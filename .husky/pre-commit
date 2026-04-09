@@ -1,6 +1,12 @@
 #!/bin/sh
 set -e
 
+# PII check: scan staged files for personal/project information
+# Patterns loaded from .pii-patterns (gitignored, local only)
+if [ -f scripts/check-pii.sh ]; then
+  bash scripts/check-pii.sh
+fi
+
 # Run lint-staged for staged files (ESLint + Prettier)
 npx lint-staged
 

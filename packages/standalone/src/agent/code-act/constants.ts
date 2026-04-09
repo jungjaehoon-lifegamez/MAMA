@@ -19,12 +19,16 @@ export function getCodeActInstructions(backend: CodeActBackend): string {
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
 - Browser: browser_navigate, browser_click, browser_screenshot
-- System: os_list_bots, os_get_config, os_set_model`
+- System: os_list_bots, os_get_config, os_set_model
+- Dashboard: report_publish
+- Wiki: wiki_publish`
     : `**USE code_act for these gateway tools** (NOT available as direct tools):
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
 - Browser: browser_navigate, browser_click, browser_screenshot
 - System: os_list_bots, os_get_config, os_set_model
+- Dashboard: report_publish
+- Wiki: wiki_publish
 
 **Use your native tools directly** (do NOT wrap in code_act):
 - Read, Write, Edit, Bash — these are your built-in tools, use them normally`;

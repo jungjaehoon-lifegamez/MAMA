@@ -75,7 +75,6 @@
               },
             },
             spacing: {
-              'header': 'var(--header-height)',
               'sidebar': 'var(--sidebar-width)',
             },
             borderRadius: {
@@ -141,9 +140,135 @@
         --radius-sm: 0.5rem;
         --radius-lg: 1.25rem;
         --radius-xl: 1.5rem;
-        --header-height: 56px;
-        --sidebar-width: 280px;
+        --header-height: 0px;
+        --sidebar-width: 56px;
+        --sidebar-width-expanded: 200px;
         --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      }
+
+      /* ── Sidebar Navigation ── */
+      #mama-sidebar {
+        position: fixed; left: 0; top: 0; height: 100vh;
+        width: var(--sidebar-width); background: #FFFFFF;
+        border-right: 1px solid #EDE9E1;
+        display: flex; flex-direction: column; align-items: center;
+        padding: 16px 0; z-index: 100; transition: width 0.2s ease;
+        overflow: hidden;
+      }
+      #mama-sidebar:hover {
+        width: var(--sidebar-width-expanded);
+        box-shadow: 4px 0 24px rgba(0,0,0,0.06);
+      }
+      .mama-sidebar-logo {
+        display: flex; align-items: center; gap: 10px;
+        width: 100%; padding: 0 14px; margin-bottom: 24px;
+        text-decoration: none; color: #1A1A1A; white-space: nowrap;
+      }
+      .mama-sidebar-logo img { flex-shrink: 0; }
+      .mama-sidebar-logo span {
+        font-family: 'Fredoka', sans-serif; font-weight: 700;
+        font-size: 16px; opacity: 0; transition: opacity 0.15s ease;
+      }
+      #mama-sidebar:hover .mama-sidebar-logo span { opacity: 1; }
+
+      .mama-nav-items {
+        display: flex; flex-direction: column; gap: 4px;
+        width: 100%; padding: 0 8px;
+      }
+      .mama-nav-item {
+        position: relative; display: flex; align-items: center; gap: 12px;
+        width: 100%; height: 40px; padding: 0 12px;
+        border-radius: 6px; border: none; background: transparent;
+        color: #6B6560; font-family: 'Nunito', sans-serif;
+        font-size: 13px; font-weight: 600; cursor: pointer;
+        transition: background 0.15s ease, color 0.15s ease;
+        white-space: nowrap; overflow: hidden;
+      }
+      .mama-nav-item:hover { background: #F9F7F4; color: #1A1A1A; }
+      .mama-nav-item i,
+      .mama-nav-item svg { flex-shrink: 0; width: 18px; height: 18px; }
+      .mama-nav-item span {
+        opacity: 0; transition: opacity 0.15s ease;
+      }
+      #mama-sidebar:hover .mama-nav-item span { opacity: 1; }
+
+      .mama-nav-item.mama-nav-active {
+        color: #1A1A1A; background: #FEF9E7;
+      }
+      .mama-nav-item.mama-nav-active::before {
+        content: ''; position: absolute; left: -8px; top: 8px;
+        width: 3px; height: 24px; border-radius: 0 3px 3px 0;
+        background: #F5C518;
+      }
+
+      /* ── Mobile bottom tab bar ── */
+      #mama-mobile-tabs {
+        display: none; position: fixed; bottom: 0; left: 0; right: 0;
+        height: 64px; background: #FFFFFF; border-top: 1px solid #EDE9E1;
+        z-index: 100; padding: 0 8px;
+        align-items: center; justify-content: space-around;
+      }
+      .mama-mobile-tab {
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        padding: 8px 12px; border: none; background: transparent;
+        color: #6B6560; font-size: 10px; font-weight: 600;
+        font-family: 'Nunito', sans-serif; cursor: pointer;
+        transition: color 0.15s ease;
+      }
+      .mama-mobile-tab i,
+      .mama-mobile-tab svg { width: 20px; height: 20px; }
+      .mama-mobile-tab.mama-nav-active { color: #F5C518; }
+
+      /* ── Slot container ── */
+      .mama-slots-container {
+        display: flex; flex-direction: column; gap: 16px;
+        min-height: 200px;
+      }
+
+      /* ── Settings Sections ── */
+      .mama-settings-section {
+        border-bottom: 1px solid #EDE9E1;
+        padding: 16px 0;
+        border-radius: 4px;
+      }
+      .mama-settings-section:last-child {
+        border-bottom: none;
+      }
+      .mama-settings-heading {
+        font-family: 'Fredoka', sans-serif;
+        font-size: 16px;
+        font-weight: 600;
+        color: #1A1A1A;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+        padding: 0 0 8px 0;
+        margin: 0;
+        border: none;
+        background: none;
+        width: 100%;
+        text-align: left;
+      }
+      .mama-settings-heading:hover { color: #3D3630; }
+      .mama-collapse-icon {
+        font-size: 14px;
+        color: #9B9389;
+        transition: transform 0.2s ease;
+        display: inline-block;
+      }
+      .mama-settings-section.collapsed .mama-settings-body { display: none; }
+      .mama-settings-section.collapsed .mama-collapse-icon { transform: rotate(-90deg); }
+
+      /* ── Responsive ── */
+      @media (max-width: 767px) {
+        #mama-sidebar { display: none; }
+        #mama-mobile-tabs { display: flex; }
+        main.flex-1 { margin-left: 0 !important; padding-bottom: 72px; }
+      }
+      @media (min-width: 768px) {
+        main.flex-1 { margin-left: var(--sidebar-width); }
       }
     </style>
 
@@ -151,175 +276,38 @@
   </head>
   <body class="bg-background text-mama-black font-body">
     <div id="app" class="h-screen flex flex-col">
-      <!-- Header -->
-      <header class="fixed top-0 left-0 right-0 h-14 bg-white/95 backdrop-blur-md border-b border-gray-200 shadow-soft z-50">
-        <div class="h-full max-w-[1920px] mx-auto px-4 flex items-center justify-between">
-          <!-- Logo -->
-          <a href="/" class="flex items-center gap-2 text-lg font-display font-bold hover:opacity-80 transition-opacity">
-            <img src="/viewer/icons/mama-icon.svg" alt="MAMA" class="w-8 h-8">
-            <span class="hidden sm:inline">MAMA</span>
-          </a>
-
-          <!-- Navigation Tabs -->
-          <nav class="flex items-center gap-1" id="nav-tabs">
-            <button
-              class="hidden px-3 py-1.5 rounded-lg text-sm font-medium transition-colors hover:bg-gray-100"
-              data-tab="setup"
-              onclick="window.switchTab && window.switchTab('setup')"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path
-                  d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-                />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              <span class="hidden sm:inline">Setup</span>
-            </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-              </svg>
-              <span class="hidden sm:inline">Dashboard</span>
-            </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="playground" onclick="window.switchTab && window.switchTab('playground')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <polygon points="5 3 19 12 5 21 5 3" />
-              </svg>
-              <span class="hidden sm:inline">Playground</span>
-            </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="skills" onclick="window.switchTab && window.switchTab('skills')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-              <span class="hidden sm:inline">Skills</span>
-            </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path
-                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
-                />
-                <polyline points="3.29 7 12 12 20.71 7" />
-                <line x1="12" y1="22" x2="12" y2="12" />
-              </svg>
-              <span class="hidden sm:inline">Memory</span>
-            </button>
-            <button class="px-3 py-1.5 rounded-full text-sm font-semibold transition-all hover:bg-gray-100 flex items-center gap-2" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
-              <span class="hidden sm:inline">Settings</span>
-            </button>
-          </nav>
-
-          <!-- Header Actions -->
-          <div class="flex items-center gap-2">
-            <button
-              id="context-help-btn"
-              class="p-2 rounded-full hover:bg-gray-100 transition-colors"
-              onclick="askContextHelp()"
-              title="Ask agent about this tab"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
-                <line x1="12" y1="17" x2="12.01" y2="17"/>
-              </svg>
-            </button>
-            <button
-              class="p-2 rounded-full hover:bg-gray-100 transition-colors"
-              onclick="showTunnelSetup()"
-              title="External Access"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <circle cx="12" cy="12" r="10" />
-                <line x1="2" y1="12" x2="22" y2="12" />
-                <path
-                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
-                />
-              </svg>
-            </button>
-          </div>
+      <!-- Sidebar Navigation -->
+      <nav id="mama-sidebar">
+        <a href="/" class="mama-sidebar-logo">
+          <img src="/viewer/icons/mama-icon.svg" alt="MAMA" width="28" height="28">
+          <span>MAMA</span>
+        </a>
+        <div class="mama-nav-items">
+          <button class="mama-nav-item mama-nav-active" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+            <i data-lucide="layout-dashboard"></i>
+            <span>Dashboard</span>
+          </button>
+          <button class="mama-nav-item" data-tab="feed" onclick="window.switchTab && window.switchTab('feed')">
+            <i data-lucide="rss"></i>
+            <span>Feed</span>
+          </button>
+          <button class="mama-nav-item" data-tab="wiki" onclick="window.switchTab && window.switchTab('wiki')">
+            <i data-lucide="book-open"></i>
+            <span>Wiki</span>
+          </button>
+          <button class="mama-nav-item" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+            <i data-lucide="brain"></i>
+            <span>Memory</span>
+          </button>
+          <button class="mama-nav-item" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
+            <i data-lucide="settings"></i>
+            <span>Settings</span>
+          </button>
         </div>
-      </header>
+      </nav>
 
       <!-- Main Content -->
-      <main class="flex-1 pt-14 overflow-hidden flex flex-col">
+      <main class="flex-1 overflow-hidden flex flex-col">
         <!-- Setup tab hidden: runs on port 3848 -->
         <div class="tab-content" id="tab-setup" style="display: none">
           <div class="setup-container">
@@ -392,141 +380,28 @@
         <!-- Dashboard Tab -->
         <div class="tab-content" id="tab-dashboard">
           <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-            <!-- Header -->
-            <div class="mb-4">
-              <h1 class="text-xl font-bold text-mama-black">MAMA OS Dashboard</h1>
-              <p class="text-xs text-gray-500 mt-0.5">System status overview</p>
-            </div>
-
-            <!-- Row 1: Gateway + MCP (Connectivity) -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-              <!-- Gateway Status -->
-              <section>
-                <h2 class="text-sm font-semibold text-gray-900 mb-2">Gateways</h2>
-                <div id="dashboard-gateways" class="grid grid-cols-2 gap-2">
-                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                </div>
-              </section>
-
-              <!-- MCP Servers -->
-              <section>
-                <div class="flex items-center justify-between mb-2">
-                  <h2 class="font-semibold text-gray-900">MCP Servers</h2>
-                  <button onclick="window.dashboardModule?.loadMCPServers()"
-                    class="text-[10px] text-gray-400 hover:text-mama-yellow-hover">↻</button>
-                </div>
-                <div id="dashboard-mcp" class="grid grid-cols-2 gap-2">
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                </div>
-                <p class="text-[10px] text-gray-400 mt-1">~/.mama/mama-mcp-config.json</p>
-              </section>
-            </div>
-
-            <!-- Row 2: Agent Swarm + Sessions (Activity) -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-              <!-- Agent Swarm -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Agent Swarm</h2>
-                <div id="dashboard-agent-swarm" class="bg-white border border-gray-200 rounded-lg p-3">
-                  <div class="animate-pulse space-y-1.5">
-                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
-                  </div>
-                </div>
-              </section>
-
-              <!-- Active Sessions -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Active Sessions</h2>
-                <div id="dashboard-sessions" class="bg-white border border-gray-200 rounded-lg p-3">
-                  <div class="animate-pulse space-y-1.5">
-                    <div class="h-3 bg-gray-100 rounded w-1/3"></div>
-                    <div class="h-3 bg-gray-100 rounded w-full"></div>
-                  </div>
-                </div>
-              </section>
-            </div>
-
-            <!-- Row 3: Agent Config + Memory Stats -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-              <!-- Agent Configuration -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Agent Config</h2>
-                <div id="dashboard-agent" class="bg-white border border-gray-200 rounded-lg p-3">
-                  <div class="animate-pulse space-y-1.5">
-                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                    <div class="h-3 bg-gray-100 rounded w-1/3"></div>
-                  </div>
-                </div>
-              </section>
-
-              <!-- Memory Stats -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Memory</h2>
-                <div id="dashboard-memory" class="grid grid-cols-4 gap-2">
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                  <div class="animate-pulse bg-white rounded-lg h-16"></div>
-                </div>
-              </section>
-            </div>
-
-            <!-- Row 3.5: System Health (full width) -->
-            <section class="mb-4">
-              <h2 class="font-semibold text-gray-900 mb-2">System Health</h2>
-              <div id="dashboard-health" class="bg-white border border-gray-200 rounded-lg p-3">
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-1/3"></div>
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                </div>
+            <div id="dashboard-slots" class="mama-slots-container">
+              <div id="slots-empty" style="padding:40px;text-align:center;color:#9E9891;font-size:14px">
+                No briefing yet. Run the orchestrator to generate the first report.
               </div>
-            </section>
-
-            <!-- Row 4: Token + Cron (Usage) -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-              <!-- Token Usage -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Token Usage</h2>
-                <div id="dashboard-tokens" class="bg-white border border-gray-200 rounded-lg p-3">
-                  <div class="animate-pulse space-y-1.5">
-                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
-                  </div>
-                </div>
-              </section>
-
-              <!-- Cron Monitor -->
-              <section>
-                <h2 class="font-semibold text-gray-900 mb-2">Cron Jobs</h2>
-                <div id="dashboard-cron" class="bg-white border border-gray-200 rounded-lg p-3">
-                  <div class="animate-pulse space-y-1.5">
-                    <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                    <div class="h-3 bg-gray-100 rounded w-3/4"></div>
-                  </div>
-                </div>
-              </section>
             </div>
+          </div>
+        </div>
 
-            <!-- Row 5: Top Topics (Secondary) -->
-            <section class="mb-4">
-              <h2 class="font-semibold text-gray-900 mb-2">Top Topics</h2>
-              <div id="dashboard-topics" class="bg-white border border-gray-200 rounded-lg p-3">
-                <div class="animate-pulse space-y-1.5">
-                  <div class="h-3 bg-gray-100 rounded w-3/4"></div>
-                  <div class="h-3 bg-gray-100 rounded w-1/2"></div>
-                </div>
-              </div>
-            </section>
+        <!-- Feed Tab -->
+        <div class="tab-content" id="tab-feed">
+          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+            <div id="feed-content">
+              <div style="padding:40px;text-align:center;color:#9E9891;font-size:14px">Loading connectors...</div>
+            </div>
+          </div>
+        </div>
 
-            <!-- Status Bar -->
-            <div id="dashboard-status" class="text-xs text-gray-400 text-center py-1">
-              Loading...
+        <!-- Wiki Tab -->
+        <div class="tab-content" id="tab-wiki">
+          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+            <div id="wiki-content">
+              <div style="padding:40px;text-align:center;color:#9E9891;font-size:14px">Loading wiki...</div>
             </div>
           </div>
         </div>
@@ -540,284 +415,108 @@
               <span class="text-[10px] text-gray-400">MAMA OS Configuration</span>
             </div>
 
-            <!-- Main Grid: 2 columns on desktop -->
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
-
-              <!-- Left Column -->
-              <div class="space-y-3">
-
-                <!-- Gateway Connections - 2x2 Grid -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Gateways</h2>
-                  <div class="grid grid-cols-2 gap-1.5">
-                    <!-- Discord -->
-                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                      <div class="flex items-center justify-between mb-1.5">
-                        <span class="text-xs font-medium">💬 Discord</span>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" id="settings-discord-enabled" class="sr-only peer" aria-label="Enable Discord">
-                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
-                        </label>
-                      </div>
-                      <input type="password" id="settings-discord-token" placeholder="Bot Token" aria-label="Discord bot token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 mb-1">
-                      <input type="text" id="settings-discord-channel" placeholder="Channel ID" aria-label="Discord channel ID" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                    </div>
-                    <!-- Slack -->
-                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                      <div class="flex items-center justify-between mb-1.5">
-                        <span class="text-xs font-medium">📱 Slack</span>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" id="settings-slack-enabled" class="sr-only peer" aria-label="Enable Slack">
-                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
-                        </label>
-                      </div>
-                      <input type="password" id="settings-slack-bot-token" placeholder="Bot Token (xoxb-)" aria-label="Slack bot token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 mb-1">
-                      <input type="password" id="settings-slack-app-token" placeholder="App Token (xapp-)" aria-label="Slack app token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                    </div>
-                    <!-- Telegram -->
-                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                      <div class="flex items-center justify-between mb-1.5">
-                        <span class="text-xs font-medium">✈️ Telegram</span>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" id="settings-telegram-enabled" class="sr-only peer" aria-label="Enable Telegram">
-                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
-                        </label>
-                      </div>
-                      <input type="password" id="settings-telegram-token" placeholder="Bot Token" aria-label="Telegram bot token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                    </div>
-                    <!-- Chatwork -->
-                    <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                      <div class="flex items-center justify-between mb-1.5">
-                        <span class="text-xs font-medium">💼 Chatwork</span>
-                        <label class="relative inline-flex items-center cursor-pointer">
-                          <input type="checkbox" id="settings-chatwork-enabled" class="sr-only peer" aria-label="Enable Chatwork">
-                          <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
-                        </label>
-                      </div>
-                      <input type="password" id="settings-chatwork-token" placeholder="API Token" aria-label="Chatwork API token" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                    </div>
-                  </div>
-                </section>
-
-                <!-- Agent Config Card -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Default Agent</h2>
-                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <div class="grid grid-cols-2 gap-1.5 mb-2">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Backend</label>
-                        <select id="settings-agent-backend" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                          <option value="claude">Claude CLI</option>
-                          <option value="codex-mcp">Codex MCP</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Model</label>
-                        <select id="settings-agent-model" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"></select>
-                      </div>
-                      <div id="settings-effort-container" style="display: none;">
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Effort <span class="text-indigo-500">(4.6)</span></label>
-                        <select id="settings-agent-effort" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                          <option value="low">Low</option>
-                          <option value="medium" selected>Medium</option>
-                          <option value="high">High</option>
-                          <option value="max">Max (Opus only)</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Max Turns</label>
-                        <input type="number" id="settings-agent-max-turns" value="10" min="1" max="100" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Timeout (s)</label>
-                        <input type="number" id="settings-agent-timeout" value="300" min="30" max="600" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <!-- Heartbeat Card -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Heartbeat</h2>
-                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <div class="flex items-center justify-between mb-2">
-                      <span class="text-[10px] text-gray-600">Enable scheduler</span>
-                      <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" id="settings-heartbeat-enabled" class="sr-only peer" aria-label="Enable heartbeat scheduler">
-                        <div class="w-6 h-3.5 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[1px] after:left-[1px] after:bg-white after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-green-500"></div>
-                      </label>
-                    </div>
-                    <div class="grid grid-cols-3 gap-1">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Interval (min)</label>
-                        <input type="number" id="settings-heartbeat-interval" value="30" min="5" max="1440" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Quiet Start</label>
-                        <input type="number" id="settings-heartbeat-quiet-start" value="23" min="0" max="23" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Quiet End</label>
-                        <input type="number" id="settings-heartbeat-quiet-end" value="8" min="0" max="23" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <!-- Timeouts -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Timeouts</h2>
-                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <div class="grid grid-cols-3 gap-1 mb-1">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Request (s)</label>
-                        <input type="number" id="settings-timeout-request" value="120" min="10" max="600" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Agent (s)</label>
-                        <input type="number" id="settings-timeout-agent" value="300" min="30" max="3600" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Session (min)</label>
-                        <input type="number" id="settings-timeout-session" value="30" min="5" max="1440" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                    </div>
-                    <div class="grid grid-cols-3 gap-1 mb-1">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">WF Step (s)</label>
-                        <input type="number" id="settings-timeout-wf-step" value="300" min="0" max="7200" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50" title="0 = unlimited">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">WF Max (min)</label>
-                        <input type="number" id="settings-timeout-wf-max" value="30" min="0" max="1440" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50" title="0 = unlimited">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">UltraWork (s)</label>
-                        <input type="number" id="settings-timeout-ultrawork" value="300" min="0" max="7200" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50" title="0 = unlimited">
-                      </div>
-                    </div>
-                    <p class="text-[8px] text-gray-400 mt-0.5">0 = unlimited (WF Step, WF Max, UltraWork)</p>
-                  </div>
-                </section>
-
-                <!-- Role Permissions -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Roles</h2>
-                  <div id="settings-roles-container" class="grid grid-cols-2 gap-1.5">
-                    <div class="animate-pulse bg-white rounded-lg h-12"></div>
-                    <div class="animate-pulse bg-white rounded-lg h-12"></div>
-                  </div>
-                </section>
-
-              </div>
-
-              <!-- Right Column -->
-              <div class="space-y-3">
-
-                <!-- Multi-Agent Team -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Multi-Agent Team</h2>
-                  <div id="settings-multi-agent-container">
-                    <div class="animate-pulse bg-white rounded-lg h-20"></div>
-                  </div>
-                </section>
-
-                <!-- Installed Skills -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Skills</h2>
-                  <div id="settings-skills-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <p class="text-[10px] text-gray-500">Loading...</p>
-                  </div>
-                </section>
-
-                <!-- Token Budget -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Token Budget</h2>
-                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <div class="grid grid-cols-2 gap-1.5">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Daily Limit</label>
-                        <input type="number" id="settings-token-daily-limit" placeholder="1000000" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
-                        <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="5.00" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <!-- Metrics -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Metrics</h2>
-                  <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                    <div class="grid grid-cols-2 gap-1.5">
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Enable metrics</label>
-                        <input type="checkbox" id="settings-metrics-enabled" checked class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400">
-                      </div>
-                      <div>
-                        <label class="block text-[9px] text-gray-500 mb-0.5">Retention (days)</label>
-                        <input type="number" id="settings-metrics-retention" min="1" max="90" value="7" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                    </div>
-                  </div>
-                </section>
-
-                <!-- Scheduled Jobs -->
-                <section>
-                  <h2 class="text-xs font-semibold text-gray-700 mb-1.5 flex items-center gap-1">Scheduled Jobs</h2>
-                  <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5">
-                    <p class="text-[10px] text-gray-500">Loading...</p>
-                  </div>
-                  <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
-                    <summary class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50">+ Add New Job</summary>
-                    <div class="p-2 border-t border-gray-100 space-y-1.5" id="settings-cron-form">
-                      <div class="grid grid-cols-2 gap-1.5">
-                        <input type="text" id="settings-cron-name" placeholder="Job Name" aria-label="Cron job name" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                        <input type="text" id="settings-cron-expr" placeholder="0 * * * *" aria-label="Cron expression" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                      </div>
-                      <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt..." aria-label="Cron job task prompt" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"></textarea>
-                      <button onclick="settingsModule.addCronJob()" class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded">Add</button>
-                    </div>
-                  </details>
-                </section>
-
+            <!-- Section 1: Connectors -->
+            <div class="mama-settings-section">
+              <h3 class="mama-settings-heading" onclick="this.parentElement.classList.toggle('collapsed')">
+                Connectors <span class="mama-collapse-icon">&#9662;</span>
+              </h3>
+              <div class="mama-settings-body">
+                <p class="text-[10px] text-gray-500 mb-2">Data source connectors for polling external channels. Configure in <code>~/.mama/connectors.json</code>.</p>
+                <div id="settings-connectors-list" class="space-y-1.5">
+                  <p class="text-[10px] text-gray-400">Loading connectors...</p>
+                </div>
               </div>
             </div>
 
-            <!-- Full Width: Tools Section (collapsible) -->
-            <details class="mt-3">
-              <summary class="text-xs font-semibold text-gray-700 cursor-pointer mb-1.5 flex items-center gap-1">🔧 Tool Selection <span class="text-[9px] text-gray-400 font-normal">(click to expand)</span></summary>
-              <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                <div class="flex items-center justify-between mb-2">
-                  <div class="flex items-center gap-2">
-                    <span class="text-[10px] text-gray-500">Gateway</span>
-                    <label class="flex items-center gap-1 text-[10px] cursor-pointer">
-                      <input type="checkbox" id="gateway-select-all" onchange="settingsModule.toggleAllGateway(this.checked)" checked class="w-3 h-3" aria-label="Select all gateway tools">All
-                    </label>
+            <!-- Section 3: System -->
+            <div class="mama-settings-section">
+              <h3 class="mama-settings-heading" onclick="this.parentElement.classList.toggle('collapsed')">
+                System <span class="mama-collapse-icon">&#9662;</span>
+              </h3>
+              <div class="mama-settings-body">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+                  <!-- Left: Health + DB Info -->
+                  <div class="space-y-3">
+
+                    <!-- Health Check -->
+                    <section>
+                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Health</h2>
+                      <div id="settings-system-health" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                        <p class="text-[10px] text-gray-400">Health status will appear here.</p>
+                      </div>
+                    </section>
+
+                    <!-- Database Info -->
+                    <section>
+                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Database</h2>
+                      <div id="settings-system-db" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                        <p class="text-[10px] text-gray-400">Database info will appear here.</p>
+                      </div>
+                    </section>
+
                   </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-[10px] text-gray-500">MCP</span>
-                    <label class="flex items-center gap-1 text-[10px] cursor-pointer">
-                      <input type="checkbox" id="mcp-select-all" onchange="settingsModule.toggleAllMCP(this.checked)" class="w-3 h-3" aria-label="Select all MCP tools">All
-                    </label>
+
+                  <!-- Right: Token Usage + Metrics + Cron -->
+                  <div class="space-y-3">
+
+                    <!-- Token Usage -->
+                    <section>
+                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Token Budget</h2>
+                      <div id="settings-system-tokens" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                        <div class="grid grid-cols-2 gap-1.5">
+                          <div>
+                            <label class="block text-[9px] text-gray-500 mb-0.5">Daily Limit</label>
+                            <input type="number" id="settings-token-daily-limit" placeholder="1000000" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          </div>
+                          <div>
+                            <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
+                            <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="5.00" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <!-- Metrics -->
+                    <section>
+                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Metrics</h2>
+                      <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                        <div class="grid grid-cols-2 gap-1.5">
+                          <div>
+                            <label class="block text-[9px] text-gray-500 mb-0.5">Enable metrics</label>
+                            <input type="checkbox" id="settings-metrics-enabled" checked class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400">
+                          </div>
+                          <div>
+                            <label class="block text-[9px] text-gray-500 mb-0.5">Retention (days)</label>
+                            <input type="number" id="settings-metrics-retention" min="1" max="90" value="7" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          </div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <!-- Scheduled Jobs -->
+                    <section>
+                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Scheduled Jobs</h2>
+                      <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5">
+                        <p class="text-[10px] text-gray-500">Loading...</p>
+                      </div>
+                      <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
+                        <summary class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50">+ Add New Job</summary>
+                        <div class="p-2 border-t border-gray-100 space-y-1.5" id="settings-cron-form">
+                          <div class="grid grid-cols-2 gap-1.5">
+                            <input type="text" id="settings-cron-name" placeholder="Job Name" aria-label="Cron job name" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                            <input type="text" id="settings-cron-expr" placeholder="0 * * * *" aria-label="Cron expression" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                          </div>
+                          <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt..." aria-label="Cron job task prompt" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"></textarea>
+                          <button onclick="settingsModule.addCronJob()" class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded">Add</button>
+                        </div>
+                      </details>
+                    </section>
+
                   </div>
                 </div>
-                <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1 mb-2">
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_search" checked>mama_search</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_save" checked>mama_save</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_update" checked>mama_update</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="mama_load_checkpoint" checked>checkpoint</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="discord_send" checked>discord_send</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Read" checked>Read</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Write" checked>Write</label>
-                  <label class="flex items-center gap-1 text-[9px] cursor-pointer"><input type="checkbox" class="gateway-tool w-2.5 h-2.5" value="Bash" checked>Bash</label>
-                </div>
-                <div id="mcp-tools-list" class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-1 text-[9px] text-gray-400">Loading MCP...</div>
-                <div class="mt-2 pt-2 border-t border-gray-100 text-[10px] text-gray-500" id="tool-summary">Gateway: 8 | MCP: 0</div>
               </div>
-            </details>
+            </div>
 
             <!-- Action Buttons -->
             <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
@@ -835,48 +534,14 @@
 
         <div class="tab-content" id="tab-memory">
           <div class="flex-1 flex flex-col min-h-0">
-            <!-- Analytics Bar (full width, top) -->
-            <div class="border-b border-gray-200 bg-white">
-              <div class="flex items-center justify-between px-3 py-1.5">
-                <div class="flex items-center gap-3">
-                  <div id="memory-stats-total" class="text-center">
-                    <p class="text-lg font-bold text-gray-900">-</p>
-                    <p class="text-[10px] text-gray-500">Total</p>
-                  </div>
-                  <div class="h-6 w-px bg-gray-200"></div>
-                  <div id="memory-stats-week" class="text-center">
-                    <p class="text-lg font-bold text-gray-900">-</p>
-                    <p class="text-[10px] text-gray-500">This Week</p>
-                  </div>
-                  <div class="h-6 w-px bg-gray-200"></div>
-                  <div id="memory-stats-outcomes" class="flex items-center gap-1.5">
-                    <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-green-100 text-green-700">
-                      <span id="outcome-success">0</span> ✓
-                    </span>
-                    <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-red-100 text-red-700">
-                      <span id="outcome-failed">0</span> ✗
-                    </span>
-                    <span class="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] rounded-full bg-yellow-100 text-yellow-700">
-                      <span id="outcome-partial">0</span> ~
-                    </span>
-                  </div>
-                </div>
-                <div class="flex items-center gap-1">
-                  <button onclick="exportDecisions('json')" class="px-2 py-1 text-[10px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-600 rounded transition-colors">JSON</button>
-                  <button onclick="exportDecisions('markdown')" class="px-2 py-1 text-[10px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-600 rounded transition-colors">MD</button>
-                  <button onclick="exportDecisions('csv')" class="px-2 py-1 text-[10px] font-medium bg-gray-100 hover:bg-gray-200 text-gray-600 rounded transition-colors">CSV</button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Filters Bar (full width) -->
-            <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50/50">
-              <!-- Toggle button for checkpoint sidebar -->
+            <!-- Compact Filter Bar (full width, top) -->
+            <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white">
+              <!-- Toggle sidebar -->
               <button
                 id="checkpoint-sidebar-toggle"
                 class="w-7 h-7 bg-white border border-gray-200 rounded flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700"
                 onclick="toggleCheckpointSidebar()"
-                title="Toggle Checkpoints"
+                title="Toggle Decision List"
                 aria-controls="checkpoint-sidebar"
                 aria-expanded="true"
               >
@@ -886,37 +551,47 @@
                   <line x1="9" y1="21" x2="9" y2="9" />
                 </svg>
               </button>
-              <select class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="topic-filter" onchange="filterByTopic(this.value)">
-                <option value="">All Topics</option>
-              </select>
-              <select class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="outcome-filter" onchange="filterByOutcome(this.value)">
+              <!-- Stats (compact inline) -->
+              <span id="memory-stats-total" style="font-family:Fredoka,sans-serif;font-size:13px;font-weight:600;color:#1A1A1A">-</span>
+              <span style="font-size:11px;color:#9E9891">decisions</span>
+              <span style="color:#EDE9E1">|</span>
+              <span id="memory-stats-week" style="font-size:11px;color:#6B6560">- this week</span>
+              <!-- Spacer -->
+              <div style="flex:1"></div>
+              <!-- Topic filter -->
+              <input list="topic-filter-list" class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="topic-filter" placeholder="Filter topics..." oninput="filterByTopic(this.value)" style="width:160px">
+              <datalist id="topic-filter-list"></datalist>
+              <select class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="outcome-filter" onchange="filterByOutcome(this.value)" style="display:none">
                 <option value="">All Outcomes</option>
                 <option value="success">Success</option>
                 <option value="failed">Failed</option>
                 <option value="partial">Partial</option>
                 <option value="pending">Pending</option>
               </select>
-              <input type="text" class="px-2 py-1 bg-white border border-gray-200 rounded text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-yellow-400 flex-1 max-w-[160px]" id="search-input" placeholder="Search..." onkeyup="handleGraphSearch(event)" />
+              <!-- Search -->
+              <input type="text" class="px-2 py-1 bg-white border border-gray-200 rounded text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-yellow-400" id="search-input" placeholder="Search content..." onkeyup="handleGraphSearch(event)" style="width:160px" />
               <button onclick="clearFilters()" class="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-600">Clear</button>
+              <!-- Export (collapsed) -->
+              <details style="position:relative">
+                <summary style="font-size:10px;color:#9E9891;cursor:pointer;padding:4px 8px;border:1px solid #EDE9E1;border-radius:4px">Export</summary>
+                <div style="position:absolute;right:0;top:100%;background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:4px;z-index:10;display:flex;gap:4px;margin-top:2px">
+                  <button onclick="exportDecisions('json')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">JSON</button>
+                  <button onclick="exportDecisions('markdown')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">MD</button>
+                  <button onclick="exportDecisions('csv')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">CSV</button>
+                </div>
+              </details>
             </div>
 
             <!-- Main content area: Sidebar + Graph -->
             <div class="flex-1 flex min-h-0 relative">
-              <!-- Checkpoint Sidebar -->
-              <aside id="checkpoint-sidebar" class="checkpoint-sidebar w-56 border-r border-gray-200 bg-gray-50 flex flex-col min-h-0 overflow-hidden" style="min-width: 120px; max-width: 400px;">
-                <div class="p-2 border-b border-gray-200 flex items-center gap-1.5">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-500">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                    <line x1="3" y1="9" x2="21" y2="9" />
-                    <line x1="9" y1="21" x2="9" y2="9" />
-                  </svg>
-                  <span class="text-[10px] font-semibold text-gray-700 uppercase">Checkpoints</span>
+              <!-- Decision List Sidebar -->
+              <aside id="checkpoint-sidebar" class="checkpoint-sidebar w-64 border-r border-gray-200 bg-white flex flex-col min-h-0 overflow-hidden" style="min-width: 180px; max-width: 400px;">
+                <div class="p-2 border-b border-gray-200 flex items-center justify-between">
+                  <span style="font-family:Fredoka,sans-serif;font-size:12px;font-weight:600;color:#1A1A1A">Decisions</span>
+                  <span id="decision-list-count" style="font-size:10px;color:#9E9891">0</span>
                 </div>
-                <div class="flex-1 flex flex-col gap-1 p-1.5 overflow-y-auto" id="checkpoint-list">
-                  <div class="flex flex-col items-center justify-center py-4 text-gray-400">
-                    <div class="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin"></div>
-                    <span class="mt-1 text-[10px]">Loading...</span>
-                  </div>
+                <div class="flex-1 overflow-y-auto" id="decision-list" style="padding:4px">
+                  <div style="padding:16px;text-align:center;color:#9E9891;font-size:11px">Loading decisions...</div>
                 </div>
               </aside>
 
@@ -925,7 +600,7 @@
 
               <!-- Graph Container -->
               <div class="flex-1 flex flex-col relative min-h-0" id="graph-container">
-                <div class="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-200 bg-white/80" id="graph-stats">Loading...</div>
+                <div class="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-200 bg-white/80" id="graph-stats" style="display:none"></div>
 
                 <div id="graph-canvas" class="flex-1 w-full h-full min-h-[400px]" style="background: #FAFAFA;"></div>
 
@@ -1233,6 +908,30 @@
         </div>
       </main>
 
+      <!-- Mobile Bottom Tab Bar -->
+      <div id="mama-mobile-tabs">
+        <button class="mama-mobile-tab mama-nav-active" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+          <i data-lucide="layout-dashboard"></i>
+          <span>Dashboard</span>
+        </button>
+        <button class="mama-mobile-tab" data-tab="feed" onclick="window.switchTab && window.switchTab('feed')">
+          <i data-lucide="rss"></i>
+          <span>Feed</span>
+        </button>
+        <button class="mama-mobile-tab" data-tab="wiki" onclick="window.switchTab && window.switchTab('wiki')">
+          <i data-lucide="book-open"></i>
+          <span>Wiki</span>
+        </button>
+        <button class="mama-mobile-tab" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+          <i data-lucide="brain"></i>
+          <span>Memory</span>
+        </button>
+        <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
+          <i data-lucide="settings"></i>
+          <span>Settings</span>
+        </button>
+      </div>
+
       <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="save-decision-modal">
         <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden">
           <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
@@ -1416,6 +1115,8 @@
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { SkillsModule } from '/viewer/js/modules/skills.js';
       import { PlaygroundModule } from '/viewer/js/modules/playground.js';
+      import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
+      import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { API } from '/viewer/js/utils/api.js';
 
       const memory = new MemoryModule();
@@ -1425,6 +1126,8 @@
       const settings = new SettingsModule();
       const skills = SkillsModule;
       const playground = PlaygroundModule;
+      const connectorFeed = new ConnectorFeedModule();
+      const wiki = new WikiModule();
 
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
@@ -1448,11 +1151,22 @@
       async function switchTab(tabName) {
         STATE.currentTab = tabName;
 
+        // Update sidebar nav items
+        document.querySelectorAll('#mama-sidebar .mama-nav-item').forEach(btn => {
+          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
+        });
+
+        // Update mobile tab bar
+        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach(btn => {
+          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
+        });
+
+        // Legacy: update any remaining [data-tab] buttons outside sidebar/mobile
         document.querySelectorAll('[data-tab]').forEach(btn => {
+          if (btn.closest('#mama-sidebar') || btn.closest('#mama-mobile-tabs')) return;
           const isActive = btn.dataset.tab === tabName;
           btn.classList.toggle('bg-indigo-100', isActive);
           btn.classList.toggle('bg-mama-lavender/30', isActive);
-          btn.classList.toggle('text-mama-black', isActive);
           btn.classList.toggle('text-mama-black', isActive);
         });
 
@@ -1464,8 +1178,7 @@
           dashboard.init();
         } else if (tabName === 'settings') {
           settings.init();
-        } else if (tabName === 'skills') {
-          skills.init();
+          loadConnectorsList();
         } else if (tabName === 'memory') {
           // Initialize sidebar state for current screen size
           updateCheckpointSidebarForScreenSize();
@@ -1490,6 +1203,10 @@
               if (loadingEl) loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
             }
           }
+        } else if (tabName === 'feed') {
+          connectorFeed.init();
+        } else if (tabName === 'wiki') {
+          wiki.init();
         } else if (tabName === 'playground') {
           playground.init();
         }
@@ -1981,12 +1698,10 @@
         try {
           const data = await API.get('/api/dashboard/status');
           const memory = data.memory || {};
-
-          document.querySelector('#memory-stats-total p').textContent = memory.total || 0;
-          document.querySelector('#memory-stats-week p').textContent = memory.thisWeek || 0;
-          document.getElementById('outcome-success').textContent = memory.outcomes?.success || 0;
-          document.getElementById('outcome-failed').textContent = memory.outcomes?.failed || 0;
-          document.getElementById('outcome-partial').textContent = memory.outcomes?.partial || 0;
+          const totalEl = document.getElementById('memory-stats-total');
+          const weekEl = document.getElementById('memory-stats-week');
+          if (totalEl) totalEl.textContent = memory.total || 0;
+          if (weekEl) weekEl.textContent = `${memory.thisWeek || 0} this week`;
         } catch (error) {
           console.error('[MemoryStats] Error:', error);
         }
@@ -2073,6 +1788,59 @@
             item.classList.remove('border-indigo-500');
           }
         });
+      }
+
+      // Connector list loader for Settings
+      const CONNECTOR_NAMES = ['slack','telegram','discord','chatwork','gmail','calendar','notion','obsidian','kagemusha','sheets','trello','drive','imessage'];
+      const CONNECTOR_CATEGORIES = {
+        'Messaging': ['slack','telegram','discord','chatwork'],
+        'Google': ['gmail','calendar','drive','sheets'],
+        'Knowledge': ['notion','obsidian','kagemusha'],
+        'Dev Tools': ['claude-code'],
+        'Other': ['trello','imessage'],
+      };
+      async function loadConnectorsList() {
+        const container = document.getElementById('settings-connectors-list');
+        if (!container) return;
+        let connectorStatus = {};
+        try {
+          const res = await fetch('/api/connectors/status');
+          if (res.ok) {
+            const data = await res.json();
+            for (const c of (data.connectors || [])) connectorStatus[c.name] = c;
+          }
+        } catch {}
+        // Load config
+        let config = {};
+        try {
+          const res = await fetch('/api/config');
+          if (res.ok) {
+            const data = await res.json();
+            config = data?.connectors || {};
+          }
+        } catch {}
+        let html = '';
+        for (const [category, names] of Object.entries(CONNECTOR_CATEGORIES)) {
+          html += `<div style="margin-bottom:12px"><div style="font-family:Fredoka,sans-serif;font-size:12px;font-weight:600;color:#6B6560;margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px">${category}</div><div class="grid grid-cols-2 lg:grid-cols-3 gap-1.5">`;
+          for (const name of names) {
+            const status = connectorStatus[name];
+            const cfg = config[name];
+            const enabled = cfg?.enabled || (status?.enabled) || false;
+            const healthy = status?.healthy || false;
+            const lastPoll = status?.lastPollTime ? new Date(status.lastPollTime).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : null;
+            const channels = status?.channelCount || Object.keys(cfg?.channels || {}).length || 0;
+            const statusDot = enabled ? (healthy ? '#3A9E7E' : '#E8A040') : '#9E9891';
+            html += `<div style="background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:8px 10px;font-size:12px;display:flex;align-items:center;gap:8px">`;
+            html += `<span style="display:inline-block;width:6px;height:6px;background:${statusDot};border-radius:1px;flex-shrink:0"></span>`;
+            html += `<span style="font-weight:600;color:#1A1A1A;flex:1">${name}</span>`;
+            if (channels > 0) html += `<span style="font-size:10px;color:#9E9891">${channels}ch</span>`;
+            if (lastPoll) html += `<span style="font-size:10px;color:#9E9891">${lastPoll}</span>`;
+            if (!enabled) html += `<span style="font-size:9px;color:#9E9891;background:#F5F2ED;padding:1px 4px;border-radius:2px">off</span>`;
+            html += `</div>`;
+          }
+          html += `</div></div>`;
+        }
+        container.innerHTML = html;
       }
 
       // Expose to window for onclick handlers
@@ -2201,6 +1969,11 @@
       document.addEventListener('DOMContentLoaded', () => {
         const userLang = navigator.language || navigator.userLanguage;
         document.documentElement.lang = userLang.split('-')[0];
+
+        // Initialize Lucide icons (sidebar + mobile tab bar)
+        if (typeof lucide !== 'undefined' && lucide.createIcons) {
+          lucide.createIcons();
+        }
 
         initTheme();
         // Initialize floating chat panel bindings (session init is lazy, on first open)
