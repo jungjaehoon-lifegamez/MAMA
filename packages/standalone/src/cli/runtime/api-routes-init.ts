@@ -37,7 +37,7 @@ import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
-import { EMBEDDING_PORT } from './utilities.js';
+import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -135,7 +135,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       existing.mcpServers['code-act'] = {
         command: 'node',
         args: [codeActServerPath],
-        env: { MAMA_SERVER_PORT: String(EMBEDDING_PORT) },
+        env: { MAMA_SERVER_PORT: String(API_PORT) },
       };
       writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
       console.log('[api-routes-init] code-act MCP merged into mama-mcp-config.json');

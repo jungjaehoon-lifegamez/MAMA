@@ -257,10 +257,34 @@ export class AgentProcessManager extends EventEmitter {
       options.effort = effort;
     }
 
-    // MCP config: expose MAMA MCP tools (mama_save, brave-devtools, etc.) to agents
+    // MCP config: expose MCP tools to agents
+    // Code-Act agents get a stripped config (code-act only) to force tool access through sandbox.
+    // Without this, direct MCP tools (mcp__mama__search) compete with code-act gateway tools
+    // (report_publish, wiki_publish) which are ONLY available inside code_act.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      options.mcpConfigPath = mcpConfigPath;
+      if (agentConfig.useCodeAct) {
+        // Code-Act agents: only provide code-act MCP server
+        const codeActOnlyConfig = resolve(homedir(), '.mama', 'code-act-only-mcp-config.json');
+        try {
+          const fullConfig = JSON.parse(require('fs').readFileSync(mcpConfigPath, 'utf-8'));
+          const codeActEntry = fullConfig.mcpServers?.['code-act'];
+          if (codeActEntry) {
+            require('fs').writeFileSync(
+              codeActOnlyConfig,
+              JSON.stringify({ mcpServers: { 'code-act': codeActEntry } }, null, 2),
+              'utf-8'
+            );
+            options.mcpConfigPath = codeActOnlyConfig;
+          } else {
+            options.mcpConfigPath = mcpConfigPath;
+          }
+        } catch {
+          options.mcpConfigPath = mcpConfigPath;
+        }
+      } else {
+        options.mcpConfigPath = mcpConfigPath;
+      }
     }
 
     if (tier >= 2) {
