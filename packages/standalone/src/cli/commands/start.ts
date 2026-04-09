@@ -378,6 +378,24 @@ export async function runAgentLoop(
     cronEmitter,
   });
 
+  // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
+  // If no Discord/Slack handler wired the delegate tool, create standalone
+  // DelegationManager + AgentProcessManager so delegate() works from any path
+  // (Viewer, Telegram, iMessage, Terminal).
+  if (!toolExecutor['agentProcessManager'] && config.multi_agent?.enabled) {
+    const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
+    const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
+    const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
+      id,
+      ...cfg,
+    }));
+    const pm = new AgentProcessManager(config.multi_agent, {}, { backend: runtimeBackend });
+    const dm = new DelegationManager(agentConfigs);
+    toolExecutor.setAgentProcessManager(pm);
+    toolExecutor.setDelegationManager(dm);
+    console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
+  }
+
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
 
   const { heartbeatScheduler, tokenKeepAlive, healthWarningInterval } = initHeartbeat(
