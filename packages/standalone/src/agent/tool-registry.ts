@@ -21,7 +21,8 @@ export type ToolCategory =
   | 'pr_review'
   | 'playground'
   | 'webchat'
-  | 'code_act';
+  | 'code_act'
+  | 'multi_agent';
 
 export interface ToolDefinitionMeta {
   name: GatewayToolName;
@@ -261,6 +262,15 @@ register({
   category: 'code_act',
 });
 
+// Multi-Agent delegation
+register({
+  name: 'delegate',
+  description:
+    "Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Returns the agent's response.",
+  category: 'multi_agent',
+  params: 'agentId, task, background?',
+});
+
 // Business Data — progressive exploration of operational data
 register({
   name: 'kagemusha_overview',
@@ -374,7 +384,8 @@ export class ToolRegistry {
 
     const categoryLabels: Record<ToolCategory, string> = {
       memory: 'MAMA Memory',
-      business_data: 'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
+      business_data:
+        'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
       utility: 'Utility',
       browser: 'Browser (Playwright)',
       os_management: 'OS Management (viewer-only)',
@@ -383,6 +394,7 @@ export class ToolRegistry {
       playground: 'Playground',
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
+      multi_agent: 'Multi-Agent Delegation',
     };
 
     const sections: string[] = ['# Gateway Tools\n'];
