@@ -208,6 +208,10 @@ export class GatewayToolExecutor {
   setDelegationManager(dm: DelegationManager): void {
     this.delegationManagerRef = dm;
   }
+  /** Get AgentProcessManager (for cron/event triggers that need direct process access) */
+  getAgentProcessManager(): AgentProcessManager | null {
+    return this.agentProcessManager;
+  }
   setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
     this.currentAgentId = agentId;
     this.currentSource = source;
