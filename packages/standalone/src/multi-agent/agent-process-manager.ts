@@ -346,8 +346,12 @@ export class AgentProcessManager extends EventEmitter {
     const shouldTrace = this.shouldTracePrompt(agentId);
     const traceCacheKey = agentId.toLowerCase() === 'conductor' ? 'conductor' : agentId;
 
-    // Check cache first
-    if (this.personaCache.has(agentId)) {
+    // Check if a skill rules file exists for this agent (allows hot-reload)
+    const skillPath = resolve(homedir(), '.mama', 'skills', `${agentId}-rules.md`);
+    const hasSkillFile = existsSync(skillPath);
+
+    // Check cache first — skip cache if skill file exists to allow hot-reload
+    if (this.personaCache.has(agentId) && !hasSkillFile) {
       const cachedPrompt = this.personaCache.get(agentId)!;
       if (shouldTrace) {
         processManagerLogger.debug(
@@ -389,7 +393,7 @@ export class AgentProcessManager extends EventEmitter {
         );
       }
       const buildStart = Date.now();
-      const systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      let systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
       if (shouldTrace) {
         processManagerLogger.debug(
           `[Conductor] system prompt built key=${traceCacheKey} build_ms=${Date.now() - buildStart} total_ms=${
@@ -397,6 +401,24 @@ export class AgentProcessManager extends EventEmitter {
           } len=${systemPrompt.length}`
         );
       }
+
+      // Append agent-specific skill rules from ~/.mama/skills/{agentId}-rules.md
+      if (hasSkillFile) {
+        try {
+          const skillContent = await readFile(skillPath, 'utf8');
+          if (skillContent.trim()) {
+            systemPrompt += `\n\n## Agent Rules (auto-loaded from ${agentId}-rules.md)\n\n${skillContent}`;
+            if (shouldTrace) {
+              processManagerLogger.debug(
+                `[${agentId}] Skill rules loaded: ${skillContent.length} chars`
+              );
+            }
+          }
+        } catch {
+          // Non-fatal: skill file read error
+        }
+      }
+
       this.personaCache.set(agentId, systemPrompt);
       if (shouldTrace && this.dumpConductorPrompt) {
         processManagerLogger.debug(`[Conductor] system prompt content:\n${systemPrompt}`);
