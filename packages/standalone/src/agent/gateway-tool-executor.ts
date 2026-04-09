@@ -72,6 +72,7 @@ import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
+import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -191,6 +192,13 @@ export class GatewayToolExecutor {
         }>
       ) => void)
     | null = null;
+  private agentEventBus: AgentEventBus | null = null;
+  setAgentEventBus(bus: AgentEventBus): void {
+    this.agentEventBus = bus;
+  }
+  getAgentEventBus(): AgentEventBus | null {
+    return this.agentEventBus;
+  }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
   }
@@ -639,6 +647,24 @@ export class GatewayToolExecutor {
             );
           }
           return { success: true, messages: queryMessages(msgInput) };
+        }
+        case 'agent_notices': {
+          const limit = Number((input as { limit?: number }).limit) || 10;
+          if (!this.agentEventBus) {
+            return { success: true, data: { notices: [], message: 'Event bus not available' } };
+          }
+          const notices = this.agentEventBus.getRecentNotices(limit);
+          return {
+            success: true,
+            data: {
+              notices: notices.map((n) => ({
+                agent: n.agent,
+                action: n.action,
+                target: n.target,
+                timestamp: new Date(n.timestamp).toISOString(),
+              })),
+            },
+          };
         }
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);

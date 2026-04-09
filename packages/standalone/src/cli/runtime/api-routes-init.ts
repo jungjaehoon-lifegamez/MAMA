@@ -90,6 +90,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     getAdapter,
   } = params;
 
+  // Wire EventBus to tool executor for agent_notices tool
+  toolExecutor.setAgentEventBus(eventBus);
+
   // ── Report Slots ──────────────────────────────────────────────────────
   {
     const { broadcastReportUpdate } = await import('../../api/report-handler.js');
@@ -179,6 +182,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         slots: apiServer.reportStore.getAllSorted(),
       });
       console.log(`[Dashboard Agent] Published briefing slot via report_publish`);
+      eventBus.emit({
+        type: 'agent:action',
+        agent: 'dashboard-agent',
+        action: 'publish',
+        target: 'briefing',
+      });
     });
 
     // Run dashboard agent on startup (after data loads) + every 30 minutes
@@ -343,10 +352,13 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               return entries;
             };
             existingPages = walkDir(obsWriter.getWikiPath(), '');
-          } catch { /* non-fatal */ }
-          const existingPagesHint = existingPages.length > 0
-            ? `\n\nExisting wiki pages (reuse these exact paths, do NOT create duplicates):\n${existingPages.map(p => `- ${p}`).join('\n')}\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.`
-            : '\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.';
+          } catch {
+            /* non-fatal */
+          }
+          const existingPagesHint =
+            existingPages.length > 0
+              ? `\n\nExisting wiki pages (reuse these exact paths, do NOT create duplicates):\n${existingPages.map((p) => `- ${p}`).join('\n')}\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.`
+              : '\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.';
           await wikiAgentLoop.run(
             `Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.${existingPagesHint}`,
             {

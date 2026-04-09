@@ -368,6 +368,17 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ agentId: string; response?: string; taskId?: string; message?: string }',
     category: 'os',
   },
+  // System — agent activity notices
+  {
+    name: 'agent_notices',
+    description: 'Get recent agent activity notices.',
+    params: [
+      { name: 'limit', type: 'number', required: false, description: 'Max notices (default: 10)' },
+    ],
+    returnType:
+      '{ data: { notices: Array<{ agent: string; action: string; target: string; timestamp: string }> } }',
+    category: 'system',
+  },
   // Kagemusha Query — progressive business data exploration
   {
     name: 'kagemusha_overview',
@@ -461,6 +472,7 @@ export const READ_ONLY_TOOLS = new Set([
   'os_list_bots',
   'os_get_config',
   'pr_review_threads',
+  'agent_notices',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */

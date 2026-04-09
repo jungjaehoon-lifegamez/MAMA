@@ -704,7 +704,9 @@ export type GatewayToolName =
   | 'kagemusha_overview'
   | 'kagemusha_entities'
   | 'kagemusha_tasks'
-  | 'kagemusha_messages';
+  | 'kagemusha_messages'
+  // System tools
+  | 'agent_notices';
 
 // ============================================================================
 // MCP Tool Output Types
