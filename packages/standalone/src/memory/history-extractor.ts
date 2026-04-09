@@ -173,7 +173,9 @@ export function buildActivityExtractionPrompt(
   activity: NormalizedItem[],
   truth: ProjectTruth
 ): string {
-  let prompt = 'You are a project historian.\n\n';
+  let prompt = 'You are a project historian.\n';
+  prompt +=
+    'IMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n';
   prompt += 'Current project state (from management docs / kanban):\n';
 
   const truthEntries = Object.entries(truth.projects);
@@ -248,7 +250,7 @@ export function buildSpokeExtractionPrompt(
     })
     .join('\n');
 
-  let prompt = `You are a historian.\n\n`;
+  let prompt = `You are a historian.\nIMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n`;
 
   // Include truth context if provided
   if (truth && Object.keys(truth.projects).length > 0) {
