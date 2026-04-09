@@ -11,6 +11,7 @@ import {
   type ConnectorActivitySummary,
 } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { createCollapsible } from '../utils/dom.js';
 
 declare const DOMPurify: { sanitize(html: string): string };
 
@@ -178,13 +179,13 @@ export class DashboardModule {
     }
     if (emptyEl) emptyEl.style.display = 'none';
 
-    const sections: string[] = [];
+    // Clear container and build DOM elements
+    this.container.innerHTML = '';
 
     // ── Section 1: Summary + Notices ──────────────────────────────────────
     {
       let summaryHtml = '';
 
-      // Agent-generated summary
       if (data.briefingSlot?.html) {
         summaryHtml += `<div id="dash-briefing-content" style="margin-bottom:12px">${DOMPurify.sanitize(data.briefingSlot.html)}</div>`;
       } else if (data.summary.text) {
@@ -196,7 +197,6 @@ export class DashboardModule {
         summaryHtml += `<p style="font-size:12px;color:${COLOR.tertiary};margin-bottom:12px">Waiting for agent briefing...</p>`;
       }
 
-      // Agent notices
       if (data.notices.length > 0) {
         summaryHtml += `<div style="margin-top:8px">`;
         for (const n of data.notices) {
@@ -214,13 +214,17 @@ export class DashboardModule {
         summaryHtml += `<div style="font-size:11px;color:${COLOR.tertiary};margin-top:8px">No agent activity yet</div>`;
       }
 
-      sections.push(
-        `<div class="dash-section" style="${S.section}">` +
-          `<h3 style="${S.heading}">Summary</h3>${summaryHtml}</div>`
-      );
+      const summarySection = createCollapsible('Summary', summaryHtml, {
+        storageKey: 'dash-collapse-summary',
+        defaultOpen: true,
+        headingStyle: S.heading,
+        containerStyle: S.section,
+      });
+      summarySection.classList.add('dash-section');
+      this.container.appendChild(summarySection);
     }
 
-    // ── Section 2: Pipeline ──────────────────────────────────────────────
+    // ── Section 2: Pipeline (clickable rows) ─────────────────────────────
     if (data.pipeline.length > 0) {
       const sorted = [...data.pipeline].sort(
         (a, b) => new Date(b.lastActivity).getTime() - new Date(a.lastActivity).getTime()
@@ -234,76 +238,203 @@ export class DashboardModule {
           ? ' <span style="color:#D94F4F;font-size:10px">\u{1F534}</span>'
           : '';
         const dotColor = isRecent ? COLOR.green : COLOR.tertiary;
+        const projectId = esc(p.project);
 
         pipelineHtml +=
-          `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid ${COLOR.border}">` +
+          `<div class="dash-pipeline-row" data-project="${projectId}" ` +
+          `style="cursor:pointer;border-bottom:1px solid ${COLOR.border};transition:background 0.1s" ` +
+          `onmouseover="this.style.background='#F5F3EF'" onmouseout="this.style.background='transparent'">` +
+          `<div style="display:flex;align-items:center;gap:8px;padding:4px 0">` +
+          `<span class="dash-row-arrow" style="display:inline-block;font-size:9px;width:10px;color:${COLOR.tertiary}">\u25B6</span>` +
           `<span style="display:inline-block;width:6px;height:6px;background:${dotColor};flex-shrink:0"></span>` +
           `<span style="font-size:12px;font-weight:600;color:${COLOR.primary};flex:1">${esc(p.project.slice(0, 20))}${newBadge}</span>` +
           `<span style="font-size:10px;color:${COLOR.tertiary}">${p.activeDecisions} decisions</span>` +
           `<span style="${S.time}">${esc(rel)}</span>` +
+          `</div>` +
+          `<div class="dash-pipeline-detail" style="display:none;padding:6px 0 6px 28px;font-size:11px;color:${COLOR.secondary}">Loading...</div>` +
           `</div>`;
       }
 
-      sections.push(
-        `<div class="dash-section" style="${S.section}">` +
-          `<h3 style="${S.heading}">Pipeline</h3>${pipelineHtml}</div>`
-      );
+      const pipelineSection = createCollapsible('Pipeline', pipelineHtml, {
+        storageKey: 'dash-collapse-pipeline',
+        defaultOpen: true,
+        headingStyle: S.heading,
+        containerStyle: S.section,
+      });
+      pipelineSection.classList.add('dash-section');
+      this.container.appendChild(pipelineSection);
+
+      // Bind click-to-expand on pipeline rows
+      pipelineSection.querySelectorAll('.dash-pipeline-row').forEach((el) => {
+        el.addEventListener('click', () => {
+          const row = el as HTMLElement;
+          const detail = row.querySelector('.dash-pipeline-detail') as HTMLElement;
+          const arrow = row.querySelector('.dash-row-arrow') as HTMLElement;
+          if (!detail || !arrow) return;
+
+          const isOpen = detail.style.display !== 'none';
+          if (isOpen) {
+            detail.style.display = 'none';
+            arrow.textContent = '\u25B6';
+          } else {
+            detail.style.display = '';
+            arrow.textContent = '\u25BC';
+            const projectName = row.dataset.project;
+            if (projectName && detail.textContent === 'Loading...') {
+              this.loadPipelineDetail(detail, projectName);
+            }
+          }
+        });
+      });
     }
 
-    // ── Section 3: Connector Activity ────────────────────────────────────
+    // ── Section 3: Connector Activity (clickable rows) ───────────────────
     if (data.connectors.length > 0) {
       let connHtml = '';
       for (const c of data.connectors) {
         const icon = CONNECTOR_ICON[c.connector] || '\u{1F517}';
+        const connId = esc(c.connector);
+
         if (c.status === 'active') {
           const rel = relativeTime(c.timestamp);
           const snippet = c.content.replace(/\n/g, ' ').slice(0, 60);
           connHtml +=
+            `<div class="dash-connector-row" data-connector="${connId}" ` +
+            `style="cursor:pointer;transition:background 0.1s" ` +
+            `onmouseover="this.style.background='#F5F3EF'" onmouseout="this.style.background='transparent'">` +
             `<div style="${S.row}">` +
+            `<span class="dash-row-arrow" style="display:inline-block;font-size:9px;width:10px;color:${COLOR.tertiary}">\u25B6</span>` +
             `<span style="font-size:14px;min-width:20px">${icon}</span>` +
-            `<span style="font-size:12px;font-weight:600;color:${COLOR.primary};min-width:80px">${esc(c.connector)}</span>` +
+            `<span style="font-size:12px;font-weight:600;color:${COLOR.primary};min-width:80px">${connId}</span>` +
             `<span style="font-size:11px;color:${COLOR.secondary};flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">` +
             `<span style="color:${COLOR.tertiary}">${esc(c.channel)}</span> ${esc(snippet)}</span>` +
             `<span style="${S.time}">${esc(rel)}</span>` +
+            `</div>` +
+            `<div class="dash-connector-detail" style="display:none;padding:4px 0 4px 36px;font-size:11px;color:${COLOR.secondary}">Loading...</div>` +
             `</div>`;
         } else if (c.status === 'idle') {
           connHtml +=
             `<div style="${S.row}">` +
             `<span style="font-size:14px;min-width:20px">${icon}</span>` +
-            `<span style="font-size:12px;color:${COLOR.tertiary};flex:1">${esc(c.connector)} <span style="font-size:10px">idle</span></span>` +
+            `<span style="font-size:12px;color:${COLOR.tertiary};flex:1">${connId} <span style="font-size:10px">idle</span></span>` +
             `</div>`;
         } else {
           connHtml +=
             `<div style="${S.row}">` +
             `<span style="font-size:14px;min-width:20px">${icon}</span>` +
-            `<span style="font-size:12px;color:${COLOR.red};flex:1">${esc(c.connector)} <span style="font-size:10px">\u26A0\uFE0F \uBBF8\uC5F0\uACB0</span></span>` +
+            `<span style="font-size:12px;color:${COLOR.red};flex:1">${connId} <span style="font-size:10px">\u26A0\uFE0F \uBBF8\uC5F0\uACB0</span></span>` +
             `</div>`;
         }
       }
 
-      sections.push(
-        `<div class="dash-section" style="${S.section}">` +
-          `<h3 style="${S.heading}">Connectors</h3>${connHtml}</div>`
-      );
+      const connSection = createCollapsible('Connectors', connHtml, {
+        storageKey: 'dash-collapse-connectors',
+        defaultOpen: true,
+        headingStyle: S.heading,
+        containerStyle: S.section,
+      });
+      connSection.classList.add('dash-section');
+      this.container.appendChild(connSection);
+
+      // Bind click-to-expand on connector rows
+      connSection.querySelectorAll('.dash-connector-row').forEach((el) => {
+        el.addEventListener('click', () => {
+          const row = el as HTMLElement;
+          const detail = row.querySelector('.dash-connector-detail') as HTMLElement;
+          const arrow = row.querySelector('.dash-row-arrow') as HTMLElement;
+          if (!detail || !arrow) return;
+
+          const isOpen = detail.style.display !== 'none';
+          if (isOpen) {
+            detail.style.display = 'none';
+            arrow.textContent = '\u25B6';
+          } else {
+            detail.style.display = '';
+            arrow.textContent = '\u25BC';
+            const connName = row.dataset.connector;
+            if (connName && detail.textContent === 'Loading...') {
+              this.loadConnectorDetail(detail, connName);
+            }
+          }
+        });
+      });
     }
 
     // ── Section 4: System ────────────────────────────────────────────────
     {
-      const statsItems: string[] = [];
-      statsItems.push(
-        `<span style="font-size:11px;color:${COLOR.secondary}">Agents: <strong style="color:${COLOR.primary}">${data.agentCount || '-'}</strong></span>`
-      );
-      statsItems.push(
-        `<span style="font-size:11px;color:${COLOR.secondary}">Decisions: <strong style="color:${COLOR.primary}">${data.totalDecisions}</strong></span>`
-      );
+      const statsHtml =
+        `<div style="display:flex;gap:24px;align-items:center">` +
+        `<span style="font-size:11px;color:${COLOR.secondary}">Agents: <strong style="color:${COLOR.primary}">${data.agentCount || '-'}</strong></span>` +
+        `<span style="font-size:11px;color:${COLOR.secondary}">Decisions: <strong style="color:${COLOR.primary}">${data.totalDecisions}</strong></span>` +
+        `</div>`;
 
-      sections.push(
-        `<div class="dash-section" style="${S.section}padding:10px 20px;">` +
-          `<div style="display:flex;gap:24px;align-items:center">${statsItems.join('')}</div></div>`
-      );
+      const systemSection = createCollapsible('System', statsHtml, {
+        storageKey: 'dash-collapse-system',
+        defaultOpen: true,
+        headingStyle: S.heading,
+        containerStyle: S.section + 'padding:10px 20px;',
+      });
+      systemSection.classList.add('dash-section');
+      this.container.appendChild(systemSection);
     }
+  }
 
-    this.container.innerHTML = sections.join('');
+  /** Load and render project decisions inline for a pipeline row */
+  private async loadPipelineDetail(detailEl: HTMLElement, project: string): Promise<void> {
+    try {
+      const res = await API.getProjectDecisions(project, 10);
+      if (res.decisions.length === 0) {
+        detailEl.innerHTML = `<div style="color:${COLOR.tertiary}">No decisions found.</div>`;
+        return;
+      }
+      let html = '';
+      for (const d of res.decisions) {
+        const rel = relativeTime(d.created_at);
+        const statusColor = d.status === 'active' ? COLOR.green : COLOR.tertiary;
+        html +=
+          `<div style="padding:3px 0;border-bottom:1px solid ${COLOR.border}">` +
+          `<div style="display:flex;align-items:baseline;gap:6px">` +
+          `<span style="${S.pill}background:${statusColor}20;color:${statusColor}">${esc(d.status)}</span>` +
+          `<span style="font-size:11px;font-weight:600;color:${COLOR.primary};flex:1">${esc(d.topic)}</span>` +
+          `<span style="font-size:10px;color:${COLOR.tertiary}">${esc(rel)}</span>` +
+          `</div>` +
+          `<div style="font-size:11px;color:${COLOR.secondary};margin-top:2px;line-height:1.4">${esc(d.decision.slice(0, 120))}</div>` +
+          `</div>`;
+      }
+      detailEl.innerHTML = html;
+    } catch {
+      detailEl.innerHTML = `<div style="color:${COLOR.red}">Failed to load decisions.</div>`;
+    }
+  }
+
+  /** Load and render recent feed items inline for a connector row */
+  private async loadConnectorDetail(detailEl: HTMLElement, connector: string): Promise<void> {
+    try {
+      const res = await API.getConnectorFeed(connector, 5);
+      if (res.feed.length === 0) {
+        detailEl.innerHTML = `<div style="color:${COLOR.tertiary}">No recent items.</div>`;
+        return;
+      }
+      let html = '';
+      for (const ch of res.feed) {
+        for (const item of ch.items) {
+          const rel = relativeTime(item.timestamp);
+          const preview = item.content.replace(/\n/g, ' ').slice(0, 100);
+          html +=
+            `<div style="padding:3px 0;border-bottom:1px solid ${COLOR.border}">` +
+            `<div style="display:flex;align-items:baseline;gap:6px">` +
+            `<span style="font-size:10px;font-weight:600;color:${COLOR.primary}">${esc(item.author)}</span>` +
+            `<span style="font-size:10px;color:${COLOR.tertiary};background:${COLOR.bg};padding:0 4px;border-radius:2px">#${esc(ch.channel)}</span>` +
+            `<span style="font-size:10px;color:${COLOR.tertiary};margin-left:auto">${esc(rel)}</span>` +
+            `</div>` +
+            `<div style="font-size:11px;color:${COLOR.secondary};margin-top:2px">${esc(preview)}</div>` +
+            `</div>`;
+        }
+      }
+      detailEl.innerHTML = html || `<div style="color:${COLOR.tertiary}">No recent items.</div>`;
+    } catch {
+      detailEl.innerHTML = `<div style="color:${COLOR.red}">Failed to load feed.</div>`;
+    }
   }
 
   destroy(): void {

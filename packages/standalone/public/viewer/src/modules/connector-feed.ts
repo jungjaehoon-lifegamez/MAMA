@@ -1,5 +1,6 @@
 import { API, type ConnectorActivitySummary, type ConnectorFeedChannel } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { createCollapsible, createResizeHandle } from '../utils/dom.js';
 
 const logger = new DebugLogger('ConnectorFeed');
 
@@ -136,6 +137,16 @@ export class ConnectorFeedModule {
 
     this.container.innerHTML = html;
 
+    // Attach resize handle to connector list panel
+    const listPanel = document.getElementById('connector-list');
+    if (listPanel) {
+      createResizeHandle(listPanel, {
+        storageKey: 'feed-connector-list-width',
+        minWidth: 180,
+        maxWidth: 500,
+      });
+    }
+
     // Bind click events
     this.container.querySelectorAll('.connector-item').forEach((el) => {
       el.addEventListener('click', () => {
@@ -185,47 +196,58 @@ export class ConnectorFeedModule {
     feed: ConnectorFeedChannel[]
   ): void {
     const icon = CONNECTOR_ICON[name] || '\u{1F517}';
-    let html = '';
 
-    // Header
-    html += `<div style="margin-bottom:16px">`;
-    html += `<h2 style="font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0">${icon} ${esc(name)}</h2>`;
-    html += `<div style="font-size:11px;color:${COLOR.tertiary};margin-top:4px">${feed.length} channel${feed.length !== 1 ? 's' : ''}</div>`;
-    html += '</div>';
+    // Clear and build header
+    container.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.setAttribute('style', 'margin-bottom:16px');
+    header.innerHTML =
+      `<h2 style="font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0">${icon} ${esc(name)}</h2>` +
+      `<div style="font-size:11px;color:${COLOR.tertiary};margin-top:4px">${feed.length} channel${feed.length !== 1 ? 's' : ''}</div>`;
+    container.appendChild(header);
 
     if (feed.length === 0) {
-      html +=
-        `<div style="padding:20px;text-align:center;color:${COLOR.tertiary};font-size:13px">` +
-        'No feed data available for this connector.</div>';
-      container.innerHTML = html;
+      const empty = document.createElement('div');
+      empty.setAttribute(
+        'style',
+        `padding:20px;text-align:center;color:${COLOR.tertiary};font-size:13px`
+      );
+      empty.textContent = 'No feed data available for this connector.';
+      container.appendChild(empty);
       return;
     }
 
-    // Channel-grouped items
+    // Channel-grouped items with collapsible headers and newest-first sort
     for (const ch of feed) {
-      html += `<div style="margin-bottom:16px;border:1px solid ${COLOR.border};border-radius:4px;background:#fff">`;
-      html += `<div style="padding:10px 12px;border-bottom:1px solid ${COLOR.border};background:${COLOR.bg}">`;
-      html += `<span style="font-size:12px;font-weight:600;color:${COLOR.primary}">#${esc(ch.channel)}</span>`;
-      html += `<span style="font-size:10px;color:${COLOR.tertiary};margin-left:8px">${ch.items.length} items</span>`;
-      html += `</div>`;
+      // Sort items newest first by timestamp
+      const sorted = [...ch.items].sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
 
-      for (const item of ch.items) {
+      let itemsHtml = '';
+      for (const item of sorted) {
         const rel = relativeTime(item.timestamp);
         const preview = item.content.replace(/\n/g, ' ').slice(0, 120);
-        html += `<div style="padding:8px 12px;border-bottom:1px solid ${COLOR.border}">`;
-        html += `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">`;
-        html += `<span style="font-size:11px;font-weight:600;color:${COLOR.primary}">${esc(item.author)}</span>`;
-        html += `<span style="font-size:10px;color:${COLOR.tertiary};padding:0 4px;background:${COLOR.bg};border-radius:2px">${esc(item.type)}</span>`;
-        html += `<span style="font-size:10px;color:${COLOR.tertiary};margin-left:auto;white-space:nowrap">${esc(rel)}</span>`;
-        html += `</div>`;
-        html += `<div style="font-size:11px;color:${COLOR.secondary};line-height:1.5">${esc(preview)}</div>`;
-        html += `</div>`;
+        itemsHtml += `<div style="padding:8px 12px;border-bottom:1px solid ${COLOR.border}">`;
+        itemsHtml += `<div style="display:flex;align-items:baseline;gap:8px;margin-bottom:2px">`;
+        itemsHtml += `<span style="font-size:11px;font-weight:600;color:${COLOR.primary}">${esc(item.author)}</span>`;
+        itemsHtml += `<span style="font-size:10px;color:${COLOR.tertiary};padding:0 4px;background:${COLOR.bg};border-radius:2px">${esc(item.type)}</span>`;
+        itemsHtml += `<span style="font-size:10px;color:${COLOR.tertiary};margin-left:auto;white-space:nowrap">${esc(rel)}</span>`;
+        itemsHtml += `</div>`;
+        itemsHtml += `<div style="font-size:11px;color:${COLOR.secondary};line-height:1.5">${esc(preview)}</div>`;
+        itemsHtml += `</div>`;
       }
 
-      html += `</div>`;
+      const channelHeading = `#${esc(ch.channel)} (${ch.items.length} items)`;
+      const channelGroup = createCollapsible(channelHeading, itemsHtml, {
+        storageKey: `feed-channel-${name}-${ch.channel}`,
+        defaultOpen: true,
+        headingStyle: `font-size:12px;font-weight:600;color:${COLOR.primary};padding:10px 12px;background:${COLOR.bg};`,
+        containerStyle: `margin-bottom:16px;border:1px solid ${COLOR.border};border-radius:4px;background:#fff;overflow:hidden;`,
+      });
+      container.appendChild(channelGroup);
     }
-
-    container.innerHTML = html;
   }
 
   destroy(): void {

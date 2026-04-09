@@ -1,5 +1,6 @@
 import { API, type WikiTreeNode, type WikiPageResponse } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { createResizeHandle } from '../utils/dom.js';
 
 declare const marked: { parse(md: string): string };
 declare const DOMPurify: { sanitize(html: string): string };
@@ -31,12 +32,19 @@ function renderMarkdown(raw: string): string {
 function renderTreeNode(node: WikiTreeNode, depth: number = 0): string {
   const indent = depth * 12;
   if (node.type === 'directory') {
+    const storageKey = `wiki-dir-${node.name}-d${depth}`;
+    const storedState = localStorage.getItem(storageKey);
+    const isOpen = storedState !== null ? storedState === 'true' : true;
     const children = (node.children || []).map((c) => renderTreeNode(c, depth + 1)).join('');
+    const arrow = isOpen ? '\u25BC' : '\u25B6';
+    const childDisplay = isOpen ? '' : 'display:none;';
     return (
       `<div style="padding-left:${indent}px">` +
-      `<div style="padding:3px 0;font-size:12px;font-weight:600;color:#6B6560;cursor:default">` +
-      `<span style="margin-right:4px">📁</span>${node.name}</div>` +
-      `${children}</div>`
+      `<div class="wiki-tree-dir" data-storage-key="${storageKey}" ` +
+      `style="padding:3px 0;font-size:12px;font-weight:600;color:#6B6560;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">` +
+      `<span class="wiki-dir-arrow" style="display:inline-block;font-size:9px;width:10px;color:#9E9891">${arrow}</span>` +
+      `<span>\u{1F4C1}</span><span>${node.name}</span></div>` +
+      `<div class="wiki-dir-children" style="${childDisplay}">${children}</div></div>`
     );
   }
   return (
@@ -92,6 +100,32 @@ export class WikiModule {
       `<div style="padding:40px;text-align:center;color:#9E9891;font-size:13px">Select a page to view.</div>` +
       `</div>` +
       '</div>';
+
+    // Attach resize handle to wiki tree panel
+    const treePanel = document.getElementById('wiki-tree');
+    if (treePanel) {
+      createResizeHandle(treePanel, {
+        storageKey: 'wiki-tree-width',
+        minWidth: 120,
+        maxWidth: 500,
+      });
+    }
+
+    // Bind collapsible directory toggles
+    this.container.querySelectorAll('.wiki-tree-dir').forEach((el) => {
+      el.addEventListener('click', () => {
+        const dirEl = el as HTMLElement;
+        const key = dirEl.dataset.storageKey;
+        const arrow = dirEl.querySelector('.wiki-dir-arrow') as HTMLElement;
+        const children = dirEl.parentElement?.querySelector('.wiki-dir-children') as HTMLElement;
+        if (!arrow || !children) return;
+
+        const isOpen = children.style.display !== 'none';
+        children.style.display = isOpen ? 'none' : '';
+        arrow.textContent = isOpen ? '\u25B6' : '\u25BC';
+        if (key) localStorage.setItem(key, String(!isOpen));
+      });
+    });
 
     this.container.querySelectorAll('.wiki-tree-file').forEach((el) => {
       el.addEventListener('click', () => {
