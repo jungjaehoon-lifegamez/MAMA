@@ -118,7 +118,7 @@ export class ConnectorFeedModule {
       ? 'width:100%;overflow-y:auto;padding-right:0'
       : `width:280px;min-width:280px;overflow-y:auto;border-right:1px solid ${COLOR.border};padding-right:16px`;
     html += `<div id="connector-list" style="${listStyle}">`;
-    html += `<h2 style="font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0 0 12px 0">Connectors</h2>`;
+    html += `<h2 style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0 0 12px 0">Connectors</h2>`;
 
     for (const c of connectors) {
       const isActive = this.selectedConnector === c.connector;
@@ -297,7 +297,7 @@ export class ConnectorFeedModule {
     const header = document.createElement('div');
     header.setAttribute('style', 'margin-bottom:16px');
     header.innerHTML =
-      `<h2 style="font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0">${icon} ${esc(name)}</h2>` +
+      `<h2 style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0">${icon} ${esc(name)}</h2>` +
       `<div style="font-size:11px;color:${COLOR.tertiary};margin-top:4px">${feed.length} channel${feed.length !== 1 ? 's' : ''}</div>`;
     container.appendChild(header);
 

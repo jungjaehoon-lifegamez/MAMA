@@ -118,7 +118,7 @@ export class WikiModule {
       `<div style="display:flex;gap:${mobile ? '0' : '16'}px;height:100%">` +
       `<div id="wiki-tree" style="${treeStyle}">` +
       `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">` +
-      `<h2 style="font-family:Fredoka,sans-serif;font-size:14px;font-weight:600;color:#1A1A1A;margin:0">Wiki</h2>` +
+      `<h2 style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:14px;font-weight:600;color:#1A1A1A;margin:0">Wiki</h2>` +
       `<button id="wiki-new-btn" style="font-size:11px;padding:2px 8px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">+ New</button>` +
       `</div>` +
       treeHtml +
@@ -268,9 +268,9 @@ export class WikiModule {
       `<button id="wiki-edit-btn" style="font-size:11px;padding:3px 12px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#1A1A1A">Edit</button>` +
       `</div>` +
       `<div id="wiki-rendered" style="font-size:13px;color:#1A1A1A;line-height:1.7">` +
-      `<style>.wiki-page h1{font-family:Fredoka,sans-serif;font-size:22px;font-weight:700;color:#1A1A1A;margin:0 0 16px 0;border-bottom:2px solid #EDE9E1;padding-bottom:8px}` +
-      `.wiki-page h2{font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:#1A1A1A;margin:20px 0 8px 0}` +
-      `.wiki-page h3{font-family:Fredoka,sans-serif;font-size:14px;font-weight:600;color:#6B6560;margin:16px 0 6px 0}` +
+      `<style>.wiki-page h1{font-family:Inter,'Noto Sans KR',sans-serif;font-size:22px;font-weight:700;color:#1A1A1A;margin:0 0 16px 0;border-bottom:2px solid #EDE9E1;padding-bottom:8px}` +
+      `.wiki-page h2{font-family:Inter,'Noto Sans KR',sans-serif;font-size:16px;font-weight:600;color:#1A1A1A;margin:20px 0 8px 0}` +
+      `.wiki-page h3{font-family:Inter,'Noto Sans KR',sans-serif;font-size:14px;font-weight:600;color:#6B6560;margin:16px 0 6px 0}` +
       `.wiki-page p{margin:0 0 10px 0}` +
       `.wiki-page ul,.wiki-page ol{margin:0 0 10px 0;padding-left:20px}` +
       `.wiki-page li{margin:2px 0}` +
@@ -320,7 +320,7 @@ export class WikiModule {
       `<button id="wiki-save-btn" style="font-size:11px;padding:3px 12px;border:none;border-radius:3px;background:#1A1A1A;color:#fff;cursor:pointer">Done</button>` +
       `<button id="wiki-cancel-btn" style="font-size:11px;padding:3px 12px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">Cancel</button>` +
       `</div>` +
-      `<textarea id="wiki-editor" style="flex:1;width:100%;font-family:monospace;font-size:13px;padding:16px;border:1px solid #EDE9E1;border-radius:4px;resize:none;line-height:1.7;color:#1A1A1A;background:#FAFAF8;outline:none">${escapeHtml(page.raw)}</textarea>` +
+      `<textarea id="wiki-editor" style="flex:1;width:100%;min-height:400px;font-family:'JetBrains Mono','Fira Code',monospace;font-size:13px;padding:16px;border:1px solid #EDE9E1;border-radius:4px;resize:vertical;line-height:1.7;color:#1A1A1A;background:#FAFAF8;outline:none;tab-size:2">${escapeHtml(page.raw)}</textarea>` +
       `</div>`;
 
     const editor = document.getElementById('wiki-editor') as HTMLTextAreaElement;
