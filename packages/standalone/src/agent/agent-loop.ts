@@ -608,6 +608,29 @@ export class AgentLoop {
   }
 
   /**
+   * Set AgentProcessManager for delegate tool (multi-agent delegation)
+   */
+  setAgentProcessManager(
+    pm: import('../multi-agent/agent-process-manager.js').AgentProcessManager
+  ): void {
+    this.mcpExecutor.setAgentProcessManager(pm);
+  }
+
+  /**
+   * Set DelegationManager for delegate tool (permission checks)
+   */
+  setDelegationManager(dm: import('../multi-agent/delegation-manager.js').DelegationManager): void {
+    this.mcpExecutor.setDelegationManager(dm);
+  }
+
+  /**
+   * Set AgentEventBus for agent_notices tool
+   */
+  setAgentEventBus(eventBus: import('../multi-agent/agent-event-bus.js').AgentEventBus): void {
+    this.mcpExecutor.setAgentEventBus(eventBus);
+  }
+
+  /**
    * Run the agent loop with a user prompt
    *
    * Uses lane-based concurrency when useLanes is enabled:

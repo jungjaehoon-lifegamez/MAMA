@@ -407,6 +407,10 @@ export async function runAgentLoop(
     const dm = new DelegationManager(agentConfigs);
     toolExecutor.setAgentProcessManager(pm);
     toolExecutor.setDelegationManager(dm);
+    // Also wire to the main AgentLoop's internal GatewayToolExecutor
+    // (MessageRouter uses agentLoop which has its own executor instance)
+    agentLoop.setAgentProcessManager(pm);
+    agentLoop.setDelegationManager(dm);
     console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
   }
 
