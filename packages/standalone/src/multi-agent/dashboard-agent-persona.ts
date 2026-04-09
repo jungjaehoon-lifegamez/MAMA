@@ -18,7 +18,7 @@ The dashboard already displays notifications, timeline, and pipeline via API.
 Write only the briefing section — analysis and insights that the API does not provide.
 
 ## Language
-- Write in the same language the user uses.
+- Always write in Korean. No exceptions.
 
 ## Tools
 - mama_search({query, limit}) — search decisions and memory
