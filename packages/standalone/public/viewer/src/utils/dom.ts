@@ -136,3 +136,155 @@ export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): 
     textarea.style.height = newHeight + 'px';
   });
 }
+
+// ── Collapsible Section Helper ─────────────────────────────────────────────
+
+/**
+ * Create a collapsible section with toggle heading.
+ * The heading shows a triangle indicator that rotates on expand/collapse.
+ * State is persisted to localStorage using the provided storageKey.
+ *
+ * @param heading - Text for the section heading
+ * @param contentHtml - Inner HTML for the collapsible body
+ * @param options - Configuration options
+ * @returns The root container element
+ */
+export function createCollapsible(
+  heading: string,
+  contentHtml: string,
+  options: {
+    storageKey: string;
+    defaultOpen?: boolean;
+    headingStyle?: string;
+    containerStyle?: string;
+  }
+): HTMLElement {
+  const { storageKey, defaultOpen = true, headingStyle = '', containerStyle = '' } = options;
+
+  const stored = localStorage.getItem(storageKey);
+  let isOpen = stored !== null ? stored === 'true' : defaultOpen;
+
+  const wrapper = document.createElement('div');
+  if (containerStyle) wrapper.setAttribute('style', containerStyle);
+
+  const headerEl = document.createElement('div');
+  headerEl.setAttribute(
+    'style',
+    'display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none;' + headingStyle
+  );
+
+  const arrow = document.createElement('span');
+  arrow.setAttribute(
+    'style',
+    'display:inline-block;font-size:10px;width:12px;transition:transform 0.15s;color:#9E9891'
+  );
+  arrow.textContent = isOpen ? '\u25BC' : '\u25B6';
+
+  const label = document.createElement('span');
+  label.textContent = heading;
+
+  headerEl.appendChild(arrow);
+  headerEl.appendChild(label);
+
+  const body = document.createElement('div');
+  body.innerHTML = contentHtml;
+  body.style.display = isOpen ? '' : 'none';
+
+  headerEl.addEventListener('click', () => {
+    isOpen = !isOpen;
+    arrow.textContent = isOpen ? '\u25BC' : '\u25B6';
+    body.style.display = isOpen ? '' : 'none';
+    localStorage.setItem(storageKey, String(isOpen));
+  });
+
+  wrapper.appendChild(headerEl);
+  wrapper.appendChild(body);
+  return wrapper;
+}
+
+// ── Resizable Panel Helper ─────────────────────────────────────────────────
+
+/**
+ * Create a draggable resize handle on the right edge of a panel.
+ * The handle is 4px wide with cursor:col-resize.
+ * Width is persisted to localStorage using the provided storageKey.
+ *
+ * @param panel - The panel element to make resizable
+ * @param options - Configuration options
+ * @returns The handle element (already appended to the panel)
+ */
+export function createResizeHandle(
+  panel: HTMLElement,
+  options: {
+    storageKey: string;
+    minWidth?: number;
+    maxWidth?: number;
+  }
+): HTMLElement {
+  const { storageKey, minWidth = 100, maxWidth = 600 } = options;
+
+  // Restore saved width
+  const savedWidth = localStorage.getItem(storageKey);
+  if (savedWidth) {
+    const w = parseInt(savedWidth, 10);
+    if (w >= minWidth && w <= maxWidth) {
+      panel.style.width = w + 'px';
+      panel.style.minWidth = w + 'px';
+    }
+  }
+
+  // Ensure panel has relative positioning for the handle
+  panel.style.position = 'relative';
+
+  const handle = document.createElement('div');
+  handle.setAttribute(
+    'style',
+    'position:absolute;top:0;right:0;width:4px;height:100%;cursor:col-resize;background:transparent;z-index:10'
+  );
+
+  handle.addEventListener('mouseenter', () => {
+    handle.style.background = '#EDE9E1';
+  });
+  handle.addEventListener('mouseleave', () => {
+    if (!isDragging) handle.style.background = 'transparent';
+  });
+
+  let isDragging = false;
+  let startX = 0;
+  let startWidth = 0;
+
+  const onMouseMove = (e: MouseEvent) => {
+    if (!isDragging) return;
+    const delta = e.clientX - startX;
+    const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + delta));
+    panel.style.width = newWidth + 'px';
+    panel.style.minWidth = newWidth + 'px';
+    e.preventDefault();
+  };
+
+  const onMouseUp = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    handle.style.background = 'transparent';
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    localStorage.setItem(storageKey, String(parseInt(panel.style.width, 10)));
+    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mouseup', onMouseUp);
+  };
+
+  handle.addEventListener('mousedown', (e: MouseEvent) => {
+    isDragging = true;
+    startX = e.clientX;
+    startWidth = panel.offsetWidth;
+    handle.style.background = '#EDE9E1';
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    e.preventDefault();
+  });
+
+  panel.appendChild(handle);
+  return handle;
+}
