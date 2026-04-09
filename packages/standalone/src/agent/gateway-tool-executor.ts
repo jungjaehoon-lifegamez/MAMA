@@ -71,6 +71,7 @@ import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
+import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -171,6 +172,11 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
+  private agentProcessManager: AgentProcessManager | null = null;
+  private delegationManagerRef: DelegationManager | null = null;
+  private currentAgentId: string = '';
+  private currentSource: string = '';
+  private currentChannelId: string = '';
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
   private wikiPublisher:
     | ((
@@ -187,6 +193,17 @@ export class GatewayToolExecutor {
     | null = null;
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
+  }
+  setAgentProcessManager(pm: AgentProcessManager): void {
+    this.agentProcessManager = pm;
+  }
+  setDelegationManager(dm: DelegationManager): void {
+    this.delegationManagerRef = dm;
+  }
+  setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
+    this.currentAgentId = agentId;
+    this.currentSource = source;
+    this.currentChannelId = channelId;
   }
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
@@ -451,6 +468,11 @@ export class GatewayToolExecutor {
         // Code-Act sandbox execution
         case 'code_act':
           return await this.executeCodeAct(input as { code: string });
+        // Multi-Agent delegation
+        case 'delegate':
+          return await this.executeDelegate(
+            input as { agentId: string; task: string; background?: boolean }
+          );
       }
 
       // MAMA tools require API
@@ -2016,6 +2038,84 @@ export class GatewayToolExecutor {
         success: false,
         error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
       };
+    }
+  }
+
+  // ============================================================================
+  // Multi-Agent Delegation
+  // ============================================================================
+
+  /**
+   * Execute delegate tool — dispatch a task to another agent
+   */
+  private async executeDelegate(input: {
+    agentId: string;
+    task: string;
+    background?: boolean;
+  }): Promise<GatewayToolResult> {
+    const { agentId, task, background } = input;
+
+    if (!this.agentProcessManager || !this.delegationManagerRef) {
+      return { success: false, error: 'Multi-agent not configured' } as GatewayToolResult;
+    }
+
+    // Permission check using existing DelegationManager
+    const sourceAgentId = this.currentAgentId || 'unknown';
+    const check = this.delegationManagerRef.isDelegationAllowed(sourceAgentId, agentId);
+    if (!check.allowed) {
+      return {
+        success: false,
+        error: `Delegation denied: ${check.reason}`,
+      } as GatewayToolResult;
+    }
+
+    // Background delegation: fire-and-forget
+    if (background) {
+      const source = this.currentSource || 'viewer';
+      const channelId = this.currentChannelId || 'default';
+
+      // Fire-and-forget: spawn process and send message without awaiting result
+      void (async () => {
+        try {
+          const process = await this.agentProcessManager!.getProcess(source, channelId, agentId);
+          const delegationPrompt = this.delegationManagerRef!.buildDelegationPrompt(
+            sourceAgentId,
+            task
+          );
+          await process.sendMessage(delegationPrompt);
+        } catch {
+          // Background task failures are silently ignored
+        }
+      })();
+
+      return {
+        success: true,
+        data: { agentId, background: true, message: 'Background task submitted' },
+      } as GatewayToolResult;
+    }
+
+    // Synchronous delegation: get persistent process, execute, return result
+    try {
+      const source = this.currentSource || 'viewer';
+      const channelId = this.currentChannelId || 'default';
+      const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
+
+      const delegationPrompt = this.delegationManagerRef.buildDelegationPrompt(sourceAgentId, task);
+
+      const startTime = Date.now();
+      const result = await process.sendMessage(delegationPrompt);
+      const duration = Date.now() - startTime;
+
+      return {
+        success: true,
+        data: { agentId, response: result.response, duration_ms: duration },
+      } as GatewayToolResult;
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: `Delegation to ${agentId} failed: ${errMsg}`,
+      } as GatewayToolResult;
     }
   }
 
