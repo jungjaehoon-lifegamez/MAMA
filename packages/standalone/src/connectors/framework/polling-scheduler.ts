@@ -24,10 +24,13 @@ export class PollingScheduler {
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly stateFile: string;
   private isBatchRunning = false;
+  /** Initial lookback for connectors with no saved state (default: 24h). Set to 0 for all history. */
+  initialLookbackMs: number;
 
-  constructor(rawStore: RawStore, basePath: string) {
+  constructor(rawStore: RawStore, basePath: string, options?: { initialLookbackMs?: number }) {
     this.rawStore = rawStore;
     this.stateFile = join(basePath, 'poll-state.json');
+    this.initialLookbackMs = options?.initialLookbackMs ?? 24 * 60 * 60 * 1000;
     this.restoreState();
   }
 
@@ -67,7 +70,9 @@ export class PollingScheduler {
       const allItems: NormalizedItem[] = [];
 
       for (const [name, connector] of registry.getActive()) {
-        const since = this.lastPollTimes.get(name) ?? new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const since =
+          this.lastPollTimes.get(name) ??
+          new Date(this.initialLookbackMs > 0 ? Date.now() - this.initialLookbackMs : 0);
         try {
           const items = await connector.poll(since);
           console.log(
@@ -124,6 +129,19 @@ export class PollingScheduler {
 
   getLastPollTime(name: string): Date | undefined {
     return this.lastPollTimes.get(name);
+  }
+
+  /** Reset poll cursor for a connector to re-ingest from a given date. */
+  resetPollState(name: string, since?: Date): void {
+    if (since) {
+      this.lastPollTimes.set(name, since);
+    } else {
+      this.lastPollTimes.delete(name);
+    }
+    this.persistState();
+    console.log(
+      `[connector] Poll state reset for ${name}: ${since ? since.toISOString() : 'epoch'}`
+    );
   }
 
   stop(): void {

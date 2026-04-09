@@ -72,6 +72,20 @@ register({
   category: 'memory',
 });
 register({
+  name: 'report_publish',
+  description:
+    'Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.',
+  category: 'os_monitoring',
+  params: 'slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }',
+});
+register({
+  name: 'wiki_publish',
+  description:
+    'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
+  category: 'os_monitoring',
+  params: 'pages: [{path, title, type, content, confidence}]',
+});
+register({
   name: 'mama_add',
   description: 'Auto-extract and save facts from conversation content via Haiku',
   category: 'memory',

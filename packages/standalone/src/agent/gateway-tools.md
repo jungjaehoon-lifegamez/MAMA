@@ -46,6 +46,8 @@ Call tools via JSON block:
 
 ## OS Monitoring (viewer-only)
 
+- **report_publish**(slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }) — Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.
+- **wiki_publish**(pages: [{path, title, type, content, confidence}]) — Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform

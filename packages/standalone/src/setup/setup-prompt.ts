@@ -49,7 +49,7 @@ You have these tools to configure MAMA:
 8. Ask for the channel ID where they want MAMA to respond
 9. Save channel ID:
    \`\`\`
-   update_config("discord.default_channel", "1464890972...")
+   update_config("discord.default_channel", "CHANNEL_ID_HERE")
    \`\`\`
 
 ### Slack Setup
@@ -149,7 +149,7 @@ First, you'll need to create a Discord application:
 
 Once you have the token, paste it here."
 
-User: "YOUR_DISCORD_BOT_TOKEN_HERE..."
+User: "MTIzNDU2Nzg5MDEyMzQ1Njc4OQ..."
 
 You: [validate token] "✓ Token is valid! I've saved it to your configuration.
 

@@ -11,12 +11,27 @@ import type { ExecutionLogStore } from './cron-handler.js';
 /**
  * Default heartbeat prompt for scheduled reports
  */
-export const DEFAULT_HEARTBEAT_PROMPT = `🚨 Comprehensive Report Checklist:
-1. Load MAMA: load_checkpoint
-2. Data collection: Search recent activity
-3. Write report: Generate summary
-4. Send to messenger (if configured)
-5. Save to MAMA: checkpoint`;
+export const DEFAULT_HEARTBEAT_PROMPT = `You are the MAMA OS orchestrator. Analyze the current state and update the dashboard.
+
+Steps:
+1. Search recent decisions: mama_search({query: "recent", limit: 20})
+2. Analyze the data: identify key projects, urgent items, stale decisions, and patterns
+3. Write a dashboard briefing as HTML and publish it:
+
+report_publish({
+  slots: {
+    briefing: "<html with your analysis — summarize what's happening across all projects, what needs attention, what's progressing well. Write like a team lead giving a morning briefing, not a data dump>",
+    alerts: "<html listing items that need immediate attention — stale decisions, deadline risks, conflicts. Empty string if nothing urgent>",
+    activity: "<html showing recent activity timeline — what changed, who did what, in chronological order>",
+    pipeline: "<html showing project pipeline status — which projects are active, connector health>"
+  }
+})
+
+IMPORTANT:
+- You are writing for a human team. Analyze and interpret, don't just list data.
+- Use inline styles (font-family:Fredoka for headings, colors: #1A1A1A text, #6B6560 secondary, #D94F4F red, #3A9E7E green)
+- Be concise. Each slot should be a focused section, not a wall of text.
+- If there are no alerts, set alerts to empty string "".`;
 
 /**
  * Heartbeat execution tracker interface

@@ -171,8 +171,40 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
+  private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
+  private wikiPublisher:
+    | ((
+        pages: Array<{
+          path: string;
+          title: string;
+          type: string;
+          content: string;
+          sourceIds: string[];
+          compiledAt: string;
+          confidence: string;
+        }>
+      ) => void)
+    | null = null;
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
+  }
+  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+    this.reportPublisher = fn;
+  }
+  setWikiPublisher(
+    fn: (
+      pages: Array<{
+        path: string;
+        title: string;
+        type: string;
+        content: string;
+        sourceIds: string[];
+        compiledAt: string;
+        confidence: string;
+      }>
+    ) => void
+  ): void {
+    this.wikiPublisher = fn;
   }
 
   /** Check if a memory agent is available for routing memory writes. */
@@ -445,6 +477,108 @@ export class GatewayToolExecutor {
           return await this.handleMamaAdd(input as { content: string });
         case 'mama_ingest':
           return await this.handleMamaIngest(input as { content: string; scopes?: unknown });
+        case 'report_publish': {
+          const slotsInput = (input as { slots?: Record<string, string> }).slots;
+          if (!slotsInput || typeof slotsInput !== 'object') {
+            throw new AgentError(
+              'report_publish requires slots object',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (this.reportPublisher) {
+            this.reportPublisher(slotsInput);
+            const slotNames = Object.keys(slotsInput);
+            return {
+              success: true,
+              message: `Dashboard updated: ${slotNames.join(', ')} (${slotNames.length} slots)`,
+            };
+          }
+          throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
+        }
+        case 'wiki_publish': {
+          const pagesInput = (
+            input as {
+              pages?: Array<{
+                path: string;
+                title: string;
+                type: string;
+                content: string;
+                confidence?: string;
+              }>;
+            }
+          ).pages;
+          if (!pagesInput || !Array.isArray(pagesInput)) {
+            throw new AgentError(
+              'wiki_publish requires pages array',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (this.wikiPublisher) {
+            const now = new Date().toISOString();
+            const wikiPages = pagesInput.map((p) => ({
+              path: p.path,
+              title: p.title,
+              type: p.type || 'entity',
+              content: p.content,
+              sourceIds: [] as string[],
+              compiledAt: now,
+              confidence: p.confidence || 'medium',
+            }));
+            this.wikiPublisher(wikiPages);
+            return {
+              success: true,
+              message: `Wiki published: ${wikiPages.length} pages`,
+            };
+          }
+          throw new AgentError('Wiki publisher not configured', 'TOOL_ERROR', undefined, false);
+        }
+        // Kagemusha query tools — progressive business data exploration
+        case 'kagemusha_overview': {
+          const { getOverview } = await import('../connectors/kagemusha/query-tools.js');
+          return { success: true, ...getOverview() };
+        }
+        case 'kagemusha_entities': {
+          const { listEntities } = await import('../connectors/kagemusha/query-tools.js');
+          const entityInput = input as {
+            channel?: string;
+            activeOnly?: boolean;
+            limit?: number;
+          };
+          return { success: true, entities: listEntities(entityInput) };
+        }
+        case 'kagemusha_tasks': {
+          const { queryTasks } = await import('../connectors/kagemusha/query-tools.js');
+          const taskInput = input as {
+            sourceRoom?: string;
+            status?: string;
+            priority?: string;
+            search?: string;
+            limit?: number;
+          };
+          return { success: true, tasks: queryTasks(taskInput) };
+        }
+        case 'kagemusha_messages': {
+          const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');
+          const msgInput = input as {
+            channelId: string;
+            since?: string;
+            limit?: number;
+            search?: string;
+          };
+          if (!msgInput.channelId) {
+            throw new AgentError(
+              'kagemusha_messages requires channelId',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          return { success: true, messages: queryMessages(msgInput) };
+        }
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }

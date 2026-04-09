@@ -458,8 +458,8 @@ export class AgentLoop {
         dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? true,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
-        // Code-Act: available as optional tool alongside direct tools (no disallowedTools)
-        disallowedTools: undefined,
+        // Structurally disallow specific tools (e.g., Bash/Read for restricted agents)
+        disallowedTools: options.disallowedTools,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });
@@ -579,6 +579,32 @@ export class AgentLoop {
     sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
   }): void {
     this.mcpExecutor.setTelegramGateway(gateway);
+  }
+
+  /**
+   * Set report publisher for report_publish tool (Dashboard Agent)
+   */
+  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+    this.mcpExecutor.setReportPublisher(fn);
+  }
+
+  /**
+   * Set wiki publisher for wiki_publish tool (Wiki Agent)
+   */
+  setWikiPublisher(
+    fn: (
+      pages: Array<{
+        path: string;
+        title: string;
+        type: string;
+        content: string;
+        sourceIds: string[];
+        compiledAt: string;
+        confidence: string;
+      }>
+    ) => void
+  ): void {
+    this.mcpExecutor.setWikiPublisher(fn);
   }
 
   /**
@@ -1189,7 +1215,8 @@ export class AgentLoop {
       const toolStart = Date.now();
       try {
         // Code-Act: execute JS code in sandbox
-        if (toolUse.name === CODE_ACT_MARKER) {
+        // Match both gateway-parsed 'code_act' and MCP-prefixed 'mcp__code-act__code_act'
+        if (toolUse.name === CODE_ACT_MARKER || toolUse.name === 'mcp__code-act__code_act') {
           const codeInput = toolUse.input as Record<string, unknown> | undefined;
           const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
           const codeActResult = code

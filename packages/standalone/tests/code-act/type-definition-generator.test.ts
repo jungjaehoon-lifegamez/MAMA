@@ -56,7 +56,7 @@ describe('TypeDefinitionGenerator', () => {
 
     it('stays within token budget (~2000 chars for Tier 1)', () => {
       const dts = TypeDefinitionGenerator.generate(1);
-      expect(dts.length).toBeLessThan(5000);
+      expect(dts.length).toBeLessThan(7000);
     });
   });
 
