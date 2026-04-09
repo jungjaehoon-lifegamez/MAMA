@@ -237,6 +237,14 @@ export class GatewayToolExecutor {
     return this.memoryAgentProcessManager !== null;
   }
 
+  /** Check if delegate tool support is available (multi-agent wired). */
+  hasDelegateSupport(): boolean {
+    return this.agentProcessManager !== null && this.delegationManagerRef !== null;
+  }
+
+  /** Retry delay (ms) for delegate backoff. Initialized from config in constructor. */
+  private _retryDelayMs: number = 1000;
+
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
     this.sessionStore = options.sessionStore;
@@ -250,6 +258,13 @@ export class GatewayToolExecutor {
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
+    }
+
+    // Read retry delay from config (safe: falls back to 1000ms if config not yet initialized)
+    try {
+      this._retryDelayMs = getConfig().timeouts?.busy_retry_ms ?? 1000;
+    } catch {
+      // Config not initialized yet — keep default 1000ms
     }
   }
 
@@ -2207,7 +2222,7 @@ export class GatewayToolExecutor {
         }
 
         if (attempt < MAX_RETRIES - 1 && (isBusy || isCrash)) {
-          await new Promise((r) => setTimeout(r, 1000 * (attempt + 1))); // 1s, 2s backoff
+          await new Promise((r) => setTimeout(r, this._retryDelayMs * (attempt + 1)));
           continue;
         }
         break;
