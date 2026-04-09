@@ -279,7 +279,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
 
     const auditPrompt =
-      'Perform a system audit. Read ~/.mama/skills/audit-checklist.md and execute each step. Classify findings as MINOR (auto-fix via delegate) or MAJOR (report to human). Save results to memory.';
+      'Perform a system audit. Read ~/.mama/skills/audit-checklist.md and execute each step. ' +
+      'Classify findings as MINOR or MAJOR. ' +
+      'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
+      'For MAJOR items: report to human via channel alert. ' +
+      'After all fixes and reports, save audit results to memory.';
 
     const runConductorAudit = async () => {
       try {
