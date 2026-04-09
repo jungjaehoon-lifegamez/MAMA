@@ -304,30 +304,34 @@ export class WikiModule {
   }
 
   private renderPageEdit(el: HTMLElement, page: WikiPageResponse): void {
+    // Obsidian-style: single pane editor replaces the rendered view
+    // Mobile back button preserved
+    const mobileBackHtml =
+      isMobile() && this.currentPath
+        ? `<button id="wiki-back-btn" style="${backBtnStyle}">\u2190 ${escapeHtml(this.buildBreadcrumb(this.currentPath))}</button>`
+        : '';
+
     el.innerHTML =
-      `<div style="display:flex;flex-direction:column;height:100%">` +
-      `<div style="display:flex;gap:8px;margin-bottom:8px">` +
-      `<button id="wiki-save-btn" style="font-size:11px;padding:3px 12px;border:none;border-radius:3px;background:#1A1A1A;color:#fff;cursor:pointer">Save</button>` +
+      mobileBackHtml +
+      `<div style="display:flex;flex-direction:column;height:100%;max-width:720px">` +
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #EDE9E1">` +
+      `<span style="font-size:10px;color:#9E9891;padding:2px 6px;background:#F5F3EF;border-radius:2px">Editing</span>` +
+      `<span style="font-size:10px;color:#9E9891;flex:1">${escapeHtml(page.path)}</span>` +
+      `<button id="wiki-save-btn" style="font-size:11px;padding:3px 12px;border:none;border-radius:3px;background:#1A1A1A;color:#fff;cursor:pointer">Done</button>` +
       `<button id="wiki-cancel-btn" style="font-size:11px;padding:3px 12px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">Cancel</button>` +
-      `<span style="font-size:10px;color:#9E9891;margin-left:auto;align-self:center">${page.path}</span>` +
       `</div>` +
-      `<div style="display:flex;gap:12px;flex:1;min-height:0">` +
-      `<textarea id="wiki-editor" style="flex:1;font-family:monospace;font-size:12px;padding:12px;border:1px solid #EDE9E1;border-radius:4px;resize:none;line-height:1.6;color:#1A1A1A;background:#FAFAF8">${escapeHtml(page.raw)}</textarea>` +
-      `<div id="wiki-preview" style="flex:1;overflow-y:auto;padding:12px;border:1px solid #EDE9E1;border-radius:4px;font-size:13px;color:#1A1A1A;line-height:1.7;background:#fff"></div>` +
-      `</div>` +
+      `<textarea id="wiki-editor" style="flex:1;width:100%;font-family:monospace;font-size:13px;padding:16px;border:1px solid #EDE9E1;border-radius:4px;resize:none;line-height:1.7;color:#1A1A1A;background:#FAFAF8;outline:none">${escapeHtml(page.raw)}</textarea>` +
       `</div>`;
 
     const editor = document.getElementById('wiki-editor') as HTMLTextAreaElement;
-    const preview = document.getElementById('wiki-preview') as HTMLElement;
+    if (editor) editor.focus();
 
-    if (preview) preview.innerHTML = renderMarkdown(page.raw);
-
-    editor?.addEventListener('input', () => {
-      if (preview) preview.innerHTML = renderMarkdown(editor.value);
+    document.getElementById('wiki-back-btn')?.addEventListener('click', () => {
+      this.showMobileTree();
     });
 
     document.getElementById('wiki-save-btn')?.addEventListener('click', async () => {
-      if (!this.currentPath) return;
+      if (!this.currentPath || !editor) return;
       try {
         await API.saveWikiPage(this.currentPath, editor.value);
         const updated = await API.getWikiPage(this.currentPath);
@@ -339,6 +343,18 @@ export class WikiModule {
 
     document.getElementById('wiki-cancel-btn')?.addEventListener('click', () => {
       this.renderPageView(el, page);
+    });
+
+    // Ctrl+S / Cmd+S to save
+    editor?.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        document.getElementById('wiki-save-btn')?.click();
+      }
+      // Escape to cancel
+      if (e.key === 'Escape') {
+        this.renderPageView(el, page);
+      }
     });
   }
 
