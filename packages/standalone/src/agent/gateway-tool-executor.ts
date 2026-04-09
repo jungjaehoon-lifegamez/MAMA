@@ -192,6 +192,10 @@ export class GatewayToolExecutor {
         }>
       ) => void)
     | null = null;
+  private obsidianVaultPath: string | null = null;
+  setObsidianVaultPath(vaultPath: string): void {
+    this.obsidianVaultPath = vaultPath;
+  }
   private agentEventBus: AgentEventBus | null = null;
   setAgentEventBus(bus: AgentEventBus): void {
     this.agentEventBus = bus;
@@ -495,6 +499,11 @@ export class GatewayToolExecutor {
         // Code-Act sandbox execution
         case 'code_act':
           return await this.executeCodeAct(input as { code: string });
+        // Obsidian vault management via CLI
+        case 'obsidian':
+          return await this.executeObsidian(
+            input as { command: string; args?: Record<string, string> }
+          );
         // Multi-Agent delegation
         case 'delegate':
           return await this.executeDelegate(
@@ -2239,6 +2248,59 @@ export class GatewayToolExecutor {
       success: false,
       error: `Delegation to ${agentId} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
     } as GatewayToolResult;
+  }
+
+  /**
+   * Execute Obsidian CLI command on the wiki vault.
+   */
+  private async executeObsidian(input: {
+    command: string;
+    args?: Record<string, string>;
+  }): Promise<GatewayToolResult> {
+    const { command, args } = input;
+
+    if (!this.obsidianVaultPath) {
+      return {
+        success: false,
+        error: 'Wiki vault path not configured',
+      } as GatewayToolResult;
+    }
+
+    const cliArgs = [this.obsidianVaultPath, command];
+    for (const [key, value] of Object.entries(args || {})) {
+      if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
+        cliArgs.push(key);
+      } else {
+        cliArgs.push(`${key}=${value}`);
+      }
+    }
+
+    try {
+      const output = execSync(
+        `obsidian ${cliArgs.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(' ')}`,
+        {
+          timeout: 15000,
+          encoding: 'utf-8',
+          maxBuffer: 1024 * 1024,
+        }
+      );
+      return {
+        success: true,
+        data: { output: output.trim() },
+      } as GatewayToolResult;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not enabled') || msg.includes('ENOENT') || msg.includes('not running')) {
+        return {
+          success: false,
+          error: 'Obsidian CLI unavailable (app not running). Use wiki_publish fallback.',
+        } as GatewayToolResult;
+      }
+      return {
+        success: false,
+        error: `Obsidian CLI error: ${msg.substring(0, 500)}`,
+      } as GatewayToolResult;
+    }
   }
 
   private async executeCodeAct(input: { code: string }): Promise<GatewayToolResult> {
