@@ -7,6 +7,20 @@ declare const DOMPurify: { sanitize(html: string): string };
 
 const logger = new DebugLogger('Wiki');
 
+// ── Mobile helpers ──────────────────────────────────────────────────────────
+
+const MOBILE_BREAKPOINT = 768;
+
+function isMobile(): boolean {
+  return window.innerWidth < MOBILE_BREAKPOINT;
+}
+
+const backBtnStyle =
+  'display:flex;align-items:center;gap:6px;' +
+  'padding:8px 12px;margin-bottom:8px;' +
+  'font-size:13px;color:#6B6560;cursor:pointer;' +
+  'border:none;background:none;';
+
 function wikilinkToHtml(md: string): string {
   return md.replace(
     /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
@@ -62,10 +76,14 @@ function escapeHtml(s: string): string {
 export class WikiModule {
   private container: HTMLElement | null = null;
   private currentPath: string | null = null;
+  private resizeHandler: (() => void) | null = null;
+  private mobileShowingPage = false;
 
   init(): void {
     this.container = document.getElementById('wiki-content');
     if (!this.container) return;
+    this.resizeHandler = () => this.handleResize();
+    window.addEventListener('resize', this.resizeHandler);
     this.loadTree();
   }
 
@@ -86,29 +104,42 @@ export class WikiModule {
     if (!this.container) return;
 
     const treeHtml = tree.map((n) => renderTreeNode(n)).join('');
+    const mobile = isMobile();
+
+    const treeStyle = mobile
+      ? 'width:100%;overflow-y:auto;padding-right:0'
+      : 'width:200px;min-width:200px;overflow-y:auto;border-right:1px solid #EDE9E1;padding-right:12px';
+    const pageDisplay = mobile ? 'display:none;' : '';
+    const pageStyle = mobile
+      ? `flex:1;overflow-y:auto;${pageDisplay}width:100%`
+      : `flex:1;overflow-y:auto;${pageDisplay}`;
 
     this.container.innerHTML =
-      '<div style="display:flex;gap:16px;height:100%">' +
-      `<div id="wiki-tree" style="width:200px;min-width:200px;overflow-y:auto;border-right:1px solid #EDE9E1;padding-right:12px">` +
+      `<div style="display:flex;gap:${mobile ? '0' : '16'}px;height:100%">` +
+      `<div id="wiki-tree" style="${treeStyle}">` +
       `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">` +
       `<h2 style="font-family:Fredoka,sans-serif;font-size:14px;font-weight:600;color:#1A1A1A;margin:0">Wiki</h2>` +
       `<button id="wiki-new-btn" style="font-size:11px;padding:2px 8px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">+ New</button>` +
       `</div>` +
       treeHtml +
       `</div>` +
-      `<div id="wiki-page" style="flex:1;overflow-y:auto">` +
-      `<div style="padding:40px;text-align:center;color:#9E9891;font-size:13px">Select a page to view.</div>` +
+      `<div id="wiki-page" style="${pageStyle}">` +
+      (mobile
+        ? ''
+        : `<div style="padding:40px;text-align:center;color:#9E9891;font-size:13px">Select a page to view.</div>`) +
       `</div>` +
       '</div>';
 
-    // Attach resize handle to wiki tree panel
-    const treePanel = document.getElementById('wiki-tree');
-    if (treePanel) {
-      createResizeHandle(treePanel, {
-        storageKey: 'wiki-tree-width',
-        minWidth: 120,
-        maxWidth: 500,
-      });
+    // Attach resize handle to wiki tree panel (desktop only)
+    if (!mobile) {
+      const treePanel = document.getElementById('wiki-tree');
+      if (treePanel) {
+        createResizeHandle(treePanel, {
+          storageKey: 'wiki-tree-width',
+          minWidth: 120,
+          maxWidth: 500,
+        });
+      }
     }
 
     // Bind collapsible directory toggles
@@ -136,14 +167,26 @@ export class WikiModule {
 
     document.getElementById('wiki-new-btn')?.addEventListener('click', () => this.promptNewPage());
 
-    const indexNode = tree.find((n) => n.name === 'index.md');
-    if (indexNode) this.openPage(indexNode.path);
+    // Auto-open index page (desktop only)
+    if (!mobile) {
+      const indexNode = tree.find((n) => n.name === 'index.md');
+      if (indexNode) this.openPage(indexNode.path);
+    }
   }
 
   private async openPage(path: string): Promise<void> {
     this.currentPath = path;
     const pageEl = document.getElementById('wiki-page');
     if (!pageEl) return;
+
+    // Mobile: hide tree, show page
+    if (isMobile()) {
+      this.mobileShowingPage = true;
+      const treeEl = document.getElementById('wiki-tree');
+      if (treeEl) treeEl.style.display = 'none';
+      pageEl.style.display = '';
+      pageEl.style.width = '100%';
+    }
 
     try {
       const page = await API.getWikiPage(path);
@@ -159,13 +202,66 @@ export class WikiModule {
     });
   }
 
+  private buildBreadcrumb(path: string): string {
+    // e.g. "projects/MyPage.md" -> "Wiki / projects / MyPage"
+    const parts = path.replace(/\.md$/, '').split('/').filter(Boolean);
+    return ['Wiki', ...parts].join(' / ');
+  }
+
+  private showMobileTree(): void {
+    this.mobileShowingPage = false;
+    const treeEl = document.getElementById('wiki-tree');
+    const pageEl = document.getElementById('wiki-page');
+    if (treeEl) treeEl.style.display = '';
+    if (pageEl) pageEl.style.display = 'none';
+  }
+
+  private handleResize(): void {
+    const treeEl = document.getElementById('wiki-tree');
+    const pageEl = document.getElementById('wiki-page');
+    if (!treeEl || !pageEl) return;
+
+    if (isMobile()) {
+      // Mobile: show one panel at a time
+      treeEl.style.width = '100%';
+      treeEl.style.minWidth = '';
+      treeEl.style.borderRight = 'none';
+      treeEl.style.paddingRight = '0';
+      pageEl.style.width = '100%';
+      if (this.mobileShowingPage) {
+        treeEl.style.display = 'none';
+        pageEl.style.display = '';
+      } else {
+        treeEl.style.display = '';
+        pageEl.style.display = 'none';
+      }
+    } else {
+      // Desktop: side-by-side
+      treeEl.style.display = '';
+      treeEl.style.width = '200px';
+      treeEl.style.minWidth = '200px';
+      treeEl.style.borderRight = '1px solid #EDE9E1';
+      treeEl.style.paddingRight = '12px';
+      pageEl.style.display = '';
+      pageEl.style.width = '';
+      this.mobileShowingPage = false;
+    }
+  }
+
   private renderPageView(el: HTMLElement, page: WikiPageResponse): void {
     const type = (page.frontmatter.type as string) || '';
     const confidence = (page.frontmatter.confidence as string) || '';
     const meta = [type, confidence].filter(Boolean).join(' · ');
     const html = renderMarkdown(page.raw);
 
+    // Mobile back button with breadcrumb
+    const mobileBackHtml =
+      isMobile() && this.currentPath
+        ? `<button id="wiki-back-btn" style="${backBtnStyle}">\u2190 ${escapeHtml(this.buildBreadcrumb(this.currentPath))}</button>`
+        : '';
+
     el.innerHTML =
+      mobileBackHtml +
       `<div style="max-width:720px">` +
       `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #EDE9E1">` +
       `<span style="font-size:10px;color:#9E9891">${meta}</span>` +
@@ -189,6 +285,10 @@ export class WikiModule {
       `.wiki-page th{background:#FAFAF8;font-weight:600}</style>` +
       `<div class="wiki-page">${html}</div></div>` +
       `</div>`;
+
+    document.getElementById('wiki-back-btn')?.addEventListener('click', () => {
+      this.showMobileTree();
+    });
 
     document.getElementById('wiki-edit-btn')?.addEventListener('click', () => {
       this.renderPageEdit(el, page);
@@ -257,5 +357,10 @@ export class WikiModule {
 
   destroy(): void {
     this.currentPath = null;
+    this.mobileShowingPage = false;
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
+    }
   }
 }

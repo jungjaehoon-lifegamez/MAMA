@@ -4,6 +4,20 @@ import { createCollapsible, createResizeHandle } from '../utils/dom.js';
 
 const logger = new DebugLogger('ConnectorFeed');
 
+// ── Mobile helpers ──────────────────────────────────────────────────────────
+
+const MOBILE_BREAKPOINT = 768;
+
+function isMobile(): boolean {
+  return window.innerWidth < MOBILE_BREAKPOINT;
+}
+
+const backBtnStyle =
+  'display:flex;align-items:center;gap:6px;' +
+  'padding:8px 12px;margin-bottom:8px;' +
+  'font-size:13px;color:#6B6560;cursor:pointer;' +
+  'border:none;background:none;';
+
 // ── Style constants ─────────────────────────────────────────────────────────
 
 const COLOR = {
@@ -60,10 +74,15 @@ function relativeTime(ts: string | number): string {
 export class ConnectorFeedModule {
   private container: HTMLElement | null = null;
   private selectedConnector: string | null = null;
+  private cachedConnectors: ConnectorActivitySummary[] = [];
+  private resizeHandler: (() => void) | null = null;
+  private mobileShowingDetail = false;
 
   init(): void {
     this.container = document.getElementById('feed-content');
     if (!this.container) return;
+    this.resizeHandler = () => this.handleResize();
+    window.addEventListener('resize', this.resizeHandler);
     this.loadConnectors();
   }
 
@@ -71,6 +90,7 @@ export class ConnectorFeedModule {
     if (!this.container) return;
     try {
       const res = await API.getConnectorActivity();
+      this.cachedConnectors = res.connectors;
       this.renderConnectorList(res.connectors);
     } catch (err) {
       logger.error('Failed to load connectors', err);
@@ -89,10 +109,15 @@ export class ConnectorFeedModule {
       return;
     }
 
-    let html = '<div style="display:flex;gap:16px;height:100%">';
+    const mobile = isMobile();
+
+    let html = `<div style="display:flex;gap:${mobile ? '0' : '16'}px;height:100%">`;
 
     // Left: Connector list
-    html += `<div id="connector-list" style="width:280px;min-width:280px;overflow-y:auto;border-right:1px solid ${COLOR.border};padding-right:16px">`;
+    const listStyle = mobile
+      ? 'width:100%;overflow-y:auto;padding-right:0'
+      : `width:280px;min-width:280px;overflow-y:auto;border-right:1px solid ${COLOR.border};padding-right:16px`;
+    html += `<div id="connector-list" style="${listStyle}">`;
     html += `<h2 style="font-family:Fredoka,sans-serif;font-size:16px;font-weight:600;color:${COLOR.primary};margin:0 0 12px 0">Connectors</h2>`;
 
     for (const c of connectors) {
@@ -125,10 +150,14 @@ export class ConnectorFeedModule {
     html += '</div>';
 
     // Right: Detail panel
-    html += '<div id="connector-detail" style="flex:1;overflow-y:auto;padding-left:16px">';
+    const detailDisplay = mobile ? 'display:none;' : '';
+    const detailStyle = mobile
+      ? `flex:1;overflow-y:auto;${detailDisplay}width:100%`
+      : `flex:1;overflow-y:auto;padding-left:16px;${detailDisplay}`;
+    html += `<div id="connector-detail" style="${detailStyle}">`;
     if (this.selectedConnector) {
       html += `<div style="color:${COLOR.tertiary};font-size:13px">Loading...</div>`;
-    } else {
+    } else if (!mobile) {
       html +=
         `<div style="padding:40px;text-align:center;color:${COLOR.tertiary};font-size:13px">` +
         'Select a connector to view its feed.</div>';
@@ -137,14 +166,16 @@ export class ConnectorFeedModule {
 
     this.container.innerHTML = html;
 
-    // Attach resize handle to connector list panel
-    const listPanel = document.getElementById('connector-list');
-    if (listPanel) {
-      createResizeHandle(listPanel, {
-        storageKey: 'feed-connector-list-width',
-        minWidth: 180,
-        maxWidth: 500,
-      });
+    // Attach resize handle to connector list panel (desktop only)
+    if (!mobile) {
+      const listPanel = document.getElementById('connector-list');
+      if (listPanel) {
+        createResizeHandle(listPanel, {
+          storageKey: 'feed-connector-list-width',
+          minWidth: 180,
+          maxWidth: 500,
+        });
+      }
     }
 
     // Bind click events
@@ -155,8 +186,8 @@ export class ConnectorFeedModule {
       });
     });
 
-    // Auto-select first connector if none selected
-    if (!this.selectedConnector && connectors.length > 0) {
+    // Auto-select first connector if none selected (desktop only)
+    if (!this.selectedConnector && connectors.length > 0 && !mobile) {
       this.selectConnector(connectors[0].connector, connectors);
     }
   }
@@ -177,6 +208,18 @@ export class ConnectorFeedModule {
         : '3px solid transparent';
     });
 
+    // Mobile: hide list, show detail
+    if (isMobile()) {
+      this.mobileShowingDetail = true;
+      const list = document.getElementById('connector-list');
+      const detail = document.getElementById('connector-detail');
+      if (list) list.style.display = 'none';
+      if (detail) {
+        detail.style.display = '';
+        detail.style.width = '100%';
+      }
+    }
+
     const detail = document.getElementById('connector-detail');
     if (!detail) return;
     detail.innerHTML = `<div style="color:${COLOR.tertiary};font-size:13px">Loading feed...</div>`;
@@ -190,6 +233,48 @@ export class ConnectorFeedModule {
     }
   }
 
+  private showMobileList(): void {
+    this.mobileShowingDetail = false;
+    const list = document.getElementById('connector-list');
+    const detail = document.getElementById('connector-detail');
+    if (list) list.style.display = '';
+    if (detail) detail.style.display = 'none';
+  }
+
+  private handleResize(): void {
+    const list = document.getElementById('connector-list');
+    const detail = document.getElementById('connector-detail');
+    if (!list || !detail) return;
+
+    if (isMobile()) {
+      // Mobile: show one panel at a time
+      list.style.width = '100%';
+      list.style.minWidth = '';
+      list.style.borderRight = 'none';
+      list.style.paddingRight = '0';
+      detail.style.paddingLeft = '0';
+      detail.style.width = '100%';
+      if (this.mobileShowingDetail) {
+        list.style.display = 'none';
+        detail.style.display = '';
+      } else {
+        list.style.display = '';
+        detail.style.display = 'none';
+      }
+    } else {
+      // Desktop: side-by-side
+      list.style.display = '';
+      list.style.width = '280px';
+      list.style.minWidth = '280px';
+      list.style.borderRight = `1px solid ${COLOR.border}`;
+      list.style.paddingRight = '16px';
+      detail.style.display = '';
+      detail.style.paddingLeft = '16px';
+      detail.style.width = '';
+      this.mobileShowingDetail = false;
+    }
+  }
+
   private renderFeedDetail(
     container: HTMLElement,
     name: string,
@@ -199,6 +284,15 @@ export class ConnectorFeedModule {
 
     // Clear and build header
     container.innerHTML = '';
+
+    // Mobile back button
+    if (isMobile()) {
+      const backBtn = document.createElement('button');
+      backBtn.setAttribute('style', backBtnStyle);
+      backBtn.innerHTML = '\u2190 Connectors';
+      backBtn.addEventListener('click', () => this.showMobileList());
+      container.appendChild(backBtn);
+    }
 
     const header = document.createElement('div');
     header.setAttribute('style', 'margin-bottom:16px');
@@ -252,5 +346,11 @@ export class ConnectorFeedModule {
 
   destroy(): void {
     this.selectedConnector = null;
+    this.cachedConnectors = [];
+    this.mobileShowingDetail = false;
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler);
+      this.resizeHandler = null;
+    }
   }
 }
