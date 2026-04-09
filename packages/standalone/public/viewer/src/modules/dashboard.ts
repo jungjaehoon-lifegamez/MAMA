@@ -31,7 +31,7 @@ const COLOR = {
 } as const;
 
 const S = {
-  heading: `font-family:Fredoka,sans-serif;font-size:14px;font-weight:600;color:${COLOR.primary};margin:0 0 10px 0;`,
+  heading: `font-family:Inter,'Noto Sans KR',sans-serif;font-size:14px;font-weight:600;color:${COLOR.primary};margin:0 0 10px 0;`,
   body: `font-size:12px;color:${COLOR.secondary};line-height:1.6;margin:0;`,
   pill: `display:inline-block;font-size:10px;padding:1px 6px;border-radius:2px;font-weight:600;`,
   row: `display:flex;align-items:baseline;gap:8px;padding:5px 0;border-bottom:1px solid ${COLOR.border};`,
