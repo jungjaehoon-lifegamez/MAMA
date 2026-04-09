@@ -230,33 +230,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         try {
           console.log('[Wiki Agent] Starting compilation...');
 
-          // Build list of existing wiki pages so LLM reuses exact paths
-          let existingPages: string[] = [];
-          try {
-            const walkDir = (dir: string, prefix: string): string[] => {
-              const entries: string[] = [];
-              for (const f of readdirSync(dir)) {
-                const full = path.join(dir, f);
-                const rel = prefix ? `${prefix}/${f}` : f;
-                if (statSync(full).isDirectory()) {
-                  entries.push(...walkDir(full, rel));
-                } else if (f.endsWith('.md') && f !== 'log.md') {
-                  entries.push(rel);
-                }
-              }
-              return entries;
-            };
-            existingPages = walkDir(obsWriter.getWikiPath(), '');
-          } catch {
-            /* non-fatal */
-          }
-
-          const existingPagesHint =
-            existingPages.length > 0
-              ? `\n\nExisting wiki pages (reuse these exact paths, do NOT create duplicates):\n${existingPages.map((p) => `- ${p}`).join('\n')}\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.`
-              : '\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.';
-
-          const wikiPrompt = `Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.${existingPagesHint}`;
+          const wikiPrompt =
+            'Search MAMA memory for recent decisions using mama_search, then use obsidian("search") to check existing wiki pages. Update existing pages or create new ones. Clean up any duplicates found.';
 
           const process = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
           await process.sendMessage(wikiPrompt);
