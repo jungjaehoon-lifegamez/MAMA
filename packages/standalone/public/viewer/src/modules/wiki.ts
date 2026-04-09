@@ -311,16 +311,30 @@ export class WikiModule {
         ? `<button id="wiki-back-btn" style="${backBtnStyle}">\u2190 ${escapeHtml(this.buildBreadcrumb(this.currentPath))}</button>`
         : '';
 
+    const mobile = isMobile();
+    // Mobile: use calc(100vh - offset) so editor fills the screen
+    // Desktop: flex within parent container
+    const containerStyle = mobile
+      ? 'display:flex;flex-direction:column;width:100%;padding:0 4px'
+      : 'display:flex;flex-direction:column;height:100%;max-width:720px';
+    const textareaHeight = mobile
+      ? 'height:calc(100vh - 160px);min-height:300px'
+      : 'flex:1;min-height:400px';
+    // Mobile toolbar: wrap buttons for small screens
+    const toolbarStyle = mobile
+      ? 'display:flex;align-items:center;gap:6px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid #EDE9E1;flex-wrap:wrap'
+      : 'display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #EDE9E1';
+
     el.innerHTML =
       mobileBackHtml +
-      `<div style="display:flex;flex-direction:column;height:100%;max-width:720px">` +
-      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid #EDE9E1">` +
+      `<div style="${containerStyle}">` +
+      `<div style="${toolbarStyle}">` +
       `<span style="font-size:10px;color:#9E9891;padding:2px 6px;background:#F5F3EF;border-radius:2px">Editing</span>` +
-      `<span style="font-size:10px;color:#9E9891;flex:1">${escapeHtml(page.path)}</span>` +
-      `<button id="wiki-save-btn" style="font-size:11px;padding:3px 12px;border:none;border-radius:3px;background:#1A1A1A;color:#fff;cursor:pointer">Done</button>` +
-      `<button id="wiki-cancel-btn" style="font-size:11px;padding:3px 12px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">Cancel</button>` +
+      `<span style="font-size:10px;color:#9E9891;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(page.path)}</span>` +
+      `<button id="wiki-save-btn" style="font-size:11px;padding:4px 14px;border:none;border-radius:3px;background:#1A1A1A;color:#fff;cursor:pointer">Done</button>` +
+      `<button id="wiki-cancel-btn" style="font-size:11px;padding:4px 14px;border:1px solid #EDE9E1;border-radius:3px;background:#fff;cursor:pointer;color:#6B6560">Cancel</button>` +
       `</div>` +
-      `<textarea id="wiki-editor" style="flex:1;width:100%;min-height:400px;font-family:'JetBrains Mono','Fira Code',monospace;font-size:13px;padding:16px;border:1px solid #EDE9E1;border-radius:4px;resize:vertical;line-height:1.7;color:#1A1A1A;background:#FAFAF8;outline:none;tab-size:2">${escapeHtml(page.raw)}</textarea>` +
+      `<textarea id="wiki-editor" style="${textareaHeight};width:100%;font-family:'JetBrains Mono','Fira Code',monospace;font-size:${mobile ? '14' : '13'}px;padding:${mobile ? '12' : '16'}px;border:1px solid #EDE9E1;border-radius:4px;resize:vertical;line-height:1.7;color:#1A1A1A;background:#FAFAF8;outline:none;tab-size:2;box-sizing:border-box">${escapeHtml(page.raw)}</textarea>` +
       `</div>`;
 
     const editor = document.getElementById('wiki-editor') as HTMLTextAreaElement;
