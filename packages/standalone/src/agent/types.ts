@@ -694,6 +694,8 @@ export type GatewayToolName =
   | 'webchat_send'
   // Code-Act sandbox
   | 'code_act'
+  // Multi-Agent delegation
+  | 'delegate'
   // Report slots
   | 'report_publish'
   // Wiki compilation
