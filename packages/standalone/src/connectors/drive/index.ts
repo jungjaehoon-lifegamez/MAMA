@@ -138,64 +138,134 @@ export class DriveConnector implements IConnector {
     return null;
   }
 
-  async poll(_since: Date): Promise<NormalizedItem[]> {
+  /**
+   * Get shared drive IDs from channel configs.
+   * Channels with a driveId property are treated as shared drive sources.
+   */
+  private getSharedDriveIds(): Array<{ driveId: string; channelKey: string }> {
+    const drives: Array<{ driveId: string; channelKey: string }> = [];
+    for (const [key, cfg] of Object.entries(this.config.channels)) {
+      const driveId = cfg.driveId as string | undefined;
+      if (driveId) {
+        drives.push({ driveId, channelKey: key });
+      }
+    }
+    return drives;
+  }
+
+  /**
+   * Poll changes from a single drive (personal or shared).
+   * Returns items and updates the page token.
+   */
+  private pollDrive(
+    tokenKey: string,
+    driveId?: string
+  ): NormalizedItem[] {
+    // Get or initialize page token
+    let pageToken = this.pageTokens.get(tokenKey);
+    if (!pageToken) {
+      const tokenParams: Record<string, unknown> = {};
+      if (driveId) {
+        tokenParams.driveId = driveId;
+        tokenParams.supportsAllDrives = true;
+      }
+      const tokenResult = execGws(
+        `drive changes getStartPageToken --params '${JSON.stringify(tokenParams)}'`
+      ) as StartPageTokenResult;
+      pageToken = tokenResult.startPageToken;
+      this.pageTokens.set(tokenKey, pageToken);
+    }
+
+    const params: Record<string, unknown> = {
+      pageToken,
+      pageSize: 100,
+      fields:
+        'changes(fileId,time,removed,file(name,mimeType,modifiedTime,lastModifyingUser,parents,driveId)),newStartPageToken',
+      includeRemoved: false,
+      includeItemsFromAllDrives: true,
+      supportsAllDrives: true,
+    };
+    if (driveId) {
+      params.driveId = driveId;
+    }
+
+    const changeList = execGws(
+      `drive changes list --params '${JSON.stringify(params)}'`
+    ) as DriveChangeList;
+
     const items: NormalizedItem[] = [];
+    for (const change of changeList.changes) {
+      if (!change.file) continue;
+
+      const file = change.file;
+      const parents = file.parents ?? [];
+
+      // Match by parent folder or by shared drive ID
+      let channelName: string | null = null;
+      const folderMatch = this.findChannelByParent(parents);
+      if (folderMatch) {
+        channelName = folderMatch[1];
+      } else if (driveId) {
+        // For shared drives: use the channel key as channel name
+        for (const [key, cfg] of Object.entries(this.config.channels)) {
+          if (cfg.driveId === driveId) {
+            channelName = cfg.name ?? key;
+            break;
+          }
+        }
+      }
+
+      if (!channelName) continue;
+
+      const author = file.lastModifyingUser?.displayName ?? 'unknown';
+      items.push({
+        source: 'drive',
+        sourceId: `${change.fileId}:${change.time}`,
+        channel: channelName,
+        author,
+        content: `modified: ${file.name} (${file.mimeType})`,
+        timestamp: new Date(change.time),
+        type: 'file_change',
+        metadata: {
+          fileId: change.fileId,
+          fileName: file.name,
+          mimeType: file.mimeType,
+          modifiedTime: file.modifiedTime,
+          parents,
+          driveId: driveId || undefined,
+        },
+      });
+    }
+
+    if (changeList.newStartPageToken) {
+      this.pageTokens.set(tokenKey, changeList.newStartPageToken);
+    }
+
+    return items;
+  }
+
+  async poll(_since: Date): Promise<NormalizedItem[]> {
+    const allItems: NormalizedItem[] = [];
     let hadError = false;
 
     try {
-      // Get or initialize the page token
-      let pageToken = this.pageTokens.get('drive');
-      if (!pageToken) {
-        const tokenResult = execGws(
-          `drive changes getStartPageToken --params '{}'`
-        ) as StartPageTokenResult;
-        pageToken = tokenResult.startPageToken;
-        this.pageTokens.set('drive', pageToken);
+      // 1. Poll personal drive (for folder-based channels)
+      const hasFolderChannels = Object.values(this.config.channels).some(
+        (c) => c.folderId && !c.driveId
+      );
+      if (hasFolderChannels) {
+        allItems.push(...this.pollDrive('drive'));
       }
 
-      const params = JSON.stringify({
-        pageToken,
-        pageSize: 100,
-        fields:
-          'changes(fileId,time,removed,file(name,mimeType,modifiedTime,lastModifyingUser,parents)),newStartPageToken',
-        includeRemoved: false,
-      });
-
-      const changeList = execGws(`drive changes list --params '${params}'`) as DriveChangeList;
-
-      for (const change of changeList.changes) {
-        if (!change.file) continue;
-
-        const file = change.file;
-        const parents = file.parents ?? [];
-        const channelMatch = this.findChannelByParent(parents);
-        if (!channelMatch) continue;
-
-        const [, channelName] = channelMatch;
-        const author = file.lastModifyingUser?.displayName ?? 'unknown';
-
-        items.push({
-          source: 'drive',
-          sourceId: `${change.fileId}:${change.time}`,
-          channel: channelName,
-          author,
-          content: `modified: ${file.name} (${file.mimeType})`,
-          timestamp: new Date(change.time),
-          type: 'file_change',
-          metadata: {
-            fileId: change.fileId,
-            fileName: file.name,
-            mimeType: file.mimeType,
-            modifiedTime: file.modifiedTime,
-            parents,
-          },
-        });
+      // 2. Poll each shared drive
+      for (const { driveId, channelKey } of this.getSharedDriveIds()) {
+        try {
+          allItems.push(...this.pollDrive(`shared:${driveId}`, driveId));
+        } catch (err) {
+          console.error(`[drive] Shared drive ${channelKey} poll error:`, err);
+        }
       }
 
-      // Store the new page token for the next poll and persist to disk
-      if (changeList.newStartPageToken) {
-        this.pageTokens.set('drive', changeList.newStartPageToken);
-      }
       this.saveState();
     } catch (err) {
       hadError = true;
@@ -204,10 +274,9 @@ export class DriveConnector implements IConnector {
     }
 
     this.lastPollTime = new Date();
-    this.lastPollCount = items.length;
-    // lastError was set in catch blocks; clear only if no error occurred this pass
+    this.lastPollCount = allItems.length;
     if (!hadError) this.lastError = undefined;
 
-    return items;
+    return allItems;
   }
 }
