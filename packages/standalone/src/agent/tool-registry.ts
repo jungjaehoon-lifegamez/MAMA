@@ -13,6 +13,7 @@ import type { GatewayToolName } from './types.js';
 
 export type ToolCategory =
   | 'memory'
+  | 'business_data'
   | 'utility'
   | 'browser'
   | 'os_management'
@@ -260,6 +261,32 @@ register({
   category: 'code_act',
 });
 
+// Business Data — progressive exploration of operational data
+register({
+  name: 'kagemusha_overview',
+  description: 'Get overview: room/task/message counts across all channels',
+  category: 'business_data',
+  params: '(none)',
+});
+register({
+  name: 'kagemusha_entities',
+  description: 'List people and project channels with activity stats',
+  category: 'business_data',
+  params: 'channel?, activeOnly?, limit?',
+});
+register({
+  name: 'kagemusha_tasks',
+  description: 'Query tasks by room, status, priority, or text search',
+  category: 'business_data',
+  params: 'sourceRoom?, status?, priority?, search?, limit?',
+});
+register({
+  name: 'kagemusha_messages',
+  description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
+  category: 'business_data',
+  params: 'channelId (required), since?, limit?, search?',
+});
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {
@@ -347,6 +374,7 @@ export class ToolRegistry {
 
     const categoryLabels: Record<ToolCategory, string> = {
       memory: 'MAMA Memory',
+      business_data: 'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
       utility: 'Utility',
       browser: 'Browser (Playwright)',
       os_management: 'OS Management (viewer-only)',
