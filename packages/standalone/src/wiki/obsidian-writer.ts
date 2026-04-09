@@ -108,6 +108,17 @@ export class ObsidianWriter {
     const dir = dirname(filePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
+    // Strip duplicate frontmatter from LLM-generated content
+    let cleanContent = page.content;
+    if (cleanContent.trimStart().startsWith('---')) {
+      cleanContent = cleanContent.replace(/^[\s]*---[\s\S]*?---[\s]*/, '').trimStart();
+    }
+    // Strip duplicate title heading if it matches page title
+    const titlePrefix = `# ${page.title}`;
+    if (cleanContent.startsWith(titlePrefix)) {
+      cleanContent = cleanContent.slice(titlePrefix.length).trimStart();
+    }
+
     let humanSection = '';
     if (existsSync(filePath)) {
       const existing = readFileSync(filePath, 'utf8');
@@ -128,7 +139,7 @@ export class ObsidianWriter {
       '---',
     ].join('\n');
 
-    let body = `${frontmatter}\n\n# ${page.title}\n\n${page.content}`;
+    let body = `${frontmatter}\n\n# ${page.title}\n\n${cleanContent}`;
     if (humanSection) {
       body += '\n\n' + humanSection;
     }
