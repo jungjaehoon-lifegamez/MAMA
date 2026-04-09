@@ -512,6 +512,25 @@ export class GatewayToolExecutor {
           if (this.reportPublisher) {
             this.reportPublisher(slotsInput);
             const slotNames = Object.keys(slotsInput);
+
+            // Persist report summary to mama memory for Conductor querying
+            const slotValues = Object.values(slotsInput).join(' ');
+            const textSummary = slotValues
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const truncated =
+              textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
+            void handleSave(api, {
+              type: 'decision' as const,
+              topic: 'dashboard_briefing',
+              decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+              reasoning: 'Auto-saved by dashboard agent after report_publish',
+              scopes: [{ kind: 'global', id: 'system' }],
+            }).catch(() => {
+              /* non-fatal */
+            });
+
             return {
               success: true,
               message: `Dashboard updated: ${slotNames.join(', ')} (${slotNames.length} slots)`,
@@ -551,6 +570,26 @@ export class GatewayToolExecutor {
               confidence: p.confidence || 'medium',
             }));
             this.wikiPublisher(wikiPages);
+
+            // Persist wiki compilation summary to mama memory for Conductor querying
+            const pageSummary = pagesInput
+              .slice(0, 20)
+              .map(
+                (p: { title?: string; path: string; type?: string }) =>
+                  `- ${p.title || p.path} (${p.type || 'page'})`
+              )
+              .join('\n');
+            const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
+            void handleSave(api, {
+              type: 'decision' as const,
+              topic: 'wiki_compilation',
+              decision: wikiSummary,
+              reasoning: 'Auto-saved by wiki agent after wiki_publish',
+              scopes: [{ kind: 'global', id: 'system' }],
+            }).catch(() => {
+              /* non-fatal */
+            });
+
             return {
               success: true,
               message: `Wiki published: ${wikiPages.length} pages`,
