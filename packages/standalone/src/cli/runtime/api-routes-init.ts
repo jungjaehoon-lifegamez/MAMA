@@ -3,7 +3,7 @@
  *
  * Extracted from start.ts (Task 11 Part B).
  * Registers ALL REST endpoints, middleware, static file serving,
- * and creates the Dashboard + Wiki agent loops.
+ * and wires Dashboard + Wiki agents via AgentProcessManager.
  */
 
 import {
@@ -26,7 +26,6 @@ import http from 'node:http';
 
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
-import type { AgentContext, MAMAApiInterface } from '../../agent/types.js';
 import type { MessageRouter } from '../../gateways/index.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
@@ -79,8 +78,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     config,
     apiServer,
     eventBus,
-    oauthManager,
-    mamaApi,
+    oauthManager: _oauthManager,
+    mamaApi: _mamaApi,
     messageRouter,
     agentLoop,
     toolExecutor,
@@ -116,113 +115,42 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
     // ── Dashboard Agent ─────────────────────────────────────────────────
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
-    const dashboardPersonaPath = ensureDashboardPersona();
-    const dashboardPersona = readFileSync(dashboardPersonaPath, 'utf-8');
-    console.log(`[Dashboard Agent] Persona loaded from ${dashboardPersonaPath}`);
+    ensureDashboardPersona();
+    console.log('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
 
-    // Generate code-act-only MCP config for Dashboard Agent
-    // This follows the same pattern as Kagemusha: stdio MCP server → HTTP /api/code-act
-    const codeActMcpConfig = path.join(homedir(), '.mama', 'code-act-mcp-config.json');
+    // Merge code-act MCP server into mama-mcp-config.json
+    // Makes code_act available to all CLI processes (AgentProcessManager agents)
     const codeActServerPath = path.join(__dirname, '../../mcp/code-act-server.js');
-    writeFileSync(
-      codeActMcpConfig,
-      JSON.stringify(
-        {
-          mcpServers: {
-            'code-act': {
-              command: 'node',
-              args: [codeActServerPath],
-              env: { MAMA_SERVER_PORT: '3847' },
-            },
-          },
-        },
-        null,
-        2
-      ),
-      'utf-8'
-    );
+    try {
+      const mamaMcpConfigPath = path.join(homedir(), '.mama', 'mama-mcp-config.json');
+      const existing = existsSync(mamaMcpConfigPath)
+        ? JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8'))
+        : { mcpServers: {} };
+      existing.mcpServers['code-act'] = {
+        command: 'node',
+        args: [codeActServerPath],
+        env: { MAMA_SERVER_PORT: String(EMBEDDING_PORT) },
+      };
+      writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
+      console.log('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
+    } catch (err) {
+      console.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
+    }
 
-    const dashboardAgentLoop = new AgentLoop(
-      oauthManager,
-      {
-        useCodeAct: true,
-        disallowedTools: [
-          'Bash',
-          'Read',
-          'Write',
-          'Edit',
-          'Grep',
-          'Glob',
-          'Agent',
-          'WebSearch',
-          'WebFetch',
-        ],
-        systemPrompt: dashboardPersona,
-        model: 'claude-sonnet-4-6',
-        maxTurns: 5,
-        backend: 'claude' as const,
-        toolsConfig: {
-          gateway: ['mama_search', 'report_publish'],
-          mcp: ['code_act'],
-          mcp_config: codeActMcpConfig,
-        },
-      },
-      undefined,
-      { mamaApi: mamaApi as MAMAApiInterface }
-    );
-    dashboardAgentLoop.setSessionKey('dashboard-agent:shared');
+    // Dashboard cron: 30-min interval via AgentProcessManager
+    const dashboardPrompt =
+      'Analyze current project data and write an executive briefing. Use mama_search to find recent decisions, then use report_publish to publish your briefing HTML in the "briefing" slot.';
 
-    // Wire report_publish tool to Dashboard Agent's internal executor
-    dashboardAgentLoop.setReportPublisher((slots) => {
-      for (const [slotId, html] of Object.entries(slots)) {
-        if (slotId !== 'briefing') continue; // only accept briefing slot
-        apiServer.reportStore.update(slotId, html, 0);
-      }
-      broadcastReportUpdate(apiServer.reportSseClients, {
-        slots: apiServer.reportStore.getAllSorted(),
-      });
-      console.log(`[Dashboard Agent] Published briefing slot via report_publish`);
-      eventBus.emit({
-        type: 'agent:action',
-        agent: 'dashboard-agent',
-        action: 'publish',
-        target: 'briefing',
-      });
-    });
-
-    // Run dashboard agent on startup (after data loads) + every 30 minutes
-    const dashboardAgentContext: AgentContext = {
-      source: 'dashboard-agent',
-      platform: 'cli',
-      roleName: 'dashboard_agent',
-      role: {
-        allowedTools: ['mama_search', 'report_publish'],
-        blockedTools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'Edit'],
-        systemControl: false,
-        sensitiveAccess: false,
-      },
-      session: {
-        sessionId: 'dashboard-agent:shared',
-        channelId: 'system',
-        startedAt: new Date(),
-      },
-      capabilities: ['mama_search', 'report_publish'],
-      limitations: ['No file or shell access'],
-      tier: 2,
-      backend: 'claude',
-    };
     const runDashboardAgent = async () => {
+      const pm = toolExecutor.getAgentProcessManager();
+      if (!pm) {
+        console.warn('[Dashboard Agent] AgentProcessManager not available yet');
+        return;
+      }
       try {
         console.log('[Dashboard Agent] Starting briefing generation...');
-        await dashboardAgentLoop.run(
-          'Analyze current project data and write an executive briefing. Use mama_search to find recent decisions, then use report_publish to publish your briefing HTML in the "briefing" slot.',
-          {
-            source: 'dashboard-agent',
-            channelId: 'system',
-            agentContext: dashboardAgentContext,
-            stopAfterSuccessfulTools: ['report_publish', 'code_act', 'mcp__code-act__code_act'],
-          }
-        );
+        const process = await pm.getSharedProcess('dashboard-agent');
+        await process.sendMessage(dashboardPrompt);
         console.log('[Dashboard Agent] Briefing published');
       } catch (err) {
         console.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
@@ -248,14 +176,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const { ensureWikiPersona } = await import('../../multi-agent/wiki-agent-persona.js');
       const { ObsidianWriter } = await import('../../wiki/obsidian-writer.js');
 
-      const wikiPersonaPath = ensureWikiPersona();
-      const wikiPersona = readFileSync(wikiPersonaPath, 'utf-8');
+      ensureWikiPersona();
       const obsWriter = new ObsidianWriter(wikiConfig.vaultPath, wikiConfig.wikiDir || 'wiki');
       obsWriter.ensureDirectories();
-      console.log(`[Wiki Agent] Persona loaded from ${wikiPersonaPath}`);
-      console.log(`[Wiki Agent] Vault: ${obsWriter.getWikiPath()}`);
+      console.log(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
 
-      // Wire wiki_publish tool to gateway executor
+      // Wire wiki_publish tool to shared gateway executor (used by code-act path)
       toolExecutor.setWikiPublisher((pages) => {
         for (const page of pages) {
           obsWriter.writePage(page as import('../../wiki/types.js').WikiPage);
@@ -265,49 +191,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           obsWriter.appendLog('compile', `Published ${pages.length} pages`);
         }
         console.log(`[Wiki Agent] Published ${pages.length} pages to vault`);
-      });
-
-      const wikiAgentLoop = new AgentLoop(
-        oauthManager,
-        {
-          useCodeAct: true,
-          timeoutMs: 600_000, // 10 min — wiki compilation with MCP init takes time
-          disallowedTools: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
-          ],
-          systemPrompt: wikiPersona,
-          model: 'claude-sonnet-4-6',
-          maxTurns: 5,
-          backend: 'claude' as const,
-          toolsConfig: {
-            gateway: ['mama_search', 'wiki_publish'],
-            mcp: ['code_act'],
-            mcp_config: codeActMcpConfig,
-          },
-        },
-        undefined,
-        { mamaApi: mamaApi as MAMAApiInterface }
-      );
-      wikiAgentLoop.setSessionKey('wiki-agent:shared');
-
-      // Wire wiki_publish tool to Wiki Agent's internal executor
-      wikiAgentLoop.setWikiPublisher((pages) => {
-        for (const page of pages) {
-          obsWriter.writePage(page as import('../../wiki/types.js').WikiPage);
-        }
-        if (pages.length > 0) {
-          obsWriter.updateIndex(pages as import('../../wiki/types.js').WikiPage[]);
-          obsWriter.appendLog('compile', `Published ${pages.length} pages`);
-        }
-        console.log(`[Wiki Agent] Published ${pages.length} pages via wiki_publish`);
 
         eventBus.emit({
           type: 'wiki:compiled',
@@ -315,34 +198,19 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         });
       });
 
-      const wikiAgentContext: AgentContext = {
-        source: 'wiki-agent',
-        platform: 'cli',
-        roleName: 'wiki_agent',
-        role: {
-          allowedTools: ['mama_search', 'wiki_publish'],
-          blockedTools: ['Read', 'Write', 'Bash', 'Grep', 'Glob', 'Edit'],
-          systemControl: false,
-          sensitiveAccess: false,
-        },
-        session: {
-          sessionId: 'wiki-agent:shared',
-          channelId: 'system',
-          startedAt: new Date(),
-        },
-        capabilities: ['mama_search', 'wiki_publish'],
-        limitations: ['No file or shell access'],
-        tier: 2,
-        backend: 'claude',
-      };
-
+      // Wiki trigger via AgentProcessManager
       const runWikiAgent = async () => {
+        const pm = toolExecutor.getAgentProcessManager();
+        if (!pm) {
+          console.warn('[Wiki Agent] AgentProcessManager not available yet');
+          return;
+        }
         try {
           console.log('[Wiki Agent] Starting compilation...');
+
           // Build list of existing wiki pages so LLM reuses exact paths
           let existingPages: string[] = [];
           try {
-            const { readdirSync, statSync } = await import('node:fs');
             const walkDir = (dir: string, prefix: string): string[] => {
               const entries: string[] = [];
               for (const f of readdirSync(dir)) {
@@ -360,19 +228,16 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           } catch {
             /* non-fatal */
           }
+
           const existingPagesHint =
             existingPages.length > 0
               ? `\n\nExisting wiki pages (reuse these exact paths, do NOT create duplicates):\n${existingPages.map((p) => `- ${p}`).join('\n')}\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.`
               : '\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.';
-          await wikiAgentLoop.run(
-            `Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.${existingPagesHint}`,
-            {
-              source: 'wiki-agent',
-              channelId: 'system',
-              agentContext: wikiAgentContext,
-              stopAfterSuccessfulTools: ['wiki_publish', 'code_act', 'mcp__code-act__code_act'],
-            }
-          );
+
+          const wikiPrompt = `Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.${existingPagesHint}`;
+
+          const process = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
+          await process.sendMessage(wikiPrompt);
           console.log('[Wiki Agent] Compilation complete');
         } catch (err) {
           console.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
