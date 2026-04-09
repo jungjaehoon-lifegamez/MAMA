@@ -411,6 +411,48 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   }
 
+  // ── Conductor Audit — hourly system health check ──────────────────────
+  {
+    const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+    const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
+
+    const auditPrompt =
+      'Perform a system audit. Read ~/.mama/skills/audit-checklist.md and execute each step. Classify findings as MINOR (auto-fix via delegate) or MAJOR (report to human). Save results to memory.';
+
+    const runConductorAudit = async () => {
+      try {
+        console.log('[Conductor Audit] Starting hourly audit...');
+        await messageRouter.process({
+          source: 'viewer' as const,
+          channelId: 'conductor-audit',
+          userId: 'system',
+          text: auditPrompt,
+        });
+        console.log('[Conductor Audit] Audit complete');
+      } catch (err) {
+        console.error(
+          '[Conductor Audit] Failed:',
+          err instanceof Error ? err.message : String(err)
+        );
+      }
+    };
+
+    setTimeout(() => {
+      runConductorAudit();
+      setInterval(runConductorAudit, AUDIT_INTERVAL_MS);
+    }, AUDIT_INITIAL_DELAY_MS);
+
+    // Manual trigger
+    apiServer.app.post('/api/conductor/audit', requireAuth, async (_req, res) => {
+      runConductorAudit().catch(() => {});
+      res.json({ ok: true, message: 'Conductor audit triggered' });
+    });
+
+    console.log(
+      '[Conductor Audit] Ready — runs every 60 min, POST /api/conductor/audit for manual trigger'
+    );
+  }
+
   // ── Memory Agent stats API ────────────────────────────────────────────
   apiServer.app.get('/api/memory-agent/stats', requireAuth, (_req, res) => {
     const stats = messageRouter.getMemoryAgentStats();
