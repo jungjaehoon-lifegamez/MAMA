@@ -9,7 +9,7 @@ fi
 
 # Korean hardcoding check: block non-functional Korean in source files
 # Allows: regex patterns, string literals in keyword arrays, meta[] lookups, Unicode ranges
-if git diff --cached --name-only | grep -E '\.ts$' | grep -v 'node_modules'; then
+if git diff --cached --name-only | grep -qE '\.ts$'; then
   KOREAN_IN_SOURCE=$(git diff --cached -U0 -- '*.ts' | grep '^+' | grep -v '^+++' | \
     grep '[가-힣]' | \
     grep -v -E '(/(가-힣|[가-힣])/|/[^/]*\\\\[가-힣]|meta\[|RegExp|new Set|Keywords|keywords|Patterns|patterns|IGNORE_PATTERNS|INCOMPLETE_PATTERNS|COMPLETION_MARKERS|가-힣_|// Korean:|includes\(|lowerContent\.|\.match\(|\.includes\()' || true)

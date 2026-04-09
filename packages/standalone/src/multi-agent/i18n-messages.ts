@@ -61,9 +61,7 @@ export class I18n {
   getLanguage(): string {
     return 'en';
   }
-  static isSupported(_language: string): boolean {
-    return true;
-  }
+  /** @deprecated Removed — always returns 'en' */
   static detectLanguage(_locale?: string): string {
     return 'en';
   }

@@ -84,7 +84,7 @@ describe('Story SRS-1: SystemReminderService', () => {
     it('should switch to Korean labels', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'task-started' }));
-      expect(msg).toContain('Background task started');
+      expect(msg).toContain('Background Task Started');
     });
 
     it('should switch back to English', () => {
@@ -534,14 +534,14 @@ describe('Story SRS-1: SystemReminderService', () => {
     it('should use Korean task-failed label', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'task-failed', error: 'err' }));
-      expect(msg).toContain('Background task failed');
+      expect(msg).toContain('Background Task Failed');
       expect(msg).toContain('Error');
     });
 
     it('should use Korean all-tasks-complete label', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'all-tasks-complete' }));
-      expect(msg).toContain('All background tasks completed');
+      expect(msg).toContain('All Background Tasks Complete');
     });
 
     it('should use Korean batch summary labels', () => {
@@ -551,9 +551,9 @@ describe('Story SRS-1: SystemReminderService', () => {
         makeReminder({ type: 'task-failed', taskId: 'bg_k2', error: 'e' }),
       ];
       const msg = service.formatBatchMessage(reminders);
-      expect(msg).toContain('Succeeded');
-      expect(msg).toContain('Failed');
-      expect(msg).toContain('of');
+      expect(msg).toContain('succeeded');
+      expect(msg).toContain('failed');
+      expect(msg).toContain('out of');
     });
 
     it('should use Korean context injection header', async () => {

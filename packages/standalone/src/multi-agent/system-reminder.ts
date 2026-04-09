@@ -115,41 +115,27 @@ interface ReminderLabels {
   outOf: string;
 }
 
+const enLabels: ReminderLabels = {
+  taskStarted: 'Background Task Started',
+  taskCompleted: 'Background Task Completed',
+  taskFailed: 'Background Task Failed',
+  allTasksComplete: 'All Background Tasks Complete',
+  delegationStarted: 'Delegation Started',
+  delegationCompleted: 'Delegation Completed',
+  id: 'ID',
+  agent: 'Agent',
+  task: 'Task',
+  requestedBy: 'Requested by',
+  duration: 'Duration',
+  error: 'Error',
+  succeeded: 'succeeded',
+  failed: 'failed',
+  outOf: 'out of',
+};
+
 const labels: Record<ReminderLanguage, ReminderLabels> = {
-  en: {
-    taskStarted: 'Background Task Started',
-    taskCompleted: 'Background Task Completed',
-    taskFailed: 'Background Task Failed',
-    allTasksComplete: 'All Background Tasks Complete',
-    delegationStarted: 'Delegation Started',
-    delegationCompleted: 'Delegation Completed',
-    id: 'ID',
-    agent: 'Agent',
-    task: 'Task',
-    requestedBy: 'Requested by',
-    duration: 'Duration',
-    error: 'Error',
-    succeeded: 'succeeded',
-    failed: 'failed',
-    outOf: 'out of',
-  },
-  ko: {
-    taskStarted: 'Background task started',
-    taskCompleted: 'Background task completed',
-    taskFailed: 'Background task failed',
-    allTasksComplete: 'All background tasks completed',
-    delegationStarted: 'Delegation started',
-    delegationCompleted: 'Delegation completed',
-    id: 'ID',
-    agent: 'Agent',
-    task: 'Task',
-    requestedBy: 'Requested by',
-    duration: 'Duration',
-    error: 'Error',
-    succeeded: 'Succeeded',
-    failed: 'Failed',
-    outOf: 'of',
-  },
+  en: enLabels,
+  ko: enLabels,
 };
 
 // ---------------------------------------------------------------------------

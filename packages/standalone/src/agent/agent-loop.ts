@@ -227,28 +227,34 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
  * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
+// Cache gateway-tools.md content (static at runtime, no need to re-read)
+let _gatewayToolsCache: string | null = null;
+// Cache filtered versions keyed by sorted disallowed list
+const _filteredCache = new Map<string, string>();
+
 export function getGatewayToolsPrompt(disallowed?: string[]): string {
-  const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
-
-  let content: string;
-  if (existsSync(gatewayToolsPath)) {
-    content = readFileSync(gatewayToolsPath, 'utf-8');
-  } else {
-    // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
-    logger.warn('gateway-tools.md not found, using registry fallback');
-    content = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
-  }
-
-  // Filter out disallowed tools (e.g., OS agent can't use sub-agent tools)
-  if (disallowed?.length) {
-    for (const tool of disallowed) {
-      // Remove tool description line: "- **tool_name**(...) — description"
-      const pattern = new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm');
-      content = content.replace(pattern, '');
+  if (!_gatewayToolsCache) {
+    const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
+    if (existsSync(gatewayToolsPath)) {
+      _gatewayToolsCache = readFileSync(gatewayToolsPath, 'utf-8');
+    } else {
+      logger.warn('gateway-tools.md not found, using registry fallback');
+      _gatewayToolsCache = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
     }
   }
 
-  return content;
+  if (!disallowed?.length) return _gatewayToolsCache;
+
+  const cacheKey = disallowed.sort().join(',');
+  let filtered = _filteredCache.get(cacheKey);
+  if (!filtered) {
+    filtered = _gatewayToolsCache;
+    for (const tool of disallowed) {
+      filtered = filtered.replace(new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm'), '');
+    }
+    _filteredCache.set(cacheKey, filtered);
+  }
+  return filtered;
 }
 
 export class AgentLoop {
