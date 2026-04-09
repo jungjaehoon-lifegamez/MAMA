@@ -12,6 +12,21 @@ import type { AgentPersonaConfig } from '../../src/multi-agent/types.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 
 // ---------------------------------------------------------------------------
+// Mock config-manager so getConfig() returns a known busy_retry_ms value
+// ---------------------------------------------------------------------------
+
+vi.mock('../../src/cli/config/config-manager.js', async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return {
+    ...actual,
+    getConfig: () => ({
+      timeouts: { busy_retry_ms: 1000 },
+      io: {},
+    }),
+  };
+});
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

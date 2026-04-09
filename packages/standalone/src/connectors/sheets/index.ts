@@ -5,8 +5,9 @@
  */
 
 import { execSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 
 import type {
@@ -48,6 +49,7 @@ export class SheetsConnector implements IConnector {
     } catch {
       throw new Error('gws CLI not found. Install it and run: gws auth login');
     }
+    mkdirSync(dirname(this.snapshotPath), { recursive: true });
     this.loadSnapshot();
   }
 
@@ -66,11 +68,9 @@ export class SheetsConnector implements IConnector {
     }
   }
 
-  private saveSnapshot(): void {
+  private async saveSnapshot(): Promise<void> {
     try {
-      const dir = join(homedir(), '.mama', 'connectors', 'sheets');
-      mkdirSync(dir, { recursive: true });
-      writeFileSync(this.snapshotPath, JSON.stringify(Object.fromEntries(this.lastSnapshot)));
+      await writeFile(this.snapshotPath, JSON.stringify(Object.fromEntries(this.lastSnapshot)));
     } catch {
       // non-fatal
     }
@@ -245,7 +245,7 @@ export class SheetsConnector implements IConnector {
     // lastError was set in catch blocks; clear only if no error occurred this pass
     if (!hadError) this.lastError = undefined;
 
-    this.saveSnapshot();
+    await this.saveSnapshot();
 
     return items;
   }

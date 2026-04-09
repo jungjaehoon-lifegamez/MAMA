@@ -321,6 +321,13 @@ export async function runAgentLoop(
           toolCalls.push({ name: toolName, input });
         }
       };
+      // Set default agent context for /api/code-act calls (Conductor, tier 1)
+      // In normal agent loop execution, this is set per-request by the handler
+      toolExecutor.setCurrentAgentContext(
+        config.multi_agent?.default_agent || 'conductor',
+        'api',
+        'code-act'
+      );
       bridge.injectInto(sandbox, 1);
       const result = await sandbox.execute(code);
       return {
@@ -382,14 +389,21 @@ export async function runAgentLoop(
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
   // (Viewer, Telegram, iMessage, Terminal).
-  if (!toolExecutor['agentProcessManager'] && config.multi_agent?.enabled) {
+  if (!toolExecutor.hasDelegateSupport() && config.multi_agent?.enabled) {
     const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
     const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
     const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
       id,
       ...cfg,
     }));
-    const pm = new AgentProcessManager(config.multi_agent, {}, { backend: runtimeBackend });
+    const pm = new AgentProcessManager(
+      config.multi_agent,
+      {},
+      {
+        backend: runtimeBackend,
+        model: config.agent.model,
+      }
+    );
     const dm = new DelegationManager(agentConfigs);
     toolExecutor.setAgentProcessManager(pm);
     toolExecutor.setDelegationManager(dm);
