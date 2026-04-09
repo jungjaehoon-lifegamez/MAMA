@@ -138,7 +138,7 @@ export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResu
     throw new Error('MAMA API shape is incompatible; failed to initialize memory helpers');
   }
 
-  // Set isolated DB path for MAMA OS (카게무샤 pattern: process.env before initDB)
+  // Set isolated DB path for MAMA OS (kagemusha pattern: process.env before initDB)
   const mamaDbPathForCore = expandPath(config.database.path);
   process.env.MAMA_DB_PATH = mamaDbPathForCore;
 

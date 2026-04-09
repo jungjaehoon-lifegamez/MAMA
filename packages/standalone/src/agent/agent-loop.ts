@@ -227,16 +227,28 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
  * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
-export function getGatewayToolsPrompt(): string {
+export function getGatewayToolsPrompt(disallowed?: string[]): string {
   const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
 
+  let content: string;
   if (existsSync(gatewayToolsPath)) {
-    return readFileSync(gatewayToolsPath, 'utf-8');
+    content = readFileSync(gatewayToolsPath, 'utf-8');
+  } else {
+    // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
+    logger.warn('gateway-tools.md not found, using registry fallback');
+    content = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
   }
 
-  // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
-  logger.warn('gateway-tools.md not found, using registry fallback');
-  return `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
+  // Filter out disallowed tools (e.g., OS agent can't use sub-agent tools)
+  if (disallowed?.length) {
+    for (const tool of disallowed) {
+      // Remove tool description line: "- **tool_name**(...) — description"
+      const pattern = new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm');
+      content = content.replace(pattern, '');
+    }
+  }
+
+  return content;
 }
 
 export class AgentLoop {
@@ -275,6 +287,7 @@ export class AgentLoop {
   private preCompactInjected = false;
   private currentStreamCallbacks?: StreamCallbacks;
   private currentTier: 1 | 2 | 3 = 1;
+  private readonly disallowedTools?: string[];
 
   constructor(
     _oauthManager: OAuthManager,
@@ -305,6 +318,7 @@ export class AgentLoop {
     const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.isGatewayMode = useGatewayMode;
     this.useCodeAct = options.useCodeAct ?? false;
+    this.disallowedTools = options.disallowedTools;
 
     if (useGatewayMode && useMCPMode) {
       logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
@@ -398,7 +412,7 @@ export class AgentLoop {
           getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else {
-        const gatewayToolsPrompt = getGatewayToolsPrompt();
+        const gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
         if (gatewayToolsPrompt) {
           promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
         }
@@ -474,6 +488,9 @@ export class AgentLoop {
     );
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
+    if (this.disallowedTools?.length) {
+      this.mcpExecutor.setDisallowedGatewayTools(this.disallowedTools);
+    }
     this.systemPromptOverride = options.systemPrompt;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.model = options.model!;
@@ -787,7 +804,7 @@ export class AgentLoop {
             gatewayToolsPrompt =
               getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
           } else {
-            gatewayToolsPrompt = getGatewayToolsPrompt();
+            gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
           }
         }
         const fullPrompt = gatewayToolsPrompt
@@ -933,7 +950,7 @@ export class AgentLoop {
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
-              piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n⚠️ 이전 대화가 너무 길어져 새 세션으로 전환되었습니다.\n\n${piResult.response}`;
+              piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n\n${piResult.response}`;
             }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {

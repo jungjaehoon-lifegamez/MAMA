@@ -94,13 +94,20 @@ export function initMainAgentLoop(
     config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
   const useCodeAct = conductorConfig?.useCodeAct === true;
 
+  // OS Agent mode: block sub-agent-specific tools to force delegation.
+  // The OS agent must use delegate() instead of doing sub-agent work directly.
+  const osAgentDisallowed = options?.osAgentMode
+    ? ['report_publish', 'wiki_publish', 'obsidian', 'code_act', 'mcp__code-act__code_act']
+    : undefined;
+
   const agentLoop = new AgentLoop(oauthManager, {
     backend: runtimeBackend,
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,
-    useCodeAct,
+    useCodeAct: options?.osAgentMode ? false : useCodeAct,
     toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
+    disallowedTools: osAgentDisallowed,
     useLanes: true, // Enable lane-based concurrency for Discord
     // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
     // Permission enforcement is handled by MAMA's own RoleManager layer:

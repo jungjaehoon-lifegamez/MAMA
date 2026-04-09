@@ -134,21 +134,21 @@ const labels: Record<ReminderLanguage, ReminderLabels> = {
     outOf: 'out of',
   },
   ko: {
-    taskStarted: '백그라운드 작업 시작',
-    taskCompleted: '백그라운드 작업 완료',
-    taskFailed: '백그라운드 작업 실패',
-    allTasksComplete: '모든 백그라운드 작업 완료',
-    delegationStarted: '위임 시작',
-    delegationCompleted: '위임 완료',
+    taskStarted: 'Background task started',
+    taskCompleted: 'Background task completed',
+    taskFailed: 'Background task failed',
+    allTasksComplete: 'All background tasks completed',
+    delegationStarted: 'Delegation started',
+    delegationCompleted: 'Delegation completed',
     id: 'ID',
-    agent: '에이전트',
-    task: '작업',
-    requestedBy: '요청자',
-    duration: '소요 시간',
-    error: '오류',
-    succeeded: '성공',
-    failed: '실패',
-    outOf: '중',
+    agent: 'Agent',
+    task: 'Task',
+    requestedBy: 'Requested by',
+    duration: 'Duration',
+    error: 'Error',
+    succeeded: 'Succeeded',
+    failed: 'Failed',
+    outOf: 'of',
   },
 };
 
@@ -480,7 +480,7 @@ export class SystemReminderService {
     const l = labels[this.language];
     const header =
       this.language === 'ko'
-        ? `[시스템 알림: 최근 백그라운드 작업 ${recent.length}건]`
+        ? `[System notice: ${recent.length} recent background tasks]`
         : `[System Reminders: ${recent.length} recent background tasks]`;
 
     const entries = recent.map((r) => {

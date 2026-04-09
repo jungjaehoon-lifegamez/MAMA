@@ -7,6 +7,24 @@ if [ -f scripts/check-pii.sh ]; then
   bash scripts/check-pii.sh
 fi
 
+# Korean hardcoding check: block non-functional Korean in source files
+# Allows: regex patterns, string literals in keyword arrays, meta[] lookups, Unicode ranges
+if git diff --cached --name-only | grep -E '\.ts$' | grep -v 'node_modules'; then
+  KOREAN_IN_SOURCE=$(git diff --cached -U0 -- '*.ts' | grep '^+' | grep -v '^+++' | \
+    grep '[가-힣]' | \
+    grep -v -E '(/(가-힣|[가-힣])/|/[^/]*\\\\[가-힣]|meta\[|RegExp|new Set|Keywords|keywords|Patterns|patterns|IGNORE_PATTERNS|INCOMPLETE_PATTERNS|COMPLETION_MARKERS|가-힣_|// Korean:|includes\(|lowerContent\.|\.match\(|\.includes\()' || true)
+  if [ -n "$KOREAN_IN_SOURCE" ]; then
+    echo "❌ Korean text detected in staged .ts files:"
+    echo "$KOREAN_IN_SOURCE"
+    echo ""
+    echo "Source code must be in English. Korean is only allowed in:"
+    echo "  - Regex patterns for Korean input detection"
+    echo "  - Keyword arrays for Korean user matching"
+    echo "  - meta[] lookups for Korean spreadsheet data"
+    exit 1
+  fi
+fi
+
 # Run lint-staged for staged files (ESLint + Prettier)
 npx lint-staged
 
