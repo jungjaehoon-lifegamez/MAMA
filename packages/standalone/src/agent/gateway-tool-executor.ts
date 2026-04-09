@@ -2266,7 +2266,9 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    const cliArgs = [this.obsidianVaultPath, command];
+    // Obsidian CLI syntax: obsidian <command> key=value ... [flags]
+    // Vault is not passed as path — Obsidian uses the default/focused vault
+    const cliArgs = [command];
     for (const [key, value] of Object.entries(args || {})) {
       if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
         cliArgs.push(key);

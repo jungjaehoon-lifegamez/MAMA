@@ -89,6 +89,13 @@ register({
   params: 'pages: [{path, title, type, content, confidence}]',
 });
 register({
+  name: 'obsidian',
+  description:
+    'Execute Obsidian CLI command on the wiki vault. Search, read, create, append, move, delete pages, manage tags and backlinks.',
+  category: 'os_monitoring',
+  params: 'command, args?',
+});
+register({
   name: 'mama_add',
   description: 'Auto-extract and save facts from conversation content via Haiku',
   category: 'memory',
