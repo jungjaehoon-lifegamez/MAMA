@@ -340,6 +340,34 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ path: string; url: string }',
     category: 'os',
   },
+  // Delegation — Tier 1 only (Conductor can delegate tasks to other agents)
+  {
+    name: 'delegate',
+    description:
+      'Delegate a task to another agent with its own persona, tools, and persistent session. Returns the agent response.',
+    params: [
+      {
+        name: 'agentId',
+        type: 'string',
+        required: true,
+        description: 'Target agent ID (e.g., "developer", "reviewer")',
+      },
+      {
+        name: 'task',
+        type: 'string',
+        required: true,
+        description: 'Task description for the target agent',
+      },
+      {
+        name: 'background',
+        type: 'boolean',
+        required: false,
+        description: 'If true, fire-and-forget. Default: false',
+      },
+    ],
+    returnType: '{ agentId: string; response?: string; taskId?: string; message?: string }',
+    category: 'os',
+  },
   // Kagemusha Query — progressive business data exploration
   {
     name: 'kagemusha_overview',

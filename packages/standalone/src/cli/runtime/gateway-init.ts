@@ -129,6 +129,9 @@ export async function initGateways(
       if (multiAgentDiscord) {
         toolExecutor.setDiscordGateway(gatewayInterface);
         multiAgentDiscord.setGatewayToolExecutor(toolExecutor);
+        // Wire delegate dependencies so code-act sandbox can call delegate()
+        toolExecutor.setAgentProcessManager(multiAgentDiscord.getProcessManager());
+        toolExecutor.setDelegationManager(multiAgentDiscord.getDelegationManager());
         console.log('[start] ✓ Gateway tool executor wired to multi-agent handler');
       }
 
@@ -173,6 +176,9 @@ export async function initGateways(
       const multiAgentSlack = slackGateway.getMultiAgentHandler();
       if (multiAgentSlack) {
         multiAgentSlack.setGatewayToolExecutor(toolExecutor);
+        // Wire delegate dependencies so code-act sandbox can call delegate()
+        toolExecutor.setAgentProcessManager(multiAgentSlack.getProcessManager());
+        toolExecutor.setDelegationManager(multiAgentSlack.getDelegationManager());
         console.log('[start] ✓ Gateway tool executor wired to Slack multi-agent handler');
       }
 
