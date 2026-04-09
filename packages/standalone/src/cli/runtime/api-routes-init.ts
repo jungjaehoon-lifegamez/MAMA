@@ -111,6 +111,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         slots: apiServer.reportStore.getAllSorted(),
       });
       console.log(`[Report] Agent published briefing slot`);
+      eventBus.emit({
+        type: 'agent:action',
+        agent: 'dashboard-agent',
+        action: 'publish',
+        target: 'briefing',
+      });
     });
 
     // ── Dashboard Agent ─────────────────────────────────────────────────
