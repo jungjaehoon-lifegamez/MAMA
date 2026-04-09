@@ -700,6 +700,8 @@ export type GatewayToolName =
   | 'report_publish'
   // Wiki compilation
   | 'wiki_publish'
+  // Obsidian vault management via CLI
+  | 'obsidian'
   // Kagemusha query — progressive business data exploration
   | 'kagemusha_overview'
   | 'kagemusha_entities'
