@@ -187,6 +187,22 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       obsWriter.ensureDirectories();
       console.log(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
 
+      // Wire Obsidian vault path for CLI tool
+      const fullWikiPath = obsWriter.getWikiPath();
+      toolExecutor.setObsidianVaultPath(fullWikiPath);
+      console.log(`[Wiki Agent] Obsidian CLI vault: ${fullWikiPath}`);
+
+      // Ensure Obsidian is running for CLI access (macOS only)
+      try {
+        const { execSync: execSyncChild } = await import('child_process');
+        execSyncChild('pgrep -x Obsidian || open -a Obsidian', {
+          timeout: 5000,
+          stdio: 'ignore',
+        });
+      } catch {
+        /* non-fatal: CLI will return error, agent falls back to wiki_publish */
+      }
+
       // Wire wiki_publish tool to shared gateway executor (used by code-act path)
       toolExecutor.setWikiPublisher((pages) => {
         for (const page of pages) {
