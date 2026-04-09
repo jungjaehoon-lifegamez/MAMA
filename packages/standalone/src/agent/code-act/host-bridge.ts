@@ -96,6 +96,37 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ success: boolean; message: string }',
     category: 'os',
   },
+  // Obsidian CLI — vault management
+  {
+    name: 'obsidian',
+    description:
+      'Execute Obsidian CLI command on the wiki vault. Search existing pages before creating new ones to prevent duplicates. ' +
+      'Commands: search, read, create, append, prepend, move, delete, find, ' +
+      'property:set, property:get, property:list, tags, tags:counts, tags:rename, ' +
+      'backlinks, js, daily, daily:append, daily:create.',
+    params: [
+      {
+        name: 'command',
+        type: 'string',
+        required: true,
+        description:
+          'CLI command: search, read, create, append, prepend, move, delete, find, ' +
+          'property:set, property:get, property:list, tags, tags:counts, tags:rename, ' +
+          'backlinks, js, daily, daily:append, daily:create',
+      },
+      {
+        name: 'args',
+        type: 'Record<string, string>',
+        required: false,
+        description:
+          'Named arguments as key-value pairs. Common keys: query, limit, file, path, ' +
+          'name, content, template, to, old, new, tag, code. ' +
+          'Boolean flags (silent, overwrite, total): set value to "true".',
+      },
+    ],
+    returnType: '{ output: string }',
+    category: 'os',
+  },
   // File I/O
   {
     name: 'Read',
@@ -473,6 +504,7 @@ export const READ_ONLY_TOOLS = new Set([
   'os_get_config',
   'pr_review_threads',
   'agent_notices',
+  'obsidian',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
