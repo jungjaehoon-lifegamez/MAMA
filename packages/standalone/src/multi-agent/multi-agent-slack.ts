@@ -554,16 +554,16 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
               ? ` [${event.completedSteps}/${event.totalSteps}]`
               : '';
           if (event.type === 'step-started') {
-            msg = `  ${event.agentDisplayName}${modelTag}${progress} 시작...`;
+            msg = `  ${event.agentDisplayName}${modelTag}${progress} starting...`;
           } else if (event.type === 'step-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
             const pct =
               event.totalSteps && event.completedSteps !== undefined
                 ? ` (${Math.round((event.completedSteps / event.totalSteps) * 100)}%)`
                 : '';
-            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} 완료`;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} completed`;
           } else if (event.type === 'step-failed') {
-            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             wfClient.chat.postMessage({ channel: context.channelId, text: msg }).catch(() => {});
@@ -640,12 +640,12 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           }
           let msg = '';
           if (event.type === 'council-round-started') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} starting...`;
           } else if (event.type === 'council-round-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) completed`;
           } else if (event.type === 'council-round-failed') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             try {
@@ -716,8 +716,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const queueSize = this.messageQueue.getQueueSize(agentId);
         const queueText =
           queueSize > 0
-            ? `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. ${queueSize}개의 메시지가 대기열에 있습니다.`
-            : `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. 요청이 대기열에 등록되었습니다.`;
+            ? `⚠️ ${agent.display_name} is currently busy. ${queueSize} messages queued.`
+            : `⚠️ ${agent.display_name} is currently busy. Your request has been queued.`;
 
         // Trigger immediate drain if process is idle or reaped
         this.tryDrainNow(agentId, 'slack', context.channelId).catch(() => {});
@@ -733,8 +733,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
       const fallbackMessage =
         errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
-          ? `⚠️ ${agent.display_name} 응답이 시간 초과되어 처리 결과를 못 받았습니다. 잠시 후 다시 시도해 주세요.`
-          : `⚠️ ${agent.display_name} 처리 중 오류가 발생했습니다: ${errMsg}`;
+          ? `⚠️ ${agent.display_name} response timed out. Please try again later.`
+          : `⚠️ ${agent.display_name} error occurred while processing: ${errMsg}`;
 
       const fallbackRaw =
         errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')

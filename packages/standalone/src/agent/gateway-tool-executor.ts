@@ -178,6 +178,7 @@ export class GatewayToolExecutor {
   private currentAgentId: string = '';
   private currentSource: string = '';
   private currentChannelId: string = '';
+  private disallowedGatewayTools: Set<string> = new Set();
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
   private wikiPublisher:
     | ((
@@ -220,6 +221,9 @@ export class GatewayToolExecutor {
     this.currentAgentId = agentId;
     this.currentSource = source;
     this.currentChannelId = channelId;
+  }
+  setDisallowedGatewayTools(tools: string[]): void {
+    this.disallowedGatewayTools = new Set(tools);
   }
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
@@ -412,6 +416,14 @@ export class GatewayToolExecutor {
         undefined,
         false
       );
+    }
+
+    // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
+    if (this.disallowedGatewayTools.has(toolName)) {
+      return {
+        success: false,
+        error: `Tool "${toolName}" is not available. Use delegate() to assign this work to the appropriate sub-agent.`,
+      } as GatewayToolResult;
     }
 
     // Check tool permission

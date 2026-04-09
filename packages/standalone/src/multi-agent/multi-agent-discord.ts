@@ -724,16 +724,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
               ? ` [${event.completedSteps}/${event.totalSteps}]`
               : '';
           if (event.type === 'step-started') {
-            msg = `  ${event.agentDisplayName}${modelTag}${progress} 시작...`;
+            msg = `  ${event.agentDisplayName}${modelTag}${progress} starting...`;
           } else if (event.type === 'step-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
             const pct =
               event.totalSteps && event.completedSteps !== undefined
                 ? ` (${Math.round((event.completedSteps / event.totalSteps) * 100)}%)`
                 : '';
-            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} 완료`;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} completed`;
           } else if (event.type === 'step-failed') {
-            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             this.sendChannelNotification(context.channelId, msg).catch(() => {});
@@ -783,12 +783,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           if (!this.discordClient) return;
           let msg = '';
           if (event.type === 'council-round-started') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} starting...`;
           } else if (event.type === 'council-round-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) completed`;
           } else if (event.type === 'council-round-failed') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             this.sendChannelNotification(context.channelId, msg).catch(() => {});
@@ -1098,8 +1098,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       /\bmodified\b.*\bfile/i,
       /\bEdit\b.*\bsuccess/i,
       /\bWrite\b.*\bsuccess/i,
-      /파일.*수정/,
-      /수정.*완료/,
+      /파일.*수정/, // Korean: "file...modified" — detects Korean user input
+      /수정.*완료/, // Korean: "modification...completed" — detects Korean user input
       /\[SOLO\]/i,
       /\[PAIR\]/i,
     ];

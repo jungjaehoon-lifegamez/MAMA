@@ -299,6 +299,10 @@
             <i data-lucide="brain"></i>
             <span>Memory</span>
           </button>
+          <button class="mama-nav-item" data-tab="logs" onclick="window.switchTab && window.switchTab('logs')">
+            <i data-lucide="terminal"></i>
+            <span>Logs</span>
+          </button>
           <button class="mama-nav-item" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
             <i data-lucide="settings"></i>
             <span>Settings</span>
@@ -404,6 +408,11 @@
               <div style="padding:40px;text-align:center;color:#9E9891;font-size:14px">Loading wiki...</div>
             </div>
           </div>
+        </div>
+
+        <!-- Logs Tab -->
+        <div class="tab-content" id="tab-logs">
+          <iframe id="logs-iframe" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
         </div>
 
         <!-- Settings Tab -->
@@ -926,6 +935,10 @@
           <i data-lucide="brain"></i>
           <span>Memory</span>
         </button>
+        <button class="mama-mobile-tab" data-tab="logs" onclick="window.switchTab && window.switchTab('logs')">
+          <i data-lucide="terminal"></i>
+          <span>Logs</span>
+        </button>
         <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
           <i data-lucide="settings"></i>
           <span>Settings</span>
@@ -1209,6 +1222,11 @@
           wiki.init();
         } else if (tabName === 'playground') {
           playground.init();
+        } else if (tabName === 'logs') {
+          const iframe = document.getElementById('logs-iframe');
+          if (iframe && !iframe.src) {
+            iframe.src = '/playgrounds/mama-log-viewer.html';
+          }
         }
       }
 
