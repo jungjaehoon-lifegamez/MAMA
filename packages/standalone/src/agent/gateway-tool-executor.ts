@@ -2140,7 +2140,9 @@ export class GatewayToolExecutor {
     }
 
     // Permission check using existing DelegationManager
-    const sourceAgentId = this.currentAgentId || 'unknown';
+    // Default to 'conductor' when no agent context is set (e.g., MessageRouter path, audit cron)
+    // Conductor is the default agent and the only tier-1 agent that should delegate
+    const sourceAgentId = this.currentAgentId || 'conductor';
     const check = this.delegationManagerRef.isDelegationAllowed(sourceAgentId, agentId);
     if (!check.allowed) {
       return {
