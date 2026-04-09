@@ -188,6 +188,30 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         action: 'publish',
         target: 'briefing',
       });
+
+      // Persist briefing summary to mama memory for Conductor querying
+      void (async () => {
+        try {
+          const allHtml = Object.values(slots).join(' ');
+          const textSummary = allHtml
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const truncated =
+            textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
+          const { handleSave } = await import('../../agent/mama-tool-handlers.js');
+          await handleSave(mamaApi as Parameters<typeof handleSave>[0], {
+            type: 'decision',
+            topic: 'dashboard_briefing',
+            decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+            reasoning: 'Auto-saved by dashboard agent after report_publish',
+            scopes: [{ kind: 'global', id: 'system' }],
+          });
+          console.log('[Dashboard Agent] Briefing saved to mama memory');
+        } catch {
+          /* non-fatal */
+        }
+      })();
     });
 
     // Run dashboard agent on startup (after data loads) + every 30 minutes
@@ -308,6 +332,28 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           obsWriter.appendLog('compile', `Published ${pages.length} pages`);
         }
         console.log(`[Wiki Agent] Published ${pages.length} pages via wiki_publish`);
+
+        // Persist wiki compilation summary to mama memory for Conductor querying
+        void (async () => {
+          try {
+            const pageSummary = (pages as Array<{ title?: string; path?: string; type?: string }>)
+              .slice(0, 20)
+              .map((p) => `- ${p.title || p.path} (${p.type || 'page'})`)
+              .join('\n');
+            const summary = `Wiki compilation (${new Date().toISOString().split('T')[0]}): ${pages.length} pages\n${pageSummary}`;
+            const { handleSave } = await import('../../agent/mama-tool-handlers.js');
+            await handleSave(mamaApi as Parameters<typeof handleSave>[0], {
+              type: 'decision',
+              topic: 'wiki_compilation',
+              decision: summary,
+              reasoning: 'Auto-saved by wiki agent after wiki_publish',
+              scopes: [{ kind: 'global', id: 'system' }],
+            });
+            console.log('[Wiki Agent] Compilation saved to mama memory');
+          } catch {
+            /* non-fatal */
+          }
+        })();
       });
 
       const wikiAgentContext: AgentContext = {
