@@ -325,8 +325,30 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const runWikiAgent = async () => {
         try {
           console.log('[Wiki Agent] Starting compilation...');
+          // Build list of existing wiki pages so LLM reuses exact paths
+          let existingPages: string[] = [];
+          try {
+            const { readdirSync, statSync } = await import('node:fs');
+            const walkDir = (dir: string, prefix: string): string[] => {
+              const entries: string[] = [];
+              for (const f of readdirSync(dir)) {
+                const full = path.join(dir, f);
+                const rel = prefix ? `${prefix}/${f}` : f;
+                if (statSync(full).isDirectory()) {
+                  entries.push(...walkDir(full, rel));
+                } else if (f.endsWith('.md') && f !== 'log.md') {
+                  entries.push(rel);
+                }
+              }
+              return entries;
+            };
+            existingPages = walkDir(obsWriter.getWikiPath(), '');
+          } catch { /* non-fatal */ }
+          const existingPagesHint = existingPages.length > 0
+            ? `\n\nExisting wiki pages (reuse these exact paths, do NOT create duplicates):\n${existingPages.map(p => `- ${p}`).join('\n')}\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.`
+            : '\n\nCRITICAL: Do NOT include frontmatter (--- blocks) or # Title heading in content. System adds both automatically.';
           await wikiAgentLoop.run(
-            'Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.',
+            `Search for recent decisions across all projects using mama_search, then compile them into wiki pages and publish with wiki_publish.${existingPagesHint}`,
             {
               source: 'wiki-agent',
               channelId: 'system',
