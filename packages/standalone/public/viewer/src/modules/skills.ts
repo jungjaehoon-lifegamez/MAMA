@@ -450,8 +450,8 @@ export const SkillsModule = {
   /**
    * Open Skill Lab with existing skill content for editing
    */
-  async editInSkillLab(_source: string, _id: string): Promise<void> {
-    alert('Skill editing is available via CLI: mama skill edit <id>');
+  async editInSkillLab(_source: string, id: string): Promise<void> {
+    alert(`Skill editing is available via CLI: mama skill edit ${id}`);
   },
 
   /**

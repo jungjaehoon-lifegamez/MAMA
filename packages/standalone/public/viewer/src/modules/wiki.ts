@@ -57,15 +57,15 @@ function renderTreeNode(node: WikiTreeNode, depth: number = 0): string {
       `<div class="wiki-tree-dir" data-storage-key="${storageKey}" ` +
       `style="padding:3px 0;font-size:12px;font-weight:600;color:#6B6560;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">` +
       `<span class="wiki-dir-arrow" style="display:inline-block;font-size:9px;width:10px;color:#9E9891">${arrow}</span>` +
-      `<span>\u{1F4C1}</span><span>${node.name}</span></div>` +
+      `<span>\u{1F4C1}</span><span>${escapeHtml(node.name)}</span></div>` +
       `<div class="wiki-dir-children" style="${childDisplay}">${children}</div></div>`
     );
   }
   return (
-    `<div class="wiki-tree-file" data-path="${node.path}" ` +
+    `<div class="wiki-tree-file" data-path="${escapeHtml(node.path || '')}" ` +
     `style="padding:3px 0 3px ${indent}px;font-size:12px;color:#1A1A1A;cursor:pointer;border-radius:3px" ` +
     `onmouseover="this.style.background='#F5F3EF'" onmouseout="this.style.background='transparent'">` +
-    `${node.name.replace(/\.md$/, '')}</div>`
+    `${escapeHtml(node.name.replace(/\.md$/, ''))}</div>`
   );
 }
 
