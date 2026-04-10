@@ -124,7 +124,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
           'Boolean flags (silent, overwrite, total): set value to "true".',
       },
     ],
-    returnType: '{ output: string }',
+    returnType: '{ data: { output: string } }',
     category: 'os',
   },
   // File I/O
@@ -377,8 +377,14 @@ const TOOL_REGISTRY: ToolMeta[] = [
         required: false,
         description: 'If true, fire-and-forget. Default: false',
       },
+      {
+        name: 'skill',
+        type: 'string',
+        required: false,
+        description: 'Skill name to inject from ~/.mama/skills/{skill}.md',
+      },
     ],
-    returnType: '{ agentId: string; response?: string; taskId?: string; message?: string }',
+    returnType: '{ data: { agentId: string; response?: string; duration_ms?: number; message?: string } }',
     category: 'os',
   },
   // System — agent activity notices
@@ -421,7 +427,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'limit', type: 'number', required: false },
     ],
     returnType:
-      'Array<{ id: string; name: string; channel: string; type: string; totalMessages: number; recentMessages: number; activeTasks: number; totalTasks: number; lastActive: string }>',
+      '{ entities: Array<{ id: string; name: string; channel: string; type: string; totalMessages: number; recentMessages: number; activeTasks: number; totalTasks: number; lastActive: string }> }',
     category: 'memory',
   },
   {
@@ -446,7 +452,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'limit', type: 'number', required: false },
     ],
     returnType:
-      'Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }>',
+      '{ tasks: Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }> }',
     category: 'memory',
   },
   {
@@ -470,7 +476,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'search', type: 'string', required: false, description: 'Text search in content' },
     ],
     returnType:
-      'Array<{ id: number; channel: string; author: string; content: string; timestamp: string }>',
+      '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
     category: 'memory',
   },
 ];

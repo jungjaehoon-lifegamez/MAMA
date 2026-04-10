@@ -517,26 +517,26 @@ export class GatewayToolExecutor {
           );
       }
 
-      // MAMA tools require API
-      const api = await this.initializeMAMAApi();
+      // Lazy MAMA API init — only for tools that need it
+      const getApi = () => this.initializeMAMAApi();
 
       switch (toolName as GatewayToolName) {
         case 'mama_save':
           return await handleSave(
-            api,
+            await getApi(),
             input as SaveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
               : undefined
           );
         case 'mama_search':
-          return await handleSearch(api, input as SearchInput);
+          return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
         case 'mama_update':
-          return await handleUpdate(api, input as UpdateInput);
+          return await handleUpdate(await getApi(), input as UpdateInput);
         case 'mama_load_checkpoint':
-          return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
+          return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
         case 'mama_add':
           return await this.handleMamaAdd(input as { content: string });
         case 'mama_ingest':
@@ -563,13 +563,15 @@ export class GatewayToolExecutor {
               .trim();
             const truncated =
               textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
-            void handleSave(api, {
-              type: 'decision' as const,
-              topic: 'dashboard_briefing',
-              decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
-              reasoning: 'Auto-saved by dashboard agent after report_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            }).catch(() => {
+            void getApi().then((a) =>
+              handleSave(a, {
+                type: 'decision' as const,
+                topic: 'dashboard_briefing',
+                decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+                reasoning: 'Auto-saved by dashboard agent after report_publish',
+                scopes: [{ kind: 'global', id: 'system' }],
+              })
+            ).catch(() => {
               /* non-fatal */
             });
 
@@ -622,13 +624,15 @@ export class GatewayToolExecutor {
               )
               .join('\n');
             const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
-            void handleSave(api, {
-              type: 'decision' as const,
-              topic: 'wiki_compilation',
-              decision: wikiSummary,
-              reasoning: 'Auto-saved by wiki agent after wiki_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            }).catch(() => {
+            void getApi().then((a) =>
+              handleSave(a, {
+                type: 'decision' as const,
+                topic: 'wiki_compilation',
+                decision: wikiSummary,
+                reasoning: 'Auto-saved by wiki agent after wiki_publish',
+                scopes: [{ kind: 'global', id: 'system' }],
+              })
+            ).catch(() => {
               /* non-fatal */
             });
 
@@ -683,7 +687,8 @@ export class GatewayToolExecutor {
           return { success: true, messages: queryMessages(msgInput) };
         }
         case 'agent_notices': {
-          const limit = Number((input as { limit?: number }).limit) || 10;
+          const rawLimit = Number((input as { limit?: number }).limit);
+          const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 10;
           if (!this.agentEventBus) {
             return { success: true, data: { notices: [], message: 'Event bus not available' } };
           }
@@ -2041,10 +2046,14 @@ export class GatewayToolExecutor {
 
     // Resolve skill path safely — reject path traversal attempts
     const resolveSkillPath = (skillName: string): string | null => {
-      if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) return null;
+      if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) {
+        return null;
+      }
       const skillsDir = join(homedir(), '.mama', 'skills');
       const resolved = resolve(skillsDir, `${skillName}.md`);
-      if (!resolved.startsWith(skillsDir)) return null;
+      if (!resolved.startsWith(skillsDir)) {
+        return null;
+      }
       return resolved;
     };
 
