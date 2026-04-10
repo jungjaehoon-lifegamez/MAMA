@@ -62,6 +62,71 @@ const TOOL_REGISTRY: ToolMeta[] = [
       '{ summary?: string; next_steps?: string; open_files?: string[]; message?: string }',
     category: 'memory',
   },
+  // Dashboard
+  {
+    name: 'report_publish',
+    description:
+      'Update dashboard report slots with HTML. Each slot is a section you write as HTML. Write analysis, not data listing.',
+    params: [
+      {
+        name: 'slots',
+        type: 'Record<string, string>',
+        required: true,
+        description:
+          'Object mapping slot IDs to HTML strings. Keys: briefing, alerts, activity, pipeline. Values: your analysis as styled HTML.',
+      },
+    ],
+    returnType: '{ success: boolean; message: string }',
+    category: 'os',
+  },
+  // Wiki
+  {
+    name: 'wiki_publish',
+    description:
+      'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
+    params: [
+      {
+        name: 'pages',
+        type: 'Array<{ path: string; title: string; type: string; content: string; confidence: string }>',
+        required: true,
+        description:
+          'Array of wiki pages to publish. Each page has path, title, type (entity/lesson/synthesis/process), content (markdown), confidence (high/medium/low).',
+      },
+    ],
+    returnType: '{ success: boolean; message: string }',
+    category: 'os',
+  },
+  // Obsidian CLI — vault management
+  {
+    name: 'obsidian',
+    description:
+      'Execute Obsidian CLI command on the wiki vault. Search existing pages before creating new ones to prevent duplicates. ' +
+      'Commands: search, read, create, append, prepend, move, delete, find, ' +
+      'property:set, property:get, property:list, tags, tags:counts, tags:rename, ' +
+      'backlinks, js, daily, daily:append, daily:create.',
+    params: [
+      {
+        name: 'command',
+        type: 'string',
+        required: true,
+        description:
+          'CLI command: search, read, create, append, prepend, move, delete, find, ' +
+          'property:set, property:get, property:list, tags, tags:counts, tags:rename, ' +
+          'backlinks, js, daily, daily:append, daily:create',
+      },
+      {
+        name: 'args',
+        type: 'Record<string, string>',
+        required: false,
+        description:
+          'Named arguments as key-value pairs. Common keys: query, limit, file, path, ' +
+          'name, content, template, to, old, new, tag, code. ' +
+          'Boolean flags (silent, overwrite, total): set value to "true".',
+      },
+    ],
+    returnType: '{ data: { output: string } }',
+    category: 'os',
+  },
   // File I/O
   {
     name: 'Read',
@@ -288,23 +353,131 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ threads?: ReviewThread[]; summary?: string }',
     category: 'os',
   },
-  // Playground
+  // Delegation — Tier 1 only (Conductor can delegate tasks to other agents)
   {
-    name: 'playground_create',
+    name: 'delegate',
     description:
-      'Create an interactive HTML playground. Use file_path for large HTML instead of inline.',
+      'Delegate a task to another agent with its own persona, tools, and persistent session. Returns the agent response.',
     params: [
-      { name: 'name', type: 'string', required: true },
-      { name: 'html', type: 'string', required: false, description: 'Inline HTML content' },
       {
-        name: 'file_path',
+        name: 'agentId',
+        type: 'string',
+        required: true,
+        description: 'Target agent ID (e.g., "developer", "reviewer")',
+      },
+      {
+        name: 'task',
+        type: 'string',
+        required: true,
+        description: 'Task description for the target agent',
+      },
+      {
+        name: 'background',
+        type: 'boolean',
+        required: false,
+        description: 'If true, fire-and-forget. Default: false',
+      },
+      {
+        name: 'skill',
         type: 'string',
         required: false,
-        description: 'Path to HTML file (use instead of html for large content)',
+        description: 'Skill name to inject from ~/.mama/skills/{skill}.md',
       },
     ],
-    returnType: '{ path: string; url: string }',
+    returnType: '{ data: { agentId: string; response?: string; duration_ms?: number; message?: string } }',
     category: 'os',
+  },
+  // System — agent activity notices
+  {
+    name: 'agent_notices',
+    description: 'Get recent agent activity notices.',
+    params: [
+      { name: 'limit', type: 'number', required: false, description: 'Max notices (default: 10)' },
+    ],
+    returnType:
+      '{ data: { notices: Array<{ agent: string; action: string; target: string; timestamp: string }> } }',
+    category: 'system',
+  },
+  // Kagemusha Query — progressive business data exploration
+  {
+    name: 'kagemusha_overview',
+    description:
+      'Get overview of all business data: room counts, task stats, message volume. Start here.',
+    params: [],
+    returnType:
+      '{ rooms: { total: number; byChannel: Record<string, number> }; tasks: { total: number; byStatus: Record<string, number> }; messages: { total: number; recent30d: number } }',
+    category: 'memory',
+  },
+  {
+    name: 'kagemusha_entities',
+    description: 'List people and project channels with activity stats. Like browsing a file tree.',
+    params: [
+      {
+        name: 'channel',
+        type: 'string',
+        required: false,
+        description: "Filter by platform: 'kakao', 'slack', 'chatwork', 'line', 'telegram'",
+      },
+      {
+        name: 'activeOnly',
+        type: 'boolean',
+        required: false,
+        description: 'Only entities active in last 30 days',
+      },
+      { name: 'limit', type: 'number', required: false },
+    ],
+    returnType:
+      '{ entities: Array<{ id: string; name: string; channel: string; type: string; totalMessages: number; recentMessages: number; activeTasks: number; totalTasks: number; lastActive: string }> }',
+    category: 'memory',
+  },
+  {
+    name: 'kagemusha_tasks',
+    description:
+      'Query tasks by room, status, priority, or text search. Like reading type definitions.',
+    params: [
+      {
+        name: 'sourceRoom',
+        type: 'string',
+        required: false,
+        description: 'Room ID from kagemusha_entities (e.g., "slack:CHANNEL_ID")',
+      },
+      {
+        name: 'status',
+        type: 'string',
+        required: false,
+        description: 'pending, in_progress, done, completed, dismissed',
+      },
+      { name: 'priority', type: 'string', required: false, description: 'urgent, high, normal' },
+      { name: 'search', type: 'string', required: false, description: 'Text search in title' },
+      { name: 'limit', type: 'number', required: false },
+    ],
+    returnType:
+      '{ tasks: Array<{ id: number; title: string; status: string; priority: string; deadline: string | null; sourceRoom: string | null; createdAt: string }> }',
+    category: 'memory',
+  },
+  {
+    name: 'kagemusha_messages',
+    description:
+      'Read raw messages from a specific channel. Like reading source code. Follow entity → task → messages.',
+    params: [
+      {
+        name: 'channelId',
+        type: 'string',
+        required: true,
+        description: 'Channel ID from kagemusha_entities result (e.g., "kakao:ROOM_NAME")',
+      },
+      {
+        name: 'since',
+        type: 'string',
+        required: false,
+        description: 'ISO date (default: 7 days ago)',
+      },
+      { name: 'limit', type: 'number', required: false },
+      { name: 'search', type: 'string', required: false, description: 'Text search in content' },
+    ],
+    returnType:
+      '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
+    category: 'memory',
   },
 ];
 
@@ -318,6 +491,7 @@ export const READ_ONLY_TOOLS = new Set([
   'os_list_bots',
   'os_get_config',
   'pr_review_threads',
+  'agent_notices',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */

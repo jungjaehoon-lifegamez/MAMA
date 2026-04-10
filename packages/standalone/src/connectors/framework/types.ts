@@ -36,6 +36,8 @@ export interface ChannelConfig {
   boardId?: string;
   /** Deliverable: Drive folder ID */
   folderId?: string;
+  /** Deliverable: Shared Drive (Team Drive) ID */
+  driveId?: string;
   /** Spoke: Obsidian vault path */
   vaultPath?: string;
   /** Spoke: file watch patterns */

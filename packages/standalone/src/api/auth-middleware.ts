@@ -9,7 +9,7 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import { recordSecurityEvent } from '../security/security-monitor.js';
+import { recordSecurityEvent, recordAuthFailure, isIpBanned } from '../security/security-monitor.js';
 import { getForwardedClientAddress, isTrustedProxyPeer } from '../security/trusted-proxy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -199,8 +199,17 @@ export function isAuthenticated(req: IncomingMessage, options: AuthOptions = {})
  *   app.use('/api/cron', requireAuth, cronRouter);
  */
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {
+  const clientAddress = getClientAddress(req);
+
+  // Banned IP → reject immediately
+  if (isIpBanned(clientAddress)) {
+    res.status(403).json({ error: true, code: 'FORBIDDEN', message: 'Access denied.' });
+    return;
+  }
+
   if (!isAuthenticated(req)) {
     logUnauthorizedAttempt(req);
+    recordAuthFailure(clientAddress);
     res.status(401).json({
       error: true,
       code: 'UNAUTHORIZED',

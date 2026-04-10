@@ -1,112 +1,61 @@
 # MAMA OS — Local AI Runtime with Connected Memory
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D22.13.0-brightgreen)](https://nodejs.org)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
 [![LongMemEval](https://img.shields.io/badge/LongMemEval-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-2800%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Your AI remembers why, not just what.
+> Your scattered knowledge, organized by AI agents that never sleep.
 
-MAMA OS is a **local AI runtime** that turns conversations, decisions, and work artifacts into a structured knowledge graph. Every choice is saved with reasoning. Every mistake becomes a reference. When AI agents connect to MAMA, they don't just answer — they understand your context and recommend with evidence.
+## The Problem
 
-```
-Session 1:  "Use SQLite for the project"
-Session 5:  "Switch to PostgreSQL — SQLite can't handle concurrent writes"
-Session 12: "Should we use MongoDB for the new service?"
-            → MAMA: "You switched from SQLite to PostgreSQL in Session 5
-               because of concurrent write issues. MongoDB has similar
-               trade-offs. Here's what happened last time..."
-```
+Your knowledge is everywhere — Slack threads, email chains, code reviews, meeting notes, spreadsheets, Telegram messages. No human can track all of it. Important decisions get buried. Context gets lost between tools. When you need to make a decision, the information that would help is scattered across ten different apps and three months of history.
 
-## Why MAMA OS
+This isn't a memory problem. It's an intelligence problem.
 
-AI agents today are brilliant but amnesiac. They forget everything between sessions. MAMA solves this:
+## What MAMA OS Does
 
-|               | Without MAMA           | With MAMA                               |
-| ------------- | ---------------------- | --------------------------------------- |
-| **Memory**    | Forgets after session  | Knowledge graph with decision evolution |
-| **Context**   | Generic answers        | Answers grounded in your history        |
-| **Mistakes**  | Repeat the same errors | Past failures prevent future ones       |
-| **Knowledge** | Only general knowledge | Domain-specific, accumulated over time  |
+MAMA OS is a local daemon that connects to your apps, reads everything continuously, and turns scattered records into organized knowledge — then delivers actionable briefings so you can make better decisions faster.
 
-### Why We Pivoted
+**What the knowledge agents do:**
 
-MAMA started as a multi-agent dashboard — skills marketplace, playground, agent swarm, cron scheduler. Those features still exist and work, but they're no longer the focus.
-
-Why? Because **AI agents commoditized all of it.** Claude, GPT, Codex can all orchestrate sub-agents, execute code, and run tools out of the box. Building another agent framework is competing with the foundation model providers themselves.
-
-What AI agents **cannot** do is remember. Every session starts from zero. That's the gap only a persistent memory layer can fill — and that's where MAMA's real value lies.
-
-| Commoditized (still works, not the focus) | Unique to MAMA (core focus)                     |
-| ----------------------------------------- | ----------------------------------------------- |
-| Multi-agent orchestration                 | Knowledge graph with decision evolution         |
-| Skills/plugins marketplace                | Automatic memory extraction from conversations  |
-| Code sandbox                              | Cross-source intelligence (code + chat + email) |
-| Cron scheduling                           | Domain-specific recall with "why" context       |
-
-### The Vision: From Tool to Partner
+- **Read everything** — 15 connectors poll Slack, Gmail, Trello, Obsidian, and more. Every day, every channel.
+- **Identify what matters** — Out of thousands of messages, surface the decisions, deadlines, and changes that affect your work
+- **Connect across sources** — A Slack conversation + a Trello card + an email about the same project are linked automatically
+- **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
+- **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and next steps
+- **Brief you proactively** — When you start working, relevant context from all sources is already there
 
 ```
-Today:     General-purpose AI agent (smart but no context)
-+ MAMA:    AI agent with your domain knowledge (smart + experienced)
-Future:    AI that understands why your team makes decisions the way it does
+Without MAMA:  You read 5 Slack channels, 3 email threads, check Trello,
+               re-read old PRs, then try to piece together the full picture.
+
+With MAMA:     Agents already read everything. You get a briefing with
+               what changed, what's at risk, and what needs your decision.
 ```
 
-Tacit knowledge — the know-how that lives in conversations, failed experiments, and tribal memory — is the most valuable and hardest to capture asset in any organization. MAMA captures it automatically through a knowledge graph that preserves not just facts, but the reasoning behind every decision.
+**This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
 
-## Architecture
+## How It Runs
+
+MAMA OS executes AI agents as **official CLI subprocesses** — spawning `claude` or `codex` the same way you would in your terminal.
 
 ```
-  Conversations                Files & Documents            External Apps
-  ─────────────                ─────────────────            ─────────────
-  Claude Code (hooks)          PDF / Images                 Gmail MCP ──┐
-  Telegram ──────┐             Google Drive                 Calendar ───┤
-  Discord  ──────┤             Slack attachments            GitHub ─────┤
-  Slack    ──────┤                    │                     Notion ─────┘
-  Web Chat ──────┘                    │                          │
-        │                             │                     MCP Bridge
-        ▼                             ▼                          │
-   ingestConversation            ingestDocument                  │
-        │                             │                          │
-        └──────────┬──────────────────┴──────────────────────────┘
-                   ▼
-          MAMA OS (localhost:3847)
-     ┌──────────────────────────────┐
-     │   Memory Agent               │
-     │   (observe, extract, evolve) │
-     │                              │
-     │   Knowledge Graph Engine     │
-     │   ┌──────────────────────┐   │
-     │   │ facts, decisions,    │   │
-     │   │ preferences (nodes)  │   │
-     │   │ supersedes/builds_on │   │
-     │   │ debates/synthesizes  │   │
-     │   │ (edges)              │   │
-     │   │ vector + FTS5 search │   │
-     │   └──────────────────────┘   │
-     └──────────────────────────────┘
-                   │
-              SQLite (local)
-         ~/.claude/mama-memory.db
+MAMA OS daemon
+  └─ spawns: claude --session-id abc --system-prompt "..."
+       └─ Claude Code CLI (your existing OAuth session)
+            └─ Anthropic API (standard authenticated request)
 ```
 
-**Local-first.** All data stays on your device. No cloud dependency. AI provider independent — works with Claude, GPT, Codex.
+This is the provider-sanctioned execution method. No API keys to manage, no token extraction, no header spoofing. Your existing CLI authentication is reused directly.
 
-### Knowledge Sources
+**Why this matters:** Some third-party agent frameworks access Claude via unofficial methods — extracting OAuth tokens, spoofing API headers, or bypassing rate limits. These approaches violate [Anthropic's Terms of Service](https://www.anthropic.com/policies/terms) and risk account suspension. MAMA OS doesn't do any of that. If `claude` or `codex` works in your terminal, MAMA OS works.
 
-MAMA's knowledge graph isn't limited to conversations. Any source of knowledge can be ingested:
-
-| Source                   | Method                                             | Status     |
-| ------------------------ | -------------------------------------------------- | ---------- |
-| **Claude Code sessions** | Plugin hooks → `ingestConversation`                | Production |
-| **Messenger chats**      | Telegram/Discord/Slack bots → `ingestConversation` | Production |
-| **PDF / Documents**      | Connector → LLM extraction → `ingestDocument`      | v0.17      |
-| **Images**               | Connector → LLM vision → `ingestDocument`          | v0.17      |
-| **Google Drive**         | MCP Bridge → `ingestDocument`                      | v0.17      |
-| **Gmail / Calendar**     | MCP Bridge → `ingestConversation`                  | v0.17      |
-| **GitHub / Notion**      | MCP Bridge → `ingestConversation`                  | v0.17      |
-
-mama-core stores **extracted facts only**, never raw files. Connectors handle extraction, mama-core handles storage + search. This means 100+ existing [MCP servers](https://modelcontextprotocol.io/) can feed into MAMA's knowledge graph via a thin bridge adapter.
+```bash
+# Already have Claude Code?
+claude --version   # If this works, you're ready
+mama start         # MAMA uses your existing authentication
+```
 
 ## Knowledge Graph
 
@@ -126,30 +75,65 @@ MAMA doesn't just store facts. It tracks how knowledge evolves:
 
 Edge types: `supersedes` (replaced), `builds_on` (extended), `debates` (alternative view), `synthesizes` (unified from multiple).
 
-This means MAMA can answer "why did we switch?" — not just "what do we use?"
+MAMA answers "why did we switch?" — not just "what do we use?"
+
+## Architecture
+
+```
+Connectors (15)          Gateways (4)
+Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
+       |                        |
+       v                        v
+ 3-Pass Extraction       Knowledge Agents
+ (Truth → Hub → Spoke)  (Conductor, Dashboard, Wiki, Memory)
+       |                        |
+       +--------+-------+------+
+                |
+         MAMA Core (mama-memory.db)
+         Local SQLite + 1024-dim embeddings
+         Knowledge graph + evolution edges
+                |
+         +------+------+
+         |             |
+    Viewer UI     Claude Code Plugin
+```
+
+**Local-first.** All data stays on your device. No cloud. AI provider independent — works with Claude, Codex, or any future backend.
+
+## Security
+
+MAMA OS has full system access via the backend CLI — so security is foundational, not optional.
+
+- **Local-only by default** — Binds to localhost. External access requires explicit tunnel + authentication.
+- **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode, bulk extraction limits. Built from a [real incident](docs/guides/security.md), not theory.
+- **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
+- **Agent permission tiers** — Tier 1 (full), Tier 2 (read-only), Tier 3 (scoped). Each agent gets only the tools it needs.
+- **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts down gracefully rather than operating compromised.
+
+See the full [Security Guide](docs/guides/security.md) for Cloudflare Zero Trust setup, token authentication, threat scenarios, and Code-Act sandbox isolation.
 
 ## Benchmark: LongMemEval
 
 Tested on [LongMemEval](https://xiaowu0162.github.io/long-mem-eval/) — 500 questions across 6 types, ~115K tokens of conversation history per question.
 
-| System      | Score     | Model      | Notes                        |
-| ----------- | --------- | ---------- | ---------------------------- |
-| Mastra      | 94.87%    | GPT-5-mini |                              |
+| System | Score | Model | Notes |
+|--------|-------|-------|-------|
+| Mastra | 94.87% | GPT-5-mini | |
 | **MAMA OS** | **93.0%** | Sonnet 4.6 | Tool-use answer, 100Q sample |
-| SuperMemory | 81.6%     | GPT-4o     |                              |
-| Zep         | 71.2%     | GPT-4o     |                              |
+| SuperMemory | 81.6% | GPT-4o | |
+| Zep | 71.2% | GPT-4o | |
 
-MAMA now outperforms SuperMemory while running **entirely locally** with open-source components. The tool-use answer phase lets the LLM re-search when initial results are insufficient.
+MAMA outperforms SuperMemory while running **entirely locally** with open-source components.
 
 ## Packages
 
-| Package                                          | Version | Description                                  |
-| ------------------------------------------------ | ------- | -------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.17.0  | Always-on runtime with messenger gateways    |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1  | MCP server for Claude Desktop/Code           |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.0   | Core library (memory engine, embeddings, DB) |
-| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)             |
-| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework      |
+| Package | Version | Description |
+|---------|---------|-------------|
+| [@jungjaehoon/mama-os](packages/standalone/) | 0.18.0 | Always-on runtime — connectors, knowledge agents, viewer |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1 | MCP server for Claude Desktop/Code |
+| [@jungjaehoon/mama-core](packages/mama-core/) | 1.4.1 | Core library (memory engine, embeddings, DB) |
+| [mama plugin](packages/claude-code-plugin/) | 1.9.0 | Claude Code plugin (marketplace) |
+| [memorybench](packages/memorybench/) | 1.0.0 | Memory retrieval benchmarking framework |
 
 ## Quick Start
 
@@ -166,13 +150,13 @@ MAMA now outperforms SuperMemory while running **entirely locally** with open-so
 ### MAMA OS (full runtime)
 
 ```bash
-npm install -g @jungjaehoon/mama-os
+npx @jungjaehoon/mama-os init
 mama start   # starts daemon at localhost:3847
 ```
 
-Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
+Web viewer at `http://localhost:3847`. Connects to Discord, Slack, Telegram.
 
-> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated.
+> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 18.
 
 ### MCP Server (Claude Desktop)
 
@@ -195,52 +179,38 @@ Connects to Discord, Slack, Telegram. Web dashboard at `http://localhost:3847`.
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
-## Current Status & Roadmap
+## What Works Today
 
-### What Works Today
+Anyone who installs MAMA OS and connects their apps gets:
 
-| Feature                 | Status     | Details                                                                                                                                                                                                                                                 |
-| ----------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Knowledge Graph**     | Production | decisions + edges (supersedes/builds_on/debates/synthesizes) + truth projection                                                                                                                                                                         |
-| **Hybrid Search**       | Production | FTS5 BM25 + vector cosine + RRF fusion, 93% on LongMemEval                                                                                                                                                                                              |
-| **Claude Code Plugin**  | Production | Auto-save decisions via hooks, search via `/mama:search`                                                                                                                                                                                                |
-| **MCP Server**          | Production | `mama_save`, `mama_search`, `mama_suggest`, `ingest_conversation` + scopes                                                                                                                                                                              |
-| **Messenger Gateways**  | Production | Telegram, Discord, Slack bots with memory integration                                                                                                                                                                                                   |
-| **Always-On Daemon**    | Production | Cron scheduler, web dashboard at localhost:3847                                                                                                                                                                                                         |
-| **Evolution Engine**    | Production | Conservative supersede (overlap-based), builds_on for independent facts                                                                                                                                                                                 |
-| **Connector Framework** | v0.17      | 13 data source connectors (Slack, Gmail, Notion, iMessage, Sheets, Trello, Drive, and more). Automatic project intelligence extraction via truth-first 3-pass pipeline. Hub/spoke/truth source role classification. Config at `~/.mama/connectors.json` |
+- **Automatic knowledge extraction** — Connectors poll 15 sources, AI extracts decisions/deadlines/changes without manual input
+- **Cross-source search** — "What did we decide about X?" searches Slack + email + code + docs simultaneously
+- **Decision evolution tracking** — Not just what was decided, but what it replaced and why
+- **Proactive briefings** — Dashboard agent compiles what changed across all sources
+- **Wiki compilation** — Knowledge agents organize raw conversations into structured Obsidian pages
+- **93% retrieval accuracy** — Proven on LongMemEval benchmark against 115K-token conversation histories
 
-### What's Not Built Yet
+## Roadmap
 
-| Feature                      | Target | Why It Matters                                        |
-| ---------------------------- | ------ | ----------------------------------------------------- |
-| **Workflow Recommendations** | v0.18  | "Your team usually does X before Y" suggestions       |
-| **Memory Explorer UI**       | v0.18  | Visual graph of decision evolution                    |
-| **Enterprise Server Mode**   | v0.19  | Central server for team knowledge (vs personal local) |
-| **Domain Automation**        | v1.0   | Knowledge graph → automated workflow execution        |
-
-### Roadmap
-
-| Phase    | Version | Focus                                                                                   |
-| -------- | ------- | --------------------------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                             |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                            |
-| **Done** | v0.17   | Connector framework (13 connectors), truth-first 3-pass extraction, cross-source memory |
-| **Next** | v0.18   | Control tower UI, memory explorer, workflow recommendations                             |
-|          | v0.19   | Stability, security audit, enterprise server mode                                       |
-|          | v1.0    | General release — domain automation                                                     |
+| Phase | Version | Focus |
+|-------|---------|-------|
+| **Done** | v0.15 | Search quality overhaul, FTS5, evolution engine (58% → 88%) |
+| **Done** | v0.16 | event_date API, tool-use answer, memory agent v5 (88% → 93%) |
+| **Done** | v0.17 | Connector framework (15 connectors), truth-first 3-pass extraction |
+| **Done** | v0.18 | Output layer — knowledge agents, viewer redesign, security hardening |
+| **Next** | v0.19 | Agent management UI — customize agent personas, tools, and behavior from the viewer. Stability: watchdog, audit log, health score, 72h uptime test |
+| | v0.20 | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design) |
+| | v1.0 | Team mode — shared knowledge graph for organizations. General release |
 
 ## Development
 
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
-cd MAMA
-pnpm install
-pnpm build
-pnpm test     # 2000+ tests across all packages
+cd MAMA && pnpm install && pnpm build
+pnpm test     # 2800+ tests across all packages
 ```
 
-See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
+See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
 ## License
 
@@ -248,4 +218,4 @@ MIT
 
 ---
 
-_Last updated: 2026-04-01_
+_Last updated: 2026-04-10_
