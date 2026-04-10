@@ -170,10 +170,10 @@ export class WikiModule {
 
     document.getElementById('wiki-new-btn')?.addEventListener('click', () => this.promptNewPage());
 
-    // Auto-open index page (desktop only)
-    if (!mobile) {
+    // Auto-open index page only on initial load (no page selected yet)
+    if (!mobile && !this.currentPath) {
       const indexNode = tree.find((n) => n.name === 'index.md');
-      if (indexNode) this.openPage(indexNode.path);
+      if (indexNode) { this.openPage(indexNode.path); }
     }
   }
 
@@ -239,10 +239,13 @@ export class WikiModule {
         pageEl.style.display = 'none';
       }
     } else {
-      // Desktop: side-by-side
+      // Desktop: side-by-side — only set default width if no persisted width
       treeEl.style.display = '';
-      treeEl.style.width = '200px';
-      treeEl.style.minWidth = '200px';
+      const savedWidth = localStorage.getItem('wiki-tree-width');
+      if (!savedWidth) {
+        treeEl.style.width = '200px';
+        treeEl.style.minWidth = '200px';
+      }
       treeEl.style.borderRight = '1px solid #EDE9E1';
       treeEl.style.paddingRight = '12px';
       pageEl.style.display = '';

@@ -276,8 +276,9 @@ function sendToMemoryAgent(transcript) {
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
       timeout: 3000,
     },
-    () => {} // ignore response
+    (res) => { res.resume(); } // drain response body
   );
+  req.on('timeout', () => { req.destroy(); });
   req.on('error', () => {}); // ignore errors (MAMA OS may not be running)
   req.write(payload);
   req.end();
