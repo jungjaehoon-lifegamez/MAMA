@@ -33,6 +33,17 @@ With MAMA:     Agents already read everything. You get a briefing with
 - **Private by design** — All data stays on your device. Nothing leaves your machine.
 - **AI-independent** — Works with Claude, Codex, or any future backend. Your memory outlives any AI provider.
 
+## How It Runs
+
+MAMA OS runs AI agents as **official CLI subprocesses** — the same way you'd use `claude` or `codex` in your terminal. This is the provider-sanctioned execution method, fully compliant with Anthropic and OpenAI Terms of Service.
+
+Some third-party agent frameworks (OpenClaw, etc.) use unofficial API access, token extraction, or header spoofing — approaches that violate provider policies and risk account suspension. MAMA OS doesn't do any of that. If you have Claude Code or Codex CLI installed and authenticated, MAMA OS just works. No API keys, no workarounds, no risk.
+
+```bash
+# Already have Claude Code installed?
+mama start   # That's it. MAMA uses your existing CLI authentication.
+```
+
 ## How It's Secured
 
 MAMA OS has full system access — so security is not optional, it's foundational.

@@ -36,6 +36,8 @@ With MAMA:     Agents already read everything. You get a briefing with
 
 **This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
 
+**How it runs:** MAMA OS executes agents as official CLI subprocesses (Claude Code, Codex) — fully ToS-compliant. No API keys, no token extraction, no workarounds. If you have the CLI installed, MAMA just works.
+
 ## Knowledge Graph
 
 MAMA doesn't just store facts. It tracks how knowledge evolves:
