@@ -45,6 +45,8 @@ MAMA OS has full system access — so security is not optional, it's foundationa
 
 These aren't theoretical protections. The prompt injection defense was built after a real attack where an adversary injected a fake "server failure" message into a monitored channel, causing the AI agent to voluntarily expose system configuration. The IP banning system has blocked actual intrusion attempts in production.
 
+See the full [Security Guide](../../docs/guides/security.md) for Cloudflare Zero Trust setup, token authentication, threat scenarios, agent isolation, and Code-Act sandbox security.
+
 ## Quick Start
 
 ```bash
