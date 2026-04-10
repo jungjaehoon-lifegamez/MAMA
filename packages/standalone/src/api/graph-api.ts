@@ -12,6 +12,16 @@ import os from 'os';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
+import {
+  handleGetAgents,
+  handleGetAgent,
+  handleCreateAgent,
+  handleUpdateAgent,
+  handleArchiveAgent,
+  handleListVersions,
+  handleGetAgentMetrics,
+  handleCompareVersions,
+} from './agent-handler.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -1568,6 +1578,112 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       await handleExportRequest(req, res, params);
       return true;
     }
+
+    // ── Agent Management API (Managed Agents pattern) ──
+
+    // Route: GET /api/agents/:id/versions/:v1/compare/:v2 — before/after (must be before /api/agents/:id)
+    if (
+      pathname.match(/^\/api\/agents\/[^/]+\/versions\/\d+\/compare\/\d+$/) &&
+      req.method === 'GET'
+    ) {
+      const parts = pathname.split('/');
+      const agentId = decodeURIComponent(parts[3]);
+      const v1 = parseInt(parts[5], 10);
+      const v2 = parseInt(parts[7], 10);
+      if (options.sessionsDb) handleCompareVersions(res, agentId, v1, v2, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/versions — version history
+    if (pathname.match(/^\/api\/agents\/[^/]+\/versions$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) handleListVersions(res, agentId, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/metrics?from=&to= — metrics for period
+    if (pathname.match(/^\/api\/agents\/[^/]+\/metrics$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      // Parse query params from raw URL
+      const rawUrl = req.url || pathname;
+      const qIdx = rawUrl.indexOf('?');
+      const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+      const from = params.get('from') || '2020-01-01';
+      const to = params.get('to') || '2099-12-31';
+      if (options.sessionsDb) handleGetAgentMetrics(res, agentId, from, to, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id/archive — archive agent
+    if (pathname.match(/^\/api\/agents\/[^/]+\/archive$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) handleArchiveAgent(res, agentId, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents — list all agents
+    if (pathname === '/api/agents' && req.method === 'GET') {
+      const config = loadMAMAConfig();
+      if (options.sessionsDb) handleGetAgents(res, config, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents — create new agent
+    if (pathname === '/api/agents' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (options.sessionsDb) handleCreateAgent(res, body, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id — single agent detail (must be after /api/agents/:id/*)
+    if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const config = loadMAMAConfig();
+      if (options.sessionsDb) handleGetAgent(res, agentId, config, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id — update agent (Managed Agents: version required)
+    if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const body = await readBody(req);
+      if (options.sessionsDb) handleUpdateAgent(res, agentId, body, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // ── Legacy Multi-Agent API (redirect-compatible) ──
 
     // Route: GET /api/multi-agent/status - get multi-agent system status
     if (pathname === '/api/multi-agent/status' && req.method === 'GET') {
