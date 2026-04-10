@@ -128,8 +128,13 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Security headers
   app.disable('x-powered-by');
-  app.use((_req, res, next) => {
-    res.setHeader('X-Frame-Options', 'DENY');
+  app.use((req, res, next) => {
+    // Allow log viewer to be loaded in iframe (viewer embeds it)
+    if (req.path === '/viewer/log-viewer.html') {
+      res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    } else {
+      res.setHeader('X-Frame-Options', 'DENY');
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });

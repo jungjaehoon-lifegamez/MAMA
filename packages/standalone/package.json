@@ -59,6 +59,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
     "@jungjaehoon/mama-core": "workspace:*",
+    "better-sqlite3": "^12.8.0",
     "@slack/socket-mode": "^2.0.5",
     "@slack/web-api": "^7.13.0",
     "commander": "^12.0.0",
@@ -77,6 +78,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/minimatch": "^6.0.0",

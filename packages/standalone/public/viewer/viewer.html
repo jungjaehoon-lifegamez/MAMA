@@ -270,19 +270,6 @@
       @media (min-width: 768px) {
         main.flex-1 { margin-left: var(--sidebar-width); }
       }
-      /* Logs module */
-      .logs-line { padding: 1px 4px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .logs-level-error { background: #fef2f2; }
-      .logs-level-warn { background: #fffbeb; }
-      .logs-ts { color: #9ca3af; margin-right: 4px; }
-      .logs-src { color: #6366f1; margin-right: 4px; }
-      .logs-lvl { font-weight: 600; margin-right: 4px; }
-      .logs-level-error .logs-lvl { color: #dc2626; }
-      .logs-level-warn .logs-lvl { color: #d97706; }
-      .logs-level-info .logs-lvl { color: #2563eb; }
-      .logs-level-debug .logs-lvl { color: #6b7280; }
-      [data-log-level].active { opacity: 1; }
-      [data-log-level]:not(.active) { opacity: 0.4; }
     </style>
 
     <link rel="stylesheet" href="/viewer/viewer.css" />
@@ -425,25 +412,7 @@
 
         <!-- Logs Tab -->
         <div class="tab-content" id="tab-logs">
-          <div class="flex-1 flex flex-col w-full h-full overflow-hidden p-2 md:p-3">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-2">
-                <h1 class="text-sm font-bold text-gray-900">Daemon Logs</h1>
-                <span id="logs-count" class="text-[10px] text-gray-400">0 lines</span>
-              </div>
-              <div class="flex items-center gap-1">
-                <button id="logs-pause-btn" class="px-2 py-1 text-[10px] rounded bg-gray-100 hover:bg-gray-200 text-gray-700">Pause</button>
-              </div>
-            </div>
-            <div class="flex items-center gap-1 mb-2">
-              <input id="logs-search" type="text" placeholder="Search logs..." class="flex-1 px-2 py-1 text-[10px] border border-gray-200 rounded bg-white focus:outline-none focus:border-indigo-300" />
-              <button data-log-level="ERROR" class="active px-1.5 py-0.5 text-[9px] rounded bg-red-100 text-red-700 font-medium">ERR</button>
-              <button data-log-level="WARN" class="active px-1.5 py-0.5 text-[9px] rounded bg-yellow-100 text-yellow-700 font-medium">WARN</button>
-              <button data-log-level="INFO" class="active px-1.5 py-0.5 text-[9px] rounded bg-blue-100 text-blue-700 font-medium">INFO</button>
-              <button data-log-level="DEBUG" class="active px-1.5 py-0.5 text-[9px] rounded bg-gray-100 text-gray-600 font-medium">DBG</button>
-            </div>
-            <div id="logs-container" class="flex-1 overflow-y-auto font-mono text-[10px] bg-gray-50 rounded border border-gray-200 p-1 leading-relaxed"></div>
-          </div>
+          <iframe id="logs-iframe" src="" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
         </div>
 
         <!-- Settings Tab -->
@@ -1137,7 +1106,6 @@
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { SkillsModule } from '/viewer/js/modules/skills.js';
       import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
-      import { LogsModule } from '/viewer/js/modules/logs.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { API } from '/viewer/js/utils/api.js';
 
@@ -1148,7 +1116,6 @@
       const settings = new SettingsModule();
       const skills = SkillsModule;
       const connectorFeed = new ConnectorFeedModule();
-      const logs = new LogsModule();
       const wiki = new WikiModule();
 
       // Expose modules globally for debugging and onclick handlers
@@ -1230,7 +1197,10 @@
         } else if (tabName === 'wiki') {
           wiki.init();
         } else if (tabName === 'logs') {
-          logs.init();
+          const iframe = document.getElementById('logs-iframe');
+          if (iframe && !iframe.src) {
+            iframe.src = '/viewer/log-viewer.html';
+          }
         }
       }
 
