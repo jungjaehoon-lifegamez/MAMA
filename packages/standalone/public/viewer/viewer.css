@@ -922,3 +922,20 @@ body,
   left: -30px;
   animation: float 20s ease-in-out infinite -7s;
 }
+
+/* ============================================================================
+   Graph Tooltip (vis-network hover tooltip)
+   ============================================================================ */
+div.vis-tooltip {
+  font-family: Inter, 'Noto Sans KR', sans-serif;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #131313;
+  background: #fff;
+  border: 1px solid #EDE9E1;
+  border-radius: 8px;
+  padding: 10px 14px;
+  box-shadow: 0 4px 20px rgba(19, 19, 19, 0.12);
+  max-width: 320px;
+  pointer-events: none;
+}

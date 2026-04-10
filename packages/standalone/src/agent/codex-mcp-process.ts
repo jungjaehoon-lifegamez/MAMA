@@ -2,7 +2,7 @@
  * Codex MCP Process - Codex via MCP protocol
  *
  * Architecture:
- *   채팅 → MCP Client → codex mcp-server → MCP → 채팅
+ *   Chat → MCP Client → codex mcp-server → MCP → Chat
  *
  * Uses standard MCP protocol instead of app-server's JSON-RPC.
  * Benefits:

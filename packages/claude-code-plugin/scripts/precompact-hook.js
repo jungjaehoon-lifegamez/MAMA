@@ -13,6 +13,8 @@
 const path = require('path');
 const fs = require('fs');
 
+const http = require('http');
+
 const PLUGIN_ROOT = path.resolve(__dirname, '..');
 const CORE_PATH = path.join(PLUGIN_ROOT, 'src', 'core');
 const { getEnabledFeatures } = require(path.join(CORE_PATH, 'hook-features'));
@@ -205,6 +207,83 @@ function buildWarningMessage(unsavedDecisions) {
   );
 }
 
+/**
+ * Extract recent conversation turns from transcript and send to memory agent.
+ * Fire-and-forget: does not block the hook. Returns immediately.
+ */
+function sendToMemoryAgent(transcript) {
+  const lines = transcript.trim().split('\n');
+  const messages = [];
+
+  // Parse last ~20 conversation turns from JSONL
+  const recentLines = lines.slice(-200);
+  for (const line of recentLines) {
+    let msg;
+    try {
+      msg = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (msg.type !== 'user' && msg.type !== 'assistant') {
+      continue;
+    }
+
+    let content = '';
+    const msgContent = msg.message?.content;
+    if (typeof msgContent === 'string') {
+      content = msgContent;
+    } else if (Array.isArray(msgContent)) {
+      content = msgContent
+        .filter((c) => c.type === 'text' && c.text)
+        .map((c) => c.text)
+        .join('\n');
+    }
+    if (!content || content.length < 10) {
+      continue;
+    }
+    if (content.startsWith('<system-reminder>') || content.startsWith('<command-message>')) {
+      continue;
+    }
+
+    messages.push({
+      role: msg.type === 'user' ? 'user' : 'assistant',
+      content: content.slice(0, 3000),
+    });
+  }
+
+  // Keep last 20 messages max
+  const recentMessages = messages.slice(-20);
+  if (recentMessages.length < 2) {
+    return;
+  }
+
+  // Derive project scope from CWD
+  const cwd = process.cwd();
+  const scopes = [
+    { kind: 'global', id: 'global' },
+    { kind: 'project', id: cwd },
+  ];
+
+  const payload = JSON.stringify({ messages: recentMessages, scopes });
+
+  // Fire-and-forget POST to MAMA OS memory agent
+  const req = http.request(
+    {
+      hostname: 'localhost',
+      port: parseInt(process.env.MAMA_HTTP_PORT || '3847', 10),
+      path: '/api/memory-agent/ingest',
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+      timeout: 3000,
+    },
+    (res) => { res.resume(); } // drain response body
+  );
+  req.on('timeout', () => { req.destroy(); });
+  req.on('error', () => {}); // ignore errors (MAMA OS may not be running)
+  req.write(payload);
+  req.end();
+}
+
 module.exports = {
   handler: main,
   main,
@@ -213,6 +292,7 @@ module.exports = {
   filterUnsaved,
   buildCompactionPrompt,
   buildWarningMessage,
+  sendToMemoryAgent,
 };
 
 async function main() {
@@ -243,6 +323,13 @@ async function main() {
     transcript = fs.readFileSync(transcriptPath, 'utf8');
   } catch {
     process.exit(0);
+  }
+
+  // Send conversation to memory agent before compaction (fire-and-forget)
+  try {
+    sendToMemoryAgent(transcript);
+  } catch {
+    // Non-fatal: memory agent may not be running
   }
 
   // Extract candidates from transcript

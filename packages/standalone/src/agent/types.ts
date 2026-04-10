@@ -688,12 +688,25 @@ export type GatewayToolName =
   | 'os_stop_bot'
   // PR Review tools
   | 'pr_review_threads'
-  // Playground tools
-  | 'playground_create'
   // Webchat tools
   | 'webchat_send'
   // Code-Act sandbox
-  | 'code_act';
+  | 'code_act'
+  // Multi-Agent delegation
+  | 'delegate'
+  // Report slots
+  | 'report_publish'
+  // Wiki compilation
+  | 'wiki_publish'
+  // Obsidian vault management via CLI
+  | 'obsidian'
+  // Kagemusha query — progressive business data exploration
+  | 'kagemusha_overview'
+  | 'kagemusha_entities'
+  | 'kagemusha_tasks'
+  | 'kagemusha_messages'
+  // System tools
+  | 'agent_notices';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -768,7 +781,8 @@ export type GatewayToolResult =
   | SearchResult
   | UpdateResult
   | LoadCheckpointResult
-  | TranslateImageResult;
+  | TranslateImageResult
+  | { success: boolean; [key: string]: unknown };
 
 // ============================================================================
 // Streaming Types
@@ -892,6 +906,12 @@ export interface AgentLoopOptions {
    * Called after each API response to track token consumption
    */
   onTokenUsage?: (record: TokenUsageRecord) => void;
+
+  /**
+   * CLI tools to structurally disallow via --disallowedTools flag.
+   * Prevents Claude CLI from exposing these tools to the agent.
+   */
+  disallowedTools?: string[];
 
   /**
    * Enable Code-Act mode: LLM writes JS code blocks instead of tool_call blocks

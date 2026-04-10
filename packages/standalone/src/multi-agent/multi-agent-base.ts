@@ -806,40 +806,6 @@ export abstract class MultiAgentHandlerBase {
   }
 
   /**
-   * Parse background delegations from content and submit them.
-   * Shared by Discord/Slack after workflow/council execution.
-   */
-  protected submitBackgroundDelegations(
-    sourceAgentId: string,
-    channelId: string,
-    content: string,
-    source: 'discord' | 'slack',
-    logPrefix: string
-  ): void {
-    const delegations = this.delegationManager.parseAllDelegations(sourceAgentId, content);
-    for (const delegation of delegations) {
-      if (!delegation.background) continue;
-      const check = this.delegationManager.isDelegationAllowed(
-        delegation.fromAgentId,
-        delegation.toAgentId
-      );
-      if (check.allowed) {
-        this.backgroundTaskManager.submit({
-          description: delegation.task.substring(0, 200),
-          prompt: delegation.task,
-          agentId: delegation.toAgentId,
-          requestedBy: sourceAgentId,
-          channelId,
-          source,
-        });
-        this.logger.info(
-          `[${logPrefix}] Background delegation: ${sourceAgentId} -> ${delegation.toAgentId}`
-        );
-      }
-    }
-  }
-
-  /**
    * Get chain state for a channel (for debugging)
    */
   getChainState(channelId: string): ChainState {

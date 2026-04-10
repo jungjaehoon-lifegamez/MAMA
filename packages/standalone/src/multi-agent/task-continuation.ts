@@ -4,7 +4,7 @@
  * Analyzes agent responses to detect incomplete tasks and
  * automatically sends continuation prompts to resume work.
  *
- * Completion detection uses markers like "DONE", "완료", "✅",
+ * Completion detection uses markers like "DONE", "TASK_COMPLETE", "✅",
  * while incomplete detection uses truncation signals and "I'll continue".
  */
 
@@ -123,7 +123,7 @@ export class TaskContinuationEnforcer {
 ---
 ${tail}
 ---
-Continue the task. When done, end your response with "DONE" or "완료".`;
+Continue the task. When done, end your response with "DONE".`;
   }
 
   /**

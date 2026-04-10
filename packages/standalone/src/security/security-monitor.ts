@@ -29,6 +29,71 @@ const DENYLIST_LOCK_STALE_MS = Number(process.env.MAMA_DENYLIST_LOCK_STALE_MS ||
 
 const suspicionScores = new Map<string, { score: number; updatedAt: number }>();
 const attributionCache = new Map<string, { value: NetworkAttribution | null; updatedAt: number }>();
+
+// --- IP Ban ---
+const MAX_AUTH_FAILURES = 5;
+const BAN_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+const AUTH_FAILURE_WINDOW_MS = 5 * 60 * 1000; // 5 minute window
+
+interface BanRecord {
+  failCount: number;
+  firstFailAt: number;
+  bannedUntil: number;
+}
+
+const banMap = new Map<string, BanRecord>();
+
+// Periodic cleanup (every hour)
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, rec] of banMap) {
+    if (now > rec.bannedUntil && now - rec.firstFailAt > AUTH_FAILURE_WINDOW_MS) {
+      banMap.delete(ip);
+    }
+  }
+}, 60 * 60 * 1000).unref();
+
+export function isIpBanned(clientAddress: string | null | undefined): boolean {
+  if (!clientAddress || clientAddress === 'unknown' || isLocalAddress(clientAddress)) {
+    return false;
+  }
+  const rec = banMap.get(clientAddress);
+  if (!rec) return false;
+  return Date.now() < rec.bannedUntil;
+}
+
+export function banIp(clientAddress: string, reason: string): void {
+  if (isLocalAddress(clientAddress)) return;
+  const now = Date.now();
+  banMap.set(clientAddress, {
+    failCount: MAX_AUTH_FAILURES,
+    firstFailAt: now,
+    bannedUntil: now + BAN_DURATION_MS,
+  });
+  logger.warn(`[SECURITY] IP BANNED: ${clientAddress} for ${BAN_DURATION_MS / 1000}s — ${reason}`);
+}
+
+export function recordAuthFailure(clientAddress: string | null | undefined): void {
+  if (!clientAddress || clientAddress === 'unknown' || isLocalAddress(clientAddress)) {
+    return;
+  }
+  const now = Date.now();
+  let rec = banMap.get(clientAddress);
+
+  if (!rec || now - rec.firstFailAt > AUTH_FAILURE_WINDOW_MS) {
+    rec = { failCount: 0, firstFailAt: now, bannedUntil: 0 };
+    banMap.set(clientAddress, rec);
+  }
+
+  rec.failCount++;
+  logger.warn(`[SECURITY] Auth failure from ${clientAddress} (${rec.failCount}/${MAX_AUTH_FAILURES})`);
+
+  if (rec.failCount >= MAX_AUTH_FAILURES) {
+    rec.bannedUntil = now + BAN_DURATION_MS;
+    logger.error(`[SECURITY] IP ${clientAddress} BANNED — ${rec.failCount} auth failures in ${AUTH_FAILURE_WINDOW_MS / 60000}min`);
+  }
+}
+
 const HONEYPOT_PATTERNS = [
   /^\/\.git(?:\/|$)/i,
   /^\/\.env(?:\.|$)/i,
@@ -769,12 +834,21 @@ export function createSecurityMiddleware() {
     const clientAddress = getClientAddressFromRequestLike(req);
     const pathname = getPathFromRequestLike(req);
 
+    // Banned IP → tarpit + reject
+    if (isIpBanned(clientAddress)) {
+      await new Promise((resolve) => setTimeout(resolve, MAX_TARPIT_DELAY_MS));
+      res.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+
+    // Honeypot → immediate ban + tarpit + reject
     if (isHoneypotPath(pathname) && !isLocalAddress(clientAddress)) {
+      banIp(clientAddress, `honeypot: ${pathname}`);
       const delayMs = Math.max(HONEYPOT_DELAY_MS, getTarpitDelayMs(clientAddress));
       recordSecurityEvent({
         type: 'honeypot_hit',
         severity: 'critical',
-        message: 'Honeypot path accessed',
+        message: `Honeypot path accessed — IP banned`,
         clientAddress,
         remoteAddress: req.socket?.remoteAddress || null,
         forwardedFor:
@@ -789,7 +863,7 @@ export function createSecurityMiddleware() {
         method: req.method,
         path: pathname,
         viaTunnel: !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray']),
-        details: { delayMs },
+        details: { delayMs, banned: true },
       });
 
       await new Promise((resolve) => setTimeout(resolve, delayMs));
