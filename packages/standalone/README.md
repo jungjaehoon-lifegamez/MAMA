@@ -71,17 +71,18 @@ mama connector list           # Status of all connectors
 
 Each connector classifies its source (truth / hub / spoke / reference) for the 3-pass extraction pipeline. Config: `~/.mama/connectors.json`.
 
-## Multi-Agent System
+## Knowledge Agents
 
-Multiple AI agents collaborate and delegate across chat platforms.
+MAMA OS runs specialized agents for knowledge management — not coding (that's what Claude Code does natively).
 
-| Tier | Role | Access |
-|------|------|--------|
-| **1** | Conductor | All tools + delegation |
-| **2** | Advisor | Read-only |
-| **3** | Executor | Scoped read-only |
+| Agent | Role |
+|-------|------|
+| **Conductor** | Orchestrates other agents, handles user chat |
+| **Dashboard Agent** | Generates project briefings from connected sources |
+| **Wiki Agent** | Compiles knowledge into Obsidian vault |
+| **Memory Agent** | Extracts decisions from conversations automatically |
 
-Agents delegate via the `delegate()` tool with optional skill injection, retry with backoff, and channel history recovery on crash. Configure agents in `~/.mama/config.yaml`.
+Agents delegate via `delegate()` with skill injection and automatic retry. Configure in `~/.mama/config.yaml`.
 
 ## Viewer
 
