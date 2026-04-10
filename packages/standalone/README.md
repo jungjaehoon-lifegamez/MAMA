@@ -78,17 +78,29 @@ open http://localhost:3847
 
 MAMA connects to your apps and extracts structured facts into the memory graph.
 
-| Source | Connectors |
-|--------|-----------|
-| **Messengers** | Slack, Discord, Telegram, Chatwork, iMessage |
-| **Google Workspace** | Gmail, Calendar, Drive, Sheets |
-| **Knowledge** | Notion, Obsidian, Trello |
-| **Dev Tools** | Claude Code (plugin hooks), Kagemusha |
-
 ```bash
 mama connector add slack      # Activate + auth guide
 mama connector list           # Status of all connectors
 ```
+
+| Connector | Prerequisites | Config |
+|-----------|--------------|--------|
+| **Slack** | Bot Token (api.slack.com → OAuth scopes) | `bot_token`, `app_token` |
+| **Discord** | Bot Token (discord.com/developers → MESSAGE CONTENT INTENT) | `token`, `default_channel_id` |
+| **Telegram** | Bot Token (@BotFather) | `token`, `allowed_chat_ids` |
+| **Chatwork** | API Token (account settings) | `api_token`, `room_ids` |
+| **iMessage** | macOS only (reads local chat.db) | No config needed |
+| **Gmail** | [gws CLI](https://github.com/nicholasgasior/gws) installed + Google OAuth | `gws` in PATH |
+| **Calendar** | gws CLI installed + Google OAuth | `gws` in PATH |
+| **Drive** | gws CLI installed + Google OAuth | `gws` in PATH |
+| **Sheets** | gws CLI installed + Google OAuth | `gws` in PATH, `spreadsheet_ids` |
+| **Notion** | Integration Token (notion.so/my-integrations) | `api_token`, `database_ids` |
+| **Obsidian** | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled | `vault_path` in config.yaml |
+| **Trello** | API Key + Token (trello.com/app-key) | `api_key`, `token`, `board_ids` |
+| **Kagemusha** | Kagemusha running locally | Reads `kagemusha.db` directly |
+| **Claude Code** | Claude Code plugin installed | Automatic via hooks |
+
+**Google Workspace connectors** (Gmail, Calendar, Drive, Sheets) require the [gws CLI](https://github.com/nicholasgasior/gws) — a Google Workspace command-line tool. Install it, run `gws auth` once for OAuth, then MAMA polls via CLI.
 
 Each connector classifies its source (truth / hub / spoke / reference) for the 3-pass extraction pipeline. Config: `~/.mama/connectors.json`.
 
@@ -96,12 +108,12 @@ Each connector classifies its source (truth / hub / spoke / reference) for the 3
 
 MAMA OS runs specialized agents for knowledge management — not coding (that's what Claude Code does natively).
 
-| Agent | Role |
-|-------|------|
-| **Conductor** | Orchestrates other agents, handles user chat |
-| **Dashboard Agent** | Generates project briefings from connected sources |
-| **Wiki Agent** | Compiles knowledge into Obsidian vault |
-| **Memory Agent** | Extracts decisions from conversations automatically |
+| Agent | Role | Requires |
+|-------|------|----------|
+| **Conductor** | Orchestrates other agents, handles user chat | — |
+| **Dashboard Agent** | Generates project briefings from connected sources | — |
+| **Wiki Agent** | Compiles knowledge into Obsidian vault | [Obsidian](https://obsidian.md) + [Terminal plugin](https://github.com/polyipseity/obsidian-terminal) |
+| **Memory Agent** | Extracts decisions from conversations automatically | — |
 
 Agents delegate via `delegate()` with skill injection and automatic retry. Configure in `~/.mama/config.yaml`.
 
