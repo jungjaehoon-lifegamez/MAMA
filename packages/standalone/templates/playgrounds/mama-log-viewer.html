@@ -222,6 +222,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   <button class="btn active" id="graphToggle" style="font-size:10px" title="GraphHandler toggle">GH</button>
   <button class="btn" id="pinToggle" style="font-size:10px" title="Show pinned lines">&#128204;</button>
   <button class="src-toggle" id="srcToggle" title="Source/Channel panel">Sources</button>
+  <button class="btn" id="agentFilterBtn" style="font-size:10px" title="Filter agent activity only">&#129302; Agents</button>
+  <button class="btn" id="auditPanelToggle" style="font-size:10px" title="Agent audit timeline">&#128270; Audit</button>
+</div>
+<div id="auditPanel" style="display:none;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);max-height:200px;overflow-y:auto">
+  <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Agent Activity Timeline</div>
+  <div id="auditTimeline" style="font-size:11px;font-family:'SF Mono','Cascadia Code',Consolas,monospace;line-height:1.8"></div>
 </div>
 <div class="source-panel" id="sourcePanel">
   <div class="source-panel-header">
@@ -297,10 +303,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
   </div>
   <div class="prompt-body open" id="promptBody">
     <div class="presets">
-      <button class="preset" data-p="errors">&#128308; 에러 분석</button>
-      <button class="preset" data-p="status">&#128202; 시스템 상태</button>
-      <button class="preset" data-p="slow">&#128012; 느린 작업</button>
-      <button class="preset" data-p="recent">&#128221; 최근 요약</button>
+      <button class="preset" data-p="errors">&#128308; Errors</button>
+      <button class="preset" data-p="status">&#128202; Status</button>
+      <button class="preset" data-p="slow">&#128012; Slow</button>
+      <button class="preset" data-p="recent">&#128221; Recent</button>
     </div>
     <div class="prompt-row">
       <textarea class="prompt-input" id="promptInput" placeholder="루나에게 요청..."></textarea>
@@ -572,6 +578,7 @@ function addLines(rawLines, isInitial) {
   if (S.autoScroll) logArea.scrollTop = logArea.scrollHeight;
   updateMinimap();
   if (S.statsDashOpen) updateStatsDashboard();
+  if ($('auditPanel') && $('auditPanel').style.display !== 'none') buildAuditTimeline();
 }
 
 function diffTailLines(snapshotLines) {
@@ -1288,16 +1295,67 @@ $('promptHdr').addEventListener('click', () => {
 });
 
 const PRESETS = {
-  errors: 'daemon.log\uc5d0\uc11c ERROR, FAIL, ECONNREFUSED \uad00\ub828 \ub85c\uadf8\ub97c \ubd84\uc11d\ud558\uace0 \uc6d0\uc778\uacfc \ud574\uacb0\ubc29\ubc95\uc744 \uc54c\ub824\uc918',
-  status: 'MAMA OS \ud604\uc7ac \uc0c1\ud0dc\ub97c \ud655\uc778\ud574\uc918 (\ud504\ub85c\uc138\uc2a4, \uba54\ubaa8\ub9ac, \uc5c5\ud0c0\uc784, \uc5f0\uacb0 \uc0c1\ud0dc)',
-  slow: 'daemon.log\uc5d0\uc11c \ub290\ub9b0 \uc791\uc5c5(timeout, slow, 1000ms \uc774\uc0c1)\uc744 \ucc3e\uc544\uc11c \uc131\ub2a5 \ubcd1\ubaa9\uc744 \ubd84\uc11d\ud574\uc918',
-  recent: '\ucd5c\uadfc \ub85c\uadf8 50\uc904\uc744 \uc694\uc57d\ud574\uc918 \u2014 \ubb34\uc2a8 \uc77c\uc774 \uc788\uc5c8\ub294\uc9c0, \uc5d0\ub7ec\uac00 \uc788\uc5c8\ub294\uc9c0'
+  errors: 'Analyze ERROR, FAIL, ECONNREFUSED logs from daemon.log and explain causes and fixes',
+  status: 'Check current MAMA OS status (processes, memory, uptime, connections)',
+  slow: 'Find slow operations (timeout, slow, 1000ms+) and analyze performance bottlenecks',
+  recent: 'Summarize the last 50 log lines \u2014 what happened, any errors?',
+  agents: 'Show only agent activity: Dashboard Agent, Wiki Agent, Conductor, delegate, audit results'
 };
+
+// Agent Activity patterns for filtering and audit timeline
+const AGENT_PATTERNS = /Dashboard Agent|Wiki Agent|Conductor|Audit|delegate|Briefing published|Compilation complete|No changes detected|agent-refresh|wiki\/compile|Tool\] delegate/;
+
+function buildAuditTimeline() {
+  const panel = $('auditTimeline');
+  if (!panel) return;
+  const agentLogs = S.logs.filter(e => e && AGENT_PATTERNS.test(e.raw));
+  if (agentLogs.length === 0) {
+    panel.innerHTML = '<span style="color:var(--muted)">No agent activity found</span>';
+    return;
+  }
+  const recent = agentLogs.slice(-30);
+  const html = recent.map(e => {
+    let icon = '\u2022';
+    let color = 'var(--muted)';
+    if (/Briefing published/i.test(e.raw)) { icon = '\ud83d\udcca'; color = 'var(--success)'; }
+    else if (/Compilation complete/i.test(e.raw)) { icon = '\ud83d\udcda'; color = 'var(--success)'; }
+    else if (/No changes detected/i.test(e.raw)) { icon = '\u23ed\ufe0f'; color = 'var(--muted)'; }
+    else if (/Audit|Conductor/i.test(e.raw)) { icon = '\ud83d\udd0d'; color = 'var(--warn)'; }
+    else if (/delegate/i.test(e.raw)) { icon = '\ud83d\udce4'; color = 'var(--accent)'; }
+    else if (/Checking for updates/i.test(e.raw)) { icon = '\u23f3'; color = 'var(--muted)'; }
+    else if (/error|fail/i.test(e.raw)) { icon = '\u274c'; color = 'var(--error)'; }
+    const time = e.time || '';
+    const msg = e.msg.length > 80 ? e.msg.substring(0, 80) + '...' : e.msg;
+    return '<div style="color:' + color + '">' + icon + ' <span style="color:var(--muted);min-width:60px;display:inline-block">' + esc(time) + '</span> ' + esc(msg) + '</div>';
+  }).join('');
+  panel.innerHTML = html;
+}
+
+$('auditPanelToggle').addEventListener('click', () => {
+  const panel = $('auditPanel');
+  const isVisible = panel.style.display !== 'none';
+  panel.style.display = isVisible ? 'none' : 'block';
+  if (!isVisible) buildAuditTimeline();
+});
 document.querySelectorAll('.preset').forEach((el) => {
   el.addEventListener('click', () => {
     $('promptInput').value = PRESETS[el.getAttribute('data-p')];
     $('promptInput').focus();
   });
+});
+
+// Toolbar: Agent filter button
+$('agentFilterBtn').addEventListener('click', () => {
+  const isActive = $('agentFilterBtn').classList.toggle('active');
+  if (isActive) {
+    $('searchInput').value = 'Dashboard Agent|Wiki Agent|Conductor|Audit|delegate|Briefing|Compilation|No changes';
+    S.regexMode = true;
+    const rmBtn = document.querySelector('.search-mode-btn');
+    if (rmBtn) rmBtn.classList.add('active');
+  } else {
+    $('searchInput').value = '';
+  }
+  applyFilters();
 });
 
 $('promptSend').addEventListener('click', () => {
