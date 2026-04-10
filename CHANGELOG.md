@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.1] - 2026-04-10
+
+### Fixed
+
+- **Config migration** — Existing users with `e5-small` (384-dim) config are automatically migrated to `e5-large` (1024-dim) on startup. Added `configVersion` field with versioned migration framework
+- **npx install** — `npx @jungjaehoon/mama-os init` now works. Added `mama-os` bin alias to match scoped package name
+
 ## [0.18.0] - 2026-04-10
 
 ### Added
