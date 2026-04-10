@@ -87,6 +87,7 @@ declare global {
       data: VisNetworkDataContext;
     };
     getScale(): number;
+    setOptions?(options: unknown): void;
     focus(nodeId: string | number, options?: unknown): void;
     selectNodes(ids: Array<string | number>): void;
     destroy?: () => void;
