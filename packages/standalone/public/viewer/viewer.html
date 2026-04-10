@@ -412,7 +412,7 @@
 
         <!-- Logs Tab -->
         <div class="tab-content" id="tab-logs">
-          <iframe id="logs-iframe" src="" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
+          <iframe id="logs-iframe" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
         </div>
 
         <!-- Settings Tab -->
@@ -1198,7 +1198,7 @@
           wiki.init();
         } else if (tabName === 'logs') {
           const iframe = document.getElementById('logs-iframe');
-          if (iframe && !iframe.src) {
+          if (iframe && !iframe.getAttribute('src')) {
             iframe.src = '/viewer/log-viewer.html';
           }
         }
