@@ -486,7 +486,6 @@ export const READ_ONLY_TOOLS = new Set([
   'os_get_config',
   'pr_review_threads',
   'agent_notices',
-  'obsidian',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */

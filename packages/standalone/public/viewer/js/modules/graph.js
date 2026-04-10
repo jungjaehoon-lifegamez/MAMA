@@ -711,7 +711,7 @@ export class GraphModule {
             // Fallback for old select element
             const select = getElementByIdOrNull('topic-filter');
             if (!select)
-                {return;}
+                return;
             select.innerHTML = '<option value="">All Topics</option>';
             topics.forEach((topic) => {
                 const option = document.createElement('option');
@@ -735,14 +735,14 @@ export class GraphModule {
         const listEl = getElementByIdOrNull('decision-list');
         const countEl = getElementByIdOrNull('decision-list-count');
         if (!listEl)
-            {return;}
+            return;
         const sorted = [...nodes].sort((a, b) => {
             const ta = typeof a.created_at === 'number' ? a.created_at : 0;
             const tb = typeof b.created_at === 'number' ? b.created_at : 0;
             return tb - ta;
         });
         if (countEl)
-            {countEl.textContent = String(sorted.length);}
+            countEl.textContent = String(sorted.length);
         if (sorted.length === 0) {
             listEl.innerHTML =
                 '<div style="padding:16px;text-align:center;color:#9E9891;font-size:11px">No decisions yet</div>';
@@ -750,14 +750,14 @@ export class GraphModule {
         }
         const formatTime = (ts) => {
             if (!ts)
-                {return '';}
+                return '';
             const d = new Date(typeof ts === 'number' ? ts : parseInt(String(ts), 10));
             const now = Date.now();
             const diffH = Math.floor((now - d.getTime()) / 3600000);
             if (diffH < 1)
-                {return 'just now';}
+                return 'just now';
             if (diffH < 24)
-                {return `${diffH}h ago`;}
+                return `${diffH}h ago`;
             const diffD = Math.floor(diffH / 24);
             return `${diffD}d ago`;
         };
@@ -780,7 +780,7 @@ export class GraphModule {
      */
     focusNode(nodeId) {
         if (!this.network)
-            {return;}
+            return;
         try {
             this.network.selectNodes([nodeId]);
             this.network.focus(nodeId, {

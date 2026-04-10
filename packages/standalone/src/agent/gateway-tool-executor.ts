@@ -2039,6 +2039,15 @@ export class GatewayToolExecutor {
   }): Promise<GatewayToolResult> {
     const { agentId, task, background } = input;
 
+    // Resolve skill path safely — reject path traversal attempts
+    const resolveSkillPath = (skillName: string): string | null => {
+      if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) return null;
+      const skillsDir = join(homedir(), '.mama', 'skills');
+      const resolved = resolve(skillsDir, `${skillName}.md`);
+      if (!resolved.startsWith(skillsDir)) return null;
+      return resolved;
+    };
+
     if (!this.agentProcessManager || !this.delegationManagerRef) {
       return { success: false, error: 'Multi-agent not configured' } as GatewayToolResult;
     }
@@ -2070,8 +2079,8 @@ export class GatewayToolExecutor {
           );
           // Inject skill content if specified
           if (input.skill) {
-            const skillPath = join(homedir(), '.mama', 'skills', `${input.skill}.md`);
-            if (existsSync(skillPath)) {
+            const skillPath = resolveSkillPath(input.skill);
+            if (skillPath && existsSync(skillPath)) {
               const skillContent = readFileSync(skillPath, 'utf-8');
               delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
             }
@@ -2186,17 +2195,14 @@ export class GatewayToolExecutor {
     }
 
     try {
-      const output = execSync(
-        `obsidian ${cliArgs.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(' ')}`,
-        {
-          timeout: 15000,
-          encoding: 'utf-8',
-          maxBuffer: 1024 * 1024,
-        }
-      );
+      const { stdout } = await execFileAsync('obsidian', cliArgs, {
+        timeout: 15000,
+        encoding: 'utf-8',
+        maxBuffer: 1024 * 1024,
+      });
       return {
         success: true,
-        data: { output: output.trim() },
+        data: { output: stdout.trim() },
       } as GatewayToolResult;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

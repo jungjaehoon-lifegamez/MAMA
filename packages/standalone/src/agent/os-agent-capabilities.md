@@ -224,8 +224,9 @@ Do NOT use Bash, Read, Write, or any other tool to do work that a sub-agent can 
 
 ### delegate tool
 
-`delegate(agentId, task)` — Delegate a task to a sub-agent and receive the result.
+`delegate(agentId, task, background?, skill?)` — Delegate a task to a sub-agent and receive the result.
 `delegate(agentId, task, background: true)` — Background delegation (do not wait for result).
+`delegate(agentId, task, false, skill: "name")` — Inject `~/.mama/skills/{name}.md` into delegation prompt.
 
 ### Sub-Agent Roster
 
@@ -242,7 +243,7 @@ Do NOT use Bash, Read, Write, or any other tool to do work that a sub-agent can 
 
 1. **ALWAYS delegate** — If the request matches any sub-agent role above, call `delegate()`. Do NOT attempt the work yourself using Bash/Read/Write.
 2. **Verify results** — When you receive delegation results, summarize and relay to the user.
-3. **Retry on failure** — If delegation fails, retry once, then report the error.
+3. **Handle failures** — If delegation returns an error, report it clearly. The executor already retries with backoff — do not retry at prompt level.
 4. **Parallel delegation** — Independent tasks can run concurrently with `background: true`.
 5. **Only handle directly** — Simple MAMA searches (`mama_search`), system status checks, and config changes.
 
