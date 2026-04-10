@@ -353,24 +353,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ threads?: ReviewThread[]; summary?: string }',
     category: 'os',
   },
-  // Playground
-  {
-    name: 'playground_create',
-    description:
-      'Create an interactive HTML playground. Use file_path for large HTML instead of inline.',
-    params: [
-      { name: 'name', type: 'string', required: true },
-      { name: 'html', type: 'string', required: false, description: 'Inline HTML content' },
-      {
-        name: 'file_path',
-        type: 'string',
-        required: false,
-        description: 'Path to HTML file (use instead of html for large content)',
-      },
-    ],
-    returnType: '{ path: string; url: string }',
-    category: 'os',
-  },
   // Delegation — Tier 1 only (Conductor can delegate tasks to other agents)
   {
     name: 'delegate',

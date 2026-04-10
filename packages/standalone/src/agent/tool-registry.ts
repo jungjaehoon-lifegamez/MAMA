@@ -19,7 +19,6 @@ export type ToolCategory =
   | 'os_management'
   | 'os_monitoring'
   | 'pr_review'
-  | 'playground'
   | 'webchat'
   | 'code_act'
   | 'multi_agent'
@@ -247,14 +246,6 @@ register({
   params: 'pr_url',
 });
 
-// Playground
-register({
-  name: 'playground_create',
-  description: 'Create an interactive HTML playground',
-  category: 'playground',
-  params: 'name, html?, file_path?, description?',
-});
-
 // Webchat
 register({
   name: 'webchat_send',
@@ -408,7 +399,6 @@ export class ToolRegistry {
       os_management: 'OS Management (viewer-only)',
       os_monitoring: 'OS Monitoring (viewer-only)',
       pr_review: 'PR Review',
-      playground: 'Playground',
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
       multi_agent: 'Multi-Agent Delegation',

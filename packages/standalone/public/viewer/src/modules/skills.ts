@@ -13,8 +13,6 @@ import { API, type SkillItem } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { getElementByIdOrNull } from '../utils/dom.js';
 import { renderSafeMarkdown } from '../utils/markdown.js';
-import { PlaygroundModule } from './playground.js';
-
 const logger = new DebugLogger('Skills');
 
 /**
@@ -452,36 +450,15 @@ export const SkillsModule = {
   /**
    * Open Skill Lab with existing skill content for editing
    */
-  async editInSkillLab(source: string, id: string): Promise<void> {
-    try {
-      const { content } = (await API.getSkillContent(id, source)) as { content: string };
-      const skill = this.installed.find((s: SkillItem) => s.id === id && s.source === source);
-      const name = skill?.name || id;
-
-      // Switch to playground tab and open Skill Lab
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const switchTab = (window as any).switchTab;
-      if (typeof switchTab === 'function') {
-        switchTab('playground');
-      }
-      PlaygroundModule.openSkillLab({ id, name, content });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error('Failed to load skill for editing:', message);
-      alert(`Failed to load skill: ${message}`);
-    }
+  async editInSkillLab(_source: string, _id: string): Promise<void> {
+    alert('Skill editing is available via CLI: mama skill edit <id>');
   },
 
   /**
    * Open Skill Lab with empty state for new skill creation
    */
   openNewSkillLab(): void {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const switchTab = (window as any).switchTab;
-    if (typeof switchTab === 'function') {
-      switchTab('playground');
-    }
-    PlaygroundModule.openSkillLab();
+    alert('Create new skills via CLI: mama skill create');
   },
 
   /**
