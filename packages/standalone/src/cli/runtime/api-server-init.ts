@@ -77,7 +77,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     get open() {
       return true;
     },
-    driver: 'node:sqlite' as const,
+    driver: 'better-sqlite3' as const,
   };
 
   // ── Wiki path ─────────────────────────────────────────────────────────
