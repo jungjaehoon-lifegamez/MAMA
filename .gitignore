@@ -105,3 +105,6 @@ gha-creds-*.json
 GEMINI.md
 packages/standalone/bench/results/*.json
 .gstack/
+
+# PII patterns (local only, never commit)
+.pii-patterns

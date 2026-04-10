@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-04-10
+
+### Added
+
+- **Knowledge Agents** — Conductor orchestrates Dashboard Agent (project briefings), Wiki Agent (Obsidian knowledge compilation), and Memory Agent (automatic decision extraction). Agents delegate via `delegate()` gateway tool with optional skill injection (`~/.mama/skills/{skill}.md`)
+- **Viewer redesign** — Dashboard (project intelligence), Feed (connector stream), Wiki (Obsidian editor), Memory (1000+ node graph with neighbor expansion, hover labels), Logs (full-featured daemon viewer with stats/pins/export/WebSocket), Settings (connectors, agents, cron, token budget). Floating chat on all tabs
+- **Delegate gateway tool** — `delegate(agentId, task, background?, skill?)` replaces DELEGATE:: text parsing. Retry with exponential backoff (3 attempts), channel history injection on crash recovery, tier-based permission control
+- **OS Agent mode** — Conductor delegates specialized work to sub-agents. Sub-agent tools (report_publish, wiki_publish, obsidian) blocked on Conductor to enforce delegation
+- **Obsidian wiki integration** — Wiki agent compiles knowledge into Obsidian vault via CLI. Search-before-write prevents duplicates. Change detection skips compilation when no new information
+- **Agent audit system** — Hourly audit cron job, agent activity timeline in Logs tab, agent notices API
+- **Kagemusha query tools** — `kagemusha_overview`, `kagemusha_entities`, `kagemusha_tasks`, `kagemusha_messages` for progressive business data exploration
+- **Claude Code connector** — Plugin hooks feed coding session context into the connector framework
+- **Graph improvements** — 1000 node limit, neighbor expansion on click, zoom-independent hover labels, physics optimization
+- **start.ts refactoring** — Extracted into 14 focused modules under `src/cli/runtime/` (agent-loop-init, api-routes-init, api-server-init, connector-init, daemon, gateway-init, gateway-wiring, mama-core-init, memory-agent-init, metrics-init, scheduler-init, server-start, shutdown, utilities)
+
+### Changed
+
+- **Playground system removed** — Playground tab, CRUD API, template seeding, playground_create tool all deleted. Log viewer moved to `/viewer/log-viewer.html` (full 1399-line feature set preserved)
+- **SQLite driver unified** — Standalone migrated from `node:sqlite` to `better-sqlite3`, aligning with mama-core. Node.js 22.13+ no longer required
+- **Source code English conversion** — 230 → 93 Korean lines in source. Pre-commit hook blocks new Korean in .ts files
+- **Multi-agent handlers simplified** — Removed DELEGATE:: text parsing, delegation-format-validator, multi-agent-base. Delegation now routes through gateway tool exclusively
+- **Plugin mama-core dependency** — Changed from `"^1.3.0"` (npm registry) to `workspace:*` (local build). Fixes stale e5-small model resolution
+
+### Fixed
+
+- **mama_save null ref** — `agent-loop-init.ts` was creating AgentLoop without passing `executorOptions` (4th arg), leaving `GatewayToolExecutor.mamaDbPath` undefined
+- **Logs tab iframe** — Empty `src=""` attribute caused browser to resolve current page URL, making the load check always fail
+- **Dashboard/Wiki agents not delegatable** — Were created as separate AgentLoops in api-routes-init instead of being registered in multi-agent config
+
+### Security
+
+- **All API routes protected** — 7 previously unprotected routes (`/api/sessions`, `/api/logs/daemon`, `/api/workspace/skills`, etc.) now require `requireAuth`
+- **IP ban on honeypot hit** — Probes to `.git`, `.env`, `wp-login.php`, `mama-memory.db` trigger immediate 15-minute IP ban + tarpit
+- **IP ban on auth failure** — 5 authentication failures within 5 minutes → automatic 15-minute IP ban
+- **Banned IP rejection** — Enforced at both security middleware and requireAuth levels
+- **X-Frame-Options hardened** — Only `/viewer/log-viewer.html` allows SAMEORIGIN; all other paths DENY
+
 ## [0.17.0] - 2026-04-07
 
 ### Added

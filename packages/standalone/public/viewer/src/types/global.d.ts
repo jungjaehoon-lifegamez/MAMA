@@ -82,9 +82,12 @@ declare global {
       event: 'click' | 'stabilized',
       handler: (params: { nodes: Array<string | number> }) => void
     ): void;
+    on(event: 'hoverNode' | 'blurNode', handler: (params: { node: string | number }) => void): void;
     body: {
       data: VisNetworkDataContext;
     };
+    getScale(): number;
+    setOptions?(options: unknown): void;
     focus(nodeId: string | number, options?: unknown): void;
     selectNodes(ids: Array<string | number>): void;
     destroy?: () => void;

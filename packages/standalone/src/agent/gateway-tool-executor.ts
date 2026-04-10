@@ -18,7 +18,6 @@ import {
   mkdirSync,
   statSync,
   copyFileSync,
-  unlinkSync,
   realpathSync,
 } from 'fs';
 import { createHash } from 'crypto';
@@ -71,6 +70,8 @@ import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
+import type { DelegationManager } from '../multi-agent/delegation-manager.js';
+import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -171,14 +172,89 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
+  private agentProcessManager: AgentProcessManager | null = null;
+  private delegationManagerRef: DelegationManager | null = null;
+  private currentAgentId: string = '';
+  private currentSource: string = '';
+  private currentChannelId: string = '';
+  private disallowedGatewayTools: Set<string> = new Set();
+  private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
+  private wikiPublisher:
+    | ((
+        pages: Array<{
+          path: string;
+          title: string;
+          type: string;
+          content: string;
+          sourceIds: string[];
+          compiledAt: string;
+          confidence: string;
+        }>
+      ) => void)
+    | null = null;
+  private obsidianVaultPath: string | null = null;
+  setObsidianVaultPath(vaultPath: string): void {
+    this.obsidianVaultPath = vaultPath;
+  }
+  private agentEventBus: AgentEventBus | null = null;
+  setAgentEventBus(bus: AgentEventBus): void {
+    this.agentEventBus = bus;
+  }
+  getAgentEventBus(): AgentEventBus | null {
+    return this.agentEventBus;
+  }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
+  }
+  setAgentProcessManager(pm: AgentProcessManager): void {
+    this.agentProcessManager = pm;
+  }
+  setDelegationManager(dm: DelegationManager): void {
+    this.delegationManagerRef = dm;
+  }
+  /** Get AgentProcessManager (for cron/event triggers that need direct process access) */
+  getAgentProcessManager(): AgentProcessManager | null {
+    return this.agentProcessManager;
+  }
+  setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
+    this.currentAgentId = agentId;
+    this.currentSource = source;
+    this.currentChannelId = channelId;
+  }
+  setDisallowedGatewayTools(tools: string[]): void {
+    this.disallowedGatewayTools = new Set(tools);
+  }
+  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+    this.reportPublisher = fn;
+  }
+  setWikiPublisher(
+    fn: (
+      pages: Array<{
+        path: string;
+        title: string;
+        type: string;
+        content: string;
+        sourceIds: string[];
+        compiledAt: string;
+        confidence: string;
+      }>
+    ) => void
+  ): void {
+    this.wikiPublisher = fn;
   }
 
   /** Check if a memory agent is available for routing memory writes. */
   hasMemoryAgent(): boolean {
     return this.memoryAgentProcessManager !== null;
   }
+
+  /** Check if delegate tool support is available (multi-agent wired). */
+  hasDelegateSupport(): boolean {
+    return this.agentProcessManager !== null && this.delegationManagerRef !== null;
+  }
+
+  /** Retry delay (ms) for delegate backoff. Initialized from config in constructor. */
+  private _retryDelayMs: number = 1000;
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
@@ -193,6 +269,13 @@ export class GatewayToolExecutor {
 
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
+    }
+
+    // Read retry delay from config (safe: falls back to 1000ms if config not yet initialized)
+    try {
+      this._retryDelayMs = getConfig().timeouts?.busy_retry_ms ?? 1000;
+    } catch {
+      // Config not initialized yet — keep default 1000ms
     }
   }
 
@@ -334,6 +417,14 @@ export class GatewayToolExecutor {
       );
     }
 
+    // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
+    if (this.disallowedGatewayTools.has(toolName)) {
+      return {
+        success: false,
+        error: `Tool "${toolName}" is not available. Use delegate() to assign this work to the appropriate sub-agent.`,
+      } as GatewayToolResult;
+    }
+
     // Check tool permission
     const toolPermission = this.checkToolPermission(toolName);
     if (!toolPermission.allowed) {
@@ -406,11 +497,6 @@ export class GatewayToolExecutor {
           return await this.executePrReviewThreads(
             input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
           );
-        // Playground tools
-        case 'playground_create':
-          return await this.executePlaygroundCreate(
-            input as { name: string; html: string; description?: string }
-          );
         // Webchat tools
         case 'webchat_send':
           return await this.executeWebchatSend(
@@ -419,32 +505,212 @@ export class GatewayToolExecutor {
         // Code-Act sandbox execution
         case 'code_act':
           return await this.executeCodeAct(input as { code: string });
+        // Obsidian vault management via CLI
+        case 'obsidian':
+          return await this.executeObsidian(
+            input as { command: string; args?: Record<string, string> }
+          );
+        // Multi-Agent delegation
+        case 'delegate':
+          return await this.executeDelegate(
+            input as { agentId: string; task: string; background?: boolean }
+          );
       }
 
-      // MAMA tools require API
-      const api = await this.initializeMAMAApi();
+      // Lazy MAMA API init — only for tools that need it
+      const getApi = () => this.initializeMAMAApi();
 
       switch (toolName as GatewayToolName) {
         case 'mama_save':
           return await handleSave(
-            api,
+            await getApi(),
             input as SaveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
               : undefined
           );
         case 'mama_search':
-          return await handleSearch(api, input as SearchInput);
+          return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
         case 'mama_update':
-          return await handleUpdate(api, input as UpdateInput);
+          return await handleUpdate(await getApi(), input as UpdateInput);
         case 'mama_load_checkpoint':
-          return await handleLoadCheckpoint(api, input as LoadCheckpointInput);
+          return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
         case 'mama_add':
           return await this.handleMamaAdd(input as { content: string });
         case 'mama_ingest':
           return await this.handleMamaIngest(input as { content: string; scopes?: unknown });
+        case 'report_publish': {
+          const slotsInput = (input as { slots?: Record<string, string> }).slots;
+          if (!slotsInput || typeof slotsInput !== 'object') {
+            throw new AgentError(
+              'report_publish requires slots object',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (this.reportPublisher) {
+            this.reportPublisher(slotsInput);
+            const slotNames = Object.keys(slotsInput);
+
+            // Persist report summary to mama memory for Conductor querying
+            const slotValues = Object.values(slotsInput).join(' ');
+            const textSummary = slotValues
+              .replace(/<[^>]+>/g, ' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+            const truncated =
+              textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
+            void (async () => {
+              try {
+                const a = await getApi();
+                await handleSave(a, {
+                  type: 'decision' as const,
+                  topic: 'dashboard_briefing',
+                  decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+                  reasoning: 'Auto-saved by dashboard agent after report_publish',
+                  scopes: [{ kind: 'global', id: 'system' }],
+                });
+              } catch {
+                /* non-fatal */
+              }
+            })();
+
+            return {
+              success: true,
+              message: `Dashboard updated: ${slotNames.join(', ')} (${slotNames.length} slots)`,
+            };
+          }
+          throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
+        }
+        case 'wiki_publish': {
+          const pagesInput = (
+            input as {
+              pages?: Array<{
+                path: string;
+                title: string;
+                type: string;
+                content: string;
+                confidence?: string;
+              }>;
+            }
+          ).pages;
+          if (!pagesInput || !Array.isArray(pagesInput)) {
+            throw new AgentError(
+              'wiki_publish requires pages array',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (this.wikiPublisher) {
+            const now = new Date().toISOString();
+            const wikiPages = pagesInput.map((p) => ({
+              path: p.path,
+              title: p.title,
+              type: p.type || 'entity',
+              content: p.content,
+              sourceIds: [] as string[],
+              compiledAt: now,
+              confidence: p.confidence || 'medium',
+            }));
+            this.wikiPublisher(wikiPages);
+
+            // Persist wiki compilation summary to mama memory for Conductor querying
+            const pageSummary = pagesInput
+              .slice(0, 20)
+              .map(
+                (p: { title?: string; path: string; type?: string }) =>
+                  `- ${p.title || p.path} (${p.type || 'page'})`
+              )
+              .join('\n');
+            const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
+            void (async () => {
+              try {
+                const a = await getApi();
+                await handleSave(a, {
+                  type: 'decision' as const,
+                  topic: 'wiki_compilation',
+                  decision: wikiSummary,
+                  reasoning: 'Auto-saved by wiki agent after wiki_publish',
+                  scopes: [{ kind: 'global', id: 'system' }],
+                });
+              } catch {
+                /* non-fatal */
+              }
+            })();
+
+            return {
+              success: true,
+              message: `Wiki published: ${wikiPages.length} pages`,
+            };
+          }
+          throw new AgentError('Wiki publisher not configured', 'TOOL_ERROR', undefined, false);
+        }
+        // Kagemusha query tools — progressive business data exploration
+        case 'kagemusha_overview': {
+          const { getOverview } = await import('../connectors/kagemusha/query-tools.js');
+          return { success: true, ...getOverview() };
+        }
+        case 'kagemusha_entities': {
+          const { listEntities } = await import('../connectors/kagemusha/query-tools.js');
+          const entityInput = input as {
+            channel?: string;
+            activeOnly?: boolean;
+            limit?: number;
+          };
+          return { success: true, entities: listEntities(entityInput) };
+        }
+        case 'kagemusha_tasks': {
+          const { queryTasks } = await import('../connectors/kagemusha/query-tools.js');
+          const taskInput = input as {
+            sourceRoom?: string;
+            status?: string;
+            priority?: string;
+            search?: string;
+            limit?: number;
+          };
+          return { success: true, tasks: queryTasks(taskInput) };
+        }
+        case 'kagemusha_messages': {
+          const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');
+          const msgInput = input as {
+            channelId: string;
+            since?: string;
+            limit?: number;
+            search?: string;
+          };
+          if (!msgInput.channelId) {
+            throw new AgentError(
+              'kagemusha_messages requires channelId',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          return { success: true, messages: queryMessages(msgInput) };
+        }
+        case 'agent_notices': {
+          const rawLimit = Number((input as { limit?: number }).limit);
+          const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 10;
+          if (!this.agentEventBus) {
+            return { success: false, error: 'Agent event bus not available' } as GatewayToolResult;
+          }
+          const notices = this.agentEventBus.getRecentNotices(limit);
+          return {
+            success: true,
+            data: {
+              notices: notices.map((n) => ({
+                agent: n.agent,
+                action: n.action,
+                target: n.target,
+                timestamp: new Date(n.timestamp).toISOString(),
+              })),
+            },
+          };
+        }
         default:
           throw new AgentError(`Unknown tool: ${toolName}`, 'UNKNOWN_TOOL', undefined, false);
       }
@@ -1685,122 +1951,6 @@ export class GatewayToolExecutor {
   }
 
   // ============================================================================
-  // Playground Tools
-  // ============================================================================
-
-  private async executePlaygroundCreate(input: {
-    name: string;
-    html?: string;
-    file_path?: string;
-    description?: string;
-  }): Promise<{ success: boolean; url?: string; slug?: string; error?: string }> {
-    const { name, description } = input;
-    let { html } = input;
-
-    // Support file_path as alternative to inline html (avoids escaping issues with large HTML)
-    if (!html && input.file_path) {
-      // Expand ~ to home directory
-      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-      const expandedPath = input.file_path.startsWith('~/')
-        ? join(homeDir, input.file_path.slice(2))
-        : input.file_path;
-
-      // Check path permission based on role
-      const pathPermission = this.checkPathPermission(expandedPath);
-      if (!pathPermission.allowed) {
-        return { success: false, error: pathPermission.error };
-      }
-
-      try {
-        html = readFileSync(expandedPath, 'utf-8');
-      } catch (err) {
-        return {
-          success: false,
-          error: `Failed to read file: ${expandedPath} — ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-    }
-
-    if (!name || !html) {
-      return { success: false, error: 'name and (html or file_path) are required' };
-    }
-
-    // Generate slug from name (kebab-case, sanitized)
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 64);
-
-    if (!slug) {
-      return { success: false, error: 'Invalid name: cannot generate slug' };
-    }
-
-    const playgroundsDir = join(homedir(), '.mama', 'workspace', 'playgrounds');
-    const htmlPath = join(playgroundsDir, `${slug}.html`);
-    const indexPath = join(playgroundsDir, 'index.json');
-
-    try {
-      mkdirSync(playgroundsDir, { recursive: true });
-
-      // Read and validate index FIRST, before writing HTML file
-      // (so if index is corrupt, we don't leave dangling HTML files)
-      let index: Array<{
-        name: string;
-        slug: string;
-        description?: string;
-        created_at: string;
-      }> = [];
-      if (existsSync(indexPath)) {
-        try {
-          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
-          if (!Array.isArray(parsed)) {
-            throw new Error(`${indexPath} is corrupted: expected array, got ${typeof parsed}`);
-          }
-          index = parsed;
-        } catch (error) {
-          throw new Error(
-            `Failed to parse ${indexPath}: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }
-
-      // Remove existing entry with same slug
-      index = index.filter((entry) => entry.slug !== slug);
-
-      // Write HTML before updating index (HTML is primary artifact; index push comes after)
-      writeFileSync(htmlPath, html, 'utf-8');
-
-      // Add new entry
-      index.push({
-        name,
-        slug,
-        description,
-        created_at: new Date().toISOString(),
-      });
-
-      // Write index after HTML is safely on disk
-      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
-
-      return { success: true, url: `/playgrounds/${slug}.html`, slug };
-    } catch (err) {
-      // Clean up orphaned HTML file if it was written before error
-      try {
-        if (existsSync(htmlPath)) {
-          unlinkSync(htmlPath);
-        }
-      } catch {
-        // Silently ignore cleanup errors to preserve original error
-      }
-      return {
-        success: false,
-        error: `Failed to create playground: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
   // ============================================================================
   // Webchat Tools
   // ============================================================================
@@ -1882,6 +2032,205 @@ export class GatewayToolExecutor {
         success: false,
         error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
       };
+    }
+  }
+
+  // ============================================================================
+  // Multi-Agent Delegation
+  // ============================================================================
+
+  /**
+   * Execute delegate tool — dispatch a task to another agent
+   */
+  private async executeDelegate(input: {
+    agentId: string;
+    task: string;
+    background?: boolean;
+    skill?: string;
+  }): Promise<GatewayToolResult> {
+    const { agentId, task, background } = input;
+
+    // Resolve skill path safely — reject path traversal attempts
+    const resolveSkillPath = (skillName: string): string | null => {
+      if (!/^[a-zA-Z0-9_-]+$/.test(skillName)) {
+        return null;
+      }
+      const skillsDir = join(homedir(), '.mama', 'skills');
+      const resolved = resolve(skillsDir, `${skillName}.md`);
+      if (!resolved.startsWith(skillsDir)) {
+        return null;
+      }
+      return resolved;
+    };
+
+    if (!this.agentProcessManager || !this.delegationManagerRef) {
+      return { success: false, error: 'Multi-agent not configured' } as GatewayToolResult;
+    }
+
+    // Permission check using existing DelegationManager
+    // Default to 'conductor' when no agent context is set (e.g., MessageRouter path, audit cron)
+    // Conductor is the default agent and the only tier-1 agent that should delegate
+    const sourceAgentId = this.currentAgentId || 'conductor';
+    const check = this.delegationManagerRef.isDelegationAllowed(sourceAgentId, agentId);
+    if (!check.allowed) {
+      return {
+        success: false,
+        error: `Delegation denied: ${check.reason}`,
+      } as GatewayToolResult;
+    }
+
+    // Background delegation: fire-and-forget
+    if (background) {
+      const source = this.currentSource || 'viewer';
+      const channelId = this.currentChannelId || 'default';
+
+      // Fire-and-forget: spawn process and send message without awaiting result
+      void (async () => {
+        try {
+          const process = await this.agentProcessManager!.getProcess(source, channelId, agentId);
+          let delegationPrompt = this.delegationManagerRef!.buildDelegationPrompt(
+            sourceAgentId,
+            task
+          );
+          // Inject skill content if specified
+          if (input.skill) {
+            const skillPath = resolveSkillPath(input.skill);
+            if (skillPath && existsSync(skillPath)) {
+              const skillContent = readFileSync(skillPath, 'utf-8');
+              delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
+            }
+          }
+          await process.sendMessage(delegationPrompt);
+        } catch {
+          // Background task failures are silently ignored
+        }
+      })();
+
+      return {
+        success: true,
+        data: { agentId, background: true, message: 'Background task submitted' },
+      } as GatewayToolResult;
+    }
+
+    // Synchronous delegation with retry + backoff for resilience
+    const source = this.currentSource || 'viewer';
+    const channelId = this.currentChannelId || 'default';
+    const startTime = Date.now();
+
+    const MAX_RETRIES = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
+
+        let delegationPrompt = this.delegationManagerRef.buildDelegationPrompt(sourceAgentId, task);
+
+        // Inject skill content if specified
+        if (input.skill) {
+          const skillPath = resolveSkillPath(input.skill);
+          if (skillPath && existsSync(skillPath)) {
+            const skillContent = readFileSync(skillPath, 'utf-8');
+            delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
+          }
+        }
+
+        // Inject channel history for fresh processes (no prior context)
+        const sessionId = process.getSessionId?.();
+        if (!sessionId || attempt > 0) {
+          // Fresh process or retried after crash — inject channel history for context
+          try {
+            const { getChannelHistory } = await import('../gateways/channel-history.js');
+            const channelHistory = getChannelHistory();
+            if (channelHistory) {
+              const historyContext = channelHistory.formatForContext(channelId, '', agentId);
+              if (historyContext) {
+                delegationPrompt = `${historyContext}\n\n${delegationPrompt}`;
+              }
+            }
+          } catch {
+            // Channel history injection is best-effort — proceed without it
+          }
+        }
+
+        const result = await process.sendMessage(delegationPrompt);
+        return {
+          success: true,
+          data: { agentId, response: result.response, duration_ms: Date.now() - startTime },
+        } as GatewayToolResult;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        const isBusy = lastError.message.includes('busy');
+        const isCrash = lastError.message.includes('exited with code');
+
+        if (isCrash) {
+          // Force remove crashed process so next getProcess() creates a fresh one
+          this.agentProcessManager.stopProcess(source, channelId, agentId);
+        }
+
+        if (attempt < MAX_RETRIES - 1 && (isBusy || isCrash)) {
+          await new Promise((r) => setTimeout(r, this._retryDelayMs * (attempt + 1)));
+          continue;
+        }
+        break;
+      }
+    }
+
+    return {
+      success: false,
+      error: `Delegation to ${agentId} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
+    } as GatewayToolResult;
+  }
+
+  /**
+   * Execute Obsidian CLI command on the wiki vault.
+   */
+  private async executeObsidian(input: {
+    command: string;
+    args?: Record<string, string>;
+  }): Promise<GatewayToolResult> {
+    const { command, args } = input;
+
+    if (!this.obsidianVaultPath) {
+      return {
+        success: false,
+        error: 'Wiki vault path not configured',
+      } as GatewayToolResult;
+    }
+
+    // Obsidian CLI syntax: obsidian <command> key=value ... [flags]
+    // Vault is not passed as path — Obsidian uses the default/focused vault
+    const cliArgs = [command];
+    for (const [key, value] of Object.entries(args || {})) {
+      if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
+        cliArgs.push(key);
+      } else {
+        cliArgs.push(`${key}=${value}`);
+      }
+    }
+
+    try {
+      const { stdout } = await execFileAsync('obsidian', cliArgs, {
+        timeout: 15000,
+        encoding: 'utf-8',
+        maxBuffer: 1024 * 1024,
+      });
+      return {
+        success: true,
+        data: { output: stdout.trim() },
+      } as GatewayToolResult;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('not enabled') || msg.includes('ENOENT') || msg.includes('not running')) {
+        return {
+          success: false,
+          error: 'Obsidian CLI unavailable (app not running). Use wiki_publish fallback.',
+        } as GatewayToolResult;
+      }
+      return {
+        success: false,
+        error: `Obsidian CLI error: ${msg.substring(0, 500)}`,
+      } as GatewayToolResult;
     }
   }
 

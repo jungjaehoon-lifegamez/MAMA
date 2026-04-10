@@ -17,7 +17,6 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import { splitForDiscord } from '../gateways/message-splitter.js';
 import type { QueuedMessage } from './agent-message-queue.js';
-import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
@@ -134,13 +133,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   }
 
   /**
-   * Extract agent IDs from <@USER_ID> mentions AND DELEGATE::{agent_id}:: patterns
-   * in message content. Both syntaxes route to the same delegation flow.
+   * Extract agent IDs from <@USER_ID> mentions in message content.
    */
   extractMentionedAgentIds(content: string): string[] {
     const agentIds: string[] = [];
 
-    // 1. Discord native mentions: <@USER_ID> or <@!USER_ID>
+    // Discord native mentions: <@USER_ID> or <@!USER_ID>
     const mentionPattern = /<@!?(\d+)>/g;
     let match;
 
@@ -152,16 +150,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       } else if (agentId === 'main' && this.config.default_agent) {
         // Main bot userId maps to the default agent (LEAD)
         agentIds.push(this.config.default_agent);
-      }
-    }
-
-    // 2. DELEGATE::{agent_id}:: and DELEGATE_BG::{agent_id}:: syntax
-    const delegatePattern = /DELEGATE(?:_BG)?::([\w-]+)::/g;
-    while ((match = delegatePattern.exec(content)) !== null) {
-      const targetAgentId = match[1];
-      // Only add if it's a known agent and not already in the list
-      if (this.orchestrator.getAgent(targetAgentId) && !agentIds.includes(targetAgentId)) {
-        agentIds.push(targetAgentId);
       }
     }
 
@@ -736,16 +724,16 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
               ? ` [${event.completedSteps}/${event.totalSteps}]`
               : '';
           if (event.type === 'step-started') {
-            msg = `  ${event.agentDisplayName}${modelTag}${progress} 시작...`;
+            msg = `  ${event.agentDisplayName}${modelTag}${progress} starting...`;
           } else if (event.type === 'step-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
             const pct =
               event.totalSteps && event.completedSteps !== undefined
                 ? ` (${Math.round((event.completedSteps / event.totalSteps) * 100)}%)`
                 : '';
-            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} 완료`;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} completed`;
           } else if (event.type === 'step-failed') {
-            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             this.sendChannelNotification(context.channelId, msg).catch(() => {});
@@ -775,17 +763,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
 
-        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
-        if (workflowResult.directMessage) {
-          this.submitBackgroundDelegations(
-            agentId,
-            context.channelId,
-            workflowResult.directMessage,
-            'discord',
-            'MultiAgent post-workflow'
-          );
-        }
-
         const formattedResponse = this.formatAgentResponse(agent, display);
         const totalDuration = Date.now() - workflowStart + (result.duration_ms ?? 0);
         return {
@@ -806,12 +783,12 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
           if (!this.discordClient) return;
           let msg = '';
           if (event.type === 'council-round-started') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} starting...`;
           } else if (event.type === 'council-round-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) completed`;
           } else if (event.type === 'council-round-failed') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             this.sendChannelNotification(context.channelId, msg).catch(() => {});
@@ -823,17 +800,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         const display = councilResult.directMessage
           ? `${councilResult.directMessage}\n\n${councilResult.result}`
           : councilResult.result;
-
-        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
-        if (councilResult.directMessage) {
-          this.submitBackgroundDelegations(
-            agentId,
-            context.channelId,
-            councilResult.directMessage,
-            'discord',
-            'MultiAgent post-council'
-          );
-        }
 
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
@@ -856,61 +822,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
       const cleanedResponse = await this.executeAgentToolCalls(agentId, responseForProcessing);
 
-      // Detect API error responses — skip mention resolution and delegation to prevent error loops
+      // Detect API error responses — skip mention resolution to prevent error loops
       const isErrorResponse = /API Error:\s*\d{3}\b/.test(cleanedResponse);
       const resolvedResponse = isErrorResponse
         ? cleanedResponse
         : this.resolveResponseMentions(cleanedResponse);
-
-      const bgDelegations = isErrorResponse
-        ? []
-        : this.delegationManager.parseAllDelegations(agentId, resolvedResponse);
-      if (bgDelegations.length > 0 && bgDelegations[0].background) {
-        let submittedCount = 0;
-        const submittedAgents: string[] = [];
-        for (const delegation of bgDelegations) {
-          if (!delegation.background) {
-            continue;
-          }
-          const check = this.delegationManager.isDelegationAllowed(
-            delegation.fromAgentId,
-            delegation.toAgentId
-          );
-          if (check.allowed) {
-            this.backgroundTaskManager.submit({
-              description: delegation.task.substring(0, 200),
-              prompt: delegation.task,
-              agentId: delegation.toAgentId,
-              requestedBy: agentId,
-              channelId: context.channelId,
-              source: 'discord',
-            });
-            submittedCount++;
-            submittedAgents.push(delegation.toAgentId);
-            logger.info(
-              `[MultiAgent] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
-            );
-          } else {
-            console.warn(
-              `[MultiAgent] Delegation denied: ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
-            );
-          }
-        }
-
-        if (submittedCount > 0) {
-          const displayResponse =
-            bgDelegations[0].originalContent ||
-            `🔄 ${submittedCount} background task(s) submitted to **${[...new Set(submittedAgents)].join(', ')}**`;
-          const formattedResponse = this.formatAgentResponse(agent, displayResponse);
-          return {
-            agentId,
-            agent,
-            content: formattedResponse,
-            rawContent: displayResponse,
-            duration: result.duration_ms,
-          };
-        }
-      }
 
       const formattedResponse = this.formatAgentResponse(agent, resolvedResponse);
       return {
@@ -1007,14 +923,11 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     // Try executing workflow if this is a conductor response with a workflow_plan
     let cleanedResponse: string;
-    let delegationSource: string | undefined;
     const workflowResult = await this.tryExecuteWorkflow(response, message.channelId, 'discord');
     if (workflowResult && !workflowResult.failed) {
       cleanedResponse = workflowResult.directMessage
         ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
         : workflowResult.result;
-      // Parse delegations only from directMessage (not workflow result output)
-      delegationSource = workflowResult.directMessage;
     } else {
       // Strip workflow/council plan JSON that wasn't executed
       let strippedResponse = response;
@@ -1028,73 +941,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       cleanedResponse = await this.executeAgentToolCalls(agentId, strippedResponse);
     }
 
-    // Parse and submit DELEGATE_BG commands (from directMessage only for workflow results)
-    const delegations = this.delegationManager.parseAllDelegations(
-      agentId,
-      delegationSource ?? cleanedResponse
-    );
-    let displayResponse = cleanedResponse;
-    const hasBackground = delegations.some((delegation) => delegation.background);
-    if (delegations.length > 0 && hasBackground) {
-      let submittedCount = 0;
-      for (const delegation of delegations) {
-        if (!delegation.background) {
-          continue;
-        }
-        const check = this.delegationManager.isDelegationAllowed(
-          delegation.fromAgentId,
-          delegation.toAgentId
-        );
-        if (check.allowed) {
-          this.backgroundTaskManager.submit({
-            description: delegation.task.substring(0, 200),
-            prompt: delegation.task,
-            agentId: delegation.toAgentId,
-            requestedBy: agentId,
-            channelId: message.channelId,
-            source: 'discord',
-          });
-          submittedCount++;
-          logger.info(
-            `[MultiAgent] Background delegation (queued): ${agentId} -> ${delegation.toAgentId} (async)`
-          );
-        } else {
-          console.warn(
-            `[MultiAgent] Delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
-          );
-        }
-      }
-      if (submittedCount > 0) {
-        displayResponse =
-          delegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
-      }
-    }
-
-    // Handle synchronous DELEGATE:: delegations via message queue
-    const syncDelegations = delegations.filter((d) => !d.background);
-    for (const delegation of syncDelegations) {
-      const check = this.delegationManager.isDelegationAllowed(
-        delegation.fromAgentId,
-        delegation.toAgentId
-      );
-      if (check.allowed) {
-        this.messageQueue.enqueue(delegation.toAgentId, {
-          prompt: delegation.task,
-          channelId: message.channelId,
-          source: 'discord',
-          enqueuedAt: Date.now(),
-          context: { channelId: message.channelId, userId: 'delegation' },
-        });
-        logger.info(
-          `[MultiAgent] Sync delegation (queued path): ${agentId} -> ${delegation.toAgentId}`
-        );
-        this.tryDrainNow(delegation.toAgentId, 'discord', message.channelId).catch(() => {});
-      } else {
-        console.warn(
-          `[MultiAgent] Sync delegation denied (queued): ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
-        );
-      }
-    }
+    const displayResponse = cleanedResponse;
 
     // Format response with agent prefix
     const formattedResponse = this.formatAgentResponse(agent, displayResponse);
@@ -1251,8 +1098,8 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       /\bmodified\b.*\bfile/i,
       /\bEdit\b.*\bsuccess/i,
       /\bWrite\b.*\bsuccess/i,
-      /파일.*수정/,
-      /수정.*완료/,
+      /파일.*수정/, // Korean: "file...modified" — detects Korean user input
+      /수정.*완료/, // Korean: "modification...completed" — detects Korean user input
       /\[SOLO\]/i,
       /\[PAIR\]/i,
     ];
@@ -1351,8 +1198,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
    */
   async routeResponseMentions(originalMessage: Message, responses: AgentResponse[]): Promise<void> {
     for (const response of responses) {
-      const senderAgent = this.orchestrator.getAgent(response.agentId);
-
       // Filter out self-mentions only. All agents can route to any other agent
       // including LEAD -- the receiving LLM agent can reason about whether to
       // respond with new information or acknowledge without repeating.
@@ -1360,35 +1205,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
         (id) => id !== response.agentId // no self-mention
       );
       if (mentionedAgentIds.length === 0) continue;
-      if (senderAgent?.can_delegate && isDelegationAttempt(response.rawContent)) {
-        const validation = validateDelegationFormat(response.rawContent);
-        if (!validation.valid) {
-          console.warn(
-            `[Delegation] BLOCKED ${response.agentId} -- missing: ${validation.missingSections.join(', ')}`
-          );
-
-          // Post warning to channel so the agent sees the feedback
-          try {
-            const warningMsg =
-              `⚠️ **Delegation blocked** -- missing sections: ${validation.missingSections.join(', ')}\n` +
-              `Re-send with all 6 sections: TASK, EXPECTED OUTCOME, MUST DO, MUST NOT DO, REQUIRED TOOLS, CONTEXT`;
-            const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
-            if (hasOwnBot) {
-              await this.multiBotManager.replyAsAgent(
-                response.agentId,
-                originalMessage,
-                warningMsg
-              );
-            } else {
-              await originalMessage.reply({ content: warningMsg });
-            }
-          } catch {
-            /* ignore warning post errors */
-          }
-
-          continue; // Skip routing -- do not forward to target agents
-        }
-      }
 
       logger.info(
         `[MultiAgent] Auto-routing mentions from ${response.agentId}: -> ${mentionedAgentIds.join(', ')}`
@@ -1455,7 +1271,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
 
     const truncatedDescription = sourceResponse.rawContent
       .replace(/<@!?\d+>/g, '')
-      .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
       .trim()
       .substring(0, 200);
 
@@ -1470,10 +1285,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
       timestamp: Date.now(),
     });
 
-    const delegationContent = sourceResponse.rawContent
-      .replace(/<@!?\d+>/g, '')
-      .replace(/DELEGATE(?:_BG)?::[\w-]+::/g, '')
-      .trim();
+    const delegationContent = sourceResponse.rawContent.replace(/<@!?\d+>/g, '').trim();
 
     try {
       const response = await this.processAgentResponse(
@@ -1615,15 +1427,6 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
   private resolveResponseMentions(text: string): string {
     if (!this.config.mention_delegation) return text;
 
-    // Collect agent IDs already handled by DELEGATE:: / DELEGATE_BG:: patterns
-    // to avoid duplicate delegation via mention resolution
-    const delegatedAgentIds = new Set<string>();
-    const delegateRegex = /DELEGATE(?:_BG)?::(\w+)::/g;
-    let dm;
-    while ((dm = delegateRegex.exec(text)) !== null) {
-      delegatedAgentIds.add(dm[1].toLowerCase());
-    }
-
     const botUserIdMap = this.multiBotManager.getBotUserIdMap();
     const mainBotUserId = this.multiBotManager.getMainBotUserId();
     const defaultAgentId = this.config.default_agent;
@@ -1649,10 +1452,7 @@ export class MultiAgentDiscordHandler extends MultiAgentHandlerBase {
     }
 
     let resolved = text;
-    for (const [pattern, { mention, agentId }] of patterns) {
-      // Skip mention resolution for agents already in DELEGATE:: patterns
-      if (delegatedAgentIds.has(agentId.toLowerCase())) continue;
-
+    for (const [pattern, { mention }] of patterns) {
       // Match @pattern but NOT already-resolved <@pattern
       const regex = new RegExp(`(?<!<)@${pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
       resolved = resolved.replace(regex, mention);

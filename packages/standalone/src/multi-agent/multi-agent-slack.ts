@@ -17,7 +17,6 @@ import type { PersistentProcessOptions } from '../agent/persistent-cli-process.j
 import { splitForSlack } from '../gateways/message-splitter.js';
 import type { AgentRuntimeProcess } from './runtime-process.js';
 import type { QueuedMessage } from './agent-message-queue.js';
-import { validateDelegationFormat, isDelegationAttempt } from './delegation-format-validator.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { getChannelHistory } from '../gateways/channel-history.js';
 import {
@@ -555,16 +554,16 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
               ? ` [${event.completedSteps}/${event.totalSteps}]`
               : '';
           if (event.type === 'step-started') {
-            msg = `  ${event.agentDisplayName}${modelTag}${progress} 시작...`;
+            msg = `  ${event.agentDisplayName}${modelTag}${progress} starting...`;
           } else if (event.type === 'step-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
             const pct =
               event.totalSteps && event.completedSteps !== undefined
                 ? ` (${Math.round((event.completedSteps / event.totalSteps) * 100)}%)`
                 : '';
-            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} 완료`;
+            msg = `${event.agentDisplayName}${modelTag} (${sec}s)${pct} completed`;
           } else if (event.type === 'step-failed') {
-            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `${event.agentDisplayName}${modelTag}${progress} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             wfClient.chat.postMessage({ channel: context.channelId, text: msg }).catch(() => {});
@@ -619,17 +618,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
           : workflowResult.result;
 
-        // Parse delegations from non-plan content (directMessage may contain DELEGATE commands)
-        if (workflowResult.directMessage) {
-          this.submitBackgroundDelegations(
-            agentId,
-            context.channelId,
-            workflowResult.directMessage,
-            'slack',
-            'MultiAgentSlack post-workflow'
-          );
-        }
-
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
           agentId,
@@ -652,12 +640,12 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
           }
           let msg = '';
           if (event.type === 'council-round-started') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} 시작...`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} starting...`;
           } else if (event.type === 'council-round-completed') {
             const sec = event.duration_ms ? Math.round(event.duration_ms / 1000) : 0;
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) 완료`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} (${sec}s) completed`;
           } else if (event.type === 'council-round-failed') {
-            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ 실패: ${event.error?.substring(0, 100)}`;
+            msg = `🗣️ ${event.agentDisplayName} Round ${event.round} ❌ failed: ${event.error?.substring(0, 100)}`;
           }
           if (msg) {
             try {
@@ -673,17 +661,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const display = councilResult.directMessage
           ? `${councilResult.directMessage}\n\n${councilResult.result}`
           : councilResult.result;
-
-        // Parse delegations from non-plan content
-        if (councilResult.directMessage) {
-          this.submitBackgroundDelegations(
-            agentId,
-            context.channelId,
-            councilResult.directMessage,
-            'slack',
-            'MultiAgentSlack post-council'
-          );
-        }
 
         const formattedResponse = this.formatAgentResponse(agent, display);
         return {
@@ -708,68 +685,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       // Execute text-based gateway tool calls (```tool_call blocks in response)
       const cleanedResponse = await this.executeTextToolCalls(responseForProcessing);
 
-      // Parse all delegation commands (both sync and background)
-      const delegations = this.delegationManager.parseAllDelegations(agentId, cleanedResponse);
-      let displayResponse = cleanedResponse;
-
-      // Handle background delegations
-      const bgDelegations = delegations.filter((d) => d.background);
-      if (bgDelegations.length > 0) {
-        let submittedCount = 0;
-        for (const delegation of bgDelegations) {
-          const check = this.delegationManager.isDelegationAllowed(
-            delegation.fromAgentId,
-            delegation.toAgentId
-          );
-          if (check.allowed) {
-            this.backgroundTaskManager.submit({
-              description: delegation.task.substring(0, 200),
-              prompt: delegation.task,
-              agentId: delegation.toAgentId,
-              requestedBy: agentId,
-              channelId: context.channelId,
-              source: 'slack',
-            });
-            this.logger.log(
-              `[MultiAgentSlack] Background delegation: ${agentId} -> ${delegation.toAgentId} (async)`
-            );
-            submittedCount++;
-          }
-        }
-        if (submittedCount > 0) {
-          displayResponse =
-            bgDelegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
-        }
-      }
-
-      // Handle synchronous delegations via message queue
-      const syncDelegations = delegations.filter((d) => !d.background);
-      for (const delegation of syncDelegations) {
-        const check = this.delegationManager.isDelegationAllowed(
-          delegation.fromAgentId,
-          delegation.toAgentId
-        );
-        if (check.allowed) {
-          this.messageQueue.enqueue(delegation.toAgentId, {
-            prompt: delegation.task,
-            channelId: context.channelId,
-            source: 'slack',
-            enqueuedAt: Date.now(),
-            context,
-          });
-          this.logger.log(
-            `[MultiAgentSlack] Sync delegation (queued): ${agentId} -> ${delegation.toAgentId}`
-          );
-          this.tryDrainNow(delegation.toAgentId, 'slack', context.channelId).catch(() => {});
-        } else {
-          this.logger.log(
-            `[MultiAgentSlack] Sync delegation denied: ${agentId} -> ${delegation.toAgentId}: ${check.reason}`
-          );
-        }
-      }
-
       // Format response with agent prefix
-      const formattedResponse = this.formatAgentResponse(agent, displayResponse);
+      const formattedResponse = this.formatAgentResponse(agent, cleanedResponse);
 
       return {
         agentId,
@@ -799,8 +716,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
         const queueSize = this.messageQueue.getQueueSize(agentId);
         const queueText =
           queueSize > 0
-            ? `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. ${queueSize}개의 메시지가 대기열에 있습니다.`
-            : `⚠️ ${agent.display_name}이(가) 현재 작업 중입니다. 요청이 대기열에 등록되었습니다.`;
+            ? `⚠️ ${agent.display_name} is currently busy. ${queueSize} messages queued.`
+            : `⚠️ ${agent.display_name} is currently busy. Your request has been queued.`;
 
         // Trigger immediate drain if process is idle or reaped
         this.tryDrainNow(agentId, 'slack', context.channelId).catch(() => {});
@@ -816,8 +733,8 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
 
       const fallbackMessage =
         errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
-          ? `⚠️ ${agent.display_name} 응답이 시간 초과되어 처리 결과를 못 받았습니다. 잠시 후 다시 시도해 주세요.`
-          : `⚠️ ${agent.display_name} 처리 중 오류가 발생했습니다: ${errMsg}`;
+          ? `⚠️ ${agent.display_name} response timed out. Please try again later.`
+          : `⚠️ ${agent.display_name} error occurred while processing: ${errMsg}`;
 
       const fallbackRaw =
         errMsg.toLowerCase().includes('timed out') || errMsg.toLowerCase().includes('timeout')
@@ -979,13 +896,10 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       undefined,
       createStepCbs
     );
-    let delegationSource: string | undefined;
     if (workflowResult && !workflowResult.failed) {
       displayResponse = workflowResult.directMessage
         ? `${workflowResult.directMessage}\n\n${workflowResult.result}`
         : workflowResult.result;
-      // Parse delegations only from directMessage (not workflow result output)
-      delegationSource = workflowResult.directMessage;
     } else {
       // Strip workflow/council plan JSON from queued responses
       if (this.workflowEngine?.isEnabled()) {
@@ -996,62 +910,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       }
       // Execute text-based gateway tool calls
       displayResponse = await this.executeTextToolCalls(displayResponse);
-    }
-
-    // Parse and submit DELEGATE_BG commands (from directMessage only for workflow results)
-    const delegations = this.delegationManager.parseAllDelegations(
-      agentId,
-      delegationSource ?? displayResponse
-    );
-    const bgDelegations = delegations.filter((d) => d.background);
-    if (bgDelegations.length > 0) {
-      let submittedCount = 0;
-      for (const delegation of bgDelegations) {
-        const check = this.delegationManager.isDelegationAllowed(
-          delegation.fromAgentId,
-          delegation.toAgentId
-        );
-        if (check.allowed) {
-          this.backgroundTaskManager.submit({
-            description: delegation.task.substring(0, 200),
-            prompt: delegation.task,
-            agentId: delegation.toAgentId,
-            requestedBy: agentId,
-            channelId: message.channelId,
-            source: 'slack',
-          });
-          this.logger.info(
-            `[MultiAgentSlack] Background delegation (queued): ${agentId} -> ${delegation.toAgentId}`
-          );
-          submittedCount++;
-        }
-      }
-      if (submittedCount > 0) {
-        displayResponse =
-          bgDelegations[0].originalContent || `🔄 ${submittedCount} background task(s) delegated`;
-      }
-    }
-
-    // Handle synchronous delegations via message queue
-    const syncDelegations = delegations.filter((d) => !d.background);
-    for (const delegation of syncDelegations) {
-      const check = this.delegationManager.isDelegationAllowed(
-        delegation.fromAgentId,
-        delegation.toAgentId
-      );
-      if (check.allowed) {
-        this.messageQueue.enqueue(delegation.toAgentId, {
-          prompt: delegation.task,
-          channelId: message.channelId,
-          source: 'slack',
-          enqueuedAt: Date.now(),
-          context: { channelId: message.channelId, userId: 'delegation' },
-        });
-        this.logger.info(
-          `[MultiAgentSlack] Sync delegation (queued path): ${agentId} -> ${delegation.toAgentId}`
-        );
-        this.tryDrainNow(delegation.toAgentId, 'slack', message.channelId).catch(() => {});
-      }
     }
 
     // Format response with agent prefix
@@ -1223,43 +1081,6 @@ export class MultiAgentSlackHandler extends MultiAgentHandlerBase {
       );
       if (mentionedAgentIds.length === 0) {
         continue;
-      }
-
-      // Hard gate: block malformed delegations from can_delegate agents
-      const senderAgent = this.orchestrator.getAgent(response.agentId);
-      if (senderAgent?.can_delegate && isDelegationAttempt(response.rawContent)) {
-        const validation = validateDelegationFormat(response.rawContent);
-        if (!validation.valid) {
-          this.logger.warn(
-            `[Delegation] BLOCKED ${response.agentId} -- missing: ${validation.missingSections.join(', ')}`
-          );
-
-          // Post warning to channel so the agent sees the feedback
-          try {
-            const warningMsg =
-              `⚠️ *Delegation blocked* -- missing sections: ${validation.missingSections.join(', ')}\n` +
-              `Re-send with all 6 sections: TASK, EXPECTED OUTCOME, MUST DO, MUST NOT DO, REQUIRED TOOLS, CONTEXT`;
-            const hasOwnBot = this.multiBotManager.hasAgentBot(response.agentId);
-            if (hasOwnBot) {
-              await this.multiBotManager.replyAsAgent(
-                response.agentId,
-                channelId,
-                threadTs,
-                warningMsg
-              );
-            } else {
-              await mainWebClient.chat.postMessage({
-                channel: channelId,
-                text: warningMsg,
-                thread_ts: threadTs,
-              });
-            }
-          } catch {
-            /* ignore warning post errors */
-          }
-
-          continue; // Skip routing -- do not forward to target agents
-        }
       }
 
       this.logger.log(

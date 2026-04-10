@@ -257,10 +257,34 @@ export class AgentProcessManager extends EventEmitter {
       options.effort = effort;
     }
 
-    // MCP config: expose MAMA MCP tools (mama_save, brave-devtools, etc.) to agents
+    // MCP config: expose MCP tools to agents
+    // Code-Act agents get a stripped config (code-act only) to force tool access through sandbox.
+    // Without this, direct MCP tools (mcp__mama__search) compete with code-act gateway tools
+    // (report_publish, wiki_publish) which are ONLY available inside code_act.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      options.mcpConfigPath = mcpConfigPath;
+      if (agentConfig.useCodeAct) {
+        // Code-Act agents: only provide code-act MCP server
+        const codeActOnlyConfig = resolve(homedir(), '.mama', 'code-act-only-mcp-config.json');
+        try {
+          const fullConfig = JSON.parse(require('fs').readFileSync(mcpConfigPath, 'utf-8'));
+          const codeActEntry = fullConfig.mcpServers?.['code-act'];
+          if (codeActEntry) {
+            require('fs').writeFileSync(
+              codeActOnlyConfig,
+              JSON.stringify({ mcpServers: { 'code-act': codeActEntry } }, null, 2),
+              'utf-8'
+            );
+            options.mcpConfigPath = codeActOnlyConfig;
+          } else {
+            options.mcpConfigPath = mcpConfigPath;
+          }
+        } catch {
+          options.mcpConfigPath = mcpConfigPath;
+        }
+      } else {
+        options.mcpConfigPath = mcpConfigPath;
+      }
     }
 
     if (tier >= 2) {
@@ -346,8 +370,12 @@ export class AgentProcessManager extends EventEmitter {
     const shouldTrace = this.shouldTracePrompt(agentId);
     const traceCacheKey = agentId.toLowerCase() === 'conductor' ? 'conductor' : agentId;
 
-    // Check cache first
-    if (this.personaCache.has(agentId)) {
+    // Check if a skill rules file exists for this agent (allows hot-reload)
+    const skillPath = resolve(homedir(), '.mama', 'skills', `${agentId}-rules.md`);
+    const hasSkillFile = existsSync(skillPath);
+
+    // Check cache first — skip cache if skill file exists to allow hot-reload
+    if (this.personaCache.has(agentId) && !hasSkillFile) {
       const cachedPrompt = this.personaCache.get(agentId)!;
       if (shouldTrace) {
         processManagerLogger.debug(
@@ -389,7 +417,7 @@ export class AgentProcessManager extends EventEmitter {
         );
       }
       const buildStart = Date.now();
-      const systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
+      let systemPrompt = await this.buildSystemPrompt(agentId, agentConfig, personaContent);
       if (shouldTrace) {
         processManagerLogger.debug(
           `[Conductor] system prompt built key=${traceCacheKey} build_ms=${Date.now() - buildStart} total_ms=${
@@ -397,6 +425,24 @@ export class AgentProcessManager extends EventEmitter {
           } len=${systemPrompt.length}`
         );
       }
+
+      // Append agent-specific skill rules from ~/.mama/skills/{agentId}-rules.md
+      if (hasSkillFile) {
+        try {
+          const skillContent = await readFile(skillPath, 'utf8');
+          if (skillContent.trim()) {
+            systemPrompt += `\n\n## Agent Rules (auto-loaded from ${agentId}-rules.md)\n\n${skillContent}`;
+            if (shouldTrace) {
+              processManagerLogger.debug(
+                `[${agentId}] Skill rules loaded: ${skillContent.length} chars`
+              );
+            }
+          }
+        } catch {
+          // Non-fatal: skill file read error
+        }
+      }
+
       this.personaCache.set(agentId, systemPrompt);
       if (shouldTrace && this.dumpConductorPrompt) {
         processManagerLogger.debug(`[Conductor] system prompt content:\n${systemPrompt}`);

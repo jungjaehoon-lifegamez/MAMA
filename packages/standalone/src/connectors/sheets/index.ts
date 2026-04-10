@@ -5,6 +5,10 @@
  */
 
 import { execSync } from 'child_process';
+import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
 
 import type {
   AuthRequirement,
@@ -35,16 +39,41 @@ export class SheetsConnector implements IConnector {
     this.config = config;
   }
 
+  private get snapshotPath(): string {
+    return join(homedir(), '.mama', 'connectors', 'sheets', 'snapshot.json');
+  }
+
   async init(): Promise<void> {
     try {
       execSync('gws --version', { stdio: 'pipe' });
     } catch {
       throw new Error('gws CLI not found. Install it and run: gws auth login');
     }
+    mkdirSync(dirname(this.snapshotPath), { recursive: true });
+    this.loadSnapshot();
   }
 
   async dispose(): Promise<void> {
     this.lastSnapshot.clear();
+  }
+
+  private loadSnapshot(): void {
+    try {
+      if (existsSync(this.snapshotPath)) {
+        const data = JSON.parse(readFileSync(this.snapshotPath, 'utf8'));
+        this.lastSnapshot = new Map(Object.entries(data));
+      }
+    } catch {
+      // start fresh on error
+    }
+  }
+
+  private async saveSnapshot(): Promise<void> {
+    try {
+      await writeFile(this.snapshotPath, JSON.stringify(Object.fromEntries(this.lastSnapshot)));
+    } catch {
+      // non-fatal
+    }
   }
 
   async healthCheck(): Promise<ConnectorHealth> {
@@ -215,6 +244,8 @@ export class SheetsConnector implements IConnector {
     this.lastPollCount = items.length;
     // lastError was set in catch blocks; clear only if no error occurred this pass
     if (!hadError) this.lastError = undefined;
+
+    await this.saveSnapshot();
 
     return items;
   }
