@@ -6,6 +6,7 @@
 
 import express, { type Express, type Router } from 'express';
 import { createServer, type Server as HttpServer } from 'node:http';
+import type { ServerResponse } from 'node:http';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { createCronRouter, InMemoryLogStore, type ExecutionLogStore } from './cron-handler.js';
 import {
@@ -21,6 +22,14 @@ import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
 import { createSecurityMiddleware } from '../security/security-monitor.js';
+import { createReportRouter, createReportStore } from './report-handler.js';
+import { createWikiRouter } from './wiki-handler.js';
+import { createIntelligenceRouter } from './intelligence-handler.js';
+import { createConnectorFeedRouter } from './connector-feed-handler.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { AVAILABLE_CONNECTORS } from '../connectors/index.js';
 
 // Re-export types
 export * from './types.js';
@@ -50,6 +59,10 @@ export interface ApiServerOptions {
   enableAutoKillPort?: boolean;
   /** Sessions database instance (for token tracking) */
   db?: SQLiteDatabase;
+  /** Memory database instance (for intelligence queries — mama-memory.db) */
+  memoryDb?: SQLiteDatabase;
+  /** Wiki directory path (for wiki API) */
+  wikiPath?: string;
   /** Skill registry instance */
   skillRegistry?: SkillRegistry;
   /** Health score service for /api/metrics/health */
@@ -57,6 +70,16 @@ export interface ApiServerOptions {
   /** Connection-based health check service */
   healthCheckService?: {
     check(): Promise<SystemHealthReport>;
+  };
+  /** RawStore for connector feed queries */
+  rawStore?: import('../connectors/framework/raw-store.js').RawStore;
+  /** List of enabled connector names */
+  enabledConnectors?: string[];
+  /** AgentEventBus for notices */
+  eventBus?: {
+    getRecentNotices(
+      limit: number
+    ): Array<{ agent: string; action: string; target: string; timestamp: number }>;
   };
 }
 
@@ -68,6 +91,10 @@ export interface ApiServer {
   app: Express;
   /** HTTP server instance */
   server: HttpServer | null;
+  /** Report slots store */
+  reportStore: import('./report-handler.js').ReportStore;
+  /** SSE clients for report updates */
+  reportSseClients: Set<ServerResponse>;
   /** Start the server */
   start(): Promise<void>;
   /** Stop the server */
@@ -88,9 +115,13 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     onHeartbeat,
     enableAutoKillPort = false,
     db,
+    memoryDb,
     skillRegistry,
     healthService,
     healthCheckService,
+    rawStore,
+    enabledConnectors,
+    eventBus,
   } = options;
 
   const app = express();
@@ -98,11 +129,11 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Security headers
   app.disable('x-powered-by');
   app.use((req, res, next) => {
-    // Allow playgrounds to be loaded in iframes (viewer embeds them)
-    if (!req.path.startsWith('/playgrounds/')) {
-      res.setHeader('X-Frame-Options', 'DENY');
-    } else {
+    // Allow log viewer to be loaded in iframe (viewer embeds it)
+    if (req.path === '/viewer/log-viewer.html') {
       res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    } else {
+      res.setHeader('X-Frame-Options', 'DENY');
     }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
@@ -152,11 +183,22 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
 
+  // Mount report store (created early so intelligence router can reference it)
+  const reportSseClients = new Set<ServerResponse>();
+  const reportStore = createReportStore();
+
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
     const tokenRouter = createTokenRouter(db);
     app.use('/api/tokens', tokenRouter);
+
+    const intelligenceDb = memoryDb ?? db;
+    const intelligenceRouter = createIntelligenceRouter(intelligenceDb, {
+      reportStore,
+      eventBus,
+    });
+    app.use('/api/intelligence', intelligenceRouter);
   }
 
   // Mount skills router if registry is available
@@ -165,13 +207,64 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/skills', skillsRouter);
   }
 
+  // Mount report router (always available)
+  const reportRouter = createReportRouter(reportStore, reportSseClients);
+  app.use('/api/report', reportRouter);
+
+  // Mount wiki router if wiki path is configured
+  const wikiPath = options.wikiPath;
+  if (wikiPath) {
+    const wikiRouter = createWikiRouter(wikiPath);
+    app.use('/api/wiki', wikiRouter);
+  }
+
+  // Connector status endpoint — reads connectors.json + runtime state
+  app.get('/api/connectors/status', requireAuth, (_req, res) => {
+    const configPath = join(homedir(), '.mama', 'connectors.json');
+    let config: Record<
+      string,
+      {
+        enabled?: boolean;
+        pollIntervalMinutes?: number;
+        channels?: Record<string, unknown>;
+        auth?: unknown;
+      }
+    > = {};
+    try {
+      if (existsSync(configPath)) {
+        config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      }
+    } catch {
+      /* empty */
+    }
+    const connectors = AVAILABLE_CONNECTORS.map((name) => {
+      const cfg = config[name];
+      return {
+        name,
+        enabled: cfg?.enabled ?? false,
+        healthy: cfg?.enabled ?? false,
+        lastPollTime: null,
+        lastPollCount: 0,
+        channelCount: cfg?.channels ? Object.keys(cfg.channels).length : 0,
+        pollIntervalMinutes: cfg?.pollIntervalMinutes ?? 60,
+      };
+    });
+    res.json({ connectors });
+  });
+
+  // Mount connector feed router (activity + per-connector feed)
+  if (rawStore && enabledConnectors && enabledConnectors.length > 0) {
+    const connectorFeedRouter = createConnectorFeedRouter(rawStore, enabledConnectors);
+    app.use('/api/connectors', connectorFeedRouter);
+  }
+
   // Health check endpoint (watchdog)
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
 
   // Metrics health endpoint (observability)
-  app.get('/api/metrics/health', async (_req, res) => {
+  app.get('/api/metrics/health', requireAuth, async (_req, res) => {
     if (healthCheckService) {
       try {
         const report = await healthCheckService.check();
@@ -200,6 +293,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   return {
     app,
+    reportStore,
+    reportSseClients,
     get server() {
       return server;
     },

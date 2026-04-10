@@ -118,7 +118,7 @@ export function buildProjectTruth(truthItems: NormalizedItem[]): ProjectTruth {
         const h = headers[i]?.replace(/\n/g, '').trim() ?? '';
         meta[h] = values[i]?.trim() ?? '';
       }
-      // Spreadsheet schema example: 클라이언트, 프로젝트, 명칭, 제출기한, Trello
+      // Spreadsheet schema example: client, project, name, deadline, Trello (Korean fallback keys retained for user data)
       const client = meta['클라이언트'] ?? meta['client'] ?? '';
       const project = meta['프로젝트'] ?? meta['project'] ?? item.channel;
       const name = meta['명칭'] ?? meta['name'] ?? meta['LIST_NO'] ?? '';
@@ -129,7 +129,7 @@ export function buildProjectTruth(truthItems: NormalizedItem[]): ProjectTruth {
         projects[projectKey] = { workUnits: {} };
       }
       projects[projectKey].workUnits[name || item.sourceId] = {
-        status: deadline ? `납기:${deadline}` : 'active',
+        status: deadline ? `deadline:${deadline}` : 'active',
         assigned: meta['담당'] ?? meta['담당자'] ?? meta['assigned'],
         metadata: { ...meta, trello },
       };
@@ -173,33 +173,35 @@ export function buildActivityExtractionPrompt(
   activity: NormalizedItem[],
   truth: ProjectTruth
 ): string {
-  let prompt = '당신은 프로젝트 역사가입니다.\n\n';
-  prompt += '현재 프로젝트 상태 (관리 문서/칸반 기준):\n';
+  let prompt = 'You are a project historian.\n';
+  prompt +=
+    'IMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n';
+  prompt += 'Current project state (from management docs / kanban):\n';
 
   const truthEntries = Object.entries(truth.projects);
   if (truthEntries.length === 0) {
-    prompt += '(없음)\n';
+    prompt += '(none)\n';
   } else {
     for (const [projectName, project] of truthEntries) {
       for (const [workUnit, state] of Object.entries(project.workUnits)) {
         prompt += `- ${projectName}/${workUnit}: ${state.status}`;
-        if (state.assigned) prompt += `, 담당: ${state.assigned}`;
+        if (state.assigned) prompt += `, assigned: ${state.assigned}`;
         prompt += '\n';
       }
     }
   }
 
-  prompt += '\n아래는 이번 기간의 크로스채널 활동입니다.\n';
-  prompt += '진실 대비 변경사항을 추출하세요:\n';
-  prompt += '- 상태 변경 (진행→제출 등)\n';
-  prompt += '- 결과물 업로드 (파일 변경)\n';
-  prompt += '- 결정/합의\n';
-  prompt += '- 일정 변경\n';
-  prompt += '- 교훈/문제-해결\n\n';
-  prompt += '일상 대화, 인사, 잡담은 무시하세요.\n\n';
+  prompt += '\nBelow is the cross-channel activity for this period.\n';
+  prompt += 'Extract changes relative to the ground truth:\n';
+  prompt += '- Status changes (in-progress → submitted, etc.)\n';
+  prompt += '- Deliverable uploads (file changes)\n';
+  prompt += '- Decisions / agreements\n';
+  prompt += '- Schedule changes\n';
+  prompt += '- Lessons learned / problem-resolution\n\n';
+  prompt += 'Ignore casual conversation, greetings, and small talk.\n\n';
   prompt +=
-    'JSON 배열로 반환: [{project, work_unit, kind, topic, summary, reasoning, event_date, confidence}]\n';
-  prompt += '추출할 것이 없으면 빈 배열 []을 반환하세요.\n\n---\n';
+    'Return as a JSON array: [{project, work_unit, kind, topic, summary, reasoning, event_date, confidence}]\n';
+  prompt += 'If there is nothing to extract, return an empty array [].\n\n---\n';
 
   // Add activity items grouped by source:channel
   const grouped = groupByChannel(activity);
@@ -233,59 +235,59 @@ export function buildSpokeExtractionPrompt(
   const channelSections: string[] = [];
   for (const [channelKey, channelItems] of groups.entries()) {
     const lines = channelItems.map(formatItemLine).join('\n');
-    channelSections.push(`### 채널: ${channelKey}\n${lines}`);
+    channelSections.push(`### Channel: ${channelKey}\n${lines}`);
   }
 
   const messagesBlock = channelSections.join('\n\n');
 
   const hubContextLines = hubContext
     .map((entry) => {
-      const parts: string[] = [`- 프로젝트: ${entry.project}`];
-      if (entry.workUnit) parts.push(`  작업: ${entry.workUnit}`);
-      if (entry.assignedTo) parts.push(`  담당: ${entry.assignedTo}`);
-      if (entry.status) parts.push(`  상태: ${entry.status}`);
+      const parts: string[] = [`- Project: ${entry.project}`];
+      if (entry.workUnit) parts.push(`  Work unit: ${entry.workUnit}`);
+      if (entry.assignedTo) parts.push(`  Assigned: ${entry.assignedTo}`);
+      if (entry.status) parts.push(`  Status: ${entry.status}`);
       return parts.join('\n');
     })
     .join('\n');
 
-  let prompt = `당신은 역사가입니다.\n\n`;
+  let prompt = `You are a historian.\nIMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n`;
 
   // Include truth context if provided
   if (truth && Object.keys(truth.projects).length > 0) {
-    prompt += '프로젝트 진실 상태 (관리 문서/칸반 기준):\n';
+    prompt += 'Project truth state (from management docs / kanban):\n';
     for (const [projectName, project] of Object.entries(truth.projects)) {
       for (const [workUnit, state] of Object.entries(project.workUnits)) {
         prompt += `- ${projectName}/${workUnit}: ${state.status}`;
-        if (state.assigned) prompt += `, 담당: ${state.assigned}`;
+        if (state.assigned) prompt += `, assigned: ${state.assigned}`;
         prompt += '\n';
       }
     }
     prompt += '\n';
   }
 
-  prompt += `현재 활성 프로젝트 상황:\n${hubContextLines || '(없음)'}
+  prompt += `Current active project context:\n${hubContextLines || '(none)'}
 
-아래 스포크 채널 메시지에서 중요한 작업, 결정, 교훈, 일정을 추출하세요.
-가능한 경우 위의 허브 프로젝트와 연결하세요.
-허브 프로젝트와 무관한 일상적인 잡담은 무시하세요.
+Extract important tasks, decisions, lessons, and schedules from the spoke channel messages below.
+Where possible, connect them to the hub projects above.
+Ignore casual small talk unrelated to hub projects.
 
-출력 형식: JSON 배열로만 응답하세요. 다른 텍스트 없이 JSON만 출력하세요.
-각 항목의 스키마:
+Output format: respond with a JSON array only. Output only JSON, no other text.
+Schema for each item:
 [
   {
-    "project": "프로젝트명 (허브 컨텍스트에서 연결 가능한 경우 해당 프로젝트명 사용)",
-    "work_unit": "작업 단위 또는 기능명 (선택)",
-    "assigned_to": "담당자 이름 (선택)",
+    "project": "project name (use the hub context project name if linkable)",
+    "work_unit": "work unit or feature name (optional)",
+    "assigned_to": "assignee name (optional)",
     "kind": "task | decision | lesson | schedule",
-    "topic": "한 줄 제목",
-    "summary": "요약 (2-3문장)",
-    "reasoning": "이 항목을 추출한 이유 및 허브 프로젝트와의 연결 근거",
-    "event_date": "YYYY-MM-DD 형식 (메시지에서 날짜를 추론할 수 있는 경우, 없으면 null)",
+    "topic": "one-line title",
+    "summary": "summary (2-3 sentences)",
+    "reasoning": "why this item was extracted and evidence linking it to a hub project",
+    "event_date": "YYYY-MM-DD format (if a date can be inferred from messages, otherwise null)",
     "confidence": 0.0~1.0
   }
 ]
 
-메시지:
+Messages:
 ${messagesBlock}`;
 
   return prompt;

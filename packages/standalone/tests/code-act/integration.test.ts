@@ -126,7 +126,7 @@ describe('Code-Act Integration', () => {
     expect(fullPrompt).toContain('declare function mama_search');
     expect(fullPrompt).toContain('declare function Read');
     expect(fullPrompt).toContain('## Code-Act');
-    expect(fullPrompt.length).toBeLessThan(8000);
+    expect(fullPrompt.length).toBeLessThan(9000);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

@@ -15,6 +15,13 @@ Call tools via JSON block:
 - **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku
 - **mama_ingest**(content, scopes?, source?) — Ingest raw content into memory v2
 
+## Business Data (progressive exploration: overview -> entities -> tasks -> messages)
+
+- **kagemusha_overview**((none)) — Get overview: room/task/message counts across all channels
+- **kagemusha_entities**(channel?, activeOnly?, limit?) — List people and project channels with activity stats
+- **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search
+- **kagemusha_messages**(channelId (required), since?, limit?, search?) — Read raw messages from a specific channel (follow entities -> tasks -> messages)
+
 ## Utility
 
 - **Read**(path) — Read file
@@ -46,6 +53,9 @@ Call tools via JSON block:
 
 ## OS Monitoring (viewer-only)
 
+- **report_publish**(slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }) — Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.
+- **wiki_publish**(pages: [{path, title, type, content, confidence}]) — Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.
+- **obsidian**(command, args?) — Execute Obsidian CLI command on the wiki vault. Search, read, create, append, move, delete pages, manage tags and backlinks.
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform
@@ -54,10 +64,6 @@ Call tools via JSON block:
 
 - **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR
 
-## Playground
-
-- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground
-
 ## Webchat
 
 - **webchat_send**(message?, file_path?, session_id?) — Send message/file to webchat viewer
@@ -65,6 +71,14 @@ Call tools via JSON block:
 ## Code-Act Sandbox
 
 - **code_act**() — Execute JavaScript in sandboxed QuickJS
+
+## Multi-Agent Delegation
+
+- **delegate**(agentId, task, background?, skill?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Optional `skill` loads `~/.mama/skills/{skill}.md` and prepends it to the delegation prompt. Returns the agent's response.
+
+## System
+
+- **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.

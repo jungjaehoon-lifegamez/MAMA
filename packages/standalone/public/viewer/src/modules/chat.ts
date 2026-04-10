@@ -159,7 +159,6 @@ export class ChatModule {
   historyExpiryMs = 24 * 60 * 60 * 1000;
   checkpointCooldown = false;
   COOLDOWN_MS = 60 * 1000;
-  playgroundAwaitingResponse = false;
   idleTimer: ReturnType<typeof setTimeout> | null = null;
   IDLE_TIMEOUT = 5 * 60 * 1000;
   _onDragMouseMove: ((event: MouseEvent) => void) | null = null;
@@ -1017,9 +1016,6 @@ export class ChatModule {
       if (this.ttsEnabled) {
         this.speak(this.currentStreamText);
       }
-
-      // Relay response to playground iframe if open
-      this.relayToPlayground(this.currentStreamText);
     }
 
     // Show unread badge if floating panel is closed
@@ -1033,38 +1029,6 @@ export class ChatModule {
     }
     this.rafPending = false;
     this.enableSend(true);
-  }
-
-  /**
-   * Relay assistant response to playground iframe (if open)
-   */
-  relayToPlayground(content: string): void {
-    if (!this.playgroundAwaitingResponse) {
-      return;
-    }
-
-    const iframe = document.getElementById('playground-iframe') as HTMLIFrameElement | null;
-    if (!iframe || !iframe.contentWindow) {
-      this.playgroundAwaitingResponse = false;
-      return;
-    }
-    const viewer = document.getElementById('playground-viewer');
-    if (!viewer || viewer.classList.contains('hidden')) {
-      this.playgroundAwaitingResponse = false;
-      return;
-    }
-
-    this.playgroundAwaitingResponse = false;
-
-    try {
-      iframe.contentWindow.postMessage(
-        { type: 'playground:response', content },
-        window.location.origin
-      );
-      logger.info('Relayed response to playground iframe');
-    } catch (e) {
-      logger.error('Failed to relay to playground:', e);
-    }
   }
 
   /**

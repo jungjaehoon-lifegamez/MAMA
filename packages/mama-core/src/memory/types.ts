@@ -9,6 +9,7 @@ export const MEMORY_KINDS = [
   'fact',
   'task',
   'schedule',
+  'compiled',
 ] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
