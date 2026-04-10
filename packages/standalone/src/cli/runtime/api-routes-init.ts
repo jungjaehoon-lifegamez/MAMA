@@ -144,8 +144,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
 
     // Dashboard cron: 30-min interval via AgentProcessManager
-    const dashboardPrompt =
-      'Analyze current project data and write an executive briefing. Use mama_search to find recent decisions, then use report_publish to publish your briefing HTML in the "briefing" slot.';
+    const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
+
+1. Use mama_search to find the most recent "dashboard_briefing" decision (limit 1). Note its timestamp and content.
+2. Use mama_search to find recent decisions (limit 20). Check if any were created AFTER the last briefing.
+3. If NO new decisions exist since the last briefing → respond "NO_UPDATE" and stop. Do NOT call report_publish.
+4. If new decisions exist → analyze them, write a new briefing, and publish via report_publish in the "briefing" slot.
+
+This saves resources. Only publish when there is genuinely new information to report.`;
 
     const runDashboardAgent = async () => {
       const pm = toolExecutor.getAgentProcessManager();
@@ -154,10 +160,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         return;
       }
       try {
-        console.log('[Dashboard Agent] Starting briefing generation...');
+        console.log('[Dashboard Agent] Checking for updates...');
         const process = await pm.getSharedProcess('dashboard-agent');
-        await process.sendMessage(dashboardPrompt);
-        console.log('[Dashboard Agent] Briefing published');
+        const result = await process.sendMessage(dashboardPrompt);
+        if (result?.response?.includes('NO_UPDATE')) {
+          console.log('[Dashboard Agent] No changes detected, skipped');
+        } else {
+          console.log('[Dashboard Agent] Briefing published');
+        }
       } catch (err) {
         console.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
       }
@@ -228,14 +238,24 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           return;
         }
         try {
-          console.log('[Wiki Agent] Starting compilation...');
+          console.log('[Wiki Agent] Checking for updates...');
 
-          const wikiPrompt =
-            'Search MAMA memory for recent decisions using mama_search, then use obsidian("search") to check existing wiki pages. Update existing pages or create new ones. Clean up any duplicates found.';
+          const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
-          const process = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
-          await process.sendMessage(wikiPrompt);
-          console.log('[Wiki Agent] Compilation complete');
+1. Use mama_search to find the most recent "wiki_compilation" decision (limit 1). Note its timestamp.
+2. Use mama_search to find recent decisions (limit 20). Check if any were created AFTER the last wiki compilation.
+3. If NO new decisions exist since the last compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
+4. If new decisions exist → use obsidian("search") to check existing pages, then update or create pages as needed. Clean up duplicates.
+
+This saves resources. Only compile when there is genuinely new information to document.`;
+
+          const wikiProcess = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
+          const wikiResult = await wikiProcess.sendMessage(wikiPrompt);
+          if (wikiResult?.response?.includes('NO_UPDATE')) {
+            console.log('[Wiki Agent] No changes detected, skipped');
+          } else {
+            console.log('[Wiki Agent] Compilation complete');
+          }
         } catch (err) {
           console.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
         }

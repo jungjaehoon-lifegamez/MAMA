@@ -113,7 +113,7 @@ export class GraphModule {
                 highlight: { background: this.getTopicColor(n.topic), border: '#fff' },
             },
             size: this.getNodeSize(connectionCounts[String(n.id)] || 0),
-            font: { color: '#131313', size: 12 },
+            font: { color: '#131313', size: 14, vadjust: -2 },
             borderWidth: 3,
             data: n,
         }));
@@ -137,7 +137,11 @@ export class GraphModule {
         const options = {
             nodes: {
                 shape: 'dot',
-                scaling: { min: 10, max: 30 },
+                scaling: {
+                    min: 10,
+                    max: 30,
+                    label: { enabled: true, min: 12, max: 22, maxVisible: 22, drawThreshold: 8 },
+                },
             },
             edges: {
                 smooth: { type: 'continuous', roundness: 0.5 },
@@ -161,7 +165,7 @@ export class GraphModule {
             },
             interaction: {
                 hover: true,
-                tooltipDelay: 200,
+                tooltipDelay: 100,
                 zoomView: true,
                 dragView: true,
             },
@@ -191,6 +195,28 @@ export class GraphModule {
                     logger.error('Error stack:', error.stack);
                 }
             }
+        });
+        // Hover: show label at fixed visual size regardless of zoom (Obsidian style)
+        this.network.on('hoverNode', (params) => {
+            try {
+                const scale = this.network?.getScale() || 1;
+                const targetVisualSize = 16; // px on screen
+                const fontSize = Math.round(targetVisualSize / scale);
+                networkData.nodes.update({
+                    id: params.node,
+                    font: { color: '#131313', size: Math.max(fontSize, 14), vadjust: -2 },
+                });
+            }
+            catch { /* ignore */ }
+        });
+        this.network.on('blurNode', (params) => {
+            try {
+                networkData.nodes.update({
+                    id: params.node,
+                    font: { color: '#131313', size: 14, vadjust: -2 },
+                });
+            }
+            catch { /* ignore */ }
         });
         this.network.on('stabilized', () => {
             const loadingEl = getElementByIdOrNull('graph-loading');
