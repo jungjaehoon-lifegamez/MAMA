@@ -179,6 +179,17 @@ Web viewer at `http://localhost:3847`. Connects to Discord, Slack, Telegram.
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
+## What Works Today
+
+Anyone who installs MAMA OS and connects their apps gets:
+
+- **Automatic knowledge extraction** — Connectors poll 15 sources, AI extracts decisions/deadlines/changes without manual input
+- **Cross-source search** — "What did we decide about X?" searches Slack + email + code + docs simultaneously
+- **Decision evolution tracking** — Not just what was decided, but what it replaced and why
+- **Proactive briefings** — Dashboard agent compiles what changed across all sources
+- **Wiki compilation** — Knowledge agents organize raw conversations into structured Obsidian pages
+- **93% retrieval accuracy** — Proven on LongMemEval benchmark against 115K-token conversation histories
+
 ## Roadmap
 
 | Phase | Version | Focus |
@@ -187,8 +198,9 @@ Web viewer at `http://localhost:3847`. Connects to Discord, Slack, Telegram.
 | **Done** | v0.16 | event_date API, tool-use answer, memory agent v5 (88% → 93%) |
 | **Done** | v0.17 | Connector framework (15 connectors), truth-first 3-pass extraction |
 | **Done** | v0.18 | Output layer — knowledge agents, viewer redesign, security hardening |
-| **Next** | v0.19 | Stability + agent management UI |
-| | v1.0 | General release — onboarding, 72h uptime test |
+| **Next** | v0.19 | Agent management UI — customize agent personas, tools, and behavior from the viewer. Stability: watchdog, audit log, health score, 72h uptime test |
+| | v0.20 | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design) |
+| | v1.0 | Team mode — shared knowledge graph for organizations. General release |
 
 ## Development
 
