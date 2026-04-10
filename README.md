@@ -36,7 +36,26 @@ With MAMA:     Agents already read everything. You get a briefing with
 
 **This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
 
-**How it runs:** MAMA OS executes agents as official CLI subprocesses (Claude Code, Codex) — fully ToS-compliant. No API keys, no token extraction, no workarounds. If you have the CLI installed, MAMA just works.
+## How It Runs
+
+MAMA OS executes AI agents as **official CLI subprocesses** — spawning `claude` or `codex` the same way you would in your terminal.
+
+```
+MAMA OS daemon
+  └─ spawns: claude --session-id abc --system-prompt "..."
+       └─ Claude Code CLI (your existing OAuth session)
+            └─ Anthropic API (standard authenticated request)
+```
+
+This is the provider-sanctioned execution method. No API keys to manage, no token extraction, no header spoofing. Your existing CLI authentication is reused directly.
+
+**Why this matters:** Some third-party agent frameworks access Claude via unofficial methods — extracting OAuth tokens, spoofing API headers, or bypassing rate limits. These approaches violate [Anthropic's Terms of Service](https://www.anthropic.com/policies/terms) and risk account suspension. MAMA OS doesn't do any of that. If `claude` or `codex` works in your terminal, MAMA OS works.
+
+```bash
+# Already have Claude Code?
+claude --version   # If this works, you're ready
+mama start         # MAMA uses your existing authentication
+```
 
 ## Knowledge Graph
 
