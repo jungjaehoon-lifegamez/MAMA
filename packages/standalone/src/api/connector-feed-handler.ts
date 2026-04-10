@@ -101,6 +101,7 @@ export function createConnectorFeedRouter(rawStore: RawStore, enabledConnectors:
       const allItems: RawFeedItem[] = [];
 
       const connectorsWithData = new Set<string>();
+      const errorConnectors = new Map<string, string>();
 
       for (const name of enabledConnectors) {
         try {
@@ -119,12 +120,24 @@ export function createConnectorFeedRouter(rawStore: RawStore, enabledConnectors:
               });
             }
           }
-        } catch {
-          // Connector DB may not exist yet — treat as disconnected
+        } catch (err) {
+          connectorsWithData.add(name);
+          errorConnectors.set(name, err instanceof Error ? err.message : 'DB not available');
         }
       }
 
       const summaries = buildActivitySummaries(allItems);
+
+      // Add error entries for connectors that failed
+      for (const [name, errMsg] of errorConnectors) {
+        summaries.push({
+          connector: name,
+          channel: '',
+          content: `Error: ${errMsg}`,
+          timestamp: '',
+          status: 'error' as 'idle',
+        });
+      }
 
       // Add idle/disconnected entries for connectors with no data
       for (const name of enabledConnectors) {
@@ -149,6 +162,10 @@ export function createConnectorFeedRouter(rawStore: RawStore, enabledConnectors:
     '/:name/feed',
     asyncHandler(async (req, res) => {
       const name = req.params.name as string;
+      if (!enabledConnectors.includes(name)) {
+        res.status(404).json({ error: `Connector '${name}' is not enabled` });
+        return;
+      }
       const rawLimit = parseInt((req.query.limit as string) || '20', 10);
       const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 20 : rawLimit, 200);
       const sinceRaw = req.query.since;

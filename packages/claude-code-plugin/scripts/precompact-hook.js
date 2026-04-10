@@ -270,7 +270,7 @@ function sendToMemoryAgent(transcript) {
   const req = http.request(
     {
       hostname: 'localhost',
-      port: 3847,
+      port: parseInt(process.env.MAMA_HTTP_PORT || '3847', 10),
       path: '/api/memory-agent/ingest',
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },

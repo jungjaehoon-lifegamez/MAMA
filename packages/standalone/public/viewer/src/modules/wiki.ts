@@ -46,7 +46,7 @@ function renderMarkdown(raw: string): string {
 function renderTreeNode(node: WikiTreeNode, depth: number = 0): string {
   const indent = depth * 12;
   if (node.type === 'directory') {
-    const storageKey = `wiki-dir-${node.name}-d${depth}`;
+    const storageKey = `wiki-dir-${node.path || node.name}-d${depth}`;
     const storedState = localStorage.getItem(storageKey);
     const isOpen = storedState !== null ? storedState === 'true' : true;
     const children = (node.children || []).map((c) => renderTreeNode(c, depth + 1)).join('');
@@ -70,7 +70,7 @@ function renderTreeNode(node: WikiTreeNode, depth: number = 0): string {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 export class WikiModule {
@@ -78,10 +78,13 @@ export class WikiModule {
   private currentPath: string | null = null;
   private resizeHandler: (() => void) | null = null;
   private mobileShowingPage = false;
+  private initialized = false;
 
   init(): void {
+    if (this.initialized) { return; }
     this.container = document.getElementById('wiki-content');
-    if (!this.container) return;
+    if (!this.container) { return; }
+    this.initialized = true;
     this.resizeHandler = () => this.handleResize();
     window.addEventListener('resize', this.resizeHandler);
     this.loadTree();
