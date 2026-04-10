@@ -467,6 +467,62 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   });
 
+  // ── Kagemusha Tasks endpoint ───────────────────────────────────────────
+  apiServer.app.get('/api/kagemusha/tasks', requireAuth, async (req, res) => {
+    try {
+      const { queryTasks } = await import('../../connectors/kagemusha/query-tools.js');
+      const tasks = queryTasks({
+        status: (req.query.status as string) || undefined,
+        priority: (req.query.priority as string) || undefined,
+        search: (req.query.search as string) || undefined,
+        sourceRoom: (req.query.sourceRoom as string) || undefined,
+        limit: req.query.limit ? Number(req.query.limit) : 30,
+      });
+
+      // Filter for overdue if requested
+      if (req.query.filter === 'overdue') {
+        const now = Date.now();
+        const overdue = tasks.filter(
+          (t: { deadline: string | null }) => t.deadline && new Date(t.deadline).getTime() < now
+        );
+        res.json({ success: true, tasks: overdue, total: overdue.length });
+        return;
+      }
+
+      res.json({ success: true, tasks, total: tasks.length });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // ── Agent Notices endpoint ────────────────────────────────────────────
+  apiServer.app.get('/api/agent-notices', requireAuth, async (_req, res) => {
+    try {
+      const limit = Number(_req.query.limit) || 20;
+      const notices = eventBus.getRecentNotices(limit);
+      res.json({
+        success: true,
+        notices: notices.map(
+          (n: { agent: string; action: string; target?: string; timestamp: number }) => ({
+            agent: n.agent,
+            action: n.action,
+            target: n.target,
+            timestamp: new Date(n.timestamp).toISOString(),
+          })
+        ),
+        total: notices.length,
+      });
+    } catch (error) {
+      res.status(500).json({
+        success: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
   // ── Discord send endpoint ─────────────────────────────────────────────
   apiServer.app.post('/api/discord/send', requireAuth, async (req, res) => {
     try {
