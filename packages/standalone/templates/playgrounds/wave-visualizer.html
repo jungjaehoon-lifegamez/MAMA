@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wave Visualizer — MAMA Multi-Agent</title>
+<style>
+:root {
+  --bg:#0d1117;--surface:#161b22;--surface2:#1c2333;--surface3:#21262d;
+  --border:#30363d;--text:#e6edf3;--text2:#8b949e;--text3:#484f58;
+  --accent:#58a6ff;--green:#3fb950;--yellow:#d29922;--red:#f85149;
+  --orange:#db6d28;--purple:#bc8cff;--cyan:#39d2c0;--pink:#f778ba;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.header{display:flex;align-items:center;gap:12px;padding:10px 16px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
+.header h1{font-size:15px;font-weight:600}
+.header h1 span{color:var(--accent)}
+.hc{display:flex;gap:8px;margin-left:auto;align-items:center}
+.btn{padding:5px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:12px;cursor:pointer;font-weight:500;transition:all .15s;white-space:nowrap}
+.btn:hover{background:var(--border)}
+.btn-primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+.btn-sm{padding:3px 8px;font-size:11px}
+.btn-active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.mode-tabs{display:flex;gap:2px;background:var(--bg);border-radius:6px;padding:2px}
+.mode-tab{padding:4px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:500;background:transparent;color:var(--text2);transition:all .15s}
+.mode-tab.active{background:var(--surface2);color:var(--text)}
+.mode-tab.live-on{background:rgba(63,185,80,.2);color:var(--green)}
+.speed-ctl{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text2)}
+.speed-ctl input[type=range]{width:80px;accent-color:var(--accent)}
+.main{display:flex;flex:1;overflow:hidden}
+.sidebar{width:260px;background:var(--surface);border-right:1px solid var(--border);flex-shrink:0;overflow-y:auto}
+.sidebar::-webkit-scrollbar{width:6px}
+.sidebar::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.sec{padding:10px 12px;border-bottom:1px solid var(--border)}
+.sec-title{font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.acard{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;margin-bottom:4px;cursor:pointer;transition:background .15s}
+.acard:hover{background:var(--surface2)}
+.adot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.aname{font-size:13px;font-weight:500;flex:1}
+.atier{font-size:10px;padding:1px 5px;border-radius:3px;background:var(--surface3);color:var(--text2)}
+.astatus{font-size:11px}
+.online-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.online-dot.online{background:var(--green)}
+.online-dot.offline{background:var(--red)}
+.online-dot.busy{background:var(--yellow);animation:lp 1s infinite}
+@keyframes lp{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(63,185,80,.4)}50%{opacity:.7;box-shadow:0 0 0 4px rgba(63,185,80,0)}}
+.live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block}
+.live-dot.pulse{animation:lp 1.5s infinite}
+.wave-area{flex:1;overflow:auto;padding:16px}
+.wave-area::-webkit-scrollbar{width:8px;height:8px}
+.wave-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.wave-row{display:flex;align-items:stretch;margin-bottom:2px;min-height:60px}
+.wave-label{width:100px;flex-shrink:0;display:flex;flex-direction:column;justify-content:center;align-items:flex-end;padding-right:16px;border-right:2px solid var(--border)}
+.wave-num{font-size:20px;font-weight:700;color:var(--accent)}
+.wave-name{font-size:11px;color:var(--text2);white-space:nowrap}
+.wave-tasks{flex:1;display:flex;gap:6px;padding:8px 16px;flex-wrap:wrap;align-items:center}
+.tcard{display:flex;flex-direction:column;gap:2px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface);min-width:160px;max-width:260px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
+.tcard:hover{border-color:var(--accent);transform:translateY(-1px)}
+.tcard::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;border-radius:3px 0 0 3px}
+.tcard.pending::before{background:var(--text3)}
+.tcard.claimed::before{background:var(--yellow)}
+.tcard.completed::before{background:var(--green)}
+.tcard.failed::before{background:var(--red)}
+.tcard.claimed{border-color:var(--yellow);box-shadow:0 0 12px rgba(210,153,34,.2)}
+.tcard.completed{opacity:.7}
+.tcard.failed{border-color:var(--red);opacity:.85}
+.tagent{display:flex;align-items:center;gap:5px}
+.tagent-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.tagent-name{font-size:11px;font-weight:600}
+.tdesc{font-size:12px;color:var(--text2);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tmeta{display:flex;align-items:center;gap:6px;margin-top:2px}
+.tstatus{font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.3px;padding:1px 5px;border-radius:3px}
+.tstatus.pending{background:rgba(72,79,88,.3);color:var(--text3)}
+.tstatus.claimed{background:rgba(210,153,34,.15);color:var(--yellow)}
+.tstatus.completed{background:rgba(63,185,80,.15);color:var(--green)}
+.tstatus.failed{background:rgba(248,81,73,.15);color:var(--red)}
+.ttime{font-size:10px;color:var(--text3);font-family:'SF Mono',monospace}
+.wconn{display:flex;align-items:center;justify-content:center;padding:0 0 0 100px}
+.cline{width:2px;height:16px;background:var(--border);position:relative}
+.cline::after{content:'\25BC';position:absolute;bottom:-10px;left:50%;transform:translateX(-50%);font-size:8px;color:var(--text3)}
+.pbar{flex-shrink:0;padding:8px 16px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;gap:12px}
+.ptrack{flex:1;height:6px;background:var(--surface3);border-radius:3px;overflow:hidden;display:flex}
+.pfill{height:100%;transition:width .5s ease}
+.pfill.c{background:var(--green)}.pfill.a{background:var(--yellow)}.pfill.f{background:var(--red)}
+.pstats{display:flex;gap:12px;font-size:12px;color:var(--text2);white-space:nowrap}
+.pstats strong{color:var(--text)}
+.preset-bar{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--border);flex-wrap:wrap;align-items:center}
+.dpanel{width:280px;background:var(--surface);border-left:1px solid var(--border);padding:12px;overflow-y:auto;flex-shrink:0;display:none}
+.dpanel.show{display:block}
+.dtitle{font-size:14px;font-weight:600;margin-bottom:8px}
+.dfield{margin-bottom:8px}
+.dlabel{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+.dvalue{font-size:13px}
+.dfiles{list-style:none}
+.dfiles li{font-size:12px;font-family:'SF Mono',monospace;color:var(--cyan);padding:2px 0}
+.ddeps{display:flex;gap:4px;flex-wrap:wrap}
+.ddep{font-size:11px;padding:2px 6px;border-radius:4px;background:var(--surface3);color:var(--text2)}
+.chg-item{display:flex;align-items:center;gap:10px;padding:5px 10px;border-radius:6px;background:var(--bg);margin-bottom:2px;font-size:12px}
+.prompt-output{flex-shrink:0;border-top:1px solid var(--border);background:var(--surface);padding:10px 16px}
+.prompt-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.prompt-header label{font-size:12px;font-weight:600;color:var(--text2)}
+.prompt-actions{display:flex;gap:6px}
+.prompt-text{font-size:12px;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;min-height:36px;max-height:80px;overflow-y:auto;line-height:1.5;font-family:'SF Mono',monospace;white-space:pre-wrap}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.tcard.claimed .tstatus{animation:pulse 1.5s infinite}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>🌊 <span>Wave Visualizer</span></h1>
+  <div class="hc">
+    <div class="mode-tabs">
+      <button class="mode-tab active" id="modeSimTab" onclick="switchMode('sim')">Simulation</button>
+      <button class="mode-tab" id="modeLiveTab" onclick="switchMode('live')">🔴 Live</button>
+    </div>
+    <div class="speed-ctl" id="simCtl">
+      <span>Speed:</span>
+      <input type="range" id="speedSlider" min="1" max="10" value="5">
+      <span id="speedLabel">1x</span>
+    </div>
+    <button class="btn" id="resetBtn" onclick="resetSim()">⟳ Reset</button>
+    <button class="btn btn-primary" id="playBtn" onclick="togglePlay()">▶ Play</button>
+  </div>
+</div>
+<div style="display:flex;flex-direction:column;flex:1;overflow:hidden">
+  <div class="preset-bar" id="presetBar"></div>
+  <div class="main">
+    <div class="sidebar" id="sidebar"></div>
+    <div class="content">
+      <div class="wave-area" id="waveArea"></div>
+      <div class="pbar">
+        <div class="ptrack" id="ptrack"></div>
+        <div class="pstats" id="pstats"></div>
+      </div>
+    </div>
+    <div class="dpanel" id="dpanel"></div>
+  </div>
+  <div class="prompt-output">
+    <div class="prompt-header">
+      <label>Generated Prompt</label>
+      <div class="prompt-actions">
+        <button class="btn btn-sm" id="copyPromptBtn" onclick="copyPrompt()">Copy</button>
+        <button class="btn btn-sm" id="sendToChatBtn" onclick="sendToChat()">Send to Chat</button>
+      </div>
+    </div>
+    <div id="promptText" class="prompt-text">Select a preset and run the simulation.</div>
+  </div>
+</div>
+<script>
+var AC={conductor:'#58a6ff',developer:'#3fb950',reviewer:'#bc8cff',qa:'#f778ba',coder:'#39d2c0',pm:'#d29922',artisan:'#db6d28',critic:'#f85149'};
+var AE={conductor:'🎯',developer:'🔧',reviewer:'👁',qa:'🧪',coder:'💻',pm:'📋',artisan:'🎨',critic:'🔍'};
+
+var PRESETS={
+  'feature-impl':{name:'🚀 Feature Implementation',desc:'New feature implementation',agents:['conductor','developer','reviewer'],waves:[
+    {wave:1,name:'Analysis',tasks:[{id:'t1',agent:'conductor',desc:'Requirements analysis and code exploration',category:'analysis',files:['src/','docs/']},{id:'t2',agent:'developer',desc:'Module dependency mapping',category:'analysis',files:['package.json']}]},
+    {wave:2,name:'Planning',tasks:[{id:'t3',agent:'conductor',desc:'Implementation strategy and task distribution',category:'planning',dependsOn:['t1','t2']}]},
+    {wave:3,name:'Implementation',tasks:[{id:'t4',agent:'developer',desc:'Core business logic implementation',category:'coding',files:['src/features/auth.ts'],dependsOn:['t3']},{id:'t5',agent:'developer',desc:'API endpoint creation',category:'coding',dependsOn:['t3']},{id:'t6',agent:'developer',desc:'Test writing',category:'testing',dependsOn:['t3']}]},
+    {wave:4,name:'Review',tasks:[{id:'t7',agent:'reviewer',desc:'Code quality and security review',category:'review',dependsOn:['t4','t5']},{id:'t8',agent:'reviewer',desc:'Test coverage verification',category:'review',dependsOn:['t6']}]},
+    {wave:5,name:'Completion',tasks:[{id:'t9',agent:'conductor',desc:'Final summary and PR preparation',category:'summary',dependsOn:['t7','t8']}]}
+  ]},
+  'bug-fix':{name:'🐛 Bug Fix',desc:'Bug fix',agents:['conductor','developer','qa'],waves:[
+    {wave:1,name:'Analysis',tasks:[{id:'t1',agent:'conductor',desc:'Bug report analysis',category:'analysis'},{id:'t2',agent:'qa',desc:'Error log analysis',category:'analysis'}]},
+    {wave:2,name:'Planning',tasks:[{id:'t3',agent:'conductor',desc:'Root cause and fix strategy',category:'planning',dependsOn:['t1','t2']}]},
+    {wave:3,name:'Implementation',tasks:[{id:'t4',agent:'developer',desc:'Bug fix patch',category:'coding',dependsOn:['t3']},{id:'t5',agent:'developer',desc:'Regression test addition',category:'testing',dependsOn:['t3']}]},
+    {wave:4,name:'Review',tasks:[{id:'t6',agent:'qa',desc:'Fix verification',category:'review',dependsOn:['t4','t5']}]},
+    {wave:5,name:'Completion',tasks:[{id:'t7',agent:'conductor',desc:'Release notes',category:'summary',dependsOn:['t6']}]}
+  ]},
+  'refactor':{name:'♻️ Refactoring',desc:'Large-scale refactoring',agents:['conductor','developer','coder','reviewer','qa'],waves:[
+    {wave:1,name:'Analysis',tasks:[{id:'t1',agent:'conductor',desc:'Refactoring target analysis',category:'analysis'},{id:'t2',agent:'reviewer',desc:'Complexity measurement',category:'analysis'},{id:'t3',agent:'qa',desc:'Test coverage check',category:'analysis'}]},
+    {wave:2,name:'Planning',tasks:[{id:'t4',agent:'conductor',desc:'Module separation strategy',category:'planning',dependsOn:['t1','t2','t3']}]},
+    {wave:3,name:'Implementation',tasks:[{id:'t5',agent:'developer',desc:'Extract save module',category:'coding',dependsOn:['t4']},{id:'t6',agent:'developer',desc:'Extract recall module',category:'coding',dependsOn:['t4']},{id:'t7',agent:'coder',desc:'Extract suggest module',category:'coding',dependsOn:['t4']},{id:'t8',agent:'coder',desc:'Extract update module',category:'coding',dependsOn:['t4']}]},
+    {wave:4,name:'Review',tasks:[{id:'t9',agent:'reviewer',desc:'API compatibility verification',category:'review',dependsOn:['t5','t6','t7','t8']},{id:'t10',agent:'qa',desc:'Full test regression',category:'testing',dependsOn:['t5','t6','t7','t8']}]},
+    {wave:5,name:'Completion',tasks:[{id:'t11',agent:'conductor',desc:'Migration guide',category:'summary',dependsOn:['t9','t10']}]}
+  ]},
+  'mama-session':{name:'🧠 MAMA Session',desc:'MAMA OS agent session',agents:['conductor','artisan','critic'],waves:[
+    {wave:1,name:'Analysis',tasks:[{id:'t1',agent:'conductor',desc:'Request analysis and context loading',category:'analysis'},{id:'t2',agent:'conductor',desc:'MAMA memory search',category:'analysis'}]},
+    {wave:2,name:'Planning',tasks:[{id:'t3',agent:'conductor',desc:'Work planning and agent assignment',category:'planning',dependsOn:['t1','t2']}]},
+    {wave:3,name:'Implementation',tasks:[{id:'t4',agent:'artisan',desc:'Code implementation',category:'coding',dependsOn:['t3']},{id:'t5',agent:'artisan',desc:'Test writing',category:'testing',dependsOn:['t3']}]},
+    {wave:4,name:'Review',tasks:[{id:'t6',agent:'critic',desc:'Code review and quality verification',category:'review',dependsOn:['t4','t5']}]},
+    {wave:5,name:'Completion',tasks:[{id:'t7',agent:'conductor',desc:'Decision saving and summary',category:'summary',dependsOn:['t6']}]}
+  ]}
+};
+
+var S={
+  mode:'sim',preset:'feature-impl',tasks:{},curWave:0,playing:false,speed:5,
+  selTask:null,timer:null,taskOrder:[],failedTasks:new Set(),
+  liveAgents:[],liveDelegations:[],livePolling:null,liveHistory:[],
+  lastPoll:null,liveOk:false,prevDelegCount:0,
+  prevStates:{},stateChanges:[],activeChains:0,pollCount:0,
+  liveTasks:[],waveCounter:0,currentBusy:new Set(),
+  pollInFlight:false
+};
+
+// === Utilities ===
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
+function timeAgo(d){var s=(Date.now()-d.getTime())/1000;if(s<5)return'just now';if(s<60)return Math.floor(s)+'s ago';if(s<3600)return Math.floor(s/60)+'m ago';return Math.floor(s/3600)+'h ago'}
+function fmtTime(d){if(!(d instanceof Date))d=new Date(d);return d.toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})}
+
+// === Mode Switch ===
+function switchMode(m){
+  S.mode=m;
+  document.getElementById('modeSimTab').className='mode-tab'+(m==='sim'?' active':'');
+  document.getElementById('modeLiveTab').className='mode-tab'+(m==='live'?' live-on':'');
+  if(m==='sim'){
+    stopLive();
+    document.getElementById('simCtl').style.display='flex';
+    document.getElementById('resetBtn').style.display='';
+    document.getElementById('playBtn').style.display='';
+    document.getElementById('playBtn').textContent='▶ Play';
+    loadPreset(S.preset);
+  } else {
+    stopSim();
+    document.getElementById('simCtl').style.display='none';
+    document.getElementById('resetBtn').style.display='none';
+    document.getElementById('playBtn').style.display='none';
+    renderLivePresetBar();
+    startLive();
+  }
+}
+
+// ====================== LIVE MODE ======================
+function renderLivePresetBar(){
+  document.getElementById('presetBar').innerHTML=
+    '<span class="live-dot pulse"></span> <span style="font-size:12px;color:var(--green);font-weight:600">LIVE</span>'+
+    '<span style="font-size:12px;color:var(--text2);margin-left:8px" id="liveStatus">Connecting...</span>'+
+    '<span style="font-size:11px;color:var(--text3);margin-left:auto" id="livePollTime"></span>';
+}
+function startLive(){pollLive();S.livePolling=setInterval(function(){
+  if(S.pollInFlight)return;
+  S.pollInFlight=true;
+  pollLive().finally(function(){S.pollInFlight=false;});
+},3000)}
+function stopLive(){if(S.livePolling){clearInterval(S.livePolling);S.livePolling=null}}
+
+async function pollLive(){
+  try{
+    var ctrl=new AbortController();
+    var timeoutId=setTimeout(function(){ctrl.abort();},8000);
+    var r=await fetch('/api/multi-agent/status',{signal:ctrl.signal});
+    clearTimeout(timeoutId);
+    if(!r.ok)throw new Error('API '+r.status);
+    var sd=await r.json();
+    S.liveAgents=sd.agents||[];
+    S.liveDelegations=sd.recentDelegations||[];
+    S.activeChains=sd.activeChains||0;
+    S.liveOk=true;S.lastPoll=new Date();S.pollCount++;
+
+    // Detect state changes & build live tasks
+    var now=new Date();
+    S.liveAgents.forEach(function(a){
+      var prev=S.prevStates[a.id];
+      if(prev&&prev!==a.status){
+        S.stateChanges.unshift({agent:a.id,from:prev,to:a.status,time:now});
+
+        // Agent became busy → new task starts
+        if(a.status==='busy'){
+          // If no other agents are busy, this is a new wave
+          if(S.currentBusy.size===0)S.waveCounter++;
+          S.currentBusy.add(a.id);
+          S.liveTasks.push({
+            id:'lt-'+S.liveTasks.length,
+            agent:a.id,
+            model:a.model||'unknown',
+            wave:S.waveCounter,
+            status:'busy',
+            startTime:now,
+            endTime:null,
+            duration:null,
+            ephemeral:a.ephemeral||false
+          });
+        }
+
+        // Agent became idle/online → task completed
+        if((a.status==='idle'||a.status==='online')&&prev==='busy'){
+          S.currentBusy.delete(a.id);
+          for(var i=S.liveTasks.length-1;i>=0;i--){
+            if(S.liveTasks[i].agent===a.id&&S.liveTasks[i].status==='busy'){
+              S.liveTasks[i].status='completed';
+              S.liveTasks[i].endTime=now;
+              S.liveTasks[i].duration=Math.round((now-S.liveTasks[i].startTime)/1000);
+              break;
+            }
+          }
+        }
+      }
+      S.prevStates[a.id]=a.status;
+    });
+    if(S.stateChanges.length>50)S.stateChanges=S.stateChanges.slice(0,50);
+
+    // Track new swarm tasks
+    if (S.liveDelegations.length < S.prevDelegCount) {
+      S.prevDelegCount = S.liveDelegations.length;
+    }
+    if(S.liveDelegations.length>S.prevDelegCount){
+      S.liveDelegations.slice(S.prevDelegCount).forEach(function(d){
+        S.liveHistory.unshift(Object.assign({},d,{receivedAt:new Date()}));
+      });
+      S.prevDelegCount=S.liveDelegations.length;
+    }
+    if(S.liveHistory.length>100)S.liveHistory=S.liveHistory.slice(0,100);
+
+    // Status bar
+    var busy=S.liveAgents.filter(function(a){return a.status==='busy'});
+    var el=document.getElementById('liveStatus');
+    if(el){
+      var t='Connected · '+S.liveAgents.length+' agents';
+      if(busy.length>0)t+=' · '+busy.map(function(a){return a.id}).join(', ')+' busy';
+      if(S.activeChains>0)t+=' · '+S.activeChains+' chains';
+      el.textContent=t;el.style.color=busy.length>0?'var(--yellow)':'var(--green)';
+    }
+    var te=document.getElementById('livePollTime');
+    if(te)te.textContent='Poll #'+S.pollCount+' · '+S.lastPoll.toLocaleTimeString();
+
+    renderLiveSidebar();renderLiveArea();updateLivePrompt();
+  }catch(e){
+    if(e.name==='AbortError'){console.warn('Poll timed out');}
+    S.liveOk=false;
+    var el=document.getElementById('liveStatus');
+    if(el){el.textContent='Disconnected — '+(e.name==='AbortError'?'Timeout':e.message);el.style.color='var(--red)'}
+    renderLiveSidebar();renderLiveDisconnected();
+  }
+}
+
+function renderLiveSidebar(){
+  var sb=document.getElementById('sidebar');
+  var h='<div class="sec"><div class="sec-title"><span class="live-dot'+(S.liveOk?' pulse':'')+'"></span> Live Agents ('+S.liveAgents.length+')</div>';
+  S.liveAgents.forEach(function(a){
+    var c=AC[a.id]||'#888',e=AE[a.id]||'🤖';
+    var sc=a.status==='online'?'online':a.status==='busy'?'busy':'offline';
+    h+='<div class="acard"><span class="online-dot '+esc(sc)+'"></span>'+
+      '<span class="aname" style="color:'+esc(c)+'">'+esc(e)+' '+esc(a.name||a.id)+'</span>'+
+      '<span class="atier">T'+esc(String(a.tier||1))+'</span></div>'+
+      '<div style="padding:0 8px 6px 26px;font-size:11px;color:var(--text3)">'+
+      esc(a.model||'unknown')+' · '+(a.lastActivity?esc(timeAgo(new Date(a.lastActivity))):'idle')+'</div>';
+  });
+  h+='</div>';
+
+  // State changes
+  h+='<div class="sec"><div class="sec-title">Activity Log ('+S.stateChanges.length+')</div>';
+  if(S.stateChanges.length===0){
+    h+='<div style="font-size:12px;color:var(--text3);padding:4px 0">No state changes<br><span style="font-size:11px">Busy detected on DELEGATE:: delegation</span></div>';
+  }else{
+    S.stateChanges.slice(0,15).forEach(function(c){
+      var col=AC[c.agent]||'#888';
+      var tc=c.to==='busy'?'var(--yellow)':c.to==='idle'||c.to==='online'?'var(--green)':'var(--text3)';
+      var ic=c.to==='busy'?'⚡':c.to==='idle'||c.to==='online'?'✅':'⏸';
+      h+='<div class="chg-item">'+
+        '<span style="color:var(--text3);font-family:monospace;font-size:10px;min-width:55px">'+esc(fmtTime(c.time))+'</span>'+
+        '<span>'+esc(ic)+'</span>'+
+        '<span style="color:'+esc(col)+';font-weight:600">'+esc(c.agent)+'</span>'+
+        '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
+        '<span style="color:var(--accent);font-size:10px">→</span>'+
+        '<span style="color:'+esc(tc)+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
+    });
+  }
+  h+='</div>';
+
+  // Swarm tasks
+  if(S.liveHistory.length>0){
+    h+='<div class="sec"><div class="sec-title">Swarm Tasks ('+S.liveHistory.length+')</div>';
+    S.liveHistory.slice(0,10).forEach(function(d){
+      var cc=AC[d.claimedBy]||'#888';
+      h+='<div style="padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)">'+
+        '<span style="color:'+esc(cc)+';font-weight:600">'+esc(d.claimedBy||'?')+'</span>'+
+        ' <span class="tstatus '+esc(d.status||'pending')+'" style="font-size:9px">'+esc(d.status||'?')+'</span>'+
+        (d.wave?' <span style="color:var(--accent);font-size:10px">W'+esc(String(d.wave))+'</span>':'')+
+        '<div style="color:var(--text2);font-size:11px">'+esc(d.description||'-')+'</div></div>';
+    });
+    h+='</div>';
+  }
+
+  // Connection
+  h+='<div class="sec"><div class="sec-title">Connection</div>'+
+    '<div style="font-size:11px;color:var(--text2);line-height:1.7">'+
+    'API: <code style="color:var(--cyan);font-size:10px">/api/multi-agent/*</code><br>'+
+    'Poll: 3s interval<br>'+
+    'Status: '+(S.liveOk?'<span style="color:var(--green)">OK</span>':'<span style="color:var(--red)">Disconnected</span>')+
+    '</div></div>';
+  sb.innerHTML=h;
+}
+
+function renderLiveArea(){
+  var area=document.getElementById('waveArea');
+  var h='';
+
+  // Agent status cards
+  h+='<div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">';
+  S.liveAgents.forEach(function(a){
+    var c=AC[a.id]||'#888',e=AE[a.id]||'🤖';
+    var bc=a.status==='busy'?'var(--yellow)':a.status==='online'||a.status==='idle'?'var(--green)':'var(--text3)';
+    var bg=a.status==='busy'?'rgba(210,153,34,.08)':'transparent';
+    h+='<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid '+esc(bc)+';border-radius:8px;padding:8px 12px;min-width:140px;'+(bg!=='transparent'?'background:'+esc(bg):'')+'">'+
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'+
+      '<span class="online-dot '+esc(a.status)+'"></span>'+
+      '<span style="font-size:13px;font-weight:600;color:'+esc(c)+'">'+esc(e)+' '+esc(a.name||a.id)+'</span>'+
+      (a.ephemeral?'<span style="font-size:9px;padding:1px 4px;border-radius:3px;background:var(--surface3);color:var(--text3)">ephemeral</span>':'')+
+      '</div>'+
+      '<div style="font-size:10px;color:var(--text3)">'+esc(a.model||'-')+' · T'+esc(String(a.tier||1))+'</div>'+
+      '</div>';
+  });
+  h+='</div>';
+
+  // Wave timeline (built from live tasks)
+  if(S.liveTasks.length>0){
+    // Group by wave
+    var waves={};
+    S.liveTasks.forEach(function(t){
+      if(!waves[t.wave])waves[t.wave]=[];
+      waves[t.wave].push(t);
+    });
+    var waveNums=Object.keys(waves).sort(function(a,b){return a-b});
+
+    waveNums.forEach(function(wn,wi){
+      if(wi>0)h+='<div class="wconn"><div class="cline"></div></div>';
+      var wTasks=waves[wn];
+      var allDone=wTasks.every(function(t){return t.status==='completed'});
+      var anyBusy=wTasks.some(function(t){return t.status==='busy'});
+      var wColor=anyBusy?'var(--yellow)':allDone?'var(--green)':'var(--accent)';
+
+      h+='<div class="wave-row"><div class="wave-label">'+
+        '<div class="wave-num" style="color:'+wColor+'">W'+wn+'</div>'+
+        '<div class="wave-name">'+(anyBusy?'Running':allDone?'Done':'Pending')+'</div>'+
+        '</div><div class="wave-tasks">';
+
+      wTasks.forEach(function(t){
+        var c=AC[t.agent]||'#888',e=AE[t.agent]||'🤖';
+        var elapsed='';
+        if(t.duration!==null)elapsed=esc(String(t.duration))+'s';
+        else if(t.startTime)elapsed=esc(String(Math.round((Date.now()-t.startTime)/1000)))+'s...';
+
+        h+='<div class="tcard '+esc(t.status)+'">'+
+          '<div class="tagent"><div class="tagent-dot" style="background:'+esc(c)+'"></div>'+
+          '<span class="tagent-name" style="color:'+esc(c)+'">'+esc(e)+' '+esc(t.agent)+'</span></div>'+
+          '<div style="font-size:11px;color:var(--text3)">'+esc(t.model||'')+'</div>'+
+          '<div class="tmeta"><span class="tstatus '+esc(t.status)+'">'+(t.status==='busy'?'running':esc(t.status))+'</span>'+
+          (elapsed?'<span class="ttime">'+elapsed+'</span>':'')+'</div>'+
+          '</div>';
+      });
+      h+='</div></div>';
+    });
+
+    // Completion summary
+    var done=S.liveTasks.filter(function(t){return t.status==='completed'}).length;
+    var total=S.liveTasks.length;
+    var busy=S.liveTasks.filter(function(t){return t.status==='busy'}).length;
+    if(done===total&&total>0){
+      var totalTime=0;
+      S.liveTasks.forEach(function(t){if(t.duration)totalTime+=t.duration});
+      h+='<div style="text-align:center;padding:16px;color:var(--green);font-size:14px;font-weight:600">'+
+        '✅ All '+total+' tasks completed in '+waveNums.length+' waves (total '+totalTime+'s)</div>';
+    }
+  } else if(S.stateChanges.length>0){
+    // Show state changes as simple log if no wave structure yet
+    h+='<div style="margin-bottom:12px"><div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px">📊 Agent Activity</div>';
+    S.stateChanges.slice(0,20).forEach(function(c,i){
+      var col=AC[c.agent]||'#888';
+      var tc=c.to==='busy'?'var(--yellow)':'var(--green)';
+      var ic=c.to==='busy'?'⚡':'✅';
+      h+='<div class="chg-item" style="opacity:'+Math.max(0.4,1-i*0.04)+'">'+
+        '<span style="font-size:10px;color:var(--text3);font-family:monospace;min-width:60px">'+esc(fmtTime(c.time))+'</span>'+
+        '<span>'+esc(ic)+'</span>'+
+        '<span style="color:'+esc(col)+';font-weight:600;min-width:70px">'+esc(AE[c.agent]||'')+' '+esc(c.agent)+'</span>'+
+        '<span style="color:var(--text3);font-size:11px">'+esc(c.from)+'</span>'+
+        '<span style="color:var(--accent);font-size:10px">→</span>'+
+        '<span style="color:'+esc(tc)+';font-weight:600;font-size:11px">'+esc(c.to)+'</span></div>';
+    });
+    h+='</div>';
+  } else if(S.liveOk) {
+    h+='<div style="text-align:center;padding:40px;color:var(--text3)">'+
+      '<div style="font-size:32px;margin-bottom:12px">📡</div>'+
+      '<div style="font-size:14px">Agents standing by</div>'+
+      '<div style="font-size:12px;margin-top:8px;max-width:400px;margin-left:auto;margin-right:auto;line-height:1.6">'+
+      'Polling every 3s · Wave timeline auto-generated on agent activity'+
+      '</div><div style="font-size:11px;margin-top:12px">Poll #'+S.pollCount+'</div></div>';
+  }
+
+  area.innerHTML=h;
+
+  // Progress bar based on live tasks
+  var ltDone=S.liveTasks.filter(function(t){return t.status==='completed'}).length;
+  var ltBusy=S.liveTasks.filter(function(t){return t.status==='busy'}).length;
+  var ltTotal=S.liveTasks.length||1;
+  var agBusy=S.liveAgents.filter(function(a){return a.status==='busy'}).length;
+  document.getElementById('ptrack').innerHTML=
+    '<div class="pfill c" style="width:'+esc(String(ltDone/ltTotal*100))+'%"></div>'+
+    '<div class="pfill a" style="width:'+esc(String(ltBusy/ltTotal*100))+'%"></div>';
+  document.getElementById('pstats').innerHTML=
+    '<span>✅ Done: <strong>'+esc(String(ltDone))+'</strong></span>'+
+    '<span>⚡ Running: <strong>'+esc(String(ltBusy))+'</strong></span>'+
+    '<span>🤖 Agents: <strong>'+esc(String(S.liveAgents.length))+'</strong> ('+esc(String(agBusy))+' busy)</span>'+
+    '<span style="margin-left:auto">Wave <strong>'+esc(String(S.waveCounter))+'</strong></span>';
+}
+
+function renderLiveDisconnected(){
+  document.getElementById('waveArea').innerHTML=
+    '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--text2);gap:12px;padding:40px">'+
+    '<div style="font-size:32px">📡</div>'+
+    '<div style="font-size:14px">API connection failed</div>'+
+    '<div style="font-size:12px">Make sure MAMA OS is running</div>'+
+    '<code style="font-size:11px;background:var(--surface2);padding:4px 8px;border-radius:4px">/api/multi-agent/status</code></div>';
+}
+
+function updateLivePrompt(){
+  var p=[];
+  p.push('[LIVE] Multi-Agent Monitor · Wave '+S.waveCounter);
+  p.push('Agents: '+S.liveAgents.map(function(a){return(a.ephemeral?'*':'')+a.id+'('+a.status+')'}).join(', '));
+  var busy=S.liveAgents.filter(function(a){return a.status==='busy'});
+  if(busy.length>0)p.push('Active now: '+busy.map(function(a){return a.id+' ['+a.model+']'}).join(', '));
+  var done=S.liveTasks.filter(function(t){return t.status==='completed'});
+  var running=S.liveTasks.filter(function(t){return t.status==='busy'});
+  if(S.liveTasks.length>0){
+    p.push('Tasks: '+done.length+'/'+S.liveTasks.length+' completed'+(running.length>0?', '+running.length+' running':''));
+    done.forEach(function(t){p.push('  '+t.agent+' (W'+t.wave+'): '+t.duration+'s')});
+    running.forEach(function(t){p.push('  '+t.agent+' (W'+t.wave+'): running '+Math.round((Date.now()-t.startTime)/1000)+'s...')});
+  }
+  document.getElementById('promptText').textContent=p.join('\n');
+}
+
+// ====================== SIM MODE ======================
+function init(){renderPresets();loadPreset('feature-impl')}
+
+function renderPresets(){
+  var bar=document.getElementById('presetBar');bar.innerHTML='';
+  Object.keys(PRESETS).forEach(function(k){
+    var p=PRESETS[k],b=document.createElement('button');
+    b.className='btn btn-sm'+(k===S.preset?' btn-active':'');
+    b.textContent=p.name;b.title=p.desc;
+    b.onclick=function(){loadPreset(k)};bar.appendChild(b);
+  });
+}
+
+function loadPreset(k){
+  stopSim();S.preset=k;S.tasks={};S.curWave=0;S.taskOrder=[];S.selTask=null;S.failedTasks=new Set();
+  var p=PRESETS[k];
+  p.waves.forEach(function(w){
+    w.tasks.forEach(function(t){S.tasks[t.id]=Object.assign({},t,{status:'pending',st:null,et:null,wave:w.wave})});
+  });
+  p.waves.forEach(function(w){S.taskOrder.push(w.tasks.map(function(t){return t.id}))});
+  renderPresets();renderSidebar();renderWaves();updateProgress();updatePrompt();hideDetail();
+}
+
+function renderSidebar(){
+  var sb=document.getElementById('sidebar'),p=PRESETS[S.preset],at={};
+  p.agents.forEach(function(a){at[a]={t:0,c:0,f:0,a:0}});
+  Object.values(S.tasks).forEach(function(t){
+    if(!at[t.agent])at[t.agent]={t:0,c:0,f:0,a:0};
+    at[t.agent].t++;
+    if(t.status==='completed')at[t.agent].c++;
+    if(t.status==='failed')at[t.agent].f++;
+    if(t.status==='claimed')at[t.agent].a++;
+  });
+  var h='<div class="sec"><div class="sec-title">Agents ('+p.agents.length+')</div>';
+  p.agents.forEach(function(a){
+    var i=at[a]||{t:0,c:0,f:0,a:0};
+    var tier=a==='conductor'||a==='pm'?1:(a==='reviewer'||a==='qa'||a==='critic')?3:2;
+    var ic=i.a>0?'⚡':i.c===i.t&&i.t>0?'✅':i.f>0?'❌':'⏸';
+    h+='<div class="acard"><div class="adot" style="background:'+esc(AC[a]||'#888')+'"></div>'+
+      '<span class="aname">'+esc(AE[a]||'🤖')+' '+esc(a)+'</span>'+
+      '<span class="atier">T'+esc(String(tier))+'</span>'+
+      '<span class="astatus">'+esc(ic)+' '+esc(String(i.c))+'/'+esc(String(i.t))+'</span></div>';
+  });
+  h+='</div>';
+  h+='<div class="sec"><div class="sec-title">Legend</div><div style="font-size:12px;color:var(--text2);line-height:1.8">'+
+    '<div><span style="color:var(--text3)">●</span> Pending</div><div><span style="color:var(--yellow)">●</span> Claimed</div>'+
+    '<div><span style="color:var(--green)">●</span> Completed</div><div><span style="color:var(--red)">●</span> Failed</div></div></div>';
+  h+='<div class="sec"><div class="sec-title">Tiers</div><div style="font-size:11px;color:var(--text2);line-height:1.7">'+
+    '<div><strong style="color:var(--accent)">T1</strong> Full Access</div>'+
+    '<div><strong style="color:var(--green)">T2</strong> Limited Write</div>'+
+    '<div><strong style="color:var(--purple)">T3</strong> Read-Only</div></div></div>';
+  sb.innerHTML=h;
+}
+
+function renderWaves(){
+  var area=document.getElementById('waveArea'),p=PRESETS[S.preset],h='';
+  p.waves.forEach(function(w,wi){
+    if(wi>0)h+='<div class="wconn"><div class="cline"></div></div>';
+    var isA=S.curWave===wi,isD=S.curWave>wi;
+    h+='<div class="wave-row"><div class="wave-label">'+
+      '<div class="wave-num" style="color:'+(isA?'var(--yellow)':isD?'var(--green)':'var(--accent)')+'">W'+w.wave+'</div>'+
+      '<div class="wave-name">'+w.name+'</div></div><div class="wave-tasks">';
+    w.tasks.forEach(function(t){
+      var tk=S.tasks[t.id],c=AC[tk.agent]||'#888';
+      var el='';
+      if(tk.st&&tk.et)el=((tk.et-tk.st)/1000).toFixed(1)+'s';
+      else if(tk.st)el='...';
+      h+='<div class="tcard '+esc(tk.status)+'" onclick="selectTask(\''+esc(t.id)+'\')">'+
+        '<div class="tagent"><div class="tagent-dot" style="background:'+esc(c)+'"></div>'+
+        '<span class="tagent-name" style="color:'+esc(c)+'">'+esc(AE[tk.agent]||'')+' '+esc(tk.agent)+'</span></div>'+
+        '<div class="tdesc">'+esc(tk.desc)+'</div>'+
+        '<div class="tmeta"><span class="tstatus '+esc(tk.status)+'">'+esc(tk.status)+'</span>'+
+        (el?'<span class="ttime">'+esc(el)+'</span>':'')+'</div></div>';
+    });
+    h+='</div></div>';
+  });
+  area.innerHTML=h;
+}
+
+function updateProgress(){
+  var ts=Object.values(S.tasks),n=ts.length;
+  var c=ts.filter(function(t){return t.status==='completed'}).length;
+  var a=ts.filter(function(t){return t.status==='claimed'}).length;
+  var f=ts.filter(function(t){return t.status==='failed'}).length;
+  document.getElementById('ptrack').innerHTML=
+    '<div class="pfill c" style="width:'+esc(String(c/n*100))+'%"></div>'+
+    '<div class="pfill a" style="width:'+esc(String(a/n*100))+'%"></div>'+
+    '<div class="pfill f" style="width:'+esc(String(f/n*100))+'%"></div>';
+  document.getElementById('pstats').innerHTML=
+    '<span>✅ <strong>'+esc(String(c))+'</strong></span><span>⚡ <strong>'+esc(String(a))+'</strong></span>'+
+    '<span>❌ <strong>'+esc(String(f))+'</strong></span><span style="margin-left:auto">Wave <strong>'+esc(String(S.curWave+1))+'</strong>/'+esc(String(S.taskOrder.length))+'</span>';
+}
+
+function togglePlay(){if(S.playing)stopSim();else startSim()}
+function startSim(){S.playing=true;document.getElementById('playBtn').textContent='⏸ Pause';document.getElementById('playBtn').classList.add('btn-active');runStep()}
+function stopSim(){S.playing=false;if(S.timer){clearTimeout(S.timer);S.timer=null}document.getElementById('playBtn').textContent='▶ Play';document.getElementById('playBtn').classList.remove('btn-active')}
+function resetSim(){loadPreset(S.preset)}
+function getInterval(){return Math.max(200,2000/(S.speed/5))}
+
+function runStep(){
+  if(!S.playing)return;
+  var wave=S.taskOrder[S.curWave];
+  if(!wave){stopSim();return}
+  var allDone=true,acted=false;
+  for(var i=0;i<wave.length;i++){
+    var t=S.tasks[wave[i]];
+    if(t.status==='pending'){t.status='claimed';t.st=Date.now();acted=true;allDone=false;break}
+    else if(t.status==='claimed'){
+      if(Math.random()<0.08&&!S.failedTasks.has(t.id)){t.status='failed';t.et=Date.now();S.failedTasks.add(t.id)}
+      else{t.status='completed';t.et=Date.now()}
+      acted=true;allDone=false;break;
+    }else if(t.status!=='completed'&&t.status!=='failed'){allDone=false}
+  }
+  if(!acted&&allDone){if(S.curWave<S.taskOrder.length-1)S.curWave++;else stopSim()}
+  renderWaves();renderSidebar();updateProgress();updatePrompt();
+  if(S.playing)S.timer=setTimeout(runStep,getInterval());
+}
+
+document.getElementById('speedSlider').addEventListener('input',function(e){
+  S.speed=parseInt(e.target.value);
+  document.getElementById('speedLabel').textContent=S.speed<=3?'0.5x':S.speed<=5?'1x':S.speed<=7?'2x':'4x';
+});
+
+function selectTask(id){
+  S.selTask=id;var t=S.tasks[id],p=document.getElementById('dpanel');
+  var tier=t.agent==='conductor'||t.agent==='pm'?1:(t.agent==='reviewer'||t.agent==='qa'||t.agent==='critic')?3:2;
+  var h='<div class="dtitle">'+esc(AE[t.agent]||'')+' '+esc(t.id.toUpperCase())+'</div>'+
+    '<div class="dfield"><div class="dlabel">Description</div><div class="dvalue">'+esc(t.desc)+'</div></div>'+
+    '<div class="dfield"><div class="dlabel">Agent</div><div class="dvalue" style="color:'+esc(AC[t.agent]||'#888')+'">'+esc(t.agent)+' (Tier '+esc(String(tier))+')</div></div>'+
+    '<div class="dfield"><div class="dlabel">Wave</div><div class="dvalue">Wave '+esc(String(t.wave))+'</div></div>'+
+    '<div class="dfield"><div class="dlabel">Status</div><div class="dvalue"><span class="tstatus '+esc(t.status)+'">'+esc(t.status)+'</span></div></div>'+
+    '<div class="dfield"><div class="dlabel">Category</div><div class="dvalue">'+esc(t.category||'-')+'</div></div>';
+  if(t.files&&t.files.length){h+='<div class="dfield"><div class="dlabel">Files</div><ul class="dfiles">';t.files.forEach(function(f){h+='<li>'+esc(f)+'</li>'});h+='</ul></div>'}
+  if(t.dependsOn&&t.dependsOn.length){
+    h+='<div class="dfield"><div class="dlabel">Dependencies</div><div class="ddeps">';
+    t.dependsOn.forEach(function(d){var dt=S.tasks[d];var c=dt?(dt.status==='completed'?'var(--green)':dt.status==='failed'?'var(--red)':'var(--text3)'):'var(--text3)';h+='<span class="ddep" style="border-left:2px solid '+esc(c)+'">'+esc(d)+'</span>'});
+    h+='</div></div>';
+  }
+  if(t.st){var el=t.et?((t.et-t.st)/1000).toFixed(1)+'s':'running...';h+='<div class="dfield"><div class="dlabel">Duration</div><div class="dvalue" style="font-family:monospace">'+esc(el)+'</div></div>'}
+  p.innerHTML=h;p.classList.add('show');
+}
+function hideDetail(){document.getElementById('dpanel').classList.remove('show');S.selTask=null}
+
+function updatePrompt(){
+  var p=PRESETS[S.preset],ts=Object.values(S.tasks),n=ts.length;
+  var c=ts.filter(function(t){return t.status==='completed'}).length;
+  var f=ts.filter(function(t){return t.status==='failed'}).length;
+  var a=ts.filter(function(t){return t.status==='claimed'}).length;
+  var parts=[];
+  parts.push('Preset: '+p.name);
+  parts.push('Agents: '+p.agents.join(', '));
+  parts.push(p.waves.length+' waves, '+n+' tasks');
+  if(c>0||f>0||a>0)parts.push('Progress: '+c+'/'+n+' completed'+(f>0?', '+f+' failed':'')+(a>0?', '+a+' running':''));
+  var text=c===n&&n>0?'Multi-agent waves completed. '+n+' tasks completed'+(f>0?' ('+f+' failed)':'')+'.':parts.join('\n');
+  document.getElementById('promptText').textContent=text;
+}
+
+async function copyPrompt(){
+  var t=document.getElementById('promptText').textContent;
+  try{await navigator.clipboard.writeText(t);document.getElementById('copyPromptBtn').textContent='Copied!';setTimeout(function(){document.getElementById('copyPromptBtn').textContent='Copy'},1500)}catch(e){}
+}
+function sendToChat(){
+  var t=document.getElementById('promptText').textContent;if(!t)return;
+  window.parent.postMessage({type:'playground:sendToChat',message:t},window.location.origin);
+  document.getElementById('sendToChatBtn').textContent='Sent!';
+  setTimeout(function(){document.getElementById('sendToChatBtn').textContent='Send to Chat'},1500);
+}
+
+document.addEventListener('click',function(e){if(!e.target.closest('.tcard')&&!e.target.closest('.dpanel'))hideDetail()});
+
+init();
+</script>
+</body>
+</html>
