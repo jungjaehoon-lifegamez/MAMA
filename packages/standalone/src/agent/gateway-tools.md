@@ -79,7 +79,7 @@ Call tools via JSON block:
 
 ## Multi-Agent Delegation
 
-- **delegate**(agentId, task, background?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Returns the agent's response.
+- **delegate**(agentId, task, background?, skill?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Optional `skill` loads `~/.mama/skills/{skill}.md` and prepends it to the delegation prompt. Returns the agent's response.
 
 ## System
 

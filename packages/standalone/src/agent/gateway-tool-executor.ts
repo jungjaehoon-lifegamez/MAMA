@@ -2157,6 +2157,7 @@ export class GatewayToolExecutor {
     agentId: string;
     task: string;
     background?: boolean;
+    skill?: string;
   }): Promise<GatewayToolResult> {
     const { agentId, task, background } = input;
 
@@ -2185,10 +2186,18 @@ export class GatewayToolExecutor {
       void (async () => {
         try {
           const process = await this.agentProcessManager!.getProcess(source, channelId, agentId);
-          const delegationPrompt = this.delegationManagerRef!.buildDelegationPrompt(
+          let delegationPrompt = this.delegationManagerRef!.buildDelegationPrompt(
             sourceAgentId,
             task
           );
+          // Inject skill content if specified
+          if (input.skill) {
+            const skillPath = join(homedir(), '.mama', 'skills', `${input.skill}.md`);
+            if (existsSync(skillPath)) {
+              const skillContent = readFileSync(skillPath, 'utf-8');
+              delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
+            }
+          }
           await process.sendMessage(delegationPrompt);
         } catch {
           // Background task failures are silently ignored
@@ -2214,6 +2223,15 @@ export class GatewayToolExecutor {
         const process = await this.agentProcessManager.getProcess(source, channelId, agentId);
 
         let delegationPrompt = this.delegationManagerRef.buildDelegationPrompt(sourceAgentId, task);
+
+        // Inject skill content if specified
+        if (input.skill) {
+          const skillPath = join(homedir(), '.mama', 'skills', `${input.skill}.md`);
+          if (existsSync(skillPath)) {
+            const skillContent = readFileSync(skillPath, 'utf-8');
+            delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
+          }
+        }
 
         // Inject channel history for fresh processes (no prior context)
         const sessionId = process.getSessionId?.();

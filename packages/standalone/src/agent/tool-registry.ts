@@ -274,9 +274,9 @@ register({
 register({
   name: 'delegate',
   description:
-    "Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Returns the agent's response.",
+    "Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Optional `skill` loads `~/.mama/skills/{skill}.md` and prepends it to the delegation prompt. Returns the agent's response.",
   category: 'multi_agent',
-  params: 'agentId, task, background?',
+  params: 'agentId, task, background?, skill?',
 });
 
 // Business Data — progressive exploration of operational data
