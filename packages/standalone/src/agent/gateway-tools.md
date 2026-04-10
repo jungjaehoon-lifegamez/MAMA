@@ -5,6 +5,7 @@ Call tools via JSON block:
 ```tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
+
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
@@ -50,6 +51,11 @@ Call tools via JSON block:
 - **os_set_permissions**() — Set tool/path permissions for a role
 - **os_get_config**() — Get current configuration
 - **os_set_model**() — Set AI model for a role
+- **agent_get**(agent_id) — Get agent config, persona, and current version
+- **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
+- **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
+- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab (e.g., agent detail, metrics)
+- **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
 
 ## OS Monitoring (viewer-only)
 
@@ -59,6 +65,7 @@ Call tools via JSON block:
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform
+- **agent_compare**(agent_id, version_a, version_b) — Compare metrics between two versions of an agent (Before/After)
 
 ## PR Review
 
@@ -79,6 +86,7 @@ Call tools via JSON block:
 ## System
 
 - **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.

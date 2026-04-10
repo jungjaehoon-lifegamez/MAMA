@@ -706,7 +706,15 @@ export type GatewayToolName =
   | 'kagemusha_tasks'
   | 'kagemusha_messages'
   // System tools
-  | 'agent_notices';
+  | 'agent_notices'
+  // Agent management tools (Managed Agents pattern)
+  | 'agent_get'
+  | 'agent_update'
+  | 'agent_create'
+  | 'agent_compare'
+  // Viewer control tools (SmartStore pattern)
+  | 'viewer_navigate'
+  | 'viewer_notify';
 
 // ============================================================================
 // MCP Tool Output Types

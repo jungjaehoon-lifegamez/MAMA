@@ -305,6 +305,47 @@ register({
   params: 'limit?',
 });
 
+// Agent management tools (Managed Agents pattern)
+register({
+  name: 'agent_get',
+  description: 'Get agent config, persona, and current version',
+  category: 'os_management',
+  params: 'agent_id',
+});
+register({
+  name: 'agent_update',
+  description:
+    'Update agent config. Requires current version for optimistic concurrency. Bumps version on change.',
+  category: 'os_management',
+  params: 'agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note',
+});
+register({
+  name: 'agent_create',
+  description: 'Create new agent with initial config and persona',
+  category: 'os_management',
+  params: 'id, name, model, tier, system?, backend?',
+});
+register({
+  name: 'agent_compare',
+  description: 'Compare metrics between two versions of an agent (Before/After)',
+  category: 'os_monitoring',
+  params: 'agent_id, version_a, version_b',
+});
+
+// Viewer control tools (SmartStore pattern)
+register({
+  name: 'viewer_navigate',
+  description: 'Navigate viewer to a specific page/tab (e.g., agent detail, metrics)',
+  category: 'os_management',
+  params: 'route, params?: {id?, tab?, compareV1?, compareV2?}',
+});
+register({
+  name: 'viewer_notify',
+  description: 'Show toast or alert card in viewer',
+  category: 'os_management',
+  params: 'type: info|warning|suggest, message, action?: {label, navigate}',
+});
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {
