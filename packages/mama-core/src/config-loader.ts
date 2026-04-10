@@ -19,6 +19,7 @@ import os from 'os';
 import { info, warn, error as logError } from './debug-logger.js';
 
 export interface MAMAConfig {
+  configVersion: number;
   modelName: string;
   embeddingDim: number;
   quantized: boolean;
@@ -26,13 +27,51 @@ export interface MAMAConfig {
   [key: string]: unknown;
 }
 
+// Current config version — bump this when adding migrations
+const CURRENT_CONFIG_VERSION = 2;
+
 // Default configuration
 export const DEFAULT_CONFIG: MAMAConfig = {
+  configVersion: CURRENT_CONFIG_VERSION,
   modelName: 'Xenova/multilingual-e5-large',
   embeddingDim: 1024,
   quantized: true,
   cacheDir: path.join(os.homedir(), '.cache', 'huggingface', 'transformers'),
 };
+
+/**
+ * Config migrations — each entry upgrades from (version - 1) to version.
+ * Migrations run sequentially and mutate the config object in place.
+ */
+const CONFIG_MIGRATIONS: Record<number, (cfg: MAMAConfig) => void> = {
+  // v1 → v2: e5-small (384-dim) → e5-large (1024-dim)
+  2: (cfg) => {
+    if (cfg.modelName === 'Xenova/multilingual-e5-small' && cfg.embeddingDim === 384) {
+      info('[config] Migration v2: upgrading embedding model e5-small → e5-large');
+      cfg.modelName = 'Xenova/multilingual-e5-large';
+      cfg.embeddingDim = 1024;
+    }
+  },
+};
+
+/**
+ * Apply pending migrations to a config object.
+ * Returns true if any migrations were applied.
+ */
+function applyMigrations(config: MAMAConfig): boolean {
+  const startVersion = config.configVersion || 1;
+  if (startVersion >= CURRENT_CONFIG_VERSION) return false;
+
+  for (let v = startVersion + 1; v <= CURRENT_CONFIG_VERSION; v++) {
+    const migrate = CONFIG_MIGRATIONS[v];
+    if (migrate) {
+      migrate(config);
+      info(`[config] Applied migration v${v}`);
+    }
+  }
+  config.configVersion = CURRENT_CONFIG_VERSION;
+  return true;
+}
 
 // Config file path
 const CONFIG_DIR = path.join(os.homedir(), '.mama');
@@ -85,11 +124,21 @@ export function loadConfig(reload = false): MAMAConfig {
     const configData = fs.readFileSync(CONFIG_PATH, 'utf8');
     const userConfig = JSON.parse(configData) as Partial<MAMAConfig>;
 
+    // Determine file's config version before merging with defaults
+    const fileVersion = (userConfig as MAMAConfig).configVersion || 1;
+
     // Merge with defaults (user config overrides)
     const config: MAMAConfig = {
       ...DEFAULT_CONFIG,
       ...userConfig,
+      configVersion: fileVersion, // preserve file version for migration check
     };
+
+    // Apply pending migrations based on file's version
+    if (applyMigrations(config)) {
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf8');
+      info(`[config] Migrated config saved to ${CONFIG_PATH}`);
+    }
 
     // Validate configuration
     if (!config.modelName || typeof config.modelName !== 'string') {

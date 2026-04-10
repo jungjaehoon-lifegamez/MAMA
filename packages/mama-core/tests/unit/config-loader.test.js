@@ -227,6 +227,64 @@ describe('Story M1.4: Config Loader', () => {
     });
   });
 
+  describe('Config migration', () => {
+    it('should migrate e5-small to e5-large on load', async () => {
+      // Write old config with e5-small (no configVersion = v1)
+      const oldConfig = {
+        modelName: 'Xenova/multilingual-e5-small',
+        embeddingDim: 384,
+        quantized: true,
+        cacheDir: '/Users/test/.cache/huggingface/transformers',
+      };
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(oldConfig, null, 2));
+
+      const { loadConfig } = await import('../../src/config-loader.js');
+      const config = loadConfig(true);
+
+      expect(config.modelName).toBe('Xenova/multilingual-e5-large');
+      expect(config.embeddingDim).toBe(1024);
+      expect(config.configVersion).toBe(2);
+
+      // Verify persisted to disk
+      const saved = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+      expect(saved.modelName).toBe('Xenova/multilingual-e5-large');
+      expect(saved.embeddingDim).toBe(1024);
+    });
+
+    it('should not migrate if already on e5-large', async () => {
+      const currentConfig = {
+        configVersion: 2,
+        modelName: 'Xenova/multilingual-e5-large',
+        embeddingDim: 1024,
+        quantized: true,
+        cacheDir: '/Users/test/.cache/huggingface/transformers',
+      };
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(currentConfig, null, 2));
+
+      const { loadConfig } = await import('../../src/config-loader.js');
+      const config = loadConfig(true);
+
+      expect(config.modelName).toBe('Xenova/multilingual-e5-large');
+      expect(config.configVersion).toBe(2);
+    });
+
+    it('should not migrate custom models', async () => {
+      const customConfig = {
+        modelName: 'Xenova/gte-large',
+        embeddingDim: 1024,
+        quantized: true,
+        cacheDir: '/Users/test/.cache/huggingface/transformers',
+      };
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(customConfig, null, 2));
+
+      const { loadConfig } = await import('../../src/config-loader.js');
+      const config = loadConfig(true);
+
+      expect(config.modelName).toBe('Xenova/gte-large');
+      expect(config.configVersion).toBe(2);
+    });
+  });
+
   describe('Config path', () => {
     it('should return correct config path', async () => {
       const { getConfigPath } = await import('../../src/config-loader.js');

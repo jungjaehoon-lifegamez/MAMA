@@ -116,24 +116,24 @@ See the full [Security Guide](docs/guides/security.md) for Cloudflare Zero Trust
 
 Tested on [LongMemEval](https://xiaowu0162.github.io/long-mem-eval/) — 500 questions across 6 types, ~115K tokens of conversation history per question.
 
-| System | Score | Model | Notes |
-|--------|-------|-------|-------|
-| Mastra | 94.87% | GPT-5-mini | |
+| System      | Score     | Model      | Notes                        |
+| ----------- | --------- | ---------- | ---------------------------- |
+| Mastra      | 94.87%    | GPT-5-mini |                              |
 | **MAMA OS** | **93.0%** | Sonnet 4.6 | Tool-use answer, 100Q sample |
-| SuperMemory | 81.6% | GPT-4o | |
-| Zep | 71.2% | GPT-4o | |
+| SuperMemory | 81.6%     | GPT-4o     |                              |
+| Zep         | 71.2%     | GPT-4o     |                              |
 
 MAMA outperforms SuperMemory while running **entirely locally** with open-source components.
 
 ## Packages
 
-| Package | Version | Description |
-|---------|---------|-------------|
-| [@jungjaehoon/mama-os](packages/standalone/) | 0.18.0 | Always-on runtime — connectors, knowledge agents, viewer |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1 | MCP server for Claude Desktop/Code |
-| [@jungjaehoon/mama-core](packages/mama-core/) | 1.4.1 | Core library (memory engine, embeddings, DB) |
-| [mama plugin](packages/claude-code-plugin/) | 1.9.0 | Claude Code plugin (marketplace) |
-| [memorybench](packages/memorybench/) | 1.0.0 | Memory retrieval benchmarking framework |
+| Package                                          | Version | Description                                              |
+| ------------------------------------------------ | ------- | -------------------------------------------------------- |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.18.1  | Always-on runtime — connectors, knowledge agents, viewer |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1  | MCP server for Claude Desktop/Code                       |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.2   | Core library (memory engine, embeddings, DB)             |
+| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)                         |
+| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework                  |
 
 ## Quick Start
 
@@ -192,15 +192,15 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 ## Roadmap
 
-| Phase | Version | Focus |
-|-------|---------|-------|
-| **Done** | v0.15 | Search quality overhaul, FTS5, evolution engine (58% → 88%) |
-| **Done** | v0.16 | event_date API, tool-use answer, memory agent v5 (88% → 93%) |
-| **Done** | v0.17 | Connector framework (15 connectors), truth-first 3-pass extraction |
-| **Done** | v0.18 | Output layer — knowledge agents, viewer redesign, security hardening |
-| **Next** | v0.19 | Agent management UI — customize agent personas, tools, and behavior from the viewer. Stability: watchdog, audit log, health score, 72h uptime test |
-| | v0.20 | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design) |
-| | v1.0 | Team mode — shared knowledge graph for organizations. General release |
+| Phase    | Version | Focus                                                                                                                                                |
+| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                          |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                         |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                   |
+| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                 |
+| **Next** | v0.19   | Agent management UI — customize agent personas, tools, and behavior from the viewer. Stability: watchdog, audit log, health score, 72h uptime test   |
+|          | v0.20   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design) |
+|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                |
 
 ## Development
 
