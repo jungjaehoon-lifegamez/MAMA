@@ -103,10 +103,10 @@ describe('auth-middleware', () => {
     expect(isAuthenticated(req)).toBe(false);
   });
 
-  it('allows trusted Cloudflare Access requests when explicitly enabled', () => {
+  it('auto-trusts Cloudflare Access requests from localhost tunnel', () => {
     delete process.env.MAMA_AUTH_TOKEN;
     delete process.env.MAMA_SERVER_TOKEN;
-    process.env.MAMA_TRUST_CLOUDFLARE_ACCESS = 'true';
+    delete process.env.MAMA_TRUST_CLOUDFLARE_ACCESS;
 
     const req = createRequest({
       remoteAddress: '127.0.0.1',
@@ -123,7 +123,6 @@ describe('auth-middleware', () => {
   it('does not trust Cloudflare Access identity headers from untrusted peers', () => {
     delete process.env.MAMA_AUTH_TOKEN;
     delete process.env.MAMA_SERVER_TOKEN;
-    process.env.MAMA_TRUST_CLOUDFLARE_ACCESS = 'true';
 
     const req = createRequest({
       remoteAddress: '198.51.100.20',

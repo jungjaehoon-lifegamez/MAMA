@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.2] - 2026-04-10
+
+### Fixed
+
+- **Cloudflare Tunnel auto-trust** — Requests through Cloudflare Tunnel with CF Access identity headers are now automatically trusted without requiring `MAMA_TRUST_CLOUDFLARE_ACCESS` environment variable. Peer must be localhost (tunnel by definition)
+
 ## [0.18.1] - 2026-04-10
 
 ### Fixed
