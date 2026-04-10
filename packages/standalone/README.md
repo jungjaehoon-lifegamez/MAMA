@@ -1,29 +1,37 @@
 # @jungjaehoon/mama-os
 
-> Stop re-explaining yourself to AI. MAMA remembers so you don't have to.
+> Your scattered knowledge, organized by AI agents that never sleep.
 
 ## The Problem
 
-Every time you start a new Claude session, it knows nothing. The architecture decision from last week, the deadline someone mentioned in Slack, the reason you chose JWT over sessions three PRs ago — all gone. You spend the first few minutes re-loading context that you've already explained before.
+Your knowledge is everywhere — Slack threads, email chains, code reviews, meeting notes, spreadsheets, Telegram messages. No human can track all of it. Important decisions get buried. Context gets lost between tools. When you need to make a decision, the information that would help is scattered across ten different apps and three months of history.
 
-Your knowledge is scattered across Slack, Telegram, email, code reviews, and your own head. No single tool sees all of it.
+This isn't a memory problem. It's an intelligence problem. You don't just need to *store* information — you need something that reads everything, connects the dots, identifies what matters, and tells you what you're missing.
 
 ## What MAMA OS Does
 
-MAMA OS is a local daemon that runs on your machine 24/7. It silently connects to your apps, watches conversations, and builds a private knowledge graph — then injects the right context into every new AI session automatically.
+MAMA OS is a local AI runtime that connects to your apps, reads everything continuously, and turns scattered records into organized knowledge.
+
+**What the agents actually do:**
+
+- **Identify what matters** — Out of thousands of daily messages, surface the decisions, deadlines, and changes that affect your work
+- **Connect across sources** — A Slack conversation + a Trello card + an email attachment about the same project are linked automatically
+- **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
+- **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and suggested next steps
+- **Brief you proactively** — When you start working, relevant context from all sources is already there — you didn't ask for it
 
 ```
-Without MAMA:  New session → "Last week we decided to use JWT..." → re-explain everything
-With MAMA:     New session → context already loaded → you just work
+Without MAMA:  You read 5 Slack channels, 3 email threads, check Trello,
+               re-read old PRs, then try to piece together the full picture.
+
+With MAMA:     Agents already read everything. You get a briefing with
+               what changed, what's at risk, and what needs your decision.
 ```
 
-**What you get:**
+**This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
 
-- **Never re-explain context** — Decisions from past sessions surface automatically when relevant
-- **Cross-app awareness** — Slack deadline + code decision + email thread = one connected picture
-- **Private by design** — All data stays on your device. Nothing leaves your machine. Ever.
+- **Private by design** — All data stays on your device. Nothing leaves your machine.
 - **AI-independent** — Works with Claude, Codex, or any future backend. Your memory outlives any AI provider.
-- **Always watching, always learning** — 15 connectors poll your apps continuously, extracting what matters without you lifting a finger
 
 ## How It's Secured
 
