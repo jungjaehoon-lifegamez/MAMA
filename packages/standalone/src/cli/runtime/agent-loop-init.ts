@@ -100,63 +100,70 @@ export function initMainAgentLoop(
     ? ['report_publish', 'wiki_publish', 'obsidian', 'code_act', 'mcp__code-act__code_act']
     : undefined;
 
-  const agentLoop = new AgentLoop(oauthManager, {
-    backend: runtimeBackend,
-    model: config.agent.model,
-    timeoutMs: config.agent.timeout,
-    maxTurns: config.agent.max_turns,
-    useCodeAct: options?.osAgentMode ? false : useCodeAct,
-    toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
-    disallowedTools: osAgentDisallowed,
-    useLanes: true, // Enable lane-based concurrency for Discord
-    // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
-    // Permission enforcement is handled by MAMA's own RoleManager layer:
-    //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
-    //   - Multi-agent ToolPermissionManager (tier-based tool access)
-    //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
-    // Headless daemon — no TTY for interactive permission prompts.
-    // Security is enforced at the API/network layer (auth-middleware), not Claude CLI permissions.
-    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
-    sessionKey: 'default', // Will be updated per message
-    systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
-    // Collect reasoning for Discord display
-    onTurn: (turn) => {
-      turnCount++;
-      if (Array.isArray(turn.content)) {
-        for (const block of turn.content) {
-          if (block.type === 'tool_use') {
-            reasoningLog.push(`🔧 ${block.name}`);
+  const agentLoop = new AgentLoop(
+    oauthManager,
+    {
+      backend: runtimeBackend,
+      model: config.agent.model,
+      timeoutMs: config.agent.timeout,
+      maxTurns: config.agent.max_turns,
+      useCodeAct: options?.osAgentMode ? false : useCodeAct,
+      toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
+      disallowedTools: osAgentDisallowed,
+      useLanes: true, // Enable lane-based concurrency for Discord
+      // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
+      // Permission enforcement is handled by MAMA's own RoleManager layer:
+      //   - config.yaml roles.definitions.*.allowedTools / blockedTools / allowedPaths
+      //   - Multi-agent ToolPermissionManager (tier-based tool access)
+      //   - Source-based role mapping (viewer=os_agent, discord=chat_bot, etc.)
+      // Headless daemon — no TTY for interactive permission prompts.
+      // Security is enforced at the API/network layer (auth-middleware), not Claude CLI permissions.
+      dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
+      sessionKey: 'default', // Will be updated per message
+      systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
+      // Collect reasoning for Discord display
+      onTurn: (turn) => {
+        turnCount++;
+        if (Array.isArray(turn.content)) {
+          for (const block of turn.content) {
+            if (block.type === 'tool_use') {
+              reasoningLog.push(`🔧 ${block.name}`);
+            }
           }
         }
-      }
+      },
+      onToolUse: (toolName, _input, result) => {
+        // Track tool name (for Code-Act sandbox calls that bypass onTurn)
+        if (!reasoningLog.includes(`🔧 ${toolName}`)) {
+          reasoningLog.push(`🔧 ${toolName}`);
+        }
+        // Add tool result summary
+        const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
+        if (resultObj?.error) {
+          reasoningLog.push(`  ❌ ${resultObj.error}`);
+        } else if (resultObj?.results && Array.isArray(resultObj.results)) {
+          reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
+        } else if (resultObj?.success !== undefined) {
+          reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
+        }
+        console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
+      },
+      onTokenUsage: (record) => {
+        try {
+          insertTokenUsage(db, record);
+        } catch {
+          /* ignore */
+        }
+      },
+      onMetric: (name, value, labels) => {
+        metricsStore?.record({ name, value, labels });
+      },
     },
-    onToolUse: (toolName, _input, result) => {
-      // Track tool name (for Code-Act sandbox calls that bypass onTurn)
-      if (!reasoningLog.includes(`🔧 ${toolName}`)) {
-        reasoningLog.push(`🔧 ${toolName}`);
-      }
-      // Add tool result summary
-      const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
-      if (resultObj?.error) {
-        reasoningLog.push(`  ❌ ${resultObj.error}`);
-      } else if (resultObj?.results && Array.isArray(resultObj.results)) {
-        reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
-      } else if (resultObj?.success !== undefined) {
-        reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
-      }
-      console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
-    },
-    onTokenUsage: (record) => {
-      try {
-        insertTokenUsage(db, record);
-      } catch {
-        /* ignore */
-      }
-    },
-    onMetric: (name, value, labels) => {
-      metricsStore?.record({ name, value, labels });
-    },
-  });
+    undefined,
+    {
+      mamaDbPath: config.database.path.replace(/^~/, homedir()),
+    }
+  );
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
 
   // Build reasoning header for Discord
