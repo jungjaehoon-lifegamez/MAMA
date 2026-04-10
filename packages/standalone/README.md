@@ -1,26 +1,32 @@
 # @jungjaehoon/mama-os
 
-> **Your AI Operating System**  
-> _Control + Visibility for AI-Powered Automation_
-
-Always-on AI assistant powered by an authenticated backend CLI (Claude/Codex) with gateway integrations and autonomous agent capabilities.
+> **Your digital life, remembered locally.**  
+> _Always-on AI runtime that connects your apps, remembers what matters, and keeps it all on your device._
 
 ## What is MAMA OS?
 
-MAMA OS transforms your configured backend into an always-on AI assistant that runs continuously on your machine. Unlike the MCP server that requires a client, MAMA OS operates independently with:
+MAMA OS is a **local AI runtime** — not just a tool that Claude picks up and puts down, but a daemon that runs continuously on your machine. It watches your conversations across coding sessions, messengers, and connected apps, automatically extracts important decisions and context, and surfaces them when you need them.
 
-- **Gateway Integrations** - Discord, Slack, Telegram bot support
-- **Autonomous Agent Loop** - Continuous conversation handling via official backend CLI
-- **MAMA OS** - Built-in graph viewer and mobile chat interface
-- **Skills System** - Pluggable skills for document analysis, image translation, and more
-- **Cron Scheduler** - Scheduled task execution with heartbeat monitoring
+**What makes it different from an MCP server:**
 
-**Use cases:**
+```
+MCP Server:  Claude calls mama_save → saves one fact → done
+             (Tool. Works when called. Silent otherwise.)
 
-- Run MAMA as a Discord/Slack/Telegram bot for your team
-- Build custom workflows with the skills API
-- Access your configured backend from anywhere via mobile chat
-- Automate tasks with scheduled cron jobs
+MAMA OS:     Always running on localhost:3847
+             Polls messengers and connected apps continuously
+             Memory agent extracts decisions automatically
+             Multi-agent team collaborates in chat channels
+             (Runtime. Watches, learns, acts. Always on.)
+```
+
+**Core capabilities:**
+
+- **Cross-source memory** — Slack + Telegram + Claude Code + Gmail = one unified knowledge graph
+- **Always-on daemon** — Watches, learns, and provides context without user prompting
+- **Multi-agent orchestration** — Agent teams that collaborate in Discord/Slack/Telegram channels
+- **Connector framework** — 15 connectors feed data into a local-first memory engine
+- **Local-first** — All data stays on your device. No cloud dependency.
 
 ## Installation
 
@@ -32,867 +38,302 @@ npm install -g @jungjaehoon/mama-os
 npx @jungjaehoon/mama-os init
 ```
 
-## Prerequisites
+### Prerequisites
 
-- **Node.js** >= 22.13.0 (required for unflagged `node:sqlite` support)
-- **At least one authenticated backend CLI**
+- **Node.js** >= 18.0.0
+- **At least one authenticated backend CLI:**
   - Claude CLI: `npm install -g @anthropic-ai/claude-code` then `claude`
   - Codex CLI: `npm install -g @openai/codex` then `codex login`
-- **500MB disk space** - For embedding model cache
+- **500MB disk space** for embedding model cache
 
 ## Quick Start
 
-Get MAMA running in 30 seconds:
-
 ```bash
-# 1. Authenticate one backend CLI (one-time)
-# Claude: claude
-# Codex:  codex login
+# 1. Authenticate a backend CLI (one-time)
+claude    # or: codex login
 
 # 2. Initialize workspace
 mama init
 
-# 3. Start the agent
+# 3. Start the daemon
 mama start
 
-# 4. Check status
-mama status
+# 4. Open the viewer
+open http://localhost:3847
 ```
 
-MAMA will start in daemon mode and run continuously in the background.
+MAMA runs as a background daemon. Use `mama status` to check, `mama stop` to stop.
 
-## CLI Commands
+## Viewer (Web UI)
 
-| Command             | Description                     | Options                                                                                                                                          |
-| ------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `mama init`         | Initialize MAMA workspace       | `-f, --force` - Overwrite existing config<br>`--backend <auto\|claude\|codex>` - Preferred backend<br>`--skip-auth-check` - Skip auth validation |
-| `mama setup`        | Interactive setup wizard        | `-p, --port <port>` - Port number (default: 3847)<br>`--no-browser` - Don't auto-open browser                                                    |
-| `mama start`        | Start MAMA agent                | `-f, --foreground` - Run in foreground (not daemon)                                                                                              |
-| `mama stop`         | Stop MAMA agent                 |                                                                                                                                                  |
-| `mama status`       | Check agent status              |                                                                                                                                                  |
-| `mama run <prompt>` | Execute single prompt (testing) | `-v, --verbose` - Detailed output                                                                                                                |
+Access at `http://localhost:3847`. PWA-enabled for mobile.
 
-### Command Examples
+### Tabs
 
-```bash
-# Initialize with force (overwrites existing config)
-mama init --force
+| Tab | Purpose |
+|-----|---------|
+| **Dashboard** | Project intelligence view — agent activity, memory stats, system health |
+| **Feed** | Real-time connector feed — messages from all connected sources |
+| **Wiki** | Knowledge base with Obsidian vault integration |
+| **Memory** | Interactive reasoning graph (1000+ nodes), checkpoint timeline, search |
+| **Logs** | Full-featured daemon log viewer — filtering, pinning, stats, export, WebSocket mode |
+| **Settings** | Connectors, gateways, agent config, cron jobs, token budget |
 
-# Initialize with explicit backend
-mama init --backend codex
+### Chat
 
-# Run setup wizard on custom port
-mama setup --port 8080
-
-# Start in foreground (see logs in terminal)
-mama start --foreground
-
-# Test a single prompt
-mama run "What's the weather today?" --verbose
-```
-
-## Gateway Integrations
-
-MAMA Standalone supports multiple chat platforms. Configure them via the setup wizard or manually in `config.yaml`.
-
-### Discord Bot
-
-**Setup Steps:**
-
-1. Create application at https://discord.com/developers/applications
-2. Add bot and enable **MESSAGE CONTENT INTENT**
-3. Copy bot token
-4. Invite bot to your server with permissions:
-   - Read Messages/View Channels
-   - Send Messages
-   - Read Message History
-   - Add Reactions
-
-**Configuration:**
-
-```yaml
-gateways:
-  discord:
-    enabled: true
-    token: 'YOUR_DISCORD_BOT_TOKEN'
-    default_channel_id: '123456789' # Optional
-```
-
-**Usage:**
-
-```
-# In Discord
-@YourBot hello!
-@YourBot analyze this image [attach image]
-@YourBot /translate [image with text]
-```
-
-### Slack Bot
-
-**Setup Steps:**
-
-1. Create app at https://api.slack.com/apps
-2. Add bot token scopes:
-   - `channels:history`
-   - `channels:read`
-   - `chat:write`
-   - `users:read`
-3. Enable Socket Mode and create app-level token
-4. Install to workspace
-
-**Configuration:**
-
-```yaml
-gateways:
-  slack:
-    enabled: true
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
-```
-
-**Usage:**
-
-```
-# In Slack
-@mama what's the status?
-@mama /report
-
-# File upload support
-@mama [attach image] translate this
-```
-
-### Telegram Bot
-
-**Setup Steps:**
-
-1. Message @BotFather on Telegram
-2. Send `/newbot` and follow prompts
-3. Copy bot token
-4. Get your chat ID from @userinfobot
-
-**Configuration:**
-
-```yaml
-gateways:
-  telegram:
-    enabled: true
-    token: '123456789:ABCdefGHI...'
-    allowed_chat_ids:
-      - 987654321 # Your chat ID
-```
-
-**Usage:**
-
-```
-# In Telegram
-/start
-Hello MAMA!
-/translate [send image]
-```
-
-## MAMA OS
-
-Built-in web interface for managing MAMA and chatting with your configured backend.
-
-**Access:** `http://localhost:3847` (default port)
-
-### Features
-
-**📊 Dashboard Tab**
-
-- Gateway status overview
-- Memory statistics
-- Agent configuration
-- Top topics
-
-**💬 Chat Tab**
-
-- Real-time chat with backend CLI sessions
-- Voice input (Web Speech API, Korean optimized)
+Floating chat panel available on all tabs:
+- Real-time conversation with the Conductor agent
+- Voice input (Web Speech API)
 - Text-to-speech with adjustable speed
-- Hands-free mode (auto-listen after TTS)
-- Long press to copy messages (750ms)
-- Slash commands: `/save`, `/search`, `/checkpoint`, `/resume`, `/help`
-- Auto-checkpoint (5-minute idle auto-save)
-- Session resume with banner UI
-- MCP tool display (see Read, Write, Bash execution)
+- Slash commands: `/save`, `/search`, `/checkpoint`, `/resume`
 
-**🧠 Memory Tab**
-
-- Interactive reasoning graph visualization
-- Checkpoint timeline sidebar
-- Draggable detail panel
-- Topic filtering and search
-- Export decisions (JSON, Markdown, CSV)
-
-**🧩 Skills Tab**
-
-- Browse installed skills with status badges (published/draft/coworking)
-- Click to open in Skill Lab Playground for editing
-- Skill verification with 12-point checklist
-
-**🧪 Playground Tab**
-
-- **Skill Lab** — Step-by-step skill creation, modification, and verification
-- **Cron Workflow Lab** — Node-based DAG editor for cron workflows (trigger → prompt → condition → action)
-- **Wave Visualizer** — Multi-Agent task execution flow visualizer (Simulation + Live modes)
-- Bidirectional sync with Skills Tab (select skill → opens in Skill Lab)
-- "Open in new tab" for full-screen editing
-
-**⚙️ Settings Tab**
-
-- Configure gateway tokens
-- Heartbeat scheduler settings
-- Agent configuration (model, max turns, timeout)
-
-### Mobile Access
-
-MAMA OS is PWA-enabled and works great on mobile:
+### Mobile
 
 1. Open `http://localhost:3847` on your phone
-2. Add to home screen
+2. Add to home screen (PWA)
 3. Use voice input for hands-free interaction
 
-**For external access** (e.g., from phone on different network), see [Security](#security) section.
+For external access, use [Cloudflare Zero Trust tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/).
 
-## Skills System
+## Connector Framework
 
-MAMA includes built-in skills and supports custom skill creation.
+MAMA OS connects to external data sources via a plugin-based connector framework. Each connector polls its source and feeds structured facts into the memory engine.
 
-### Built-in Skills
+### Available Connectors (15)
 
-**📸 Image Translation**
+| Connector | Auth | Role |
+|-----------|------|------|
+| **Slack** | Bot Token | Hub (project channels) |
+| **Discord** | Bot Token | Hub |
+| **Telegram** | Bot Token | Spoke (individual) |
+| **Chatwork** | API Token | Hub |
+| **iMessage** | Local DB | Spoke |
+| **Gmail** | Google Workspace CLI | Spoke |
+| **Calendar** | Google Workspace CLI | Reference |
+| **Drive** | Google Workspace CLI | Deliverable |
+| **Sheets** | Google Workspace CLI | Truth (structured data) |
+| **Notion** | API Token | Reference |
+| **Obsidian** | Local vault | Reference |
+| **Trello** | API Token | Truth (kanban) |
+| **Kagemusha** | Local DB | Hub (team monitoring) |
+| **Claude Code** | Plugin hooks | Hub (coding sessions) |
 
-```
-# Discord/Telegram
-[Send image with text]
-MAMA: [Translates text to Korean]
+### CLI
 
-# Or explicitly
-/translate [image]
-```
-
-**📄 Document Analysis**
-
-```
-# Send Excel, PDF, or Word file
-MAMA: [Analyzes and summarizes content]
-```
-
-**📊 Heartbeat Report**
-
-```
-/report
-MAMA: [Collects activity from all gateways and creates summary]
-```
-
-### Skill Forge
-
-Create custom skills with AI assistance:
-
-```
-/forge weather-check - A skill that tells weather info
-
-# 3 AI agents collaborate:
-# 1. 🏗️ Architect - Designs structure
-# 2. 💻 Developer - Writes code
-# 3. 🔍 QA - Quality verification
-
-# Each step has 5-second countdown for review
+```bash
+mama connector add slack      # Activate + auth guide
+mama connector remove slack   # Deactivate
+mama connector list           # Status of all connectors
+mama connector status         # Health + last poll time
 ```
 
-Skills are stored in `workspace/skills/` and auto-loaded on startup.
+### Source Role Classification
 
-## Cron Jobs & Heartbeat
+Connectors classify channels by role for the 3-pass memory extraction pipeline:
+- **Truth** — Spreadsheets, kanban boards (structured facts, no LLM needed)
+- **Hub** — Project channels (cross-source activity extraction)
+- **Deliverable** — File storage (document tracking)
+- **Spoke** — Individual channels (linked to projects via context)
+- **Reference** — Calendar, docs (supplementary context)
 
-### Cron Jobs
+Config: `~/.mama/connectors.json`
 
-Schedule automated tasks:
+## Multi-Agent System
 
-```
-# Add cron job
-/cron add "0 9 * * *" "Daily morning briefing"
+Run multiple AI agents that collaborate, delegate tasks, and work autonomously across chat platforms.
 
-# List cron jobs
-/cron list
+### Agent Tiers
 
-# Remove cron job
-/cron remove [id]
-```
+| Tier | Role | Tool Access |
+|------|------|-------------|
+| **Tier 1** | Orchestrator (Conductor) | All tools + delegation |
+| **Tier 2** | Advisor | Read-only tools |
+| **Tier 3** | Executor | Scoped read-only |
 
-**Cron syntax:**
+### Delegation
 
-```
-* * * * *
-│ │ │ │ │
-│ │ │ │ └─ Day of week (0-7, 0 and 7 are Sunday)
-│ │ │ └─── Month (1-12)
-│ │ └───── Day of month (1-31)
-│ └─────── Hour (0-23)
-└───────── Minute (0-59)
-```
+Agents delegate via the `delegate()` gateway tool:
 
-**Examples:**
-
-```
-"0 9 * * *"      # Every day at 9 AM
-"0 18 * * 5"     # Every Friday at 6 PM
-"*/30 * * * *"   # Every 30 minutes
-"0 0 1 * *"      # First day of every month at midnight
+```json
+{"name": "delegate", "input": {"agentId": "developer", "task": "implement the login endpoint", "skill": "code-review"}}
 ```
 
-### Heartbeat
-
-MAMA periodically wakes up to check for new messages across gateways.
-
-**Configuration:**
-
-```yaml
-heartbeat:
-  enabled: true
-  interval_minutes: 30
-  quiet_hours:
-    start: 23 # 11 PM
-    end: 8 # 8 AM
-```
-
-During quiet hours, heartbeat is paused to avoid notifications.
-
-## Multi-Agent Swarm
-
-Run multiple AI agents in Discord that collaborate, delegate tasks, and work autonomously.
-
-> Developed independently, released the same day as Anthropic's [Agent Teams](https://docs.anthropic.com/en/docs/claude-code/agent-teams).
-> Same vision — coordinated AI agents — but designed for **chat platforms** (Discord/Slack/Telegram), not CLI.
-
-### Agent Tier System
-
-| Tier       | Role         | Tool Access                                       | Capabilities                             |
-| ---------- | ------------ | ------------------------------------------------- | ---------------------------------------- |
-| **Tier 1** | Orchestrator | All tools (Read, Write, Edit, Bash, ...)          | Full access + delegation to other agents |
-| **Tier 2** | Advisor      | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Analysis and recommendations             |
-| **Tier 3** | Executor     | Read-only (Read, Grep, Glob, WebSearch, WebFetch) | Scoped tasks, no delegation              |
-
-Tier defaults can be overridden per agent with explicit `tool_permissions.allowed/blocked`.
-
-### 5-Stage Message Routing
-
-Messages are routed through a priority pipeline:
-
-```text
-Message arrives
-    │
-    ├─ 1. Free Chat?     → All agents respond (when free_chat: true)
-    ├─ 2. Explicit Trigger? → "!dev fix the bug" → Developer responds
-    ├─ 3. Category Match? → "리뷰해줘" → Reviewer responds (regex patterns)
-    ├─ 4. Keyword Match?  → "bug" in auto_respond_keywords → Developer responds
-    └─ 5. Default Agent   → Fallback agent responds
-```
+- **Background mode** — fire-and-forget delegation
+- **Skill injection** — loads `~/.mama/skills/{skill}.md` and prepends to delegation prompt
+- **Retry with backoff** — 3 retries on busy/crash, channel history injection on restart
+- **Permission control** — tier-based tool filtering per agent
 
 ### Configuration
 
 ```yaml
 multi_agent:
   enabled: true
-  free_chat: false
-
   agents:
-    sisyphus:
-      name: 'Sisyphus'
-      display_name: '🏔️ Sisyphus'
-      trigger_prefix: '!sis'
-      persona_file: '~/.mama/personas/sisyphus.md'
-      bot_token: 'DISCORD_BOT_TOKEN_1'
+    conductor:
+      name: 'Conductor'
       tier: 1
       can_delegate: true
-      auto_continue: true
-      auto_respond_keywords: ['architect', 'plan', '설계']
-      cooldown_ms: 5000
+      persona_file: '~/.mama/personas/conductor.md'
 
     developer:
       name: 'Developer'
-      display_name: '🔧 Developer'
-      trigger_prefix: '!dev'
+      tier: 1
       persona_file: '~/.mama/personas/developer.md'
-      bot_token: 'DISCORD_BOT_TOKEN_2'
-      tier: 1 # Full access for code changes
-      auto_continue: true
-      auto_respond_keywords: ['bug', 'code', 'implement', '구현']
+      auto_respond_keywords: ['bug', 'code', 'implement']
 
     reviewer:
       name: 'Reviewer'
-      display_name: '📝 Reviewer'
-      trigger_prefix: '!review'
+      tier: 2
       persona_file: '~/.mama/personas/reviewer.md'
-      bot_token: 'DISCORD_BOT_TOKEN_3'
-      tier: 1 # Full access for code changes
-      auto_respond_keywords: ['review', 'check', '리뷰', '검토']
-
-  # Regex-based category routing
-  categories:
-    - name: 'code_review'
-      patterns: ['리뷰해', "review\\s+(this|the)"]
-      agent_ids: ['reviewer']
-      priority: 10
-    - name: 'implementation'
-      patterns: ['구현해', 'implement', 'build']
-      agent_ids: ['developer']
-      priority: 5
-
-  # Autonomous work sessions
-  ultrawork:
-    enabled: true
-    max_steps: 20
-    max_duration: 1800000 # 30 minutes
-
-  # Auto-resume incomplete responses
-  task_continuation:
-    enabled: true
-    max_retries: 3
-
-  loop_prevention:
-    max_chain_length: 10
-    global_cooldown_ms: 2000
 ```
 
-### Delegation
+### OS Agent Mode
 
-Tier 1 agents can delegate tasks to other agents:
+When running without gateway bots, MAMA OS operates as an OS Agent — the Conductor delegates specialized work to sub-agents instead of doing everything directly. Sub-agent-specific tools (report_publish, wiki_publish, obsidian) are blocked on the Conductor to enforce delegation.
 
-```text
-DELEGATE::{agent_id}::{task description}
-```
+## Gateway Integrations
 
-Example in a persona file:
+Connect MAMA to chat platforms. Configure via `mama setup` or `~/.mama/config.yaml`.
 
-```markdown
-When implementation is needed, delegate:
-DELEGATE::developer::Implement the login endpoint with JWT
+| Platform | Setup |
+|----------|-------|
+| **Discord** | Create bot at discord.com/developers, enable MESSAGE CONTENT INTENT, invite to server |
+| **Slack** | Create app at api.slack.com, add bot scopes, enable Socket Mode |
+| **Telegram** | Message @BotFather, create bot, set `allowed_chat_ids` |
+| **Chatwork** | Generate API token in account settings |
 
-When code review is needed, delegate:
-DELEGATE::reviewer::Review the auth module changes
-```
+## Wiki (Obsidian Integration)
 
-**Constraints:**
+MAMA OS compiles project knowledge into an Obsidian vault at `~/.mama/wiki/`.
 
-- Only Tier 1 agents with `can_delegate: true`
-- Maximum delegation depth: 1 (no re-delegation)
-- Circular delegation automatically prevented
-- Notifications appear in Discord
+- Wiki agent searches existing notes before writing (prevents duplicates)
+- Change detection — skips compilation when no new information
+- Automatic frontmatter with tags, date, source links
+- View and edit in the Viewer's Wiki tab or Obsidian app
 
-### Task Continuation
+## CLI Commands
 
-When an agent's response appears incomplete, MAMA auto-retries:
-
-- **Completion markers:** `DONE`, `완료`, `TASK_COMPLETE`, `finished`
-- **Incomplete signals:** "I'll continue", "계속하겠", truncation near 2000 chars
-- **Max retries:** Configurable (default: 3)
-- Supports Korean and English patterns
-
-### UltraWork Mode (Ralph Loop 3-Phase)
-
-Trigger autonomous multi-step sessions:
-
-```
-User: "Build the auth system ultrawork"
-```
-
-**3-Phase Loop:**
-
-```text
-Phase 1: Planning
-  → Lead agent creates implementation plan
-  → Optional Council discussion for plan review
-  → Plan persisted to disk (plan.md)
-
-Phase 2: Building
-  → Executes plan via DELEGATE:: delegation
-  → Each step recorded to progress.json
-  → Council escalation on failures
-
-Phase 3: Retrospective
-  → Reviews completed work against plan
-  → Council discussion for quality check
-  → RETRO_COMPLETE → session ends
-  → RETRO_INCOMPLETE → re-enters Phase 2 (max 1 retry)
-```
-
-**State persistence** (`~/.mama/workspace/ultrawork/{session_id}/`):
-
-| File               | Purpose                    |
-| ------------------ | -------------------------- |
-| `session.json`     | Session metadata and phase |
-| `plan.md`          | Phase 1 output             |
-| `progress.json`    | Completed step records     |
-| `retrospective.md` | Phase 3 output             |
-
-**Config:**
-
-```yaml
-multi_agent:
-  ultrawork:
-    enabled: true
-    phased_loop: true # false = legacy freeform loop
-    persist_state: true # file-based state persistence
-    max_steps: 20
-    max_duration: 1800000 # 30 min
-```
-
-**Trigger keywords:** `ultrawork`, `울트라워크`, `deep work`, `autonomous`, `자율 작업`
-
-Session progress is reported in Discord/Slack in real-time.
-
-### Persona Files
-
-Each agent loads a persona from a markdown file:
-
-```markdown
-# Sisyphus - Lead Architect
-
-You are Sisyphus, the tireless lead architect.
-
-## Role
-
-- Break down complex tasks into manageable pieces
-- Delegate specialized work to Developer and Reviewer agents
-- Ensure quality and consistency
-
-## Delegation Guidelines
-
-When implementation is needed:
-DELEGATE::developer::task description here
-
-When code review is needed:
-DELEGATE::reviewer::review description here
-```
-
-Place persona files in `~/.mama/personas/`.
-
-## Onboarding Wizard
-
-First-time setup includes a 9-phase autonomous onboarding:
-
-1. **The Awakening** ✨ - MAMA is born, meets you for the first time
-2. **Getting to Know You** 💬 - Natural conversation to understand your needs
-3. **Personality Quest** 🎮 - Fun scenario-based quiz (customized to your role)
-4. **The Naming Ceremony** 🏷️ - Give MAMA a unique name and emoji
-5. **Checkpoint** ✅ - Confirm all settings before proceeding
-6. **Security Talk** 🔒 - Understand capabilities and risks (mandatory)
-7. **The Connections** 🔌 - Step-by-step Discord/Slack/Telegram setup
-8. **The Demo** 🎪 - See MAMA's capabilities in action
-9. **Grand Finale** 🎉 - Complete setup and start using MAMA
-
-**Start onboarding:**
-
-```bash
-mama setup
-```
-
-The wizard runs in your browser at `http://localhost:3847` and guides you through each step with your configured backend.
+| Command | Description |
+|---------|-------------|
+| `mama init` | Initialize workspace |
+| `mama setup` | Interactive setup wizard |
+| `mama start` | Start daemon (background) |
+| `mama start -f` | Start in foreground |
+| `mama stop` | Stop daemon |
+| `mama status` | Check status |
+| `mama run <prompt>` | Execute single prompt |
+| `mama connector <add\|remove\|list\|status>` | Manage connectors |
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│         MAMA Standalone Architecture            │
-├─────────────────────────────────────────────────┤
-│                                                  │
-│  Discord Bot    Slack Bot    Telegram Bot       │
-│       │             │              │             │
-│       └─────────────┴──────────────┘             │
-│                     │                            │
-│          ┌──────────▼──────────┐                │
-│          │  Message Router     │                │
-│          │  (Gateway Layer)    │                │
-│          └──────────┬──────────┘                │
-│                     │                            │
-│          ┌──────────▼──────────┐                │
-│          │  Agent Loop         │                │
-│          │  (Backend CLI)      │                │
-│          └──────────┬──────────┘                │
-│                     │                            │
-│          ┌──────────▼──────────┐                │
-│          │  Skills System      │                │
-│          │  (Pluggable)        │                │
-│          └──────────┬──────────┘                │
-│                     │                            │
-│          ┌──────────▼──────────┐                │
-│          │  MAMA Core          │                │
-│          │  (Memory + DB)      │                │
-│          └─────────────────────┘                │
-│                     │                            │
-│          ┌──────────▼──────────┐                │
-│          │  MAMA OS Viewer     │                │
-│          │  (Web UI)           │                │
-│          └─────────────────────┘                │
-│                                                  │
-└─────────────────────────────────────────────────┘
+Connectors (15)          Gateways
+Slack, Gmail, Sheets...  Discord, Slack, Telegram
+       |                        |
+       v                        v
+ Polling Scheduler       Message Router
+       |                        |
+       v                        v
+ 3-Pass Extraction    Multi-Agent System
+ (Truth → Hub → Spoke)  (Conductor → Sub-agents)
+       |                        |
+       +--------+-------+------+
+                |
+         MAMA Core (mama-memory.db)
+         Memory Graph + Embeddings
+                |
+         +------+------+
+         |             |
+    Viewer UI     Claude Code Plugin
+   localhost:3847   (Hook injection)
 ```
 
-**Key Components:**
+**Key modules:**
 
-- **Gateway Layer** - Handles Discord/Slack/Telegram message routing
-- **Agent Loop** - Continuous conversation handling via configured backend CLI
-- **Skills System** - Pluggable capabilities (image translation, document analysis)
-- **MAMA Core** - Shared memory and database (from @jungjaehoon/mama-core)
-- **MAMA OS** - Web-based management interface
+| Module | Path | Responsibility |
+|--------|------|---------------|
+| Runtime orchestration | `src/cli/runtime/` | 14 modules extracted from start.ts |
+| Agent system | `src/agent/` | AgentLoop, GatewayToolExecutor, ToolRegistry |
+| Multi-agent | `src/multi-agent/` | AgentProcessManager, delegation, personas |
+| Connectors | `src/connectors/` | 15 connector implementations |
+| Wiki | `src/wiki/` | Obsidian writer, compiler |
+| API handlers | `src/api/` | Dashboard, wiki, report, intelligence |
+| Viewer | `public/viewer/` | TypeScript modules, viewer.html |
 
 ## Configuration
 
-MAMA uses `config.yaml` in your workspace directory.
-
-**Example configuration:**
+Main config: `~/.mama/config.yaml`
 
 ```yaml
-# Agent settings
 agent:
   model: 'claude-sonnet-4-20250514'
   max_turns: 10
   timeout_seconds: 300
 
-# Gateway integrations
-gateways:
-  discord:
-    enabled: true
-    token: 'YOUR_TOKEN'
-    default_channel_id: '123456789'
+database:
+  path: '~/.mama/mama-memory.db'
 
-  slack:
-    enabled: false
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
-
-  telegram:
-    enabled: false
-    token: '123456:ABC...'
-    allowed_chat_ids: []
-
-# Heartbeat scheduler
-heartbeat:
-  enabled: true
-  interval_minutes: 30
-  quiet_hours:
-    start: 23
-    end: 8
-
-# Skills
-skills:
-  enabled: true
-  auto_load: true
-  directory: './skills'
-
-# MAMA OS
-viewer:
-  enabled: true
-  port: 3847
+logging:
+  level: info
+  path: '~/.mama/logs/daemon.log'
 ```
-
-## Security
-
-**IMPORTANT:** MAMA Standalone has full access to your system via the configured backend CLI.
-
-### Capabilities
-
-MAMA can:
-
-- 🗂️ **Read/write files** - Any file your user account can access
-- ⚡ **Execute commands** - Run terminal commands (npm, git, etc.)
-- 🌐 **Make network requests** - Fetch data, call APIs
-- 🔌 **Send messages** - Via configured gateway integrations
-
-### Recommendations
-
-**For maximum safety:**
-
-- Run MAMA in a Docker container
-- Use a dedicated user account with limited permissions
-- Don't give MAMA access to production systems
-- Review gateway permissions carefully
-
-**Gateway security:**
-
-- Discord: Use role-based permissions to limit bot access
-- Slack: Only install to test workspaces initially
-- Telegram: Use `allowed_chat_ids` to restrict who can interact
-
-**External access:**
-
-If you want to access MAMA OS from outside localhost (e.g., from your phone):
-
-1. **Recommended:** Use Cloudflare Zero Trust tunnel with authentication
-2. **Testing only:** Use `cloudflared tunnel --url http://localhost:3847`
-3. **If using Cloudflare Zero Trust:** start MAMA with `MAMA_TRUST_CLOUDFLARE_ACCESS=true` so Access-authenticated `/api/*` requests are not blocked by a second auth layer
-
-⚠️ **Never expose MAMA OS to the internet without authentication** - Anyone with access can control your system via your backend session.
-
-See [Security Guide](../../docs/guides/security.md) for detailed setup instructions.
-
-## Compliance
-
-MAMA OS operators are responsible for complying with their backend provider Terms/Usage policies.
-
-### Account Usage Rules
-
-- Do not share personal CLI accounts, sessions, or credentials.
-- Do not run multi-user team bots on a personal account plan.
-- For team channels, use organization-approved plans/accounts (Team/Enterprise or API org setup).
-- Do not bypass provider safeguards (token extraction, header spoofing, rate-limit evasion).
-
-### Why this matters for chat channels
-
-- A single bot in a group channel can still represent multi-user usage.
-- Even if credentials are not directly shared, providers may treat shared bot access as account sharing.
-- Multi-agent channels can increase concurrency/pattern complexity, so keep audit logs and sane limits.
 
 ## Environment Variables
 
-| Variable         | Description              | Default                    |
-| ---------------- | ------------------------ | -------------------------- |
-| `MAMA_DB_PATH`   | SQLite database location | `~/.claude/mama-memory.db` |
-| `MAMA_HTTP_PORT` | MAMA OS port             | `3847`                     |
-| `MAMA_WORKSPACE` | Workspace directory      | `./mama-workspace`         |
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MAMA_DB_PATH` | SQLite database location | `~/.mama/mama-memory.db` |
+| `MAMA_HTTP_PORT` | Viewer port | `3847` |
+| `MAMA_WORKSPACE` | Workspace directory | `~/.mama/workspace` |
+| `MAMA_TRUST_CLOUDFLARE_ACCESS` | Trust Cloudflare Access headers | `false` |
 
-> **Note:** Authentication is handled by the selected backend CLI. Run `claude` or `codex login` first.
+## Security
 
-## Troubleshooting
+MAMA OS has full system access via the backend CLI. Treat it accordingly.
 
-### Agent won't start
+**Recommendations:**
+- Run in a Docker container for isolation
+- Use Cloudflare Zero Trust for external access (never expose raw port)
+- Set `allowed_chat_ids` for Telegram
+- Use role-based permissions in Discord
+- Review `~/.mama/config.yaml` gateway tokens
 
-```bash
-# Check if already running
-mama status
+**Compliance:** Operators must comply with their backend provider's Terms of Service. Do not share personal CLI accounts or run multi-user bots on personal plans.
 
-# Stop existing instance
-mama stop
+## Related Packages
 
-# Start in foreground to see logs
-mama start --foreground
-```
-
-### Gateway not connecting
-
-```bash
-# Verify token in config.yaml
-cat mama-workspace/config.yaml
-
-# Check gateway status in MAMA OS
-# Open http://localhost:3847 → Dashboard tab
-```
-
-### Backend CLI authentication errors
-
-```bash
-# Re-authenticate Claude CLI
-claude
-
-# Re-authenticate Codex CLI
-codex login
-
-# Check CLI status
-claude --version
-codex --version
-
-# Test with verbose output
-mama run "test" --verbose
-```
-
-### Port already in use
-
-```bash
-# Change port in config.yaml
-vim mama-workspace/config.yaml
-
-# Or use setup wizard
-mama setup --port 8080
-```
-
-## Comparison with Other Packages
-
-| Package                      | Purpose                                     | Use When                            |
-| ---------------------------- | ------------------------------------------- | ----------------------------------- |
-| **@jungjaehoon/mama-os**     | Your AI Operating System (agent + gateways) | You want Discord/Slack/Telegram bot |
-| **@jungjaehoon/mama-server** | MCP server for Claude clients               | You use Claude Code/Desktop         |
-| **@jungjaehoon/mama-core**   | Shared core library                         | You're building custom integrations |
-
-**Not what you're looking for?**
-
-- **For Claude Code/Desktop:** Use [@jungjaehoon/mama-server](../mcp-server/README.md)
-- **For custom integrations:** Use [@jungjaehoon/mama-core](../mama-core/README.md)
-- **For the full project:** See [main README](../../README.md)
+| Package | Purpose | Install |
+|---------|---------|---------|
+| **@jungjaehoon/mama-os** | Always-on AI runtime | `npx @jungjaehoon/mama-os` |
+| **@jungjaehoon/mama-server** | MCP server for Claude Desktop | `npx @jungjaehoon/mama-server` |
+| **@jungjaehoon/mama-core** | Shared memory engine | (dependency) |
 
 ## Development
 
-### Project Structure
-
-```
-packages/standalone/
-├── src/
-│   ├── cli/              # CLI commands
-│   ├── agent/            # Agent loop implementation
-│   ├── gateways/         # Discord, Slack, Telegram
-│   ├── skills/           # Built-in skills
-│   ├── onboarding/       # Setup wizard
-│   └── config/           # Configuration management
-├── public/
-│   └── viewer/           # MAMA OS web interface
-├── templates/            # Workspace templates
-└── tests/                # Test suite
-```
-
-### Building from Source
-
 ```bash
-# Clone repository
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
-cd MAMA
-
-# Install dependencies
-pnpm install
-
-# Build standalone package
+cd MAMA && pnpm install
 cd packages/standalone
-pnpm build
-
-# Link for local testing
-npm link
-
-# Test
-mama init
-mama start --foreground
-```
-
-### Running Tests
-
-```bash
-# All tests
-pnpm test
-
-# Watch mode
-pnpm test:watch
-
-# Type checking
-pnpm typecheck
+pnpm build    # Build
+pnpm test     # Run tests (2500+)
+pnpm typecheck  # Type check
 ```
 
 ## Links
 
-- [GitHub Repository](https://github.com/jungjaehoon-lifegamez/MAMA)
+- [GitHub](https://github.com/jungjaehoon-lifegamez/MAMA)
+- [npm](https://www.npmjs.com/package/@jungjaehoon/mama-os)
 - [Documentation](https://github.com/jungjaehoon-lifegamez/MAMA/tree/main/docs)
 - [Issues](https://github.com/jungjaehoon-lifegamez/MAMA/issues)
-- [npm Package](https://www.npmjs.com/package/@jungjaehoon/mama-os)
-- [MCP Server Package](https://www.npmjs.com/package/@jungjaehoon/mama-server)
 
 ## License
 
-MIT - see [LICENSE](../../LICENSE)
+MIT
 
 ## Acknowledgments
 
-MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While MAMA is a distinct implementation focused on local-first SQLite/MCP architecture, we appreciate their pioneering work in LLM memory management.
-
-The multi-agent swarm architecture was inspired by [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode). Their agent orchestration approach informed our design. The key difference is that MAMA's swarm is built for **chat platforms** (Discord, Slack, Telegram) — multiple bot accounts collaborating in real-time channels — rather than a local CLI environment.
+Inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0) for LLM memory management and [oh-my-opencode](https://github.com/nicepkg/oh-my-opencode) for agent orchestration patterns.
 
 ---
 
-**Author:** SpineLift Team
-**Last Updated:** 2026-02-20
+**Last Updated:** 2026-04-10
