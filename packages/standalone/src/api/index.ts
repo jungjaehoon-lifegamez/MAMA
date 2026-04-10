@@ -219,7 +219,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   }
 
   // Connector status endpoint — reads connectors.json + runtime state
-  app.get('/api/connectors/status', (_req, res) => {
+  app.get('/api/connectors/status', requireAuth, (_req, res) => {
     const configPath = join(homedir(), '.mama', 'connectors.json');
     let config: Record<
       string,
@@ -264,7 +264,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   });
 
   // Metrics health endpoint (observability)
-  app.get('/api/metrics/health', async (_req, res) => {
+  app.get('/api/metrics/health', requireAuth, async (_req, res) => {
     if (healthCheckService) {
       try {
         const report = await healthCheckService.check();

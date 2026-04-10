@@ -451,7 +451,7 @@ This saves resources. Only compile when there is genuinely new information to do
   });
 
   // ── Session API endpoints ─────────────────────────────────────────────
-  apiServer.app.get('/api/sessions/last-active', async (_req, res) => {
+  apiServer.app.get('/api/sessions/last-active', requireAuth, async (_req, res) => {
     try {
       const sessions = messageRouter.listSessions('viewer');
       if (sessions.length === 0) {
@@ -466,7 +466,7 @@ This saves resources. Only compile when there is genuinely new information to do
     }
   });
 
-  apiServer.app.get('/api/sessions', async (_req, res) => {
+  apiServer.app.get('/api/sessions', requireAuth, async (_req, res) => {
     try {
       const viewerSessions = messageRouter.listSessions('viewer');
       const discordSessions = messageRouter.listSessions('discord');
@@ -994,7 +994,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
   // ── Daemon Log API ────────────────────────────────────────────────────
-  apiServer.app.get('/api/logs/daemon', (req, res) => {
+  apiServer.app.get('/api/logs/daemon', requireAuth, (req, res) => {
     const logPath = path.join(homedir(), '.mama', 'logs', 'daemon.log');
     if (!existsSync(logPath)) {
       res.status(404).json({ error: 'daemon.log not found' });
@@ -1037,7 +1037,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   // ── Workspace skills API ──────────────────────────────────────────────
   const skillsWorkDir = path.join(homedir(), '.mama', 'workspace', 'skills');
-  apiServer.app.get('/api/workspace/skills', (_req, res) => {
+  apiServer.app.get('/api/workspace/skills', requireAuth, (_req, res) => {
     try {
       if (!existsSync(skillsWorkDir)) {
         res.json({ skills: [] });
@@ -1059,7 +1059,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
     }
   });
 
-  apiServer.app.get('/api/workspace/skills/:name/content', (req, res) => {
+  apiServer.app.get('/api/workspace/skills/:name/content', requireAuth, (req, res) => {
     const name = req.params.name as string;
     if (!name || /[^a-zA-Z0-9_-]/.test(name)) {
       res.status(400).json({ error: 'Invalid skill name' });
