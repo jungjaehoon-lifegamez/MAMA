@@ -17,8 +17,8 @@ import { DebugLogger } from '../utils/debug-logger.js';
 import { API, } from '../utils/api.js';
 import { renderSafeMarkdown } from '../utils/markdown.js';
 const logger = new DebugLogger('Graph');
-const INITIAL_GRAPH_LIMIT = 300;
-const PHYSICS_NODE_THRESHOLD = 400;
+const INITIAL_GRAPH_LIMIT = 1000;
+const PHYSICS_NODE_THRESHOLD = 1200;
 /**
  * Graph Module Class
  */
@@ -159,8 +159,8 @@ export class GraphModule {
                 },
                 stabilization: {
                     enabled: true,
-                    iterations: 200,
-                    updateInterval: 50,
+                    iterations: data.nodes.length > 500 ? 100 : 200,
+                    updateInterval: 25,
                 },
             },
             interaction: {
@@ -207,7 +207,9 @@ export class GraphModule {
                     font: { color: '#131313', size: Math.max(fontSize, 14), vadjust: -2 },
                 });
             }
-            catch { /* ignore */ }
+            catch {
+                /* ignore */
+            }
         });
         this.network.on('blurNode', (params) => {
             try {
@@ -216,14 +218,18 @@ export class GraphModule {
                     font: { color: '#131313', size: 14, vadjust: -2 },
                 });
             }
-            catch { /* ignore */ }
+            catch {
+                /* ignore */
+            }
         });
         this.network.on('stabilized', () => {
             const loadingEl = getElementByIdOrNull('graph-loading');
             if (loadingEl) {
                 loadingEl.style.display = 'none';
             }
-            logger.info('Graph stabilized');
+            // Disable physics after initial layout to free CPU
+            this.network?.setOptions?.({ physics: { enabled: false } });
+            logger.info('Graph stabilized, physics disabled');
         });
         // Backup: hide loading after 3 seconds even if stabilization doesn't complete
         setTimeout(() => {
