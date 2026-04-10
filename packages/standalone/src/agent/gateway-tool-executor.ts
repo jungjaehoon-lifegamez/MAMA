@@ -18,7 +18,6 @@ import {
   mkdirSync,
   statSync,
   copyFileSync,
-  unlinkSync,
   realpathSync,
 } from 'fs';
 import { createHash } from 'crypto';
@@ -497,11 +496,6 @@ export class GatewayToolExecutor {
         case 'pr_review_threads':
           return await this.executePrReviewThreads(
             input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
-          );
-        // Playground tools
-        case 'playground_create':
-          return await this.executePlaygroundCreate(
-            input as { name: string; html: string; description?: string }
           );
         // Webchat tools
         case 'webchat_send':
@@ -1946,122 +1940,6 @@ export class GatewayToolExecutor {
   }
 
   // ============================================================================
-  // Playground Tools
-  // ============================================================================
-
-  private async executePlaygroundCreate(input: {
-    name: string;
-    html?: string;
-    file_path?: string;
-    description?: string;
-  }): Promise<{ success: boolean; url?: string; slug?: string; error?: string }> {
-    const { name, description } = input;
-    let { html } = input;
-
-    // Support file_path as alternative to inline html (avoids escaping issues with large HTML)
-    if (!html && input.file_path) {
-      // Expand ~ to home directory
-      const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-      const expandedPath = input.file_path.startsWith('~/')
-        ? join(homeDir, input.file_path.slice(2))
-        : input.file_path;
-
-      // Check path permission based on role
-      const pathPermission = this.checkPathPermission(expandedPath);
-      if (!pathPermission.allowed) {
-        return { success: false, error: pathPermission.error };
-      }
-
-      try {
-        html = readFileSync(expandedPath, 'utf-8');
-      } catch (err) {
-        return {
-          success: false,
-          error: `Failed to read file: ${expandedPath} — ${err instanceof Error ? err.message : String(err)}`,
-        };
-      }
-    }
-
-    if (!name || !html) {
-      return { success: false, error: 'name and (html or file_path) are required' };
-    }
-
-    // Generate slug from name (kebab-case, sanitized)
-    const slug = name
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .replace(/^-|-$/g, '')
-      .slice(0, 64);
-
-    if (!slug) {
-      return { success: false, error: 'Invalid name: cannot generate slug' };
-    }
-
-    const playgroundsDir = join(homedir(), '.mama', 'workspace', 'playgrounds');
-    const htmlPath = join(playgroundsDir, `${slug}.html`);
-    const indexPath = join(playgroundsDir, 'index.json');
-
-    try {
-      mkdirSync(playgroundsDir, { recursive: true });
-
-      // Read and validate index FIRST, before writing HTML file
-      // (so if index is corrupt, we don't leave dangling HTML files)
-      let index: Array<{
-        name: string;
-        slug: string;
-        description?: string;
-        created_at: string;
-      }> = [];
-      if (existsSync(indexPath)) {
-        try {
-          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
-          if (!Array.isArray(parsed)) {
-            throw new Error(`${indexPath} is corrupted: expected array, got ${typeof parsed}`);
-          }
-          index = parsed;
-        } catch (error) {
-          throw new Error(
-            `Failed to parse ${indexPath}: ${error instanceof Error ? error.message : String(error)}`
-          );
-        }
-      }
-
-      // Remove existing entry with same slug
-      index = index.filter((entry) => entry.slug !== slug);
-
-      // Write HTML before updating index (HTML is primary artifact; index push comes after)
-      writeFileSync(htmlPath, html, 'utf-8');
-
-      // Add new entry
-      index.push({
-        name,
-        slug,
-        description,
-        created_at: new Date().toISOString(),
-      });
-
-      // Write index after HTML is safely on disk
-      writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
-
-      return { success: true, url: `/playgrounds/${slug}.html`, slug };
-    } catch (err) {
-      // Clean up orphaned HTML file if it was written before error
-      try {
-        if (existsSync(htmlPath)) {
-          unlinkSync(htmlPath);
-        }
-      } catch {
-        // Silently ignore cleanup errors to preserve original error
-      }
-      return {
-        success: false,
-        error: `Failed to create playground: ${err instanceof Error ? err.message : String(err)}`,
-      };
-    }
-  }
-
   // ============================================================================
   // Webchat Tools
   // ============================================================================

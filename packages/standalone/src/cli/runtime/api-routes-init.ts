@@ -8,12 +8,9 @@
 
 import {
   existsSync,
-  mkdirSync,
   readFileSync,
   readdirSync,
-  copyFileSync,
   writeFileSync,
-  unlinkSync,
   statSync,
   openSync,
   readSync,
@@ -996,85 +993,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   });
   console.log(`✓ Session API proxied to port ${EMBEDDING_PORT}`);
 
-  // ── Playground static serving + API ───────────────────────────────────
-  const publicDir = path.join(__dirname, '..', '..', '..', 'public');
-  const playgroundsDir = path.join(homedir(), '.mama', 'workspace', 'playgrounds');
-  try {
-    mkdirSync(playgroundsDir, { recursive: true });
-  } catch (err) {
-    routesLogger.warn(
-      `Failed to create playgrounds dir, skipping seeding: ${err instanceof Error ? err.message : String(err)}`
-    );
-    // DO NOT return — continue with the rest of route registration
-  }
-
-  // Seed built-in playgrounds from templates
-  try {
-    const pgTemplatesDir = path.join(__dirname, '..', '..', '..', 'templates', 'playgrounds');
-    if (existsSync(pgTemplatesDir)) {
-      const pgEntries = readdirSync(pgTemplatesDir);
-      let pgSynced = 0;
-      const indexPath = path.join(playgroundsDir, 'index.json');
-      let index: Array<{ name: string; slug: string; description: string; created_at: string }> =
-        [];
-      try {
-        if (existsSync(indexPath)) {
-          const parsed = JSON.parse(readFileSync(indexPath, 'utf-8'));
-          if (!Array.isArray(parsed)) {
-            throw new Error(`index.json must be an array, got ${typeof parsed}`);
-          }
-          index = parsed;
-        }
-      } catch (err) {
-        routesLogger.warn(
-          `[seedBuiltinPlaygrounds] Failed to parse index.json, rebuilding: ${err}`
-        );
-        index = [];
-      }
-      const existingSlugs = new Set(index.map((e) => e.slug));
-      let indexRepaired = false;
-
-      for (const file of pgEntries) {
-        if (!file.endsWith('.html')) continue;
-        const dest = path.join(playgroundsDir, file);
-        const slug = file.replace('.html', '');
-
-        // Copy file if it doesn't exist
-        if (!existsSync(dest)) {
-          copyFileSync(path.join(pgTemplatesDir, file), dest);
-          pgSynced++;
-        }
-
-        // Add to index if slug doesn't exist (decouple from file copy)
-        if (!existingSlugs.has(slug)) {
-          const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-          index.push({
-            name,
-            slug,
-            description: `Built-in ${name}`,
-            created_at: new Date().toISOString(),
-          });
-          existingSlugs.add(slug);
-          indexRepaired = true;
-        }
-      }
-
-      if (pgSynced > 0 || indexRepaired) {
-        writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
-        if (pgSynced > 0 && indexRepaired) {
-          console.log(`✓ Seeded ${pgSynced} built-in playground(s) and repaired index`);
-        } else if (pgSynced > 0) {
-          console.log(`✓ Seeded ${pgSynced} built-in playground(s)`);
-        } else {
-          console.log('✓ Repaired built-in playground index');
-        }
-      }
-    }
-  } catch (err) {
-    // Non-blocking: playground seeding is optional
-    console.warn('[seedBuiltinPlaygrounds] Playground seeding failed (non-fatal):', err);
-  }
-
   // ── Daemon Log API ────────────────────────────────────────────────────
   apiServer.app.get('/api/logs/daemon', (req, res) => {
     const logPath = path.join(homedir(), '.mama', 'logs', 'daemon.log');
@@ -1116,70 +1034,6 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
       res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
     }
   });
-
-  // ── Playground CRUD endpoints ─────────────────────────────────────────
-  apiServer.app.use('/playgrounds', express.static(playgroundsDir));
-
-  apiServer.app.get('/api/playgrounds', (_req, res) => {
-    const indexPath = path.join(playgroundsDir, 'index.json');
-    try {
-      if (!existsSync(indexPath)) {
-        // Self-heal: rebuild index from existing HTML files
-        const htmlFiles = readdirSync(playgroundsDir)
-          .filter((f) => f.endsWith('.html'))
-          .map((f) => {
-            const slug = f.replace('.html', '');
-            const name = slug.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-            return {
-              name,
-              slug,
-              description: `Playground: ${name}`,
-              created_at: new Date().toISOString(),
-            };
-          });
-        if (htmlFiles.length > 0) {
-          writeFileSync(indexPath, JSON.stringify(htmlFiles, null, 2), 'utf-8');
-          res.json(htmlFiles);
-        } else {
-          res.json([]);
-        }
-        return;
-      }
-      const data = JSON.parse(readFileSync(indexPath, 'utf-8'));
-      res.json(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.warn('[GET /api/playgrounds] Failed to read playground index (non-fatal):', err);
-      res.json([]);
-    }
-  });
-
-  apiServer.app.delete('/api/playgrounds/:slug', requireAuth, (req, res) => {
-    const slug = req.params.slug as string;
-    if (!slug || /[^a-z0-9-]/.test(slug)) {
-      res.status(400).json({ error: 'Invalid slug' });
-      return;
-    }
-    const htmlPath = path.join(playgroundsDir, `${slug}.html`);
-    const indexPath = path.join(playgroundsDir, 'index.json');
-    try {
-      if (existsSync(htmlPath)) unlinkSync(htmlPath);
-      if (existsSync(indexPath)) {
-        const index = JSON.parse(readFileSync(indexPath, 'utf-8'));
-        const updated = Array.isArray(index)
-          ? index.filter((e: { slug: string }) => e.slug !== slug)
-          : [];
-        writeFileSync(indexPath, JSON.stringify(updated, null, 2), 'utf-8');
-      }
-      res.json({ success: true });
-    } catch (err) {
-      const safeMsg = (err instanceof Error ? err.message : String(err))
-        .replace(/\/home\/[^/]+/g, '~') // Linux
-        .replace(/\/Users\/[^/]+/g, '~') // macOS
-        .replace(/C:\\Users\\[^\\]+/gi, '~'); // Windows
-      res.status(500).json({ error: `Failed to delete playground: ${safeMsg}` });
-    }
-  });
-  console.log('✓ Playground API available at /api/playgrounds');
 
   // ── Workspace skills API ──────────────────────────────────────────────
   const skillsWorkDir = path.join(homedir(), '.mama', 'workspace', 'skills');
@@ -1227,6 +1081,7 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
   console.log('✓ Workspace Skills API available at /api/workspace/skills');
 
   // ── Setup page + static assets ────────────────────────────────────────
+  const publicDir = path.join(__dirname, '..', '..', '..', 'public');
   apiServer.app.get('/setup', (_req, res) => {
     res.sendFile(path.join(publicDir, 'setup.html'));
   });

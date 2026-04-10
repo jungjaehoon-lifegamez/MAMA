@@ -688,8 +688,6 @@ export type GatewayToolName =
   | 'os_stop_bot'
   // PR Review tools
   | 'pr_review_threads'
-  // Playground tools
-  | 'playground_create'
   // Webchat tools
   | 'webchat_send'
   // Code-Act sandbox

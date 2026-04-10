@@ -65,10 +65,6 @@ Call tools via JSON block:
 
 - **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR
 
-## Playground
-
-- **playground_create**(name, html?, file_path?, description?) — Create an interactive HTML playground
-
 ## Webchat
 
 - **webchat_send**(message?, file_path?, session_id?) — Send message/file to webchat viewer

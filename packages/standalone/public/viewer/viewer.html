@@ -270,6 +270,19 @@
       @media (min-width: 768px) {
         main.flex-1 { margin-left: var(--sidebar-width); }
       }
+      /* Logs module */
+      .logs-line { padding: 1px 4px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .logs-level-error { background: #fef2f2; }
+      .logs-level-warn { background: #fffbeb; }
+      .logs-ts { color: #9ca3af; margin-right: 4px; }
+      .logs-src { color: #6366f1; margin-right: 4px; }
+      .logs-lvl { font-weight: 600; margin-right: 4px; }
+      .logs-level-error .logs-lvl { color: #dc2626; }
+      .logs-level-warn .logs-lvl { color: #d97706; }
+      .logs-level-info .logs-lvl { color: #2563eb; }
+      .logs-level-debug .logs-lvl { color: #6b7280; }
+      [data-log-level].active { opacity: 1; }
+      [data-log-level]:not(.active) { opacity: 0.4; }
     </style>
 
     <link rel="stylesheet" href="/viewer/viewer.css" />
@@ -412,7 +425,25 @@
 
         <!-- Logs Tab -->
         <div class="tab-content" id="tab-logs">
-          <iframe id="logs-iframe" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
+          <div class="flex-1 flex flex-col w-full h-full overflow-hidden p-2 md:p-3">
+            <div class="flex items-center justify-between mb-2">
+              <div class="flex items-center gap-2">
+                <h1 class="text-sm font-bold text-gray-900">Daemon Logs</h1>
+                <span id="logs-count" class="text-[10px] text-gray-400">0 lines</span>
+              </div>
+              <div class="flex items-center gap-1">
+                <button id="logs-pause-btn" class="px-2 py-1 text-[10px] rounded bg-gray-100 hover:bg-gray-200 text-gray-700">Pause</button>
+              </div>
+            </div>
+            <div class="flex items-center gap-1 mb-2">
+              <input id="logs-search" type="text" placeholder="Search logs..." class="flex-1 px-2 py-1 text-[10px] border border-gray-200 rounded bg-white focus:outline-none focus:border-indigo-300" />
+              <button data-log-level="ERROR" class="active px-1.5 py-0.5 text-[9px] rounded bg-red-100 text-red-700 font-medium">ERR</button>
+              <button data-log-level="WARN" class="active px-1.5 py-0.5 text-[9px] rounded bg-yellow-100 text-yellow-700 font-medium">WARN</button>
+              <button data-log-level="INFO" class="active px-1.5 py-0.5 text-[9px] rounded bg-blue-100 text-blue-700 font-medium">INFO</button>
+              <button data-log-level="DEBUG" class="active px-1.5 py-0.5 text-[9px] rounded bg-gray-100 text-gray-600 font-medium">DBG</button>
+            </div>
+            <div id="logs-container" class="flex-1 overflow-y-auto font-mono text-[10px] bg-gray-50 rounded border border-gray-200 p-1 leading-relaxed"></div>
+          </div>
         </div>
 
         <!-- Settings Tab -->
@@ -786,28 +817,6 @@
           </div>
         </div>
 
-        <!-- Playground Tab -->
-        <div class="tab-content" id="tab-playground">
-          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
-            <div class="flex items-center justify-between mb-4">
-              <h2 class="text-lg font-bold text-mama-black">Playgrounds</h2>
-              <button id="playground-refresh-btn" class="px-3 py-1.5 text-xs rounded-lg bg-gray-50 text-mama-black font-medium hover:bg-gray-200">
-                Refresh
-              </button>
-            </div>
-            <div id="playground-list" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
-              <div class="text-gray-500 text-sm col-span-full text-center py-8">No playgrounds yet. Ask an agent to create one!</div>
-            </div>
-            <div id="playground-viewer" class="flex-1 hidden">
-              <div class="flex items-center gap-2 mb-2">
-                <button id="playground-back-btn" class="px-3 py-1.5 text-xs rounded-lg bg-gray-200 text-gray-700 font-medium hover:bg-gray-300">Back</button>
-                <span id="playground-viewer-title" class="font-semibold text-mama-black"></span>
-                <a id="playground-open-new" href="#" target="_blank" class="ml-auto text-xs text-indigo-600 hover:underline">Open in new tab</a>
-              </div>
-              <iframe id="playground-iframe" class="w-full border border-gray-300 rounded-lg bg-white" style="height: calc(100vh - 200px);" sandbox="allow-scripts allow-same-origin allow-forms allow-modals"></iframe>
-            </div>
-          </div>
-        </div>
 
         <!-- Floating Chat (global, visible on all tabs) -->
         <div id="floating-chat" class="fixed bottom-6 right-6 z-50">
@@ -1127,8 +1136,8 @@
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { SkillsModule } from '/viewer/js/modules/skills.js';
-      import { PlaygroundModule } from '/viewer/js/modules/playground.js';
       import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
+      import { LogsModule } from '/viewer/js/modules/logs.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { API } from '/viewer/js/utils/api.js';
 
@@ -1138,8 +1147,8 @@
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
       const skills = SkillsModule;
-      const playground = PlaygroundModule;
       const connectorFeed = new ConnectorFeedModule();
+      const logs = new LogsModule();
       const wiki = new WikiModule();
 
       // Expose modules globally for debugging and onclick handlers
@@ -1220,13 +1229,8 @@
           connectorFeed.init();
         } else if (tabName === 'wiki') {
           wiki.init();
-        } else if (tabName === 'playground') {
-          playground.init();
         } else if (tabName === 'logs') {
-          const iframe = document.getElementById('logs-iframe');
-          if (iframe && !iframe.src) {
-            iframe.src = '/playgrounds/mama-log-viewer.html';
-          }
+          logs.init();
         }
       }
 
@@ -2000,7 +2004,7 @@
         switchTab('dashboard');
       });
 
-      // Listen for postMessage from playground iframes
+      // Listen for postMessage from skill deployment
       window.addEventListener('message', (event) => {
         if (!event.data) return;
 
@@ -2009,29 +2013,6 @@
           if (skills && skills.loadSkills) {
             skills.loadSkills().then(() => skills.render());
           }
-          return;
-        }
-
-        if (event.data.type !== 'playground:sendToChat') return;
-        const message = event.data.message;
-        if (!message || typeof message !== 'string') return;
-
-        // Mark that next response should be relayed back to playground
-        chat.playgroundAwaitingResponse = true;
-
-        // Open floating chat if closed
-        const panel = document.getElementById('floating-chat-panel');
-        if (panel && panel.classList.contains('hidden')) {
-          const toggle = document.getElementById('floating-chat-toggle');
-          if (toggle) toggle.click();
-        }
-
-        // Set input and send
-        const input = document.getElementById('chat-input');
-        if (input && chat) {
-          input.value = message;
-          // Small delay to ensure chat panel is visible and WS is ready
-          setTimeout(() => chat.send(), 150);
         }
       });
 
@@ -2087,14 +2068,12 @@ Please explain what can be configured here:
 - Metrics: Enable/disable metrics collection and set retention period
 Be friendly and concise.`,
 
-        playground: `The user clicked the help button on the Playground tab.
+        logs: `The user clicked the help button on the Logs tab.
 Please explain this tab's features:
-- Lists interactive HTML playgrounds created by agents
-- Click any playground to run it in an iframe
-- Built-in playgrounds:
-  - Skill Lab: Create and edit skills with presets, LLM-assisted SKILL.md generation, and one-click deploy to Skills tab
-  - Cron Workflow Lab: Visual workflow builder for scheduled tasks
-  - Wave Visualizer: Multi-agent wave delegation simulator with live monitoring
+- Shows real-time daemon log output with auto-polling
+- Filter by log level (ERROR, WARN, INFO, DEBUG)
+- Search logs by keyword
+- Pause/Resume auto-refresh
 Be friendly and concise.`
       };
 
