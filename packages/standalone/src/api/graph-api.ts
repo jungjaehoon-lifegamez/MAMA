@@ -22,6 +22,11 @@ import {
   handleGetAgentMetrics,
   handleCompareVersions,
 } from './agent-handler.js';
+import {
+  handleGetUICommands,
+  handlePostPageContext,
+  handlePostUICommand,
+} from './ui-command-handler.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -1576,6 +1581,51 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET /api/memory/export - export decisions
     if (pathname === '/api/memory/export' && req.method === 'GET') {
       await handleExportRequest(req, res, params);
+      return true;
+    }
+
+    // ── UI Command API (SmartStore bidirectional communication) ──
+
+    // Route: GET /api/ui/commands — viewer polls for pending commands
+    if (pathname === '/api/ui/commands' && req.method === 'GET') {
+      if (options.uiCommandQueue) {
+        handleGetUICommands(res, options.uiCommandQueue);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ commands: [] }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/page-context — viewer reports current page state
+    if (pathname === '/api/ui/page-context' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBody(req);
+        handlePostPageContext(
+          res,
+          body as unknown as import('./ui-command-handler.js').PageContext,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/commands — agent pushes UI commands
+    if (pathname === '/api/ui/commands' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBody(req);
+        handlePostUICommand(
+          res,
+          body as unknown as import('./ui-command-handler.js').UICommand,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
       return true;
     }
 

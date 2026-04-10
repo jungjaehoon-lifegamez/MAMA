@@ -82,6 +82,8 @@ export interface GraphHandlerOptions {
   }) => Promise<{ status: string; action: string; event_ids: string[]; reason?: string }>;
   /** Sessions database for agent version tracking */
   sessionsDb?: import('../sqlite.js').SQLiteDatabase;
+  /** UI command queue for bidirectional Agent↔Viewer communication */
+  uiCommandQueue?: import('./ui-command-handler.js').UICommandQueue;
 }
 
 export interface SwarmTask {
