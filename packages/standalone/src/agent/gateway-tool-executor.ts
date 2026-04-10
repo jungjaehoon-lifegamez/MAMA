@@ -72,6 +72,9 @@ import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
+import type { SQLiteDatabase } from '../sqlite.js';
+import type { UICommandQueue } from '../api/ui-command-handler.js';
+import { getLatestVersion, createAgentVersion, compareVersionMetrics } from '../db/agent-store.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -202,6 +205,14 @@ export class GatewayToolExecutor {
   }
   getAgentEventBus(): AgentEventBus | null {
     return this.agentEventBus;
+  }
+  private sessionsDb: SQLiteDatabase | null = null;
+  setSessionsDb(db: SQLiteDatabase): void {
+    this.sessionsDb = db;
+  }
+  private uiCommandQueue: UICommandQueue | null = null;
+  setUICommandQueue(queue: UICommandQueue): void {
+    this.uiCommandQueue = queue;
   }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
@@ -510,6 +521,103 @@ export class GatewayToolExecutor {
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
           );
+        // Agent management tools (Managed Agents pattern)
+        case 'agent_get': {
+          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const agentId = (input as { agent_id: string }).agent_id;
+          const latestVer = getLatestVersion(this.sessionsDb, agentId);
+          if (!latestVer) return { success: false, error: `Agent '${agentId}' not found` };
+          return {
+            success: true,
+            agent_id: latestVer.agent_id,
+            version: latestVer.version,
+            config: JSON.parse(latestVer.snapshot),
+            system: latestVer.persona_text,
+            change_note: latestVer.change_note,
+            created_at: latestVer.created_at,
+          };
+        }
+        case 'agent_update': {
+          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const updateArgs = input as {
+            agent_id: string;
+            version: number;
+            changes: Record<string, unknown>;
+            change_note?: string;
+          };
+          const updateLatest = getLatestVersion(this.sessionsDb, updateArgs.agent_id);
+          if (!updateLatest)
+            return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
+          if (updateLatest.version !== updateArgs.version) {
+            return {
+              success: false,
+              error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
+            };
+          }
+          const curSnap = JSON.parse(updateLatest.snapshot);
+          const newSnap = { ...curSnap, ...updateArgs.changes };
+          const updatedV = createAgentVersion(this.sessionsDb, {
+            agent_id: updateArgs.agent_id,
+            snapshot: newSnap,
+            persona_text: (updateArgs.changes.system as string) ?? updateLatest.persona_text,
+            change_note: updateArgs.change_note,
+          });
+          return { success: true, new_version: updatedV.version };
+        }
+        case 'agent_create': {
+          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const createArgs = input as {
+            id: string;
+            name: string;
+            model: string;
+            tier: number;
+            system?: string;
+          };
+          const existingAgent = getLatestVersion(this.sessionsDb, createArgs.id);
+          if (existingAgent)
+            return { success: false, error: `Agent '${createArgs.id}' already exists` };
+          const createdV = createAgentVersion(this.sessionsDb, {
+            agent_id: createArgs.id,
+            snapshot: { model: createArgs.model, tier: createArgs.tier, name: createArgs.name },
+            persona_text: createArgs.system ?? null,
+            change_note: 'Created via agent_create tool',
+          });
+          return { success: true, id: createArgs.id, version: createdV.version };
+        }
+        case 'agent_compare': {
+          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const cmpArgs = input as {
+            agent_id: string;
+            version_a: number;
+            version_b: number;
+          };
+          const cmpResult = compareVersionMetrics(
+            this.sessionsDb,
+            cmpArgs.agent_id,
+            cmpArgs.version_a,
+            cmpArgs.version_b
+          );
+          return { success: true, ...cmpResult };
+        }
+        // Viewer control tools (SmartStore pattern)
+        case 'viewer_navigate': {
+          if (!this.uiCommandQueue)
+            return { success: false, error: 'UI command queue not available' };
+          const navArgs = input as { route: string; params?: Record<string, string> };
+          this.uiCommandQueue.push({ type: 'navigate', payload: navArgs });
+          return { success: true, navigated: navArgs.route };
+        }
+        case 'viewer_notify': {
+          if (!this.uiCommandQueue)
+            return { success: false, error: 'UI command queue not available' };
+          const args = input as {
+            type: string;
+            message: string;
+            action?: Record<string, unknown>;
+          };
+          this.uiCommandQueue.push({ type: 'notify', payload: args });
+          return { success: true, notified: true };
+        }
         // Multi-Agent delegation
         case 'delegate':
           return await this.executeDelegate(
@@ -694,7 +802,9 @@ export class GatewayToolExecutor {
         }
         case 'agent_notices': {
           const rawLimit = Number((input as { limit?: number }).limit);
-          const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 10;
+          const limit = Number.isFinite(rawLimit)
+            ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
+            : 10;
           if (!this.agentEventBus) {
             return { success: false, error: 'Agent event bus not available' } as GatewayToolResult;
           }
