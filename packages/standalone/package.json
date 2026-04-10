@@ -1,11 +1,12 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "description": "MAMA OS - Local AI Runtime. Your scattered knowledge, organized by AI agents that never sleep.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
     "mama": "./dist/cli/index.js",
+    "mama-os": "./dist/cli/index.js",
     "mama-code-act-mcp": "./dist/mcp/code-act-server.js"
   },
   "scripts": {
