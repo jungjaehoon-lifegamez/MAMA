@@ -131,7 +131,7 @@ MAMA outperforms SuperMemory while running **entirely locally** with open-source
 |---------|---------|-------------|
 | [@jungjaehoon/mama-os](packages/standalone/) | 0.18.0 | Always-on runtime — connectors, knowledge agents, viewer |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1 | MCP server for Claude Desktop/Code |
-| [@jungjaehoon/mama-core](packages/mama-core/) | 1.4.0 | Core library (memory engine, embeddings, DB) |
+| [@jungjaehoon/mama-core](packages/mama-core/) | 1.4.1 | Core library (memory engine, embeddings, DB) |
 | [mama plugin](packages/claude-code-plugin/) | 1.9.0 | Claude Code plugin (marketplace) |
 | [memorybench](packages/memorybench/) | 1.0.0 | Memory retrieval benchmarking framework |
 
