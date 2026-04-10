@@ -9,7 +9,11 @@ import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import { recordSecurityEvent, recordAuthFailure, isIpBanned } from '../security/security-monitor.js';
+import {
+  recordSecurityEvent,
+  recordAuthFailure,
+  isIpBanned,
+} from '../security/security-monitor.js';
 import { getForwardedClientAddress, isTrustedProxyPeer } from '../security/trusted-proxy.js';
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -50,10 +54,6 @@ function isTunnelRequest(req: IncomingMessage): boolean {
   return !!(req.headers['cf-connecting-ip'] || req.headers['cf-ray']);
 }
 
-export function isCloudflareAccessEnabled(): boolean {
-  return process.env.MAMA_TRUST_CLOUDFLARE_ACCESS === 'true';
-}
-
 export function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
   const headers = req.headers;
   return (
@@ -63,11 +63,17 @@ export function hasCloudflareAccessIdentity(req: IncomingMessage): boolean {
   );
 }
 
+/**
+ * Trust Cloudflare Access authenticated requests when:
+ * 1. Peer is localhost (request came through local Cloudflare Tunnel), AND
+ * 2. Request has CF Access identity headers (user passed Cloudflare Access login)
+ *
+ * No environment variable needed — if cf-ray + CF Access headers arrive
+ * from localhost, it's a Cloudflare Tunnel by definition.
+ * MAMA_TRUST_CLOUDFLARE_ACCESS=true is still supported as explicit opt-in
+ * but is no longer required.
+ */
 export function isTrustedCloudflareAccessRequest(req: IncomingMessage): boolean {
-  if (!isCloudflareAccessEnabled()) {
-    return false;
-  }
-
   if (!isTrustedProxyPeer(req.socket?.remoteAddress || null)) {
     return false;
   }
