@@ -271,8 +271,8 @@ describe('Heartbeat API', () => {
 
   describe('DEFAULT_HEARTBEAT_PROMPT', () => {
     it('should contain essential steps', () => {
-      expect(DEFAULT_HEARTBEAT_PROMPT).toContain('load_checkpoint');
-      expect(DEFAULT_HEARTBEAT_PROMPT).toContain('checkpoint');
+      expect(DEFAULT_HEARTBEAT_PROMPT).toContain('mama_search');
+      expect(DEFAULT_HEARTBEAT_PROMPT).toContain('report_publish');
     });
   });
 });

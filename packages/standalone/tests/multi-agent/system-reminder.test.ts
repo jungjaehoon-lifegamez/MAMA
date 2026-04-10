@@ -84,7 +84,7 @@ describe('Story SRS-1: SystemReminderService', () => {
     it('should switch to Korean labels', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'task-started' }));
-      expect(msg).toContain('백그라운드 작업 시작');
+      expect(msg).toContain('Background Task Started');
     });
 
     it('should switch back to English', () => {
@@ -527,21 +527,21 @@ describe('Story SRS-1: SystemReminderService', () => {
       const msg = service.formatChatMessage(
         makeReminder({ type: 'task-completed', duration: 5000 })
       );
-      expect(msg).toContain('소요 시간');
-      expect(msg).toContain('에이전트');
+      expect(msg).toContain('Duration');
+      expect(msg).toContain('Agent');
     });
 
     it('should use Korean task-failed label', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'task-failed', error: 'err' }));
-      expect(msg).toContain('백그라운드 작업 실패');
-      expect(msg).toContain('오류');
+      expect(msg).toContain('Background Task Failed');
+      expect(msg).toContain('Error');
     });
 
     it('should use Korean all-tasks-complete label', () => {
       service.setLanguage('ko');
       const msg = service.formatChatMessage(makeReminder({ type: 'all-tasks-complete' }));
-      expect(msg).toContain('모든 백그라운드 작업 완료');
+      expect(msg).toContain('All Background Tasks Complete');
     });
 
     it('should use Korean batch summary labels', () => {
@@ -551,9 +551,9 @@ describe('Story SRS-1: SystemReminderService', () => {
         makeReminder({ type: 'task-failed', taskId: 'bg_k2', error: 'e' }),
       ];
       const msg = service.formatBatchMessage(reminders);
-      expect(msg).toContain('성공');
-      expect(msg).toContain('실패');
-      expect(msg).toContain('중');
+      expect(msg).toContain('succeeded');
+      expect(msg).toContain('failed');
+      expect(msg).toContain('out of');
     });
 
     it('should use Korean context injection header', async () => {
@@ -565,7 +565,7 @@ describe('Story SRS-1: SystemReminderService', () => {
         })
       );
       const ctx = service.formatContextInjection('ch-ko');
-      expect(ctx).toContain('시스템 알림');
+      expect(ctx).toContain('System notice');
     });
   });
 

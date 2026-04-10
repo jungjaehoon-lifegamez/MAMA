@@ -65,8 +65,8 @@ type GraphInput = {
 };
 
 const logger = new DebugLogger('Graph');
-const INITIAL_GRAPH_LIMIT = 300;
-const PHYSICS_NODE_THRESHOLD = 400;
+const INITIAL_GRAPH_LIMIT = 1000;
+const PHYSICS_NODE_THRESHOLD = 1200;
 
 /**
  * Graph Module Class
@@ -172,7 +172,7 @@ export class GraphModule {
         highlight: { background: this.getTopicColor(n.topic), border: '#fff' },
       },
       size: this.getNodeSize(connectionCounts[String(n.id)] || 0),
-      font: { color: '#131313', size: 12 },
+      font: { color: '#131313', size: 14, vadjust: -2 },
       borderWidth: 3,
       data: n,
     }));
@@ -199,7 +199,11 @@ export class GraphModule {
     const options = {
       nodes: {
         shape: 'dot',
-        scaling: { min: 10, max: 30 },
+        scaling: {
+          min: 10,
+          max: 30,
+          label: { enabled: true, min: 12, max: 22, maxVisible: 22, drawThreshold: 8 },
+        },
       },
       edges: {
         smooth: { type: 'continuous', roundness: 0.5 },
@@ -217,13 +221,13 @@ export class GraphModule {
         },
         stabilization: {
           enabled: true,
-          iterations: 200,
-          updateInterval: 50,
+          iterations: data.nodes.length > 500 ? 100 : 200,
+          updateInterval: 25,
         },
       },
       interaction: {
         hover: true,
-        tooltipDelay: 200,
+        tooltipDelay: 100,
         zoomView: true,
         dragView: true,
       },
@@ -255,12 +259,39 @@ export class GraphModule {
       }
     });
 
+    // Hover: show label at fixed visual size regardless of zoom (Obsidian style)
+    this.network.on('hoverNode', (params: { node: string | number }) => {
+      try {
+        const scale = this.network?.getScale() || 1;
+        const targetVisualSize = 16; // px on screen
+        const fontSize = Math.round(targetVisualSize / scale);
+        networkData.nodes.update({
+          id: params.node,
+          font: { color: '#131313', size: Math.max(fontSize, 14), vadjust: -2 },
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+    this.network.on('blurNode', (params: { node: string | number }) => {
+      try {
+        networkData.nodes.update({
+          id: params.node,
+          font: { color: '#131313', size: 14, vadjust: -2 },
+        });
+      } catch {
+        /* ignore */
+      }
+    });
+
     this.network.on('stabilized', () => {
       const loadingEl = getElementByIdOrNull<HTMLElement>('graph-loading');
       if (loadingEl) {
         loadingEl.style.display = 'none';
       }
-      logger.info('Graph stabilized');
+      // Disable physics after initial layout to free CPU
+      this.network?.setOptions?.({ physics: { enabled: false } });
+      logger.info('Graph stabilized, physics disabled');
     });
 
     // Backup: hide loading after 3 seconds even if stabilization doesn't complete
@@ -272,9 +303,18 @@ export class GraphModule {
       }
     }, 3000);
 
-    // Populate topic filter
-    const topics = [...new Set(data.nodes.map((n) => n.topic || ''))].sort();
+    // Populate topic filter — sorted by most recent created_at (newest first)
+    const topicLatest = new Map<string, number>();
+    for (const n of data.nodes) {
+      const t = n.topic || '';
+      const ts = typeof n.created_at === 'number' ? n.created_at : 0;
+      if (!topicLatest.has(t) || ts > topicLatest.get(t)!) {
+        topicLatest.set(t, ts);
+      }
+    }
+    const topics = [...topicLatest.entries()].sort((a, b) => b[1] - a[1]).map(([topic]) => topic);
     this.populateTopicFilter(topics);
+    this.populateDecisionList(data.nodes);
 
     logger.info('Graph initialized with', nodes.length, 'nodes and', edges.length, 'edges');
   }
@@ -827,18 +867,97 @@ export class GraphModule {
    * Populate topic filter dropdown
    */
   populateTopicFilter(topics: string[]): void {
-    const select = getElementByIdOrNull<HTMLSelectElement>('topic-filter');
-    if (!select) {
+    const datalist = getElementByIdOrNull<HTMLDataListElement>('topic-filter-list');
+    if (!datalist) {
+      // Fallback for old select element
+      const select = getElementByIdOrNull<HTMLSelectElement>('topic-filter');
+      if (!select) return;
+      select.innerHTML = '<option value="">All Topics</option>';
+      topics.forEach((topic) => {
+        const option = document.createElement('option');
+        option.value = topic;
+        option.textContent = topic;
+        select.appendChild(option);
+      });
       return;
     }
 
-    select.innerHTML = '<option value="">All Topics</option>';
+    datalist.innerHTML = '';
     topics.forEach((topic) => {
       const option = document.createElement('option');
       option.value = topic;
-      option.textContent = topic;
-      select.appendChild(option);
+      datalist.appendChild(option);
     });
+  }
+
+  /**
+   * Populate left-side decision list (time-sorted, newest first)
+   */
+  populateDecisionList(nodes: GraphNodeRecord[]): void {
+    const listEl = getElementByIdOrNull<HTMLElement>('decision-list');
+    const countEl = getElementByIdOrNull<HTMLElement>('decision-list-count');
+    if (!listEl) return;
+
+    const sorted = [...nodes].sort((a, b) => {
+      const ta = typeof a.created_at === 'number' ? a.created_at : 0;
+      const tb = typeof b.created_at === 'number' ? b.created_at : 0;
+      return tb - ta;
+    });
+
+    if (countEl) countEl.textContent = String(sorted.length);
+
+    if (sorted.length === 0) {
+      listEl.innerHTML =
+        '<div style="padding:16px;text-align:center;color:#9E9891;font-size:11px">No decisions yet</div>';
+      return;
+    }
+
+    const formatTime = (ts: number | string | undefined): string => {
+      if (!ts) return '';
+      const d = new Date(typeof ts === 'number' ? ts : parseInt(String(ts), 10));
+      const now = Date.now();
+      const diffH = Math.floor((now - d.getTime()) / 3600000);
+      if (diffH < 1) return 'just now';
+      if (diffH < 24) return `${diffH}h ago`;
+      const diffD = Math.floor(diffH / 24);
+      return `${diffD}d ago`;
+    };
+
+    const topicLabel = (topic: string): string => {
+      const parts = topic.split('/').filter(Boolean);
+      return parts[parts.length - 1] || topic;
+    };
+
+    listEl.innerHTML = sorted
+      .map((n) => {
+        const preview = escapeHtml((n.decision_preview || n.decision || '').slice(0, 80));
+        const topic = escapeHtml(topicLabel(n.topic || ''));
+        const time = formatTime(n.created_at);
+        const id = escapeAttr(String(n.id));
+        return `<div class="mama-decision-item" data-node-id="${id}" onclick="window.graphModule?.focusNode('${id}')" style="padding:6px 8px;border-bottom:1px solid #F5F2ED;cursor:pointer;transition:background 0.1s" onmouseover="this.style.background='#FFFDF5'" onmouseout="this.style.background=''"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px"><span style="font-size:11px;font-weight:600;color:#1A1A1A;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:160px">${topic}</span><span style="font-size:9px;color:#9E9891;flex-shrink:0;font-variant-numeric:tabular-nums">${time}</span></div><div style="font-size:10px;color:#6B6560;line-height:1.4;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">${preview}</div></div>`;
+      })
+      .join('');
+  }
+
+  /**
+   * Focus a specific node in the graph (called from decision list click)
+   */
+  focusNode(nodeId: string): void {
+    if (!this.network) return;
+    try {
+      this.network.selectNodes([nodeId]);
+      this.network.focus(nodeId, {
+        scale: 1.5,
+        animation: { duration: 300, easingFunction: 'easeInOutQuad' },
+      });
+      // Trigger the detail panel
+      const nodeData = this.graphData.nodes.find((n) => String(n.id) === nodeId);
+      if (nodeData) {
+        this.showDetail(nodeData);
+      }
+    } catch (err) {
+      logger.warn('focusNode failed:', err);
+    }
   }
 
   /**
@@ -860,12 +979,15 @@ export class GraphModule {
         });
       });
     } else {
-      // Filter
+      // Filter — supports exact match from datalist or partial substring match from typing
+      const lowerTopic = topic.toLowerCase();
       allNodes.forEach((node) => {
         const nodeData = this.graphData.nodes.find((n) => String(n.id) === String(node.id));
+        const nodeTopic = nodeData?.topic || '';
+        const matches = nodeTopic === topic || nodeTopic.toLowerCase().includes(lowerTopic);
         this.network.body.data.nodes.update({
           id: node.id,
-          hidden: nodeData?.topic !== topic,
+          hidden: !matches,
         });
       });
     }

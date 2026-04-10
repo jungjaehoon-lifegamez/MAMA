@@ -13,14 +13,16 @@ import type { GatewayToolName } from './types.js';
 
 export type ToolCategory =
   | 'memory'
+  | 'business_data'
   | 'utility'
   | 'browser'
   | 'os_management'
   | 'os_monitoring'
   | 'pr_review'
-  | 'playground'
   | 'webchat'
-  | 'code_act';
+  | 'code_act'
+  | 'multi_agent'
+  | 'system';
 
 export interface ToolDefinitionMeta {
   name: GatewayToolName;
@@ -70,6 +72,27 @@ register({
   name: 'mama_load_checkpoint',
   description: 'Resume session. No params.',
   category: 'memory',
+});
+register({
+  name: 'report_publish',
+  description:
+    'Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.',
+  category: 'os_monitoring',
+  params: 'slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }',
+});
+register({
+  name: 'wiki_publish',
+  description:
+    'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
+  category: 'os_monitoring',
+  params: 'pages: [{path, title, type, content, confidence}]',
+});
+register({
+  name: 'obsidian',
+  description:
+    'Execute Obsidian CLI command on the wiki vault. Search, read, create, append, move, delete pages, manage tags and backlinks.',
+  category: 'os_monitoring',
+  params: 'command, args?',
 });
 register({
   name: 'mama_add',
@@ -223,14 +246,6 @@ register({
   params: 'pr_url',
 });
 
-// Playground
-register({
-  name: 'playground_create',
-  description: 'Create an interactive HTML playground',
-  category: 'playground',
-  params: 'name, html?, file_path?, description?',
-});
-
 // Webchat
 register({
   name: 'webchat_send',
@@ -244,6 +259,50 @@ register({
   name: 'code_act',
   description: 'Execute JavaScript in sandboxed QuickJS',
   category: 'code_act',
+});
+
+// Multi-Agent delegation
+register({
+  name: 'delegate',
+  description:
+    "Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Optional `skill` loads `~/.mama/skills/{skill}.md` and prepends it to the delegation prompt. Returns the agent's response.",
+  category: 'multi_agent',
+  params: 'agentId, task, background?, skill?',
+});
+
+// Business Data — progressive exploration of operational data
+register({
+  name: 'kagemusha_overview',
+  description: 'Get overview: room/task/message counts across all channels',
+  category: 'business_data',
+  params: '(none)',
+});
+register({
+  name: 'kagemusha_entities',
+  description: 'List people and project channels with activity stats',
+  category: 'business_data',
+  params: 'channel?, activeOnly?, limit?',
+});
+register({
+  name: 'kagemusha_tasks',
+  description: 'Query tasks by room, status, priority, or text search',
+  category: 'business_data',
+  params: 'sourceRoom?, status?, priority?, search?, limit?',
+});
+register({
+  name: 'kagemusha_messages',
+  description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
+  category: 'business_data',
+  params: 'channelId (required), since?, limit?, search?',
+});
+
+// System tools
+register({
+  name: 'agent_notices',
+  description:
+    'Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.',
+  category: 'system',
+  params: 'limit?',
 });
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -333,14 +392,17 @@ export class ToolRegistry {
 
     const categoryLabels: Record<ToolCategory, string> = {
       memory: 'MAMA Memory',
+      business_data:
+        'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
       utility: 'Utility',
       browser: 'Browser (Playwright)',
       os_management: 'OS Management (viewer-only)',
       os_monitoring: 'OS Monitoring (viewer-only)',
       pr_review: 'PR Review',
-      playground: 'Playground',
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
+      multi_agent: 'Multi-Agent Delegation',
+      system: 'System',
     };
 
     const sections: string[] = ['# Gateway Tools\n'];

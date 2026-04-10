@@ -69,7 +69,7 @@ const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
 const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
 const DEFAULT_GRAPH_LIMIT = 300;
-const MAX_GRAPH_LIMIT = 1000;
+const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
 const SIMILAR_QUERY_DECISION_CHARS = 400;
 
@@ -192,6 +192,25 @@ async function getAllNodes(limit?: number | null): Promise<GraphNode[]> {
 
   const rows = (limit ? stmt.all(limit) : stmt.all()) as GraphDecisionRow[];
 
+  return rows.map(mapDecisionRowToGraphNode);
+}
+
+/**
+ * Fetch nodes by their IDs (for neighbor expansion).
+ * Returns only nodes whose IDs are in the given set.
+ */
+async function getNodesByIds(ids: Set<string>): Promise<GraphNode[]> {
+  if (ids.size === 0) return [];
+  const adapter = getAdapter();
+  const placeholders = Array.from(ids)
+    .map(() => '?')
+    .join(',');
+  const stmt = adapter.prepare(`
+    SELECT id, topic, decision, outcome, confidence, created_at
+    FROM decisions
+    WHERE id IN (${placeholders})
+  `);
+  const rows = stmt.all(...Array.from(ids)) as GraphDecisionRow[];
   return rows.map(mapDecisionRowToGraphNode);
 }
 
@@ -387,6 +406,20 @@ async function handleGraphRequest(
       edges = filterEdgesByNodes(edges, nodes);
     } else if (limit !== null) {
       edges = filterEdgesByNodes(edges, nodes);
+    }
+
+    // Expand: fetch neighbor nodes connected via edges but outside the LIMIT
+    const nodeIdSet = new Set(nodes.map((n) => n.id));
+    const missingIds = new Set<string>();
+    for (const e of edges) {
+      if (!nodeIdSet.has(e.from)) missingIds.add(e.from);
+      if (!nodeIdSet.has(e.to)) missingIds.add(e.to);
+    }
+    if (missingIds.size > 0) {
+      const neighborNodes = await getNodesByIds(missingIds);
+      nodes = [...nodes, ...neighborNodes];
+      // Re-filter edges now that we have the full node set
+      edges = filterEdgesByNodes(allEdges, nodes);
     }
 
     const includeCluster = params.get('cluster') === 'true';

@@ -8,6 +8,22 @@ vi.mock('child_process', () => ({
   execSync: vi.fn(),
 }));
 
+// Mock node:fs to prevent snapshot loading from real filesystem
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn((p: string) => {
+      // Block snapshot file access in tests
+      if (typeof p === 'string' && p.includes('snapshot.json')) return false;
+      return actual.existsSync(p);
+    }),
+    readFileSync: actual.readFileSync,
+    writeFileSync: vi.fn(),
+    mkdirSync: vi.fn(),
+  };
+});
+
 import { execSync } from 'child_process';
 const mockExecSync = vi.mocked(execSync);
 

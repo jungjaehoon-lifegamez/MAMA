@@ -248,7 +248,7 @@ describe('History Extractor', () => {
 
       expect(truth.projects['ClientA/ProjectX']).toBeDefined();
       const wu = truth.projects['ClientA/ProjectX']!.workUnits['TaskAlpha'];
-      expect(wu?.status).toBe('납기:2026-04-20');
+      expect(wu?.status).toBe('deadline:2026-04-20');
       expect(wu?.assigned).toBe('Carol');
       expect(wu?.metadata?.['클라이언트']).toBe('ClientA');
     });
@@ -269,7 +269,7 @@ describe('History Extractor', () => {
 
       const truth = buildProjectTruth(items);
       const wu = truth.projects['ClientA/project_beta']!.workUnits['feature_dev'];
-      expect(wu?.status).toBe('납기:2026-05-01');
+      expect(wu?.status).toBe('deadline:2026-05-01');
       expect(wu?.assigned).toBe('Lee');
     });
 
@@ -353,10 +353,10 @@ describe('History Extractor', () => {
 
       const prompt = buildActivityExtractionPrompt(activity, truth);
 
-      expect(prompt).toContain('당신은 프로젝트 역사가입니다');
-      expect(prompt).toContain('현재 프로젝트 상태');
+      expect(prompt).toContain('You are a project historian');
+      expect(prompt).toContain('Current project state');
       expect(prompt).toContain('MyProject/Login Feature: In Progress');
-      expect(prompt).toContain('담당: Alice');
+      expect(prompt).toContain('assigned: Alice');
       expect(prompt).toContain('chatwork:general');
       expect(prompt).toContain('Alice');
       expect(prompt).toContain('Login feature is now submitted for review');
@@ -365,11 +365,11 @@ describe('History Extractor', () => {
       expect(prompt).toContain('confidence');
     });
 
-    it('shows (없음) when truth has no projects', () => {
+    it('shows (none) when truth has no projects', () => {
       const activity: NormalizedItem[] = [makeItem({ source: 'chatwork', channel: 'general' })];
       const truth: ProjectTruth = { projects: {} };
       const prompt = buildActivityExtractionPrompt(activity, truth);
-      expect(prompt).toContain('(없음)');
+      expect(prompt).toContain('(none)');
     });
 
     it('includes activity items grouped by source:channel', () => {
@@ -393,7 +393,7 @@ describe('History Extractor', () => {
       const truth: ProjectTruth = { projects: {} };
       const prompt = buildActivityExtractionPrompt([], truth);
       expect(typeof prompt).toBe('string');
-      expect(prompt).toContain('당신은 프로젝트 역사가입니다');
+      expect(prompt).toContain('You are a project historian');
     });
   });
 
@@ -420,8 +420,8 @@ describe('History Extractor', () => {
 
       const prompt = buildSpokeExtractionPrompt(items, hubContext);
 
-      expect(prompt).toContain('당신은 역사가입니다');
-      expect(prompt).toContain('현재 활성 프로젝트 상황:');
+      expect(prompt).toContain('You are a historian');
+      expect(prompt).toContain('Current active project context:');
       expect(prompt).toContain('DataPlatform');
       expect(prompt).toContain('DB Migration');
       expect(prompt).toContain('Alice');
@@ -443,8 +443,8 @@ describe('History Extractor', () => {
 
       const prompt = buildSpokeExtractionPrompt(items, []);
 
-      expect(prompt).toContain('현재 활성 프로젝트 상황:');
-      expect(prompt).toContain('(없음)');
+      expect(prompt).toContain('Current active project context:');
+      expect(prompt).toContain('(none)');
       expect(prompt).toContain('quick update');
     });
 
@@ -471,9 +471,9 @@ describe('History Extractor', () => {
 
       const prompt = buildSpokeExtractionPrompt(items, hubContext, truth);
 
-      expect(prompt).toContain('프로젝트 진실 상태');
+      expect(prompt).toContain('Project truth state');
       expect(prompt).toContain('MyProject/Feature X: In Review');
-      expect(prompt).toContain('담당: Dave');
+      expect(prompt).toContain('assigned: Dave');
     });
 
     it('omits truth context section when truth is undefined', () => {
@@ -484,7 +484,7 @@ describe('History Extractor', () => {
 
       const prompt = buildSpokeExtractionPrompt(items, hubContext, undefined);
 
-      expect(prompt).not.toContain('프로젝트 진실 상태');
+      expect(prompt).not.toContain('Project truth state');
     });
 
     it('omits truth context section when truth has no projects', () => {
@@ -496,7 +496,7 @@ describe('History Extractor', () => {
 
       const prompt = buildSpokeExtractionPrompt(items, hubContext, truth);
 
-      expect(prompt).not.toContain('프로젝트 진실 상태');
+      expect(prompt).not.toContain('Project truth state');
     });
   });
 });

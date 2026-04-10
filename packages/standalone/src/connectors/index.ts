@@ -14,6 +14,7 @@ export const AVAILABLE_CONNECTORS = [
   'trello',
   'drive',
   'imessage',
+  'claude-code',
 ] as const;
 
 export type AvailableConnector = (typeof AVAILABLE_CONNECTORS)[number];

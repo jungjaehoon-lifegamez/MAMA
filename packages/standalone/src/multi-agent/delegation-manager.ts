@@ -257,7 +257,7 @@ export class DelegationManager {
       }
 
       // Build delegation prompt
-      const delegationPrompt = this.buildDelegationTaskPrompt(fromAgentId, task);
+      const delegationPrompt = this.buildDelegationPrompt(fromAgentId, task);
 
       // Execute the delegated task
       const result = await executeCallback(toAgentId, delegationPrompt);
@@ -323,8 +323,9 @@ export class DelegationManager {
 
   /**
    * Build the prompt sent to the delegated agent.
+   * Public so gateway tool handlers can call it directly.
    */
-  private buildDelegationTaskPrompt(fromAgentId: string, task: string): string {
+  buildDelegationPrompt(fromAgentId: string, task: string): string {
     const fromAgent = this.agents.get(fromAgentId);
     const fromName = fromAgent?.display_name ?? fromAgentId;
 

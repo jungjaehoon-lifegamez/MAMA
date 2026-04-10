@@ -527,7 +527,7 @@ export class DiscordGateway extends BaseGateway {
     );
 
     // Get attachments from history if current message has none
-    // Only reuse attachments if message contains action keywords (번역, 분석, translate, etc.)
+    // Only reuse attachments if message contains action keywords (translate, analyze, etc.)
     let effectiveAttachments = attachments;
     if (attachments.length === 0) {
       const lowerContent = cleanContent.toLowerCase();

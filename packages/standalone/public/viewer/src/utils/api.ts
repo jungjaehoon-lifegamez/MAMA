@@ -381,6 +381,153 @@ export interface HealthReportResponse {
   [key: string]: unknown;
 }
 
+export interface ReportSlot {
+  slotId: string;
+  html: string;
+  priority: number;
+  updatedAt: number;
+}
+
+export interface IntelligenceAlert {
+  id: string | number;
+  topic: string;
+  kind: 'stale' | 'low_confidence';
+  severity: 'high' | 'medium' | 'low';
+  message: string;
+  updated_at: string;
+}
+
+export interface IntelligenceAlertsResponse {
+  alerts: IntelligenceAlert[];
+}
+
+export interface IntelligenceActivityItem {
+  type: string;
+  id: string | number;
+  topic: string;
+  summary: string;
+  project?: string;
+  timestamp: string;
+}
+
+export interface IntelligenceActivityResponse {
+  activity: IntelligenceActivityItem[];
+  limit: number;
+}
+
+export interface IntelligenceProject {
+  project: string;
+  activeDecisions: number;
+  lastActivity: string;
+}
+
+export interface IntelligenceProjectsResponse {
+  projects: IntelligenceProject[];
+}
+
+export interface ConnectorStatusItem {
+  name: string;
+  enabled: boolean;
+  healthy: boolean;
+  lastPoll: string | null;
+  channelCount: number;
+}
+
+export interface ProjectDecision {
+  id: number;
+  topic: string;
+  decision: string;
+  reasoning: string | null;
+  status: string;
+  confidence: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectDecisionsResponse {
+  project: string;
+  decisions: ProjectDecision[];
+  limit: number;
+}
+
+export interface IntelligenceSummaryResponse {
+  text: string;
+  generatedAt: string | null;
+}
+
+export interface PipelineProject {
+  project: string;
+  activeDecisions: number;
+  lastActivity: string;
+  stages?: Record<string, number>;
+  isNew?: boolean;
+}
+
+export interface PipelineResponse {
+  projects: PipelineProject[];
+}
+
+export interface AgentNotice {
+  agent: string;
+  action: string;
+  target: string;
+  timestamp: number;
+}
+
+export interface NoticesResponse {
+  notices: AgentNotice[];
+}
+
+export interface ConnectorActivitySummary {
+  connector: string;
+  channel: string;
+  content: string;
+  timestamp: string;
+  status: 'active' | 'idle' | 'disconnected';
+}
+
+export interface ConnectorActivityResponse {
+  connectors: ConnectorActivitySummary[];
+}
+
+export interface ConnectorFeedChannel {
+  channel: string;
+  items: Array<{
+    author: string;
+    content: string;
+    timestamp: string;
+    type: string;
+  }>;
+}
+
+export interface ConnectorFeedResponse {
+  connector: string;
+  feed: ConnectorFeedChannel[];
+  itemCount: number;
+}
+
+export interface ConnectorStatusResponse {
+  connectors: ConnectorStatusItem[];
+}
+
+export interface WikiTreeNode {
+  name: string;
+  path: string;
+  type: 'file' | 'directory';
+  children?: WikiTreeNode[];
+}
+
+export interface WikiTreeResponse {
+  tree: WikiTreeNode[];
+}
+
+export interface WikiPageResponse {
+  path: string;
+  frontmatter: Record<string, unknown>;
+  content: string;
+  raw: string;
+}
+
 export class API {
   /**
    * Base URL for API requests (empty for same origin)
@@ -742,5 +889,96 @@ export class API {
 
   static async getHealthReport(): Promise<HealthReportResponse> {
     return this.get<HealthReportResponse>('/api/metrics/health');
+  }
+
+  // =============================================
+  // Report Slots API
+  // =============================================
+
+  static async getReportSlots(): Promise<{ slots: ReportSlot[] }> {
+    return this.get<{ slots: ReportSlot[] }>('/api/report');
+  }
+
+  // =============================================
+  // Intelligence API
+  // =============================================
+
+  static async getAlerts(): Promise<IntelligenceAlertsResponse> {
+    return this.get<IntelligenceAlertsResponse>('/api/intelligence/alerts');
+  }
+
+  static async getActivity(limit = 20): Promise<IntelligenceActivityResponse> {
+    return this.get<IntelligenceActivityResponse>('/api/intelligence/activity', { limit });
+  }
+
+  static async getProjects(): Promise<IntelligenceProjectsResponse> {
+    return this.get<IntelligenceProjectsResponse>('/api/intelligence/projects');
+  }
+
+  static async getConnectorStatus(): Promise<ConnectorStatusResponse> {
+    return this.get<ConnectorStatusResponse>('/api/connectors/status');
+  }
+
+  static async getProjectDecisions(
+    projectId: string,
+    limit = 50
+  ): Promise<ProjectDecisionsResponse> {
+    return this.get<ProjectDecisionsResponse>(
+      `/api/intelligence/projects/${encodeURIComponent(projectId)}/decisions`,
+      { limit }
+    );
+  }
+
+  static async getIntelligenceSummary(): Promise<IntelligenceSummaryResponse> {
+    return this.get<IntelligenceSummaryResponse>('/api/intelligence/summary');
+  }
+
+  static async getPipeline(): Promise<PipelineResponse> {
+    return this.get<PipelineResponse>('/api/intelligence/pipeline');
+  }
+
+  static async getNotices(limit = 10): Promise<NoticesResponse> {
+    return this.get<NoticesResponse>('/api/intelligence/notices', { limit });
+  }
+
+  static async getConnectorActivity(): Promise<ConnectorActivityResponse> {
+    return this.get<ConnectorActivityResponse>('/api/connectors/activity');
+  }
+
+  static async getConnectorFeed(connectorName: string, limit = 20): Promise<ConnectorFeedResponse> {
+    return this.get<ConnectorFeedResponse>(
+      `/api/connectors/${encodeURIComponent(connectorName)}/feed`,
+      { limit }
+    );
+  }
+
+  // =============================================
+  // Wiki API
+  // =============================================
+
+  static async getWikiTree(): Promise<WikiTreeResponse> {
+    return this.get<WikiTreeResponse>('/api/wiki/tree');
+  }
+
+  static async getWikiPage(pagePath: string): Promise<WikiPageResponse> {
+    return this.get<WikiPageResponse>('/api/wiki/page', { path: pagePath });
+  }
+
+  static async saveWikiPage(pagePath: string, content: string): Promise<JsonRecord> {
+    return this.put<JsonRecord, { path: string; content: string }>('/api/wiki/page', {
+      path: pagePath,
+      content,
+    });
+  }
+
+  static async createWikiPage(pagePath: string, content?: string): Promise<JsonRecord> {
+    return this.post<JsonRecord, { path: string; content?: string }>('/api/wiki/page', {
+      path: pagePath,
+      content,
+    });
+  }
+
+  static async deleteWikiPage(pagePath: string): Promise<JsonRecord> {
+    return this.del<JsonRecord>(`/api/wiki/page?path=${encodeURIComponent(pagePath)}`);
   }
 }

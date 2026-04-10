@@ -46,7 +46,11 @@ MAMA follows a **localhost-first security model**:
 Recent MAMA OS builds add a defensive monitoring layer for exposed deployments:
 
 - Unauthorized API and WebSocket attempts are logged with client IP context
-- Honeypot paths and tarpit delays slow down obvious scanners
+- **Honeypot paths trigger immediate IP ban** (15min) — probes to `.git`, `.env`, `wp-login.php`, `mama-memory.db`, etc.
+- **Auth failure tracking** — 5 failures within 5 minutes → automatic IP ban (15min)
+- **Tarpit delays** — suspicious IPs receive escalating response delays (up to 5s)
+- **Banned IP rejection** — blocked at both middleware and requireAuth level
+- All API routes (except `/health`) require authentication for non-localhost access
 - SSRF and dangerous Bash patterns generate security events
 - Structured events are written to `~/.mama/logs/security-events.jsonl`
 - Incident evidence and abuse-report drafts are written under `~/.mama/logs/security-incidents/`
@@ -1053,5 +1057,5 @@ If you have security concerns or found a vulnerability:
 
 ---
 
-_Last updated: 2026-02-26_
-_MAMA OS v0.12.1_
+_Last updated: 2026-04-10_
+_MAMA OS v0.18.0_

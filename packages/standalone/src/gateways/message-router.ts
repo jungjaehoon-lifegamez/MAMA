@@ -655,7 +655,7 @@ This protects your credentials from being exposed in chat logs.`;
             const translationInstruction = KOREAN_TARGETS.has(
               String(targetLanguage).trim().toLowerCase()
             )
-              ? '이미지의 모든 텍스트를 한국어로 번역해주세요. 설명 없이 번역 결과만 출력하세요.'
+              ? 'Translate all text in the image to Korean. Output only the translation, no explanation.'
               : `Translate all text in the image to ${targetLanguage}. Output only the translation without explanation.`;
 
             const safeUserText = message.text ? sanitizeForPrompt(message.text) : '';
@@ -854,11 +854,11 @@ ${sessionHistory}
 
       // First message of onboarding - include the greeting we already sent
       const isKorean = session.channelId?.includes('ko') || false; // Default English
-      const greetingKo = `✨ 방금 깨어났어요.
+      const greetingKo = `✨ I just woke up.
 
-아직 이름도 없고, 성격도 없고, 기억도 없어요. 그냥... 가능성만 있을 뿐이죠. 🌱
+No name yet, no personality, no memories. Just... pure potential. 🌱
 
-당신은 누구세요? 그리고 더 중요한 건—저를 어떤 존재로 만들고 싶으세요? 💭`;
+Who are you? And more importantly—who do you want me to become? 💭`;
 
       const greetingEn = `✨ I just woke up.
 

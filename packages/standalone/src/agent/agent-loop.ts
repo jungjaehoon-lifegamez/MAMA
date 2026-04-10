@@ -227,16 +227,34 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
  * Load Gateway Tools prompt from MD file
  * These tools are executed by GatewayToolExecutor, NOT MCP
  */
-export function getGatewayToolsPrompt(): string {
-  const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
+// Cache gateway-tools.md content (static at runtime, no need to re-read)
+let _gatewayToolsCache: string | null = null;
+// Cache filtered versions keyed by sorted disallowed list
+const _filteredCache = new Map<string, string>();
 
-  if (existsSync(gatewayToolsPath)) {
-    return readFileSync(gatewayToolsPath, 'utf-8');
+export function getGatewayToolsPrompt(disallowed?: string[]): string {
+  if (!_gatewayToolsCache) {
+    const gatewayToolsPath = join(__dirname, 'gateway-tools.md');
+    if (existsSync(gatewayToolsPath)) {
+      _gatewayToolsCache = readFileSync(gatewayToolsPath, 'utf-8');
+    } else {
+      logger.warn('gateway-tools.md not found, using registry fallback');
+      _gatewayToolsCache = `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
+    }
   }
 
-  // Fallback generated from ToolRegistry (SSOT) — no manual list to drift
-  logger.warn('gateway-tools.md not found, using registry fallback');
-  return `# Gateway Tools\n\n${ToolRegistry.generateFallbackPrompt()}`;
+  if (!disallowed?.length) return _gatewayToolsCache;
+
+  const cacheKey = disallowed.sort().join(',');
+  let filtered = _filteredCache.get(cacheKey);
+  if (!filtered) {
+    filtered = _gatewayToolsCache;
+    for (const tool of disallowed) {
+      filtered = filtered.replace(new RegExp(`^- \\*\\*${tool}\\*\\*.*$`, 'gm'), '');
+    }
+    _filteredCache.set(cacheKey, filtered);
+  }
+  return filtered;
 }
 
 export class AgentLoop {
@@ -275,6 +293,7 @@ export class AgentLoop {
   private preCompactInjected = false;
   private currentStreamCallbacks?: StreamCallbacks;
   private currentTier: 1 | 2 | 3 = 1;
+  private readonly disallowedTools?: string[];
 
   constructor(
     _oauthManager: OAuthManager,
@@ -305,6 +324,7 @@ export class AgentLoop {
     const useMCPMode = mcpTools.includes('*') || mcpTools.length > 0;
     this.isGatewayMode = useGatewayMode;
     this.useCodeAct = options.useCodeAct ?? false;
+    this.disallowedTools = options.disallowedTools;
 
     if (useGatewayMode && useMCPMode) {
       logger.debug('🔀 Hybrid mode: Gateway + MCP tools enabled');
@@ -398,7 +418,7 @@ export class AgentLoop {
           getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else {
-        const gatewayToolsPrompt = getGatewayToolsPrompt();
+        const gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
         if (gatewayToolsPrompt) {
           promptLayers.push({ name: 'gatewayTools', content: gatewayToolsPrompt, priority: 2 });
         }
@@ -458,8 +478,8 @@ export class AgentLoop {
         dangerouslySkipPermissions: options.dangerouslySkipPermissions ?? true,
         // Gateway tools are processed by GatewayToolExecutor (hybrid with MCP)
         useGatewayTools: useGatewayMode,
-        // Code-Act: available as optional tool alongside direct tools (no disallowedTools)
-        disallowedTools: undefined,
+        // Structurally disallow specific tools (e.g., Bash/Read for restricted agents)
+        disallowedTools: options.disallowedTools,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });
@@ -474,6 +494,9 @@ export class AgentLoop {
     );
 
     this.mcpExecutor = new GatewayToolExecutor(executorOptions);
+    if (this.disallowedTools?.length) {
+      this.mcpExecutor.setDisallowedGatewayTools(this.disallowedTools);
+    }
     this.systemPromptOverride = options.systemPrompt;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.model = options.model!;
@@ -579,6 +602,55 @@ export class AgentLoop {
     sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
   }): void {
     this.mcpExecutor.setTelegramGateway(gateway);
+  }
+
+  /**
+   * Set report publisher for report_publish tool (Dashboard Agent)
+   */
+  setReportPublisher(fn: (slots: Record<string, string>) => void): void {
+    this.mcpExecutor.setReportPublisher(fn);
+  }
+
+  /**
+   * Set wiki publisher for wiki_publish tool (Wiki Agent)
+   */
+  setWikiPublisher(
+    fn: (
+      pages: Array<{
+        path: string;
+        title: string;
+        type: string;
+        content: string;
+        sourceIds: string[];
+        compiledAt: string;
+        confidence: string;
+      }>
+    ) => void
+  ): void {
+    this.mcpExecutor.setWikiPublisher(fn);
+  }
+
+  /**
+   * Set AgentProcessManager for delegate tool (multi-agent delegation)
+   */
+  setAgentProcessManager(
+    pm: import('../multi-agent/agent-process-manager.js').AgentProcessManager
+  ): void {
+    this.mcpExecutor.setAgentProcessManager(pm);
+  }
+
+  /**
+   * Set DelegationManager for delegate tool (permission checks)
+   */
+  setDelegationManager(dm: import('../multi-agent/delegation-manager.js').DelegationManager): void {
+    this.mcpExecutor.setDelegationManager(dm);
+  }
+
+  /**
+   * Set AgentEventBus for agent_notices tool
+   */
+  setAgentEventBus(eventBus: import('../multi-agent/agent-event-bus.js').AgentEventBus): void {
+    this.mcpExecutor.setAgentEventBus(eventBus);
   }
 
   /**
@@ -738,7 +810,7 @@ export class AgentLoop {
             gatewayToolsPrompt =
               getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
           } else {
-            gatewayToolsPrompt = getGatewayToolsPrompt();
+            gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
           }
         }
         const fullPrompt = gatewayToolsPrompt
@@ -884,7 +956,7 @@ export class AgentLoop {
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
-              piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n⚠️ 이전 대화가 너무 길어져 새 세션으로 전환되었습니다.\n\n${piResult.response}`;
+              piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n\n${piResult.response}`;
             }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
@@ -1189,7 +1261,8 @@ export class AgentLoop {
       const toolStart = Date.now();
       try {
         // Code-Act: execute JS code in sandbox
-        if (toolUse.name === CODE_ACT_MARKER) {
+        // Match both gateway-parsed 'code_act' and MCP-prefixed 'mcp__code-act__code_act'
+        if (toolUse.name === CODE_ACT_MARKER || toolUse.name === 'mcp__code-act__code_act') {
           const codeInput = toolUse.input as Record<string, unknown> | undefined;
           const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
           const codeActResult = code
