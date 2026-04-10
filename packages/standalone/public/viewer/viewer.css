@@ -111,11 +111,22 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   will-change: opacity;
 }
 
+/* Right panel mode (SmartStore pattern) */
+#chat-panel-wrapper {
+  transition: width 0.15s ease;
+}
+#chat-resize-handle-bar {
+  display: none;
+}
+#chat-resize-handle-bar.chat-resize-visible {
+  display: block;
+}
+
+/* Legacy bubble styles (kept for backward compat) */
 #chat-panel.chat-panel-closed {
   opacity: 0;
   pointer-events: none;
 }
-
 #chat-panel.chat-panel-open {
   opacity: 1;
   pointer-events: auto;

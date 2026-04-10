@@ -484,11 +484,18 @@ export class ChatModule {
     this.addUserMessage(message);
     this.enableSend(false);
 
+    // Include current viewer tab context (SmartStore ChatPanel pattern)
+    const tabIndicator = document.getElementById('chat-tab-indicator');
+    const viewerContext = {
+      currentTab: tabIndicator?.textContent?.toLowerCase() || 'unknown',
+    };
+
     this.ws.send(
       JSON.stringify({
         type: 'send',
         sessionId: this.sessionId,
         content: message,
+        viewerContext,
       })
     );
 
@@ -2041,6 +2048,12 @@ export class ChatModule {
     const resizeHandle = getElementByIdOrNull<HTMLDivElement>('chat-resize-handle');
     const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
     const header = getElementByIdOrNull<HTMLDivElement>('chat-header');
+
+    // Right panel mode: no bubble, auto-init session
+    const isRightPanel = !bubble && !!document.getElementById('chat-panel-wrapper');
+    if (isRightPanel && !this.ws) {
+      this.initSession();
+    }
 
     if (bubble) {
       bubble.addEventListener('click', () => this.togglePanel());

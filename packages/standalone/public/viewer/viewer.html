@@ -310,8 +310,10 @@
         </div>
       </nav>
 
+      <!-- Content Area: Main + Chat Panel (SmartStore layout) -->
+      <div id="content-area" class="flex-1 flex min-h-0">
       <!-- Main Content -->
-      <main class="flex-1 overflow-hidden flex flex-col">
+      <main class="flex-1 overflow-hidden flex flex-col min-w-0">
         <!-- Setup tab hidden: runs on port 3848 -->
         <div class="tab-content" id="tab-setup" style="display: none">
           <div class="setup-container">
@@ -787,52 +789,48 @@
         </div>
 
 
-        <!-- Floating Chat (global, visible on all tabs) -->
-        <div id="floating-chat" class="fixed bottom-6 right-6 z-50">
-          <button id="chat-bubble"
-            class="w-14 h-14 rounded-full bg-mama-yellow shadow-yellow flex items-center justify-center hover:scale-110 transition-transform cursor-pointer relative"
-            title="Open Chat">
-            <svg class="w-6 h-6 text-mama-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-            <span id="chat-badge" class="hidden absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
-          </button>
+      </main>
 
-          <div id="chat-panel" class="chat-panel-closed absolute bottom-[4.5rem] right-0 w-[400px] h-[560px] bg-white rounded-2xl shadow-float border border-gray-300 flex flex-col overflow-hidden">
+      <!-- Chat Resize Handle (SmartStore pattern) -->
+      <div id="chat-resize-handle-bar" class="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-mama-yellow/30 active:bg-mama-yellow/50 transition-colors chat-resize-visible"></div>
+
+      <!-- Right Chat Panel (always visible, SmartStore Layout pattern) -->
+      <div id="chat-panel-wrapper" class="flex-shrink-0 border-l border-gray-200 bg-white flex flex-col" style="width:380px">
+        <div id="chat-panel" class="flex flex-col h-full">
             <!-- Header -->
-            <div id="chat-header" class="h-12 bg-mama-yellow/20 flex items-center px-4 border-b border-gray-300 shrink-0">
-              <svg class="w-5 h-5 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div id="chat-header" class="h-11 bg-mama-yellow/10 flex items-center px-3 border-b border-gray-200 shrink-0">
+              <svg class="w-4 h-4 text-mama-black mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
-              <span class="font-bold text-mama-black text-sm">MAMA Chat</span>
-              <div class="ml-2 flex items-center gap-1 text-xs text-gray-500" id="chat-status">
-                <span class="status-indicator w-2 h-2 rounded-full bg-red-500"></span>
-                <span>Not connected</span>
+              <span class="font-semibold text-mama-black text-xs">MAMA Chat</span>
+              <!-- Current tab indicator -->
+              <span id="chat-tab-indicator" class="ml-2 text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">Dashboard</span>
+              <div class="ml-1 flex items-center gap-0.5 text-xs text-gray-500" id="chat-status">
+                <span class="status-indicator w-1.5 h-1.5 rounded-full bg-red-500"></span>
               </div>
-              <div class="ml-auto flex items-center gap-1">
-                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div class="ml-auto flex items-center gap-0.5">
+                <button class="p-1 rounded hover:bg-gray-100 transition-colors" id="chat-tts-toggle" onclick="toggleTTS()" title="TTS Off">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
                 <div class="relative">
-                  <span class="text-[10px] text-gray-500 cursor-pointer px-1 py-0.5 hover:bg-gray-100 rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
+                  <span class="text-[9px] text-gray-500 cursor-pointer px-0.5 py-0.5 hover:bg-gray-100 rounded" id="tts-speed-label" onclick="toggleTTSPopup()">1.8x</span>
                   <div class="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-white border border-gray-300 rounded-lg p-3 shadow-lg hidden" id="tts-speed-popup">
                     <div class="text-center text-sm font-semibold mb-2" id="tts-speed-value">1.8x</div>
                     <input type="range" class="w-full accent-mama-yellow" id="tts-speed-slider" min="0.5" max="2.0" step="0.1" value="1.8" oninput="updateTTSSpeed(this.value)" />
                   </div>
                 </div>
-                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button class="p-1 rounded hover:bg-gray-100 transition-colors" id="chat-handsfree-toggle" onclick="toggleHandsFree()" title="Hands-free Off">
+                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <circle cx="12" cy="12" r="2" stroke-width="2"/>
                     <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-                <button id="chat-close" class="p-1.5 rounded-lg hover:bg-red-100 transition-colors text-gray-500 hover:text-red-600" title="Close">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/>
-                    <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/>
+                <button id="chat-collapse-btn" class="p-1 rounded hover:bg-gray-100 transition-colors text-gray-500" title="Collapse chat" onclick="toggleChatPanel()">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <polyline points="9 18 15 12 9 6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
               </div>
@@ -849,14 +847,14 @@
             </div>
 
             <!-- Input -->
-            <div class="border-t border-gray-300 p-3 space-y-2 shrink-0">
-              <div class="flex gap-2">
+            <div class="border-t border-gray-200 p-2.5 space-y-1.5 shrink-0">
+              <div class="flex gap-1.5">
                 <textarea
-                  class="flex-1 px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-mama-black placeholder-gray-500 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  class="flex-1 px-2.5 py-1.5 border border-gray-200 rounded-lg bg-gray-50 text-mama-black placeholder-gray-400 resize-none focus:outline-none focus:ring-2 focus:ring-mama-yellow disabled:opacity-50 disabled:cursor-not-allowed text-sm"
                   id="chat-input" placeholder="Type your message..." rows="1" disabled
                 ></textarea>
                 <button
-                  class="px-3 py-2 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-400 text-mama-black rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center"
+                  class="px-2.5 py-1.5 bg-mama-yellow hover:bg-mama-yellow-hover disabled:bg-gray-300 text-mama-black rounded-lg font-medium transition-colors disabled:cursor-not-allowed flex items-center"
                   id="chat-send" onclick="sendChatMessage()" disabled>
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <line x1="22" y1="2" x2="11" y2="13" stroke-width="2" stroke-linecap="round"/>
@@ -865,35 +863,45 @@
                 </button>
               </div>
               <!-- Attachment preview -->
-              <div id="chat-attachment-preview" class="hidden flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg border border-gray-300">
-                <img id="chat-attachment-thumb" class="w-10 h-10 object-cover rounded" src="" alt="preview" />
-                <span id="chat-attachment-name" class="text-xs text-gray-600 truncate max-w-[120px]"></span>
+              <div id="chat-attachment-preview" class="hidden flex items-center gap-2 px-2 py-1 bg-gray-50 rounded-lg border border-gray-200">
+                <img id="chat-attachment-thumb" class="w-8 h-8 object-cover rounded" src="" alt="preview" />
+                <span id="chat-attachment-name" class="text-xs text-gray-600 truncate max-w-[100px]"></span>
                 <button class="text-gray-400 hover:text-red-500 ml-auto" onclick="clearAttachment()" title="Remove">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/></svg>
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/></svg>
                 </button>
               </div>
-              <div class="flex items-center gap-1">
+              <div class="flex items-center gap-0.5">
                 <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx" onchange="handleFileSelect(event)" />
-                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button class="p-1 rounded hover:bg-gray-100 transition-colors" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                 </button>
-                <button class="p-1.5 rounded-lg hover:bg-gray-100 transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button class="p-1 rounded hover:bg-gray-100 transition-colors relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                     <line x1="12" y1="19" x2="12" y2="22" stroke-width="2" stroke-linecap="round"/>
                   </svg>
                   <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
                 </button>
-                <span class="text-[10px] text-gray-400 ml-1">Enter to send, Shift+Enter for new line</span>
+                <span class="text-[9px] text-gray-400 ml-1">Enter / Shift+Enter</span>
               </div>
             </div>
-            <div id="chat-resize-handle" class="chat-resize-handle" aria-label="Resize chat panel"></div>
-          </div>
         </div>
-      </main>
+      </div>
+
+      <!-- Chat Collapsed Bar (visible when chat is collapsed) -->
+      <div id="chat-collapsed-bar" class="hidden flex-shrink-0 border-l border-gray-200 bg-white flex flex-col items-center py-3 w-10">
+        <button onclick="toggleChatPanel()" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-yellow hover:bg-mama-yellow/10 transition-colors" title="Open chat">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <span id="chat-badge-collapsed" class="hidden w-2 h-2 bg-red-500 rounded-full mt-1 animate-pulse"></span>
+      </div>
+
+      </div><!-- /content-area -->
 
       <!-- Mobile Bottom Tab Bar -->
       <div id="mama-mobile-tabs">
@@ -1118,6 +1126,76 @@
       const connectorFeed = new ConnectorFeedModule();
       const wiki = new WikiModule();
 
+      // ── Chat Panel: toggle, resize, tab indicator (SmartStore pattern) ──
+      const CHAT_WIDTH_KEY = 'mama-chat-width';
+      const CHAT_COLLAPSED_KEY = 'mama-chat-collapsed';
+      const MIN_CHAT = 280;
+      const MAX_CHAT = 560;
+
+      function toggleChatPanel() {
+        const wrapper = document.getElementById('chat-panel-wrapper');
+        const bar = document.getElementById('chat-collapsed-bar');
+        const handle = document.getElementById('chat-resize-handle-bar');
+        if (!wrapper || !bar) return;
+        const isCollapsed = wrapper.style.display === 'none';
+        if (isCollapsed) {
+          wrapper.style.display = '';
+          bar.classList.add('hidden');
+          if (handle) handle.classList.add('chat-resize-visible');
+          localStorage.setItem(CHAT_COLLAPSED_KEY, 'false');
+        } else {
+          wrapper.style.display = 'none';
+          bar.classList.remove('hidden');
+          if (handle) handle.classList.remove('chat-resize-visible');
+          localStorage.setItem(CHAT_COLLAPSED_KEY, 'true');
+        }
+      }
+      window.toggleChatPanel = toggleChatPanel;
+
+      // Restore collapsed state
+      if (localStorage.getItem(CHAT_COLLAPSED_KEY) === 'true') {
+        toggleChatPanel();
+      }
+
+      // Restore width
+      {
+        const saved = localStorage.getItem(CHAT_WIDTH_KEY);
+        if (saved) {
+          const w = Math.max(MIN_CHAT, Math.min(MAX_CHAT, Number(saved)));
+          const wrapper = document.getElementById('chat-panel-wrapper');
+          if (wrapper) wrapper.style.width = w + 'px';
+        }
+      }
+
+      // Chat resize handle (SmartStore Layout.tsx:158-176 pattern)
+      (function initChatResize() {
+        const handle = document.getElementById('chat-resize-handle-bar');
+        const wrapper = document.getElementById('chat-panel-wrapper');
+        if (!handle || !wrapper) return;
+
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const startX = e.clientX;
+          const startWidth = wrapper.offsetWidth;
+          const onMove = (ev) => {
+            const delta = startX - ev.clientX;
+            const w = Math.max(MIN_CHAT, Math.min(MAX_CHAT, startWidth + delta));
+            wrapper.style.width = w + 'px';
+          };
+          const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            localStorage.setItem(CHAT_WIDTH_KEY, String(wrapper.offsetWidth));
+          };
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+      })();
+
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
       window.graphModule = graph;
@@ -1139,6 +1217,12 @@
 
       async function switchTab(tabName) {
         STATE.currentTab = tabName;
+
+        // Update chat panel tab indicator
+        const tabIndicator = document.getElementById('chat-tab-indicator');
+        if (tabIndicator) {
+          tabIndicator.textContent = tabName.charAt(0).toUpperCase() + tabName.slice(1);
+        }
 
         // Update sidebar nav items
         document.querySelectorAll('#mama-sidebar .mama-nav-item').forEach(btn => {

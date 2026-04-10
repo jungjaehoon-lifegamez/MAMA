@@ -38,6 +38,34 @@
 
 ---
 
+## Task 0: Chat Panel — Bubble → Right Panel (SmartStore 패턴)
+
+**Files:**
+
+- Modify: `packages/standalone/public/viewer/viewer.html` (layout restructure)
+- Modify: `packages/standalone/public/viewer/src/modules/chat.ts` (panel awareness)
+
+현재 floating bubble (`#floating-chat`, 우하단 고정) → SmartStore Layout.tsx처럼 항상 보이는 우측 패널로 전환.
+채팅이 현재 어떤 탭에 있는지 인지하고, WebSocket 메시지에 포함하여 에이전트가 뷰어 상태를 파악할 수 있게 한다.
+
+**구조 변경:**
+
+```
+Before: <main> [tabs] [floating-chat-bubble] </main>
+After:  <main> [tabs] </main> | <resize-handle> | <chat-panel>
+```
+
+- [ ] **Step 1: viewer.html — main 레이아웃을 flex row로 변경**
+- [ ] **Step 2: floating-chat를 main 밖 right panel로 이동**
+- [ ] **Step 3: resize handle 추가 (SmartStore Layout.tsx:158-176 패턴)**
+- [ ] **Step 4: chat-panel을 항상 보이는 패널로 변환 (bubble/close 제거)**
+- [ ] **Step 5: 접기/펼치기 토글 (collapsed 상태 = 아이콘 바)**
+- [ ] **Step 6: chat.ts — 현재 활성 탭 정보를 WebSocket context에 포함**
+- [ ] **Step 7: 빌드 및 수동 확인**
+- [ ] **Step 8: 커밋**
+
+---
+
 ## Task 1: Agent Store — DB Schema & CRUD
 
 **Files:**
