@@ -884,6 +884,71 @@ export class API {
   }
 
   // =============================================
+  // Agent Management API (Managed Agents pattern)
+  // =============================================
+
+  static async getAgents(): Promise<{ agents: MultiAgentAgent[] }> {
+    return this.get('/api/agents');
+  }
+
+  static async getAgent(
+    agentId: string
+  ): Promise<MultiAgentAgent & { system?: string; version?: number }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  static async createAgent(body: {
+    id: string;
+    name: string;
+    model: string;
+    tier: number;
+    system?: string;
+  }): Promise<JsonRecord> {
+    return this.post('/api/agents', body);
+  }
+
+  static async updateAgent(
+    agentId: string,
+    body: { version: number; changes: Record<string, unknown>; change_note?: string }
+  ): Promise<JsonRecord> {
+    return this.post(`/api/agents/${encodeURIComponent(agentId)}`, body);
+  }
+
+  static async archiveAgent(agentId: string): Promise<JsonRecord> {
+    return this.post(`/api/agents/${encodeURIComponent(agentId)}/archive`, {});
+  }
+
+  static async getAgentVersions(agentId: string): Promise<{ versions: JsonRecord[] }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/versions`);
+  }
+
+  static async compareAgentVersions(agentId: string, v1: number, v2: number): Promise<JsonRecord> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/versions/${v1}/compare/${v2}`);
+  }
+
+  static async getAgentMetrics(
+    agentId: string,
+    from: string,
+    to: string
+  ): Promise<{ metrics: JsonRecord[] }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/metrics`, { from, to });
+  }
+
+  // =============================================
+  // UI Command API (SmartStore pattern)
+  // =============================================
+
+  static async getUICommands(): Promise<{
+    commands: Array<{ type: string; payload: Record<string, unknown> }>;
+  }> {
+    return this.get('/api/ui/commands');
+  }
+
+  static async pushPageContext(route: string, data: Record<string, unknown>): Promise<JsonRecord> {
+    return this.post('/api/ui/page-context', { currentRoute: route, pageData: data });
+  }
+
+  // =============================================
   // Metrics / Health API
   // =============================================
 

@@ -303,6 +303,10 @@
             <i data-lucide="terminal"></i>
             <span>Logs</span>
           </button>
+          <button class="mama-nav-item" data-tab="agents" onclick="window.switchTab && window.switchTab('agents')">
+            <i data-lucide="bot"></i>
+            <span>Agents</span>
+          </button>
           <button class="mama-nav-item" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
             <i data-lucide="settings"></i>
             <span>Settings</span>
@@ -415,6 +419,11 @@
         <!-- Logs Tab -->
         <div class="tab-content" id="tab-logs">
           <iframe id="logs-iframe" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
+        </div>
+
+        <!-- Agents Tab -->
+        <div class="tab-content" id="tab-agents">
+          <div class="flex-1 overflow-y-auto p-4" id="agents-content"></div>
         </div>
 
         <!-- Settings Tab -->
@@ -925,6 +934,10 @@
           <i data-lucide="terminal"></i>
           <span>Logs</span>
         </button>
+        <button class="mama-mobile-tab" data-tab="agents" onclick="window.switchTab && window.switchTab('agents')">
+          <i data-lucide="bot"></i>
+          <span>Agents</span>
+        </button>
         <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
           <i data-lucide="settings"></i>
           <span>Settings</span>
@@ -1115,7 +1128,9 @@
       import { SkillsModule } from '/viewer/js/modules/skills.js';
       import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
+      import { AgentsModule } from '/viewer/js/modules/agents.js';
       import { API } from '/viewer/js/utils/api.js';
+      import { startUICommandPolling } from '/viewer/js/utils/ui-commands.js';
 
       const memory = new MemoryModule();
       const chat = new ChatModule(memory);
@@ -1125,6 +1140,7 @@
       const skills = SkillsModule;
       const connectorFeed = new ConnectorFeedModule();
       const wiki = new WikiModule();
+      const agentsModule = new AgentsModule();
 
       // ── Chat Panel: toggle, resize, tab indicator (SmartStore pattern) ──
       const CHAT_WIDTH_KEY = 'mama-chat-width';
@@ -1195,6 +1211,9 @@
           document.addEventListener('mouseup', onUp);
         });
       })();
+
+      // Start UI command polling (SmartStore Layout pattern)
+      startUICommandPolling(switchTab);
 
       // Expose modules globally for debugging and onclick handlers
       window.chatModule = chat;
@@ -1278,6 +1297,8 @@
           }
         } else if (tabName === 'feed') {
           connectorFeed.init();
+        } else if (tabName === 'agents') {
+          agentsModule.init();
         } else if (tabName === 'wiki') {
           wiki.init();
         } else if (tabName === 'logs') {
