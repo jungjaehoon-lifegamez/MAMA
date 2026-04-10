@@ -563,17 +563,20 @@ export class GatewayToolExecutor {
               .trim();
             const truncated =
               textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
-            void getApi().then((a) =>
-              handleSave(a, {
-                type: 'decision' as const,
-                topic: 'dashboard_briefing',
-                decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
-                reasoning: 'Auto-saved by dashboard agent after report_publish',
-                scopes: [{ kind: 'global', id: 'system' }],
-              })
-            ).catch(() => {
-              /* non-fatal */
-            });
+            void (async () => {
+              try {
+                const a = await getApi();
+                await handleSave(a, {
+                  type: 'decision' as const,
+                  topic: 'dashboard_briefing',
+                  decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+                  reasoning: 'Auto-saved by dashboard agent after report_publish',
+                  scopes: [{ kind: 'global', id: 'system' }],
+                });
+              } catch {
+                /* non-fatal */
+              }
+            })();
 
             return {
               success: true,
@@ -624,17 +627,20 @@ export class GatewayToolExecutor {
               )
               .join('\n');
             const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
-            void getApi().then((a) =>
-              handleSave(a, {
-                type: 'decision' as const,
-                topic: 'wiki_compilation',
-                decision: wikiSummary,
-                reasoning: 'Auto-saved by wiki agent after wiki_publish',
-                scopes: [{ kind: 'global', id: 'system' }],
-              })
-            ).catch(() => {
-              /* non-fatal */
-            });
+            void (async () => {
+              try {
+                const a = await getApi();
+                await handleSave(a, {
+                  type: 'decision' as const,
+                  topic: 'wiki_compilation',
+                  decision: wikiSummary,
+                  reasoning: 'Auto-saved by wiki agent after wiki_publish',
+                  scopes: [{ kind: 'global', id: 'system' }],
+                });
+              } catch {
+                /* non-fatal */
+              }
+            })();
 
             return {
               success: true,
@@ -690,7 +696,7 @@ export class GatewayToolExecutor {
           const rawLimit = Number((input as { limit?: number }).limit);
           const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 10;
           if (!this.agentEventBus) {
-            return { success: true, data: { notices: [], message: 'Event bus not available' } };
+            return { success: false, error: 'Agent event bus not available' } as GatewayToolResult;
           }
           const notices = this.agentEventBus.getRecentNotices(limit);
           return {
@@ -2122,8 +2128,8 @@ export class GatewayToolExecutor {
 
         // Inject skill content if specified
         if (input.skill) {
-          const skillPath = join(homedir(), '.mama', 'skills', `${input.skill}.md`);
-          if (existsSync(skillPath)) {
+          const skillPath = resolveSkillPath(input.skill);
+          if (skillPath && existsSync(skillPath)) {
             const skillContent = readFileSync(skillPath, 'utf-8');
             delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
           }

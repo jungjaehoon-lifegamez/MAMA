@@ -28,7 +28,7 @@ export interface ActivitySummary {
   channel: string;
   content: string;
   timestamp: string;
-  status: 'active' | 'idle' | 'disconnected';
+  status: 'active' | 'idle' | 'disconnected' | 'error';
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ export function createConnectorFeedRouter(rawStore: RawStore, enabledConnectors:
           channel: '',
           content: `Error: ${errMsg}`,
           timestamp: '',
-          status: 'error' as 'idle',
+          status: 'error',
         });
       }
 
@@ -170,15 +170,24 @@ export function createConnectorFeedRouter(rawStore: RawStore, enabledConnectors:
       const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 20 : rawLimit, 200);
       const sinceRaw = req.query.since;
       const sinceParam = typeof sinceRaw === 'string' ? sinceRaw : undefined;
-      const since = sinceParam
-        ? new Date(sinceParam)
-        : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      let since: Date;
+      if (sinceParam) {
+        since = new Date(sinceParam);
+        if (isNaN(since.getTime())) {
+          res.status(400).json({ error: 'Invalid since parameter' });
+          return;
+        }
+      } else {
+        since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      }
 
       let normalized;
       try {
         normalized = rawStore.query(name, since);
-      } catch {
-        res.json({ connector: name, feed: [], itemCount: 0 });
+      } catch (err) {
+        res.status(500).json({
+          error: `Error querying connector ${name}: ${err instanceof Error ? err.message : 'unknown'}`,
+        });
         return;
       }
 

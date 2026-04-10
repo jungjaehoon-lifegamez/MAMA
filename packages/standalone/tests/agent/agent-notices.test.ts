@@ -58,17 +58,13 @@ describe('agent_notices gateway tool', () => {
     expect(notices[1].target).toBe('briefing');
   });
 
-  it('returns empty array when eventBus is not available', async () => {
+  it('returns error when eventBus is not available', async () => {
     const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
     // Do NOT set eventBus
 
     const result = await executor.execute('agent_notices', {});
-    expect(result.success).toBe(true);
-
-    const data = (result as { success: boolean; data: { notices: unknown[]; message: string } })
-      .data;
-    expect(data.notices).toEqual([]);
-    expect(data.message).toBe('Event bus not available');
+    expect(result.success).toBe(false);
+    expect((result as { error: string }).error).toBe('Agent event bus not available');
   });
 
   it('respects limit parameter', async () => {
