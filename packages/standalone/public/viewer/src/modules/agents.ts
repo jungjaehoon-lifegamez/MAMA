@@ -50,6 +50,8 @@ export class AgentsModule {
 
   private alerts: string[] = [];
 
+  private validationStates: Map<string, string> = new Map();
+
   private async loadAgents(): Promise<void> {
     if (!this.container) return;
     try {
@@ -60,6 +62,19 @@ export class AgentsModule {
       ]);
       this.agents = agents;
       this.alerts = summaryRes.alerts;
+
+      // Fetch validation state for each agent (non-blocking)
+      const valResults = await Promise.all(
+        agents.map((a) => API.getValidationSummary(a.id ?? '').catch(() => ({ summary: null })))
+      );
+      this.validationStates.clear();
+      for (let i = 0; i < agents.length; i++) {
+        const vs = valResults[i]?.summary as Record<string, unknown> | null;
+        if (vs?.validation_outcome) {
+          this.validationStates.set(agents[i].id ?? '', String(vs.validation_outcome));
+        }
+      }
+
       this.renderList();
       reportPageContext('agents', {
         pageType: 'agent-list',
@@ -128,6 +143,17 @@ export class AgentsModule {
           <div style="font-size:12px;color:${C.sec};margin-bottom:6px;">${escapeHtml(a.model || 'No model')}</div>
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span style="font-size:11px;color:${badgeColor};font-weight:500;">\u25CF ${badgeText}${lastRunStr ? ` \u00B7 ${lastRunStr}` : ''}</span>
+            ${(() => {
+              const vo = this.validationStates.get(a.id ?? '');
+              if (!vo) return '';
+              const vc: Record<string, string> = {
+                healthy: '#22c55e',
+                improved: '#3b82f6',
+                regressed: '#ef4444',
+                inconclusive: '#f59e0b',
+              };
+              return `<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:${vc[vo] ?? C.ter}15;color:${vc[vo] ?? C.ter};">${vo}</span>`;
+            })()}
           </div>
         </div>`;
       })
