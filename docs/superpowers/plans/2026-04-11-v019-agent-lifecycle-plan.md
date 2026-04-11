@@ -1,14 +1,29 @@
-# v0.19 Agent Lifecycle Implementation Plan
+# v0.19 Agent Lifecycle Implementation Plan (Rev.2 — Post-Review)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the agent lifecycle system — create agents via chat, verify with real data, track in production — all orchestrated by Conductor.
 
-**Architecture:** Phase 1 makes the Agents tab functional (Config editing, Tools saving, enable/disable). Phase 2 adds verification (agent_test, agent_evaluate, agent_activity table). Phase 3 adds tracking and reporting (activity logging, Dashboard integration, Wiki auto-docs). Phase 4 adds templates (connector-based dynamic recommendation).
+**Architecture:** Settings 탭의 에이전트 편집을 Agents 탭으로 통합. 기존 `PUT /api/multi-agent/agents/:id` 핫리로드 경로 재사용. agent_versions는 감사 전용. agent_activity 자동 로깅은 delegation handler에 삽입.
 
 **Tech Stack:** TypeScript, SQLite (better-sqlite3), vanilla TS viewer modules (Tailwind), gateway tool registry
 
 **Spec:** `docs/superpowers/specs/2026-04-11-v019-agent-lifecycle-design.md`
+
+**Review:** Codex + Claude 서브에이전트 리뷰 반영 (2026-04-11). Critical 이슈 2건, High 2건 수정.
+
+---
+
+## Review Findings Applied
+
+| #   | Finding                                   | Severity | Resolution                                                                                           |
+| --- | ----------------------------------------- | :------: | ---------------------------------------------------------------------------------------------------- |
+| 1   | config.yaml vs agent_versions 이중 저장소 | Critical | Config 저장 → 기존 `PUT /api/multi-agent/agents/:id` 사용. agent_versions는 감사 전용 기록만.        |
+| 2   | agent_activity 자동 로깅 없음             | Critical | delegation handler (`gateway-tool-executor.ts`)에서 delegate 시작/완료/에러 시 자동 logActivity 호출 |
+| 3   | Settings에 이미 에이전트 편집 존재        | Critical | Settings 에이전트 섹션 → Agents 탭으로 이동. Settings에서 제거.                                      |
+| 4   | agent_enable 보안 경계 누락               |   High   | checkViewerOnly() 적용                                                                               |
+| 5   | config.yaml 직접 fs.writeFileSync         |   High   | saveConfig() 헬퍼 사용 또는 기존 multi-agent PUT 경로                                                |
+| 6   | details/suggestion DB 미반영              |  Medium  | agent_activity에 details TEXT (JSON) 컬럼 추가                                                       |
 
 ---
 
@@ -16,27 +31,27 @@
 
 ### Modified Files
 
-| File                                  | Changes                                                                                         |
-| ------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `public/viewer/src/modules/agents.ts` | Config tab editable, Tools tab saveable, enable toggle, Activity tab, inline styles to Tailwind |
-| `public/viewer/src/utils/api.ts`      | Add enableAgent, testAgent, getActivity API methods                                             |
-| `src/agent/gateway-tool-executor.ts`  | Add agent_test, agent_evaluate, agent_enable, agent_activity_log handlers                       |
-| `src/agent/tool-registry.ts`          | Register 4 new gateway tools                                                                    |
-| `src/agent/types.ts`                  | Add 4 new GatewayToolName entries                                                               |
-| `src/api/agent-handler.ts`            | Add PATCH enable/disable, GET activity, POST test endpoints                                     |
-| `src/api/graph-api.ts`                | Route new endpoints                                                                             |
-| `src/db/agent-store.ts`               | Add agent_activity table init + CRUD                                                            |
+| File                                    | Changes                                                                             |
+| --------------------------------------- | ----------------------------------------------------------------------------------- |
+| `public/viewer/src/modules/agents.ts`   | Settings의 에이전트 카드 코드 통합, Config 편집 (기존 PUT 사용), Activity 탭 추가   |
+| `public/viewer/src/modules/settings.ts` | 에이전트 섹션 제거 → "Agents 탭에서 관리" 안내                                      |
+| `public/viewer/src/utils/api.ts`        | getAgentActivity API 메서드 추가                                                    |
+| `src/agent/gateway-tool-executor.ts`    | delegate() 전후에 logActivity 자동 호출 + agent_activity_log 도구에 checkViewerOnly |
+| `src/agent/tool-registry.ts`            | agent_activity_log 등록                                                             |
+| `src/agent/types.ts`                    | GatewayToolName에 agent_activity_log 추가                                           |
+| `src/api/agent-handler.ts`              | GET /api/agents/:id/activity 핸들러 추가                                            |
+| `src/api/graph-api.ts`                  | activity 엔드포인트 라우팅                                                          |
+| `src/db/agent-store.ts`                 | agent_activity 테이블 (details 컬럼 포함) + logActivity/getActivity                 |
 
 ### New Files
 
-| File                              | Responsibility             |
-| --------------------------------- | -------------------------- |
-| `tests/db/agent-activity.test.ts` | agent_activity table tests |
-| `tests/api/agent-enable.test.ts`  | Enable/disable API tests   |
+| File                              | Responsibility                      |
+| --------------------------------- | ----------------------------------- |
+| `tests/db/agent-activity.test.ts` | agent_activity 테이블 + CRUD 테스트 |
 
 ---
 
-## Task 1: agent_activity DB Table
+## Task 1: agent_activity DB Table + CRUD
 
 **Files:**
 
@@ -71,7 +86,7 @@ describe('agent_activity', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd packages/standalone && pnpm vitest run tests/db/agent-activity.test.ts`
-Expected: FAIL — agent_activity table not found (logActivity, getActivity not exported)
+Expected: FAIL — logActivity, getActivity not exported
 
 - [ ] **Step 3: Add agent_activity table to initAgentTables**
 
@@ -90,6 +105,7 @@ db.exec(`
       tools_called    TEXT,
       duration_ms     INTEGER DEFAULT 0,
       score           REAL,
+      details         TEXT,
       error_message   TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
@@ -99,14 +115,9 @@ db.exec(
 );
 ```
 
-- [ ] **Step 4: Run test to verify table creation passes**
-
-Run: `cd packages/standalone && pnpm vitest run tests/db/agent-activity.test.ts`
-Expected: PASS
+- [ ] **Step 4: Run test — table creation passes**
 
 - [ ] **Step 5: Write failing tests for logActivity and getActivity**
-
-Append to test file:
 
 ```typescript
 describe('activity CRUD', () => {
@@ -116,7 +127,7 @@ describe('activity CRUD', () => {
     initAgentTables(db);
   });
 
-  it('logs an activity event', () => {
+  it('logs activity with details JSON', () => {
     const row = logActivity(db, {
       agent_id: 'test-agent',
       agent_version: 1,
@@ -126,12 +137,14 @@ describe('activity CRUD', () => {
       tokens_used: 150,
       tools_called: ['Read', 'Bash'],
       duration_ms: 2300,
+      details: { items: [{ input: 'file.mov', result: 'pass' }] },
     });
     expect(row.id).toBeGreaterThan(0);
     expect(row.type).toBe('task_complete');
+    expect(JSON.parse(row.details!).items).toHaveLength(1);
   });
 
-  it('retrieves activity by agent_id', () => {
+  it('retrieves activity by agent_id newest first', () => {
     logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_complete' });
     logActivity(db, {
       agent_id: 'a1',
@@ -143,10 +156,10 @@ describe('activity CRUD', () => {
 
     const a1 = getActivity(db, 'a1', 10);
     expect(a1).toHaveLength(2);
-    expect(a1[0].type).toBe('task_error'); // newest first
+    expect(a1[0].type).toBe('task_error');
   });
 
-  it('logs test_run with score', () => {
+  it('logs test_run with score and details', () => {
     const row = logActivity(db, {
       agent_id: 'test-agent',
       agent_version: 2,
@@ -154,6 +167,7 @@ describe('activity CRUD', () => {
       input_summary: '3 files tested',
       output_summary: '3/3 passed',
       score: 95,
+      details: { total: 3, passed: 3, failed: 0, suggestion: null },
     });
     expect(row.score).toBe(95);
   });
@@ -161,8 +175,6 @@ describe('activity CRUD', () => {
 ```
 
 - [ ] **Step 6: Implement logActivity and getActivity**
-
-Append to `packages/standalone/src/db/agent-store.ts`:
 
 ```typescript
 export interface LogActivityInput {
@@ -175,6 +187,7 @@ export interface LogActivityInput {
   tools_called?: string[];
   duration_ms?: number;
   score?: number;
+  details?: Record<string, unknown>;
   error_message?: string;
 }
 
@@ -189,14 +202,15 @@ export interface ActivityRow {
   tools_called: string | null;
   duration_ms: number;
   score: number | null;
+  details: string | null;
   error_message: string | null;
   created_at: string;
 }
 
 export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
   const stmt = db.prepare(`
-    INSERT INTO agent_activity (agent_id, agent_version, type, input_summary, output_summary, tokens_used, tools_called, duration_ms, score, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_activity (agent_id, agent_version, type, input_summary, output_summary, tokens_used, tools_called, duration_ms, score, details, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.agent_id,
@@ -208,6 +222,7 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.tools_called ? JSON.stringify(input.tools_called) : null,
     input.duration_ms ?? 0,
     input.score ?? null,
+    input.details ? JSON.stringify(input.details) : null,
     input.error_message ?? null
   );
   return db
@@ -217,210 +232,130 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
 
 export function getActivity(db: DB, agentId: string, limit: number): ActivityRow[] {
   return db
-    .prepare('SELECT * FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC LIMIT ?')
+    .prepare(
+      'SELECT * FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'
+    )
     .all(agentId, limit) as ActivityRow[];
 }
 ```
 
-- [ ] **Step 7: Run tests**
+Note: `ORDER BY created_at DESC, id DESC` — same-second 이벤트도 순서 보장 (Codex 리뷰 반영).
 
-Run: `cd packages/standalone && pnpm vitest run tests/db/agent-activity.test.ts`
-Expected: ALL PASS
-
+- [ ] **Step 7: Run tests — ALL PASS**
 - [ ] **Step 8: Commit**
 
 ```bash
 git add packages/standalone/src/db/agent-store.ts packages/standalone/tests/db/agent-activity.test.ts
-git commit -m "feat(agents): agent_activity table for lifecycle tracking"
+git commit -m "feat(agents): agent_activity table with details JSON column"
 ```
 
 ---
 
-## Task 2: Enable/Disable API + Gateway Tool
+## Task 2: Auto-log Activity on Delegation
 
 **Files:**
 
-- Modify: `packages/standalone/src/api/agent-handler.ts`
-- Modify: `packages/standalone/src/api/graph-api.ts`
 - Modify: `packages/standalone/src/agent/gateway-tool-executor.ts`
-- Modify: `packages/standalone/src/agent/tool-registry.ts`
-- Modify: `packages/standalone/src/agent/types.ts`
-- Create: `packages/standalone/tests/api/agent-enable.test.ts`
 
-- [ ] **Step 1: Write failing test for enable/disable**
+이건 리뷰에서 나온 Critical 이슈 해결. delegation handler에서 자동으로 activity를 기록.
+
+- [ ] **Step 1: Find the delegate case in gateway-tool-executor.ts**
+
+Locate the `case 'delegate':` block and add auto-logging.
+
+- [ ] **Step 2: Add auto-logging around delegation**
+
+delegate case 시작에 task_start, 완료에 task_complete, catch에 task_error 로깅 추가:
 
 ```typescript
-// packages/standalone/tests/api/agent-enable.test.ts
-import { describe, it, expect, beforeEach } from 'vitest';
-import Database from 'better-sqlite3';
-import { initAgentTables, createAgentVersion } from '../../src/db/agent-store.js';
+case 'delegate': {
+  // ... existing args parsing ...
+  const startTime = Date.now();
 
-describe('agent enable/disable', () => {
-  let db: InstanceType<typeof Database>;
-
-  beforeEach(() => {
-    db = new Database(':memory:');
-    initAgentTables(db);
-    createAgentVersion(db, {
-      agent_id: 'test-agent',
-      snapshot: { model: 'claude-sonnet-4-6', tier: 1, enabled: true },
-      change_note: 'initial',
+  // Log task_start
+  if (this.sessionsDb) {
+    const latest = getLatestVersion(this.sessionsDb, delegateArgs.agentId);
+    logActivity(this.sessionsDb, {
+      agent_id: delegateArgs.agentId,
+      agent_version: latest?.version ?? 0,
+      type: 'task_start',
+      input_summary: delegateArgs.task?.slice(0, 200),
     });
-  });
+  }
 
-  it('updates enabled field without creating new version', () => {
-    // enableAgent should update the latest snapshot's enabled field in-place
-    // This is a hot toggle, not a versioned change
-    const latest = db
-      .prepare(
-        'SELECT snapshot FROM agent_versions WHERE agent_id = ? ORDER BY version DESC LIMIT 1'
-      )
-      .get('test-agent') as { snapshot: string };
-    const snap = JSON.parse(latest.snapshot);
-    expect(snap.enabled).toBe(true);
-  });
-});
+  try {
+    // ... existing delegation logic ...
+    const result = /* existing result */;
+
+    // Log task_complete
+    if (this.sessionsDb) {
+      const latest = getLatestVersion(this.sessionsDb, delegateArgs.agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: delegateArgs.agentId,
+        agent_version: latest?.version ?? 0,
+        type: 'task_complete',
+        input_summary: delegateArgs.task?.slice(0, 200),
+        output_summary: typeof result === 'string' ? result.slice(0, 500) : JSON.stringify(result).slice(0, 500),
+        duration_ms: Date.now() - startTime,
+      });
+    }
+
+    return result;
+  } catch (err) {
+    // Log task_error
+    if (this.sessionsDb) {
+      const latest = getLatestVersion(this.sessionsDb, delegateArgs.agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: delegateArgs.agentId,
+        agent_version: latest?.version ?? 0,
+        type: 'task_error',
+        input_summary: delegateArgs.task?.slice(0, 200),
+        error_message: String(err),
+        duration_ms: Date.now() - startTime,
+      });
+    }
+    throw err;
+  }
+}
 ```
 
-- [ ] **Step 2: Run test to verify it passes (baseline)**
-
-Run: `cd packages/standalone && pnpm vitest run tests/api/agent-enable.test.ts`
-Expected: PASS (baseline — confirms current snapshot structure)
-
-- [ ] **Step 3: Add agent_enable to types.ts**
-
-In `packages/standalone/src/agent/types.ts`, add to GatewayToolName union:
-
-```typescript
-  | 'agent_enable'
-  | 'agent_test'
-  | 'agent_evaluate'
-  | 'agent_activity_log'
-```
-
-- [ ] **Step 4: Register agent_enable in tool-registry.ts**
-
-In `packages/standalone/src/agent/tool-registry.ts`, add after viewer_state:
-
-```typescript
-register({
-  name: 'agent_enable',
-  description: 'Enable or disable an agent. Hot-reload without restart.',
-  category: 'os_management',
-  params: 'agent_id, enabled: boolean',
-});
-register({
-  name: 'agent_test',
-  description: 'Run test session with recent connector data. Returns test results for evaluation.',
-  category: 'os_management',
-  params: 'agent_id, count?: number',
-});
-register({
-  name: 'agent_evaluate',
-  description:
-    'Evaluate test results. Returns score (0-100), details, and improvement suggestions.',
-  category: 'os_management',
-  params: 'agent_id, test_results: {total, passed, failed, items[]}',
-});
-register({
-  name: 'agent_activity_log',
-  description: 'Log an agent activity event (task completion, error, test run).',
-  category: 'os_monitoring',
-  params: 'agent_id, type: task_complete|task_error|test_run|config_change, summary, score?',
-});
-```
-
-- [ ] **Step 5: Implement agent_enable in gateway-tool-executor.ts**
-
-Add case in the switch block after `viewer_state`:
-
-```typescript
-        case 'agent_enable': {
-          const enableArgs = input as { agent_id: string; enabled: boolean };
-          // Update config and hot-reload
-          try {
-            const configPath = path.join(os.homedir(), '.mama', 'config.yaml');
-            const configText = fs.readFileSync(configPath, 'utf-8');
-            const yaml = await import('js-yaml');
-            const config = yaml.load(configText) as Record<string, unknown>;
-            const agents = (config.multi_agent as Record<string, unknown>)?.agents as Record<string, Record<string, unknown>> | undefined;
-            if (!agents?.[enableArgs.agent_id]) {
-              return { success: false, error: `Agent '${enableArgs.agent_id}' not found in config` };
-            }
-            agents[enableArgs.agent_id].enabled = enableArgs.enabled;
-            fs.writeFileSync(configPath, yaml.dump(config, { lineWidth: 120 }));
-            return { success: true, agent_id: enableArgs.agent_id, enabled: enableArgs.enabled };
-          } catch (err) {
-            return { success: false, error: String(err) };
-          }
-        }
-```
-
-- [ ] **Step 6: Implement agent_activity_log in gateway-tool-executor.ts**
-
-```typescript
-        case 'agent_activity_log': {
-          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
-          const logArgs = input as { agent_id: string; type: string; summary: string; score?: number };
-          const latest = getLatestVersion(this.sessionsDb, logArgs.agent_id);
-          const row = logActivity(this.sessionsDb, {
-            agent_id: logArgs.agent_id,
-            agent_version: latest?.version ?? 0,
-            type: logArgs.type,
-            output_summary: logArgs.summary,
-            score: logArgs.score,
-          });
-          return { success: true, activity_id: row.id };
-        }
-```
-
-- [ ] **Step 7: Add import for logActivity**
-
-At the top of `gateway-tool-executor.ts`, add `logActivity` to the import from agent-store:
-
-```typescript
-import {
-  createAgentVersion,
-  getLatestVersion,
-  listVersions,
-  getMetrics,
-  compareVersionMetrics,
-  logActivity,
-} from '../db/agent-store.js';
-```
-
-- [ ] **Step 8: Build and verify**
-
-Run: `cd packages/standalone && pnpm build`
-Expected: Build succeeds, gateway-tools.md shows 53 tools
-
-- [ ] **Step 9: Commit**
+- [ ] **Step 3: Add logActivity import** (if not already added)
+- [ ] **Step 4: Build and verify**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/standalone/src/agent/types.ts packages/standalone/src/agent/tool-registry.ts packages/standalone/src/agent/gateway-tool-executor.ts packages/standalone/tests/api/agent-enable.test.ts
-git commit -m "feat(agents): agent_enable + agent_activity_log gateway tools"
+git add packages/standalone/src/agent/gateway-tool-executor.ts
+git commit -m "feat(agents): auto-log activity on delegation start/complete/error"
 ```
 
 ---
 
-## Task 3: Config Tab — Editable Fields
+## Task 3: Settings → Agents 탭 통합
 
 **Files:**
 
 - Modify: `packages/standalone/public/viewer/src/modules/agents.ts`
+- Modify: `packages/standalone/public/viewer/src/modules/settings.ts`
 
-- [ ] **Step 1: Replace renderConfigTab with editable version**
+Settings의 에이전트 편집 UI를 Agents 탭으로 이동하고, Settings에서는 제거.
 
-Replace the `renderConfigTab` method in `agents.ts`. Change read-only `field()` divs to input/select elements with a Save button:
+- [ ] **Step 1: Agents Config 탭 — Settings의 PUT 경로 재사용**
+
+`agents.ts`의 `renderConfigTab`을 교체. Settings의 `toggleAgent`와 `saveAgent`가 사용하는 `PUT /api/multi-agent/agents/:id` 경로를 그대로 사용:
 
 ```typescript
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
-    const modelOptions = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
-      .map(m => `<option value="${m}" ${a.model === m ? 'selected' : ''}>${m}</option>`)
-      .join('');
+    const backend = a.backend || 'claude';
+    const modelOptions = (backend === 'codex-mcp'
+      ? ['gpt-5.3-codex', 'gpt-5.4-mini']
+      : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
+    ).map(m => `<option value="${m}" ${a.model === m ? 'selected' : ''}>${m}</option>`).join('');
+
     const tierOptions = [1, 2, 3]
-      .map(t => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
-      .join('');
+      .map(t => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`).join('');
+
+    const backendOptions = ['claude', 'codex-mcp']
+      .map(b => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`).join('');
 
     el.innerHTML = `
       <div class="space-y-3">
@@ -429,45 +364,62 @@ Replace the `renderConfigTab` method in `agents.ts`. Change read-only `field()` 
           <div class="text-[13px] text-gray-800 px-2.5 py-1.5 border border-gray-200 rounded-md bg-gray-50">${escapeHtml(a.id ?? '')}</div>
         </div>
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="cfg-name">Name</label>
+          <label class="block text-[11px] text-gray-400 mb-1">Name</label>
           <input id="cfg-name" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]" value="${escapeHtml(a.display_name || a.name || '')}" />
         </div>
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="cfg-model">Model</label>
+          <label class="block text-[11px] text-gray-400 mb-1">Backend</label>
+          <select id="cfg-backend" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${backendOptions}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Model</label>
           <select id="cfg-model" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${modelOptions}</select>
         </div>
         <div>
-          <label class="block text-[11px] text-gray-400 mb-1" for="cfg-tier">Tier</label>
+          <label class="block text-[11px] text-gray-400 mb-1">Tier</label>
           <select id="cfg-tier" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${tierOptions}</select>
         </div>
-        <div>
-          <label class="block text-[11px] text-gray-400 mb-1">Enabled</label>
+        <div class="flex items-center gap-3">
           <label class="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" id="cfg-enabled" ${a.enabled !== false ? 'checked' : ''} class="accent-[#FFCE00] w-4 h-4" />
-            <span class="text-[13px]">${a.enabled !== false ? 'Active' : 'Disabled'}</span>
+            <span class="text-[13px]">Enabled</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cfg-delegate" ${a.can_delegate ? 'checked' : ''} class="accent-[#8b5cf6] w-4 h-4" />
+            <span class="text-[13px]">Can Delegate</span>
           </label>
         </div>
-        <div class="flex gap-2 pt-2">
-          <button id="btn-save-config" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save — creates v${(a.version ?? 0) + 1}</button>
+        <div class="pt-2">
+          <button id="btn-save-config" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save</button>
         </div>
       </div>`;
 
+    // Save uses existing PUT /api/multi-agent/agents/:id (same as Settings)
     el.querySelector('#btn-save-config')?.addEventListener('click', async () => {
-      const name = (el.querySelector('#cfg-name') as HTMLInputElement).value.trim();
-      const model = (el.querySelector('#cfg-model') as HTMLSelectElement).value;
-      const tier = parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10);
-      const enabled = (el.querySelector('#cfg-enabled') as HTMLInputElement).checked;
       if (!a.id) return;
       try {
-        const res = await API.updateAgent(a.id, {
-          version: a.version ?? 0,
-          changes: { display_name: name, model, tier, enabled },
-          change_note: `Config updated via viewer`,
+        await API.put(`/api/multi-agent/agents/${a.id}`, {
+          model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+          backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
+          tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+          enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
+          can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
         });
-        if ((res as { new_version?: number }).new_version) {
-          showToast(\`v\${(res as { new_version: number }).new_version} saved\`);
-          this.showDetail(a.id);
+        showToast('Saved — hot reloaded');
+
+        // Also record in agent_versions for audit trail
+        if (a.version != null) {
+          await API.updateAgent(a.id, {
+            version: a.version,
+            changes: {
+              model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+              tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+            },
+            change_note: 'Config updated via Agents tab',
+          }).catch(() => { /* audit trail is best-effort */ });
         }
+
+        this.showDetail(a.id);
       } catch (err) {
         showToast('Save failed');
       }
@@ -475,29 +427,43 @@ Replace the `renderConfigTab` method in `agents.ts`. Change read-only `field()` 
   }
 ```
 
-- [ ] **Step 2: Build and verify**
+- [ ] **Step 2: Settings에서 에이전트 섹션을 "Agents 탭으로 이동" 안내로 교체**
 
-Run: `pnpm build`
-Expected: Build succeeds
+`settings.ts`의 `renderMultiAgentSettings()` 내용을 간소화:
 
-- [ ] **Step 3: Commit**
+```typescript
+  private renderMultiAgentSettings(): void {
+    const container = getElementByIdOrNull<HTMLElement>('settings-multi-agent-container');
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+        <p class="text-sm text-gray-600 mb-2">에이전트 관리는 Agents 탭으로 이동했습니다.</p>
+        <button onclick="window.switchTab && window.switchTab('agents')"
+          class="text-sm px-4 py-1.5 rounded-md bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">
+          Agents 탭으로 이동
+        </button>
+      </div>`;
+  }
+```
+
+- [ ] **Step 3: Build and verify**
+- [ ] **Step 4: Commit**
 
 ```bash
-git add packages/standalone/public/viewer/src/modules/agents.ts
-git commit -m "feat(agents): editable Config tab — model, tier, name, enabled"
+git add packages/standalone/public/viewer/src/modules/agents.ts packages/standalone/public/viewer/src/modules/settings.ts
+git commit -m "feat(agents): consolidate agent editing from Settings into Agents tab"
 ```
 
 ---
 
-## Task 4: Tools Tab — Saveable Checkboxes
+## Task 4: Tools Tab — Save via existing PUT
 
 **Files:**
 
 - Modify: `packages/standalone/public/viewer/src/modules/agents.ts`
 
-- [ ] **Step 1: Replace renderToolsTab with saveable version**
-
-Replace the `renderToolsTab` method:
+- [ ] **Step 1: Replace renderToolsTab — save via PUT /api/multi-agent/agents/:id**
 
 ```typescript
   private renderToolsTab(el: HTMLElement, a: AgentWithVersion): void {
@@ -511,14 +477,13 @@ Replace the `renderToolsTab` method:
         return `<label class="flex items-center gap-2 py-1.5 border-b border-gray-100 text-[13px] cursor-pointer">
           <input type="checkbox" ${checked ? 'checked' : ''} data-tool="${t}" class="accent-[#8b5cf6] w-4 h-4" /> ${t}
         </label>`;
-      })
-      .join('');
+      }).join('');
 
     el.innerHTML = `
-      <div class="text-[11px] text-gray-400 mb-2">Tier ${a.tier ?? 1} preset. Toggle individual tools and save.</div>
+      <div class="text-[11px] text-gray-400 mb-2">Tier ${a.tier ?? 1} preset. Toggle tools and save.</div>
       <div>${rows}</div>
-      <div class="flex gap-2 pt-3">
-        <button id="btn-save-tools" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save Tools — creates v${(a.version ?? 0) + 1}</button>
+      <div class="pt-3">
+        <button id="btn-save-tools" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save Tools</button>
       </div>`;
 
     el.querySelector('#btn-save-tools')?.addEventListener('click', async () => {
@@ -528,15 +493,22 @@ Replace the `renderToolsTab` method:
       });
       if (!a.id) return;
       try {
-        const res = await API.updateAgent(a.id, {
-          version: a.version ?? 0,
-          changes: { tool_permissions: { allowed: checked } },
-          change_note: `Tools updated: ${checked.join(', ')}`,
+        // Save to runtime via existing PUT
+        await API.put(`/api/multi-agent/agents/${a.id}`, {
+          tool_permissions: { allowed: checked },
         });
-        if ((res as { new_version?: number }).new_version) {
-          showToast(\`Tools saved as v\${(res as { new_version: number }).new_version}\`);
-          this.showDetail(a.id);
+        showToast('Tools saved — hot reloaded');
+
+        // Audit trail (best-effort)
+        if (a.version != null) {
+          await API.updateAgent(a.id, {
+            version: a.version,
+            changes: { tool_permissions: { allowed: checked } },
+            change_note: `Tools: ${checked.join(', ')}`,
+          }).catch(() => {});
         }
+
+        this.showDetail(a.id);
       } catch (err) {
         showToast('Save failed');
       }
@@ -545,20 +517,16 @@ Replace the `renderToolsTab` method:
 ```
 
 - [ ] **Step 2: Build and verify**
-
-Run: `pnpm build`
-Expected: Build succeeds
-
 - [ ] **Step 3: Commit**
 
 ```bash
 git add packages/standalone/public/viewer/src/modules/agents.ts
-git commit -m "feat(agents): Tools tab saves tool permissions with version bump"
+git commit -m "feat(agents): Tools tab saves via PUT multi-agent + audit trail"
 ```
 
 ---
 
-## Task 5: Activity Tab (replaces Metrics)
+## Task 5: Activity Tab + API Endpoint
 
 **Files:**
 
@@ -567,9 +535,7 @@ git commit -m "feat(agents): Tools tab saves tool permissions with version bump"
 - Modify: `packages/standalone/src/api/agent-handler.ts`
 - Modify: `packages/standalone/src/api/graph-api.ts`
 
-- [ ] **Step 1: Add getAgentActivity API method**
-
-In `packages/standalone/public/viewer/src/utils/api.ts`, add:
+- [ ] **Step 1: Add getAgentActivity to API client**
 
 ```typescript
   static async getAgentActivity(agentId: string, limit = 20): Promise<{ activity: Array<Record<string, unknown>> }> {
@@ -577,9 +543,7 @@ In `packages/standalone/public/viewer/src/utils/api.ts`, add:
   }
 ```
 
-- [ ] **Step 2: Add activity endpoint handler in agent-handler.ts**
-
-In `packages/standalone/src/api/agent-handler.ts`, add:
+- [ ] **Step 2: Add handler in agent-handler.ts**
 
 ```typescript
 export function handleGetAgentActivity(
@@ -593,11 +557,7 @@ export function handleGetAgentActivity(
 }
 ```
 
-Add `getActivity` to imports from agent-store.
-
-- [ ] **Step 3: Route the endpoint in graph-api.ts**
-
-Add route before the existing agent routes:
+- [ ] **Step 3: Route in graph-api.ts**
 
 ```typescript
 if (pathname.match(/^\/api\/agents\/[^/]+\/activity$/) && req.method === 'GET') {
@@ -606,132 +566,78 @@ if (pathname.match(/^\/api\/agents\/[^/]+\/activity$/) && req.method === 'GET') 
   const limit = parseInt(url.searchParams.get('limit') || '20', 10);
   if (options.sessionsDb) {
     const { handleGetAgentActivity } = await import('./agent-handler.js');
-    handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
+    handleGetAgentActivity(res, agentId, options.sessionsDb, Math.min(limit, 100));
   }
   return true;
 }
 ```
 
-- [ ] **Step 4: Replace renderMetricsTab with renderActivityTab**
+- [ ] **Step 4: Replace Metrics tab with Activity tab in agents.ts**
 
-In `agents.ts`, replace `renderMetricsTab` with:
-
-```typescript
-  private async renderActivityTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
-    el.innerHTML = `<div class="text-[12px] text-gray-400">Loading activity...</div>`;
-    try {
-      const { activity } = await API.getAgentActivity(a.id ?? '', 20);
-      if (!activity.length) {
-        el.innerHTML = `<div class="text-[12px] text-gray-400">No activity recorded yet.</div>`;
-        return;
-      }
-      const rows = activity
-        .map((ev: Record<string, unknown>) => {
-          const typeIcon = ev.type === 'test_run' ? '🧪' : ev.type === 'task_error' ? '❌' : ev.type === 'config_change' ? '⚙️' : '✅';
-          const scoreStr = ev.score != null ? ` — ${ev.score}/100` : '';
-          return `<div class="flex items-start gap-2 py-2 border-b border-gray-100">
-            <span class="text-[14px] flex-shrink-0">${typeIcon}</span>
-            <div class="flex-1 min-w-0">
-              <div class="text-[12px] font-medium text-gray-800">${escapeHtml(String(ev.output_summary || ev.type))}${scoreStr}</div>
-              ${ev.error_message ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>` : ''}
-              <div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} · ${ev.tokens_used || 0} tokens · ${ev.created_at}</div>
-            </div>
-          </div>`;
-        })
-        .join('');
-      el.innerHTML = `<div>${rows}</div>`;
-    } catch {
-      el.innerHTML = `<div class="text-[12px] text-red-500">Failed to load activity.</div>`;
-    }
-  }
-```
-
-- [ ] **Step 5: Update tab list and switch statement**
-
-In `renderDetail()`, change the tabs array and switch:
-
-```typescript
-const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'history'];
-```
-
-Update the DetailTab type:
+Update `DetailTab` type and tabs array:
 
 ```typescript
 type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'history';
 ```
 
-Update the switch case:
+Replace `renderMetricsTab` with `renderActivityTab`:
 
 ```typescript
-      case 'activity':
-        this.renderActivityTab(content, a);
-        break;
+  private async renderActivityTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = '<div class="text-[12px] text-gray-400">Loading...</div>';
+    try {
+      const { activity } = await API.getAgentActivity(a.id ?? '', 20);
+      if (!activity.length) {
+        el.innerHTML = '<div class="text-[12px] text-gray-400 py-4 text-center">No activity yet. Delegate a task to this agent to see logs here.</div>';
+        return;
+      }
+      const rows = activity.map((ev: Record<string, unknown>) => {
+        const icon = ev.type === 'test_run' ? '🧪' : ev.type === 'task_error' ? '❌' : ev.type === 'config_change' ? '⚙️' : ev.type === 'task_start' ? '▶️' : '✅';
+        const scoreStr = ev.score != null ? ` — ${ev.score}/100` : '';
+        return `<div class="flex items-start gap-2 py-2 border-b border-gray-100">
+          <span class="text-[14px] flex-shrink-0">${icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-[12px] font-medium text-gray-800">${escapeHtml(String(ev.output_summary || ev.input_summary || ev.type))}${scoreStr}</div>
+            ${ev.error_message ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>` : ''}
+            <div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} · ${ev.duration_ms || 0}ms · ${ev.created_at}</div>
+          </div>
+        </div>`;
+      }).join('');
+      el.innerHTML = `<div>${rows}</div>`;
+    } catch {
+      el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load activity.</div>';
+    }
+  }
 ```
 
-Remove the old `case 'metrics':` block.
-
-- [ ] **Step 6: Build and verify**
-
-Run: `pnpm build`
-Expected: Build succeeds
-
-- [ ] **Step 7: Commit**
+- [ ] **Step 5: Build and verify**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add packages/standalone/public/viewer/src/modules/agents.ts packages/standalone/public/viewer/src/utils/api.ts packages/standalone/src/api/agent-handler.ts packages/standalone/src/api/graph-api.ts
-git commit -m "feat(agents): Activity tab replaces Metrics — shows execution log + test results"
+git commit -m "feat(agents): Activity tab with auto-logged delegation events"
 ```
 
 ---
 
-## Task 6: Agent List Cards — Status + Enable Toggle
+## Task 6: Agent Cards — Enable Toggle (using existing PUT)
 
 **Files:**
 
 - Modify: `packages/standalone/public/viewer/src/modules/agents.ts`
 
-- [ ] **Step 1: Enhance agent card with status badge + enable toggle**
+- [ ] **Step 1: Update card template with toggle**
 
-Update the card template in `renderList()`:
-
-```typescript
-const statusColor = a.enabled !== false ? C.green : C.ter;
-const statusText = a.enabled !== false ? 'Active' : 'Disabled';
-const toggleChecked = a.enabled !== false ? 'checked' : '';
-return `
-        <div class="agent-card bg-white border border-gray-200 rounded-xl p-4 cursor-pointer transition-all" data-agent-id="${escapeHtml(a.id ?? '')}">
-          <div class="flex justify-between items-center mb-2">
-            <span class="text-[15px] font-semibold text-gray-800">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
-            <span class="text-[11px] font-semibold px-2 py-0.5 rounded bg-purple-50 text-purple-600">T${a.tier ?? 1}</span>
-          </div>
-          <div class="text-[12px] text-gray-500 mb-1.5">${escapeHtml(a.model || 'No model')}</div>
-          <div class="flex justify-between items-center">
-            <span class="text-[11px] font-medium" style="color:${statusColor}">\u25CF ${statusText}</span>
-            <div class="flex items-center gap-2">
-              <span class="text-[11px] text-gray-400">v${a.version ?? 0}</span>
-              <label class="enable-toggle flex items-center" onclick="event.stopPropagation()">
-                <input type="checkbox" ${toggleChecked} data-toggle-id="${escapeHtml(a.id ?? '')}" class="accent-[#FFCE00] w-3.5 h-3.5" />
-              </label>
-            </div>
-          </div>
-        </div>`;
-```
-
-- [ ] **Step 2: Add toggle event listener**
-
-After the card click listeners in `renderList()`, add:
+Same approach as Settings — use `PUT /api/multi-agent/agents/:id` for toggle:
 
 ```typescript
+// In renderList(), add toggle click handler:
 this.container.querySelectorAll<HTMLInputElement>('[data-toggle-id]').forEach((toggle) => {
-  toggle.addEventListener('change', async (e) => {
+  toggle.addEventListener('change', async () => {
     const agentId = toggle.dataset.toggleId;
     if (!agentId) return;
     try {
-      await API.updateAgent(agentId, {
-        version: this.agents.find((a) => a.id === agentId)?.version ?? 0,
-        changes: { enabled: toggle.checked },
-        change_note: toggle.checked ? 'Enabled via viewer' : 'Disabled via viewer',
-      });
+      await API.put(`/api/multi-agent/agents/${agentId}`, { enabled: toggle.checked });
       showToast(`${agentId} ${toggle.checked ? 'enabled' : 'disabled'}`);
       this.loadAgents();
     } catch {
@@ -742,46 +648,45 @@ this.container.querySelectorAll<HTMLInputElement>('[data-toggle-id]').forEach((t
 });
 ```
 
-- [ ] **Step 3: Build and verify**
-
-Run: `pnpm build`
-Expected: Build succeeds
-
-- [ ] **Step 4: Commit**
+- [ ] **Step 2: Build and verify**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add packages/standalone/public/viewer/src/modules/agents.ts
-git commit -m "feat(agents): card status badge + inline enable/disable toggle"
+git commit -m "feat(agents): enable/disable toggle via existing multi-agent PUT"
 ```
 
 ---
 
 ## Task 7: Build + E2E Verification
 
-- [ ] **Step 1: Full build**
+- [ ] **Step 1: Full build** — `pnpm build`
+- [ ] **Step 2: Run all tests** — `pnpm test`
+- [ ] **Step 3: Start MAMA** — `cd packages/standalone && node dist/cli/index.js start`
+- [ ] **Step 4: Manual verification checklist**
 
-Run: `pnpm build`
-Expected: Build succeeds
+1. Agents 탭: 카드에 enable toggle 표시
+2. 카드 클릭 → Config 탭 → model/backend/tier 편집 → Save → "hot reloaded" toast
+3. Tools 탭 → 체크박스 → Save → "hot reloaded" toast
+4. Activity 탭 → 빈 상태 메시지
+5. 채팅에서 에이전트에게 delegate → Activity 탭에 task_start + task_complete 로그 자동 표시
+6. Settings 탭 → 에이전트 섹션 → "Agents 탭으로 이동" 버튼
+7. History 탭 → 새 버전 표시 (감사 기록)
 
-- [ ] **Step 2: Run all tests**
-
-Run: `pnpm test`
-Expected: All tests pass
-
-- [ ] **Step 3: Manual verification**
-
-1. Start MAMA: `cd packages/standalone && node dist/cli/index.js start`
-2. Open viewer: `http://localhost:3847/viewer/`
-3. Navigate to Agents tab
-4. Verify: Cards show status badge + enable toggle
-5. Click an agent → Config tab → verify all fields are editable
-6. Change model → Save → verify version bump
-7. Tools tab → toggle checkboxes → Save → verify version bump
-8. Activity tab → verify empty state message
-9. History tab → verify new versions appear
-
-- [ ] **Step 4: Commit any fixes**
+- [ ] **Step 5: Commit any fixes**
 
 ```bash
 git add -A && git commit -m "fix(agents): e2e verification fixes"
 ```
+
+---
+
+## GSTACK REVIEW REPORT
+
+| Review           | Trigger      | Why                     | Runs | Status       | Findings                                                        |
+| ---------------- | ------------ | ----------------------- | ---- | ------------ | --------------------------------------------------------------- |
+| CEO + Eng Review | `/autoplan`  | Strategy + Architecture | 1    | issues_found | 6 findings (2 critical, 2 high, 2 medium)                       |
+| Codex Voice      | `codex exec` | Independent 2nd opinion | 1    | issues_found | config.yaml 이중 저장소, Settings 중복, 보안 경계, saveConfig() |
+| Claude Subagent  | `Agent tool` | Independent review      | 1    | issues_found | agent_activity 미연결, cold start, Phase 2-4 시기상조           |
+
+**VERDICT:** All critical findings resolved in Rev.2. Plan ready for implementation.
