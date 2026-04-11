@@ -25,7 +25,7 @@ import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
 import { ValidationSessionService } from '../../validation/session-service.js';
-import { getLatestVersion } from '../../db/agent-store.js';
+import { getLatestVersion, logActivity } from '../../db/agent-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
@@ -114,6 +114,19 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const session = validationService?.startSession(agentId, agentVersion, 'system_run');
     const startTime = Date.now();
 
+    // Log task_start to agent_activity
+    if (sessionsDb) {
+      const startRow = logActivity(sessionsDb, {
+        agent_id: agentId,
+        agent_version: agentVersion,
+        type: 'task_start',
+        input_summary: prompt.slice(0, 200),
+      });
+      if (session) {
+        validationService?.recordRun(session.id, { activityId: startRow.id });
+      }
+    }
+
     try {
       const process = await pm.getSharedProcess(agentId, opts);
       const result = await process.sendMessage(prompt);
@@ -122,7 +135,27 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const usage = result?.usage;
       const tokensUsed = usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : 0;
 
-      // Finalize as completed
+      // Log task_complete to agent_activity
+      if (sessionsDb) {
+        const completeRow = logActivity(sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: noUpdate ? 'task_skipped' : 'task_complete',
+          input_summary: prompt.slice(0, 200),
+          output_summary: result?.response?.slice(0, 500),
+          duration_ms: durationMs,
+          tokens_used: tokensUsed,
+        });
+        if (session) {
+          validationService?.recordRun(session.id, {
+            activityId: completeRow.id,
+            duration_ms: durationMs,
+            tokens_used: tokensUsed,
+          });
+        }
+      }
+
+      // Finalize validation session as completed
       if (session && validationService) {
         validationService.finalizeSession(session.id, {
           execution_status: 'completed',
@@ -137,7 +170,19 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     } catch (err) {
       const durationMs = Date.now() - startTime;
 
-      // Finalize as failed
+      // Log task_error to agent_activity
+      if (sessionsDb) {
+        logActivity(sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_error',
+          input_summary: prompt.slice(0, 200),
+          error_message: err instanceof Error ? err.message : String(err),
+          duration_ms: durationMs,
+        });
+      }
+
+      // Finalize validation session as failed
       if (session && validationService) {
         validationService.finalizeSession(session.id, {
           execution_status: 'failed',
