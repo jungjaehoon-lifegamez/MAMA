@@ -1259,7 +1259,7 @@
         graphLoaded: false
       };
 
-      async function switchTab(tabName) {
+      async function switchTab(tabName, params) {
         STATE.currentTab = tabName;
 
         // Report tab context to agent (SmartStore pattern)
@@ -1348,6 +1348,10 @@
           connectorFeed.init();
         } else if (tabName === 'agents') {
           agentsModule.init();
+          // Handle deep navigation: params.id opens agent detail, params.tab selects tab
+          if (params?.id) {
+            agentsModule.navigateTo(params.id, params.tab);
+          }
         } else if (tabName === 'wiki') {
           wiki.init();
         } else if (tabName === 'logs') {

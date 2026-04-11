@@ -947,6 +947,31 @@ export class AgentsModule {
 
   // ── Navigation ──────────────────────────────────────────────────────────
 
+  /**
+   * Deep navigation from viewer_navigate command.
+   * Opens agent detail and optionally switches to a specific tab.
+   */
+  navigateTo(agentId: string, tab?: string): void {
+    const tryNav = () => {
+      const agent = this.agents.find((a) => a.id === agentId);
+      if (agent) {
+        this.selectedAgent = agent;
+        if (
+          tab &&
+          ['config', 'persona', 'tools', 'activity', 'validation', 'history'].includes(tab)
+        ) {
+          this.activeTab = tab as DetailTab;
+        }
+        this.renderDetail();
+      }
+    };
+    if (this.agents.length > 0) {
+      tryNav();
+    } else {
+      setTimeout(tryNav, 500);
+    }
+  }
+
   showList(): void {
     this.selectedAgent = null;
     this.loadAgents();
