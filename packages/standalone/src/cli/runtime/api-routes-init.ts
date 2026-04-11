@@ -417,12 +417,53 @@ This saves resources. Only compile when there is genuinely new information to do
     const runConductorAudit = async () => {
       try {
         console.log('[Conductor Audit] Starting hourly audit...');
+
+        // Log audit to activity + validation session
+        const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
+        const auditVersion = ver?.version ?? 0;
+        const auditSession = validationService?.startSession('conductor', auditVersion, 'audit', {
+          goal: 'hourly system audit',
+        });
+        const auditStart = Date.now();
+
+        if (sessionsDb) {
+          const startRow = logActivity(sessionsDb, {
+            agent_id: 'conductor',
+            agent_version: auditVersion,
+            type: 'audit_start',
+            input_summary: 'Hourly system audit',
+          });
+          if (auditSession) {
+            validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+          }
+        }
+
         await messageRouter.process({
           source: 'viewer' as const,
           channelId: 'conductor-audit',
           userId: 'system',
           text: auditPrompt,
         });
+
+        const auditDuration = Date.now() - auditStart;
+
+        if (sessionsDb) {
+          logActivity(sessionsDb, {
+            agent_id: 'conductor',
+            agent_version: auditVersion,
+            type: 'audit_complete',
+            input_summary: 'Hourly system audit',
+            duration_ms: auditDuration,
+          });
+        }
+
+        if (auditSession && validationService) {
+          validationService.finalizeSession(auditSession.id, {
+            execution_status: 'completed',
+            metrics: { duration_ms: auditDuration },
+          });
+        }
+
         console.log('[Conductor Audit] Audit complete');
       } catch (err) {
         console.error(
