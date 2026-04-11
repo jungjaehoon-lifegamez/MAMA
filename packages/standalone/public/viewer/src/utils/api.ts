@@ -941,6 +941,12 @@ export class API {
     return this.get(`/api/agents/${encodeURIComponent(agentId)}/activity?limit=${limit}`);
   }
 
+  static async getActivitySummary(
+    since: string
+  ): Promise<{ summary: Array<Record<string, unknown>>; alerts: string[] }> {
+    return this.get(`/api/agents/activity-summary?since=${encodeURIComponent(since)}`);
+  }
+
   // =============================================
   // UI Command API (SmartStore pattern)
   // =============================================

@@ -314,3 +314,70 @@ export function getActivity(db: DB, agentId: string, limit: number): ActivityRow
     )
     .all(agentId, limit) as ActivityRow[];
 }
+
+// ── Activity Summary ───────────────────────────────────────────────────────
+
+export interface ActivitySummaryRow {
+  agent_id: string;
+  total: number;
+  completed: number;
+  errors: number;
+  error_rate: number;
+  consecutive_errors: number;
+  last_activity_type: string | null;
+  last_activity_at: string | null;
+  avg_duration_ms: number;
+}
+
+export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] {
+  const rows = db
+    .prepare(
+      `SELECT
+        agent_id,
+        COUNT(*) as total,
+        SUM(CASE WHEN type = 'task_complete' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN type = 'task_error' THEN 1 ELSE 0 END) as errors,
+        ROUND(SUM(CASE WHEN type = 'task_error' THEN 1.0 ELSE 0 END) / COUNT(*) * 100, 2) as error_rate,
+        AVG(CASE WHEN duration_ms > 0 THEN duration_ms END) as avg_duration_ms
+      FROM agent_activity
+      WHERE created_at >= ?
+      GROUP BY agent_id
+      ORDER BY total DESC`
+    )
+    .all(since) as Array<Record<string, unknown>>;
+
+  return rows.map((row) => {
+    const agentId = String(row.agent_id);
+
+    // Consecutive errors from most recent activity
+    const recentTypes = db
+      .prepare(
+        'SELECT type FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 10'
+      )
+      .all(agentId) as Array<{ type: string }>;
+
+    let consecutiveErrors = 0;
+    for (const r of recentTypes) {
+      if (r.type === 'task_error') consecutiveErrors++;
+      else break;
+    }
+
+    const lastActivity = db
+      .prepare(
+        'SELECT type, created_at FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 1'
+      )
+      .get(agentId) as { type: string; created_at: string } | undefined;
+
+    return {
+      agent_id: agentId,
+      total: Number(row.total),
+      completed: Number(row.completed),
+      errors: Number(row.errors),
+      error_rate: Number(row.error_rate),
+      consecutive_errors: consecutiveErrors,
+      last_activity_type: lastActivity?.type ?? null,
+      last_activity_at: lastActivity?.created_at ?? null,
+      avg_duration_ms: Math.round(Number(row.avg_duration_ms ?? 0)),
+    };
+  });
+}

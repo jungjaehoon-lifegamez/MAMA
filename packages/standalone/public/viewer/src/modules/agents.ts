@@ -48,11 +48,18 @@ export class AgentsModule {
 
   // ── List View ───────────────────────────────────────────────────────────
 
+  private alerts: string[] = [];
+
   private async loadAgents(): Promise<void> {
     if (!this.container) return;
     try {
-      const { agents } = await API.getAgents();
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const [{ agents }, summaryRes] = await Promise.all([
+        API.getAgents(),
+        API.getActivitySummary(yesterday).catch(() => ({ summary: [], alerts: [] })),
+      ]);
       this.agents = agents;
+      this.alerts = summaryRes.alerts;
       this.renderList();
       reportPageContext('agents', {
         pageType: 'agent-list',
@@ -126,6 +133,11 @@ export class AgentsModule {
       })
       .join('');
 
+    const alertBanner =
+      this.alerts.length > 0
+        ? `<div class="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700">\u26A0 ${this.alerts.length} agent(s) need attention: ${escapeHtml(this.alerts.slice(0, 3).join(', '))}</div>`
+        : '';
+
     this.container.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
         <h2 style="font-size:18px;font-weight:600;color:${C.pri};margin:0;">Agents</h2>
@@ -134,6 +146,7 @@ export class AgentsModule {
           + New Agent
         </button>
       </div>
+      ${alertBanner}
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
         ${cards}
       </div>`;

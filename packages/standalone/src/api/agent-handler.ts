@@ -18,6 +18,7 @@ import {
   listVersions,
   getMetrics,
   getActivity,
+  getActivitySummary,
   compareVersionMetrics,
   type AgentVersionRow,
 } from '../db/agent-store.js';
@@ -231,6 +232,22 @@ export function handleGetAgentActivity(
 ): void {
   const activity = getActivity(db, agentId, limit);
   json(res, 200, { activity });
+}
+
+/** GET /api/agents/activity-summary — aggregated activity with alerts */
+export function handleGetActivitySummary(
+  res: ServerResponse,
+  db: SQLiteDatabase,
+  since: string
+): void {
+  const summary = getActivitySummary(db, since);
+  const alerts: string[] = [];
+  for (const s of summary) {
+    if (s.error_rate > 30) alerts.push(`${s.agent_id}: error rate ${s.error_rate}%`);
+    if (s.consecutive_errors >= 3)
+      alerts.push(`${s.agent_id}: ${s.consecutive_errors} consecutive errors`);
+  }
+  json(res, 200, { summary, alerts });
 }
 
 /** GET /api/agents/:id/versions/:v1/compare/:v2 — before/after comparison */
