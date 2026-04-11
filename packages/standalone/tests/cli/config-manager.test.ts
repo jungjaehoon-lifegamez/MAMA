@@ -14,6 +14,7 @@ import {
   loadConfig,
   saveConfig,
   createDefaultConfig,
+  getDefaultMultiAgentConfig,
   validateConfig,
 } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
@@ -183,6 +184,18 @@ describe('ConfigManager', () => {
 
       const logsDir = join(testDir, '.mama', 'logs');
       expect(existsSync(logsDir)).toBe(true);
+    });
+  });
+
+  describe('getDefaultMultiAgentConfig()', () => {
+    it('should exclude legacy swarm agents from the default agent set', () => {
+      const multiAgentConfig = getDefaultMultiAgentConfig();
+
+      expect(multiAgentConfig.agents.conductor).toBeDefined();
+      expect(multiAgentConfig.agents).not.toHaveProperty('developer');
+      expect(multiAgentConfig.agents).not.toHaveProperty('reviewer');
+      expect(multiAgentConfig.agents).not.toHaveProperty('architect');
+      expect(multiAgentConfig.agents).not.toHaveProperty('pm');
     });
   });
 

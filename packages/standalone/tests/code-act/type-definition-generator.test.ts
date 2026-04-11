@@ -23,10 +23,13 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toContain('// --- os ---');
     });
 
-    it('includes JSDoc descriptions', () => {
+    it('uses compact declaration output without per-function JSDoc blocks', () => {
       const dts = TypeDefinitionGenerator.generate(1);
-      expect(dts).toContain('/** Search decisions and checkpoints */');
-      expect(dts).toContain('/** Read file contents */');
+      expect(dts).toContain(
+        '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
+      );
+      expect(dts).toContain('declare function mama_search');
+      expect(dts).not.toContain('/** Search decisions and checkpoints */');
     });
 
     it('marks optional params with ?', () => {

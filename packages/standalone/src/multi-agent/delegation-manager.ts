@@ -99,6 +99,13 @@ export class DelegationManager {
   private historyMaxSize = 100;
   private historyCounter = 0;
 
+  /** Sessions DB for agent_activity logging */
+  private sessionsDb: import('../sqlite.js').default | null = null;
+
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.sessionsDb = db;
+  }
+
   constructor(agents: AgentPersonaConfig[], permissionManager?: ToolPermissionManager) {
     this.permissionManager = permissionManager ?? new ToolPermissionManager();
     this.agents = new Map(agents.map((a) => [a.id, a]));
@@ -234,6 +241,7 @@ export class DelegationManager {
 
     const delegationKey = `${fromAgentId}:${toAgentId}`;
     this.activeDelegations.add(delegationKey);
+    const startTime = Date.now();
 
     // Record history entry
     const historyEntry: DelegationHistoryEntry = {
@@ -249,6 +257,9 @@ export class DelegationManager {
       error: null,
     };
     this.addHistoryEntry(historyEntry);
+
+    // Log task_start to agent_activity
+    this.logToActivity(toAgentId, 'task_start', task?.slice(0, 200));
 
     try {
       // Notify channel about delegation
@@ -272,6 +283,15 @@ export class DelegationManager {
       historyEntry.completedAt = new Date().toISOString();
       historyEntry.duration = result.duration_ms;
 
+      // Log task_complete to agent_activity
+      this.logToActivity(
+        toAgentId,
+        'task_complete',
+        task?.slice(0, 200),
+        typeof result.response === 'string' ? result.response.slice(0, 500) : undefined,
+        result.duration_ms
+      );
+
       return {
         success: true,
         agentLoopResult: result, // Store the full result
@@ -286,12 +306,48 @@ export class DelegationManager {
       historyEntry.completedAt = new Date().toISOString();
       historyEntry.error = errorMessage;
 
+      // Log task_error to agent_activity
+      this.logToActivity(
+        toAgentId,
+        'task_error',
+        task?.slice(0, 200),
+        undefined,
+        Date.now() - startTime,
+        errorMessage
+      );
+
       return {
         success: false,
         error: `Delegation failed: ${errorMessage}`,
       };
     } finally {
       this.activeDelegations.delete(delegationKey);
+    }
+  }
+
+  private logToActivity(
+    agentId: string,
+    type: string,
+    inputSummary?: string,
+    outputSummary?: string,
+    durationMs?: number,
+    errorMessage?: string
+  ): void {
+    if (!this.sessionsDb) return;
+    try {
+      const { logActivity, getLatestVersion } = require('../db/agent-store.js');
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type,
+        input_summary: inputSummary,
+        output_summary: outputSummary,
+        duration_ms: durationMs ?? 0,
+        error_message: errorMessage,
+      });
+    } catch {
+      // Activity logging is best-effort — never block delegation
     }
   }
 

@@ -2,9 +2,17 @@
  * Unit tests for GatewayToolExecutor
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdir, readFile, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
+import Database from '../../src/sqlite.js';
+import { initAgentTables, getLatestVersion } from '../../src/db/agent-store.js';
+import { saveConfig } from '../../src/cli/config/config-manager.js';
+import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 
 describe('GatewayToolExecutor', () => {
@@ -329,6 +337,86 @@ describe('GatewayToolExecutor', () => {
         success: false,
         message: expect.stringContaining('Invalid outcome'),
       });
+    });
+  });
+
+  describe('agent management tools', () => {
+    let testDir: string;
+    let originalHome: string | undefined;
+
+    beforeEach(async () => {
+      testDir = join(
+        tmpdir(),
+        `mama-gateway-tool-executor-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+      await mkdir(join(testDir, '.mama', 'personas'), { recursive: true });
+
+      originalHome = process.env.HOME;
+      process.env.HOME = testDir;
+
+      await saveConfig(DEFAULT_CONFIG);
+    });
+
+    afterEach(async () => {
+      if (originalHome !== undefined) {
+        process.env.HOME = originalHome;
+      } else {
+        delete process.env.HOME;
+      }
+
+      await rm(testDir, { recursive: true, force: true });
+    });
+
+    it('should create an agent in config.yaml, persona file, and runtime version store', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+
+      const applyMultiAgentConfig = vi.fn().mockResolvedValue(undefined);
+      const restartMultiAgentAgent = vi.fn().mockResolvedValue(undefined);
+      executor.setApplyMultiAgentConfig(applyMultiAgentConfig);
+      executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
+
+      const result = await executor.execute('agent_create', {
+        id: 'qa-monitor',
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+        backend: 'claude',
+        system: 'You watch for QA regressions.',
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        id: 'qa-monitor',
+        version: 1,
+      });
+
+      const configPath = join(testDir, '.mama', 'config.yaml');
+      expect(existsSync(configPath)).toBe(true);
+      const configText = await readFile(configPath, 'utf8');
+      expect(configText).toContain('qa-monitor:');
+      expect(configText).toContain('persona_file: ~/.mama/personas/qa-monitor.md');
+
+      const personaPath = join(testDir, '.mama', 'personas', 'qa-monitor.md');
+      expect(existsSync(personaPath)).toBe(true);
+      await expect(readFile(personaPath, 'utf8')).resolves.toContain(
+        'You watch for QA regressions.'
+      );
+
+      const latestVersion = getLatestVersion(db, 'qa-monitor');
+      expect(latestVersion?.version).toBe(1);
+      expect(latestVersion ? JSON.parse(latestVersion.snapshot) : null).toMatchObject({
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+        backend: 'claude',
+      });
+
+      expect(applyMultiAgentConfig).toHaveBeenCalledTimes(1);
+      expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa-monitor');
     });
   });
 

@@ -340,6 +340,95 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: 'true',
     category: 'os',
   },
+  {
+    name: 'agent_get',
+    description: 'Get agent config, persona, and current version',
+    params: [{ name: 'agent_id', type: 'string', required: true }],
+    returnType:
+      '{ agent_id: string; version: number; config: Record<string, unknown>; system?: string | null }',
+    category: 'os',
+  },
+  {
+    name: 'agent_update',
+    description: 'Update agent config with optimistic concurrency',
+    params: [
+      { name: 'agent_id', type: 'string', required: true },
+      { name: 'version', type: 'number', required: true },
+      { name: 'changes', type: 'Record<string, unknown>', required: true },
+      { name: 'change_note', type: 'string', required: false },
+    ],
+    returnType: '{ new_version?: number }',
+    category: 'os',
+  },
+  {
+    name: 'agent_create',
+    description: 'Create new agent with initial config and persona',
+    params: [
+      { name: 'id', type: 'string', required: true },
+      { name: 'name', type: 'string', required: true },
+      { name: 'model', type: 'string', required: true },
+      { name: 'tier', type: 'number', required: true },
+      { name: 'system', type: 'string', required: false },
+      { name: 'backend', type: "'claude' | 'codex-mcp'", required: false },
+    ],
+    returnType: '{ id: string; version: number; runtime_reloaded?: boolean }',
+    category: 'os',
+  },
+  {
+    name: 'agent_compare',
+    description: 'Compare metrics between two agent versions',
+    params: [
+      { name: 'agent_id', type: 'string', required: true },
+      { name: 'version_a', type: 'number', required: true },
+      { name: 'version_b', type: 'number', required: true },
+    ],
+    returnType: 'Record<string, unknown>',
+    category: 'os',
+  },
+  {
+    name: 'agent_test',
+    description: 'Test agent with connector data or provided samples',
+    params: [
+      { name: 'agent_id', type: 'string', required: true },
+      { name: 'sample_count', type: 'number', required: false },
+      {
+        name: 'test_data',
+        type: 'Array<{ input: string; expected?: string }>',
+        required: false,
+      },
+    ],
+    returnType:
+      '{ data: { test_run_id?: number | null; agent_id: string; results: Array<Record<string, unknown>>; auto_score: number; duration_ms: number } }',
+    category: 'os',
+  },
+  {
+    name: 'viewer_state',
+    description: 'Get current viewer route and page context',
+    params: [],
+    returnType: '{ context: { currentRoute?: string; pageData?: unknown } }',
+    category: 'os',
+  },
+  {
+    name: 'viewer_navigate',
+    description: 'Navigate viewer to a route',
+    params: [
+      { name: 'route', type: 'string', required: true },
+      { name: 'params', type: 'Record<string, string>', required: false },
+    ],
+    returnType: '{ navigated: string }',
+    category: 'os',
+  },
+  {
+    name: 'viewer_notify',
+    description: 'Show a toast or suggestion in the viewer',
+    params: [
+      { name: 'type', type: "'info' | 'warning' | 'suggest'", required: true },
+      { name: 'message', type: 'string', required: true },
+      { name: 'action', type: 'Record<string, unknown>', required: false },
+    ],
+    returnType: '{ notified: boolean }',
+    category: 'os',
+  },
   // PR Review
   {
     name: 'pr_review_threads',
@@ -384,7 +473,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
         description: 'Skill name to inject from ~/.mama/skills/{skill}.md',
       },
     ],
-    returnType: '{ data: { agentId: string; response?: string; duration_ms?: number; message?: string } }',
+    returnType:
+      '{ data: { agentId: string; response?: string; duration_ms?: number; message?: string } }',
     category: 'os',
   },
   // System — agent activity notices

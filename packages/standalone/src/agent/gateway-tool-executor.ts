@@ -68,7 +68,12 @@ import {
 } from './mama-tool-handlers.js';
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
-import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
+import {
+  loadConfig,
+  saveConfig,
+  getConfig,
+  getDefaultMultiAgentConfig,
+} from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
@@ -224,6 +229,14 @@ export class GatewayToolExecutor {
   private uiCommandQueue: UICommandQueue | null = null;
   setUICommandQueue(queue: UICommandQueue): void {
     this.uiCommandQueue = queue;
+  }
+  private applyMultiAgentConfig: ((config: Record<string, unknown>) => Promise<void>) | null = null;
+  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
+    this.applyMultiAgentConfig = fn;
+  }
+  private restartMultiAgentAgent: ((agentId: string) => Promise<void>) | null = null;
+  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
+    this.restartMultiAgentAgent = fn;
   }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
@@ -592,17 +605,89 @@ export class GatewayToolExecutor {
             model: string;
             tier: number;
             system?: string;
+            backend?: 'claude' | 'codex-mcp';
           };
+          if (!createArgs.id || !/^[a-z0-9_-]+$/i.test(createArgs.id)) {
+            return { success: false, error: 'Invalid agent ID' };
+          }
           const existingAgent = getLatestVersion(this.sessionsDb, createArgs.id);
           if (existingAgent)
             return { success: false, error: `Agent '${createArgs.id}' already exists` };
+
+          const config = await loadConfig();
+          if (!config.multi_agent) {
+            config.multi_agent = getDefaultMultiAgentConfig();
+          }
+          if (!config.multi_agent.agents) {
+            config.multi_agent.agents = {};
+          }
+          if (config.multi_agent.agents[createArgs.id]) {
+            return { success: false, error: `Agent '${createArgs.id}' already exists in config` };
+          }
+
+          const personaFile = `~/.mama/personas/${createArgs.id}.md`;
+          const personaDir = join(homedir(), '.mama', 'personas');
+          const personaPath = join(personaDir, `${createArgs.id}.md`);
+          if (!existsSync(personaDir)) {
+            mkdirSync(personaDir, { recursive: true });
+          }
+
+          const agentBackend = createArgs.backend ?? config.agent.backend ?? 'claude';
+          config.multi_agent.enabled = true;
+          config.multi_agent.agents[createArgs.id] = {
+            name: createArgs.name,
+            display_name: createArgs.name,
+            trigger_prefix: `!${createArgs.id}`,
+            persona_file: personaFile,
+            tier: createArgs.tier as 1 | 2 | 3,
+            can_delegate: false,
+            backend: agentBackend,
+            model: createArgs.model,
+            enabled: true,
+          };
+
+          writeFileSync(
+            personaPath,
+            createArgs.system?.trim() || `# ${createArgs.name}\n\nYou are ${createArgs.name}.`,
+            'utf8'
+          );
+          await saveConfig(config);
+
+          let runtimeReloaded = true;
+          if (this.applyMultiAgentConfig) {
+            try {
+              await this.applyMultiAgentConfig(
+                config.multi_agent as unknown as Record<string, unknown>
+              );
+            } catch {
+              runtimeReloaded = false;
+            }
+          }
+          if (this.restartMultiAgentAgent) {
+            try {
+              await this.restartMultiAgentAgent(createArgs.id);
+            } catch {
+              runtimeReloaded = false;
+            }
+          }
+
           const createdV = createAgentVersion(this.sessionsDb, {
             agent_id: createArgs.id,
-            snapshot: { model: createArgs.model, tier: createArgs.tier, name: createArgs.name },
+            snapshot: {
+              name: createArgs.name,
+              model: createArgs.model,
+              tier: createArgs.tier,
+              backend: agentBackend,
+            },
             persona_text: createArgs.system ?? null,
             change_note: 'Created via agent_create tool',
           });
-          return { success: true, id: createArgs.id, version: createdV.version };
+          return {
+            success: true,
+            id: createArgs.id,
+            version: createdV.version,
+            runtime_reloaded: runtimeReloaded,
+          };
         }
         case 'agent_compare': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };

@@ -29,6 +29,9 @@ describe('HostBridge', () => {
       expect(names).toContain('mama_search');
       expect(names).toContain('discord_send');
       expect(names).toContain('browser_navigate');
+      expect(names).toContain('agent_create');
+      expect(names).toContain('agent_test');
+      expect(names).toContain('viewer_navigate');
     });
 
     it('returns only read-only tools for Tier 2', () => {
@@ -84,6 +87,8 @@ describe('HostBridge', () => {
       expect(registered).toContain('Read');
       expect(registered).toContain('Bash');
       expect(registered).toContain('mama_search');
+      expect(registered).toContain('agent_create');
+      expect(registered).toContain('agent_test');
     });
 
     it('injects only read-only functions for Tier 2', () => {
@@ -189,6 +194,38 @@ describe('HostBridge', () => {
       `);
       expect(result.success).toBe(true);
       expect(result.value).toEqual({ count: 2, first: 'auth' });
+    });
+
+    it('passes agent management tool calls through to the executor', async () => {
+      const executeFn = vi.fn().mockResolvedValue({
+        success: true,
+        id: 'qa-monitor-e2e',
+        version: 1,
+      });
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }));
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, 1);
+
+      const result = await sandbox.execute(`
+        agent_create({
+          id: "qa-monitor-e2e",
+          name: "QA Monitor E2E",
+          model: "claude-sonnet-4-6",
+          tier: 2,
+          system: "QA",
+          backend: "claude"
+        })
+      `);
+
+      expect(result.success).toBe(true);
+      expect(executeFn).toHaveBeenCalledWith('agent_create', {
+        id: 'qa-monitor-e2e',
+        name: 'QA Monitor E2E',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+        system: 'QA',
+        backend: 'claude',
+      });
     });
   });
 

@@ -647,6 +647,20 @@ export class AgentLoop {
   }
 
   /**
+   * Set runtime multi-agent config applier for agent management tools.
+   */
+  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
+    this.mcpExecutor.setApplyMultiAgentConfig(fn);
+  }
+
+  /**
+   * Set per-agent runtime restarter for agent management tools.
+   */
+  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
+    this.mcpExecutor.setRestartMultiAgentAgent(fn);
+  }
+
+  /**
    * Set AgentEventBus for agent_notices tool
    */
   setAgentEventBus(eventBus: import('../multi-agent/agent-event-bus.js').AgentEventBus): void {

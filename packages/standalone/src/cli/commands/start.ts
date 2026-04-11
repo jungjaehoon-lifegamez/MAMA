@@ -403,7 +403,8 @@ export async function runAgentLoop(
     messageRouter,
     toolExecutor,
     agentLoop,
-    runtimeBackend
+    runtimeBackend,
+    db
   );
 
   // ── Phase 8: Gateway Wiring ──────────────────────────────────────────────
@@ -421,6 +422,15 @@ export async function runAgentLoop(
     agentLoop,
     cronEmitter,
   });
+
+  if (graphHandlerOptions.applyMultiAgentConfig) {
+    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+  }
+  if (graphHandlerOptions.restartMultiAgentAgent) {
+    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+  }
 
   // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
   // If no Discord/Slack handler wired the delegate tool, create standalone
@@ -442,8 +452,23 @@ export async function runAgentLoop(
       }
     );
     const dm = new DelegationManager(agentConfigs);
+    dm.setSessionsDb(db);
     toolExecutor.setAgentProcessManager(pm);
     toolExecutor.setDelegationManager(dm);
+
+    graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+      const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
+      pm.updateConfig(nextConfig);
+      dm.updateAgents(Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg })));
+    };
+    graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
+      pm.reloadPersona(agentId);
+    };
+    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+
     // Also wire to the main AgentLoop's internal GatewayToolExecutor
     // (MessageRouter uses agentLoop which has its own executor instance)
     agentLoop.setAgentProcessManager(pm);

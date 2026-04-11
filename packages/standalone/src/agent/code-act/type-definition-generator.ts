@@ -32,7 +32,6 @@ export class TypeDefinitionGenerator {
         })
         .join(', ');
 
-      lines.push(`/** ${meta.description} */`);
       lines.push(`declare function ${meta.name}(${params}): ${meta.returnType};`);
     }
 
