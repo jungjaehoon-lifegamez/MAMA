@@ -88,59 +88,195 @@ enabled: true
 
 ### 1.4 템플릿 시스템
 
-범용 템플릿이 아닌 **커넥터 데이터 기반 동적 추천**:
+범용 템플릿이 아닌 **커넥터 데이터 기반 동적 추천**.
+
+#### 템플릿 구조
+
+```yaml
+# ~/.mama/agent-templates/delivery-monitor.yaml
+template:
+  id: delivery-monitor
+  name: '📦 납품 감시'
+  description: 'Drive에 파일이 추가되면 프로젝트 매칭 → 시트 기록 → 채널 알림'
+  required_connectors: [drive, sheets, kagemusha]
+  optional_connectors: [gmail] # 있으면 담당자에게 메일 알림 추가
+  category: monitoring # monitoring | analysis | processing | reporting
+
+agent:
+  model: claude-sonnet-4-6
+  tier: 2
+  system: |
+    Drive에 새 파일이 추가되면 납품으로 판단하고:
+    1. 파일명/경로에서 프로젝트명 추출
+    2. Sheets에서 프로젝트명 매칭
+    3. 납품 채널에 알림 (파일명, 프로젝트명, 시간)
+    4. Sheets 납품 기록 행 추가
+  tools:
+    agent_toolset:
+      enabled: [Read, Glob, Grep, Bash]
+    connectors: [drive, sheets, kagemusha]
+
+test:
+  description: '최근 Drive 변경 파일 3건으로 납품 감지 테스트'
+  count: 3
+  success_criteria: '3건 중 2건 이상 프로젝트 매칭 성공'
+```
+
+#### 커넥터 조합별 템플릿 카탈로그
+
+| 패턴                | 필요 커넥터                  | 템플릿                                    |
+| ------------------- | ---------------------------- | ----------------------------------------- |
+| **모니터링 → 알림** | sheets + calendar            | 마감 경보기, SLA 모니터                   |
+| **모니터링 → 기록** | drive + sheets + kagemusha   | 납품 감시, 산출물 추적                    |
+| **수집 → 분석**     | kagemusha + sheets           | 프로젝트 진행 요약, 클라이언트 인텔리전스 |
+| **변환 → 기록**     | gmail + sheets               | 메일→태스크 변환, 청구서 추적             |
+| **종합 → 보고**     | kagemusha + drive + calendar | 미팅 브리핑, 팀원 맥락 브리퍼             |
+| **분석 → 문서**     | sheets + kagemusha           | 주간 리포트, 스프린트 회고                |
+
+#### 동적 추천 플로우
 
 ```
-Conductor: "현재 연결된 커넥터를 분석했습니다.
+사용자: "에이전트 만들어줘" (또는 Agents 탭에서 + New Agent)
+           ↓
+Conductor:
+  1. 활성 커넥터 목록 조회 (connector list API)
+  2. 각 커넥터의 최근 데이터 샘플링 (어떤 데이터가 있는지 파악)
+  3. 템플릿 카탈로그에서 required_connectors 매칭
+  4. 매칭된 템플릿 + 사용자 데이터 기반 커스터마이즈 제안:
+
+채팅: "현재 연결된 커넥터: Drive ✓ Sheets ✓ Kagemusha ✓ Gmail ✓ Calendar ✓
+
 만들 수 있는 에이전트:
-1. 📦 납품 감시 — Drive + Sheets + Kagemusha
-2. 📧 메일 태스크 변환 — Gmail + Sheets
-3. 📊 프로젝트 진행 요약 — Sheets + Kagemusha
-4. ⏰ 마감 경보기 — Sheets + Calendar
-어떤 에이전트를 만들까요?"
+
+📦 납품 감시 (Drive+Sheets+Kagemusha)
+   → ProjectA 폴더에서 최근 파일 3건 감지됨. 바로 테스트 가능.
+
+📧 메일→태스크 변환 (Gmail+Sheets)
+   → 최근 미답변 메일 5건 있음. 자동 태스크 생성 가능.
+
+📊 프로젝트 현황 요약 (Sheets+Kagemusha)
+   → PROJECT_DB 시트에 프로젝트 42건. 주간 요약 자동화 가능.
+
+⏰ 마감 경보기 (Sheets+Calendar)
+   → 3일 내 마감 태스크 2건 감지. 알림 에이전트 추천.
+
+어떤 에이전트를 만들까요? 또는 원하는 역할을 설명해주세요."
+```
+
+### 1.5 전체 생성 플로우 (상세)
+
+```
+[Step 1] 사용자 요청
+  ├── A) 채팅: "납품 추적하는 에이전트 만들어줘"
+  ├── B) 채팅: "에이전트 뭐 만들 수 있어?" → 템플릿 추천
+  └── C) Agents 탭: "+ New Agent" → Conductor에게 자동 질문
+
+[Step 2] Conductor가 설계
+  ├── 커넥터 데이터 확인
+  ├── 템플릿 매칭 또는 자연어에서 설정 생성
+  ├── 에이전트 설정 YAML 구성
+  └── 채팅: "이런 에이전트를 만들겠습니다: [설정 요약]. 진행할까요?"
+
+[Step 3] 사용자 승인
+  └── "좋아" / "모델을 opus로 바꿔" / "도구에 WebFetch도 추가해"
+
+[Step 4] 에이전트 생성 + 뷰어 반영
+  ├── agent_create() → config.yaml 핫리로드
+  ├── viewer_navigate('agents') → Agents 탭으로 이동
+  ├── 새 에이전트 카드 실시간 표시
+  └── 채팅: "✅ 납품 감시 에이전트 v1 생성 완료. 테스트할까요?"
+
+[Step 5] 자동 검증 (→ Phase 2로)
 ```
 
 ## Phase 2: Verify (검증)
 
-### 2.1 테스트 세션
+### 2.1 전체 검증 플로우 (상세)
 
 ```
-Conductor: "테스트 시작합니다"
-  1. 최근 실제 데이터 N건 수집 (커넥터에서)
-  2. 대상 에이전트에게 delegate() → 시뮬레이션 실행
-  3. 결과 수집
+[Step 1] 테스트 데이터 수집
+  Conductor:
+  ├── 커넥터 API로 최근 실제 데이터 N건 수집
+  │   예: Drive 최근 파일 3건, Gmail 최근 메일 5건
+  ├── 템플릿에 test.count 정의되어 있으면 그 수만큼
+  └── 채팅: "최근 데이터 3건으로 테스트합니다..."
+
+[Step 2] 시뮬레이션 실행
+  Conductor:
+  ├── delegate(대상에이전트, '이 데이터를 처리해: [테스트 데이터]')
+  ├── 각 건별 처리 결과 수집
+  │   예: {input: "파일명.mov", output: "프로젝트 A에 매칭, 시트 기록 완료"}
+  ├── viewer_navigate('agents', {id: agentId, tab: 'activity'})
+  └── 뷰어: Activity 탭에 테스트 실행 로그 실시간 표시
+
+[Step 3] 결과 평가 (Conductor가 직접 수행)
+  Conductor:
+  ├── 각 건의 input/output을 검토
+  ├── 평가 기준 적용:
+  │   ├── 정확도: N건 중 올바르게 처리한 비율
+  │   ├── 도구 사용: 적절한 도구를 호출했는가
+  │   ├── 결과 품질: 출력이 의도에 부합하는가
+  │   └── 에러 여부: 예외 없이 완료했는가
+  ├── 종합 점수 산출 (0-100)
+  └── 개선 제안 생성
+
+[Step 4] 결과 보고
+  ├── 채팅: "테스트 완료 — 85점 (3건 중 2건 정확)
+  │          ❌ 1건 실패: 파일명에서 프로젝트명 추출 못함
+  │          💡 제안: system prompt에 프로젝트 목록 참조 추가"
+  ├── Agents 탭 Activity: 테스트 결과 카드 표시
+  ├── agent_activity_log(type='test_run', score=85, ...)
+  └── Wiki: 테스트 기록 자동 저장
+
+[Step 5] 개선 루프 (필요 시)
+  사용자: "제안대로 수정해줘"
+  Conductor:
+  ├── agent_update() → system prompt 수정 → v2 생성
+  ├── 동일 테스트 데이터로 재실행
+  ├── Before/After 비교:
+  │   "v1: 70점 (2/3) → v2: 95점 (3/3)"
+  └── 채팅: "v2가 더 좋습니다. 활성화할까요?"
+
+[Step 6] 활성화
+  사용자: "좋아 운영해"
+  Conductor:
+  ├── agent_enable(agentId, true) → 핫리로드
+  ├── viewer_notify('납품 감시 에이전트가 활성화되었습니다')
+  ├── Agents 탭: 카드 상태 → Active (녹색)
+  └── 채팅: "✅ 활성화 완료. 운영 중 이상이 있으면 알려드리겠습니다."
 ```
 
-### 2.2 자동 평가
+### 2.2 평가 데이터 구조
 
-Conductor가 직접 평가 (별도 채점자 에이전트 불필요):
-
+```yaml
+# agent_activity에 저장되는 테스트 결과
+type: test_run
+agent_id: delivery-monitor
+agent_version: 2
+input_summary: 'Drive 파일 3건 테스트'
+output_summary: '3건 중 3건 정확 (v1 대비 +1건 개선)'
+score: 95
+details:
+  total: 3
+  passed: 3
+  failed: 0
+  items:
+    - input: 'c130302-Animation_4_Loop.mov'
+      expected: 'ProjectA 프로젝트 매칭'
+      actual: 'ProjectA 프로젝트 매칭 → 시트 기록 완료'
+      result: pass
+    - input: 'SD_typhoon_addition_draft.psd'
+      expected: 'ProjectB 프로젝트 매칭'
+      actual: 'ProjectB 프로젝트 매칭 → 납품 채널 알림'
+      result: pass
+    - input: 'meeting_notes_0411.pdf'
+      expected: '납품 아님 → skip'
+      actual: '납품 아님으로 판단 → skip'
+      result: pass
+suggestion: null # 전부 통과 시 없음
 ```
-평가 기준:
-  - 정확도: N건 중 몇 건 올바르게 처리했나
-  - 도구 사용: 적절한 도구를 사용했나
-  - 응답 품질: 결과물이 의도대로인가
-  - 에러 여부: 예외 없이 완료했나
 
-결과:
-  score: 85
-  details: "5건 중 4건 정확. 1건 프로젝트명 매칭 실패"
-  suggestion: "system prompt에 프로젝트명 목록 참조 추가 권장"
-```
-
-### 2.3 Before/After 비교
-
-```
-Conductor:
-  1. 현재 버전 테스트 결과 저장 (v1: 70점)
-  2. system prompt 수정 → v2 생성
-  3. 동일 테스트 재실행 (v2: 95점)
-  4. 비교 결과 보고:
-     → 채팅: "v1: 70점 → v2: 95점. 활성화할까요?"
-     → Agents 탭: History 탭에 버전별 점수 표시
-```
-
-### 2.4 검증 기록
+### 2.3 검증 기록
 
 모든 테스트 결과는 영구 보존:
 
@@ -148,6 +284,52 @@ Conductor:
 - Wiki에 자동 문서화: "에이전트명 테스트 기록 YYYY-MM-DD"
 
 ## Phase 3: Track (추적)
+
+### 3.0 전체 추적 플로우 (상세)
+
+```
+[운영 중] 에이전트 활성화 상태
+           ↓
+[Step 1] 실행 이벤트 자동 기록
+  에이전트가 작업할 때마다:
+  ├── task_start → agent_activity 기록
+  ├── 도구 호출 로그 (tools_called)
+  ├── task_complete 또는 task_error → 결과 기록
+  └── 토큰 사용량 집계 (tokens_used)
+
+[Step 2] 실시간 뷰어 반영
+  ├── Agents 탭 카드: 상태 뱃지 갱신 (active → idle → error)
+  ├── Activity 피드: 새 로그 추가
+  └── Dashboard: 에이전트 활동 카운터 갱신
+
+[Step 3] Conductor 주기 점검 (cron 또는 heartbeat)
+  매일 아침 / 매 시간:
+  ├── agent_activity 집계 쿼리
+  ├── 이상 감지 로직:
+  │   ├── 에러율 > 30% → 경고
+  │   ├── 에러 3회 연속 → 긴급 알림
+  │   ├── 토큰 급증 (전일 대비 3배) → 비용 경고
+  │   └── 24시간 무활동 → "에이전트 작동 중인가?" 확인
+  └── 보고 생성
+
+[Step 4] 보고 (채널별 분기)
+  정상 운영:
+  ├── Dashboard briefing: "어제 에이전트 활동 요약"
+  └── Wiki: 주간 성과 문서 자동 업데이트
+
+  이상 감지 시:
+  ├── 채팅: "⚠️ 납품 감시 에이전트 에러 연속 — 확인 필요"
+  ├── Toast: 뷰어 알림
+  ├── 외부 채널: Slack/Discord/Telegram
+  └── Wiki: 인시던트 기록
+
+[Step 5] 자동 대응 (선택적)
+  Conductor:
+  ├── 에러 원인 분석 (최근 에러 로그 검토)
+  ├── 자동 수정 시도 (system prompt 조정 → 새 버전)
+  ├── 재검증 (Phase 2 루프)
+  └── 채팅: "에러 원인: API 응답 형식 변경. v3으로 수정했습니다. 테스트 결과 95점."
+```
 
 ### 3.1 실행 이벤트 기록
 
