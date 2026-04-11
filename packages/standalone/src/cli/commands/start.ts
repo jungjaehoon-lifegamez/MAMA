@@ -14,6 +14,7 @@ import {
   configExists,
   expandPath,
   provisionDefaults,
+  getDefaultMultiAgentConfig,
 } from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
@@ -376,7 +377,41 @@ export async function runAgentLoop(
   const validationService = new ValidationSessionService(db);
   toolExecutor.setValidationService(validationService);
   {
-    const agents = config.multi_agent?.agents ?? {};
+    // Ensure OS system agents exist in config (memory agent may be missing in older configs)
+    if (!config.multi_agent) {
+      config.multi_agent = getDefaultMultiAgentConfig();
+    }
+    if (!config.multi_agent.agents) {
+      config.multi_agent.agents = {};
+    }
+    const osAgents: Record<
+      string,
+      {
+        name: string;
+        display_name: string;
+        trigger_prefix: string;
+        persona_file: string;
+        tier: 1 | 2 | 3;
+        can_delegate?: boolean;
+        enabled?: boolean;
+      }
+    > = {
+      memory: {
+        name: 'Memory Agent',
+        display_name: '🧠 Memory',
+        trigger_prefix: '!memory',
+        persona_file: '~/.mama/personas/memory.md',
+        tier: 3,
+        enabled: true,
+      },
+    };
+    for (const [id, cfg] of Object.entries(osAgents)) {
+      if (!config.multi_agent.agents[id]) {
+        config.multi_agent.agents[id] = cfg;
+      }
+    }
+
+    const agents = config.multi_agent.agents;
     for (const [id, cfg] of Object.entries(agents)) {
       if (!getLatestVersion(db, id)) {
         let personaText: string | null = null;
