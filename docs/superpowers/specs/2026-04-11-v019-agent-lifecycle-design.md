@@ -2,9 +2,10 @@
 
 > 에이전트를 대화로 만들고, 자동으로 검증하고, 운영을 추적하는 시스템.
 >
-> **Scope:** 이 문서는 전체 비전. v0.19에서는 Phase 1A (Config 편집 + Tools 저장 + enable/disable) + Phase 2A (agent_activity + Activity 탭)만 구현. Phase 1B-4는 후속 버전.
+> **Scope:** v0.19 = Phase 1A (done) + 2A (done) + 2B (Conductor 팩토리) + 1B (agent_test). Phase 3은 보고 체계만. Phase 4(템플릿)는 v0.20 defer.
 >
-> **Review:** Codex + Claude 서브에이전트 리뷰 반영 (2026-04-11). Critical 6건 수정.
+> **Review Round 1:** Codex + Claude 서브에이전트 리뷰 반영 (2026-04-11). Critical 6건 수정.
+> **Review Round 2:** CEO + Eng + DX + Design 4-perspective 리뷰 (2026-04-11). Tool surface 4→1 정리, Phase 순서 재편, 보안/동시성 강화.
 
 ## Problem
 
@@ -233,13 +234,14 @@ Conductor:
   ├── 종합 점수 산출 (0-100)
   └── 개선 제안 생성
 
-[Step 4] 결과 보고
+[Step 4] 결과 보고 (Conductor 인라인 — agent_evaluate 불필요)
+  Conductor:
+  ├── agent_test 리턴의 results를 직접 평가 (LLM 인라인)
+  ├── 종합 점수 산출 + agent_activity UPDATE (score, details.items)
   ├── 채팅: "테스트 완료 — 85점 (3건 중 2건 정확)
   │          ❌ 1건 실패: 파일명에서 프로젝트명 추출 못함
   │          💡 제안: system prompt에 프로젝트 목록 참조 추가"
-  ├── Agents 탭 Activity: 테스트 결과 카드 표시
-  ├── agent_activity_log(type='test_run', score=85, ...)
-  └── Wiki: 테스트 기록 자동 저장
+  └── Agents 탭 Activity: 테스트 결과 카드 (expandable, pass/fail per item)
 
 [Step 5] 개선 루프 (필요 시)
   사용자: "제안대로 수정해줘"
@@ -336,12 +338,12 @@ suggestion: null # 전부 통과 시 없음
   ├── 외부 채널: Slack/Discord/Telegram
   └── Wiki: 인시던트 기록
 
-[Step 5] 자동 대응 (선택적)
+[Step 5] 대응 (기본: alert + recommend. 자동 수정은 opt-in)
   Conductor:
   ├── 에러 원인 분석 (최근 에러 로그 검토)
-  ├── 자동 수정 시도 (system prompt 조정 → 새 버전)
-  ├── 재검증 (Phase 2 루프)
-  └── 채팅: "에러 원인: API 응답 형식 변경. v3으로 수정했습니다. 테스트 결과 95점."
+  ├── 채팅: "⚠️ 에러 원인: API 응답 형식 변경. 수정 제안: system prompt에 새 형식 추가."
+  ├── 사용자 승인 시에만 → system prompt 수정 → 새 버전 → 재검증
+  └── (v0.20) opt-in 자동 수정: config에 auto_remediate: true 설정 시만 동작
 ```
 
 ### 3.1 실행 이벤트 기록
@@ -401,27 +403,47 @@ CREATE INDEX IF NOT EXISTS idx_agent_activity_agent ON agent_activity(agent_id, 
 | 테스트 결과 | 채팅 (점수+피드백)  | Agents History   | Wiki + agent_activity |
 | 버전 변경   | 채팅 (Before/After) | Agents History   | agent_versions        |
 
-## New Gateway Tools
+## New Gateway Tools (Review Round 2 반영)
 
-기존 도구에 추가:
+기존 도구에 추가. Round 2 리뷰에서 tool surface를 4→1로 정리:
 
-| 도구                 | 파라미터                        | 설명                                           |
-| -------------------- | ------------------------------- | ---------------------------------------------- |
-| `agent_test`         | agent_id, test_data?, count?    | 최근 커넥터 데이터로 에이전트 테스트 세션 실행 |
-| `agent_evaluate`     | agent_id, test_results          | 테스트 결과 평가 (정확도, 품질, 에러)          |
-| `agent_enable`       | agent_id, enabled               | 에이전트 활성화/비활성화 토글                  |
-| `agent_activity_log` | agent_id, type, summary, score? | 실행 이벤트 기록                               |
+- ~~`agent_evaluate`~~ → 제거. Conductor가 인라인 평가 (스펙 Phase 2.1 Step 3과 일치). `agent_test`가 점수 저장까지 수행.
+- ~~`agent_enable`~~ → 제거. 기존 `agent_update({enabled: bool})` 사용 (DX: CRUD 패턴 일관성).
+- ~~`agent_activity_log`~~ → 제거. delegation handler 자동 로깅으로 충분 (스펙 3.1과 모순 해소).
+
+| 도구         | 파라미터                                                                | 리턴                                                                        | 설명                                             |
+| ------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------------------- | ------------------------------------------------ |
+| `agent_test` | `agent_id, sample_count?: number, test_data?: Record<string,unknown>[]` | `{ success, test_run_id, results: [{input, output, error?}], duration_ms }` | 커넥터 실제 데이터로 에이전트 테스트 + 결과 저장 |
+
+### agent_test 상세
+
+**데이터 수집:** `RawStore.getRecent(connectorName, count)` 신규 메서드 사용. 에이전트 config의 `connectors` 필드에서 대상 커넥터 결정.
+
+**동시성:** `agentId` 기준 in-flight map으로 중복 실행 방지. 이미 실행 중이면 `{ success: false, error: 'test_already_running' }` 반환.
+
+**보안:** `checkViewerOnly()` 적용. 뷰어 외 소스에서 호출 불가.
+
+**에러 taxonomy:**
+
+- `connector_unavailable` — 대상 커넥터 비활성
+- `agent_timeout` — delegate 타임아웃
+- `partial_failure` — 일부 항목 성공 (부분 결과 반환)
+
+**점수 저장:** Conductor가 인라인 평가 후, `agent_test` 리턴의 `test_run_id`로 `agent_activity` 행을 UPDATE (score, details.items 추가). 또는 Conductor가 평가 결과를 포함하여 `agent_update`의 `change_note`에 기록.
 
 ## Viewer Changes
 
-### Agents 탭 리스트 뷰 개선
+### Agents 탭 리스트 뷰 개선 (Design 리뷰 반영)
 
-현재 카드에 추가:
+카드 최대 6 항목 (Design: "8 data points in 220px card is too dense"):
 
-- 상태 뱃지 (active/idle/error/disabled)
-- 마지막 실행 시각
-- 오늘 실행 횟수
-- enable/disable 토글
+- name + tier badge (기존)
+- enable/disable 토글 (기존)
+- model (기존)
+- 상태 뱃지 (active/idle/error/disabled) — **NEW**
+- 마지막 실행 시각 — **NEW**
+- ~~version~~ → detail view header로 이동
+- ~~오늘 실행 횟수~~ → Activity 탭으로 이동
 
 ### Agents 탭 상세 뷰 탭 재구성
 
@@ -433,9 +455,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_activity_agent ON agent_activity(agent_id, 
 | Activity | **신규** (Metrics 대체)  | 시간순 실행 로그 + 테스트 결과               |
 | History  | 유지 + **점수 표시**     | 버전별 테스트 점수 + diff                    |
 
-### agents.ts 인라인 스타일 → Tailwind 전환
+### agents.ts 스타일 통일 (별도 tech-debt ticket)
 
-현재 100% 인라인 스타일을 Tailwind 클래스로 전환하여 디자인 시스템 일관성 확보.
+CEO 리뷰: "인라인→Tailwind 전환은 feature epic에 넣지 말 것." 현재 Config/Tools/Activity는 Tailwind, 나머지(List/Persona/History/Create)는 인라인. 별도 정리 작업으로 분리.
 
 ## What This Is NOT
 
@@ -456,11 +478,17 @@ MAMA가 차지하는 영역: "판단이 필요한 자동화"
 - 납품물을 보고 프로젝트를 **매칭**해서 기록
 - 채널 대화에서 액션 아이템을 **추출**해서 태스크 생성
 
-## Implementation Priority
+## Implementation Priority (Review Round 2 재편)
 
-1. **Phase 1A**: Config 탭 편집 + Tools 저장 + enable/disable 토글
-2. **Phase 1B**: agent_test + agent_evaluate gateway tools
-3. **Phase 2A**: agent_activity 테이블 + Activity 탭
-4. **Phase 2B**: Conductor 페르소나에 에이전트 팩토리 역할 추가
-5. **Phase 3**: 보고 체계 (Dashboard + Wiki + 외부 채널 통합)
-6. **Phase 4**: 커넥터 기반 템플릿 동적 추천
+CEO 리뷰: "데모 가능한 flow를 최우선으로. 2B를 1B 앞으로."
+
+1. **Phase 1A**: Config 탭 편집 + Tools 저장 + enable/disable 토글 — **DONE**
+2. **Phase 2A**: agent_activity 테이블 + Activity 탭 + auto-log — **DONE**
+3. **Phase 2B**: Conductor 페르소나에 에이전트 팩토리 역할 추가 ← **NEXT**
+4. **Phase 1B**: `agent_test` gateway tool + RawStore.getRecent + 동시성 가드
+5. **Phase 3**: 보고 체계 (alert only, 자동 대응은 opt-in. default = alert + recommend)
+6. ~~**Phase 4**~~: 커넥터 기반 템플릿 → **v0.20 defer** (CEO: "pattern이 검증되기 전 최적화")
+
+### Demo Day Milestone (v0.19 완료 기준)
+
+> 채팅: "에이전트 만들어줘" → Conductor가 설계+생성 → agent_test 실행 → Activity에 결과 표시 → Conductor 평가 → 활성화 (90초 flow)
