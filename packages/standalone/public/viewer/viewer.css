@@ -473,22 +473,22 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   box-shadow: 0 4px 12px rgba(255, 206, 0, 0.3);
 }
 
-/* Assistant messages - left aligned, lavender bubble */
+/* Assistant messages - left aligned, white bubble */
 .chat-message.assistant {
   align-self: flex-start;
   align-items: flex-start;
 }
 
 .chat-message.assistant .message-content {
-  background: #F5EBF9;
+  background: #FFFFFF;
   color: #131313;
   padding: 12px 16px;
   border-radius: 20px 20px 20px 4px;
   font-size: 15px;
   line-height: 1.5;
   word-break: break-word;
-  box-shadow: 0 2px 8px rgba(19, 19, 19, 0.08);
-  border: 1px solid #D4C4E0;
+  box-shadow: 0 1px 4px rgba(19, 19, 19, 0.06);
+  border: 1px solid #EDE9E1;
 }
 
 /* System messages - centered, subtle */
