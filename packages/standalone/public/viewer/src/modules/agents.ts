@@ -29,7 +29,7 @@ const C = {
 } as const;
 
 type AgentWithVersion = MultiAgentAgent & { system?: string; version?: number };
-type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'history';
+type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'validation' | 'history';
 
 export class AgentsModule {
   private container: HTMLElement | null = null;
@@ -203,7 +203,7 @@ export class AgentsModule {
   private renderDetail(): void {
     if (!this.container || !this.selectedAgent) return;
     const a = this.selectedAgent;
-    const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'history'];
+    const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'validation', 'history'];
 
     const tabBar = tabs
       .map(
@@ -246,6 +246,9 @@ export class AgentsModule {
         break;
       case 'activity':
         void this.renderActivityTab(content, a);
+        break;
+      case 'validation':
+        void this.renderValidationTab(content, a);
         break;
       case 'history':
         this.renderHistoryTab(content, a);
@@ -526,6 +529,179 @@ export class AgentsModule {
       });
     } catch {
       el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load activity.</div>';
+    }
+  }
+
+  // ── Validation Tab ─────────────────────────────────────────────────────
+
+  private async renderValidationTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading validation...</div>`;
+    const agentId = a.id ?? '';
+
+    try {
+      const [summaryRes, historyRes] = await Promise.all([
+        API.getValidationSummary(agentId),
+        API.getValidationHistory(agentId, 20),
+      ]);
+
+      const summary = summaryRes.summary as Record<string, unknown> | null;
+      const history = historyRes.history as Array<Record<string, unknown>>;
+
+      if (!summary && history.length === 0) {
+        el.innerHTML = `<div style="color:${C.ter};font-size:13px;padding:20px 0;text-align:center;">
+          No validation sessions yet. Run <code style="background:${C.bg};padding:2px 6px;border-radius:4px;">agent_test("${escapeHtml(agentId)}")</code> to start.
+        </div>`;
+        return;
+      }
+
+      // ── Summary card ──
+      const outcomeColors: Record<string, string> = {
+        healthy: '#22c55e',
+        improved: '#3b82f6',
+        regressed: '#ef4444',
+        inconclusive: '#f59e0b',
+      };
+      const outcome = String(summary?.validation_outcome ?? 'none');
+      const execStatus = String(summary?.execution_status ?? '—');
+      const outcomeColor = outcomeColors[outcome] ?? C.ter;
+      const baselineVer = summary?.baseline_version ?? '—';
+      const endedAt = summary?.ended_at ? new Date(Number(summary.ended_at)).toLocaleString() : '—';
+
+      // ── Diff section (before/after from latest session) ──
+      let diffHtml = '';
+      if (summary?.before_snapshot_json || summary?.after_snapshot_json) {
+        const before = summary.before_snapshot_json
+          ? JSON.parse(String(summary.before_snapshot_json))
+          : null;
+        const after = summary.after_snapshot_json
+          ? JSON.parse(String(summary.after_snapshot_json))
+          : null;
+
+        const diffRows = Object.keys({ ...before, ...after })
+          .filter((k) => k !== 'schema_version' && k !== 'captured_at')
+          .map((k) => {
+            const bv = before?.[k] ?? '—';
+            const av = after?.[k] ?? '—';
+            const changed = String(bv) !== String(av);
+            return `<tr style="border-bottom:1px solid ${C.bdr};">
+              <td style="padding:4px 8px;font-size:12px;color:${C.sec};">${escapeHtml(k)}</td>
+              <td style="padding:4px 8px;font-size:12px;color:${C.ter};">${escapeHtml(String(bv))}</td>
+              <td style="padding:4px 8px;font-size:12px;color:${changed ? (outcomeColors.improved ?? C.pri) : C.ter};font-weight:${changed ? '600' : '400'};">${escapeHtml(String(av))}</td>
+            </tr>`;
+          })
+          .join('');
+
+        if (diffRows) {
+          diffHtml = `
+            <div style="margin-top:16px;">
+              <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Before / After Diff</div>
+              <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="border-bottom:2px solid ${C.bdr};">
+                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Field</th>
+                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Before</th>
+                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">After</th>
+                </tr></thead>
+                <tbody>${diffRows}</tbody>
+              </table>
+            </div>`;
+        }
+      }
+
+      // ── Report ──
+      let reportHtml = '';
+      if (summary?.report_json) {
+        try {
+          const report = JSON.parse(String(summary.report_json));
+          reportHtml = `
+            <div style="margin-top:16px;">
+              <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Report</div>
+              <div style="background:${C.bg};padding:12px;border-radius:8px;font-size:12px;color:${C.sec};white-space:pre-wrap;">${escapeHtml(report.details || report.headline || '—')}</div>
+            </div>`;
+        } catch {
+          /* ignore parse errors */
+        }
+      }
+
+      // ── History timeline ──
+      const historyRows = history
+        .map((h) => {
+          const hOutcome = String(h.validation_outcome ?? '—');
+          const hColor = outcomeColors[hOutcome] ?? C.ter;
+          const hTime = h.ended_at ? new Date(Number(h.ended_at)).toLocaleString() : 'in progress';
+          return `<tr style="border-bottom:1px solid ${C.bdr};">
+          <td style="padding:6px 8px;font-size:12px;color:${C.sec};">v${h.agent_version ?? '?'}</td>
+          <td style="padding:6px 8px;font-size:12px;"><span style="color:${hColor};font-weight:600;">${escapeHtml(hOutcome)}</span></td>
+          <td style="padding:6px 8px;font-size:12px;color:${C.sec};">${escapeHtml(String(h.trigger_type ?? '—'))}</td>
+          <td style="padding:6px 8px;font-size:11px;color:${C.ter};">${escapeHtml(hTime)}</td>
+        </tr>`;
+        })
+        .join('');
+
+      // ── Approve button ──
+      const approveBtn =
+        outcome === 'improved' || outcome === 'healthy'
+          ? `<button id="btn-approve-validation" style="margin-top:12px;padding:6px 16px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Approve as Baseline</button>`
+          : '';
+
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;">
+          <div style="background:${C.bg};padding:12px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Outcome</div>
+            <div style="font-size:16px;font-weight:700;color:${outcomeColor};">${escapeHtml(outcome)}</div>
+          </div>
+          <div style="background:${C.bg};padding:12px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Execution</div>
+            <div style="font-size:14px;font-weight:600;color:${C.pri};">${escapeHtml(execStatus)}</div>
+          </div>
+          <div style="background:${C.bg};padding:12px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Baseline</div>
+            <div style="font-size:14px;font-weight:600;color:${C.pri};">v${escapeHtml(String(baselineVer))}</div>
+          </div>
+          <div style="background:${C.bg};padding:12px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Last Run</div>
+            <div style="font-size:12px;color:${C.sec};">${escapeHtml(endedAt)}</div>
+          </div>
+        </div>
+
+        ${diffHtml}
+        ${reportHtml}
+
+        ${
+          historyRows
+            ? `
+        <div style="margin-top:16px;">
+          <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation History</div>
+          <table style="width:100%;border-collapse:collapse;">
+            <thead><tr style="border-bottom:2px solid ${C.bdr};">
+              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Version</th>
+              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Outcome</th>
+              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Trigger</th>
+              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Time</th>
+            </tr></thead>
+            <tbody>${historyRows}</tbody>
+          </table>
+        </div>`
+            : ''
+        }
+
+        ${approveBtn}
+      `;
+
+      // Approve button handler
+      const approveEl = el.querySelector('#btn-approve-validation');
+      if (approveEl && summary?.id) {
+        approveEl.addEventListener('click', async () => {
+          try {
+            await API.approveValidationSession(agentId, String(summary.id));
+            showToast('Approved as baseline');
+            void this.renderValidationTab(el, a);
+          } catch {
+            showToast('Approval failed');
+          }
+        });
+      }
+    } catch {
+      el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load validation data.</div>';
     }
   }
 
