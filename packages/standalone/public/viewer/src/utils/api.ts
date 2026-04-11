@@ -948,6 +948,39 @@ export class API {
   }
 
   // =============================================
+  // Validation API
+  // =============================================
+
+  static async getValidationSummary(
+    agentId: string
+  ): Promise<{ summary: Record<string, unknown> | null }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/validation/summary`);
+  }
+
+  static async getValidationHistory(
+    agentId: string,
+    limit = 50
+  ): Promise<{ history: Array<Record<string, unknown>> }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/validation/history?limit=${limit}`);
+  }
+
+  static async getValidationSessionDetail(
+    sessionId: string
+  ): Promise<{ session: Record<string, unknown>; metrics: Array<Record<string, unknown>> }> {
+    return this.get(`/api/validation-sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  static async approveValidationSession(
+    agentId: string,
+    sessionId: string
+  ): Promise<{ success: boolean }> {
+    return this.post(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/approve?session_id=${encodeURIComponent(sessionId)}`,
+      {}
+    );
+  }
+
+  // =============================================
   // UI Command API (SmartStore pattern)
   // =============================================
 

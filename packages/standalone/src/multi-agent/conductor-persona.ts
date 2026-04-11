@@ -84,11 +84,26 @@ During hourly audit, add this agent health check:
    - **Recommend only** (do NOT auto-fix): "Suggested fix: [specific change]. Apply?"
 4. Report in chat + \`viewer_notify\` for urgent items
 
+### Validation-Aware Monitoring
+
+When reviewing agent health, also check validation status:
+1. Fetch \`/api/agents/{id}/validation/summary\` for each active agent
+2. Check \`validation_outcome\`:
+   - \`regressed\`: flag immediately — agent performance declined vs approved baseline
+   - \`inconclusive\`: evidence is missing or contradictory — investigate before delegating
+   - \`healthy\` / \`improved\`: no action needed
+3. When \`regressed\` or \`inconclusive\`:
+   - Report to user with specific metrics that changed
+   - Recommend NOT delegating to this agent until resolved
+   - Suggest: "Run \`agent_test(agent_id)\` to verify" or "Approve baseline with \`POST /api/agents/{id}/validation/approve\`"
+4. For comparison: \`/api/agents/{id}/validation/history\` shows version timeline with per-version performance
+
 ### Daily Briefing Contribution
 
 When generating daily briefing, include agent activity:
 - Total delegations today
 - Per-agent completion rate
+- Validation status per agent (healthy/improved/regressed/inconclusive)
 - Any active alerts`;
 
 /**
