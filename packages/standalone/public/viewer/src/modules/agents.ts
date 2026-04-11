@@ -326,16 +326,19 @@ export class AgentsModule {
     const overlay = document.createElement('div');
     overlay.style.cssText =
       'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;display:flex;align-items:center;justify-content:center;';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Create new agent');
     overlay.innerHTML = `
-      <div style="background:#fff;border-radius:12px;padding:24px;width:380px;box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+      <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.15);">
         <h3 style="font-size:16px;font-weight:600;color:${C.pri};margin:0 0 16px 0;">New Agent</h3>
-        <div style="margin-bottom:10px;"><label style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">ID (slug)</label><input id="new-id" style="width:100%;padding:6px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="qa-specialist" /></div>
-        <div style="margin-bottom:10px;"><label style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Name</label><input id="new-name" style="width:100%;padding:6px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="QA Specialist" /></div>
-        <div style="margin-bottom:10px;"><label style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Model</label><input id="new-model" style="width:100%;padding:6px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" value="claude-sonnet-4-6" /></div>
-        <div style="margin-bottom:16px;"><label style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Tier</label><select id="new-tier" style="width:100%;padding:6px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;"><option value="1">T1 (Full)</option><option value="2" selected>T2 (Read/Search)</option><option value="3">T3 (Read only)</option></select></div>
+        <div style="margin-bottom:10px;"><label for="new-id" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">ID (slug)</label><input id="new-id" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="qa-specialist" /></div>
+        <div style="margin-bottom:10px;"><label for="new-name" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Name</label><input id="new-name" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="QA Specialist" /></div>
+        <div style="margin-bottom:10px;"><label for="new-model" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Model</label><input id="new-model" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" value="claude-sonnet-4-6" /></div>
+        <div style="margin-bottom:16px;"><label for="new-tier" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Tier</label><select id="new-tier" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;"><option value="1">T1 (Full)</option><option value="2" selected>T2 (Read/Search)</option><option value="3">T3 (Read only)</option></select></div>
         <div style="display:flex;gap:8px;justify-content:flex-end;">
-          <button id="btn-cancel" style="padding:6px 14px;border:1px solid ${C.bdr};border-radius:6px;background:#fff;cursor:pointer;font-size:12px;">Cancel</button>
-          <button id="btn-create" style="padding:6px 14px;border:none;border-radius:6px;background:${C.agent};color:#fff;cursor:pointer;font-size:12px;font-weight:500;">Create</button>
+          <button id="btn-cancel" style="padding:8px 14px;border:1px solid ${C.bdr};border-radius:6px;background:#fff;cursor:pointer;font-size:12px;">Cancel</button>
+          <button id="btn-create" style="padding:8px 14px;border:none;border-radius:6px;background:${C.agent};color:#fff;cursor:pointer;font-size:12px;font-weight:500;">Create</button>
         </div>
       </div>`;
 
