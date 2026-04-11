@@ -25,7 +25,7 @@ const C = {
   agent: '#8b5cf6',
   green: '#3A9E7E',
   red: '#D94F4F',
-  yellow: '#F5C518',
+  yellow: '#FFCE00',
 } as const;
 
 type AgentWithVersion = MultiAgentAgent & { system?: string; version?: number };
@@ -73,9 +73,7 @@ export class AgentsModule {
         const statusText = a.enabled ? 'Active' : 'Disabled';
         return `
         <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}"
-             style="background:#fff;border:1px solid ${C.bdr};border-radius:8px;padding:16px;cursor:pointer;transition:box-shadow 0.15s;"
-             onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'"
-             onmouseout="this.style.boxShadow='none'">
+             style="background:#fff;border:1px solid ${C.bdr};border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow 0.15s,transform 0.15s;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:15px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
             <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${C.agent}15;color:${C.agent}">T${a.tier ?? 1}</span>

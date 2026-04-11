@@ -851,6 +851,12 @@ body,
   box-shadow: 0 8px 32px rgba(19, 19, 19, 0.12);
 }
 
+/* Agent card hover (replaces inline JS handlers) */
+.agent-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
 /* ============================================================================
    INPUT STYLES - Brand aligned
    ============================================================================ */
