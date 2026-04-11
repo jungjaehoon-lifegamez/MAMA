@@ -29,7 +29,7 @@ const C = {
 } as const;
 
 type AgentWithVersion = MultiAgentAgent & { system?: string; version?: number };
-type DetailTab = 'config' | 'persona' | 'tools' | 'metrics' | 'history';
+type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'history';
 
 export class AgentsModule {
   private container: HTMLElement | null = null;
@@ -69,14 +69,22 @@ export class AgentsModule {
     if (!this.container) return;
     const cards = this.agents
       .map((a) => {
-        const statusColor = a.enabled ? C.green : C.ter;
-        const statusText = a.enabled ? 'Active' : 'Disabled';
+        const statusColor = a.enabled !== false ? C.green : C.ter;
+        const statusText = a.enabled !== false ? 'Active' : 'Disabled';
         return `
         <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}"
              style="background:#fff;border:1px solid ${C.bdr};border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow 0.15s,transform 0.15s;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:15px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
-            <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${C.agent}15;color:${C.agent}">T${a.tier ?? 1}</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${C.agent}15;color:${C.agent}">T${a.tier ?? 1}</span>
+              <label class="agent-toggle-label" style="position:relative;display:inline-flex;align-items:center;cursor:pointer;" title="${a.enabled !== false ? 'Disable' : 'Enable'} agent">
+                <input type="checkbox" data-toggle-id="${escapeHtml(a.id ?? '')}" ${a.enabled !== false ? 'checked' : ''} style="position:absolute;opacity:0;width:0;height:0;" />
+                <div style="width:28px;height:16px;background:${a.enabled !== false ? C.green : '#D1D5DB'};border-radius:8px;position:relative;transition:background 0.2s;">
+                  <div style="position:absolute;top:2px;left:${a.enabled !== false ? '14px' : '2px'};width:12px;height:12px;background:#fff;border-radius:50%;transition:left 0.2s;"></div>
+                </div>
+              </label>
+            </div>
           </div>
           <div style="font-size:12px;color:${C.sec};margin-bottom:6px;">${escapeHtml(a.model || 'No model')}</div>
           <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -98,6 +106,23 @@ export class AgentsModule {
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
         ${cards}
       </div>`;
+
+    // Enable toggle — stop propagation so card click doesn't fire
+    this.container.querySelectorAll<HTMLInputElement>('[data-toggle-id]').forEach((toggle) => {
+      toggle.addEventListener('click', (e) => e.stopPropagation());
+      toggle.addEventListener('change', async () => {
+        const agentId = toggle.dataset.toggleId;
+        if (!agentId) return;
+        try {
+          await API.put(`/api/multi-agent/agents/${agentId}`, { enabled: toggle.checked });
+          showToast(`${agentId} ${toggle.checked ? 'enabled' : 'disabled'}`);
+          this.loadAgents();
+        } catch {
+          showToast('Toggle failed');
+          toggle.checked = !toggle.checked;
+        }
+      });
+    });
 
     this.container.querySelectorAll('.agent-card').forEach((card) => {
       card.addEventListener('click', () => {
@@ -134,7 +159,7 @@ export class AgentsModule {
   private renderDetail(): void {
     if (!this.container || !this.selectedAgent) return;
     const a = this.selectedAgent;
-    const tabs: DetailTab[] = ['config', 'persona', 'tools', 'metrics', 'history'];
+    const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'history'];
 
     const tabBar = tabs
       .map(
@@ -175,8 +200,8 @@ export class AgentsModule {
       case 'tools':
         this.renderToolsTab(content, a);
         break;
-      case 'metrics':
-        this.renderMetricsTab(content, a);
+      case 'activity':
+        void this.renderActivityTab(content, a);
         break;
       case 'history':
         this.renderHistoryTab(content, a);
@@ -185,20 +210,103 @@ export class AgentsModule {
   }
 
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
-    const field = (label: string, value: string) =>
-      `<div style="margin-bottom:12px;"><label style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">${label}</label><div style="font-size:13px;color:${C.pri};padding:6px 10px;border:1px solid ${C.bdr};border-radius:6px;background:#fff;">${escapeHtml(value)}</div></div>`;
+    const backend = a.backend || 'claude';
+    const modelOptions = (
+      backend === 'codex-mcp'
+        ? ['gpt-5.3-codex', 'gpt-5.4-mini']
+        : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
+    )
+      .map((m) => `<option value="${m}" ${a.model === m ? 'selected' : ''}>${m}</option>`)
+      .join('');
+
+    const tierOptions = [1, 2, 3]
+      .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
+      .join('');
+
+    const backendOptions = ['claude', 'codex-mcp']
+      .map((b) => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`)
+      .join('');
 
     el.innerHTML = `
-      ${field('ID', a.id ?? '')}
-      ${field('Name', a.display_name || a.name || '')}
-      ${field('Backend', a.backend || 'claude')}
-      ${field('Model', a.model || 'Not set')}
-      ${field('Tier', String(a.tier ?? 1))}
-      ${field('Effort', a.effort || 'Not set')}
-      ${field('Can Delegate', String(a.can_delegate ?? false))}
-      ${field('Trigger', a.trigger_prefix || 'None')}
-      ${field('Cooldown', `${a.cooldown_ms ?? 5000}ms`)}
-    `;
+      <div class="space-y-3">
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">ID</label>
+          <div class="text-[13px] text-gray-800 px-2.5 py-1.5 border border-gray-200 rounded-md bg-gray-50">${escapeHtml(a.id ?? '')}</div>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Name</label>
+          <input id="cfg-name" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]" value="${escapeHtml(a.display_name || a.name || '')}" />
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Backend</label>
+          <select id="cfg-backend" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${backendOptions}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Model</label>
+          <select id="cfg-model" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${modelOptions}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Tier</label>
+          <select id="cfg-tier" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${tierOptions}</select>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cfg-enabled" ${a.enabled !== false ? 'checked' : ''} class="accent-[#FFCE00] w-4 h-4" />
+            <span class="text-[13px]">Enabled</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cfg-delegate" ${a.can_delegate ? 'checked' : ''} class="accent-[#8b5cf6] w-4 h-4" />
+            <span class="text-[13px]">Can Delegate</span>
+          </label>
+        </div>
+        <div class="pt-2">
+          <button id="btn-save-config" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save</button>
+        </div>
+      </div>`;
+
+    // Backend change → update model options
+    el.querySelector('#cfg-backend')?.addEventListener('change', () => {
+      const newBackend = (el.querySelector('#cfg-backend') as HTMLSelectElement).value;
+      const models =
+        newBackend === 'codex-mcp'
+          ? ['gpt-5.3-codex', 'gpt-5.4-mini']
+          : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
+      const modelSelect = el.querySelector('#cfg-model') as HTMLSelectElement;
+      modelSelect.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join('');
+    });
+
+    // Save uses existing PUT /api/multi-agent/agents/:id (same as Settings)
+    el.querySelector('#btn-save-config')?.addEventListener('click', async () => {
+      if (!a.id) return;
+      try {
+        await API.put(`/api/multi-agent/agents/${a.id}`, {
+          model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+          backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
+          tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+          enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
+          can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
+        });
+        showToast('Saved — hot reloaded');
+
+        // Also record in agent_versions for audit trail
+        if (a.version !== null && a.version !== undefined) {
+          await API.updateAgent(a.id, {
+            version: a.version,
+            changes: {
+              model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+              tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+            },
+            change_note: 'Config updated via Agents tab',
+          }).catch(() => {
+            /* audit trail is best-effort */
+          });
+        }
+
+        this.showDetail(a.id);
+      } catch {
+        showToast('Save failed');
+      }
+    });
   }
 
   private renderPersonaTab(el: HTMLElement, a: AgentWithVersion): void {
@@ -247,50 +355,84 @@ export class AgentsModule {
     const rows = allTools
       .map((t) => {
         const checked = isAll || allowed.includes(t);
-        return `<label style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid ${C.bdr};font-size:13px;color:${C.pri};"><input type="checkbox" ${checked ? 'checked' : ''} data-tool="${t}" style="accent-color:${C.agent}"> ${t}</label>`;
+        return `<label class="flex items-center gap-2 py-1.5 border-b border-gray-100 text-[13px] cursor-pointer">
+          <input type="checkbox" ${checked ? 'checked' : ''} data-tool="${t}" class="accent-[#8b5cf6] w-4 h-4" /> ${t}
+        </label>`;
       })
       .join('');
 
     el.innerHTML = `
-      <div style="font-size:11px;color:${C.ter};margin-bottom:8px;">Tier ${a.tier ?? 1} preset applied. Toggle individual tools below.</div>
-      <div>${rows}</div>`;
+      <div class="text-[11px] text-gray-400 mb-2">Tier ${a.tier ?? 1} preset. Toggle tools and save.</div>
+      <div>${rows}</div>
+      <div class="pt-3">
+        <button id="btn-save-tools" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save Tools</button>
+      </div>`;
+
+    el.querySelector('#btn-save-tools')?.addEventListener('click', async () => {
+      const checked: string[] = [];
+      el.querySelectorAll<HTMLInputElement>('input[data-tool]').forEach((cb) => {
+        if (cb.checked) checked.push(cb.dataset.tool!);
+      });
+      if (!a.id) return;
+      try {
+        await API.put(`/api/multi-agent/agents/${a.id}`, {
+          tool_permissions: { allowed: checked },
+        });
+        showToast('Tools saved ��� hot reloaded');
+
+        // Audit trail (best-effort)
+        if (a.version !== null && a.version !== undefined) {
+          await API.updateAgent(a.id, {
+            version: a.version,
+            changes: { tool_permissions: { allowed: checked } },
+            change_note: `Tools: ${checked.join(', ')}`,
+          }).catch(() => {});
+        }
+
+        this.showDetail(a.id);
+      } catch {
+        showToast('Save failed');
+      }
+    });
   }
 
-  private async renderMetricsTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
-    el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading metrics...</div>`;
+  private async renderActivityTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = '<div class="text-[12px] text-gray-400">Loading...</div>';
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-      const { metrics } = await API.getAgentMetrics(a.id ?? '', weekAgo, today);
-      if (!metrics.length) {
-        el.innerHTML = `<div style="color:${C.ter};font-size:12px;">No metrics recorded yet for this agent.</div>`;
+      const { activity } = await API.getAgentActivity(a.id ?? '', 20);
+      if (!activity.length) {
+        el.innerHTML =
+          '<div class="text-[12px] text-gray-400 py-4 text-center">No activity yet. Delegate a task to this agent to see logs here.</div>';
         return;
       }
-      const rows = (metrics as Array<Record<string, unknown>>)
-        .map(
-          (m) =>
-            `<tr style="border-bottom:1px solid ${C.bdr};">
-            <td style="padding:4px 8px;font-size:12px;">${m.period_start}</td>
-            <td style="padding:4px 8px;font-size:12px;text-align:right;">${m.input_tokens}</td>
-            <td style="padding:4px 8px;font-size:12px;text-align:right;">${m.output_tokens}</td>
-            <td style="padding:4px 8px;font-size:12px;text-align:right;">${m.tool_calls}</td>
-            <td style="padding:4px 8px;font-size:12px;text-align:right;">${m.errors}</td>
-          </tr>`
-        )
+      const rows = activity
+        .map((ev: Record<string, unknown>) => {
+          const typeIcons: Record<string, string> = {
+            test_run: '&#x1F9EA;',
+            task_error: '&#x274C;',
+            config_change: '&#x2699;&#xFE0F;',
+            task_start: '&#x25B6;&#xFE0F;',
+          };
+          const icon = typeIcons[String(ev.type)] || '&#x2705;';
+          const scoreStr =
+            ev.score !== null && ev.score !== undefined ? ` &mdash; ${ev.score}/100` : '';
+          const summary = escapeHtml(String(ev.output_summary || ev.input_summary || ev.type));
+          const errorHtml = ev.error_message
+            ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>`
+            : '';
+          return `<div class="flex items-start gap-2 py-2 border-b border-gray-100">
+          <span class="text-[14px] flex-shrink-0">${icon}</span>
+          <div class="flex-1 min-w-0">
+            <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
+            ${errorHtml}
+            <div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} &middot; ${ev.duration_ms || 0}ms &middot; ${ev.created_at}</div>
+          </div>
+        </div>`;
+        })
         .join('');
-      el.innerHTML = `
-        <table style="width:100%;border-collapse:collapse;">
-          <thead><tr style="border-bottom:2px solid ${C.bdr};font-size:11px;color:${C.ter};">
-            <th style="text-align:left;padding:4px 8px;">Date</th>
-            <th style="text-align:right;padding:4px 8px;">In Tokens</th>
-            <th style="text-align:right;padding:4px 8px;">Out Tokens</th>
-            <th style="text-align:right;padding:4px 8px;">Tool Calls</th>
-            <th style="text-align:right;padding:4px 8px;">Errors</th>
-          </tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
+      el.innerHTML = `<div>${rows}</div>`;
     } catch {
-      el.innerHTML = `<div style="color:${C.red};font-size:12px;">Failed to load metrics.</div>`;
+      el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load activity.</div>';
     }
   }
 

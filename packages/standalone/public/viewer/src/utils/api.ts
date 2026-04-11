@@ -934,6 +934,13 @@ export class API {
     return this.get(`/api/agents/${encodeURIComponent(agentId)}/metrics`, { from, to });
   }
 
+  static async getAgentActivity(
+    agentId: string,
+    limit = 20
+  ): Promise<{ activity: Array<Record<string, unknown>> }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/activity?limit=${limit}`);
+  }
+
   // =============================================
   // UI Command API (SmartStore pattern)
   // =============================================

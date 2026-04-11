@@ -17,6 +17,7 @@ import {
   getLatestVersion,
   listVersions,
   getMetrics,
+  getActivity,
   compareVersionMetrics,
   type AgentVersionRow,
 } from '../db/agent-store.js';
@@ -215,6 +216,17 @@ export function handleGetAgentMetrics(
 ): void {
   const metrics = getMetrics(db, agentId, from, to);
   json(res, 200, { metrics });
+}
+
+/** GET /api/agents/:id/activity — recent activity log */
+export function handleGetAgentActivity(
+  res: ServerResponse,
+  agentId: string,
+  db: SQLiteDatabase,
+  limit: number
+): void {
+  const activity = getActivity(db, agentId, limit);
+  json(res, 200, { activity });
 }
 
 /** GET /api/agents/:id/versions/:v1/compare/:v2 — before/after comparison */

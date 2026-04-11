@@ -54,6 +54,7 @@ Call tools via JSON block:
 - **agent_get**(agent_id) — Get agent config, persona, and current version
 - **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
 - **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
+- **viewer_state**() — Get current viewer state (active tab, page context). Call this to know what the user is looking at.
 - **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab (e.g., agent detail, metrics)
 - **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
 

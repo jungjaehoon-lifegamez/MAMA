@@ -20,6 +20,7 @@ import {
   handleArchiveAgent,
   handleListVersions,
   handleGetAgentMetrics,
+  handleGetAgentActivity,
   handleCompareVersions,
 } from './agent-handler.js';
 import {
@@ -1681,6 +1682,21 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const from = params.get('from') || '2020-01-01';
       const to = params.get('to') || '2099-12-31';
       if (options.sessionsDb) handleGetAgentMetrics(res, agentId, from, to, options.sessionsDb);
+      else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/activity?limit= — activity log
+    if (pathname.match(/^\/api\/agents\/[^/]+\/activity$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const rawUrl = req.url || pathname;
+      const qIdx = rawUrl.indexOf('?');
+      const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+      const limit = Math.min(parseInt(params.get('limit') || '20', 10), 100);
+      if (options.sessionsDb) handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
       else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));

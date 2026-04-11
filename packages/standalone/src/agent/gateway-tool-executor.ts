@@ -74,7 +74,12 @@ import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { UICommandQueue } from '../api/ui-command-handler.js';
-import { getLatestVersion, createAgentVersion, compareVersionMetrics } from '../db/agent-store.js';
+import {
+  getLatestVersion,
+  createAgentVersion,
+  compareVersionMetrics,
+  logActivity,
+} from '../db/agent-store.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
 
@@ -2200,7 +2205,19 @@ export class GatewayToolExecutor {
       const source = this.currentSource || 'viewer';
       const channelId = this.currentChannelId || 'default';
 
+      // Log task_start for background delegation
+      if (this.sessionsDb) {
+        const ver = getLatestVersion(this.sessionsDb, agentId);
+        logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: ver?.version ?? 0,
+          type: 'task_start',
+          input_summary: task?.slice(0, 200),
+        });
+      }
+
       // Fire-and-forget: spawn process and send message without awaiting result
+      const bgStartTime = Date.now();
       void (async () => {
         try {
           const process = await this.agentProcessManager!.getProcess(source, channelId, agentId);
@@ -2216,9 +2233,33 @@ export class GatewayToolExecutor {
               delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
             }
           }
-          await process.sendMessage(delegationPrompt);
-        } catch {
-          // Background task failures are silently ignored
+          const result = await process.sendMessage(delegationPrompt);
+
+          // Log task_complete for background delegation
+          if (this.sessionsDb) {
+            const ver = getLatestVersion(this.sessionsDb, agentId);
+            logActivity(this.sessionsDb, {
+              agent_id: agentId,
+              agent_version: ver?.version ?? 0,
+              type: 'task_complete',
+              input_summary: task?.slice(0, 200),
+              output_summary: result?.response?.slice(0, 500),
+              duration_ms: Date.now() - bgStartTime,
+            });
+          }
+        } catch (err) {
+          // Log task_error for background delegation
+          if (this.sessionsDb) {
+            const ver = getLatestVersion(this.sessionsDb, agentId);
+            logActivity(this.sessionsDb, {
+              agent_id: agentId,
+              agent_version: ver?.version ?? 0,
+              type: 'task_error',
+              input_summary: task?.slice(0, 200),
+              error_message: String(err),
+              duration_ms: Date.now() - bgStartTime,
+            });
+          }
         }
       })();
 
@@ -2232,6 +2273,17 @@ export class GatewayToolExecutor {
     const source = this.currentSource || 'viewer';
     const channelId = this.currentChannelId || 'default';
     const startTime = Date.now();
+
+    // Log task_start
+    if (this.sessionsDb) {
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type: 'task_start',
+        input_summary: task?.slice(0, 200),
+      });
+    }
 
     const MAX_RETRIES = 3;
     let lastError: Error | null = null;
@@ -2270,6 +2322,23 @@ export class GatewayToolExecutor {
         }
 
         const result = await process.sendMessage(delegationPrompt);
+
+        // Log task_complete
+        if (this.sessionsDb) {
+          const ver = getLatestVersion(this.sessionsDb, agentId);
+          logActivity(this.sessionsDb, {
+            agent_id: agentId,
+            agent_version: ver?.version ?? 0,
+            type: 'task_complete',
+            input_summary: task?.slice(0, 200),
+            output_summary:
+              typeof result.response === 'string'
+                ? result.response.slice(0, 500)
+                : JSON.stringify(result.response).slice(0, 500),
+            duration_ms: Date.now() - startTime,
+          });
+        }
+
         return {
           success: true,
           data: { agentId, response: result.response, duration_ms: Date.now() - startTime },
@@ -2290,6 +2359,19 @@ export class GatewayToolExecutor {
         }
         break;
       }
+    }
+
+    // Log task_error after all retries exhausted
+    if (this.sessionsDb) {
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type: 'task_error',
+        input_summary: task?.slice(0, 200),
+        error_message: lastError?.message,
+        duration_ms: Date.now() - startTime,
+      });
     }
 
     return {

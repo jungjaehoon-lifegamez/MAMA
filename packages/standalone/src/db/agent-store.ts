@@ -1,11 +1,13 @@
 /**
- * Agent Version & Metrics Store
+ * Agent Version, Metrics & Activity Store
  *
- * SQLite storage for agent version history and per-version metrics.
+ * SQLite storage for agent version history, per-version metrics, and activity logs.
  * Follows Managed Agents optimistic concurrency pattern.
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';
+
+type DB = SQLiteDatabase;
 
 // ── Table Init ──────────────────────────────────────────────────────────────
 
@@ -41,6 +43,28 @@ export function initAgentTables(db: SQLiteDatabase): void {
   `);
   db.exec(
     `CREATE INDEX IF NOT EXISTS idx_agent_metrics_agent ON agent_metrics(agent_id, agent_version)`
+  );
+
+  // ── agent_activity ──
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_activity (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id        TEXT NOT NULL,
+      agent_version   INTEGER NOT NULL,
+      type            TEXT NOT NULL,
+      input_summary   TEXT,
+      output_summary  TEXT,
+      tokens_used     INTEGER DEFAULT 0,
+      tools_called    TEXT,
+      duration_ms     INTEGER DEFAULT 0,
+      score           REAL,
+      details         TEXT,
+      error_message   TEXT,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_agent_activity_agent ON agent_activity(agent_id, created_at)`
   );
 }
 
@@ -210,4 +234,69 @@ export function compareVersionMetrics(
     version_a: { version: versionA, ...sumForVersion(versionA) },
     version_b: { version: versionB, ...sumForVersion(versionB) },
   };
+}
+
+// ── Activity Types ─────────────────────────────────────────────────────────
+
+export interface LogActivityInput {
+  agent_id: string;
+  agent_version: number;
+  type: string;
+  input_summary?: string;
+  output_summary?: string;
+  tokens_used?: number;
+  tools_called?: string[];
+  duration_ms?: number;
+  score?: number;
+  details?: Record<string, unknown>;
+  error_message?: string;
+}
+
+export interface ActivityRow {
+  id: number;
+  agent_id: string;
+  agent_version: number;
+  type: string;
+  input_summary: string | null;
+  output_summary: string | null;
+  tokens_used: number;
+  tools_called: string | null;
+  duration_ms: number;
+  score: number | null;
+  details: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
+// ── Activity CRUD ──────────────────────────────────────────────────────────
+
+export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
+  const stmt = db.prepare(`
+    INSERT INTO agent_activity (agent_id, agent_version, type, input_summary, output_summary, tokens_used, tools_called, duration_ms, score, details, error_message)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const result = stmt.run(
+    input.agent_id,
+    input.agent_version,
+    input.type,
+    input.input_summary ?? null,
+    input.output_summary ?? null,
+    input.tokens_used ?? 0,
+    input.tools_called ? JSON.stringify(input.tools_called) : null,
+    input.duration_ms ?? 0,
+    input.score ?? null,
+    input.details ? JSON.stringify(input.details) : null,
+    input.error_message ?? null
+  );
+  return db
+    .prepare('SELECT * FROM agent_activity WHERE id = ?')
+    .get(result.lastInsertRowid) as ActivityRow;
+}
+
+export function getActivity(db: DB, agentId: string, limit: number): ActivityRow[] {
+  return db
+    .prepare(
+      'SELECT * FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'
+    )
+    .all(agentId, limit) as ActivityRow[];
 }
