@@ -254,6 +254,13 @@ export class AgentsModule {
       btn.addEventListener('click', () => {
         this.activeTab = (btn as HTMLElement).dataset.dtab as DetailTab;
         this.renderDetail();
+        reportPageContext('agents', {
+          pageType: 'agent-detail',
+          selectedAgent: a.id,
+          agentVersion: a.version,
+          activeTab: this.activeTab,
+          summary: `${a.display_name || a.name} v${a.version} [${this.activeTab}]`,
+        });
       });
     });
 

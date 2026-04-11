@@ -229,6 +229,25 @@ export class MessageRouter {
     this.sessionsDb = db;
   }
 
+  // UI command queue for page context awareness
+  private uiCommandQueue: import('../api/ui-command-handler.js').UICommandQueue | null = null;
+  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
+    this.uiCommandQueue = queue;
+  }
+
+  private getPageContextPrefix(): string {
+    if (!this.uiCommandQueue) return '';
+    const ctx = this.uiCommandQueue.getPageContext();
+    if (!ctx || !ctx.currentRoute) return '';
+    const route = ctx.currentRoute;
+    const data = ctx.pageData as Record<string, unknown> | null;
+    const parts = [`[Viewer: ${route}`];
+    if (data?.pageType) parts.push(`type=${data.pageType}`);
+    if (data?.selectedAgent) parts.push(`agent=${data.selectedAgent}`);
+    if (data?.activeTab) parts.push(`tab=${data.activeTab}`);
+    return parts.join(' ') + ']\n';
+  }
+
   setGatewayRegistry(registry: GatewayRegistry): void {
     this.gatewayRegistry = registry;
   }
@@ -673,8 +692,9 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content (with memory context and skill context if matched)
-        const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}`;
+        // Add text content (with memory context, skill context, and page context)
+        const pageCtx = this.getPageContextPrefix();
+        const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -701,7 +721,8 @@ This protects your credentials from being exposed in chat logs.`;
         response = result.response;
         this.logConductorActivity(message.text, response, Date.now() - conductorStart);
       } else {
-        const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}`;
+        const pageCtx = this.getPageContextPrefix();
+        const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;

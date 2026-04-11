@@ -297,6 +297,9 @@ export async function runAgentLoop(
   });
   messageRouter.setSessionsDb(db);
 
+  // UICommandQueue created later in Phase 5 — wire after creation
+  // (see Phase 5 below where uiCommandQueue is created)
+
   const { memoryAgentLoop } = await initMemoryAgent(
     oauthManager,
     config,
@@ -319,6 +322,9 @@ export async function runAgentLoop(
     sessionsDb: db,
     uiCommandQueue,
   };
+
+  // Wire uiCommandQueue into messageRouter for page context awareness
+  messageRouter.setUICommandQueue(uiCommandQueue);
 
   // Wire sessionsDb and uiCommandQueue into gateway tool executor
   toolExecutor.setSessionsDb(db);
