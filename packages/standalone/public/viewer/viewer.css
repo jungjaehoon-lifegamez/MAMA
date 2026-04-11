@@ -191,6 +191,57 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   background: #D4C4E0;
 }
 
+/* Mobile chat panel overrides — fix height:100% and overflow:hidden from desktop */
+@media (max-width: 767px) {
+  #chat-panel-wrapper {
+    height: auto;
+  }
+  #chat-panel-wrapper #chat-panel {
+    overflow: visible;
+  }
+  /* Mobile chat header — compact + brand aligned */
+  #chat-panel-wrapper.mobile-chat-active #chat-header {
+    padding: 12px 16px;
+    background: linear-gradient(180deg, #fff 0%, #FAFAF8 100%);
+    border-bottom: 1px solid #EDE9E1;
+  }
+  /* Mobile chat input — larger targets, brand colors */
+  #chat-panel-wrapper.mobile-chat-active .p-3 {
+    padding: 12px 16px;
+    background: #FAFAF8;
+    border-top: 1px solid #EDE9E1;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-input {
+    background: #fff;
+    border: 1.5px solid #D4C4E0;
+    border-radius: 20px;
+    padding: 10px 16px;
+    font-size: 15px;
+    min-height: 44px;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-input:focus {
+    border-color: #FFCE00;
+    box-shadow: 0 0 0 3px rgba(255, 206, 0, 0.15);
+  }
+  /* Mobile action buttons — 44px touch targets */
+  #chat-panel-wrapper.mobile-chat-active #chat-attach,
+  #chat-panel-wrapper.mobile-chat-active #chat-mic,
+  #chat-panel-wrapper.mobile-chat-active #chat-send {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-send {
+    background: #FFCE00;
+    box-shadow: 0 2px 8px rgba(255, 206, 0, 0.3);
+  }
+  /* Mobile message bubbles — slightly larger text */
+  #chat-panel-wrapper.mobile-chat-active .chat-message .message-content {
+    font-size: 15px;
+    line-height: 1.5;
+  }
+}
+
 /* Memory viewer mobile layout */
 @media (max-width: 768px) {
   #tab-memory .flex-1.flex.min-h-0.relative {
