@@ -569,6 +569,15 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         tier: 1,
         can_delegate: true,
       },
+      memory: {
+        name: 'Memory Agent',
+        display_name: '🧠 Memory',
+        trigger_prefix: '!memory',
+        persona_file: '~/.mama/personas/memory.md',
+        tier: 3,
+        can_delegate: false,
+        enabled: true,
+      },
     },
     loop_prevention: {
       max_chain_length: 5,
