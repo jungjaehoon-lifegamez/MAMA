@@ -78,8 +78,17 @@ export class AgentsModule {
       this.renderList();
       reportPageContext('agents', {
         pageType: 'agent-list',
-        summary: `${agents.length} agents`,
         total: agents.length,
+        agents: agents.map((a) => ({
+          id: a.id,
+          name: a.display_name || a.name,
+          enabled: a.enabled !== false,
+          tier: a.tier,
+          model: a.model,
+          validation: this.validationStates.get(a.id ?? '') ?? null,
+        })),
+        alerts: this.alerts,
+        summary: `${agents.length} agents: ${agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
       });
     } catch (err) {
       logger.error('Failed to load agents', err);
@@ -213,12 +222,32 @@ export class AgentsModule {
       this.selectedAgent = agent;
       this.activeTab = 'config';
       this.renderDetail();
+      // Fetch validation to include in page context
+      const valData = await API.getValidationSummary(agentId).catch(() => ({ summary: null }));
+      const vs = valData.summary as Record<string, unknown> | null;
       reportPageContext('agents', {
         pageType: 'agent-detail',
         selectedAgent: agentId,
-        agentVersion: agent.version,
-        tab: this.activeTab,
-        summary: `${agent.display_name || agent.name} v${agent.version}`,
+        activeTab: this.activeTab,
+        agent: {
+          id: agent.id,
+          name: agent.display_name || agent.name,
+          model: agent.model,
+          tier: agent.tier,
+          enabled: agent.enabled !== false,
+          version: agent.version,
+          backend: agent.backend,
+        },
+        validation: vs
+          ? {
+              outcome: vs.validation_outcome,
+              execution: vs.execution_status,
+              baseline_version: vs.baseline_version,
+              trigger_type: vs.trigger_type,
+              ended_at: vs.ended_at,
+            }
+          : null,
+        summary: `${agent.display_name || agent.name} v${agent.version} | validation: ${vs?.validation_outcome ?? 'none'} | tab: ${this.activeTab}`,
       });
     } catch (err) {
       logger.error(`Failed to load agent ${agentId}`, err);
@@ -254,12 +283,21 @@ export class AgentsModule {
       btn.addEventListener('click', () => {
         this.activeTab = (btn as HTMLElement).dataset.dtab as DetailTab;
         this.renderDetail();
+        const vo = this.validationStates.get(a.id ?? '');
         reportPageContext('agents', {
           pageType: 'agent-detail',
           selectedAgent: a.id,
-          agentVersion: a.version,
           activeTab: this.activeTab,
-          summary: `${a.display_name || a.name} v${a.version} [${this.activeTab}]`,
+          agent: {
+            id: a.id,
+            name: a.display_name || a.name,
+            model: a.model,
+            tier: a.tier,
+            enabled: a.enabled !== false,
+            version: a.version,
+          },
+          validation: vo ? { outcome: vo } : null,
+          summary: `${a.display_name || a.name} v${a.version} | validation: ${vo ?? 'none'} | tab: ${this.activeTab}`,
         });
       });
     });

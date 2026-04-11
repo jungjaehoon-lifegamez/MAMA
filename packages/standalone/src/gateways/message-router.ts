@@ -239,13 +239,45 @@ export class MessageRouter {
     if (!this.uiCommandQueue) return '';
     const ctx = this.uiCommandQueue.getPageContext();
     if (!ctx || !ctx.currentRoute) return '';
-    const route = ctx.currentRoute;
     const data = ctx.pageData as Record<string, unknown> | null;
-    const parts = [`[Viewer: ${route}`];
-    if (data?.pageType) parts.push(`type=${data.pageType}`);
-    if (data?.selectedAgent) parts.push(`agent=${data.selectedAgent}`);
-    if (data?.activeTab) parts.push(`tab=${data.activeTab}`);
-    return parts.join(' ') + ']\n';
+    if (!data) return '';
+
+    // Build rich context that tells conductor exactly what the user sees
+    const lines: string[] = ['<viewer-context>'];
+    lines.push(`route: ${ctx.currentRoute}`);
+    if (data.summary) lines.push(`summary: ${data.summary}`);
+
+    if (data.pageType === 'agent-list' && Array.isArray(data.agents)) {
+      lines.push(`agents:`);
+      for (const a of data.agents as Array<Record<string, unknown>>) {
+        const parts = [`  - ${a.name || a.id}`];
+        if (a.validation) parts.push(`validation:${a.validation}`);
+        if (a.enabled === false) parts.push('(disabled)');
+        lines.push(parts.join(' '));
+      }
+      if (Array.isArray(data.alerts) && (data.alerts as string[]).length > 0) {
+        lines.push(`alerts: ${(data.alerts as string[]).join(', ')}`);
+      }
+    }
+
+    if (data.pageType === 'agent-detail') {
+      const agent = data.agent as Record<string, unknown> | null;
+      if (agent) {
+        lines.push(
+          `agent: ${agent.name} (${agent.id}) v${agent.version} tier:${agent.tier} model:${agent.model}`
+        );
+      }
+      if (data.activeTab) lines.push(`active_tab: ${data.activeTab}`);
+      const val = data.validation as Record<string, unknown> | null;
+      if (val) {
+        lines.push(
+          `validation: outcome=${val.outcome} execution=${val.execution} baseline=v${val.baseline_version ?? 'none'}`
+        );
+      }
+    }
+
+    lines.push('</viewer-context>');
+    return lines.join('\n') + '\n';
   }
 
   setGatewayRegistry(registry: GatewayRegistry): void {

@@ -86,17 +86,22 @@ During hourly audit, add this agent health check:
 
 ### Validation-Aware Monitoring
 
-When reviewing agent health, also check validation status:
-1. Fetch \`/api/agents/{id}/validation/summary\` for each active agent
-2. Check \`validation_outcome\`:
-   - \`regressed\`: flag immediately — agent performance declined vs approved baseline
-   - \`inconclusive\`: evidence is missing or contradictory — investigate before delegating
-   - \`healthy\` / \`improved\`: no action needed
-3. When \`regressed\` or \`inconclusive\`:
-   - Report to user with specific metrics that changed
-   - Recommend NOT delegating to this agent until resolved
-   - Suggest: "Run \`agent_test(agent_id)\` to verify" or "Approve baseline with \`POST /api/agents/{id}/validation/approve\`"
-4. For comparison: \`/api/agents/{id}/validation/history\` shows version timeline with per-version performance
+You receive \`<viewer-context>\` at the start of each message showing what the user sees.
+Use this to give contextual responses — if they're on the Validation tab, discuss metrics.
+If they're on the agent list, summarize which agents need attention.
+
+**Active UI guidance:**
+- Use \`viewer_navigate("agents")\` to show the agent list
+- Use \`viewer_navigate("agents", {id: "wiki-agent"})\` to show agent detail
+- Use \`viewer_notify({type: "warning", message: "wiki-agent regressed: latency 70s > 60s threshold"})\` for alerts
+- After running \`agent_test\`, navigate to validation tab: \`viewer_navigate("agents", {id: agentId})\` and tell user to check the Validation tab
+
+**Validation checks during audit:**
+1. Check each agent: \`viewer_state()\` shows current validation outcomes on agent cards
+2. \`regressed\`: flag immediately — tell user which metric exceeded threshold
+3. \`inconclusive\`: evidence missing — run \`agent_test(agent_id)\` to collect data
+4. \`healthy\` / \`improved\`: no action
+5. After checking, navigate user to the worst agent's validation tab
 
 ### Daily Briefing Contribution
 
