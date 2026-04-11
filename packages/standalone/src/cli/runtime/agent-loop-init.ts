@@ -25,6 +25,7 @@ import type { AgentLoopClient } from './types.js';
 import type { MetricsStore } from '../../observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
+import { getLatestVersion, upsertMetrics } from '../../db/agent-store.js';
 import { syncBuiltinSkills } from './utilities.js';
 
 // __dirname is available globally in CJS output (NodeNext compiles to CommonJS)
@@ -151,8 +152,22 @@ export function initMainAgentLoop(
       onTokenUsage: (record) => {
         try {
           insertTokenUsage(db, record);
+          // Also upsert agent_metrics if agent_id is known
+          if (record.agent_id) {
+            const latest = getLatestVersion(db, record.agent_id);
+            if (latest) {
+              const today = new Date().toISOString().slice(0, 10);
+              upsertMetrics(db, {
+                agent_id: record.agent_id,
+                agent_version: latest.version,
+                period_start: today,
+                input_tokens: record.input_tokens,
+                output_tokens: record.output_tokens,
+              });
+            }
+          }
         } catch {
-          /* ignore */
+          /* ignore — agent tables may not be initialized yet */
         }
       },
       onMetric: (name, value, labels) => {

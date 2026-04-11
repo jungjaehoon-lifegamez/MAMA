@@ -1,0 +1,39 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { initTokenUsageTable, insertTokenUsage } from '../../src/api/token-handler.js';
+
+describe('token_usage agent_version tracking', () => {
+  let db: InstanceType<typeof Database>;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initTokenUsageTable(db);
+  });
+
+  it('stores agent_version when provided', () => {
+    insertTokenUsage(db, {
+      channel_key: 'discord:123',
+      agent_id: 'conductor',
+      agent_version: 4,
+      input_tokens: 100,
+      output_tokens: 50,
+    });
+    const row = db
+      .prepare('SELECT agent_version FROM token_usage WHERE agent_id = ?')
+      .get('conductor');
+    expect(row.agent_version).toBe(4);
+  });
+
+  it('defaults agent_version to null when not provided', () => {
+    insertTokenUsage(db, {
+      channel_key: 'discord:123',
+      agent_id: 'conductor',
+      input_tokens: 100,
+      output_tokens: 50,
+    });
+    const row = db
+      .prepare('SELECT agent_version FROM token_usage WHERE agent_id = ?')
+      .get('conductor');
+    expect(row.agent_version).toBeNull();
+  });
+});

@@ -123,7 +123,12 @@ export function scrollToBottom(container: HTMLElement): void {
  * @param {HTMLTextAreaElement} textarea - Textarea element
  * @param {number} maxRows - Maximum number of rows (default: 5)
  */
-export function autoResizeTextarea(textarea: HTMLTextAreaElement, maxRows = 5): void {
+export function autoResizeTextarea(
+  textarea: HTMLTextAreaElement | HTMLInputElement | null,
+  maxRows = 5
+): void {
+  // Skip for non-textarea elements (e.g. input[type=text] in SmartStore-style panel)
+  if (!textarea || textarea.tagName !== 'TEXTAREA') return;
   // Use requestAnimationFrame to defer resize to the next frame, avoiding layout thrash from rapid input events
   requestAnimationFrame(() => {
     textarea.style.height = 'auto'; // Reset height before measuring

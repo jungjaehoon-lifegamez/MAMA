@@ -111,9 +111,22 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   will-change: opacity;
 }
 
-/* Right panel mode (SmartStore pattern) */
+/* Right panel mode (SmartStore pattern) — override floating panel sizing */
 #chat-panel-wrapper {
   transition: width 0.15s ease;
+  height: 100%;
+}
+#chat-panel-wrapper #chat-panel {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  resize: none;
+  overflow: hidden;
+  transform: none;
+  will-change: auto;
 }
 #chat-resize-handle-bar {
   display: none;

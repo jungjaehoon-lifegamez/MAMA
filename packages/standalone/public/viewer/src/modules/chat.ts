@@ -2062,6 +2062,9 @@ export class ChatModule {
       closeBtn.addEventListener('click', () => this.togglePanel(false));
     }
 
+    // Right panel mode: skip drag/resize handlers (handled by viewer.html inline JS)
+    if (isRightPanel) return;
+
     if (panel && header) {
       let dragging = false;
       let startX = 0;

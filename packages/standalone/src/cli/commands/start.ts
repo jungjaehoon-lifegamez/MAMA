@@ -23,6 +23,9 @@ import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { UICommandQueue } from '../../api/ui-command-handler.js';
+import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 
 import {
   API_PORT,
@@ -301,12 +304,21 @@ export async function runAgentLoop(
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
+  // Create singleton UI command queue for Agent↔Viewer communication
+  const uiCommandQueue = new UICommandQueue();
+
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
     auditConversation: (job) => messageRouter.auditConversation(job),
+    sessionsDb: db,
+    uiCommandQueue,
   };
+
+  // Wire sessionsDb and uiCommandQueue into gateway tool executor
+  toolExecutor.setSessionsDb(db);
+  toolExecutor.setUICommandQueue(uiCommandQueue);
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
@@ -352,6 +364,31 @@ export async function runAgentLoop(
   }
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
+
+  // Seed initial agent versions from config (version 1 for new agents)
+  // initAgentTables is idempotent (CREATE IF NOT EXISTS) — safe to call before apiServer
+  initAgentTables(db);
+  {
+    const agents = config.multi_agent?.agents ?? {};
+    for (const [id, cfg] of Object.entries(agents)) {
+      if (!getLatestVersion(db, id)) {
+        let personaText: string | null = null;
+        try {
+          const pPath = expandPath(cfg.persona_file);
+          if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
+        } catch {
+          /* ignore */
+        }
+        createAgentVersion(db, {
+          agent_id: id,
+          snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
+          persona_text: personaText,
+          change_note: 'Initial version (migrated from config.yaml)',
+        });
+      }
+    }
+    console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
+  }
 
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
