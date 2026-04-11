@@ -72,7 +72,11 @@ export function handleGetAgents(
   const agents = (config.multi_agent?.agents ?? {}) as Record<string, Record<string, unknown>>;
   const list = Object.entries(agents).map(([id, cfg]) => {
     const latest = getLatestVersion(db, id);
-    return agentConfigToResponse(id, cfg, latest);
+    const lastActivity = getActivity(db, id, 1);
+    return {
+      ...agentConfigToResponse(id, cfg, latest),
+      last_activity: lastActivity[0] ?? null,
+    };
   });
   json(res, 200, { agents: list });
 }

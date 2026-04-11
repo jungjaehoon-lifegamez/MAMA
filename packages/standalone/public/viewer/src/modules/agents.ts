@@ -65,12 +65,44 @@ export class AgentsModule {
     }
   }
 
+  private static relativeTime(dateStr: string): string {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return `${Math.floor(diff / 86400000)}d ago`;
+  }
+
   private renderList(): void {
     if (!this.container) return;
     const cards = this.agents
       .map((a) => {
-        const statusColor = a.enabled !== false ? C.green : C.ter;
-        const statusText = a.enabled !== false ? 'Active' : 'Disabled';
+        const lastAct = (a as unknown as Record<string, unknown>).last_activity as
+          | Record<string, unknown>
+          | null
+          | undefined;
+        // Status badge: disabled > error > active > idle
+        let badgeColor: string;
+        let badgeText: string;
+        if (a.enabled === false) {
+          badgeColor = C.ter;
+          badgeText = 'Disabled';
+        } else if (lastAct?.type === 'task_error') {
+          badgeColor = C.red;
+          badgeText = 'Error';
+        } else if (
+          lastAct?.created_at &&
+          Date.now() - new Date(String(lastAct.created_at)).getTime() < 300000
+        ) {
+          badgeColor = C.green;
+          badgeText = 'Active';
+        } else {
+          badgeColor = '#EAB308';
+          badgeText = 'Idle';
+        }
+        const lastRunStr = lastAct?.created_at
+          ? AgentsModule.relativeTime(String(lastAct.created_at))
+          : '';
         return `
         <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}"
              style="background:#fff;border:1px solid ${C.bdr};border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow 0.15s,transform 0.15s;">
@@ -88,8 +120,7 @@ export class AgentsModule {
           </div>
           <div style="font-size:12px;color:${C.sec};margin-bottom:6px;">${escapeHtml(a.model || 'No model')}</div>
           <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:11px;color:${statusColor};font-weight:500;">\u25CF ${statusText}</span>
-            <span style="font-size:11px;color:${C.ter};">v${a.version ?? 0}</span>
+            <span style="font-size:11px;color:${badgeColor};font-weight:500;">\u25CF ${badgeText}${lastRunStr ? ` \u00B7 ${lastRunStr}` : ''}</span>
           </div>
         </div>`;
       })
@@ -174,7 +205,7 @@ export class AgentsModule {
         <span style="font-size:16px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
         <span style="font-size:11px;color:${C.ter};background:${C.bg};padding:2px 8px;border-radius:4px;">v${a.version ?? 0}</span>
       </div>
-      <div style="border-bottom:1px solid ${C.bdr};margin-bottom:16px;display:flex;gap:0;">
+      <div style="border-bottom:1px solid ${C.bdr};margin-bottom:16px;display:flex;gap:0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
         ${tabBar}
       </div>
       <div id="detail-content"></div>`;
@@ -420,17 +451,66 @@ export class AgentsModule {
           const errorHtml = ev.error_message
             ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>`
             : '';
+          const meta = `<div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} &middot; ${ev.duration_ms || 0}ms &middot; ${ev.created_at}</div>`;
+
+          // Expandable card for test_run with per-item pass/fail
+          if (ev.type === 'test_run' && ev.details) {
+            let details: Record<string, unknown> | null = null;
+            try {
+              details =
+                typeof ev.details === 'string'
+                  ? (JSON.parse(ev.details) as Record<string, unknown>)
+                  : (ev.details as Record<string, unknown>);
+            } catch {
+              /* ignore parse errors */
+            }
+            const items = (details?.items as Array<Record<string, unknown>>) ?? [];
+            const itemsHtml = items
+              .map((item) => {
+                const badge =
+                  item.result === 'pass'
+                    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">PASS</span>'
+                    : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">FAIL</span>';
+                return `<div class="flex items-center gap-2 py-1 text-[11px]">${badge}<span class="text-gray-600 truncate">${escapeHtml(String(item.input || ''))}</span></div>`;
+              })
+              .join('');
+
+            return `<div class="py-2 border-b border-gray-100">
+              <div role="button" aria-expanded="false" aria-controls="expand-${ev.id}" data-expand="${ev.id}" class="flex items-center gap-2 cursor-pointer">
+                <span class="text-[14px] flex-shrink-0">${icon}</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
+                  ${meta}
+                </div>
+                <span class="text-[10px] text-gray-400">&#x25BC;</span>
+              </div>
+              <div id="expand-${ev.id}" class="hidden mt-2 ml-6 pl-2 border-l-2 border-gray-200">${itemsHtml}</div>
+            </div>`;
+          }
+
           return `<div class="flex items-start gap-2 py-2 border-b border-gray-100">
-          <span class="text-[14px] flex-shrink-0">${icon}</span>
-          <div class="flex-1 min-w-0">
-            <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
-            ${errorHtml}
-            <div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} &middot; ${ev.duration_ms || 0}ms &middot; ${ev.created_at}</div>
-          </div>
-        </div>`;
+            <span class="text-[14px] flex-shrink-0">${icon}</span>
+            <div class="flex-1 min-w-0">
+              <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
+              ${errorHtml}
+              ${meta}
+            </div>
+          </div>`;
         })
         .join('');
       el.innerHTML = `<div>${rows}</div>`;
+
+      // Expand/collapse toggle with ARIA
+      el.querySelectorAll<HTMLElement>('[data-expand]').forEach((toggle) => {
+        toggle.addEventListener('click', () => {
+          const id = toggle.dataset.expand;
+          const content = el.querySelector(`#expand-${id}`);
+          if (content) {
+            const isHidden = content.classList.toggle('hidden');
+            toggle.setAttribute('aria-expanded', String(!isHidden));
+          }
+        });
+      });
     } catch {
       el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load activity.</div>';
     }
