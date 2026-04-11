@@ -47,9 +47,9 @@ export interface CreateValidationSessionInput {
   validation_outcome: ValidationOutcome;
   summary?: string;
   recommendation?: string;
-  before_snapshot_json?: string;
-  after_snapshot_json?: string;
-  report_json?: string;
+  before_snapshot_json?: string | null;
+  after_snapshot_json?: string | null;
+  report_json?: string | null;
   schema_version?: number;
   requires_approval?: number;
   started_at: number;
@@ -86,8 +86,8 @@ export interface SaveValidationMetricInput {
   validation_session_id: string;
   name: string;
   value: number;
-  baseline_value?: number;
-  delta_value?: number;
+  baseline_value?: number | null;
+  delta_value?: number | null;
   direction: MetricDirection;
 }
 
