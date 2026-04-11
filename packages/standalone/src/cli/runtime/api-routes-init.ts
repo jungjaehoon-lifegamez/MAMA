@@ -116,6 +116,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
     });
 
+    // ── Conductor Persona (section injection — non-destructive) ────────
+    const { ensureConductorPersona } = await import('../../multi-agent/conductor-persona.js');
+    ensureConductorPersona();
+
     // ── Dashboard Agent ─────────────────────────────────────────────────
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
     ensureDashboardPersona();
