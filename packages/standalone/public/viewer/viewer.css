@@ -454,7 +454,7 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
 .chat-message {
   display: flex;
   flex-direction: column;
-  max-width: 92%;
+  max-width: 100%;
   animation: message-appear 0.2s ease-out;
 }
 
