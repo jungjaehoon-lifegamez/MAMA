@@ -238,6 +238,14 @@ export class GatewayToolExecutor {
   setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
     this.restartMultiAgentAgent = fn;
   }
+  private validationService:
+    | import('../validation/session-service.js').ValidationSessionService
+    | null = null;
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.validationService = svc;
+  }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
   }
@@ -2348,20 +2356,39 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // 2. Log test_run start
+    // 2. Start validation session for agent_test
+    const testVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+    const testAgentVersion = testVer?.version ?? 0;
+    const testValSession = this.validationService?.startSession(
+      agentId,
+      testAgentVersion,
+      'agent_test',
+      {
+        goal: `Test with ${items.length} items`,
+        customBeforeSnapshot: JSON.stringify({
+          schema_version: 1,
+          test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+          sample_count: items.length,
+        }),
+      }
+    );
+
+    // 3. Log test_run start
     let testRunId: number | null = null;
     if (this.sessionsDb) {
-      const ver = getLatestVersion(this.sessionsDb, agentId);
       const row = logActivity(this.sessionsDb, {
         agent_id: agentId,
-        agent_version: ver?.version ?? 0,
+        agent_version: testAgentVersion,
         type: 'test_run',
         input_summary: `Testing with ${items.length} items`,
       });
       testRunId = row.id;
+      if (testValSession) {
+        this.validationService!.recordRun(testValSession.id, { activityId: row.id });
+      }
     }
 
-    // 3. Delegate sequentially (v0.19 — parallel in v0.20)
+    // 4. Delegate sequentially (v0.19 — parallel in v0.20)
     const results: Array<{ input: string; output?: string; error?: string }> = [];
     for (const item of items) {
       try {
@@ -2382,7 +2409,7 @@ export class GatewayToolExecutor {
       }
     }
 
-    // 4. Auto-score: pass/fail ratio
+    // 5. Auto-score: pass/fail ratio
     const passed = results.filter((r) => !r.error).length;
     const failed = results.length - passed;
     const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
@@ -2399,6 +2426,20 @@ export class GatewayToolExecutor {
       });
     }
 
+    // 6. Finalize validation session with test metrics
+    const testDurationMs = Date.now() - startTime;
+    if (testValSession && this.validationService) {
+      this.validationService.finalizeSession(testValSession.id, {
+        execution_status: 'completed',
+        metrics: {
+          duration_ms: testDurationMs,
+          completion_rate: results.length > 0 ? passed / results.length : 0,
+          auto_score: autoScore,
+        },
+        test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+      });
+    }
+
     return {
       success: true,
       data: {
@@ -2406,7 +2447,8 @@ export class GatewayToolExecutor {
         agent_id: agentId,
         results,
         auto_score: autoScore,
-        duration_ms: Date.now() - startTime,
+        duration_ms: testDurationMs,
+        validation_session_id: testValSession?.id ?? null,
         ...(testRunId === null ? { warning: 'score_not_persisted' } : {}),
       },
     } as GatewayToolResult;
@@ -2451,23 +2493,34 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // Background delegation: fire-and-forget
+    // Background delegation: fire-and-forget with async validation finalize
     if (background) {
       const source = this.currentSource || 'viewer';
       const channelId = this.currentChannelId || 'default';
 
+      // Start validation session for background delegation
+      const bgVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+      const bgAgentVersion = bgVer?.version ?? 0;
+      const bgValSession = this.validationService?.startSession(
+        agentId,
+        bgAgentVersion,
+        'delegate_run'
+      );
+
       // Log task_start for background delegation
       if (this.sessionsDb) {
-        const ver = getLatestVersion(this.sessionsDb, agentId);
-        logActivity(this.sessionsDb, {
+        const row = logActivity(this.sessionsDb, {
           agent_id: agentId,
-          agent_version: ver?.version ?? 0,
+          agent_version: bgAgentVersion,
           type: 'task_start',
           input_summary: task?.slice(0, 200),
         });
+        if (bgValSession) {
+          this.validationService!.recordRun(bgValSession.id, { activityId: row.id });
+        }
       }
 
-      // Fire-and-forget: spawn process and send message without awaiting result
+      // Fire-and-forget: finalize validation when complete
       const bgStartTime = Date.now();
       void (async () => {
         try {
@@ -2476,7 +2529,6 @@ export class GatewayToolExecutor {
             sourceAgentId,
             task
           );
-          // Inject skill content if specified
           if (input.skill) {
             const skillPath = resolveSkillPath(input.skill);
             if (skillPath && existsSync(skillPath)) {
@@ -2485,30 +2537,49 @@ export class GatewayToolExecutor {
             }
           }
           const result = await process.sendMessage(delegationPrompt);
+          const durationMs = Date.now() - bgStartTime;
 
-          // Log task_complete for background delegation
           if (this.sessionsDb) {
-            const ver = getLatestVersion(this.sessionsDb, agentId);
-            logActivity(this.sessionsDb, {
+            const row = logActivity(this.sessionsDb, {
               agent_id: agentId,
-              agent_version: ver?.version ?? 0,
+              agent_version: bgAgentVersion,
               type: 'task_complete',
               input_summary: task?.slice(0, 200),
               output_summary: result?.response?.slice(0, 500),
-              duration_ms: Date.now() - bgStartTime,
+              duration_ms: durationMs,
+            });
+            if (bgValSession) {
+              this.validationService!.recordRun(bgValSession.id, {
+                activityId: row.id,
+                duration_ms: durationMs,
+              });
+            }
+          }
+
+          // Finalize validation session async
+          if (bgValSession && this.validationService) {
+            this.validationService.finalizeSession(bgValSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: durationMs },
             });
           }
         } catch (err) {
-          // Log task_error for background delegation
+          const durationMs = Date.now() - bgStartTime;
           if (this.sessionsDb) {
-            const ver = getLatestVersion(this.sessionsDb, agentId);
             logActivity(this.sessionsDb, {
               agent_id: agentId,
-              agent_version: ver?.version ?? 0,
+              agent_version: bgAgentVersion,
               type: 'task_error',
               input_summary: task?.slice(0, 200),
               error_message: String(err),
-              duration_ms: Date.now() - bgStartTime,
+              duration_ms: durationMs,
+            });
+          }
+          if (bgValSession && this.validationService) {
+            this.validationService.finalizeSession(bgValSession.id, {
+              execution_status: 'failed',
+              error_message: String(err),
+              metrics: { duration_ms: durationMs },
             });
           }
         }
@@ -2525,15 +2596,23 @@ export class GatewayToolExecutor {
     const channelId = this.currentChannelId || 'default';
     const startTime = Date.now();
 
+    // Start validation session for this delegation
+    const ver = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+    const agentVersion = ver?.version ?? 0;
+    const valSession = this.validationService?.startSession(agentId, agentVersion, 'delegate_run');
+
     // Log task_start
     if (this.sessionsDb) {
-      const ver = getLatestVersion(this.sessionsDb, agentId);
-      logActivity(this.sessionsDb, {
+      const row = logActivity(this.sessionsDb, {
         agent_id: agentId,
-        agent_version: ver?.version ?? 0,
+        agent_version: agentVersion,
         type: 'task_start',
         input_summary: task?.slice(0, 200),
       });
+      // Link activity to validation session
+      if (valSession) {
+        this.validationService!.recordRun(valSession.id, { activityId: row.id });
+      }
     }
 
     const MAX_RETRIES = 3;
@@ -2557,7 +2636,6 @@ export class GatewayToolExecutor {
         // Inject channel history for fresh processes (no prior context)
         const sessionId = process.getSessionId?.();
         if (!sessionId || attempt > 0) {
-          // Fresh process or retried after crash — inject channel history for context
           try {
             const { getChannelHistory } = await import('../gateways/channel-history.js');
             const channelHistory = getChannelHistory();
@@ -2568,31 +2646,45 @@ export class GatewayToolExecutor {
               }
             }
           } catch {
-            // Channel history injection is best-effort — proceed without it
+            // Channel history injection is best-effort
           }
         }
 
         const result = await process.sendMessage(delegationPrompt);
+        const durationMs = Date.now() - startTime;
 
         // Log task_complete
         if (this.sessionsDb) {
-          const ver = getLatestVersion(this.sessionsDb, agentId);
-          logActivity(this.sessionsDb, {
+          const row = logActivity(this.sessionsDb, {
             agent_id: agentId,
-            agent_version: ver?.version ?? 0,
+            agent_version: agentVersion,
             type: 'task_complete',
             input_summary: task?.slice(0, 200),
             output_summary:
               typeof result.response === 'string'
                 ? result.response.slice(0, 500)
                 : JSON.stringify(result.response).slice(0, 500),
-            duration_ms: Date.now() - startTime,
+            duration_ms: durationMs,
+          });
+          if (valSession) {
+            this.validationService!.recordRun(valSession.id, {
+              activityId: row.id,
+              duration_ms: durationMs,
+            });
+          }
+        }
+
+        // Finalize validation session as completed
+        if (valSession && this.validationService) {
+          this.validationService.finalizeSession(valSession.id, {
+            execution_status: 'completed',
+            metrics: { duration_ms: durationMs },
           });
         }
 
         return {
           success: true,
-          data: { agentId, response: result.response, duration_ms: Date.now() - startTime },
+          data: { agentId, response: result.response, duration_ms: durationMs },
         } as GatewayToolResult;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -2600,7 +2692,6 @@ export class GatewayToolExecutor {
         const isCrash = lastError.message.includes('exited with code');
 
         if (isCrash) {
-          // Force remove crashed process so next getProcess() creates a fresh one
           this.agentProcessManager.stopProcess(source, channelId, agentId);
         }
 
@@ -2614,14 +2705,22 @@ export class GatewayToolExecutor {
 
     // Log task_error after all retries exhausted
     if (this.sessionsDb) {
-      const ver = getLatestVersion(this.sessionsDb, agentId);
       logActivity(this.sessionsDb, {
         agent_id: agentId,
-        agent_version: ver?.version ?? 0,
+        agent_version: agentVersion,
         type: 'task_error',
         input_summary: task?.slice(0, 200),
         error_message: lastError?.message,
         duration_ms: Date.now() - startTime,
+      });
+    }
+
+    // Finalize validation session as failed
+    if (valSession && this.validationService) {
+      this.validationService.finalizeSession(valSession.id, {
+        execution_status: 'failed',
+        error_message: lastError?.message,
+        metrics: { duration_ms: Date.now() - startTime },
       });
     }
 
