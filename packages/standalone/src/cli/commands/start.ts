@@ -406,9 +406,21 @@ export async function runAgentLoop(
         enabled: true,
       },
     };
+    let osAgentsAdded = false;
     for (const [id, cfg] of Object.entries(osAgents)) {
       if (!config.multi_agent.agents[id]) {
         config.multi_agent.agents[id] = cfg;
+        osAgentsAdded = true;
+      }
+    }
+    // Persist to config.yaml so /api/agents sees them too
+    if (osAgentsAdded) {
+      try {
+        const { saveConfig } = await import('../config/config-manager.js');
+        await saveConfig(config);
+        console.log('✓ OS agents added to config.yaml');
+      } catch {
+        /* non-fatal — runtime config still has them */
       }
     }
 
