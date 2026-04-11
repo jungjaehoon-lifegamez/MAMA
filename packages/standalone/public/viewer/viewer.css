@@ -1,7 +1,8 @@
 /* ============================================================================
    MAMA Viewer - Brand-Aligned CSS
    Color Palette: Yellow #FFCE00, Lavender #EDDBF7, Black #131313, Blush #FF9999
-   Typography: Fredoka (display) + Nunito (body)
+   Typography: Inter (UI) + Fredoka (markdown headings) + Nunito (chat)
+   CJK Fallback: Noto Sans KR, Noto Sans JP
    ============================================================================ */
 
 /* ============================================================================
