@@ -1088,34 +1088,27 @@ export class ChatModule {
    * Update chat status
    */
   updateStatus(status: string): void {
-    const statusEl = getElementByIdOrNull<HTMLDivElement>('chat-status');
+    const statusEl = getElementByIdOrNull<HTMLElement>('chat-status');
     if (!statusEl) {
       logger.warn('Status element not found');
       return;
     }
 
-    const indicator = statusEl.querySelector('.status-indicator');
-    const text = statusEl.querySelector('span:not(.status-indicator)');
-
-    if (!indicator || !text) {
-      logger.warn('Status indicator or text not found');
-      return;
-    }
-
-    indicator.className = 'status-indicator ' + status;
+    // #chat-status IS the indicator element (not a wrapper with children)
+    statusEl.className = 'status-indicator w-1.5 h-1.5 rounded-full flex-shrink-0 ' + status;
 
     switch (status) {
       case 'connected':
-        text.textContent = 'Connected';
+        statusEl.title = 'Connected';
         break;
       case 'disconnected':
-        text.textContent = 'Disconnected';
+        statusEl.title = 'Disconnected';
         break;
       case 'connecting':
-        text.textContent = 'Connecting...';
+        statusEl.title = 'Connecting...';
         break;
       default:
-        text.textContent = status;
+        statusEl.title = status;
     }
   }
 

@@ -1155,7 +1155,7 @@
       import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { AgentsModule } from '/viewer/js/modules/agents.js';
       import { API } from '/viewer/js/utils/api.js';
-      import { startUICommandPolling } from '/viewer/js/utils/ui-commands.js';
+      import { startUICommandPolling, reportPageContext } from '/viewer/js/utils/ui-commands.js';
 
       const memory = new MemoryModule();
       const chat = new ChatModule(memory);
@@ -1261,6 +1261,9 @@
 
       async function switchTab(tabName) {
         STATE.currentTab = tabName;
+
+        // Report tab context to agent (SmartStore pattern)
+        reportPageContext(tabName, { pageType: 'tab-switch', tab: tabName });
 
         // Close mobile More menu if open
         const moreMenu = document.getElementById('mama-mobile-more');
