@@ -422,7 +422,7 @@ export class AgentsModule {
         await API.put(`/api/multi-agent/agents/${a.id}`, {
           tool_permissions: { allowed: checked },
         });
-        showToast('Tools saved ��� hot reloaded');
+        showToast('Tools saved - hot reloaded');
 
         // Audit trail (best-effort)
         if (a.version !== null && a.version !== undefined) {
@@ -489,7 +489,7 @@ export class AgentsModule {
               .join('');
 
             return `<div class="py-2 border-b border-gray-100">
-              <div role="button" aria-expanded="false" aria-controls="expand-${ev.id}" data-expand="${ev.id}" class="flex items-center gap-2 cursor-pointer">
+              <div role="button" aria-expanded="false" aria-controls="expand-${Number(ev.id)}" data-expand="${Number(ev.id)}" class="flex items-center gap-2 cursor-pointer">
                 <span class="text-[14px] flex-shrink-0">${icon}</span>
                 <div class="flex-1 min-w-0">
                   <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
@@ -497,7 +497,7 @@ export class AgentsModule {
                 </div>
                 <span class="text-[10px] text-gray-400">&#x25BC;</span>
               </div>
-              <div id="expand-${ev.id}" class="hidden mt-2 ml-6 pl-2 border-l-2 border-gray-200">${itemsHtml}</div>
+              <div id="expand-${Number(ev.id)}" class="hidden mt-2 ml-6 pl-2 border-l-2 border-gray-200">${itemsHtml}</div>
             </div>`;
           }
 

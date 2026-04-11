@@ -2188,6 +2188,7 @@ export class GatewayToolExecutor {
     const permError = this.checkViewerOnly();
     if (permError) return { success: false, error: permError } as GatewayToolResult;
 
+    // Default 2 (demo-optimized per R4 #19; override to 3+ for thorough testing)
     const { agent_id, sample_count = 2 } = input;
 
     // Concurrency guard
@@ -2312,6 +2313,7 @@ export class GatewayToolExecutor {
         results,
         auto_score: autoScore,
         duration_ms: Date.now() - startTime,
+        ...(testRunId === null ? { warning: 'score_not_persisted' } : {}),
       },
     } as GatewayToolResult;
   }

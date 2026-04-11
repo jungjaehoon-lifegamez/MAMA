@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from '../../src/sqlite.js';
-import { initAgentTables, logActivity, getActivity } from '../../src/db/agent-store.js';
+import {
+  initAgentTables,
+  logActivity,
+  getActivity,
+  updateActivityScore,
+} from '../../src/db/agent-store.js';
 
 describe('agent_activity', () => {
   let db: InstanceType<typeof Database>;
@@ -90,6 +95,28 @@ describe('agent_activity', () => {
       });
       expect(row.tokens_used).toBe(0);
       expect(row.duration_ms).toBe(0);
+    });
+
+    it('updates activity score and details', () => {
+      const row = logActivity(db, {
+        agent_id: 'test-agent',
+        agent_version: 1,
+        type: 'test_run',
+        input_summary: '3 items tested',
+      });
+      const updated = updateActivityScore(db, row.id, 85, {
+        total: 3,
+        passed: 2,
+        failed: 1,
+        items: [
+          { input: 'a', result: 'pass' },
+          { input: 'b', result: 'pass' },
+          { input: 'c', result: 'fail' },
+        ],
+      });
+      expect(updated.score).toBe(85);
+      expect(JSON.parse(updated.details!).passed).toBe(2);
+      expect(JSON.parse(updated.details!).items).toHaveLength(3);
     });
   });
 });

@@ -167,6 +167,7 @@ export function handleUpdateAgent(
     'backend',
     'name',
     'effort',
+    'enabled',
     'can_delegate',
     'trigger_prefix',
     'cooldown_ms',
