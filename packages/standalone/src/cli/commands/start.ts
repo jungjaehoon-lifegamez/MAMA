@@ -26,6 +26,7 @@ import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
+import { initValidationTables } from '../../validation/store.js';
 
 import {
   API_PORT,
@@ -368,6 +369,7 @@ export async function runAgentLoop(
   // Seed initial agent versions from config (version 1 for new agents)
   // initAgentTables is idempotent (CREATE IF NOT EXISTS) — safe to call before apiServer
   initAgentTables(db);
+  initValidationTables(db);
   {
     const agents = config.multi_agent?.agents ?? {};
     for (const [id, cfg] of Object.entries(agents)) {
@@ -526,6 +528,7 @@ export async function runAgentLoop(
     slackGateway,
     graphHandler,
     getAdapter,
+    sessionsDb: db,
   });
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────

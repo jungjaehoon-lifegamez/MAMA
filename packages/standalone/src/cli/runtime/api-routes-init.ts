@@ -24,6 +24,9 @@ import http from 'node:http';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
+import { ValidationSessionService } from '../../validation/session-service.js';
+import { getLatestVersion } from '../../db/agent-store.js';
+import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
@@ -68,6 +71,8 @@ export interface RegisterApiRoutesParams {
     };
     exec: (sql: string) => void;
   };
+  /** Sessions DB for validation */
+  sessionsDb?: SQLiteDatabase;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -84,7 +89,66 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     slackGateway,
     graphHandler,
     getAdapter,
+    sessionsDb,
   } = params;
+
+  // ── Validation Session Service ────────────────────────────────────────
+  const validationService = sessionsDb ? new ValidationSessionService(sessionsDb) : null;
+
+  /**
+   * executeValidatedRun — wraps pm.getSharedProcess().sendMessage()
+   * with validation session lifecycle (before → execute → after → classify).
+   */
+  async function executeValidatedRun(
+    agentId: string,
+    prompt: string,
+    opts?: { requestTimeout?: number }
+  ): Promise<{ response?: string; noUpdate?: boolean }> {
+    const pm = toolExecutor.getAgentProcessManager();
+    if (!pm) throw new Error(`AgentProcessManager not available`);
+
+    const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
+    const agentVersion = ver?.version ?? 0;
+
+    // Start validation session
+    const session = validationService?.startSession(agentId, agentVersion, 'system_run');
+    const startTime = Date.now();
+
+    try {
+      const process = await pm.getSharedProcess(agentId, opts);
+      const result = await process.sendMessage(prompt);
+      const durationMs = Date.now() - startTime;
+      const noUpdate = result?.response?.includes('NO_UPDATE');
+      const usage = result?.usage;
+      const tokensUsed = usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : 0;
+
+      // Finalize as completed
+      if (session && validationService) {
+        validationService.finalizeSession(session.id, {
+          execution_status: 'completed',
+          metrics: {
+            duration_ms: durationMs,
+            token_cost: tokensUsed,
+          },
+        });
+      }
+
+      return { response: result?.response, noUpdate };
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+
+      // Finalize as failed
+      if (session && validationService) {
+        validationService.finalizeSession(session.id, {
+          execution_status: 'failed',
+          error_message: err instanceof Error ? err.message : String(err),
+          metrics: { duration_ms: durationMs },
+        });
+      }
+
+      throw err;
+    }
+  }
 
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
@@ -162,9 +226,8 @@ This saves resources. Only publish when there is genuinely new information to re
       }
       try {
         console.log('[Dashboard Agent] Checking for updates...');
-        const process = await pm.getSharedProcess('dashboard-agent');
-        const result = await process.sendMessage(dashboardPrompt);
-        if (result?.response?.includes('NO_UPDATE')) {
+        const { noUpdate } = await executeValidatedRun('dashboard-agent', dashboardPrompt);
+        if (noUpdate) {
           console.log('[Dashboard Agent] No changes detected, skipped');
         } else {
           console.log('[Dashboard Agent] Briefing published');
@@ -231,10 +294,9 @@ This saves resources. Only publish when there is genuinely new information to re
         });
       });
 
-      // Wiki trigger via AgentProcessManager
+      // Wiki trigger via executeValidatedRun
       const runWikiAgent = async () => {
-        const pm = toolExecutor.getAgentProcessManager();
-        if (!pm) {
+        if (!toolExecutor.getAgentProcessManager()) {
           console.warn('[Wiki Agent] AgentProcessManager not available yet');
           return;
         }
@@ -250,9 +312,10 @@ This saves resources. Only publish when there is genuinely new information to re
 
 This saves resources. Only compile when there is genuinely new information to document.`;
 
-          const wikiProcess = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
-          const wikiResult = await wikiProcess.sendMessage(wikiPrompt);
-          if (wikiResult?.response?.includes('NO_UPDATE')) {
+          const { noUpdate } = await executeValidatedRun('wiki-agent', wikiPrompt, {
+            requestTimeout: 600_000,
+          });
+          if (noUpdate) {
             console.log('[Wiki Agent] No changes detected, skipped');
           } else {
             console.log('[Wiki Agent] Compilation complete');
