@@ -29,6 +29,9 @@ import {
   handlePostPageContext,
   handlePostUICommand,
 } from './ui-command-handler.js';
+// Validation handler functions used via require() in raw HTTP handler below
+// import type kept for reference: validation-handler.ts exports Express-style handlers
+// graph-api.ts uses raw Node HTTP, so validation store functions are required directly
 import type {
   GraphNode,
   GraphEdge,
@@ -1710,6 +1713,89 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) handleArchiveAgent(res, agentId, options.sessionsDb);
       else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // ── Validation API ──────────────────────────────────────────────────
+
+    // Route: GET /api/agents/:id/validation/summary
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/summary$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const { getValidationSummary: getValSummary } = require('../validation/store.js');
+        const summary = getValSummary(options.sessionsDb, agentId);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ summary }));
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/validation/history
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/history$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        const limit = Math.min(parseInt(params.get('limit') || '50', 10), 200);
+        const { listValidationHistory: listValHist } = require('../validation/store.js');
+        const history = listValHist(options.sessionsDb, agentId, limit);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ history }));
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/validation-sessions/:id
+    if (pathname.match(/^\/api\/validation-sessions\/[^/]+$/) && req.method === 'GET') {
+      const sessionId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const { getValidationSessionDetail: getDetail } = require('../validation/store.js');
+        const detail = getDetail(options.sessionsDb, sessionId);
+        if (!detail) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Session not found' }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(detail));
+        }
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id/validation/approve
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/approve$/) && req.method === 'POST') {
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        let sessionId = params.get('session_id');
+        if (!sessionId) {
+          const body = await readBody(req);
+          sessionId = body?.session_id as string | null;
+        }
+        if (!sessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'session_id required' }));
+        } else {
+          const { approveValidationSession: approveVal } = require('../validation/store.js');
+          approveVal(options.sessionsDb, sessionId);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, approved_session: sessionId }));
+        }
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
