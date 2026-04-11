@@ -820,7 +820,7 @@ body,
   font-weight: 700;
   border-radius: 9999px;
   box-shadow: 0 4px 20px rgba(255, 206, 0, 0.4);
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   border: none;
   cursor: pointer;
 }
