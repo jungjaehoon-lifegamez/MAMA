@@ -1,12 +1,24 @@
 # v0.19 Agent Lifecycle — Create, Verify, Track
 
 > 에이전트를 대화로 만들고, 자동으로 검증하고, 운영을 추적하는 시스템.
+>
+> **Scope:** 이 문서는 전체 비전. v0.19에서는 Phase 1A (Config 편집 + Tools 저장 + enable/disable) + Phase 2A (agent_activity + Activity 탭)만 구현. Phase 1B-4는 후속 버전.
+>
+> **Review:** Codex + Claude 서브에이전트 리뷰 반영 (2026-04-11). Critical 6건 수정.
 
 ## Problem
 
 현재 MAMA Agents 탭은 틀만 있다. Config 수정 불가, Tools 저장 안 됨, 검증 시스템 없음, 운영 추적 없음. 사용자가 에이전트를 실제로 "관리"할 수 없다.
 
 Claude Managed Agents는 Agent → Session → Events 라이프사이클로 이 문제를 풀지만, 클라우드 전용이고 MCP 서버를 직접 연결해야 한다. MAMA는 커넥터 데이터가 이미 로컬에 있고, AI 판단 기반 자동화가 가능하다.
+
+## Key Architecture Decision (Review 반영)
+
+**Settings 탭에 이미 에이전트 편집 UI가 존재한다** (`settings.ts:1145-1245`, `PUT /api/multi-agent/agents/:id`). 새로운 API를 만들지 않고 이 경로를 재사용한다.
+
+- **런타임 소스**: `config.yaml` → `PUT /api/multi-agent/agents/:id`로 수정 + 핫리로드
+- **감사 소스**: `agent_versions` 테이블 → 변경 이력 기록 (best-effort, 런타임에 영향 없음)
+- **Settings → Agents 통합**: Settings의 에이전트 섹션을 Agents 탭으로 이동. Settings에서는 제거.
 
 ## Core Principles
 
@@ -74,17 +86,18 @@ enabled: true
 
 ### 1.3 Config 탭 편집
 
-현재 읽기 전용인 Config 탭을 편집 가능하게:
+Settings 탭의 에이전트 카드 (`settings.ts:1145-1245`)를 Agents 탭으로 이동. 저장은 기존 `PUT /api/multi-agent/agents/:id` 사용 (핫리로드 포함). agent_versions에 감사 기록 추가 (best-effort).
 
-| 필드                | 편집 방식                        | 저장 시 동작             |
-| ------------------- | -------------------------------- | ------------------------ |
-| name / display_name | 텍스트 입력                      | agent_update → 버전 생성 |
-| model               | 드롭다운 (sonnet/opus/haiku)     | agent_update → 버전 생성 |
-| system prompt       | Persona 탭 텍스트에어리어 (기존) | agent_update → 버전 생성 |
-| tools               | 체크박스 토글 + Save 버튼        | agent_update → 버전 생성 |
-| tier                | 드롭다운 (T1/T2/T3)              | agent_update → 버전 생성 |
-| enabled             | 토글 스위치                      | 즉시 적용 (핫리로드)     |
-| connectors          | 체크박스 (활성 커넥터 목록)      | agent_update → 버전 생성 |
+| 필드                | 편집 방식                        | 저장 시 동작                                                |
+| ------------------- | -------------------------------- | ----------------------------------------------------------- |
+| name / display_name | 텍스트 입력                      | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| backend             | 드롭다운 (claude/codex-mcp)      | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| model               | 드롭다운 (backend별 옵션)        | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| system prompt       | Persona 탭 텍스트에어리어 (기존) | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| tools               | 체크박스 토글 + Save 버튼        | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| tier                | 드롭다운 (T1/T2/T3)              | PUT multi-agent → 핫리로드 + agent_versions 감사 기록       |
+| enabled             | 토글 스위치                      | PUT multi-agent → 즉시 핫리로드 (Settings toggleAgent 동일) |
+| can_delegate        | 체크박스                         | PUT multi-agent → 핫리로드                                  |
 
 ### 1.4 템플릿 시스템
 
@@ -345,11 +358,14 @@ CREATE TABLE IF NOT EXISTS agent_activity (
   tools_called    TEXT,           -- JSON array
   duration_ms     INTEGER DEFAULT 0,
   score           REAL,           -- 검증 시 평가 점수
+  details         TEXT,           -- JSON (테스트 결과 items, suggestion 등)
   error_message   TEXT,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_agent_activity_agent ON agent_activity(agent_id, created_at);
 ```
+
+**자동 로깅:** delegation handler (`gateway-tool-executor.ts`)에서 delegate 시작/완료/에러 시 자동으로 `logActivity()` 호출. Conductor가 수동으로 `agent_activity_log`를 호출할 필요 없음.
 
 ### 3.2 실시간 모니터링
 
