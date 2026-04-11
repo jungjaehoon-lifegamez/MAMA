@@ -16,7 +16,7 @@ header {
 }
 
 main {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100dvh - 56px);
 }
 
 [data-tab] {
