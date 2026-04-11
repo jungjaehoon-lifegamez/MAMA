@@ -120,6 +120,7 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
 #chat-panel-wrapper {
   transition: width 0.15s ease;
   height: 100%;
+  overflow: hidden;
 }
 #chat-panel-wrapper #chat-panel {
   width: 100%;
@@ -268,6 +269,7 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   overflow-x: hidden;
   overscroll-behavior: contain;
   touch-action: pan-y;
+  scrollbar-gutter: stable;
 }
 .chat-message,
 .chat-message .message-content {
