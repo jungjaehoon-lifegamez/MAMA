@@ -98,6 +98,25 @@ export class RawStore {
     }));
   }
 
+  getRecent(connectorName: string, count: number): NormalizedItem[] {
+    const db = this.getDb(connectorName);
+    const rows = db
+      .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')
+      .all(count) as RawRow[];
+
+    return rows.map((row) => ({
+      source: row.source,
+      sourceId: row.source_id,
+      channel: row.channel,
+      author: row.author,
+      content: row.content,
+      timestamp: new Date(row.timestamp),
+      type: row.type as NormalizedItem['type'],
+      metadata:
+        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+    }));
+  }
+
   close(): void {
     for (const db of this.dbs.values()) {
       db.close();

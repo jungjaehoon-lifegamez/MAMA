@@ -164,6 +164,11 @@ export class DelegationManager {
   /**
    * Check if a delegation is allowed.
    */
+  getAgentConfig(agentId: string): Record<string, unknown> | null {
+    const agent = this.agents.get(agentId);
+    return agent ? { ...agent } : null;
+  }
+
   isDelegationAllowed(fromId: string, toId: string): { allowed: boolean; reason: string } {
     const fromAgent = this.agents.get(fromId);
     if (!fromAgent) {

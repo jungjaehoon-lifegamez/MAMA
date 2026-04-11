@@ -57,6 +57,7 @@ Call tools via JSON block:
 - **viewer_state**() — Get current viewer state (active tab, page context). Call this to know what the user is looking at.
 - **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab (e.g., agent detail, metrics)
 - **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
+- **agent_test**(agent_id, sample_count?, test_data?) — Test agent with connector data. Auto-scores pass/fail ratio.
 
 ## OS Monitoring (viewer-only)
 

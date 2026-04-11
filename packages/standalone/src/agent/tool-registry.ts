@@ -353,6 +353,14 @@ register({
   params: 'type: info|warning|suggest, message, action?: {label, navigate}',
 });
 
+// Agent lifecycle tools
+register({
+  name: 'agent_test',
+  description: 'Test agent with connector data. Auto-scores pass/fail ratio.',
+  category: 'os_management',
+  params: 'agent_id, sample_count?, test_data?',
+});
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {

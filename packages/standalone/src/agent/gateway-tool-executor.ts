@@ -79,6 +79,7 @@ import {
   createAgentVersion,
   compareVersionMetrics,
   logActivity,
+  updateActivityScore,
 } from '../db/agent-store.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
@@ -215,6 +216,11 @@ export class GatewayToolExecutor {
   setSessionsDb(db: SQLiteDatabase): void {
     this.sessionsDb = db;
   }
+  private rawStore: import('../connectors/framework/raw-store.js').RawStore | null = null;
+  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
+    this.rawStore = store;
+  }
+  private testInFlight = new Map<string, Promise<GatewayToolResult>>();
   private uiCommandQueue: UICommandQueue | null = null;
   setUICommandQueue(queue: UICommandQueue): void {
     this.uiCommandQueue = queue;
@@ -525,6 +531,15 @@ export class GatewayToolExecutor {
         case 'obsidian':
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
+          );
+        // Agent lifecycle tools
+        case 'agent_test':
+          return await this.executeAgentTest(
+            input as {
+              agent_id: string;
+              sample_count?: number;
+              test_data?: Array<{ input: string; expected?: string }>;
+            }
           );
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
@@ -2163,6 +2178,146 @@ export class GatewayToolExecutor {
   /**
    * Execute delegate tool — dispatch a task to another agent
    */
+  // ── Agent Test ─────────────────────────────────────────────────────────────
+
+  private async executeAgentTest(input: {
+    agent_id: string;
+    sample_count?: number;
+    test_data?: Array<{ input: string; expected?: string }>;
+  }): Promise<GatewayToolResult> {
+    const permError = this.checkViewerOnly();
+    if (permError) return { success: false, error: permError } as GatewayToolResult;
+
+    const { agent_id, sample_count = 2 } = input;
+
+    // Concurrency guard
+    if (this.testInFlight.has(agent_id)) {
+      return { success: false, error: 'test_already_running' } as GatewayToolResult;
+    }
+
+    const promise = this._runAgentTest(agent_id, sample_count, input.test_data);
+    this.testInFlight.set(agent_id, promise);
+    try {
+      return await promise;
+    } finally {
+      this.testInFlight.delete(agent_id);
+    }
+  }
+
+  private async _runAgentTest(
+    agentId: string,
+    sampleCount: number,
+    testData?: Array<{ input: string; expected?: string }>
+  ): Promise<GatewayToolResult> {
+    if (!this.agentProcessManager || !this.delegationManagerRef) {
+      return {
+        success: false,
+        error: 'agent_timeout: multi-agent not configured',
+      } as GatewayToolResult;
+    }
+
+    const startTime = Date.now();
+
+    // 1. Collect test data
+    let items: Array<{ input: string; expected?: string }>;
+    if (testData && testData.length > 0) {
+      items = testData;
+    } else if (this.rawStore) {
+      const agentConfig = this.delegationManagerRef.getAgentConfig(agentId);
+      const connectors: string[] = (agentConfig?.connectors as string[]) ?? [];
+      if (connectors.length === 0) {
+        return {
+          success: false,
+          error: 'connector_unavailable: no connectors configured',
+        } as GatewayToolResult;
+      }
+      const allItems: Array<{ input: string }> = [];
+      for (const conn of connectors) {
+        const recent = this.rawStore.getRecent(conn, sampleCount);
+        for (const item of recent) {
+          allItems.push({ input: `[${item.type}] ${item.content}` });
+        }
+        if (allItems.length >= sampleCount) break;
+      }
+      if (allItems.length === 0) {
+        return {
+          success: false,
+          error: 'connector_unavailable: no recent data',
+        } as GatewayToolResult;
+      }
+      items = allItems.slice(0, sampleCount);
+    } else {
+      return {
+        success: false,
+        error: 'connector_unavailable: rawStore not available',
+      } as GatewayToolResult;
+    }
+
+    // 2. Log test_run start
+    let testRunId: number | null = null;
+    if (this.sessionsDb) {
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      const row = logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type: 'test_run',
+        input_summary: `Testing with ${items.length} items`,
+      });
+      testRunId = row.id;
+    }
+
+    // 3. Delegate sequentially (v0.19 — parallel in v0.20)
+    const results: Array<{ input: string; output?: string; error?: string }> = [];
+    for (const item of items) {
+      try {
+        const r = await this.executeDelegate({
+          agentId,
+          task: `Process this data:\n${item.input}`,
+        });
+        const rAny = r as Record<string, unknown>;
+        results.push({
+          input: item.input,
+          output: r.success
+            ? String((rAny.data as Record<string, unknown>)?.response ?? '').slice(0, 500)
+            : undefined,
+          error: r.success ? undefined : String(rAny.error ?? 'unknown'),
+        });
+      } catch (err) {
+        results.push({ input: item.input, error: String(err) });
+      }
+    }
+
+    // 4. Auto-score: pass/fail ratio
+    const passed = results.filter((r) => !r.error).length;
+    const failed = results.length - passed;
+    const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
+
+    if (this.sessionsDb && testRunId) {
+      updateActivityScore(this.sessionsDb, testRunId, autoScore, {
+        total: results.length,
+        passed,
+        failed,
+        items: results.map((r) => ({
+          input: r.input.slice(0, 100),
+          result: r.error ? 'fail' : 'pass',
+        })),
+      });
+    }
+
+    return {
+      success: true,
+      data: {
+        test_run_id: testRunId,
+        agent_id: agentId,
+        results,
+        auto_score: autoScore,
+        duration_ms: Date.now() - startTime,
+      },
+    } as GatewayToolResult;
+  }
+
+  // ── Delegation ────────────────────────────────────────────────────────────
+
   private async executeDelegate(input: {
     agentId: string;
     task: string;

@@ -464,6 +464,11 @@ export async function runAgentLoop(
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } =
     await initConnectors(connectorExtractionFn);
 
+  // Inject rawStore into tool executor for agent_test connector data access
+  if (rawStoreForApi) {
+    toolExecutor.setRawStore(rawStoreForApi);
+  }
+
   // Add connector scheduler to graceful shutdown if active
   if (connectorSchedulerStop) {
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });

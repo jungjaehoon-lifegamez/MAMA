@@ -293,6 +293,20 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     .get(result.lastInsertRowid) as ActivityRow;
 }
 
+export function updateActivityScore(
+  db: DB,
+  activityId: number,
+  score: number,
+  details: Record<string, unknown>
+): ActivityRow {
+  db.prepare('UPDATE agent_activity SET score = ?, details = ? WHERE id = ?').run(
+    score,
+    JSON.stringify(details),
+    activityId
+  );
+  return db.prepare('SELECT * FROM agent_activity WHERE id = ?').get(activityId) as ActivityRow;
+}
+
 export function getActivity(db: DB, agentId: string, limit: number): ActivityRow[] {
   return db
     .prepare(

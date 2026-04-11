@@ -712,6 +712,8 @@ export type GatewayToolName =
   | 'agent_update'
   | 'agent_create'
   | 'agent_compare'
+  // Agent lifecycle tools
+  | 'agent_test'
   // Viewer control tools (SmartStore pattern)
   | 'viewer_state'
   | 'viewer_navigate'
