@@ -98,7 +98,12 @@ export class RawStore {
     }));
   }
 
+  hasConnector(connectorName: string): boolean {
+    return this.dbs.has(connectorName);
+  }
+
   getRecent(connectorName: string, count: number): NormalizedItem[] {
+    if (!this.dbs.has(connectorName)) return [];
     const db = this.getDb(connectorName);
     const rows = db
       .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')

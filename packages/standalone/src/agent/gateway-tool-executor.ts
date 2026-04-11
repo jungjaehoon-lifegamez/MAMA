@@ -2233,7 +2233,12 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
       const allItems: Array<{ input: string }> = [];
+      const missingConnectors: string[] = [];
       for (const conn of connectors) {
+        if (!this.rawStore.hasConnector(conn)) {
+          missingConnectors.push(conn);
+          continue;
+        }
         const recent = this.rawStore.getRecent(conn, sampleCount);
         for (const item of recent) {
           allItems.push({ input: `[${item.type}] ${item.content}` });
@@ -2241,9 +2246,13 @@ export class GatewayToolExecutor {
         if (allItems.length >= sampleCount) break;
       }
       if (allItems.length === 0) {
+        const detail =
+          missingConnectors.length > 0
+            ? `connector(s) not found: ${missingConnectors.join(', ')}`
+            : 'no recent data';
         return {
           success: false,
-          error: 'connector_unavailable: no recent data',
+          error: `connector_unavailable: ${detail}`,
         } as GatewayToolResult;
       }
       items = allItems.slice(0, sampleCount);

@@ -330,43 +330,50 @@ export interface ActivitySummaryRow {
 }
 
 export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] {
+  // Single query with CTEs — avoids N+1 sub-queries per agent
   const rows = db
     .prepare(
-      `SELECT
-        agent_id,
-        COUNT(*) as total,
-        SUM(CASE WHEN type = 'task_complete' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN type = 'task_error' THEN 1 ELSE 0 END) as errors,
-        ROUND(SUM(CASE WHEN type = 'task_error' THEN 1.0 ELSE 0 END) / COUNT(*) * 100, 2) as error_rate,
-        AVG(CASE WHEN duration_ms > 0 THEN duration_ms END) as avg_duration_ms
-      FROM agent_activity
-      WHERE created_at >= ?
-      GROUP BY agent_id
-      ORDER BY total DESC`
+      `WITH
+        agg AS (
+          SELECT
+            agent_id,
+            COUNT(*) as total,
+            SUM(CASE WHEN type = 'task_complete' THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN type = 'task_error' THEN 1 ELSE 0 END) as errors,
+            ROUND(SUM(CASE WHEN type = 'task_error' THEN 1.0 ELSE 0 END) / COUNT(*) * 100, 2) as error_rate,
+            AVG(CASE WHEN duration_ms > 0 THEN duration_ms END) as avg_duration_ms
+          FROM agent_activity
+          WHERE created_at >= ?
+          GROUP BY agent_id
+        ),
+        latest AS (
+          SELECT agent_id, type as last_type, created_at as last_at,
+            ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
+          FROM agent_activity
+        )
+      SELECT
+        agg.*,
+        latest.last_type,
+        latest.last_at
+      FROM agg
+      LEFT JOIN latest ON agg.agent_id = latest.agent_id AND latest.rn = 1
+      ORDER BY agg.total DESC`
     )
     .all(since) as Array<Record<string, unknown>>;
 
+  // Consecutive errors still need per-agent scan (no clean single-query solution for "streak from head")
+  const consecutiveStmt = db.prepare(
+    'SELECT type FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 10'
+  );
+
   return rows.map((row) => {
     const agentId = String(row.agent_id);
-
-    // Consecutive errors from most recent activity
-    const recentTypes = db
-      .prepare(
-        'SELECT type FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 10'
-      )
-      .all(agentId) as Array<{ type: string }>;
-
+    const recentTypes = consecutiveStmt.all(agentId) as Array<{ type: string }>;
     let consecutiveErrors = 0;
     for (const r of recentTypes) {
       if (r.type === 'task_error') consecutiveErrors++;
       else break;
     }
-
-    const lastActivity = db
-      .prepare(
-        'SELECT type, created_at FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 1'
-      )
-      .get(agentId) as { type: string; created_at: string } | undefined;
 
     return {
       agent_id: agentId,
@@ -375,8 +382,8 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
       errors: Number(row.errors),
       error_rate: Number(row.error_rate),
       consecutive_errors: consecutiveErrors,
-      last_activity_type: lastActivity?.type ?? null,
-      last_activity_at: lastActivity?.created_at ?? null,
+      last_activity_type: row.last_type ? String(row.last_type) : null,
+      last_activity_at: row.last_at ? String(row.last_at) : null,
       avg_duration_ms: Math.round(Number(row.avg_duration_ms ?? 0)),
     };
   });
