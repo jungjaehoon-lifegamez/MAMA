@@ -1597,6 +1597,18 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /api/ui/page-context — agent reads current viewer state
+    if (pathname === '/api/ui/page-context' && req.method === 'GET') {
+      if (options.uiCommandQueue) {
+        const { handleGetPageContext } = await import('./ui-command-handler.js');
+        handleGetPageContext(res, options.uiCommandQueue);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, context: null }));
+      }
+      return true;
+    }
+
     // Route: POST /api/ui/page-context — viewer reports current page state
     if (pathname === '/api/ui/page-context' && req.method === 'POST') {
       if (options.uiCommandQueue) {

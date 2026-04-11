@@ -600,6 +600,12 @@ export class GatewayToolExecutor {
           return { success: true, ...cmpResult };
         }
         // Viewer control tools (SmartStore pattern)
+        case 'viewer_state': {
+          if (!this.uiCommandQueue)
+            return { success: false, error: 'UI command queue not available' };
+          const ctx = this.uiCommandQueue.getPageContext();
+          return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
+        }
         case 'viewer_navigate': {
           if (!this.uiCommandQueue)
             return { success: false, error: 'UI command queue not available' };

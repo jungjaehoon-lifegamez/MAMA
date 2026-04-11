@@ -334,6 +334,13 @@ register({
 
 // Viewer control tools (SmartStore pattern)
 register({
+  name: 'viewer_state',
+  description:
+    'Get current viewer state (active tab, page context). Call this to know what the user is looking at.',
+  category: 'os_management',
+  params: '',
+});
+register({
   name: 'viewer_navigate',
   description: 'Navigate viewer to a specific page/tab (e.g., agent detail, metrics)',
   category: 'os_management',

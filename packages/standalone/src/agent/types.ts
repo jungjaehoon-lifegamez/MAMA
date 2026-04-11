@@ -713,6 +713,7 @@ export type GatewayToolName =
   | 'agent_create'
   | 'agent_compare'
   // Viewer control tools (SmartStore pattern)
+  | 'viewer_state'
   | 'viewer_navigate'
   | 'viewer_notify';
 

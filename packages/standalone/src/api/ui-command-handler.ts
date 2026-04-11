@@ -60,6 +60,12 @@ export function handleGetUICommands(res: ServerResponse, queue: UICommandQueue):
   json(res, 200, { commands: queue.drain() });
 }
 
+/** GET /api/ui/page-context — agent reads current viewer state */
+export function handleGetPageContext(res: ServerResponse, queue: UICommandQueue): void {
+  const ctx = queue.getPageContext();
+  json(res, 200, { success: true, context: ctx });
+}
+
 /** POST /api/ui/page-context — viewer reports current page state */
 export function handlePostPageContext(
   res: ServerResponse,
