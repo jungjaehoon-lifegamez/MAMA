@@ -980,6 +980,26 @@ export class API {
     );
   }
 
+  static async getValidationCompare(
+    agentId: string,
+    sessionId: string,
+    baseline = 'approved'
+  ): Promise<{
+    current: { session: Record<string, unknown>; metrics: Array<Record<string, unknown>> };
+    baseline: { session: Record<string, unknown>; metrics: Array<Record<string, unknown>> } | null;
+    deltas: Array<{
+      name: string;
+      current: number;
+      baseline: number | null;
+      delta: number | null;
+      direction: string;
+    }>;
+  }> {
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/compare?session=${encodeURIComponent(sessionId)}&baseline=${encodeURIComponent(baseline)}`
+    );
+  }
+
   // =============================================
   // UI Command API (SmartStore pattern)
   // =============================================

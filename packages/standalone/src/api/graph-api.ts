@@ -1802,6 +1802,71 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET /api/agents/:id/validation/compare?session=X&baseline=approved
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/compare$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        const sessionId = params.get('session');
+        const baselineMode = params.get('baseline') || 'approved';
+
+        if (!sessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'session query parameter required' }));
+        } else {
+          const {
+            getValidationSessionDetail: getDetail,
+            getAgentValidationState: getState,
+          } = require('../validation/store.js');
+
+          const current = getDetail(options.sessionsDb, sessionId);
+          if (!current) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Session not found' }));
+          } else {
+            let baselineSessionId: string | null = null;
+            if (baselineMode === 'approved') {
+              const state = getState(options.sessionsDb, agentId, current.session.trigger_type);
+              baselineSessionId = state?.approved_session_id ?? null;
+            } else {
+              baselineSessionId = baselineMode;
+            }
+
+            const baseline = baselineSessionId
+              ? getDetail(options.sessionsDb, baselineSessionId)
+              : null;
+            const baselineMetrics = new Map(
+              (baseline?.metrics ?? []).map((m: { name: string; value: number }) => [
+                m.name,
+                m.value,
+              ])
+            );
+            const deltas = current.metrics.map(
+              (m: { name: string; value: number; direction: string }) => {
+                const bVal = baselineMetrics.get(m.name) as number | undefined;
+                return {
+                  name: m.name,
+                  current: m.value,
+                  baseline: bVal ?? null,
+                  delta: bVal !== undefined ? m.value - bVal : null,
+                  direction: m.direction,
+                };
+              }
+            );
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ current, baseline, deltas }));
+          }
+        }
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
     // Route: GET /api/agents/activity-summary — aggregated activity with alerts
     if (pathname === '/api/agents/activity-summary' && req.method === 'GET') {
       const rawUrl = req.url || pathname;

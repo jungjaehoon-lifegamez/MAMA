@@ -537,162 +537,256 @@ export class AgentsModule {
   private async renderValidationTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
     el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading validation...</div>`;
     const agentId = a.id ?? '';
+    const OC: Record<string, string> = {
+      healthy: '#22c55e',
+      improved: '#3b82f6',
+      regressed: '#ef4444',
+      inconclusive: '#f59e0b',
+    };
 
     try {
       const [summaryRes, historyRes] = await Promise.all([
         API.getValidationSummary(agentId),
-        API.getValidationHistory(agentId, 20),
+        API.getValidationHistory(agentId, 30),
       ]);
 
       const summary = summaryRes.summary as Record<string, unknown> | null;
       const history = historyRes.history as Array<Record<string, unknown>>;
 
       if (!summary && history.length === 0) {
-        el.innerHTML = `<div style="color:${C.ter};font-size:13px;padding:20px 0;text-align:center;">
-          No validation sessions yet. Run <code style="background:${C.bg};padding:2px 6px;border-radius:4px;">agent_test("${escapeHtml(agentId)}")</code> to start.
+        el.innerHTML = `<div style="color:${C.ter};font-size:13px;padding:32px 0;text-align:center;">
+          No validation sessions yet.<br/>
+          <span style="font-size:12px;">Run <code style="background:${C.bg};padding:2px 6px;border-radius:4px;">agent_test("${escapeHtml(agentId)}")</code> to create the first session.</span>
         </div>`;
         return;
       }
 
-      // ── Summary card ──
-      const outcomeColors: Record<string, string> = {
-        healthy: '#22c55e',
-        improved: '#3b82f6',
-        regressed: '#ef4444',
-        inconclusive: '#f59e0b',
-      };
+      const latestId = String(summary?.id ?? '');
       const outcome = String(summary?.validation_outcome ?? 'none');
       const execStatus = String(summary?.execution_status ?? '—');
-      const outcomeColor = outcomeColors[outcome] ?? C.ter;
-      const baselineVer = summary?.baseline_version ?? '—';
+      const outcomeColor = OC[outcome] ?? C.ter;
+      const baselineVer =
+        summary?.baseline_version !== null && summary?.baseline_version !== undefined
+          ? `v${summary.baseline_version}`
+          : 'none';
       const endedAt = summary?.ended_at ? new Date(Number(summary.ended_at)).toLocaleString() : '—';
 
-      // ── Diff section (before/after from latest session) ──
-      let diffHtml = '';
-      if (summary?.before_snapshot_json || summary?.after_snapshot_json) {
-        const before = summary.before_snapshot_json
-          ? JSON.parse(String(summary.before_snapshot_json))
-          : null;
-        const after = summary.after_snapshot_json
-          ? JSON.parse(String(summary.after_snapshot_json))
-          : null;
-
-        const diffRows = Object.keys({ ...before, ...after })
-          .filter((k) => k !== 'schema_version' && k !== 'captured_at')
-          .map((k) => {
-            const bv = before?.[k] ?? '—';
-            const av = after?.[k] ?? '—';
-            const changed = String(bv) !== String(av);
-            return `<tr style="border-bottom:1px solid ${C.bdr};">
-              <td style="padding:4px 8px;font-size:12px;color:${C.sec};">${escapeHtml(k)}</td>
-              <td style="padding:4px 8px;font-size:12px;color:${C.ter};">${escapeHtml(String(bv))}</td>
-              <td style="padding:4px 8px;font-size:12px;color:${changed ? (outcomeColors.improved ?? C.pri) : C.ter};font-weight:${changed ? '600' : '400'};">${escapeHtml(String(av))}</td>
-            </tr>`;
-          })
-          .join('');
-
-        if (diffRows) {
-          diffHtml = `
-            <div style="margin-top:16px;">
-              <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Before / After Diff</div>
-              <table style="width:100%;border-collapse:collapse;">
-                <thead><tr style="border-bottom:2px solid ${C.bdr};">
-                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Field</th>
-                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Before</th>
-                  <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">After</th>
-                </tr></thead>
-                <tbody>${diffRows}</tbody>
-              </table>
-            </div>`;
+      // ── 1. Fetch session detail with metrics + compare against baseline ──
+      let metricsHtml = '';
+      let compareData: {
+        deltas: Array<{
+          name: string;
+          current: number;
+          baseline: number | null;
+          delta: number | null;
+          direction: string;
+        }>;
+      } | null = null;
+      if (latestId) {
+        try {
+          compareData = await API.getValidationCompare(agentId, latestId, 'approved');
+        } catch {
+          /* no compare data available */
         }
       }
 
-      // ── Report ──
+      if (compareData && compareData.deltas && compareData.deltas.length > 0) {
+        const metricRows = compareData.deltas
+          .map((d) => {
+            const hasBaseline = d.baseline !== null && d.delta !== null;
+            const isGood = d.direction === 'down_good' ? (d.delta ?? 0) < 0 : (d.delta ?? 0) > 0;
+            const deltaColor = !hasBaseline ? C.ter : isGood ? '#22c55e' : '#ef4444';
+            const deltaSign = (d.delta ?? 0) > 0 ? '+' : '';
+            const pct =
+              hasBaseline && d.baseline ? Math.round(((d.delta ?? 0) / d.baseline) * 100) : null;
+            const pctStr = pct !== null ? ` (${pct > 0 ? '+' : ''}${pct}%)` : '';
+
+            const baseStr = hasBaseline ? String(d.baseline) : '—';
+            const arrow = hasBaseline ? ' → ' : '';
+
+            return `<tr style="border-bottom:1px solid ${C.bdr};">
+            <td style="padding:8px;font-size:12px;color:${C.sec};font-weight:500;">${escapeHtml(d.name)}</td>
+            <td style="padding:8px;font-size:13px;font-weight:600;color:${C.pri};">
+              ${hasBaseline ? `<span style="color:${C.ter};">${baseStr}</span>${arrow}` : ''}${d.current}
+            </td>
+            <td style="padding:8px;font-size:12px;font-weight:600;color:${deltaColor};">
+              ${hasBaseline ? `${deltaSign}${d.delta}${pctStr}` : 'no baseline'}
+            </td>
+            <td style="padding:8px;font-size:11px;color:${C.ter};">${d.direction === 'down_good' ? '↓ lower better' : d.direction === 'up_good' ? '↑ higher better' : '—'}</td>
+          </tr>`;
+          })
+          .join('');
+
+        metricsHtml = `
+          <div style="margin-top:20px;">
+            <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Metrics vs Baseline</div>
+            <table style="width:100%;border-collapse:collapse;">
+              <thead><tr style="border-bottom:2px solid ${C.bdr};">
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Metric</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Value</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Delta</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Direction</th>
+              </tr></thead>
+              <tbody>${metricRows}</tbody>
+            </table>
+          </div>`;
+      }
+
+      // ── 2. Report from Conductor ──
       let reportHtml = '';
       if (summary?.report_json) {
         try {
           const report = JSON.parse(String(summary.report_json));
           reportHtml = `
-            <div style="margin-top:16px;">
-              <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Report</div>
-              <div style="background:${C.bg};padding:12px;border-radius:8px;font-size:12px;color:${C.sec};white-space:pre-wrap;">${escapeHtml(report.details || report.headline || '—')}</div>
+            <div style="margin-top:20px;">
+              <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation Report</div>
+              <div style="background:${C.bg};padding:12px 16px;border-radius:8px;border-left:3px solid ${outcomeColor};">
+                <div style="font-size:13px;font-weight:600;color:${outcomeColor};margin-bottom:6px;">${escapeHtml(report.headline || '')}</div>
+                <div style="font-size:12px;color:${C.sec};white-space:pre-wrap;line-height:1.6;">${escapeHtml(report.details || '')}</div>
+              </div>
             </div>`;
         } catch {
-          /* ignore parse errors */
+          /* ignore */
         }
       }
 
-      // ── History timeline ──
-      const historyRows = history
-        .map((h) => {
-          const hOutcome = String(h.validation_outcome ?? '—');
-          const hColor = outcomeColors[hOutcome] ?? C.ter;
-          const hTime = h.ended_at ? new Date(Number(h.ended_at)).toLocaleString() : 'in progress';
-          return `<tr style="border-bottom:1px solid ${C.bdr};">
-          <td style="padding:6px 8px;font-size:12px;color:${C.sec};">v${h.agent_version ?? '?'}</td>
-          <td style="padding:6px 8px;font-size:12px;"><span style="color:${hColor};font-weight:600;">${escapeHtml(hOutcome)}</span></td>
-          <td style="padding:6px 8px;font-size:12px;color:${C.sec};">${escapeHtml(String(h.trigger_type ?? '—'))}</td>
-          <td style="padding:6px 8px;font-size:11px;color:${C.ter};">${escapeHtml(hTime)}</td>
-        </tr>`;
-        })
-        .join('');
+      // ── 3. History — version-by-version performance table ──
+      let historyHtml = '';
+      if (history.length > 0) {
+        // Fetch metrics for each session to show performance numbers
+        type HistSession = Record<string, unknown> & { _metrics: Array<Record<string, unknown>> };
+        const sessionDetails: HistSession[] = await Promise.all(
+          history.slice(0, 10).map(async (h) => {
+            try {
+              const detail = await API.getValidationSessionDetail(String(h.id));
+              return { ...h, _metrics: detail.metrics } as HistSession;
+            } catch {
+              return { ...h, _metrics: [] } as HistSession;
+            }
+          })
+        );
 
-      // ── Approve button ──
-      const approveBtn =
-        outcome === 'improved' || outcome === 'healthy'
-          ? `<button id="btn-approve-validation" style="margin-top:12px;padding:6px 16px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Approve as Baseline</button>`
-          : '';
+        const hRows = sessionDetails
+          .map((h) => {
+            const hOutcome = String(h.validation_outcome ?? '—');
+            const hColor = OC[hOutcome] ?? C.ter;
+            const hTime = h.ended_at ? new Date(Number(h.ended_at)).toLocaleString() : 'running...';
+            const metrics = h._metrics as Array<{
+              name: string;
+              value: number;
+              delta_value: number | null;
+              direction: string;
+            }>;
+
+            // Extract key metrics for display
+            const durMetric = metrics.find(
+              (m) => m.name === 'duration_ms' || m.name === 'publish_latency_ms'
+            );
+            const tokenMetric = metrics.find((m) => m.name === 'token_cost');
+            const scoreMetric = metrics.find(
+              (m) => m.name === 'auto_score' || m.name === 'completion_rate'
+            );
+
+            const fmtMetric = (
+              m: { value: number; delta_value: number | null; direction: string } | undefined,
+              unit: string
+            ) => {
+              if (!m) return `<span style="color:${C.ter};">—</span>`;
+              const val =
+                unit === 'ms'
+                  ? `${(m.value / 1000).toFixed(1)}s`
+                  : unit === '%'
+                    ? `${Math.round(m.value * 100)}%`
+                    : String(Math.round(m.value));
+              if (m.delta_value === null) return `<span>${val}</span>`;
+              const isGood = m.direction === 'down_good' ? m.delta_value < 0 : m.delta_value > 0;
+              const dColor = isGood ? '#22c55e' : '#ef4444';
+              const sign = m.delta_value > 0 ? '+' : '';
+              const dVal =
+                unit === 'ms'
+                  ? `${sign}${(m.delta_value / 1000).toFixed(1)}s`
+                  : `${sign}${Math.round(m.delta_value)}`;
+              return `<span>${val}</span> <span style="color:${dColor};font-size:10px;">${dVal}</span>`;
+            };
+
+            const cmpBase = (compareData as unknown as Record<string, unknown> | null)?.baseline as
+              | { session?: { id?: string } }
+              | null
+              | undefined;
+            const isApproved =
+              String(summary?.baseline_session_id ?? '') === String(h.id) ||
+              cmpBase?.session?.id === String(h.id);
+
+            return `<tr style="border-bottom:1px solid ${C.bdr};${String(h.id) === latestId ? `background:${C.bg};` : ''}">
+            <td style="padding:6px 8px;font-size:12px;color:${C.sec};">v${h.agent_version ?? '?'}${isApproved ? ` <span style="font-size:9px;padding:1px 4px;border-radius:3px;background:${C.agent}20;color:${C.agent};">baseline</span>` : ''}</td>
+            <td style="padding:6px 8px;font-size:12px;"><span style="color:${hColor};font-weight:600;">${escapeHtml(hOutcome)}</span></td>
+            <td style="padding:6px 8px;font-size:12px;color:${C.sec};">${escapeHtml(String(h.trigger_type ?? '—'))}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(durMetric, 'ms')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(tokenMetric, '')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(scoreMetric, '%')}</td>
+            <td style="padding:6px 8px;font-size:11px;color:${C.ter};">${escapeHtml(hTime)}</td>
+          </tr>`;
+          })
+          .join('');
+
+        historyHtml = `
+          <div style="margin-top:20px;">
+            <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Version Performance History</div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;min-width:600px;">
+                <thead><tr style="border-bottom:2px solid ${C.bdr};">
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Version</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Outcome</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Trigger</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Latency</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Tokens</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Score</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Time</th>
+                </tr></thead>
+                <tbody>${hRows}</tbody>
+              </table>
+            </div>
+          </div>`;
+      }
+
+      // ── 4. Approve button ──
+      const canApprove = outcome === 'improved' || outcome === 'healthy';
+      const approveBtn = canApprove
+        ? `<button id="btn-approve-validation" style="margin-top:16px;padding:8px 20px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Approve v${a.version ?? 0} as Baseline</button>`
+        : '';
 
       el.innerHTML = `
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:16px;">
-          <div style="background:${C.bg};padding:12px;border-radius:8px;">
-            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Outcome</div>
-            <div style="font-size:16px;font-weight:700;color:${outcomeColor};">${escapeHtml(outcome)}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:4px;">
+          <div style="background:${C.bg};padding:14px;border-radius:8px;border-left:3px solid ${outcomeColor};">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Validation Outcome</div>
+            <div style="font-size:18px;font-weight:700;color:${outcomeColor};">${escapeHtml(outcome)}</div>
           </div>
-          <div style="background:${C.bg};padding:12px;border-radius:8px;">
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
             <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Execution</div>
-            <div style="font-size:14px;font-weight:600;color:${C.pri};">${escapeHtml(execStatus)}</div>
+            <div style="font-size:15px;font-weight:600;color:${execStatus === 'completed' ? '#22c55e' : execStatus === 'failed' ? '#ef4444' : C.pri};">${escapeHtml(execStatus)}</div>
           </div>
-          <div style="background:${C.bg};padding:12px;border-radius:8px;">
-            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Baseline</div>
-            <div style="font-size:14px;font-weight:600;color:${C.pri};">v${escapeHtml(String(baselineVer))}</div>
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Approved Baseline</div>
+            <div style="font-size:15px;font-weight:600;color:${C.pri};">${escapeHtml(baselineVer)}</div>
           </div>
-          <div style="background:${C.bg};padding:12px;border-radius:8px;">
-            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Last Run</div>
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Last Validated</div>
             <div style="font-size:12px;color:${C.sec};">${escapeHtml(endedAt)}</div>
           </div>
         </div>
 
-        ${diffHtml}
+        ${metricsHtml}
         ${reportHtml}
-
-        ${
-          historyRows
-            ? `
-        <div style="margin-top:16px;">
-          <div style="font-size:12px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation History</div>
-          <table style="width:100%;border-collapse:collapse;">
-            <thead><tr style="border-bottom:2px solid ${C.bdr};">
-              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Version</th>
-              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Outcome</th>
-              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Trigger</th>
-              <th style="text-align:left;padding:4px 8px;font-size:11px;color:${C.ter};">Time</th>
-            </tr></thead>
-            <tbody>${historyRows}</tbody>
-          </table>
-        </div>`
-            : ''
-        }
-
+        ${historyHtml}
         ${approveBtn}
       `;
 
-      // Approve button handler
+      // Approve handler
       const approveEl = el.querySelector('#btn-approve-validation');
-      if (approveEl && summary?.id) {
+      if (approveEl && latestId) {
         approveEl.addEventListener('click', async () => {
           try {
-            await API.approveValidationSession(agentId, String(summary.id));
+            await API.approveValidationSession(agentId, latestId);
             showToast('Approved as baseline');
             void this.renderValidationTab(el, a);
           } catch {
@@ -700,8 +794,8 @@ export class AgentsModule {
           }
         });
       }
-    } catch {
-      el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load validation data.</div>';
+    } catch (err) {
+      el.innerHTML = `<div style="color:#ef4444;font-size:12px;">Failed to load validation data: ${escapeHtml(String(err))}</div>`;
     }
   }
 
