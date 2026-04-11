@@ -195,7 +195,7 @@
       .mama-nav-item.mama-nav-active::before {
         content: ''; position: absolute; left: -8px; top: 8px;
         width: 3px; height: 24px; border-radius: 0 3px 3px 0;
-        background: #F5C518;
+        background: #FFCE00;
       }
 
       /* ── Mobile bottom tab bar ── */
@@ -214,7 +214,16 @@
       }
       .mama-mobile-tab i,
       .mama-mobile-tab svg { width: 20px; height: 20px; }
-      .mama-mobile-tab.mama-nav-active { color: #F5C518; }
+      .mama-mobile-tab.mama-nav-active {
+        color: #FFCE00;
+        position: relative;
+      }
+      .mama-mobile-tab.mama-nav-active::after {
+        content: '';
+        position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+        width: 24px; height: 2px; border-radius: 1px;
+        background: #FFCE00;
+      }
 
       /* ── Slot container ── */
       .mama-slots-container {
@@ -270,9 +279,21 @@
         /* Full-screen chat overlay when chat tab is active */
         #chat-panel-wrapper.mobile-chat-active {
           display: flex !important;
-          position: fixed; inset: 0; bottom: 64px;
+          position: fixed; top: 0; left: 0; right: 0; bottom: 64px;
           width: 100% !important; z-index: 90;
           border-left: none;
+          flex-direction: column;
+        }
+        #chat-panel-wrapper.mobile-chat-active #chat-panel {
+          flex: 1; display: flex; flex-direction: column;
+          height: 100%; min-height: 0;
+        }
+        #chat-panel-wrapper.mobile-chat-active #chat-messages {
+          flex: 1; min-height: 0; overflow-y: auto;
+        }
+        #chat-panel-wrapper.mobile-chat-active .chat-input-area {
+          flex-shrink: 0;
+          padding-bottom: max(12px, env(safe-area-inset-bottom));
         }
       }
       @media (min-width: 768px) {
@@ -910,22 +931,39 @@
           <i data-lucide="layout-dashboard"></i>
           <span>Home</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
-          <i data-lucide="brain"></i>
-          <span>Memory</span>
-        </button>
         <button class="mama-mobile-tab" data-tab="chat" onclick="window.switchTab && window.switchTab('chat')">
           <i data-lucide="message-circle"></i>
           <span>Chat</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="feed" onclick="window.switchTab && window.switchTab('feed')">
-          <i data-lucide="rss"></i>
-          <span>Feed</span>
+        <button class="mama-mobile-tab" data-tab="agents" onclick="window.switchTab && window.switchTab('agents')">
+          <i data-lucide="bot"></i>
+          <span>Agents</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
-          <i data-lucide="settings"></i>
-          <span>Settings</span>
+        <button class="mama-mobile-tab" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+          <i data-lucide="brain"></i>
+          <span>Memory</span>
         </button>
+        <button class="mama-mobile-tab" data-tab="more" onclick="window.toggleMobileMore && window.toggleMobileMore()">
+          <i data-lucide="menu"></i>
+          <span>More</span>
+        </button>
+      </div>
+      <!-- Mobile "More" overflow menu -->
+      <div id="mama-mobile-more" style="display:none; position:fixed; bottom:64px; left:0; right:0; background:#fff; border-top:1px solid #EDE9E1; z-index:99; padding:8px;">
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:4px;">
+          <button class="mama-mobile-tab" data-tab="feed" onclick="window.switchTab && window.switchTab('feed'); window.closeMobileMore && window.closeMobileMore()">
+            <i data-lucide="rss"></i><span>Feed</span>
+          </button>
+          <button class="mama-mobile-tab" data-tab="wiki" onclick="window.switchTab && window.switchTab('wiki'); window.closeMobileMore && window.closeMobileMore()">
+            <i data-lucide="book-open"></i><span>Wiki</span>
+          </button>
+          <button class="mama-mobile-tab" data-tab="logs" onclick="window.switchTab && window.switchTab('logs'); window.closeMobileMore && window.closeMobileMore()">
+            <i data-lucide="scroll-text"></i><span>Logs</span>
+          </button>
+          <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings'); window.closeMobileMore && window.closeMobileMore()">
+            <i data-lucide="settings"></i><span>Settings</span>
+          </button>
+        </div>
       </div>
 
       <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="save-decision-modal">
@@ -1220,6 +1258,17 @@
 
       async function switchTab(tabName) {
         STATE.currentTab = tabName;
+
+        // Close mobile More menu if open
+        const moreMenu = document.getElementById('mama-mobile-more');
+        if (moreMenu) moreMenu.style.display = 'none';
+        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
+        if (moreBtn) moreBtn.classList.remove('mama-nav-active');
+
+        // Also highlight the source tab in More menu if it was selected from there
+        document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach(btn => {
+          btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
+        });
 
         // Update chat panel tab indicator
         const tabIndicator = document.getElementById('chat-tab-indicator');
@@ -1934,8 +1983,27 @@
         container.innerHTML = html;
       }
 
+      // Mobile "More" menu
+      function toggleMobileMore() {
+        const more = document.getElementById('mama-mobile-more');
+        if (!more) return;
+        const isVisible = more.style.display !== 'none';
+        more.style.display = isVisible ? 'none' : 'block';
+        // Update More button active state
+        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
+        if (moreBtn) moreBtn.classList.toggle('mama-nav-active', !isVisible);
+      }
+      function closeMobileMore() {
+        const more = document.getElementById('mama-mobile-more');
+        if (more) more.style.display = 'none';
+        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
+        if (moreBtn) moreBtn.classList.remove('mama-nav-active');
+      }
+
       // Expose to window for onclick handlers
       window.switchTab = switchTab;
+      window.toggleMobileMore = toggleMobileMore;
+      window.closeMobileMore = closeMobileMore;
       window.toggleTheme = toggleTheme;
       window.toggleLegend = toggleLegend;
       window.closeDetailModal = closeDetailModal;
