@@ -295,6 +295,7 @@ export async function runAgentLoop(
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
     backend: runtimeBackend,
   });
+  messageRouter.setSessionsDb(db);
 
   const { memoryAgentLoop } = await initMemoryAgent(
     oauthManager,

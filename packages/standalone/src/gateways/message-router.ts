@@ -223,6 +223,12 @@ export class MessageRouter {
     }>,
   };
 
+  // Sessions DB for conductor activity logging
+  private sessionsDb: import('../sqlite.js').default | null = null;
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.sessionsDb = db;
+  }
+
   setGatewayRegistry(registry: GatewayRegistry): void {
     this.gatewayRegistry = registry;
   }
@@ -690,12 +696,16 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
+        const conductorStart = Date.now();
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
+        this.logConductorActivity(message.text, response, Date.now() - conductorStart);
       } else {
         const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}`;
+        const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
+        this.logConductorActivity(message.text, response, Date.now() - conductorStart);
       }
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
@@ -1406,15 +1416,71 @@ INSTRUCTION:
     const deltaKeySource = candidates[0]?.id || userText;
     const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
 
+    const memoryStart = Date.now();
     this.memoryAuditQueue
       .enqueue(job)
       .then((ack) => {
         this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
+        // Log memory agent activity
+        this.logAgentActivity(
+          'memory',
+          'task_complete',
+          displayTopic.slice(0, 200),
+          undefined,
+          Date.now() - memoryStart
+        );
       })
       .catch((err) => {
         this.memoryAgentStats.acksFailed++;
+        this.logAgentActivity(
+          'memory',
+          'task_error',
+          displayTopic.slice(0, 200),
+          undefined,
+          Date.now() - memoryStart,
+          err instanceof Error ? err.message : String(err)
+        );
         logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
       });
+  }
+
+  // ── Activity Logging (shared by conductor + memory agent) ───────────
+
+  private logConductorActivity(inputText: string, responseText: string, durationMs: number): void {
+    this.logAgentActivity(
+      'conductor',
+      'task_complete',
+      inputText?.slice(0, 200),
+      responseText?.slice(0, 500),
+      durationMs
+    );
+  }
+
+  private logAgentActivity(
+    agentId: string,
+    type: string,
+    inputSummary?: string,
+    outputSummary?: string,
+    durationMs?: number,
+    errorMessage?: string
+  ): void {
+    if (!this.sessionsDb) return;
+    try {
+      // Dynamic import to avoid circular dependency
+      const { getLatestVersion, logActivity } = require('../db/agent-store.js');
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type,
+        input_summary: inputSummary,
+        output_summary: outputSummary,
+        duration_ms: durationMs ?? 0,
+        error_message: errorMessage,
+      });
+    } catch {
+      // Non-fatal — activity logging should never break message handling
+    }
   }
 }
 

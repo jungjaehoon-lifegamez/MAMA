@@ -29,9 +29,8 @@ import {
   handlePostPageContext,
   handlePostUICommand,
 } from './ui-command-handler.js';
-// Validation handler functions used via require() in raw HTTP handler below
-// import type kept for reference: validation-handler.ts exports Express-style handlers
-// graph-api.ts uses raw Node HTTP, so validation store functions are required directly
+// Validation store functions are loaded via require() in route handlers below
+// (graph-api.ts uses raw Node HTTP, not Express middleware)
 import type {
   GraphNode,
   GraphEdge,
