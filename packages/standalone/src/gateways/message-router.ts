@@ -235,6 +235,16 @@ export class MessageRouter {
     this.uiCommandQueue = queue;
   }
 
+  // Validation service for memory agent + conductor sessions
+  private validationService:
+    | import('../validation/session-service.js').ValidationSessionService
+    | null = null;
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.validationService = svc;
+  }
+
   private getPageContextPrefix(): string {
     if (!this.uiCommandQueue) return '';
     const ctx = this.uiCommandQueue.getPageContext();
@@ -1470,29 +1480,65 @@ INSTRUCTION:
     const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
 
     const memoryStart = Date.now();
+    // Start validation session for memory agent
+    let memValSession: { id: string } | null = null;
+    if (this.validationService && this.sessionsDb) {
+      try {
+        const { getLatestVersion: getVer } = require('../db/agent-store.js');
+        const ver = getVer(this.sessionsDb, 'memory');
+        memValSession = this.validationService.startSession('memory', ver?.version ?? 0, 'audit', {
+          goal: `Extract: ${displayTopic.slice(0, 100)}`,
+        });
+      } catch {
+        /* non-fatal */
+      }
+    }
+
     this.memoryAuditQueue
       .enqueue(job)
       .then((ack) => {
         this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
-        // Log memory agent activity
+        const dur = Date.now() - memoryStart;
         this.logAgentActivity(
           'memory',
           'task_complete',
           displayTopic.slice(0, 200),
           undefined,
-          Date.now() - memoryStart
+          dur
         );
+        if (memValSession && this.validationService) {
+          try {
+            this.validationService.finalizeSession(memValSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: dur },
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
       })
       .catch((err) => {
         this.memoryAgentStats.acksFailed++;
+        const dur = Date.now() - memoryStart;
         this.logAgentActivity(
           'memory',
           'task_error',
           displayTopic.slice(0, 200),
           undefined,
-          Date.now() - memoryStart,
+          dur,
           err instanceof Error ? err.message : String(err)
         );
+        if (memValSession && this.validationService) {
+          try {
+            this.validationService.finalizeSession(memValSession.id, {
+              execution_status: 'failed',
+              error_message: err instanceof Error ? err.message : String(err),
+              metrics: { duration_ms: dur },
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
         logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
       });
   }

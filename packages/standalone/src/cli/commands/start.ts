@@ -297,8 +297,7 @@ export async function runAgentLoop(
   });
   messageRouter.setSessionsDb(db);
 
-  // UICommandQueue created later in Phase 5 — wire after creation
-  // (see Phase 5 below where uiCommandQueue is created)
+  // validationService wired after creation (Phase 5 below)
 
   const { memoryAgentLoop } = await initMemoryAgent(
     oauthManager,
@@ -380,9 +379,10 @@ export async function runAgentLoop(
   initAgentTables(db);
   initValidationTables(db);
 
-  // Wire validation session service into tool executor
+  // Wire validation session service into tool executor + message router
   const validationService = new ValidationSessionService(db);
   toolExecutor.setValidationService(validationService);
+  messageRouter.setValidationService(validationService);
   {
     // Ensure OS system agents exist in config (memory agent may be missing in older configs)
     if (!config.multi_agent) {
