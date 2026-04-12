@@ -17,6 +17,7 @@ import { projectMemoryTruth } from './truth-store.js';
 import { buildExtractionPrompt, parseExtractionResponse } from './extraction-prompt.js';
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
+import { queryCanonicalEntities } from '../entities/recall-bridge.js';
 import type {
   MemoryKind,
   MemoryAgentBootstrap,
@@ -585,6 +586,7 @@ export async function recallMemory(
 
   let matched: MemoryRecord[] = [];
   let retrievalSource = 'none';
+  const projectionMode = process.env.MAMA_ENTITY_PROJECTION_MODE ?? 'shadow';
   let _lexicalRecords: MemoryRecord[] | null = null;
   const loadLexical = async () => {
     if (_lexicalRecords === null) {
@@ -873,6 +875,31 @@ export async function recallMemory(
     retrievalSource = 'vector_search';
   } else if (lexicalCandidates.length > 0) {
     retrievalSource = 'lexical_search';
+  }
+
+  let canonicalMatched: MemoryRecord[] = [];
+  if (projectionMode !== 'off') {
+    try {
+      canonicalMatched = await queryCanonicalEntities(query, options.scopes ?? [], { limit: 10 });
+      if (projectionMode === 'dual-write' && canonicalMatched.length > 0) {
+        const seenIds = new Set(matched.map((item) => item.id));
+        for (const canonical of canonicalMatched) {
+          if (!seenIds.has(canonical.id)) {
+            matched.push(canonical);
+            seenIds.add(canonical.id);
+          }
+        }
+        retrievalSource =
+          retrievalSource === 'none' ? 'entity_canonical' : `${retrievalSource}+entity_canonical`;
+      } else if (projectionMode === 'shadow' && canonicalMatched.length > 0) {
+        retrievalSource =
+          retrievalSource === 'none' ? 'shadow_entity_probe' : `${retrievalSource}+shadow_probe`;
+      }
+    } catch (canonicalErr) {
+      warn(
+        `[recallMemory] Canonical entity recall failed: ${canonicalErr instanceof Error ? canonicalErr.message : String(canonicalErr)}`
+      );
+    }
   }
 
   // Enrich active records with summaries from their superseded predecessors.
