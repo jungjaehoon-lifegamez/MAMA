@@ -12,6 +12,7 @@ import {
 } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { createCollapsible } from '../utils/dom.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 
 declare const DOMPurify: { sanitize(html: string): string };
 
@@ -85,6 +86,18 @@ export class DashboardModule {
   private container: HTMLElement | null = null;
   private eventSource: EventSource | null = null;
   private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private selectedProject: string | null = null;
+  private selectedConnector: string | null = null;
+
+  private getCurrentPageType(): 'dashboard-overview' | 'dashboard-project' | 'dashboard-connector' {
+    if (this.selectedConnector) {
+      return 'dashboard-connector';
+    }
+    if (this.selectedProject) {
+      return 'dashboard-project';
+    }
+    return 'dashboard-overview';
+  }
 
   init(): void {
     this.container = document.getElementById('dashboard-slots');
@@ -164,6 +177,17 @@ export class DashboardModule {
     briefingSlot: ReportSlot | null;
   }): void {
     if (!this.container) return;
+    reportPageContext('dashboard', {
+      pageType: this.getCurrentPageType(),
+      selectedProject: this.selectedProject,
+      selectedConnector: this.selectedConnector,
+      noticeCount: data.notices.length,
+      pipelineCount: data.pipeline.length,
+      connectorCount: data.connectors.length,
+      totalDecisions: data.totalDecisions,
+      agentCount: data.agentCount,
+      summary: data.summary.text?.slice(0, 300) ?? '',
+    });
 
     const emptyEl = document.getElementById('slots-empty');
     const hasData =
@@ -276,6 +300,12 @@ export class DashboardModule {
           if (isOpen) {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
+            this.selectedProject = null;
+            reportPageContext('dashboard', {
+              pageType: this.getCurrentPageType(),
+              selectedProject: null,
+              selectedConnector: this.selectedConnector,
+            });
           } else {
             detail.style.display = '';
             arrow.textContent = '\u25BC';
@@ -283,6 +313,13 @@ export class DashboardModule {
             if (projectName && detail.textContent === 'Loading...') {
               this.loadPipelineDetail(detail, projectName);
             }
+            this.selectedProject = projectName ?? null;
+            this.selectedConnector = null;
+            reportPageContext('dashboard', {
+              pageType: 'dashboard-project',
+              selectedProject: this.selectedProject,
+              selectedConnector: this.selectedConnector,
+            });
           }
         });
       });
@@ -348,6 +385,12 @@ export class DashboardModule {
           if (isOpen) {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
+            this.selectedConnector = null;
+            reportPageContext('dashboard', {
+              pageType: this.getCurrentPageType(),
+              selectedProject: this.selectedProject,
+              selectedConnector: null,
+            });
           } else {
             detail.style.display = '';
             arrow.textContent = '\u25BC';
@@ -355,6 +398,13 @@ export class DashboardModule {
             if (connName && detail.textContent === 'Loading...') {
               this.loadConnectorDetail(detail, connName);
             }
+            this.selectedConnector = connName ?? null;
+            this.selectedProject = null;
+            reportPageContext('dashboard', {
+              pageType: 'dashboard-connector',
+              selectedProject: this.selectedProject,
+              selectedConnector: this.selectedConnector,
+            });
           }
         });
       });

@@ -24,6 +24,10 @@ import http from 'node:http';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
+import { ValidationSessionService } from '../../validation/session-service.js';
+import type { ValidationSessionRow } from '../../validation/types.js';
+import { getLatestVersion, logActivity } from '../../db/agent-store.js';
+import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
@@ -68,6 +72,8 @@ export interface RegisterApiRoutesParams {
     };
     exec: (sql: string) => void;
   };
+  /** Sessions DB for validation */
+  sessionsDb?: SQLiteDatabase;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -84,7 +90,166 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     slackGateway,
     graphHandler,
     getAdapter,
+    sessionsDb,
   } = params;
+
+  // ── Validation Session Service ────────────────────────────────────────
+  const validationService = sessionsDb ? new ValidationSessionService(sessionsDb) : null;
+
+  /**
+   * executeValidatedRun — wraps pm.getSharedProcess().sendMessage()
+   * with validation session lifecycle (before → execute → after → classify).
+   */
+  async function executeValidatedRun(
+    agentId: string,
+    prompt: string,
+    opts?: { requestTimeout?: number }
+  ): Promise<{ response?: string; noUpdate?: boolean }> {
+    const pm = toolExecutor.getAgentProcessManager();
+    if (!pm) throw new Error(`AgentProcessManager not available`);
+
+    let agentVersion = 0;
+    let session: ValidationSessionRow | null = null;
+    const startTime = Date.now();
+
+    try {
+      const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
+      agentVersion = ver?.version ?? 0;
+      session = validationService?.startSession(agentId, agentVersion, 'system_run') ?? null;
+    } catch (bootstrapErr) {
+      routesLogger.warn(
+        '[executeValidatedRun] Failed to initialize validation bootstrap:',
+        bootstrapErr
+      );
+      agentVersion = 0;
+      session = null;
+    }
+
+    if (sessionsDb) {
+      try {
+        const startRow = logActivity(sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_start',
+          input_summary: prompt.slice(0, 200),
+          run_id: session?.id,
+          execution_status: 'started',
+          trigger_reason: 'system_run',
+        });
+        if (session) {
+          try {
+            validationService?.recordRun(session.id, { activityId: startRow.id });
+          } catch (telemetryErr) {
+            routesLogger.warn(
+              '[executeValidatedRun] Failed to link startup activity to validation session:',
+              telemetryErr
+            );
+          }
+        }
+      } catch (telemetryErr) {
+        routesLogger.warn('[executeValidatedRun] Failed to write startup telemetry:', telemetryErr);
+      }
+    }
+
+    try {
+      const process = await pm.getSharedProcess(agentId, opts);
+      const result = await process.sendMessage(prompt);
+      const durationMs = Date.now() - startTime;
+      const noUpdate = result?.response?.includes('NO_UPDATE');
+      const usage = result?.usage;
+      const tokensUsed = usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : 0;
+      try {
+        if (sessionsDb) {
+          const completeRow = logActivity(sessionsDb, {
+            agent_id: agentId,
+            agent_version: agentVersion,
+            type: noUpdate ? 'task_skipped' : 'task_complete',
+            input_summary: prompt.slice(0, 200),
+            output_summary: result?.response?.slice(0, 500),
+            duration_ms: durationMs,
+            tokens_used: tokensUsed,
+            run_id: session?.id,
+            execution_status: 'completed',
+            trigger_reason: 'system_run',
+          });
+          if (session) {
+            validationService?.recordRun(session.id, {
+              activityId: completeRow.id,
+              duration_ms: durationMs,
+              tokens_used: tokensUsed,
+            });
+          }
+        }
+      } catch (telemetryErr) {
+        routesLogger.warn(
+          '[executeValidatedRun] Failed to write completion telemetry:',
+          telemetryErr
+        );
+      }
+
+      try {
+        if (session && validationService) {
+          validationService.finalizeSession(session.id, {
+            execution_status: 'completed',
+            metrics: {
+              duration_ms: durationMs,
+              token_cost: tokensUsed,
+            },
+          });
+        }
+      } catch (telemetryErr) {
+        routesLogger.warn(
+          '[executeValidatedRun] Failed to finalize validation session:',
+          telemetryErr
+        );
+      }
+
+      return { response: result?.response, noUpdate };
+    } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const originalError = err;
+      try {
+        if (sessionsDb) {
+          const errorRow = logActivity(sessionsDb, {
+            agent_id: agentId,
+            agent_version: agentVersion,
+            type: 'task_error',
+            input_summary: prompt.slice(0, 200),
+            error_message: err instanceof Error ? err.message : String(err),
+            duration_ms: durationMs,
+            run_id: session?.id,
+            execution_status: 'failed',
+            trigger_reason: 'system_run',
+          });
+          if (session) {
+            validationService?.recordRun(session.id, {
+              activityId: errorRow.id,
+              duration_ms: durationMs,
+            });
+          }
+        }
+      } catch (telemetryErr) {
+        routesLogger.warn('[executeValidatedRun] Failed to write error telemetry:', telemetryErr);
+      }
+
+      try {
+        if (session && validationService) {
+          validationService.finalizeSession(session.id, {
+            execution_status: 'failed',
+            error_message: err instanceof Error ? err.message : String(err),
+            metrics: { duration_ms: durationMs },
+          });
+        }
+      } catch (telemetryErr) {
+        routesLogger.warn(
+          '[executeValidatedRun] Failed to finalize failed validation session:',
+          telemetryErr
+        );
+      }
+
+      throw originalError;
+    }
+  }
 
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
@@ -107,7 +272,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       broadcastReportUpdate(apiServer.reportSseClients, {
         slots: apiServer.reportStore.getAllSorted(),
       });
-      console.log(`[Report] Agent published briefing slot`);
+      routesLogger.debug(`[Report] Agent published briefing slot`);
       eventBus.emit({
         type: 'agent:action',
         agent: 'dashboard-agent',
@@ -116,10 +281,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
     });
 
+    // ── Conductor Persona (section injection — non-destructive) ────────
+    const { ensureConductorPersona } = await import('../../multi-agent/conductor-persona.js');
+    ensureConductorPersona();
+
     // ── Dashboard Agent ─────────────────────────────────────────────────
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
     ensureDashboardPersona();
-    console.log('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
+    routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
 
     // Merge code-act MCP server into mama-mcp-config.json
     // Makes code_act available to all CLI processes (AgentProcessManager agents)
@@ -135,9 +304,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         env: { MAMA_SERVER_PORT: String(API_PORT) },
       };
       writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
-      console.log('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
+      routesLogger.debug('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
     } catch (err) {
-      console.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
+      routesLogger.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
     }
 
     // Dashboard cron: 30-min interval via AgentProcessManager
@@ -153,20 +322,19 @@ This saves resources. Only publish when there is genuinely new information to re
     const runDashboardAgent = async () => {
       const pm = toolExecutor.getAgentProcessManager();
       if (!pm) {
-        console.warn('[Dashboard Agent] AgentProcessManager not available yet');
+        routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
         return;
       }
       try {
-        console.log('[Dashboard Agent] Checking for updates...');
-        const process = await pm.getSharedProcess('dashboard-agent');
-        const result = await process.sendMessage(dashboardPrompt);
-        if (result?.response?.includes('NO_UPDATE')) {
-          console.log('[Dashboard Agent] No changes detected, skipped');
+        routesLogger.debug('[Dashboard Agent] Checking for updates...');
+        const { noUpdate } = await executeValidatedRun('dashboard-agent', dashboardPrompt);
+        if (noUpdate) {
+          routesLogger.debug('[Dashboard Agent] No changes detected, skipped');
         } else {
-          console.log('[Dashboard Agent] Briefing published');
+          routesLogger.debug('[Dashboard Agent] Briefing published');
         }
       } catch (err) {
-        console.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
+        routesLogger.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
       }
     };
 
@@ -192,12 +360,12 @@ This saves resources. Only publish when there is genuinely new information to re
       ensureWikiPersona();
       const obsWriter = new ObsidianWriter(wikiConfig.vaultPath, wikiConfig.wikiDir || 'wiki');
       obsWriter.ensureDirectories();
-      console.log(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
+      routesLogger.debug(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
 
       // Wire Obsidian vault path for CLI tool
       const fullWikiPath = obsWriter.getWikiPath();
       toolExecutor.setObsidianVaultPath(fullWikiPath);
-      console.log(`[Wiki Agent] Obsidian CLI vault: ${fullWikiPath}`);
+      routesLogger.debug(`[Wiki Agent] Obsidian CLI vault: ${fullWikiPath}`);
 
       // Ensure Obsidian is running for CLI access (macOS only)
       try {
@@ -219,7 +387,7 @@ This saves resources. Only publish when there is genuinely new information to re
           obsWriter.updateIndex(pages as import('../../wiki/types.js').WikiPage[]);
           obsWriter.appendLog('compile', `Published ${pages.length} pages`);
         }
-        console.log(`[Wiki Agent] Published ${pages.length} pages to vault`);
+        routesLogger.debug(`[Wiki Agent] Published ${pages.length} pages to vault`);
 
         eventBus.emit({
           type: 'wiki:compiled',
@@ -227,15 +395,14 @@ This saves resources. Only publish when there is genuinely new information to re
         });
       });
 
-      // Wiki trigger via AgentProcessManager
+      // Wiki trigger via executeValidatedRun
       const runWikiAgent = async () => {
-        const pm = toolExecutor.getAgentProcessManager();
-        if (!pm) {
-          console.warn('[Wiki Agent] AgentProcessManager not available yet');
+        if (!toolExecutor.getAgentProcessManager()) {
+          routesLogger.warn('[Wiki Agent] AgentProcessManager not available yet');
           return;
         }
         try {
-          console.log('[Wiki Agent] Checking for updates...');
+          routesLogger.debug('[Wiki Agent] Checking for updates...');
 
           const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
@@ -246,15 +413,16 @@ This saves resources. Only publish when there is genuinely new information to re
 
 This saves resources. Only compile when there is genuinely new information to document.`;
 
-          const wikiProcess = await pm.getSharedProcess('wiki-agent', { requestTimeout: 600_000 });
-          const wikiResult = await wikiProcess.sendMessage(wikiPrompt);
-          if (wikiResult?.response?.includes('NO_UPDATE')) {
-            console.log('[Wiki Agent] No changes detected, skipped');
+          const { noUpdate } = await executeValidatedRun('wiki-agent', wikiPrompt, {
+            requestTimeout: 600_000,
+          });
+          if (noUpdate) {
+            routesLogger.debug('[Wiki Agent] No changes detected, skipped');
           } else {
-            console.log('[Wiki Agent] Compilation complete');
+            routesLogger.debug('[Wiki Agent] Compilation complete');
           }
         } catch (err) {
-          console.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
+          routesLogger.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
         }
       };
 
@@ -284,7 +452,7 @@ This saves resources. Only compile when there is genuinely new information to do
       // First run after 15s (let connectors and dashboard agent go first)
       setTimeout(runWikiAgent, 15_000);
 
-      console.log(
+      routesLogger.info(
         '[Wiki Agent] Ready — triggers: extraction:completed event, POST /api/wiki/compile'
       );
     }
@@ -303,17 +471,135 @@ This saves resources. Only compile when there is genuinely new information to do
       'After all fixes and reports, save audit results to memory.';
 
     const runConductorAudit = async () => {
+      let auditSession: ValidationSessionRow | null = null;
+      let auditVersion = 0;
+      const auditStart = Date.now();
       try {
-        console.log('[Conductor Audit] Starting hourly audit...');
+        routesLogger.debug('[Conductor Audit] Starting hourly audit...');
+
+        try {
+          const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
+          auditVersion = ver?.version ?? 0;
+          auditSession =
+            validationService?.startSession('conductor', auditVersion, 'audit', {
+              goal: 'hourly system audit',
+            }) ?? null;
+        } catch (bootstrapErr) {
+          routesLogger.warn(
+            '[Conductor Audit] Failed to initialize audit telemetry:',
+            bootstrapErr
+          );
+          auditVersion = 0;
+          auditSession = null;
+        }
+
+        if (sessionsDb) {
+          try {
+            const startRow = logActivity(sessionsDb, {
+              agent_id: 'conductor',
+              agent_version: auditVersion,
+              type: 'audit_start',
+              input_summary: 'Hourly system audit',
+              run_id: auditSession?.id,
+              execution_status: 'started',
+              trigger_reason: 'audit',
+            });
+            if (auditSession) {
+              try {
+                validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+              } catch (telemetryErr) {
+                routesLogger.warn(
+                  '[Conductor Audit] Failed to link startup activity to validation session:',
+                  telemetryErr
+                );
+              }
+            }
+          } catch (telemetryErr) {
+            routesLogger.warn('[Conductor Audit] Failed to write startup telemetry:', telemetryErr);
+          }
+        }
+
+        const auditChannelId = `conductor-audit-${Date.now()}`;
         await messageRouter.process({
-          source: 'viewer' as const,
-          channelId: 'conductor-audit',
+          source: 'system' as const,
+          channelId: auditChannelId,
           userId: 'system',
           text: auditPrompt,
         });
-        console.log('[Conductor Audit] Audit complete');
+
+        const auditDuration = Date.now() - auditStart;
+        try {
+          if (sessionsDb) {
+            const activityRow = logActivity(sessionsDb, {
+              agent_id: 'conductor',
+              agent_version: auditVersion,
+              type: 'audit_complete',
+              input_summary: 'Hourly system audit',
+              duration_ms: auditDuration,
+              run_id: auditSession?.id,
+              execution_status: 'completed',
+              trigger_reason: 'audit',
+            });
+            if (auditSession) {
+              validationService?.recordRun(auditSession.id, { activityId: activityRow.id });
+            }
+          }
+        } catch (telemetryErr) {
+          routesLogger.warn(
+            '[Conductor Audit] Failed to write completion telemetry:',
+            telemetryErr
+          );
+        }
+
+        try {
+          if (auditSession && validationService) {
+            validationService.finalizeSession(auditSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: auditDuration },
+            });
+          }
+        } catch (telemetryErr) {
+          routesLogger.warn(
+            '[Conductor Audit] Failed to finalize validation session:',
+            telemetryErr
+          );
+        }
+
+        routesLogger.debug('[Conductor Audit] Audit complete');
       } catch (err) {
-        console.error(
+        const auditDuration = Date.now() - auditStart;
+        try {
+          if (sessionsDb) {
+            const failRow = logActivity(sessionsDb, {
+              agent_id: 'conductor',
+              agent_version: auditVersion,
+              type: 'audit_failed',
+              input_summary: 'Hourly system audit failed',
+              error_message: err instanceof Error ? err.message : String(err),
+              duration_ms: auditDuration,
+              run_id: auditSession?.id,
+              execution_status: 'failed',
+              trigger_reason: 'audit',
+            });
+            if (auditSession) {
+              validationService?.recordRun(auditSession.id, { activityId: failRow.id });
+            }
+          }
+        } catch (telemetryErr) {
+          routesLogger.warn('[Conductor Audit] Failed to write failure telemetry:', telemetryErr);
+        }
+        try {
+          if (auditSession && validationService) {
+            validationService.finalizeSession(auditSession.id, {
+              execution_status: 'failed',
+              error_message: err instanceof Error ? err.message : String(err),
+              metrics: { duration_ms: auditDuration },
+            });
+          }
+        } catch (telemetryErr) {
+          routesLogger.warn('[Conductor Audit] Failed to finalize failed session:', telemetryErr);
+        }
+        routesLogger.error(
           '[Conductor Audit] Failed:',
           err instanceof Error ? err.message : String(err)
         );
@@ -331,7 +617,7 @@ This saves resources. Only compile when there is genuinely new information to do
       res.json({ ok: true, message: 'Conductor audit triggered' });
     });
 
-    console.log(
+    routesLogger.info(
       '[Conductor Audit] Ready — runs every 60 min, POST /api/conductor/audit for manual trigger'
     );
   }

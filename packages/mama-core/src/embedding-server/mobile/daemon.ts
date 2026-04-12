@@ -15,6 +15,7 @@
  */
 
 import { EventEmitter } from 'events';
+import { randomUUID } from 'crypto';
 import { spawn, ChildProcess } from 'child_process';
 import type { Readable, Writable } from 'stream';
 
@@ -95,6 +96,7 @@ export class ClaudeDaemon extends EventEmitter {
   private _pid: number | null;
   private _isRunning: boolean;
   private buffer: string;
+  private cliSessionId: string;
 
   /**
    * Create a new ClaudeDaemon instance
@@ -109,6 +111,7 @@ export class ClaudeDaemon extends EventEmitter {
     this._pid = null;
     this._isRunning = false;
     this.buffer = '';
+    this.cliSessionId = randomUUID();
   }
 
   /**
@@ -139,13 +142,20 @@ export class ClaudeDaemon extends EventEmitter {
       let settled = false;
 
       try {
-        // Use stream-json mode for bidirectional JSON communication
+        // Requires a modern Claude CLI build with stream-json support
+        // for --print/--verbose/--session-id/--setting-sources.
         const args = [
+          '--print',
+          '--verbose',
           '--dangerously-skip-permissions',
           '--input-format',
           'stream-json',
           '--output-format',
           'stream-json',
+          '--session-id',
+          this.cliSessionId,
+          '--setting-sources',
+          'project,local',
         ];
 
         // Spawn Claude Code CLI

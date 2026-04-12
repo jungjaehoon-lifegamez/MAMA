@@ -1,7 +1,8 @@
 /* ============================================================================
    MAMA Viewer - Brand-Aligned CSS
    Color Palette: Yellow #FFCE00, Lavender #EDDBF7, Black #131313, Blush #FF9999
-   Typography: Fredoka (display) + Nunito (body)
+   Typography: Inter (UI) + Fredoka (markdown headings) + Nunito (chat)
+   CJK Fallback: Noto Sans KR, Noto Sans JP
    ============================================================================ */
 
 /* ============================================================================
@@ -15,7 +16,7 @@ header {
 }
 
 main {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100dvh - 56px);
 }
 
 [data-tab] {
@@ -67,9 +68,13 @@ h4 { font-size: 0.8125rem; font-weight: 500; line-height: 1.4; }
   border-radius: var(--radius-card, 12px);
 }
 
-/* Button touch targets — minimum 32px height (44px recommended for mobile) */
+/* Button touch targets — 44px minimum on mobile per WCAG 2.5.8 */
 button { min-height: 32px; }
 button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px 12px; }
+@media (max-width: 768px) {
+  button { min-height: 44px; }
+  [data-tab] { min-height: 44px; }
+}
 
 /* Floating Chat */
 .animate-slide-up {
@@ -111,11 +116,37 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   will-change: opacity;
 }
 
+/* Right panel mode (SmartStore pattern) — override floating panel sizing */
+#chat-panel-wrapper {
+  transition: width 0.15s ease;
+  height: 100%;
+  overflow: hidden;
+  min-width: 280px;
+}
+#chat-panel-wrapper #chat-panel {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  resize: none;
+  overflow: hidden;
+  transform: none;
+  will-change: auto;
+}
+#chat-resize-handle-bar {
+  display: none;
+}
+#chat-resize-handle-bar.chat-resize-visible {
+  display: block;
+}
+
+/* Legacy bubble styles (kept for backward compat) */
 #chat-panel.chat-panel-closed {
   opacity: 0;
   pointer-events: none;
 }
-
 #chat-panel.chat-panel-open {
   opacity: 1;
   pointer-events: auto;
@@ -160,6 +191,57 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   margin: 1px auto;
   border-radius: 9999px;
   background: #D4C4E0;
+}
+
+/* Mobile chat panel overrides — fix height:100% and overflow:hidden from desktop */
+@media (max-width: 767px) {
+  #chat-panel-wrapper {
+    height: auto;
+  }
+  #chat-panel-wrapper #chat-panel {
+    overflow: visible;
+  }
+  /* Mobile chat header — compact + brand aligned */
+  #chat-panel-wrapper.mobile-chat-active #chat-header {
+    padding: 12px 16px;
+    background: linear-gradient(180deg, #fff 0%, #FAFAF8 100%);
+    border-bottom: 1px solid #EDE9E1;
+  }
+  /* Mobile chat input — larger targets, brand colors */
+  #chat-panel-wrapper.mobile-chat-active .p-3 {
+    padding: 12px 16px;
+    background: #FAFAF8;
+    border-top: 1px solid #EDE9E1;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-input {
+    background: #fff;
+    border: 1.5px solid #D4C4E0;
+    border-radius: 20px;
+    padding: 10px 16px;
+    font-size: 15px;
+    min-height: 44px;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-input:focus {
+    border-color: #FFCE00;
+    box-shadow: 0 0 0 3px rgba(255, 206, 0, 0.15);
+  }
+  /* Mobile action buttons — 44px touch targets */
+  #chat-panel-wrapper.mobile-chat-active #chat-attach,
+  #chat-panel-wrapper.mobile-chat-active #chat-mic,
+  #chat-panel-wrapper.mobile-chat-active #chat-send {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+  }
+  #chat-panel-wrapper.mobile-chat-active #chat-send {
+    background: #FFCE00;
+    box-shadow: 0 2px 8px rgba(255, 206, 0, 0.3);
+  }
+  /* Mobile message bubbles — slightly larger text */
+  #chat-panel-wrapper.mobile-chat-active .chat-message .message-content {
+    font-size: 15px;
+    line-height: 1.5;
+  }
 }
 
 /* Memory viewer mobile layout */
@@ -372,7 +454,7 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
 .chat-message {
   display: flex;
   flex-direction: column;
-  max-width: 80%;
+  max-width: 100%;
   animation: message-appear 0.2s ease-out;
 }
 
@@ -393,22 +475,22 @@ button:not([class*="p-"]):not([class*="px-"]):not([class*="py-"]) { padding: 6px
   box-shadow: 0 4px 12px rgba(255, 206, 0, 0.3);
 }
 
-/* Assistant messages - left aligned, lavender bubble */
+/* Assistant messages - left aligned, white bubble */
 .chat-message.assistant {
   align-self: flex-start;
   align-items: flex-start;
 }
 
 .chat-message.assistant .message-content {
-  background: #F5EBF9;
+  background: #FFFFFF;
   color: #131313;
   padding: 12px 16px;
   border-radius: 20px 20px 20px 4px;
   font-size: 15px;
   line-height: 1.5;
   word-break: break-word;
-  box-shadow: 0 2px 8px rgba(19, 19, 19, 0.08);
-  border: 1px solid #D4C4E0;
+  box-shadow: 0 1px 4px rgba(19, 19, 19, 0.06);
+  border: 1px solid #EDE9E1;
 }
 
 /* System messages - centered, subtle */
@@ -796,7 +878,7 @@ body,
   font-weight: 700;
   border-radius: 9999px;
   box-shadow: 0 4px 20px rgba(255, 206, 0, 0.4);
-  transition: all 0.2s ease;
+  transition: background 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
   border: none;
   cursor: pointer;
 }
@@ -825,6 +907,19 @@ body,
 .card-mama:hover {
   transform: translateY(-4px);
   box-shadow: 0 8px 32px rgba(19, 19, 19, 0.12);
+}
+
+/* Agent card hover (replaces inline JS handlers) */
+.agent-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+/* Agent form inputs — focus matches chat input style */
+.agent-input:focus {
+  outline: none;
+  border-color: #FFCE00;
+  box-shadow: 0 0 0 3px rgba(255, 206, 0, 0.2);
 }
 
 /* ============================================================================

@@ -484,11 +484,18 @@ export class ChatModule {
     this.addUserMessage(message);
     this.enableSend(false);
 
+    // Include current viewer tab context (SmartStore ChatPanel pattern)
+    const tabIndicator = document.getElementById('chat-tab-indicator');
+    const viewerContext = {
+      currentTab: tabIndicator?.textContent?.toLowerCase() || 'unknown',
+    };
+
     this.ws.send(
       JSON.stringify({
         type: 'send',
         sessionId: this.sessionId,
         content: message,
+        viewerContext,
       })
     );
 
@@ -1081,34 +1088,27 @@ export class ChatModule {
    * Update chat status
    */
   updateStatus(status: string): void {
-    const statusEl = getElementByIdOrNull<HTMLDivElement>('chat-status');
+    const statusEl = getElementByIdOrNull<HTMLElement>('chat-status');
     if (!statusEl) {
       logger.warn('Status element not found');
       return;
     }
 
-    const indicator = statusEl.querySelector('.status-indicator');
-    const text = statusEl.querySelector('span:not(.status-indicator)');
-
-    if (!indicator || !text) {
-      logger.warn('Status indicator or text not found');
-      return;
-    }
-
-    indicator.className = 'status-indicator ' + status;
+    // #chat-status IS the indicator element (not a wrapper with children)
+    statusEl.className = 'status-indicator w-1.5 h-1.5 rounded-full flex-shrink-0 ' + status;
 
     switch (status) {
       case 'connected':
-        text.textContent = 'Connected';
+        statusEl.title = 'Connected';
         break;
       case 'disconnected':
-        text.textContent = 'Disconnected';
+        statusEl.title = 'Disconnected';
         break;
       case 'connecting':
-        text.textContent = 'Connecting...';
+        statusEl.title = 'Connecting...';
         break;
       default:
-        text.textContent = status;
+        statusEl.title = status;
     }
   }
 
@@ -2042,12 +2042,21 @@ export class ChatModule {
     const panel = getElementByIdOrNull<HTMLDivElement>('chat-panel');
     const header = getElementByIdOrNull<HTMLDivElement>('chat-header');
 
+    // Right panel mode: no bubble, auto-init session
+    const isRightPanel = !bubble && !!document.getElementById('chat-panel-wrapper');
+    if (isRightPanel && !this.ws) {
+      this.initSession();
+    }
+
     if (bubble) {
       bubble.addEventListener('click', () => this.togglePanel());
     }
     if (closeBtn) {
       closeBtn.addEventListener('click', () => this.togglePanel(false));
     }
+
+    // Right panel mode: skip drag/resize handlers (handled by viewer.html inline JS)
+    if (isRightPanel) return;
 
     if (panel && header) {
       let dragging = false;
