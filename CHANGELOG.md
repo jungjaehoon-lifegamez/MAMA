@@ -8,15 +8,30 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **OS Agent same-view groundwork** — Viewer page context now propagates richer agent/wiki/dashboard/feed/settings state so `os-agent` can navigate and inspect the same surface the user sees
-- **Viewer/system lane separation** — `viewer:*` and `system:*` sessions now use different global lanes, preventing scheduled conductor audit work from blocking `os-agent` frontdoor traffic
+- **Managed agent lifecycle foundation** — Added DB-backed `agent_versions`, `agent_metrics`, and `agent_activity`, plus managed-agent CRUD/version/metrics APIs for create, update, compare, archive, and history flows
+- **Agents viewer surface** — Added the Agents tab with list/detail flows for Config, Persona, Tools, Activity, Validation, and History, including deep links, create modal, status badges, and activity summary integration
+- **Agent to Viewer command channel** — Added UI command queue, page-context reporting, `viewer_state`, `viewer_navigate`, and `viewer_notify` so the frontdoor agent can inspect and steer the same Viewer surface the user is using
+- **Validation session system** — Added validation session migrations, store/service APIs, summary/history/session detail/compare/approve routes, and Viewer baseline approval flows
+- **Agent testing and runtime sync** — Added `agent_test` scoring, validation-session linkage, managed-agent runtime sync helpers, and config/persona hot-reload wiring for `agent_create` and `agent_update`
+- **OS Agent same-view groundwork** — Exposed `os-agent` as a managed system agent and expanded Viewer context for agents, wiki, dashboard, feed, settings, and other same-view surfaces
 - **Mobile daemon CLI coverage** — Added regression coverage for the mobile Claude daemon stream-json spawn flags and UUID session handling
 
 ### Changed
 
-- **Frontdoor alignment** — Viewer-facing traffic now prefers `os-agent` as the user-facing frontdoor while conductor remains the system audit/background role
+- **Frontdoor alignment** — Viewer-facing traffic now prefers `os-agent` as the user-facing frontdoor while conductor remains the system audit/background role, with viewer/system lanes separated to prevent audit traffic from blocking the frontdoor
+- **Validation contract hardening** — Validation summary/history/compare/approve flows now validate agent ownership, trigger compatibility, baseline selection, session scoping, and API error handling against the shipped store shape
+- **Viewer context and routing** — Dashboard, Agents, Memory, Wiki, Feed, Logs, Settings, and chat-shell flows now publish clearer page context and route selection so agent replies can stay grounded in the user’s visible state
+- **Agent activity and telemetry** — Scheduled audit, wiki, dashboard, memory, delegate, and agent-test flows now record activity/validation data through the shared agent telemetry path
 - **Viewer build hygiene** — Standalone build now clears stale `public/viewer/js` outputs before recompiling, preventing deleted modules from shipping accidentally
-- **Release docs alignment** — README, roadmap/design docs, viewer docs, and landing-page copy now describe the shipped agent-management and post-playground viewer model
+- **Release docs alignment** — README, roadmap/design docs, viewer docs, and landing-page copy now describe the shipped agent-management, validation, and post-playground viewer model
+
+### Fixed
+
+- **Agent backend and tool handling** — Managed-agent backends now support `claude`, `codex`, `codex-mcp`, and `gemini`, viewer-only mutations are guarded consistently, and alias/canonical agent ids resolve correctly during updates and tests
+- **Validation and telemetry resilience** — Agent tests, delegations, and scheduled runs no longer fail just because telemetry persistence fails, and started validation sessions are cleaned up or finalized more consistently
+- **Activity and metrics correctness** — Version writes are serialized, response averages aggregate instead of overwrite, terminal outcomes drive summaries, audit failures count toward error streaks, and activity rows preserve run metadata
+- **Viewer state and safety** — Fixed stale detail/list context races, approval refresh issues, page-context leakage, keyboard accessibility gaps, wildcard tool-permission preservation, and multiple XSS-prone unescaped render paths
+- **Same-view wiring** — Wired the active UI command queue into the executor path actually used by OS agent flows so page lookup, navigation, and same-view context operate through the live Viewer channel
 
 ### Removed
 
