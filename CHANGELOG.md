@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **OS Agent same-view groundwork** — Viewer page context now propagates richer agent/wiki/dashboard/feed/settings state so `os-agent` can navigate and inspect the same surface the user sees
+- **Viewer/system lane separation** — `viewer:*` and `system:*` sessions now use different global lanes, preventing scheduled conductor audit work from blocking `os-agent` frontdoor traffic
+- **Mobile daemon CLI coverage** — Added regression coverage for the mobile Claude daemon stream-json spawn flags and UUID session handling
+
+### Changed
+
+- **Frontdoor alignment** — Viewer-facing traffic now prefers `os-agent` as the user-facing frontdoor while conductor remains the system audit/background role
+- **Viewer build hygiene** — Standalone build now clears stale `public/viewer/js` outputs before recompiling, preventing deleted modules from shipping accidentally
+- **Release docs alignment** — README, roadmap/design docs, viewer docs, and landing-page copy now describe the shipped agent-management and post-playground viewer model
+
+### Removed
+
+- **Legacy viewer surfaces** — Deleted the old Playground/Skills viewer modules, removed playground template assets, and stopped serving legacy root viewer asset aliases such as `/manifest.json`, `/viewer.css`, and `/js/utils/*`
+- **Legacy playground runtime artifacts** — Archived the old user playground skill/workspace assets out of the active runtime path to stop stale prompt injection and viewer references
+
 ## [0.18.2] - 2026-04-10
 
 ### Fixed

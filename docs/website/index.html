@@ -1,414 +1,480 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="MAMA OS - Your AI's Long-Term Memory. 24/7 AI assistant across Discord, Slack, and Telegram.">
-  <title>MAMA OS - Your AI's Long-Term Memory</title>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="MAMA OS - Your AI's Long-Term Memory. 24/7 AI assistant across Discord, Slack, and Telegram."
+    />
+    <title>MAMA OS - Your AI's Long-Term Memory</title>
 
-  <!-- Fonts: Playful + Refined -->
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Fonts: Playful + Refined -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
 
-  <link rel="stylesheet" href="styles.css">
-  <link rel="icon" type="image/svg+xml" href="assets/mama-icon.svg">
-</head>
-<body>
-  <!-- Floating decorative elements -->
-  <div class="bg-decor">
-    <div class="blob blob-1"></div>
-    <div class="blob blob-2"></div>
-    <div class="blob blob-3"></div>
-  </div>
-
-  <!-- Navigation -->
-  <nav class="nav">
-    <div class="nav-inner">
-      <a href="#" class="nav-logo">
-        <img src="assets/mama-icon.svg" alt="MAMA" class="logo-icon">
-        <span>MAMA OS</span>
-      </a>
-      <div class="nav-links" id="nav-links">
-        <a href="#features">Features</a>
-        <a href="#multiagent">Multi-Agent</a>
-        <a href="#packages">Packages</a>
-        <a href="#docs">Docs</a>
-        <a href="#install">Install</a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
-      </div>
-      <button class="nav-toggle" aria-label="Toggle menu" aria-controls="nav-links" aria-expanded="false">
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="icon" type="image/svg+xml" href="assets/mama-icon.svg" />
+  </head>
+  <body>
+    <!-- Floating decorative elements -->
+    <div class="bg-decor">
+      <div class="blob blob-1"></div>
+      <div class="blob blob-2"></div>
+      <div class="blob blob-3"></div>
     </div>
-  </nav>
 
-  <!-- Hero Section -->
-  <header class="hero">
-    <div class="hero-content">
-      <div class="hero-mascot">
-        <img src="assets/mama-icon.svg" alt="MAMA Mascot" class="mascot-img">
-        <div class="speech-bubble">
-          <span>I remember everything for you!</span>
-        </div>
-      </div>
-      <h1 class="hero-title">
-        <span class="title-line">Your AI's</span>
-        <span class="title-accent">Long-Term Memory</span>
-      </h1>
-      <p class="hero-tagline">
-        24/7 AI assistant. <strong>Multi-Agent System</strong> for Discord, Slack, and Telegram.
-      </p>
-      <div class="hero-cta">
-        <a href="#install" class="btn btn-primary">Get Started</a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA" class="btn btn-outline" target="_blank">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
-          GitHub
+    <!-- Navigation -->
+    <nav class="nav">
+      <div class="nav-inner">
+        <a href="#" class="nav-logo">
+          <img src="assets/mama-icon.svg" alt="MAMA" class="logo-icon" />
+          <span>MAMA OS</span>
         </a>
+        <div class="nav-links" id="nav-links">
+          <a href="#features">Features</a>
+          <a href="#multiagent">Multi-Agent</a>
+          <a href="#packages">Packages</a>
+          <a href="#docs">Docs</a>
+          <a href="#install">Install</a>
+          <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
+        </div>
+        <button
+          class="nav-toggle"
+          aria-label="Toggle menu"
+          aria-controls="nav-links"
+          aria-expanded="false"
+        >
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
       </div>
-    </div>
-  </header>
+    </nav>
 
-  <!-- What is MAMA Section -->
-  <section class="section section-about" id="about">
-    <div class="section-inner">
-      <h2 class="section-title">What is MAMA?</h2>
-      <div class="comparison-cards">
-        <div class="comparison-card comparison-old">
-          <div class="comparison-icon">😵</div>
-          <h3>Traditional AI</h3>
-          <p>Forgets everything when session ends</p>
-          <ul>
-            <li>No conversation history</li>
-            <li>Decisions forgotten</li>
-            <li>Explain from scratch every time</li>
-          </ul>
+    <!-- Hero Section -->
+    <header class="hero">
+      <div class="hero-content">
+        <div class="hero-mascot">
+          <img src="assets/mama-icon.svg" alt="MAMA Mascot" class="mascot-img" />
+          <div class="speech-bubble">
+            <span>I remember everything for you!</span>
+          </div>
         </div>
-        <div class="comparison-card comparison-new">
-          <div class="comparison-icon">🧠</div>
-          <h3>MAMA</h3>
-          <p>Remembers decisions, tracks evolution, works 24/7</p>
-          <ul>
-            <li>Discord/Slack/Telegram integration</li>
-            <li>Decision graph visualization</li>
-            <li>Semantic search support</li>
-          </ul>
+        <h1 class="hero-title">
+          <span class="title-line">Your AI's</span>
+          <span class="title-accent">Long-Term Memory</span>
+        </h1>
+        <p class="hero-tagline">
+          24/7 AI assistant. <strong>Multi-Agent System</strong> for Discord, Slack, and Telegram.
+        </p>
+        <div class="hero-cta">
+          <a href="#install" class="btn btn-primary">Get Started</a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA"
+            class="btn btn-outline"
+            target="_blank"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path
+                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
+              />
+            </svg>
+            GitHub
+          </a>
         </div>
       </div>
-    </div>
-  </section>
+    </header>
 
-  <!-- Screenshots Section -->
-  <section class="section section-screenshots" id="screenshots">
-    <div class="section-inner">
-      <h2 class="section-title">See MAMA in Action</h2>
-      <p class="section-subtitle">Beautiful, intuitive interface across all your devices</p>
-      <div class="screenshots-grid">
-        <div class="screenshot-card">
-          <div class="phone-frame">
-            <img src="assets/screenshot-chat.png" alt="MAMA Chat Interface" loading="lazy">
+    <!-- What is MAMA Section -->
+    <section class="section section-about" id="about">
+      <div class="section-inner">
+        <h2 class="section-title">What is MAMA?</h2>
+        <div class="comparison-cards">
+          <div class="comparison-card comparison-old">
+            <div class="comparison-icon">😵</div>
+            <h3>Traditional AI</h3>
+            <p>Forgets everything when session ends</p>
+            <ul>
+              <li>No conversation history</li>
+              <li>Decisions forgotten</li>
+              <li>Explain from scratch every time</li>
+            </ul>
           </div>
-          <h3>💬 AI Chat</h3>
-          <p>Natural conversations with context-aware responses</p>
-        </div>
-        <div class="screenshot-card">
-          <div class="phone-frame">
-            <img src="assets/screenshot-dashboard.png" alt="MAMA Dashboard" loading="lazy">
+          <div class="comparison-card comparison-new">
+            <div class="comparison-icon">🧠</div>
+            <h3>MAMA</h3>
+            <p>Remembers decisions, tracks evolution, works 24/7</p>
+            <ul>
+              <li>Discord/Slack/Telegram integration</li>
+              <li>Decision graph visualization</li>
+              <li>Semantic search support</li>
+            </ul>
           </div>
-          <h3>📊 Dashboard</h3>
-          <p>Monitor memory stats, gateways, and tools at a glance</p>
-        </div>
-        <div class="screenshot-card">
-          <div class="phone-frame">
-            <img src="assets/screenshot-memory.png" alt="MAMA Memory Graph" loading="lazy">
-          </div>
-          <h3>🧠 Memory Graph</h3>
-          <p>Visualize decision evolution and connections</p>
-        </div>
-        <div class="screenshot-card">
-          <div class="phone-frame">
-            <img src="assets/screenshot-settings.png" alt="MAMA Settings" loading="lazy">
-          </div>
-          <h3>⚙️ Settings</h3>
-          <p>Easy gateway and agent configuration</p>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Multi-Agent Swarm Section -->
-  <section class="section section-about" id="multiagent">
-    <div class="section-inner">
-      <h2 class="section-title">Multi-Agent System</h2>
-      <p class="section-subtitle">Conductor orchestrates specialized agents across Discord, Slack, and Telegram</p>
-      <div class="comparison-cards">
-        <div class="comparison-card comparison-old">
-          <div class="comparison-icon">🤖</div>
-          <h3>Single Agent</h3>
-          <p>One AI handles everything alone</p>
-          <ul>
-            <li>One persona, one skill set</li>
-            <li>No task specialization</li>
-            <li>Limited autonomy</li>
-          </ul>
-        </div>
-        <div class="comparison-card comparison-new">
-          <div class="comparison-icon">🎼</div>
-          <h3>Multi-Agent</h3>
-          <p>Conductor orchestrates a team of specialists</p>
-          <ul>
-            <li>4 modes: Delegation, Workflows, Council, UltraWork</li>
-            <li>3-tier permissions (lead / advisory / scoped)</li>
-            <li>Mixed backends (Claude + Codex)</li>
-          </ul>
+    <!-- Screenshots Section -->
+    <section class="section section-screenshots" id="screenshots">
+      <div class="section-inner">
+        <h2 class="section-title">See MAMA in Action</h2>
+        <p class="section-subtitle">Beautiful, intuitive interface across all your devices</p>
+        <div class="screenshots-grid">
+          <div class="screenshot-card">
+            <div class="phone-frame">
+              <img src="assets/screenshot-chat.png" alt="MAMA Chat Interface" loading="lazy" />
+            </div>
+            <h3>💬 AI Chat</h3>
+            <p>Natural conversations with context-aware responses</p>
+          </div>
+          <div class="screenshot-card">
+            <div class="phone-frame">
+              <img src="assets/screenshot-dashboard.png" alt="MAMA Dashboard" loading="lazy" />
+            </div>
+            <h3>📊 Dashboard</h3>
+            <p>Monitor memory stats, gateways, and tools at a glance</p>
+          </div>
+          <div class="screenshot-card">
+            <div class="phone-frame">
+              <img src="assets/screenshot-memory.png" alt="MAMA Memory Graph" loading="lazy" />
+            </div>
+            <h3>🧠 Memory Graph</h3>
+            <p>Visualize decision evolution and connections</p>
+          </div>
+          <div class="screenshot-card">
+            <div class="phone-frame">
+              <img src="assets/screenshot-settings.png" alt="MAMA Settings" loading="lazy" />
+            </div>
+            <h3>⚙️ Settings</h3>
+            <p>Easy gateway and agent configuration</p>
+          </div>
         </div>
       </div>
-      <div style="max-width:640px; margin:2rem auto 0; text-align:left;">
-        <pre style="background:#1e1e2e; color:#cdd6f4; border-radius:12px; padding:1.2rem; font-size:0.85rem; overflow-x:auto; line-height:1.5;">User message → Orchestrator → Routing
+    </section>
+
+    <!-- Multi-Agent Swarm Section -->
+    <section class="section section-about" id="multiagent">
+      <div class="section-inner">
+        <h2 class="section-title">Multi-Agent System</h2>
+        <p class="section-subtitle">
+          os-agent fronts the live viewer while conductor handles audit and background review across
+          connected channels
+        </p>
+        <div class="comparison-cards">
+          <div class="comparison-card comparison-old">
+            <div class="comparison-icon">🤖</div>
+            <h3>Single Agent</h3>
+            <p>One AI handles everything alone</p>
+            <ul>
+              <li>One persona, one skill set</li>
+              <li>No task specialization</li>
+              <li>Limited autonomy</li>
+            </ul>
+          </div>
+          <div class="comparison-card comparison-new">
+            <div class="comparison-icon">🎼</div>
+            <h3>Multi-Agent</h3>
+            <p>os-agent coordinates the user-facing workflow and calls specialists directly</p>
+            <ul>
+              <li>Same-view navigation plus specialist delegation</li>
+              <li>Dedicated audit/background path for conductor</li>
+              <li>Mixed backends (Claude + Codex)</li>
+            </ul>
+          </div>
+        </div>
+        <div style="max-width: 640px; margin: 2rem auto 0; text-align: left">
+          <pre
+            style="
+              background: #1e1e2e;
+              color: #cdd6f4;
+              border-radius: 12px;
+              padding: 1.2rem;
+              font-size: 0.85rem;
+              overflow-x: auto;
+              line-height: 1.5;
+            "
+          >
+User message → Orchestrator → Routing
                                 │
                 ┌───────────────┼───────────────┐
                 ▼               ▼               ▼
-         🎼 Conductor     🔧 Developer     📝 Reviewer
-          (Tier 1)          (Tier 2)         (Tier 3)
-        Orchestrates      Implements        Reviews
+         🖥️ os-agent      🎛️ Auditor      🔧 Developer
+          (frontdoor)      (background)      (worker)
+        Same-view ops      Audits / compare   Implements
 
 Coordination Modes:
-  Delegation  → DELEGATE::{agent}::{task} with depth-1 safety
-  Workflows   → Conductor generates DAG of ephemeral agents
-  Council     → Named agents discuss in multi-round debate
-  UltraWork   → 3-Phase: Plan → Build → Retrospective</pre>
-      </div>
-    </div>
-  </section>
-
-  <!-- Packages Section -->
-  <section class="section section-packages" id="packages">
-    <div class="section-inner">
-      <h2 class="section-title">Choose Your Package</h2>
-      <div class="packages-grid">
-        <article class="package-card package-featured">
-          <div class="package-badge">Recommended</div>
-          <div class="package-icon">🚀</div>
-          <h3>mama-os</h3>
-          <p class="package-desc">Standalone Agent</p>
-          <ul class="package-features">
-            <li>Discord, Slack, Telegram bots</li>
-            <li>Web dashboard</li>
-            <li>Mobile voice chat</li>
-            <li>Skill Forge</li>
-            <li>Cron scheduler</li>
-          </ul>
-          <div class="code-block">
-            <code>npm i -g @jungjaehoon/mama-os<br>mama init && mama start</code>
-          </div>
-        </article>
-
-        <article class="package-card">
-          <div class="package-icon">🔌</div>
-          <h3>mama-server</h3>
-          <p class="package-desc">MCP Server</p>
-          <ul class="package-features">
-            <li>4 MCP tools</li>
-            <li>Semantic search</li>
-            <li>Decision graph</li>
-            <li>Claude Desktop support</li>
-          </ul>
-          <div class="code-block">
-            <code>npx @jungjaehoon/mama-server</code>
-          </div>
-        </article>
-
-        <article class="package-card">
-          <div class="package-icon">⚡</div>
-          <h3>Claude Code Plugin</h3>
-          <p class="package-desc">Auto-Context</p>
-          <ul class="package-features">
-            <li>/mama-* slash commands</li>
-            <li>Auto context injection</li>
-            <li>Hook system</li>
-          </ul>
-          <div class="code-block">
-            <code>/plugin install mama</code>
-          </div>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- Features Section -->
-  <section class="section section-features" id="features">
-    <div class="section-inner">
-      <h2 class="section-title">Key Features</h2>
-      <div class="features-grid">
-        <article class="feature-card">
-          <div class="feature-icon">💬</div>
-          <h3>Gateway Integrations</h3>
-          <p>Chat with AI anywhere via Discord, Slack, Telegram bots</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">📱</div>
-          <h3>Mobile Chat</h3>
-          <p>Voice input with Web Speech API. Hands-free mode supported.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">🌳</div>
-          <h3>Decision Evolution</h3>
-          <p>Track how decisions evolve. See what succeeded and failed.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">🔍</div>
-          <h3>Semantic Search</h3>
-          <p>Search related decisions in natural language. Multi-lingual support.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">🛠️</div>
-          <h3>Agent Workspace</h3>
-          <p>Inspect config, activity, validation, and history for managed agents.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">📚</div>
-          <h3>Wiki & Logs</h3>
-          <p>Browse wiki documents and live daemon logs inside the same viewer shell.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">⏰</div>
-          <h3>Cron Scheduler</h3>
-          <p>Automated task scheduling. Daily briefings, weekly reports.</p>
-        </article>
-        <article class="feature-card">
-          <div class="feature-icon">🎼</div>
-          <h3>Multi-Agent System</h3>
-          <p>Conductor orchestrates agents via delegation, workflows, council debates, and UltraWork.</p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- Documentation Section -->
-  <section class="section section-docs" id="docs">
-    <div class="section-inner">
-      <h2 class="section-title">Documentation</h2>
-      <div class="docs-grid">
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA#quick-start" class="doc-card" target="_blank">
-          <div class="doc-icon">🚀</div>
-          <h3>Quick Start</h3>
-          <p>Get up and running in minutes</p>
-        </a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/installation.md" class="doc-card" target="_blank">
-          <div class="doc-icon">📦</div>
-          <h3>Installation Guide</h3>
-          <p>Detailed setup instructions</p>
-        </a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/mcp-tools.md" class="doc-card" target="_blank">
-          <div class="doc-icon">🔧</div>
-          <h3>MCP Tools Reference</h3>
-          <p>Complete API documentation</p>
-        </a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/discord-setup.md" class="doc-card" target="_blank">
-          <div class="doc-icon">💬</div>
-          <h3>Discord Bot Setup</h3>
-          <p>Connect your Discord server</p>
-        </a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/architecture.md" class="doc-card" target="_blank">
-          <div class="doc-icon">🏗️</div>
-          <h3>Architecture</h3>
-          <p>System design overview</p>
-        </a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/CHANGELOG.md" class="doc-card" target="_blank">
-          <div class="doc-icon">📋</div>
-          <h3>Changelog</h3>
-          <p>What's new in each release</p>
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Install Section -->
-  <section class="section section-install" id="install">
-    <div class="section-inner">
-      <h2 class="section-title">Quick Install</h2>
-      <div class="install-steps">
-        <div class="install-step">
-          <div class="step-number">1</div>
-          <div class="step-content">
-            <h3>Authenticate Claude CLI</h3>
-            <div class="code-block"><code>claude</code></div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="step-number">2</div>
-          <div class="step-content">
-            <h3>Install MAMA</h3>
-            <div class="code-block"><code>npm install -g @jungjaehoon/mama-os</code></div>
-          </div>
-        </div>
-        <div class="install-step">
-          <div class="step-number">3</div>
-          <div class="step-content">
-            <h3>Start!</h3>
-            <div class="code-block"><code>mama init && mama start</code></div>
-          </div>
+  Viewer flow  → os-agent navigates the same page the user sees
+  Delegation   → direct gateway-tool delegation to specialists
+  Audit        → conductor runs periodic or manual review jobs
+  Workflows    → specialist workers handle execution slices</pre
+          >
         </div>
       </div>
-      <p class="install-note">Dashboard: <strong>http://localhost:3847</strong></p>
-    </div>
-  </section>
+    </section>
 
-  <!-- CTA Section -->
-  <section class="section section-cta">
-    <div class="section-inner">
-      <div class="cta-mascot">
-        <img src="assets/mama-icon.svg" alt="MAMA" class="cta-mascot-img">
-      </div>
-      <h2>Ready to run your AI 24/7?</h2>
-      <p>Get started in under 10 minutes!</p>
-      <div class="cta-buttons">
-        <a href="#install" class="btn btn-primary btn-large">Install Now</a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA" class="btn btn-outline btn-large" target="_blank">Star on GitHub</a>
-      </div>
-    </div>
-  </section>
+    <!-- Packages Section -->
+    <section class="section section-packages" id="packages">
+      <div class="section-inner">
+        <h2 class="section-title">Choose Your Package</h2>
+        <div class="packages-grid">
+          <article class="package-card package-featured">
+            <div class="package-badge">Recommended</div>
+            <div class="package-icon">🚀</div>
+            <h3>mama-os</h3>
+            <p class="package-desc">Standalone Agent</p>
+            <ul class="package-features">
+              <li>Discord, Slack, Telegram bots</li>
+              <li>Web dashboard</li>
+              <li>Mobile voice chat</li>
+              <li>Skill Forge</li>
+              <li>Cron scheduler</li>
+            </ul>
+            <div class="code-block">
+              <code>npm i -g @jungjaehoon/mama-os<br />mama init && mama start</code>
+            </div>
+          </article>
 
-  <!-- Footer -->
-  <footer class="footer">
-    <div class="footer-inner">
-      <div class="footer-brand">
-        <img src="assets/mama-icon.svg" alt="MAMA" class="footer-logo">
-        <span>MAMA OS</span>
-        <span class="footer-version">v0.14.0</span>
-      </div>
-      <div class="footer-links">
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
-        <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os" target="_blank">npm</a>
-        <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues" target="_blank">Issues</a>
-      </div>
-      <div class="footer-meta">
-        <p>MIT License · SpineLift Team</p>
-      </div>
-    </div>
-  </footer>
+          <article class="package-card">
+            <div class="package-icon">🔌</div>
+            <h3>mama-server</h3>
+            <p class="package-desc">MCP Server</p>
+            <ul class="package-features">
+              <li>4 MCP tools</li>
+              <li>Semantic search</li>
+              <li>Decision graph</li>
+              <li>Claude Desktop support</li>
+            </ul>
+            <div class="code-block">
+              <code>npx @jungjaehoon/mama-server</code>
+            </div>
+          </article>
 
-  <script>
-    // Mobile navigation toggle
-    const navToggle = document.querySelector('.nav-toggle');
-    const navLinks = document.querySelector('.nav-links');
+          <article class="package-card">
+            <div class="package-icon">⚡</div>
+            <h3>Claude Code Plugin</h3>
+            <p class="package-desc">Auto-Context</p>
+            <ul class="package-features">
+              <li>/mama-* slash commands</li>
+              <li>Auto context injection</li>
+              <li>Hook system</li>
+            </ul>
+            <div class="code-block">
+              <code>/plugin install mama</code>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
-    navToggle.addEventListener('click', () => {
-      const isOpen = navLinks.classList.toggle('nav-open');
-      navToggle.classList.toggle('nav-toggle-open');
-      navToggle.setAttribute('aria-expanded', isOpen);
-    });
+    <!-- Features Section -->
+    <section class="section section-features" id="features">
+      <div class="section-inner">
+        <h2 class="section-title">Key Features</h2>
+        <div class="features-grid">
+          <article class="feature-card">
+            <div class="feature-icon">💬</div>
+            <h3>Gateway Integrations</h3>
+            <p>Chat with AI anywhere via Discord, Slack, Telegram bots</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">📱</div>
+            <h3>Mobile Chat</h3>
+            <p>Voice input with Web Speech API. Hands-free mode supported.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">🌳</div>
+            <h3>Decision Evolution</h3>
+            <p>Track how decisions evolve. See what succeeded and failed.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">🔍</div>
+            <h3>Semantic Search</h3>
+            <p>Search related decisions in natural language. Multi-lingual support.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">🛠️</div>
+            <h3>Agent Workspace</h3>
+            <p>Inspect config, activity, validation, and history for managed agents.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">📚</div>
+            <h3>Wiki & Logs</h3>
+            <p>Browse wiki documents and live daemon logs inside the same viewer shell.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">⏰</div>
+            <h3>Cron Scheduler</h3>
+            <p>Automated task scheduling. Daily briefings, weekly reports.</p>
+          </article>
+          <article class="feature-card">
+            <div class="feature-icon">🎼</div>
+            <h3>Multi-Agent System</h3>
+            <p>
+              os-agent handles the frontdoor while conductor focuses on audit, comparison, and
+              background review.
+            </p>
+          </article>
+        </div>
+      </div>
+    </section>
 
-    // Close menu when clicking a link
-    navLinks.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', () => {
-        navLinks.classList.remove('nav-open');
-        navToggle.classList.remove('nav-toggle-open');
-        navToggle.setAttribute('aria-expanded', 'false');
+    <!-- Documentation Section -->
+    <section class="section section-docs" id="docs">
+      <div class="section-inner">
+        <h2 class="section-title">Documentation</h2>
+        <div class="docs-grid">
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA#quick-start"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">🚀</div>
+            <h3>Quick Start</h3>
+            <p>Get up and running in minutes</p>
+          </a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/installation.md"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">📦</div>
+            <h3>Installation Guide</h3>
+            <p>Detailed setup instructions</p>
+          </a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/mcp-tools.md"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">🔧</div>
+            <h3>MCP Tools Reference</h3>
+            <p>Complete API documentation</p>
+          </a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/discord-setup.md"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">💬</div>
+            <h3>Discord Bot Setup</h3>
+            <p>Connect your Discord server</p>
+          </a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/architecture.md"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">🏗️</div>
+            <h3>Architecture</h3>
+            <p>System design overview</p>
+          </a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/CHANGELOG.md"
+            class="doc-card"
+            target="_blank"
+          >
+            <div class="doc-icon">📋</div>
+            <h3>Changelog</h3>
+            <p>What's new in each release</p>
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Install Section -->
+    <section class="section section-install" id="install">
+      <div class="section-inner">
+        <h2 class="section-title">Quick Install</h2>
+        <div class="install-steps">
+          <div class="install-step">
+            <div class="step-number">1</div>
+            <div class="step-content">
+              <h3>Authenticate Claude CLI</h3>
+              <div class="code-block"><code>claude</code></div>
+            </div>
+          </div>
+          <div class="install-step">
+            <div class="step-number">2</div>
+            <div class="step-content">
+              <h3>Install MAMA</h3>
+              <div class="code-block"><code>npm install -g @jungjaehoon/mama-os</code></div>
+            </div>
+          </div>
+          <div class="install-step">
+            <div class="step-number">3</div>
+            <div class="step-content">
+              <h3>Start!</h3>
+              <div class="code-block"><code>mama init && mama start</code></div>
+            </div>
+          </div>
+        </div>
+        <p class="install-note">Dashboard: <strong>http://localhost:3847</strong></p>
+      </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="section section-cta">
+      <div class="section-inner">
+        <div class="cta-mascot">
+          <img src="assets/mama-icon.svg" alt="MAMA" class="cta-mascot-img" />
+        </div>
+        <h2>Ready to run your AI 24/7?</h2>
+        <p>Get started in under 10 minutes!</p>
+        <div class="cta-buttons">
+          <a href="#install" class="btn btn-primary btn-large">Install Now</a>
+          <a
+            href="https://github.com/jungjaehoon-lifegamez/MAMA"
+            class="btn btn-outline btn-large"
+            target="_blank"
+            >Star on GitHub</a
+          >
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <img src="assets/mama-icon.svg" alt="MAMA" class="footer-logo" />
+          <span>MAMA OS</span>
+          <span class="footer-version">v0.14.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
+          <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os" target="_blank">npm</a>
+          <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues" target="_blank">Issues</a>
+        </div>
+        <div class="footer-meta">
+          <p>MIT License · SpineLift Team</p>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Mobile navigation toggle
+      const navToggle = document.querySelector('.nav-toggle');
+      const navLinks = document.querySelector('.nav-links');
+
+      navToggle.addEventListener('click', () => {
+        const isOpen = navLinks.classList.toggle('nav-open');
+        navToggle.classList.toggle('nav-toggle-open');
+        navToggle.setAttribute('aria-expanded', isOpen);
       });
-    });
-  </script>
-</body>
+
+      // Close menu when clicking a link
+      navLinks.querySelectorAll('a').forEach((link) => {
+        link.addEventListener('click', () => {
+          navLinks.classList.remove('nav-open');
+          navToggle.classList.remove('nav-toggle-open');
+          navToggle.setAttribute('aria-expanded', 'false');
+        });
+      });
+    </script>
+  </body>
 </html>

@@ -1,7 +1,7 @@
 # MAMA OS — Local AI Runtime with Connected Memory
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node Version](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org)
+[![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval](https://img.shields.io/badge/LongMemEval-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-2800%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
@@ -85,7 +85,7 @@ Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
        |                        |
        v                        v
  3-Pass Extraction       Knowledge Agents
- (Truth → Hub → Spoke)  (Conductor, Dashboard, Wiki, Memory)
+ (Truth → Hub → Spoke)  (os-agent, Conductor audit, Dashboard, Wiki, Memory)
        |                        |
        +--------+-------+------+
                 |
@@ -156,7 +156,7 @@ mama start   # starts daemon at localhost:3847
 
 Web viewer at `http://localhost:3847`. Connects to Discord, Slack, Telegram.
 
-> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 18.
+> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.
 
 ### MCP Server (Claude Desktop)
 
@@ -192,15 +192,15 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                |
-| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                          |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                         |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                   |
-| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                 |
-| **Next** | v0.19   | Agent management UI — customize agent personas, tools, and behavior from the viewer. Stability: watchdog, audit log, health score, 72h uptime test   |
-|          | v0.20   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design) |
-|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                |
+| Phase    | Version | Focus                                                                                                                                                              |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                        |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                                       |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                 |
+| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                               |
+| **Next** | v0.19   | Release prep for the agent-management foundation: os-agent same-view frontdoor, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation |
+|          | v0.20   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design)               |
+|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                              |
 
 ## Development
 

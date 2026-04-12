@@ -229,6 +229,14 @@ Branch outcome:
 
 - merged as a foundation PR, not as the final architecture
 
+Current foundation status on `feat/v019-agent-management`:
+
+- managed-agent visibility, activity, validation, and history surfaces are present in the viewer
+- `os-agent` page-context plumbing and same-view navigation foundations are in place
+- scheduled conductor/system work and viewer frontdoor work now use separate global lanes
+- legacy Playground/Skills viewer surfaces have been removed from the shipped viewer path
+- the branch is now narrow enough to serve as the merge base for the next architecture stage
+
 ### Phase 1: Build Canonical Entity Memory In A Fresh Branch
 
 Purpose:
