@@ -589,8 +589,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
   'mama_load_checkpoint',
-  'agent_get',
-  'agent_activity',
   'viewer_state',
   'Read',
   'browser_get_text',

@@ -99,6 +99,9 @@ const SIMILAR_QUERY_DECISION_CHARS = 400;
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
+const supportedManagedBackends = ['claude', 'codex', 'codex-mcp', 'gemini'];
+const isCodexFamilyBackend = (backend: string): boolean =>
+  backend === 'codex' || backend === 'codex-mcp';
 const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
@@ -1868,6 +1871,15 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
               );
               return true;
             }
+            if (baseline && baseline.session.trigger_type !== current.session.trigger_type) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'baseline session trigger_type does not match current session',
+                })
+              );
+              return true;
+            }
             const baselineMetrics = new Map(
               (baseline?.metrics ?? []).map((m: { name: string; value: number }) => [
                 m.name,
@@ -1960,7 +1972,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/agents/:id — update agent (Managed Agents: version required)
     if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'POST') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
-      const body = await readBody(req);
+      const body = await readBodyOrRespond(req, res);
+      if (!body) {
+        return true;
+      }
       if (options.sessionsDb)
         await handleUpdateAgent(res, agentId, body, options.sessionsDb, {
           loadConfig: async () => loadMAMAConfig(),
@@ -2802,9 +2817,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     }
     if (
       config.agent.backend &&
-      !['claude', 'codex-mcp'].includes(String(config.agent.backend).toLowerCase())
+      !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude" or "codex-mcp"');
+      errors.push('agent.backend must be "claude", "codex", "codex-mcp", or "gemini"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -2812,8 +2827,8 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backend === 'claude' && !isClaudeModel(model)) {
         errors.push('agent.model must be a Claude model when agent.backend is "claude"');
       }
-      if (backend === 'codex-mcp' && !isCodexModel(model)) {
-        errors.push('agent.model must be a Codex/OpenAI model when agent.backend is "codex-mcp"');
+      if (isCodexFamilyBackend(backend) && !isCodexModel(model)) {
+        errors.push(`agent.model must be a Codex/OpenAI model when agent.backend is "${backend}"`);
       }
     }
   }
@@ -2842,8 +2857,10 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       const modelRaw = cfg.model;
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
-        if (!['claude', 'codex-mcp'].includes(backend)) {
-          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex-mcp"`);
+        if (!supportedManagedBackends.includes(backend)) {
+          errors.push(
+            `multi_agent.agents.${agentId}.backend must be "claude", "codex", "codex-mcp", or "gemini"`
+          );
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -2852,9 +2869,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
               `multi_agent.agents.${agentId}.model must be a Claude model when backend is "claude"`
             );
           }
-          if (backend === 'codex-mcp' && !isCodexModel(modelRaw)) {
+          if (isCodexFamilyBackend(backend) && !isCodexModel(modelRaw)) {
             errors.push(
-              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "codex-mcp"`
+              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "${backend}"`
             );
           }
         }
@@ -3245,9 +3262,9 @@ async function handleMultiAgentUpdateAgentRequest(
     if (
       body.backend !== undefined &&
       (typeof body.backend !== 'string' ||
-        !['claude', 'codex-mcp'].includes(String(body.backend).toLowerCase()))
+        !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude" or "codex-mcp"');
+      validationErrors.push('backend must be "claude", "codex", "codex-mcp", or "gemini"');
     }
 
     const nextBackend = (
@@ -3260,8 +3277,10 @@ async function handleMultiAgentUpdateAgentRequest(
       if (nextBackend === 'claude' && !isClaudeModel(nextModel)) {
         validationErrors.push('model must be a Claude model when backend is "claude"');
       }
-      if (nextBackend === 'codex-mcp' && !isCodexModel(nextModel)) {
-        validationErrors.push('model must be a Codex/OpenAI model when backend is "codex-mcp"');
+      if (isCodexFamilyBackend(nextBackend) && !isCodexModel(nextModel)) {
+        validationErrors.push(
+          `model must be a Codex/OpenAI model when backend is "${nextBackend}"`
+        );
       }
     }
     if (body.effort !== undefined) {
@@ -3694,6 +3713,7 @@ export {
   mapDecisionRowToGraphNode,
   parseGraphLimit,
   buildGraphMeta,
+  validateConfigUpdate,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,

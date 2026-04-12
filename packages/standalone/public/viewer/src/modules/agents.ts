@@ -173,7 +173,7 @@ export class AgentsModule {
       const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       const [{ agents }, summaryRes] = await Promise.all([
         API.getAgents(),
-        API.getActivitySummary(yesterday).catch(() => ({ summary: [], alerts: [] })),
+        API.getActivitySummary(yesterday),
       ]);
       if (requestId !== this.listRequestId) {
         return;
@@ -205,8 +205,10 @@ export class AgentsModule {
         reportPageContext('agents', this.buildListPageContext());
       });
     } catch (err) {
-      logger.error('Failed to load agents', err);
-      showToast('Failed to load agents');
+      const message = err instanceof Error ? err.message : String(err);
+      const wrapped = new Error(`Failed fetching agents or activity summary: ${message}`);
+      logger.error(wrapped.message, err);
+      throw wrapped;
     }
   }
 
@@ -333,7 +335,10 @@ export class AgentsModule {
             change_note: toggle.checked ? 'Enabled via Agents tab' : 'Disabled via Agents tab',
           });
           showToast(`${agentId} ${toggle.checked ? 'enabled' : 'disabled'}`);
-          this.loadAgents();
+          void this.loadAgents().catch((error) => {
+            logger.error('Failed to refresh agents after toggle', error);
+            showToast('Failed to refresh agent list');
+          });
         } catch {
           showToast('Toggle failed');
           toggle.checked = !toggle.checked;
@@ -595,11 +600,18 @@ export class AgentsModule {
         return;
       }
       try {
-        const res = await API.updateAgent(a.id, {
-          version: a.version ?? 0,
+        const updatePayload: {
+          version?: number;
+          changes: Record<string, unknown>;
+          change_note: string;
+        } = {
           changes: { system: textarea.value },
           change_note: 'Persona updated via viewer',
-        });
+        };
+        if (a.version !== null && a.version !== undefined) {
+          updatePayload.version = a.version;
+        }
+        const res = await API.updateAgent(a.id, updatePayload);
         if ((res as { new_version?: number }).new_version) {
           showToast(`v${(res as { new_version: number }).new_version} saved`);
           this.showDetail(a.id);
@@ -715,7 +727,7 @@ export class AgentsModule {
           const errorHtml = ev.error_message
             ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>`
             : '';
-          const meta = `<div class="text-[10px] text-gray-400 mt-0.5">v${ev.agent_version} &middot; ${ev.duration_ms || 0}ms &middot; ${ev.created_at}</div>`;
+          const meta = `<div class="text-[10px] text-gray-400 mt-0.5">v${escapeHtml(String(ev.agent_version ?? ''))} &middot; ${escapeHtml(String(ev.duration_ms ?? 0))}ms &middot; ${escapeHtml(String(ev.created_at ?? ''))}</div>`;
 
           // Expandable card for test_run with per-item pass/fail
           if (ev.type === 'test_run' && ev.details) {
@@ -1148,7 +1160,7 @@ export class AgentsModule {
           (v) =>
             `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid ${C.bdr};">
             <span style="font-size:13px;font-weight:600;color:${C.pri};min-width:32px;">v${v.version}</span>
-            <span style="font-size:11px;color:${C.ter};">${v.created_at}</span>
+            <span style="font-size:11px;color:${C.ter};">${escapeHtml(String(v.created_at ?? ''))}</span>
             <span style="font-size:12px;color:${C.sec};flex:1;">${escapeHtml(String(v.change_note || ''))}</span>
             ${v.version === a.version ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${C.agent}15;color:${C.agent};font-weight:600;">current</span>` : ''}
           </div>`
@@ -1248,6 +1260,9 @@ export class AgentsModule {
       selectedAgent: null,
       activeTab: null,
     });
-    this.loadAgents();
+    void this.loadAgents().catch((error) => {
+      logger.error('Failed to load agents list', error);
+      showToast('Failed to load agents');
+    });
   }
 }

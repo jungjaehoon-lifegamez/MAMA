@@ -41,8 +41,9 @@ describe('HostBridge', () => {
       expect(names).toContain('mama_search');
       expect(names).toContain('Read');
       expect(names).toContain('mama_load_checkpoint');
-      expect(names).toContain('agent_get');
       expect(names).toContain('viewer_state');
+      expect(names).not.toContain('agent_get');
+      expect(names).not.toContain('agent_activity');
       expect(names).not.toContain('Write');
       expect(names).not.toContain('Bash');
       expect(names).not.toContain('discord_send');

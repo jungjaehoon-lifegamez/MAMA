@@ -866,8 +866,13 @@ export class GatewayToolExecutor {
           if (updateError) {
             return { success: false, error: updateError };
           }
-          return withManagedAgentMutationLock(updateArgs.agent_id, async () => {
-            const updateLatest = getLatestVersion(this.sessionsDb!, updateArgs.agent_id);
+          const agentId = this.resolveManagedAgentId(updateArgs.agent_id);
+          const initialLatest = getLatestVersion(this.sessionsDb, agentId);
+          if (!initialLatest) {
+            return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
+          }
+          return withManagedAgentMutationLock(agentId, async () => {
+            const updateLatest = getLatestVersion(this.sessionsDb!, agentId);
             if (!updateLatest) {
               return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
             }
@@ -879,7 +884,7 @@ export class GatewayToolExecutor {
             }
             const synced = await updateManagedAgentRuntime(
               {
-                agentId: updateArgs.agent_id,
+                agentId,
                 changes: updateArgs.changes,
               },
               {
@@ -891,7 +896,7 @@ export class GatewayToolExecutor {
               }
             );
             const updatedV = createAgentVersion(this.sessionsDb!, {
-              agent_id: updateArgs.agent_id,
+              agent_id: agentId,
               snapshot: synced.snapshot,
               persona_text: synced.personaText ?? updateLatest.persona_text,
               change_note: updateArgs.change_note,

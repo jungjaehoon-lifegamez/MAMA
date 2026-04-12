@@ -251,10 +251,16 @@ export class MessageRouter {
   }
 
   private getPageContextPrefix(message: NormalizedMessage): string {
-    if (!this.uiCommandQueue) return '';
-    if (message.source !== 'viewer') return '';
+    if (!this.uiCommandQueue) {
+      return '';
+    }
+    if (message.source !== 'viewer') {
+      return '';
+    }
     const ctx = this.uiCommandQueue.getPageContext(message.channelId);
-    if (!ctx || !ctx.currentRoute) return '';
+    if (!ctx || !ctx.currentRoute) {
+      return '';
+    }
     const data = (ctx.pageData as Record<string, unknown> | null) ?? null;
 
     // Build rich context that tells conductor exactly what the user sees
@@ -265,7 +271,9 @@ export class MessageRouter {
         `selected_item: ${sanitizeForPrompt(ctx.selectedItem.type)}:${sanitizeForPrompt(ctx.selectedItem.id)}`
       );
     }
-    if (data?.summary) lines.push(`summary: ${sanitizeForPrompt(String(data.summary))}`);
+    if (data?.summary) {
+      lines.push(`summary: ${sanitizeForPrompt(String(data.summary))}`);
+    }
 
     if (data?.pageType === 'agent-list' && Array.isArray(data.agents)) {
       lines.push(`agents:`);
@@ -1453,7 +1461,10 @@ INSTRUCTION:
     botResponse: string,
     message?: NormalizedMessage
   ): Promise<void> {
-    if (!this.memoryAgentProcessManager || !this.memoryAuditQueue) return;
+    const memoryAuditQueue = this.memoryAuditQueue;
+    if (!this.memoryAgentProcessManager || !memoryAuditQueue) {
+      return;
+    }
 
     const now = Date.now();
     const source = message?.source ?? 'memory-agent';
@@ -1537,9 +1548,9 @@ INSTRUCTION:
       }
     }
 
-    this.memoryAuditQueue
-      .enqueue(job)
-      .then((ack) => {
+    void (async () => {
+      try {
+        const ack = await memoryAuditQueue.enqueue(job);
         this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
         const dur = Date.now() - memoryStart;
         this.logAgentActivity(
@@ -1559,8 +1570,7 @@ INSTRUCTION:
             /* non-fatal */
           }
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         this.memoryAgentStats.acksFailed++;
         const dur = Date.now() - memoryStart;
         this.logAgentActivity(
@@ -1583,7 +1593,8 @@ INSTRUCTION:
           }
         }
         logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      }
+    })();
   }
 
   // ── Activity Logging (shared by conductor + memory agent) ───────────

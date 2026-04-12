@@ -519,6 +519,49 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa-monitor');
       });
 
+      it('should resolve agent aliases before locking and updating managed agents', async () => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setSessionsDb(db);
+
+        const applyMultiAgentConfig = vi.fn().mockResolvedValue(undefined);
+        const restartMultiAgentAgent = vi.fn().mockResolvedValue(undefined);
+        executor.setApplyMultiAgentConfig(applyMultiAgentConfig);
+        executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
+
+        const createResult = await executor.execute('agent_create', {
+          id: 'wiki-agent',
+          name: 'Wiki Agent',
+          model: 'claude-sonnet-4-6',
+          tier: 2,
+          backend: 'claude',
+          system: 'Compile wiki updates.',
+        });
+        expect(createResult).toMatchObject({ success: true, version: 1 });
+
+        const updateResult = await executor.execute('agent_update', {
+          agent_id: 'wiki',
+          version: 1,
+          changes: {
+            model: 'claude-opus-4-6',
+          },
+          change_note: 'Upgrade via alias',
+        });
+
+        expect(updateResult).toMatchObject({
+          success: true,
+          new_version: 2,
+        });
+
+        const latestVersion = getLatestVersion(db, 'wiki-agent');
+        expect(latestVersion?.version).toBe(2);
+        expect(latestVersion ? JSON.parse(latestVersion.snapshot) : null).toMatchObject({
+          model: 'claude-opus-4-6',
+        });
+      });
+
       it('should deny agent_create from non-viewer sources when context is present', async () => {
         const db = new Database(':memory:');
         initAgentTables(db);

@@ -909,7 +909,7 @@ export class API {
 
   static async updateAgent(
     agentId: string,
-    body: { version: number; changes: Record<string, unknown>; change_note?: string }
+    body: { version?: number; changes: Record<string, unknown>; change_note?: string }
   ): Promise<JsonRecord> {
     return this.post(`/api/agents/${encodeURIComponent(agentId)}`, body);
   }

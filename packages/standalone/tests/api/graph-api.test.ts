@@ -10,6 +10,7 @@ import {
   filterEdgesByNodes,
   mapDecisionRowToGraphNode,
   parseGraphLimit,
+  validateConfigUpdate,
   createGraphHandler,
 } from '../../src/api/graph-api.js';
 
@@ -165,6 +166,46 @@ describe('graph api helpers', () => {
     expect(res._body).toContain('baseline session not found');
   });
 
+  it('rejects explicit baselines whose trigger type differs from the current session', async () => {
+    createValidationSession(db, {
+      id: 'vs-current',
+      agent_id: 'dashboard-agent',
+      agent_version: 1,
+      trigger_type: 'agent_test',
+      metric_profile_json: '{}',
+      execution_status: 'completed',
+      validation_outcome: 'healthy',
+      started_at: Date.now(),
+      ended_at: Date.now(),
+    });
+    createValidationSession(db, {
+      id: 'vs-baseline',
+      agent_id: 'dashboard-agent',
+      agent_version: 1,
+      trigger_type: 'delegate_run',
+      metric_profile_json: '{}',
+      execution_status: 'completed',
+      validation_outcome: 'healthy',
+      started_at: Date.now(),
+      ended_at: Date.now(),
+    });
+
+    const handler = createGraphHandler({ sessionsDb: db });
+    const req = {
+      method: 'GET',
+      url: '/api/agents/dashboard-agent/validation/compare?session=vs-current&baseline=vs-baseline',
+      headers: { host: 'localhost' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage;
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(400);
+    expect(res._body).toContain('trigger_type');
+  });
+
   it('returns 400 for malformed JSON on ui page-context POST', async () => {
     const handler = createGraphHandler({
       uiCommandQueue: {
@@ -183,6 +224,32 @@ describe('graph api helpers', () => {
     expect(handled).toBe(true);
     expect(res._status).toBe(400);
     expect(res._body).toContain('Invalid JSON');
+  });
+
+  it('returns 400 for malformed JSON on managed-agent update POST', async () => {
+    const handler = createGraphHandler({ sessionsDb: db });
+    const req = createBodyReq('/api/agents/dashboard-agent', '{bad-json');
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(400);
+    expect(res._body).toContain('Invalid JSON');
+  });
+
+  it('accepts codex and gemini backends in legacy config validation', () => {
+    expect(
+      validateConfigUpdate({
+        agent: { backend: 'codex', model: 'gpt-5.4-mini' },
+        multi_agent: {
+          agents: {
+            resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
+            coder: { backend: 'codex-mcp', model: 'gpt-5.3-codex' },
+          },
+        },
+      })
+    ).toEqual([]);
   });
 });
 
