@@ -71,4 +71,27 @@ describe('viewer ui-commands', () => {
       'mama_os_main'
     );
   });
+
+  it('re-publishes the last page context while polling so the backend can recover after restart', async () => {
+    getUICommands.mockResolvedValue({ commands: [] });
+    const { startUICommandPolling, reportPageContext } =
+      await import('../../public/viewer/src/utils/ui-commands.js');
+
+    reportPageContext('dashboard', { pageType: 'tab-switch', tab: 'dashboard' });
+    await Promise.resolve();
+    expect(pushPageContext).toHaveBeenCalledTimes(1);
+
+    const stopPolling = startUICommandPolling(vi.fn());
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(pushPageContext).toHaveBeenCalledTimes(2);
+    expect(pushPageContext).toHaveBeenLastCalledWith(
+      'dashboard',
+      { pageType: 'tab-switch', tab: 'dashboard' },
+      undefined,
+      'mama_os_main'
+    );
+
+    stopPolling();
+  });
 });

@@ -605,6 +605,36 @@ export class AgentLoop {
   }
 
   /**
+   * Set shared sessions DB for agent management and validation-aware tools.
+   */
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.mcpExecutor.setSessionsDb(db);
+  }
+
+  /**
+   * Set UI command queue for viewer_state / viewer_navigate tools.
+   */
+  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
+    this.mcpExecutor.setUICommandQueue(queue);
+  }
+
+  /**
+   * Set validation service for agent_test / delegate validation flows.
+   */
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.mcpExecutor.setValidationService(svc);
+  }
+
+  /**
+   * Set raw store for connector-backed agent_test input gathering.
+   */
+  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
+    this.mcpExecutor.setRawStore(store);
+  }
+
+  /**
    * Set report publisher for report_publish tool (Dashboard Agent)
    */
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {

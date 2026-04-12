@@ -16,6 +16,10 @@ const persistentPromptMock = vi.fn().mockResolvedValue({
 });
 const gatewayExecutorSetAgentContextMock = vi.fn();
 const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
+const gatewayExecutorSetUICommandQueueMock = vi.fn();
+const gatewayExecutorSetSessionsDbMock = vi.fn();
+const gatewayExecutorSetValidationServiceMock = vi.fn();
+const gatewayExecutorSetRawStoreMock = vi.fn();
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -70,6 +74,10 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       setDiscordGateway: vi.fn(),
       setAgentContext: gatewayExecutorSetAgentContextMock,
       setCurrentAgentContext: gatewayExecutorSetCurrentAgentContextMock,
+      setUICommandQueue: gatewayExecutorSetUICommandQueueMock,
+      setSessionsDb: gatewayExecutorSetSessionsDbMock,
+      setValidationService: gatewayExecutorSetValidationServiceMock,
+      setRawStore: gatewayExecutorSetRawStoreMock,
       execute: vi.fn().mockResolvedValue({ success: true }),
     })),
   };
@@ -139,6 +147,10 @@ describe('AgentLoop', () => {
     persistentPromptMock.mockClear();
     gatewayExecutorSetAgentContextMock.mockClear();
     gatewayExecutorSetCurrentAgentContextMock.mockClear();
+    gatewayExecutorSetUICommandQueueMock.mockClear();
+    gatewayExecutorSetSessionsDbMock.mockClear();
+    gatewayExecutorSetValidationServiceMock.mockClear();
+    gatewayExecutorSetRawStoreMock.mockClear();
   });
 
   describe('run()', () => {
@@ -232,6 +244,37 @@ describe('AgentLoop', () => {
 
       agentLoop.setSessionKey('discord:123:456');
       expect(agentLoop.getSessionKey()).toBe('discord:123:456');
+    });
+  });
+
+  describe('runtime dependency proxies', () => {
+    it('should forward ui command queue, sessions db, validation service, and raw store to the internal executor', () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const uiCommandQueue = { getPageContext: vi.fn() };
+      const sessionsDb = { prepare: vi.fn(), exec: vi.fn() };
+      const validationService = { startSession: vi.fn(), finalizeSession: vi.fn() };
+      const rawStore = { getRecent: vi.fn(), hasConnector: vi.fn() };
+
+      agentLoop.setUICommandQueue?.(
+        uiCommandQueue as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue
+      );
+      agentLoop.setSessionsDb?.(sessionsDb as unknown as import('../../src/sqlite.js').default);
+      agentLoop.setValidationService?.(
+        validationService as unknown as import('../../src/validation/session-service.js').ValidationSessionService
+      );
+      agentLoop.setRawStore?.(
+        rawStore as unknown as import('../../src/connectors/framework/raw-store.js').RawStore
+      );
+
+      expect(gatewayExecutorSetUICommandQueueMock).toHaveBeenCalledWith(uiCommandQueue);
+      expect(gatewayExecutorSetSessionsDbMock).toHaveBeenCalledWith(sessionsDb);
+      expect(gatewayExecutorSetValidationServiceMock).toHaveBeenCalledWith(validationService);
+      expect(gatewayExecutorSetRawStoreMock).toHaveBeenCalledWith(rawStore);
     });
   });
 

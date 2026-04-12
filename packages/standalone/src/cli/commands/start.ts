@@ -328,6 +328,8 @@ export async function runAgentLoop(
   // Wire sessionsDb and uiCommandQueue into gateway tool executor
   toolExecutor.setSessionsDb(db);
   toolExecutor.setUICommandQueue(uiCommandQueue);
+  agentLoop.setSessionsDb(db);
+  agentLoop.setUICommandQueue(uiCommandQueue);
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
@@ -383,6 +385,7 @@ export async function runAgentLoop(
   const validationService = new ValidationSessionService(db);
   toolExecutor.setValidationService(validationService);
   messageRouter.setValidationService(validationService);
+  agentLoop.setValidationService(validationService);
   {
     // Ensure OS system agents exist in config (memory agent may be missing in older configs)
     if (!config.multi_agent) {
@@ -569,6 +572,7 @@ export async function runAgentLoop(
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {
     toolExecutor.setRawStore(rawStoreForApi);
+    agentLoop.setRawStore(rawStoreForApi);
   }
 
   // Add connector scheduler to graceful shutdown if active

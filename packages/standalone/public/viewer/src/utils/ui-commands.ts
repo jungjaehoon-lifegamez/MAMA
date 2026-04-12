@@ -15,6 +15,16 @@ let polling = false;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 let pollInFlight = false;
 const VIEWER_FRONTDOOR_CHANNEL_ID = 'mama_os_main';
+const PAGE_CONTEXT_REPUBLISH_MS = 5000;
+
+type StoredPageContext = {
+  route: string;
+  data: Record<string, unknown>;
+  selectedItem?: { type: string; id: string };
+};
+
+let lastReportedPageContext: StoredPageContext | null = null;
+let lastPageContextPublishAt = 0;
 
 function getViewerChannelId(): string {
   try {
@@ -54,6 +64,19 @@ export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
           }
         }
       }
+
+      if (
+        lastReportedPageContext &&
+        Date.now() - lastPageContextPublishAt >= PAGE_CONTEXT_REPUBLISH_MS
+      ) {
+        lastPageContextPublishAt = Date.now();
+        await API.pushPageContext(
+          lastReportedPageContext.route,
+          lastReportedPageContext.data,
+          lastReportedPageContext.selectedItem,
+          getViewerChannelId()
+        );
+      }
     } catch {
       // Silently ignore polling errors (server may be restarting)
     } finally {
@@ -76,6 +99,8 @@ export function reportPageContext(
   data: Record<string, unknown>,
   selectedItem?: { type: string; id: string }
 ): void {
+  lastReportedPageContext = { route, data, selectedItem };
+  lastPageContextPublishAt = Date.now();
   API.pushPageContext(route, data, selectedItem, getViewerChannelId()).catch(() => {
     /* ignore */
   });
