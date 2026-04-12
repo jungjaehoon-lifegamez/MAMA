@@ -499,7 +499,9 @@ Current viewer tabs in `agents.ts` are:
    - latest validation session
    - top metrics
    - recommendation
-   - approve / hold / request improvement
+   - approve baseline
+   - current viewer does not expose hold / request-improvement actions
+   - hold / request-improvement remain follow-up UI work
 
 6. `History`
    - version timeline
@@ -560,7 +562,7 @@ Returns:
 
 ### Session detail
 
-- `GET /api/validation-sessions/:id`
+- `GET /api/validation/session/:id`
 
 Returns:
 

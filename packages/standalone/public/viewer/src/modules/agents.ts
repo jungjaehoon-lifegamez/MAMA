@@ -11,7 +11,7 @@
 
 import { API, type MultiAgentAgent } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
-import { showToast, escapeHtml } from '../utils/dom.js';
+import { showToast, escapeAttr, escapeHtml } from '../utils/dom.js';
 import { reportPageContext } from '../utils/ui-commands.js';
 
 const logger = new DebugLogger('Agents');
@@ -65,10 +65,14 @@ export class AgentsModule {
   private currentDetailContext: Record<string, unknown> | null = null;
 
   init(): void {
-    if (this.initialized) return;
+    if (this.initialized) {
+      return;
+    }
     this.initialized = true;
     this.container = document.getElementById('agents-content');
-    if (!this.container) return;
+    if (!this.container) {
+      return;
+    }
     this.loadAgents();
   }
 
@@ -136,7 +140,9 @@ export class AgentsModule {
   }
 
   private async loadAgents(): Promise<void> {
-    if (!this.container) return;
+    if (!this.container) {
+      return;
+    }
     const requestId = ++this.listRequestId;
     try {
       const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
@@ -181,14 +187,22 @@ export class AgentsModule {
 
   private static relativeTime(dateStr: string): string {
     const diff = Date.now() - new Date(dateStr).getTime();
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    if (diff < 60000) {
+      return 'just now';
+    }
+    if (diff < 3600000) {
+      return `${Math.floor(diff / 60000)}m ago`;
+    }
+    if (diff < 86400000) {
+      return `${Math.floor(diff / 3600000)}h ago`;
+    }
     return `${Math.floor(diff / 86400000)}d ago`;
   }
 
   private renderList(): void {
-    if (!this.container) return;
+    if (!this.container) {
+      return;
+    }
     const cards = this.agents
       .map((a) => {
         const lastAct = (a as unknown as Record<string, unknown>).last_activity as
@@ -238,7 +252,9 @@ export class AgentsModule {
             <span style="font-size:11px;color:${badgeColor};font-weight:500;">\u25CF ${badgeText}${lastRunStr ? ` \u00B7 ${lastRunStr}` : ''}</span>
             ${(() => {
               const vo = this.validationStates.get(a.id ?? '');
-              if (!vo) return '';
+              if (!vo) {
+                return '';
+              }
               const vc: Record<string, string> = {
                 healthy: '#22c55e',
                 improved: '#3b82f6',
@@ -275,7 +291,9 @@ export class AgentsModule {
       toggle.addEventListener('click', (e) => e.stopPropagation());
       toggle.addEventListener('change', async () => {
         const agentId = toggle.dataset.toggleId;
-        if (!agentId) return;
+        if (!agentId) {
+          return;
+        }
         const agent = this.agents.find((item) => item.id === agentId);
         const version = agent?.version;
         if (version === null || version === undefined) {
@@ -355,7 +373,9 @@ export class AgentsModule {
   }
 
   private renderDetail(): void {
-    if (!this.container || !this.selectedAgent) return;
+    if (!this.container || !this.selectedAgent) {
+      return;
+    }
     const a = this.selectedAgent;
     const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'validation', 'history'];
 
@@ -414,7 +434,9 @@ export class AgentsModule {
     });
 
     const content = this.container.querySelector('#detail-content') as HTMLElement;
-    if (!content) return;
+    if (!content) {
+      return;
+    }
 
     switch (this.activeTab) {
       case 'config':
@@ -441,7 +463,10 @@ export class AgentsModule {
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
     const backend = String(a.backend || 'claude');
     const modelOptions = getModelsForBackend(backend)
-      .map((m) => `<option value="${m}" ${a.model === m ? 'selected' : ''}>${m}</option>`)
+      .map(
+        (m) =>
+          `<option value="${escapeAttr(m)}" ${a.model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`
+      )
       .join('');
 
     const tierOptions = [1, 2, 3]
@@ -449,7 +474,10 @@ export class AgentsModule {
       .join('');
 
     const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', 'gemini', backend]))
-      .map((b) => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`)
+      .map(
+        (b) =>
+          `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
+      )
       .join('');
 
     el.innerHTML = `
@@ -460,7 +488,7 @@ export class AgentsModule {
         </div>
         <div>
           <label class="block text-[11px] text-gray-400 mb-1">Name</label>
-          <input id="cfg-name" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]" value="${escapeHtml(a.display_name || a.name || '')}" />
+          <input id="cfg-name" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]" value="${escapeAttr(a.display_name || a.name || '')}" />
         </div>
         <div>
           <label class="block text-[11px] text-gray-400 mb-1">Backend</label>
@@ -494,7 +522,9 @@ export class AgentsModule {
       const newBackend = (el.querySelector('#cfg-backend') as HTMLSelectElement).value;
       const models = getModelsForBackend(newBackend);
       const modelSelect = el.querySelector('#cfg-model') as HTMLSelectElement;
-      modelSelect.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join('');
+      modelSelect.innerHTML = models
+        .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`)
+        .join('');
     });
 
     // Save via managed-agent API so config sync + version history happen together
@@ -545,7 +575,9 @@ export class AgentsModule {
 
     el.querySelector('#btn-save-persona')?.addEventListener('click', async () => {
       const textarea = el.querySelector('#persona-editor') as HTMLTextAreaElement;
-      if (!textarea || !a.id) return;
+      if (!textarea || !a.id) {
+        return;
+      }
       try {
         const res = await API.updateAgent(a.id, {
           version: a.version ?? 0,
@@ -896,14 +928,18 @@ export class AgentsModule {
               m: { value: number; delta_value: number | null; direction: string } | undefined,
               unit: string
             ) => {
-              if (!m) return `<span style="color:${C.ter};">—</span>`;
+              if (!m) {
+                return `<span style="color:${C.ter};">—</span>`;
+              }
               const val =
                 unit === 'ms'
                   ? `${(m.value / 1000).toFixed(1)}s`
                   : unit === '%'
                     ? `${Math.round(m.value * 100)}%`
                     : String(Math.round(m.value));
-              if (m.delta_value === null) return `<span>${val}</span>`;
+              if (m.delta_value === null) {
+                return `<span>${val}</span>`;
+              }
               const isGood = m.direction === 'down_good' ? m.delta_value < 0 : m.delta_value > 0;
               const dColor = isGood ? '#22c55e' : '#ef4444';
               const sign = m.delta_value > 0 ? '+' : '';
@@ -993,8 +1029,21 @@ export class AgentsModule {
         approveEl.addEventListener('click', async () => {
           try {
             await API.approveValidationSession(agentId, latestId);
-            showToast('Approved as baseline');
+            const refreshedSummary = await API.getValidationSummary(agentId).catch(() => ({
+              summary: null,
+            }));
+            const refreshedValidation = refreshedSummary.summary as Record<string, unknown> | null;
+            this.currentDetailContext = this.buildDetailPageContext(a, refreshedValidation);
+            if (refreshedValidation?.validation_outcome) {
+              this.validationStates.set(agentId, String(refreshedValidation.validation_outcome));
+            }
+            reportPageContext(
+              'agents',
+              this.currentDetailContext,
+              a.id ? { type: 'agent', id: a.id } : undefined
+            );
             void this.renderValidationTab(el, a);
+            showToast('Approved as baseline');
           } catch {
             showToast('Approval failed');
           }
@@ -1033,7 +1082,9 @@ export class AgentsModule {
   // ── Create Modal ────────────────────────────────────────────────────────
 
   private showCreateModal(): void {
-    if (!this.container) return;
+    if (!this.container) {
+      return;
+    }
     const overlay = document.createElement('div');
     overlay.style.cssText =
       'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;display:flex;align-items:center;justify-content:center;';
@@ -1056,7 +1107,9 @@ export class AgentsModule {
     document.body.appendChild(overlay);
     overlay.querySelector('#btn-cancel')?.addEventListener('click', () => overlay.remove());
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) overlay.remove();
+      if (e.target === overlay) {
+        overlay.remove();
+      }
     });
 
     overlay.querySelector('#btn-create')?.addEventListener('click', async () => {

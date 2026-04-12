@@ -817,6 +817,21 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           }),
         });
       });
+
+      it('should reject non-positive sample_count values for agent_test', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+
+        const result = await executor.execute('agent_test', {
+          agent_id: 'qa-monitor',
+          sample_count: 0,
+        });
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringContaining('Invalid sample_count'),
+        });
+      });
     });
 
     describe('load_checkpoint tool', () => {

@@ -282,6 +282,11 @@ export class GatewayToolExecutor {
     this.currentSource = source;
     this.currentChannelId = channelId;
   }
+  clearCurrentAgentContext(): void {
+    this.currentAgentId = '';
+    this.currentSource = '';
+    this.currentChannelId = '';
+  }
   setDisallowedGatewayTools(tools: string[]): void {
     this.disallowedGatewayTools = new Set(tools);
   }
@@ -605,14 +610,18 @@ export class GatewayToolExecutor {
           );
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
-          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
           }
           const agentId = (input as { agent_id: string }).agent_id;
           const latestVer = getLatestVersion(this.sessionsDb, agentId);
-          if (!latestVer) return { success: false, error: `Agent '${agentId}' not found` };
+          if (!latestVer) {
+            return { success: false, error: `Agent '${agentId}' not found` };
+          }
           return {
             success: true,
             agent_id: latestVer.agent_id,
@@ -624,7 +633,9 @@ export class GatewayToolExecutor {
           };
         }
         case 'agent_update': {
-          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -640,8 +651,9 @@ export class GatewayToolExecutor {
             return { success: false, error: updateError };
           }
           const updateLatest = getLatestVersion(this.sessionsDb, updateArgs.agent_id);
-          if (!updateLatest)
+          if (!updateLatest) {
             return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
+          }
           if (updateLatest.version !== updateArgs.version) {
             return {
               success: false,
@@ -674,7 +686,9 @@ export class GatewayToolExecutor {
           };
         }
         case 'agent_create': {
-          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -694,8 +708,9 @@ export class GatewayToolExecutor {
             return { success: false, error: createError };
           }
           const existingAgent = getLatestVersion(this.sessionsDb, createArgs.id);
-          if (existingAgent)
+          if (existingAgent) {
             return { success: false, error: `Agent '${createArgs.id}' already exists` };
+          }
 
           const synced = await createManagedAgentRuntime(
             {
@@ -729,7 +744,9 @@ export class GatewayToolExecutor {
           };
         }
         case 'agent_compare': {
-          if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -749,8 +766,9 @@ export class GatewayToolExecutor {
         }
         // Viewer control tools (SmartStore pattern)
         case 'viewer_state': {
-          if (!this.uiCommandQueue)
+          if (!this.uiCommandQueue) {
             return { success: false, error: 'UI command queue not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -759,8 +777,9 @@ export class GatewayToolExecutor {
           return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
         }
         case 'viewer_navigate': {
-          if (!this.uiCommandQueue)
+          if (!this.uiCommandQueue) {
             return { success: false, error: 'UI command queue not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -770,8 +789,9 @@ export class GatewayToolExecutor {
           return { success: true, navigated: navArgs.route };
         }
         case 'viewer_notify': {
-          if (!this.uiCommandQueue)
+          if (!this.uiCommandQueue) {
             return { success: false, error: 'UI command queue not available' };
+          }
           const permError = this.checkViewerOnly();
           if (permError) {
             return { success: false, error: permError };
@@ -2326,10 +2346,22 @@ export class GatewayToolExecutor {
     test_data?: Array<{ input: string; expected?: string }>;
   }): Promise<GatewayToolResult> {
     const permError = this.checkViewerOnly();
-    if (permError) return { success: false, error: permError } as GatewayToolResult;
+    if (permError) {
+      return { success: false, error: permError } as GatewayToolResult;
+    }
 
-    // Default 2 (demo-optimized per R4 #19; override to 3+ for thorough testing)
-    const { agent_id, sample_count = 2 } = input;
+    const { agent_id } = input;
+    const sample_count = Number.parseInt(String(input.sample_count ?? 2), 10);
+    if (!Number.isFinite(sample_count) || sample_count < 1) {
+      securityLogger.warn('[Agent test] Invalid sample_count received', {
+        agent_id,
+        sample_count: input.sample_count ?? null,
+      });
+      return {
+        success: false,
+        error: `Invalid sample_count for '${agent_id}': ${String(input.sample_count)}. Must be >= 1.`,
+      } as GatewayToolResult;
+    }
 
     // Concurrency guard
     if (this.testInFlight.has(agent_id)) {
@@ -2793,7 +2825,11 @@ export class GatewayToolExecutor {
     } catch (telemetryErr) {
       securityLogger.warn('[Delegation telemetry] Validation bootstrap failed', telemetryErr);
       agentVersion = 0;
-      valSession = null;
+      valSession = this.cleanupValidationSessionOnTelemetryFailure(
+        valSession,
+        telemetryErr,
+        'delegate bootstrap failed'
+      );
     }
 
     const MAX_RETRIES = 3;

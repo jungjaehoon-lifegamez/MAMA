@@ -786,6 +786,8 @@ export class AgentLoop {
           options.source,
           options.channelId
         );
+      } else {
+        this.mcpExecutor.clearCurrentAgentContext?.();
       }
       const rawTier = options.agentContext.tier ?? 1;
       this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
@@ -794,6 +796,7 @@ export class AgentLoop {
         | 3;
     } else {
       this.mcpExecutor.setAgentContext?.(null);
+      this.mcpExecutor.clearCurrentAgentContext?.();
       this.currentTier = 1;
     }
 

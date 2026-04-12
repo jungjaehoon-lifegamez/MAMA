@@ -16,6 +16,7 @@ const persistentPromptMock = vi.fn().mockResolvedValue({
 });
 const gatewayExecutorSetAgentContextMock = vi.fn();
 const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
+const gatewayExecutorClearCurrentAgentContextMock = vi.fn();
 const gatewayExecutorSetUICommandQueueMock = vi.fn();
 const gatewayExecutorSetSessionsDbMock = vi.fn();
 const gatewayExecutorSetValidationServiceMock = vi.fn();
@@ -74,6 +75,7 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       setDiscordGateway: vi.fn(),
       setAgentContext: gatewayExecutorSetAgentContextMock,
       setCurrentAgentContext: gatewayExecutorSetCurrentAgentContextMock,
+      clearCurrentAgentContext: gatewayExecutorClearCurrentAgentContextMock,
       setUICommandQueue: gatewayExecutorSetUICommandQueueMock,
       setSessionsDb: gatewayExecutorSetSessionsDbMock,
       setValidationService: gatewayExecutorSetValidationServiceMock,
@@ -147,6 +149,7 @@ describe('AgentLoop', () => {
     persistentPromptMock.mockClear();
     gatewayExecutorSetAgentContextMock.mockClear();
     gatewayExecutorSetCurrentAgentContextMock.mockClear();
+    gatewayExecutorClearCurrentAgentContextMock.mockClear();
     gatewayExecutorSetUICommandQueueMock.mockClear();
     gatewayExecutorSetSessionsDbMock.mockClear();
     gatewayExecutorSetValidationServiceMock.mockClear();
@@ -230,6 +233,31 @@ describe('AgentLoop', () => {
         'viewer',
         'mama_os_main'
       );
+    });
+
+    it('should clear stale routing state when agentContext is absent', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('First', {
+        source: 'viewer',
+        channelId: 'mama_os_main',
+        agentContext: {
+          ...createChatBotContext(),
+          source: 'viewer',
+          platform: 'viewer',
+          roleName: 'os_agent',
+        },
+      });
+      gatewayExecutorClearCurrentAgentContextMock.mockClear();
+
+      await agentLoop.run('Second');
+
+      expect(gatewayExecutorClearCurrentAgentContextMock).toHaveBeenCalledTimes(1);
     });
   });
 
