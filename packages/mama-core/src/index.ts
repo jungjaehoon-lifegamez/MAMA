@@ -129,6 +129,8 @@ export { listRecentMemoryEvents } from './memory/event-store.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';
+export * from './entities/projection.js';
+export * from './entities/recall-bridge.js';
 
 // Config loader
 export {
