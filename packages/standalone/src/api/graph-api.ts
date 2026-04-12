@@ -34,6 +34,8 @@ import {
   handleListEntityCandidates,
   handleReviewEntityCandidate,
 } from './entity-review-handler.js';
+import { createEntityAuditHandler, type EntityAuditHandlerDeps } from './entity-audit-handler.js';
+import { EntityAuditRunQueue } from './entity-audit-queue.js';
 import {
   getValidationSummary,
   listValidationHistory,
@@ -2201,6 +2203,58 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         }
         await initDB();
         await handleGetEntityCandidate(req, res, getAdapter());
+        return true;
+      }
+    }
+
+    // Route: POST /api/entities/audit/run - start a new audit run
+    if (pathname === '/api/entities/audit/run' && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Authentication required' }));
+        return true;
+      }
+      await initDB();
+      const deps: EntityAuditHandlerDeps = {
+        queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+      };
+      const handler = createEntityAuditHandler(deps);
+      await handler.handleStartAuditRun(req, res);
+      return true;
+    }
+
+    // Route: GET /api/entities/audit/runs - list recent audit runs
+    if (pathname === '/api/entities/audit/runs' && req.method === 'GET') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Authentication required' }));
+        return true;
+      }
+      await initDB();
+      const handler = createEntityAuditHandler({
+        queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+      });
+      await handler.handleListAuditRuns(req, res);
+      return true;
+    }
+
+    // Route: GET /api/entities/audit/runs/:id - single run detail
+    {
+      const runDetail = pathname.match(/^\/api\/entities\/audit\/runs\/([^/]+)$/);
+      if (runDetail && req.method === 'GET') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Authentication required' }));
+          return true;
+        }
+        await initDB();
+        const handler = createEntityAuditHandler({
+          queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+        });
+        await handler.handleGetAuditRun(req, res);
         return true;
       }
     }

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "extractor_version": "history-extractor@v1",
+  "description": "Synthetic normalization / blocking stress cases. Each entry is a label plus its expected canonical grouping.",
+  "cases": [
+    { "canonical_id": "gold_project_alpha", "label": "  Project   Alpha  " },
+    { "canonical_id": "gold_project_alpha", "label": "project-alpha" },
+    { "canonical_id": "gold_project_alpha", "label": "PROJECT ALPHA" },
+    { "canonical_id": "gold_org_acme_lab", "label": "Acme   Lab" },
+    { "canonical_id": "gold_work_release", "label": "q2_release" }
+  ]
+}
