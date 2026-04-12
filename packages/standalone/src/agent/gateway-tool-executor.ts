@@ -91,6 +91,7 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
+import type { ValidationSessionRow } from '../validation/types.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -582,6 +583,10 @@ export class GatewayToolExecutor {
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const agentId = (input as { agent_id: string }).agent_id;
           const latestVer = getLatestVersion(this.sessionsDb, agentId);
           if (!latestVer) return { success: false, error: `Agent '${agentId}' not found` };
@@ -702,6 +707,10 @@ export class GatewayToolExecutor {
         }
         case 'agent_compare': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const cmpArgs = input as {
             agent_id: string;
             version_a: number;
@@ -719,12 +728,20 @@ export class GatewayToolExecutor {
         case 'viewer_state': {
           if (!this.uiCommandQueue)
             return { success: false, error: 'UI command queue not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const ctx = this.uiCommandQueue.getPageContext(this.currentChannelId || undefined);
           return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
         }
         case 'viewer_navigate': {
           if (!this.uiCommandQueue)
             return { success: false, error: 'UI command queue not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const navArgs = input as { route: string; params?: Record<string, string> };
           this.uiCommandQueue.push({ type: 'navigate', payload: navArgs });
           return { success: true, navigated: navArgs.route };
@@ -732,6 +749,10 @@ export class GatewayToolExecutor {
         case 'viewer_notify': {
           if (!this.uiCommandQueue)
             return { success: false, error: 'UI command queue not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const args = input as {
             type: string;
             message: string;
@@ -2537,28 +2558,32 @@ export class GatewayToolExecutor {
       const channelId = this.currentChannelId || 'default';
 
       // Start validation session for background delegation
-      const bgVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
-      const bgAgentVersion = bgVer?.version ?? 0;
-      const bgValSession = this.validationService?.startSession(
-        agentId,
-        bgAgentVersion,
-        'delegate_run'
-      );
+      let bgAgentVersion = 0;
+      let bgValSession: ValidationSessionRow | null = null;
+      try {
+        const bgVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+        bgAgentVersion = bgVer?.version ?? 0;
+        bgValSession =
+          this.validationService?.startSession(agentId, bgAgentVersion, 'delegate_run') ?? null;
 
-      // Log task_start for background delegation
-      if (this.sessionsDb) {
-        const row = logActivity(this.sessionsDb, {
-          agent_id: agentId,
-          agent_version: bgAgentVersion,
-          type: 'task_start',
-          input_summary: task?.slice(0, 200),
-          run_id: bgValSession?.id,
-          execution_status: 'started',
-          trigger_reason: 'delegate_run',
-        });
-        if (bgValSession) {
-          this.validationService!.recordRun(bgValSession.id, { activityId: row.id });
+        if (this.sessionsDb) {
+          const row = logActivity(this.sessionsDb, {
+            agent_id: agentId,
+            agent_version: bgAgentVersion,
+            type: 'task_start',
+            input_summary: task?.slice(0, 200),
+            run_id: bgValSession?.id,
+            execution_status: 'started',
+            trigger_reason: 'delegate_run',
+          });
+          if (bgValSession && this.validationService) {
+            this.validationService.recordRun(bgValSession.id, { activityId: row.id });
+          }
         }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Background bootstrap failed', telemetryErr);
+        bgAgentVersion = 0;
+        bgValSession = null;
       }
 
       // Fire-and-forget: finalize validation when complete
@@ -2580,54 +2605,87 @@ export class GatewayToolExecutor {
           const result = await process.sendMessage(delegationPrompt);
           const durationMs = Date.now() - bgStartTime;
 
-          if (this.sessionsDb) {
-            const row = logActivity(this.sessionsDb, {
-              agent_id: agentId,
-              agent_version: bgAgentVersion,
-              type: 'task_complete',
-              input_summary: task?.slice(0, 200),
-              output_summary: summarizeActivityOutput(result?.response),
-              duration_ms: durationMs,
-              run_id: bgValSession?.id,
-              execution_status: 'completed',
-              trigger_reason: 'delegate_run',
-            });
-            if (bgValSession) {
-              this.validationService!.recordRun(bgValSession.id, {
-                activityId: row.id,
+          try {
+            if (this.sessionsDb) {
+              const row = logActivity(this.sessionsDb, {
+                agent_id: agentId,
+                agent_version: bgAgentVersion,
+                type: 'task_complete',
+                input_summary: task?.slice(0, 200),
+                output_summary: summarizeActivityOutput(result?.response),
                 duration_ms: durationMs,
+                run_id: bgValSession?.id,
+                execution_status: 'completed',
+                trigger_reason: 'delegate_run',
               });
+              if (bgValSession && this.validationService) {
+                this.validationService.recordRun(bgValSession.id, {
+                  activityId: row.id,
+                  duration_ms: durationMs,
+                });
+              }
             }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background completion activity failed',
+              telemetryErr
+            );
           }
 
-          // Finalize validation session async
-          if (bgValSession && this.validationService) {
-            this.validationService.finalizeSession(bgValSession.id, {
-              execution_status: 'completed',
-              metrics: { duration_ms: durationMs },
-            });
+          try {
+            if (bgValSession && this.validationService) {
+              this.validationService.finalizeSession(bgValSession.id, {
+                execution_status: 'completed',
+                metrics: { duration_ms: durationMs },
+              });
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background completion finalize failed',
+              telemetryErr
+            );
           }
         } catch (err) {
           const durationMs = Date.now() - bgStartTime;
-          if (this.sessionsDb) {
-            logActivity(this.sessionsDb, {
-              agent_id: agentId,
-              agent_version: bgAgentVersion,
-              type: 'task_error',
-              input_summary: task?.slice(0, 200),
-              error_message: String(err),
-              duration_ms: durationMs,
-              run_id: bgValSession?.id,
-              execution_status: 'failed',
-              trigger_reason: 'delegate_run',
-            });
+          try {
+            if (this.sessionsDb) {
+              const row = logActivity(this.sessionsDb, {
+                agent_id: agentId,
+                agent_version: bgAgentVersion,
+                type: 'task_error',
+                input_summary: task?.slice(0, 200),
+                error_message: String(err),
+                duration_ms: durationMs,
+                run_id: bgValSession?.id,
+                execution_status: 'failed',
+                trigger_reason: 'delegate_run',
+              });
+              if (bgValSession && this.validationService) {
+                this.validationService.recordRun(bgValSession.id, {
+                  activityId: row.id,
+                  duration_ms: durationMs,
+                });
+              }
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background failure activity failed',
+              telemetryErr
+            );
           }
-          if (bgValSession && this.validationService) {
-            this.validationService.finalizeSession(bgValSession.id, {
-              execution_status: 'failed',
-              error_message: String(err),
-              metrics: { duration_ms: durationMs },
-            });
+          try {
+            if (bgValSession && this.validationService) {
+              this.validationService.finalizeSession(bgValSession.id, {
+                execution_status: 'failed',
+                error_message: String(err),
+                metrics: { duration_ms: durationMs },
+              });
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background failure finalize failed',
+              telemetryErr
+            );
           }
         }
       })();
@@ -2644,25 +2702,32 @@ export class GatewayToolExecutor {
     const startTime = Date.now();
 
     // Start validation session for this delegation
-    const ver = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
-    const agentVersion = ver?.version ?? 0;
-    const valSession = this.validationService?.startSession(agentId, agentVersion, 'delegate_run');
+    let agentVersion = 0;
+    let valSession: ValidationSessionRow | null = null;
+    try {
+      const ver = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+      agentVersion = ver?.version ?? 0;
+      valSession =
+        this.validationService?.startSession(agentId, agentVersion, 'delegate_run') ?? null;
 
-    // Log task_start
-    if (this.sessionsDb) {
-      const row = logActivity(this.sessionsDb, {
-        agent_id: agentId,
-        agent_version: agentVersion,
-        type: 'task_start',
-        input_summary: task?.slice(0, 200),
-        run_id: valSession?.id,
-        execution_status: 'started',
-        trigger_reason: 'delegate_run',
-      });
-      // Link activity to validation session
-      if (valSession) {
-        this.validationService!.recordRun(valSession.id, { activityId: row.id });
+      if (this.sessionsDb) {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_start',
+          input_summary: task?.slice(0, 200),
+          run_id: valSession?.id,
+          execution_status: 'started',
+          trigger_reason: 'delegate_run',
+        });
+        if (valSession && this.validationService) {
+          this.validationService.recordRun(valSession.id, { activityId: row.id });
+        }
       }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Validation bootstrap failed', telemetryErr);
+      agentVersion = 0;
+      valSession = null;
     }
 
     const MAX_RETRIES = 3;
@@ -2703,33 +2768,39 @@ export class GatewayToolExecutor {
         const result = await process.sendMessage(delegationPrompt);
         const durationMs = Date.now() - startTime;
 
-        // Log task_complete
-        if (this.sessionsDb) {
-          const row = logActivity(this.sessionsDb, {
-            agent_id: agentId,
-            agent_version: agentVersion,
-            type: 'task_complete',
-            input_summary: task?.slice(0, 200),
-            output_summary: summarizeActivityOutput(result.response),
-            duration_ms: durationMs,
-            run_id: valSession?.id,
-            execution_status: 'completed',
-            trigger_reason: 'delegate_run',
-          });
-          if (valSession) {
-            this.validationService!.recordRun(valSession.id, {
-              activityId: row.id,
+        try {
+          if (this.sessionsDb) {
+            const row = logActivity(this.sessionsDb, {
+              agent_id: agentId,
+              agent_version: agentVersion,
+              type: 'task_complete',
+              input_summary: task?.slice(0, 200),
+              output_summary: summarizeActivityOutput(result.response),
               duration_ms: durationMs,
+              run_id: valSession?.id,
+              execution_status: 'completed',
+              trigger_reason: 'delegate_run',
             });
+            if (valSession && this.validationService) {
+              this.validationService.recordRun(valSession.id, {
+                activityId: row.id,
+                duration_ms: durationMs,
+              });
+            }
           }
+        } catch (telemetryErr) {
+          securityLogger.warn('[Delegation telemetry] Completion activity failed', telemetryErr);
         }
 
-        // Finalize validation session as completed
-        if (valSession && this.validationService) {
-          this.validationService.finalizeSession(valSession.id, {
-            execution_status: 'completed',
-            metrics: { duration_ms: durationMs },
-          });
+        try {
+          if (valSession && this.validationService) {
+            this.validationService.finalizeSession(valSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: durationMs },
+            });
+          }
+        } catch (telemetryErr) {
+          securityLogger.warn('[Delegation telemetry] Completion finalize failed', telemetryErr);
         }
 
         return {
@@ -2753,28 +2824,41 @@ export class GatewayToolExecutor {
       }
     }
 
-    // Log task_error after all retries exhausted
-    if (this.sessionsDb) {
-      logActivity(this.sessionsDb, {
-        agent_id: agentId,
-        agent_version: agentVersion,
-        type: 'task_error',
-        input_summary: task?.slice(0, 200),
-        error_message: lastError?.message,
-        duration_ms: Date.now() - startTime,
-        run_id: valSession?.id,
-        execution_status: 'failed',
-        trigger_reason: 'delegate_run',
-      });
+    const failedDurationMs = Date.now() - startTime;
+    try {
+      if (this.sessionsDb) {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_error',
+          input_summary: task?.slice(0, 200),
+          error_message: lastError?.message,
+          duration_ms: failedDurationMs,
+          run_id: valSession?.id,
+          execution_status: 'failed',
+          trigger_reason: 'delegate_run',
+        });
+        if (valSession && this.validationService) {
+          this.validationService.recordRun(valSession.id, {
+            activityId: row.id,
+            duration_ms: failedDurationMs,
+          });
+        }
+      }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Failure activity failed', telemetryErr);
     }
 
-    // Finalize validation session as failed
-    if (valSession && this.validationService) {
-      this.validationService.finalizeSession(valSession.id, {
-        execution_status: 'failed',
-        error_message: lastError?.message,
-        metrics: { duration_ms: Date.now() - startTime },
-      });
+    try {
+      if (valSession && this.validationService) {
+        this.validationService.finalizeSession(valSession.id, {
+          execution_status: 'failed',
+          error_message: lastError?.message,
+          metrics: { duration_ms: failedDurationMs },
+        });
+      }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Failure finalize failed', telemetryErr);
     }
 
     return {

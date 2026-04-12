@@ -2,8 +2,8 @@
  * Agents Module - Interactive Agent Management
  * @module modules/agents
  *
- * Managed Agents pattern: card grid list → detail view with 5 tabs
- * (Config, Persona, Tools, Metrics, History).
+ * Managed Agents pattern: card grid list → detail view with 6 tabs
+ * (Config, Persona, Tools, Activity, Validation, History).
  * SmartStore pattern: reportPageContext for agent awareness.
  */
 
@@ -62,6 +62,7 @@ export class AgentsModule {
   private activeTab: DetailTab = 'config';
   private detailRequestId = 0;
   private listRequestId = 0;
+  private currentDetailContext: Record<string, unknown> | null = null;
 
   init(): void {
     if (this.initialized) return;
@@ -77,6 +78,63 @@ export class AgentsModule {
 
   private validationStates: Map<string, string> = new Map();
 
+  private buildListPageContext(): Record<string, unknown> {
+    return {
+      pageType: 'agent-list',
+      total: this.agents.length,
+      agents: this.agents.map((a) => ({
+        id: a.id,
+        name: a.display_name || a.name,
+        enabled: a.enabled !== false,
+        tier: a.tier,
+        model: a.model,
+        validation: this.validationStates.get(a.id ?? '') ?? null,
+        system: SYSTEM_AGENT_IDS.has(a.id ?? ''),
+      })),
+      alerts: this.alerts,
+      summary: `${this.agents.length} agents: ${this.agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
+    };
+  }
+
+  private buildDetailValidationContext(
+    validationSummary: Record<string, unknown> | null
+  ): Record<string, unknown> | null {
+    if (!validationSummary) {
+      return null;
+    }
+    return {
+      outcome: validationSummary.validation_outcome,
+      execution: validationSummary.execution_status,
+      baseline_version: validationSummary.baseline_version,
+      trigger_type: validationSummary.trigger_type,
+      ended_at: validationSummary.ended_at,
+    };
+  }
+
+  private buildDetailPageContext(
+    agent: AgentWithVersion,
+    validationSummary: Record<string, unknown> | null
+  ): Record<string, unknown> {
+    const validation = this.buildDetailValidationContext(validationSummary);
+    const validationOutcome = typeof validation?.outcome === 'string' ? validation.outcome : 'none';
+    return {
+      pageType: 'agent-detail',
+      selectedAgent: agent.id,
+      activeTab: this.activeTab,
+      agent: {
+        id: agent.id,
+        name: agent.display_name || agent.name,
+        model: agent.model,
+        tier: agent.tier,
+        enabled: agent.enabled !== false,
+        version: agent.version,
+        backend: agent.backend,
+      },
+      validation,
+      summary: `${agent.display_name || agent.name} v${agent.version ?? 0} | validation: ${validationOutcome} | tab: ${this.activeTab}`,
+    };
+  }
+
   private async loadAgents(): Promise<void> {
     if (!this.container) return;
     const requestId = ++this.listRequestId;
@@ -86,6 +144,9 @@ export class AgentsModule {
         API.getAgents(),
         API.getActivitySummary(yesterday).catch(() => ({ summary: [], alerts: [] })),
       ]);
+      if (requestId !== this.listRequestId) {
+        return;
+      }
       this.agents = agents.filter((agent) => {
         const id = agent.id ?? '';
         return !(LEGACY_SWARM_AGENT_IDS.has(id) && agent.enabled === false);
@@ -110,22 +171,7 @@ export class AgentsModule {
           }
         }
         this.renderList();
-      });
-
-      reportPageContext('agents', {
-        pageType: 'agent-list',
-        total: this.agents.length,
-        agents: this.agents.map((a) => ({
-          id: a.id,
-          name: a.display_name || a.name,
-          enabled: a.enabled !== false,
-          tier: a.tier,
-          model: a.model,
-          validation: this.validationStates.get(a.id ?? '') ?? null,
-          system: SYSTEM_AGENT_IDS.has(a.id ?? ''),
-        })),
-        alerts: this.alerts,
-        summary: `${this.agents.length} agents: ${this.agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
+        reportPageContext('agents', this.buildListPageContext());
       });
     } catch (err) {
       logger.error('Failed to load agents', err);
@@ -240,22 +286,29 @@ export class AgentsModule {
         }
       });
     });
+    this.container.querySelectorAll<HTMLElement>('.agent-toggle-label').forEach((label) => {
+      label.addEventListener('click', (event) => event.stopPropagation());
+    });
 
     this.container.querySelectorAll('.agent-card').forEach((card) => {
-      const openCard = () => {
+      const openCard = (event?: Event) => {
+        const target = event?.target;
+        if (target instanceof Element && target.closest('.agent-toggle-label')) {
+          return;
+        }
         const agentId = (card as HTMLElement).dataset.agentId;
         if (agentId) {
           this.showDetail(agentId);
         }
       };
-      card.addEventListener('click', openCard);
+      card.addEventListener('click', (event) => openCard(event));
       card.addEventListener('keydown', (event: KeyboardEvent) => {
         if (event.target !== card) {
           return;
         }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
-          openCard();
+          openCard(event);
         }
       });
     });
@@ -282,34 +335,8 @@ export class AgentsModule {
         return;
       }
       const vs = valData.summary as Record<string, unknown> | null;
-      reportPageContext(
-        'agents',
-        {
-          pageType: 'agent-detail',
-          selectedAgent: agentId,
-          activeTab: this.activeTab,
-          agent: {
-            id: agent.id,
-            name: agent.display_name || agent.name,
-            model: agent.model,
-            tier: agent.tier,
-            enabled: agent.enabled !== false,
-            version: agent.version,
-            backend: agent.backend,
-          },
-          validation: vs
-            ? {
-                outcome: vs.validation_outcome,
-                execution: vs.execution_status,
-                baseline_version: vs.baseline_version,
-                trigger_type: vs.trigger_type,
-                ended_at: vs.ended_at,
-              }
-            : null,
-          summary: `${agent.display_name || agent.name} v${agent.version} | validation: ${vs?.validation_outcome ?? 'none'} | tab: ${this.activeTab}`,
-        },
-        { type: 'agent', id: agentId }
-      );
+      this.currentDetailContext = this.buildDetailPageContext(agent, vs);
+      reportPageContext('agents', this.currentDetailContext, { type: 'agent', id: agentId });
     } catch (err) {
       logger.error(`Failed to load agent ${agentId}`, err);
       showToast('Failed to load agent details');
@@ -345,23 +372,31 @@ export class AgentsModule {
         this.activeTab = (btn as HTMLElement).dataset.dtab as DetailTab;
         this.renderDetail();
         const vo = this.validationStates.get(a.id ?? '');
+        const existingContext = this.currentDetailContext ?? this.buildDetailPageContext(a, null);
+        const existingValidation =
+          existingContext.validation &&
+          typeof existingContext.validation === 'object' &&
+          !Array.isArray(existingContext.validation)
+            ? (existingContext.validation as Record<string, unknown>)
+            : null;
+        const nextValidation =
+          existingValidation || vo
+            ? {
+                ...(existingValidation ?? {}),
+                ...(vo ? { outcome: vo } : {}),
+              }
+            : null;
+        const validationOutcome =
+          typeof nextValidation?.outcome === 'string' ? nextValidation.outcome : 'none';
+        this.currentDetailContext = {
+          ...existingContext,
+          activeTab: this.activeTab,
+          validation: nextValidation,
+          summary: `${a.display_name || a.name} v${a.version ?? 0} | validation: ${validationOutcome} | tab: ${this.activeTab}`,
+        };
         reportPageContext(
           'agents',
-          {
-            pageType: 'agent-detail',
-            selectedAgent: a.id,
-            activeTab: this.activeTab,
-            agent: {
-              id: a.id,
-              name: a.display_name || a.name,
-              model: a.model,
-              tier: a.tier,
-              enabled: a.enabled !== false,
-              version: a.version,
-            },
-            validation: vo ? { outcome: vo } : null,
-            summary: `${a.display_name || a.name} v${a.version} | validation: ${vo ?? 'none'} | tab: ${this.activeTab}`,
-          },
+          this.currentDetailContext,
           a.id ? { type: 'agent', id: a.id } : undefined
         );
       });
@@ -786,12 +821,19 @@ export class AgentsModule {
       if (summary?.report_json) {
         try {
           const report = JSON.parse(String(summary.report_json));
+          const reportLines = Array.isArray(report.lines)
+            ? report.lines.map((line: unknown) => String(line))
+            : [];
+          const reportHeadline = String(report.headline ?? report.outcome ?? reportLines[0] ?? '');
+          const reportDetails = String(
+            report.details ?? (reportLines.length > 0 ? reportLines.join('\n') : '')
+          );
           reportHtml = `
             <div style="margin-top:20px;">
               <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation Report</div>
               <div style="background:${C.bg};padding:12px 16px;border-radius:8px;border-left:3px solid ${outcomeColor};">
-                <div style="font-size:13px;font-weight:600;color:${outcomeColor};margin-bottom:6px;">${escapeHtml(report.headline || '')}</div>
-                <div style="font-size:12px;color:${C.sec};white-space:pre-wrap;line-height:1.6;">${escapeHtml(report.details || '')}</div>
+                <div style="font-size:13px;font-weight:600;color:${outcomeColor};margin-bottom:6px;">${escapeHtml(reportHeadline)}</div>
+                <div style="font-size:12px;color:${C.sec};white-space:pre-wrap;line-height:1.6;">${escapeHtml(reportDetails)}</div>
               </div>
             </div>`;
         } catch {
@@ -900,8 +942,9 @@ export class AgentsModule {
 
       // ── 4. Approve button ──
       const canApprove = outcome === 'improved' || outcome === 'healthy';
+      const sessionVersion = Number(summary?.agent_version ?? a.version ?? 0);
       const approveBtn = canApprove
-        ? `<button id="btn-approve-validation" style="margin-top:16px;padding:8px 20px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Approve v${a.version ?? 0} as Baseline</button>`
+        ? `<button id="btn-approve-validation" style="margin-top:16px;padding:8px 20px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Approve v${sessionVersion} as Baseline</button>`
         : '';
 
       el.innerHTML = `
@@ -1050,6 +1093,7 @@ export class AgentsModule {
   showList(): void {
     this.detailRequestId++;
     this.selectedAgent = null;
+    this.currentDetailContext = null;
     this.loadAgents();
   }
 }

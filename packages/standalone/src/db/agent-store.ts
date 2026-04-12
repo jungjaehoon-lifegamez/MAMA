@@ -22,6 +22,7 @@ const TERMINAL_ACTIVITY_TYPES = new Set([
 const TERMINAL_OUTCOME_ACTIVITY_SQL = [
   "'task_complete'",
   "'task_error'",
+  "'task_skipped'",
   "'audit_complete'",
   "'audit_failed'",
 ].join(', ');
@@ -413,8 +414,11 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
       .map((type) => ({ type }));
     let consecutiveErrors = 0;
     for (const r of recentTypes) {
-      if (r.type === 'task_error') consecutiveErrors++;
-      else break;
+      if (r.type === 'task_error' || r.type === 'audit_failed') {
+        consecutiveErrors++;
+      } else {
+        break;
+      }
     }
 
     return {

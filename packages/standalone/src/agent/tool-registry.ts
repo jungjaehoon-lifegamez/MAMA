@@ -311,25 +311,29 @@ register({
   description: 'Get agent config, persona, and current version',
   category: 'os_management',
   params: 'agent_id',
+  viewerOnly: true,
 });
 register({
   name: 'agent_update',
   description:
     'Update agent config. Requires current version for optimistic concurrency. Bumps version on change.',
   category: 'os_management',
-  params: 'agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note',
+  params: 'agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?',
+  viewerOnly: true,
 });
 register({
   name: 'agent_create',
   description: 'Create new agent with initial config and persona',
   category: 'os_management',
   params: 'id, name, model, tier, system?, backend?',
+  viewerOnly: true,
 });
 register({
   name: 'agent_compare',
   description: 'Compare metrics between two versions of an agent (Before/After)',
   category: 'os_monitoring',
   params: 'agent_id, version_a, version_b',
+  viewerOnly: true,
 });
 
 // Viewer control tools (SmartStore pattern)
@@ -339,18 +343,21 @@ register({
     'Get current viewer state (active tab, page context). Call this to know what the user is looking at.',
   category: 'os_management',
   params: '',
+  viewerOnly: true,
 });
 register({
   name: 'viewer_navigate',
   description: 'Navigate viewer to a specific page/tab (e.g., agent detail, metrics)',
   category: 'os_management',
   params: 'route, params?: {id?, tab?, compareV1?, compareV2?}',
+  viewerOnly: true,
 });
 register({
   name: 'viewer_notify',
   description: 'Show toast or alert card in viewer',
   category: 'os_management',
   params: 'type: info|warning|suggest, message, action?: {label, navigate}',
+  viewerOnly: true,
 });
 
 // Agent lifecycle tools

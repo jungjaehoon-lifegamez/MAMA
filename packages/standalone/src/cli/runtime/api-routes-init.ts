@@ -147,8 +147,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const noUpdate = result?.response?.includes('NO_UPDATE');
       const usage = result?.usage;
       const tokensUsed = usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : 0;
-      let completeActivityId: number | undefined;
-
       try {
         if (sessionsDb) {
           const completeRow = logActivity(sessionsDb, {
@@ -163,7 +161,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             execution_status: 'completed',
             trigger_reason: 'system_run',
           });
-          completeActivityId = completeRow.id;
           if (session) {
             validationService?.recordRun(session.id, {
               activityId: completeRow.id,
@@ -187,7 +184,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               duration_ms: durationMs,
               token_cost: tokensUsed,
             },
-            activity_row_id: completeActivityId,
           });
         }
       } catch (telemetryErr) {
@@ -201,8 +197,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     } catch (err) {
       const durationMs = Date.now() - startTime;
       const originalError = err;
-      let errorActivityId: number | undefined;
-
       try {
         if (sessionsDb) {
           const errorRow = logActivity(sessionsDb, {
@@ -216,7 +210,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             execution_status: 'failed',
             trigger_reason: 'system_run',
           });
-          errorActivityId = errorRow.id;
           if (session) {
             validationService?.recordRun(session.id, {
               activityId: errorRow.id,
@@ -234,7 +227,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             execution_status: 'failed',
             error_message: err instanceof Error ? err.message : String(err),
             metrics: { duration_ms: durationMs },
-            activity_row_id: errorActivityId,
           });
         }
       } catch (telemetryErr) {
@@ -514,8 +506,6 @@ This saves resources. Only compile when there is genuinely new information to do
         });
 
         const auditDuration = Date.now() - auditStart;
-        let activityRowId: number | undefined;
-
         try {
           if (sessionsDb) {
             const activityRow = logActivity(sessionsDb, {
@@ -528,7 +518,6 @@ This saves resources. Only compile when there is genuinely new information to do
               execution_status: 'completed',
               trigger_reason: 'audit',
             });
-            activityRowId = activityRow.id;
             if (auditSession) {
               validationService?.recordRun(auditSession.id, { activityId: activityRow.id });
             }
@@ -545,7 +534,6 @@ This saves resources. Only compile when there is genuinely new information to do
             validationService.finalizeSession(auditSession.id, {
               execution_status: 'completed',
               metrics: { duration_ms: auditDuration },
-              activity_row_id: activityRowId,
             });
           }
         } catch (telemetryErr) {
@@ -558,7 +546,6 @@ This saves resources. Only compile when there is genuinely new information to do
         routesLogger.debug('[Conductor Audit] Audit complete');
       } catch (err) {
         const auditDuration = Date.now() - auditStart;
-        let failActivityId: number | undefined;
         try {
           if (sessionsDb) {
             const failRow = logActivity(sessionsDb, {
@@ -572,7 +559,6 @@ This saves resources. Only compile when there is genuinely new information to do
               execution_status: 'failed',
               trigger_reason: 'audit',
             });
-            failActivityId = failRow.id;
             if (auditSession) {
               validationService?.recordRun(auditSession.id, { activityId: failRow.id });
             }
@@ -586,7 +572,6 @@ This saves resources. Only compile when there is genuinely new information to do
               execution_status: 'failed',
               error_message: err instanceof Error ? err.message : String(err),
               metrics: { duration_ms: auditDuration },
-              activity_row_id: failActivityId,
             });
           }
         } catch (telemetryErr) {

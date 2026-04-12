@@ -1,6 +1,6 @@
 # v0.19 Agent Lifecycle — Final Implementation Plan
 
-> 이전 플랜들은 전부 폐기. 이 문서가 유일한 구현 가이드.
+> 이전 플랜들은 전부 폐기. 이 문서는 기준 문서이며 transition/로드맵 문서와 함께 사용한다.
 
 ## v0.19의 진짜 목적
 
@@ -412,7 +412,7 @@ graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
 
 ```bash
 mama stop && mama start
-curl -s http://localhost:3847/api/agents  # 3개만
+curl -s http://localhost:3847/api/agents  # os-agent, conductor, dashboard-agent, wiki-agent 확인
 # Config 편집 → Save → config.yaml 반영 + 재시작 불필요 확인
 ```
 
@@ -610,3 +610,4 @@ DELETE FROM agent_activity WHERE created_at < datetime('now', '-30 days');
 4. 서브에이전트 사용 안 함
 5. 데드코드 위에 코드 쌓지 않음
 6. **activity 30일 보존** — audit cron에서 prune
+7. API/계약/아키텍처 결정이 바뀌면 즉시 `/mama:decision topic="api_contract_name" decision="..." reasoning="..."`로 저장

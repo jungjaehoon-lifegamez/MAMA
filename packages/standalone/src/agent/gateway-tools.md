@@ -5,6 +5,7 @@ Call tools via JSON block:
 ```tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
+
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
@@ -51,7 +52,7 @@ Call tools via JSON block:
 - **os_get_config**() — Get current configuration
 - **os_set_model**() — Set AI model for a role
 - **agent_get**(agent_id) — Get agent config, persona, and current version
-- **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
+- **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
 - **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
 - **viewer_state**() — Get current viewer state (active tab, page context). Call this to know what the user is looking at.
 - **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab (e.g., agent detail, metrics)
@@ -87,6 +88,7 @@ Call tools via JSON block:
 ## System
 
 - **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.

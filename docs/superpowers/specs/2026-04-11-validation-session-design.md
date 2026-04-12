@@ -386,9 +386,12 @@ Comparisons must be deterministic.
 
 Baseline selection order:
 
+All baseline lookups are scoped to the same `(agent_id, trigger_type)` track as the current
+session.
+
 1. `approved_session_id`
-2. last `healthy` validation session
-3. last completed validation session
+2. last `healthy` validation session with the same `trigger_type`
+3. last completed validation session with the same `trigger_type`
 4. otherwise `inconclusive`
 
 All three lookup steps must be restricted to the same `(agent_id, trigger_type)` pair.
@@ -471,38 +474,41 @@ The Viewer must be a **decision surface**, not a raw log viewer.
 
 ### Agent detail IA
 
-1. `Overview`
-   - current status
-   - latest validation status
-   - baseline summary
-   - active alerts
+Current viewer tabs in `agents.ts` are:
 
-2. `Validation`
+1. `Config`
+   - model / backend / tier / enabled state
+   - runtime-editable config fields
+
+2. `Persona`
+   - current persona text
+   - inline edit + save path
+
+3. `Tools`
+   - Claude built-in tool permissions
+   - gateway tool enablement snapshot
+
+4. `Activity`
+   - task / audit activity feed
+   - duration, score, error, run linkage
+
+5. `Validation`
    - latest validation session
    - top metrics
    - recommendation
    - approve / hold / request improvement
 
-3. `Diff`
-   - before/after
-   - HTML change
-   - API change
-   - DB change
-   - explicit "no change" markers
-
-4. `Run Trace`
-   - raw run envelopes
-   - duration
-   - tokens
-   - tool path
-   - retries
-   - error
-
-5. `History`
+6. `History`
    - version timeline
    - approved baseline marker
    - per-version performance summary
    - drill-down to validation sessions
+
+Planned follow-up surfaces:
+
+- `Overview`
+- `Diff`
+- `Run Trace`
 
 ### UX language rule
 
@@ -628,7 +634,7 @@ Checks:
 - `agent_validation_state`
 - `before_snapshot_json` / `after_snapshot_json` / `report_json` on `validation_sessions`
 - baseline comparison rules
-- Validation / Diff / History viewer surfaces
+- Config / Persona / Tools / Activity / Validation / History viewer surfaces
 - unified handling for `delegate_run`, `agent_test`, `system_run`, `audit`
 
 ### Deferred
@@ -664,4 +670,5 @@ After this spec is approved:
 2. define raw run envelope writer
 3. centralize all execution paths behind it
 4. build validation session persistence
-5. expose Validation / Diff / History in the Viewer
+5. expose Config / Persona / Tools / Activity / Validation / History in the Viewer
+6. stage Overview / Diff / Run Trace as follow-up UI work

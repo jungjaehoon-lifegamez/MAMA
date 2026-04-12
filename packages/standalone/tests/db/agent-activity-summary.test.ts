@@ -113,6 +113,34 @@ describe('STORY-V019 - Agent activity summary', () => {
       expect(a1.avg_duration_ms).toBe(1500);
     });
 
+    it('treats task_skipped as a terminal outcome in aggregate totals', () => {
+      logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
+      logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_skipped' });
+
+      const summary = getActivitySummary(db, '2000-01-01');
+      const a1 = summary.find((s) => s.agent_id === 'a1')!;
+      expect(a1.total).toBe(1);
+    });
+
+    it('counts audit_failed rows when computing consecutive error streaks', () => {
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'audit_failed',
+        error_message: 'audit-1',
+      });
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'task_error',
+        error_message: 'task-1',
+      });
+
+      const summary = getActivitySummary(db, '2000-01-01');
+      const a1 = summary.find((s) => s.agent_id === 'a1')!;
+      expect(a1.consecutive_errors).toBe(2);
+    });
+
     it('ignores non-terminal task_start rows when computing consecutive errors', () => {
       logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
       logActivity(db, {
