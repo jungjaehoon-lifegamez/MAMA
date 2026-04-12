@@ -1,6 +1,6 @@
 # MAMA Mobile Access Guide
 
-Complete guide for accessing MAMA's Graph Viewer and Mobile Chat from any device.
+Complete guide for accessing MAMA's Viewer and floating chat shell from any device.
 
 ---
 
@@ -57,8 +57,8 @@ mama start
 
 MAMA Mobile provides a web-based interface for:
 
-- **Graph Viewer:** Visualize your decision graph and explore relationships
-- **Mobile Chat:** Real-time chat with Claude Code via WebSocket
+- **Viewer tabs:** Dashboard, Memory, Feed, Wiki, Agents, Logs, Settings
+- **Floating Chat:** Real-time chat with Claude Code via WebSocket
 
 Access both features at `http://localhost:3847/viewer`
 
@@ -84,7 +84,7 @@ MAMA OS starts with:
 MAMA_MCP_START_HTTP_EMBEDDING=true npx @jungjaehoon/mama-server
 ```
 
-This mode is for compatibility only. Use MAMA OS for Graph Viewer and Mobile Chat.
+This mode is for compatibility only. Use MAMA OS for the full Viewer plus floating chat shell.
 
 ### Verify Server is Running
 
@@ -104,9 +104,8 @@ curl http://localhost:3847/health
 
 1. Start the HTTP server
 2. Open `http://localhost:3847/viewer`
-3. Navigate between tabs:
-   - **Memory:** Browse decision graph
-   - **Chat:** Real-time chat with Claude
+3. Navigate between tabs such as **Memory**, **Feed**, **Wiki**, or **Agents**
+4. Open the floating chat button when you want real-time chat with Claude
 
 ### Mobile Device (Same Network)
 
@@ -407,7 +406,7 @@ MAMA supports token-based authentication for external access:
 - **Filters:** View by topic, confidence, outcome
 - **Node details:** Click any node to see full decision data
 
-### Mobile Chat
+### Floating Chat
 
 - **Real-time messaging:** WebSocket-based chat with Claude Code
 - **Voice input:** Press microphone button to speak (Korean optimized)
@@ -443,7 +442,7 @@ mama start
 
 ### WebSocket connection fails
 
-**Symptoms:** Chat shows "Not connected" or "Disconnected"
+**Symptoms:** The floating chat shell shows "Not connected" or "Disconnected"
 
 **Solutions:**
 

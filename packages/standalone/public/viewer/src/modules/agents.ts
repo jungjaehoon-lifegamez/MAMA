@@ -1,0 +1,1299 @@
+/**
+ * Agents Module - Interactive Agent Management
+ * @module modules/agents
+ *
+ * Managed Agents pattern: card grid list → detail view with 6 tabs
+ * (Config, Persona, Tools, Activity, Validation, History).
+ * SmartStore pattern: reportPageContext for agent awareness.
+ */
+
+/* eslint-env browser */
+
+import { API, type MultiAgentAgent } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+import { showToast, escapeAttr, escapeHtml } from '../utils/dom.js';
+import { reportPageContext } from '../utils/ui-commands.js';
+
+const logger = new DebugLogger('Agents');
+const DEFAULT_VALIDATION_TRIGGER = 'agent_test' as const;
+
+const C = {
+  pri: '#1A1A1A',
+  sec: '#6B6560',
+  ter: '#9E9891',
+  bdr: '#EDE9E1',
+  bg: '#FAFAF8',
+  agent: '#8b5cf6',
+  green: '#3A9E7E',
+  red: '#D94F4F',
+  yellow: '#FFCE00',
+} as const;
+
+type AgentWithVersion = MultiAgentAgent & { system?: string; version?: number };
+type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'validation' | 'history';
+
+const LEGACY_SWARM_AGENT_IDS = new Set(['developer', 'reviewer', 'architect', 'pm']);
+const SYSTEM_AGENT_IDS = new Set([
+  'os-agent',
+  'conductor',
+  'memory',
+  'dashboard-agent',
+  'wiki-agent',
+]);
+
+const CLAUDE_MODEL_OPTIONS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
+const CODEX_MODEL_OPTIONS = ['gpt-5.3-codex', 'gpt-5.4-mini'];
+const GEMINI_MODEL_OPTIONS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
+
+function getModelsForBackend(backend: string): string[] {
+  if (backend === 'codex-mcp' || backend === 'codex') {
+    return CODEX_MODEL_OPTIONS;
+  }
+  if (backend === 'gemini') {
+    return GEMINI_MODEL_OPTIONS;
+  }
+  return CLAUDE_MODEL_OPTIONS;
+}
+
+export class AgentsModule {
+  private container: HTMLElement | null = null;
+  private initialized = false;
+  private agents: AgentWithVersion[] = [];
+  private selectedAgent: AgentWithVersion | null = null;
+  private activeTab: DetailTab = 'config';
+  private detailRequestId = 0;
+  private listRequestId = 0;
+  private currentDetailContext: Record<string, unknown> | null = null;
+
+  init(): void {
+    if (this.initialized) {
+      return;
+    }
+    this.initialized = true;
+    this.container = document.getElementById('agents-content');
+    if (!this.container) {
+      return;
+    }
+  }
+
+  // ── List View ───────────────────────────────────────────────────────────
+
+  private alerts: string[] = [];
+
+  private validationStates: Map<string, string> = new Map();
+
+  private buildListPageContext(): Record<string, unknown> {
+    return {
+      pageType: 'agent-list',
+      total: this.agents.length,
+      agents: this.agents.map((a) => ({
+        id: a.id,
+        name: a.display_name || a.name,
+        enabled: a.enabled !== false,
+        tier: a.tier,
+        model: a.model,
+        validation: this.validationStates.get(a.id ?? '') ?? null,
+        system: SYSTEM_AGENT_IDS.has(a.id ?? ''),
+      })),
+      alerts: this.alerts,
+      summary: `${this.agents.length} agents: ${this.agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
+    };
+  }
+
+  private buildDetailValidationContext(
+    validationSummary: Record<string, unknown> | null
+  ): Record<string, unknown> | null {
+    if (!validationSummary) {
+      return null;
+    }
+    return {
+      outcome: validationSummary.validation_outcome,
+      execution: validationSummary.execution_status,
+      baseline_version: validationSummary.baseline_version,
+      trigger_type: validationSummary.trigger_type,
+      ended_at: validationSummary.ended_at,
+    };
+  }
+
+  private buildDetailPageContext(
+    agent: AgentWithVersion,
+    validationSummary: Record<string, unknown> | null
+  ): Record<string, unknown> {
+    const validation = this.buildDetailValidationContext(validationSummary);
+    const validationOutcome = typeof validation?.outcome === 'string' ? validation.outcome : 'none';
+    return {
+      pageType: 'agent-detail',
+      selectedAgent: agent.id,
+      activeTab: this.activeTab,
+      agent: {
+        id: agent.id,
+        name: agent.display_name || agent.name,
+        model: agent.model,
+        tier: agent.tier,
+        enabled: agent.enabled !== false,
+        version: agent.version,
+        backend: agent.backend,
+      },
+      validation,
+      summary: `${agent.display_name || agent.name} v${agent.version ?? 0} | validation: ${validationOutcome} | tab: ${this.activeTab}`,
+    };
+  }
+
+  private updateDetailPageContext(
+    agent: AgentWithVersion,
+    patch: Record<string, unknown> = {}
+  ): void {
+    const existingContext = this.currentDetailContext ?? this.buildDetailPageContext(agent, null);
+    const nextContext: Record<string, unknown> = {
+      ...existingContext,
+      ...patch,
+      activeTab: patch.activeTab ?? this.activeTab,
+    };
+    const validation =
+      nextContext.validation &&
+      typeof nextContext.validation === 'object' &&
+      !Array.isArray(nextContext.validation)
+        ? (nextContext.validation as Record<string, unknown>)
+        : null;
+    const validationOutcome = typeof validation?.outcome === 'string' ? validation.outcome : 'none';
+    nextContext.summary = `${agent.display_name || agent.name} v${agent.version ?? 0} | validation: ${validationOutcome} | tab: ${String(nextContext.activeTab ?? this.activeTab)}`;
+    this.currentDetailContext = nextContext;
+    reportPageContext(
+      'agents',
+      nextContext,
+      agent.id ? { type: 'agent', id: agent.id } : undefined
+    );
+  }
+
+  private async loadAgents(): Promise<void> {
+    if (!this.container) {
+      return;
+    }
+    const requestId = ++this.listRequestId;
+    try {
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      const [{ agents }, summaryRes] = await Promise.all([
+        API.getAgents(),
+        API.getActivitySummary(yesterday),
+      ]);
+      if (requestId !== this.listRequestId) {
+        return;
+      }
+      this.agents = agents.filter((agent) => {
+        const id = agent.id ?? '';
+        return !(LEGACY_SWARM_AGENT_IDS.has(id) && agent.enabled === false);
+      });
+      this.alerts = summaryRes.alerts;
+      this.validationStates.clear();
+      this.renderList();
+
+      void Promise.all(
+        this.agents.map((a) =>
+          API.getValidationSummary(a.id ?? '', DEFAULT_VALIDATION_TRIGGER).catch(() => ({
+            summary: null,
+          }))
+        )
+      ).then((valResults) => {
+        if (requestId !== this.listRequestId) {
+          return;
+        }
+        this.validationStates.clear();
+        for (let i = 0; i < this.agents.length; i++) {
+          const vs = valResults[i]?.summary as Record<string, unknown> | null;
+          if (vs?.validation_outcome) {
+            this.validationStates.set(this.agents[i].id ?? '', String(vs.validation_outcome));
+          }
+        }
+        this.renderList();
+        reportPageContext('agents', this.buildListPageContext());
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const wrapped = new Error(`Failed fetching agents or activity summary: ${message}`);
+      logger.error(wrapped.message, err);
+      throw wrapped;
+    }
+  }
+
+  private static relativeTime(dateStr: string): string {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    if (diff < 60000) {
+      return 'just now';
+    }
+    if (diff < 3600000) {
+      return `${Math.floor(diff / 60000)}m ago`;
+    }
+    if (diff < 86400000) {
+      return `${Math.floor(diff / 3600000)}h ago`;
+    }
+    return `${Math.floor(diff / 86400000)}d ago`;
+  }
+
+  private renderList(): void {
+    if (!this.container) {
+      return;
+    }
+    const cards = this.agents
+      .map((a) => {
+        const lastAct = (a as unknown as Record<string, unknown>).last_activity as
+          | Record<string, unknown>
+          | null
+          | undefined;
+        // Status badge: disabled > error > active > idle
+        let badgeColor: string;
+        let badgeText: string;
+        if (a.enabled === false) {
+          badgeColor = C.ter;
+          badgeText = 'Disabled';
+        } else if (lastAct?.type === 'task_error') {
+          badgeColor = C.red;
+          badgeText = 'Error';
+        } else if (
+          lastAct?.created_at &&
+          Date.now() - new Date(String(lastAct.created_at)).getTime() < 300000
+        ) {
+          badgeColor = C.green;
+          badgeText = 'Active';
+        } else {
+          badgeColor = '#EAB308';
+          badgeText = 'Idle';
+        }
+        const lastRunStr = lastAct?.created_at
+          ? AgentsModule.relativeTime(String(lastAct.created_at))
+          : '';
+        return `
+        <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}" tabindex="0" role="button"
+             style="background:#fff;border:1px solid ${C.bdr};border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow 0.15s,transform 0.15s;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <span style="font-size:15px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${C.agent}15;color:${C.agent}">T${a.tier ?? 1}</span>
+              ${SYSTEM_AGENT_IDS.has(a.id ?? '') ? `<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:${C.bg};color:${C.sec};border:1px solid ${C.bdr};">system</span>` : ''}
+              <label class="agent-toggle-label" style="position:relative;display:inline-flex;align-items:center;cursor:pointer;" title="${a.enabled !== false ? 'Disable' : 'Enable'} agent">
+                <input type="checkbox" data-toggle-id="${escapeHtml(a.id ?? '')}" ${a.enabled !== false ? 'checked' : ''} style="position:absolute;opacity:0;width:0;height:0;" />
+                <div style="width:28px;height:16px;background:${a.enabled !== false ? C.green : '#D1D5DB'};border-radius:8px;position:relative;transition:background 0.2s;">
+                  <div style="position:absolute;top:2px;left:${a.enabled !== false ? '14px' : '2px'};width:12px;height:12px;background:#fff;border-radius:50%;transition:left 0.2s;"></div>
+                </div>
+              </label>
+            </div>
+          </div>
+          <div style="font-size:12px;color:${C.sec};margin-bottom:6px;">${escapeHtml(a.model || 'No model')}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-size:11px;color:${badgeColor};font-weight:500;">\u25CF ${badgeText}${lastRunStr ? ` \u00B7 ${lastRunStr}` : ''}</span>
+            ${(() => {
+              const vo = this.validationStates.get(a.id ?? '');
+              if (!vo) {
+                return '';
+              }
+              const vc: Record<string, string> = {
+                healthy: '#22c55e',
+                improved: '#3b82f6',
+                regressed: '#ef4444',
+                inconclusive: '#f59e0b',
+              };
+              return `<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:${vc[vo] ?? C.ter}15;color:${vc[vo] ?? C.ter};">${vo}</span>`;
+            })()}
+          </div>
+        </div>`;
+      })
+      .join('');
+
+    const alertBanner =
+      this.alerts.length > 0
+        ? `<div class="mb-3 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-[12px] text-red-700">\u26A0 ${this.alerts.length} agent(s) need attention: ${escapeHtml(this.alerts.slice(0, 3).join(', '))}</div>`
+        : '';
+
+    this.container.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+        <h2 style="font-size:18px;font-weight:600;color:${C.pri};margin:0;">Agents</h2>
+        <button id="btn-create-agent"
+                style="font-size:12px;padding:6px 14px;border-radius:6px;border:none;background:${C.agent};color:#fff;cursor:pointer;font-weight:500;">
+          + New Agent
+        </button>
+      </div>
+      ${alertBanner}
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;">
+        ${cards}
+      </div>`;
+
+    // Enable toggle — stop propagation so card click doesn't fire
+    this.container.querySelectorAll<HTMLInputElement>('[data-toggle-id]').forEach((toggle) => {
+      toggle.addEventListener('click', (e) => e.stopPropagation());
+      toggle.addEventListener('change', async () => {
+        const agentId = toggle.dataset.toggleId;
+        if (!agentId) {
+          return;
+        }
+        const agent = this.agents.find((item) => item.id === agentId);
+        const version = agent?.version;
+        if (version === null || version === undefined) {
+          showToast('Version unavailable');
+          toggle.checked = !toggle.checked;
+          return;
+        }
+        try {
+          await API.updateAgent(agentId, {
+            version,
+            changes: { enabled: toggle.checked },
+            change_note: toggle.checked ? 'Enabled via Agents tab' : 'Disabled via Agents tab',
+          });
+          showToast(`${agentId} ${toggle.checked ? 'enabled' : 'disabled'}`);
+          void this.loadAgents().catch((error) => {
+            logger.error('Failed to refresh agents after toggle', error);
+            showToast('Failed to refresh agent list');
+          });
+        } catch {
+          showToast('Toggle failed');
+          toggle.checked = !toggle.checked;
+        }
+      });
+    });
+    this.container.querySelectorAll<HTMLElement>('.agent-toggle-label').forEach((label) => {
+      label.addEventListener('click', (event) => event.stopPropagation());
+    });
+
+    this.container.querySelectorAll('.agent-card').forEach((card) => {
+      const openCard = (event?: Event) => {
+        const target = event?.target;
+        if (target instanceof Element && target.closest('.agent-toggle-label')) {
+          return;
+        }
+        const agentId = (card as HTMLElement).dataset.agentId;
+        if (agentId) {
+          this.showDetail(agentId);
+        }
+      };
+      card.addEventListener('click', (event) => openCard(event));
+      card.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.target !== card) {
+          return;
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openCard(event);
+        }
+      });
+    });
+    this.container
+      .querySelector('#btn-create-agent')
+      ?.addEventListener('click', () => this.showCreateModal());
+  }
+
+  // ── Detail View ─────────────────────────────────────────────────────────
+
+  private async showDetail(agentId: string, desiredTab?: DetailTab): Promise<void> {
+    const requestId = ++this.detailRequestId;
+    try {
+      const agent = await API.getAgent(agentId);
+      if (requestId !== this.detailRequestId) {
+        return;
+      }
+      this.selectedAgent = agent;
+      this.activeTab = desiredTab ?? 'config';
+      this.renderDetail();
+      // Fetch validation to include in page context
+      const valData = await API.getValidationSummary(agentId, DEFAULT_VALIDATION_TRIGGER).catch(
+        () => ({ summary: null })
+      );
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== agentId) {
+        return;
+      }
+      const vs = valData.summary as Record<string, unknown> | null;
+      this.currentDetailContext = this.buildDetailPageContext(agent, vs);
+      reportPageContext('agents', this.currentDetailContext, { type: 'agent', id: agentId });
+    } catch (err) {
+      logger.error(`Failed to load agent ${agentId}`, err);
+      showToast('Failed to load agent details');
+    }
+  }
+
+  private renderDetail(): void {
+    if (!this.container || !this.selectedAgent) {
+      return;
+    }
+    const a = this.selectedAgent;
+    const tabs: DetailTab[] = ['config', 'persona', 'tools', 'activity', 'validation', 'history'];
+
+    const tabBar = tabs
+      .map(
+        (t) =>
+          `<button class="detail-tab" data-dtab="${t}" style="padding:6px 14px;border:none;border-bottom:2px solid ${this.activeTab === t ? C.agent : 'transparent'};background:none;cursor:pointer;font-size:12px;font-weight:${this.activeTab === t ? '600' : '400'};color:${this.activeTab === t ? C.agent : C.sec};transition:all 0.15s;">${t.charAt(0).toUpperCase() + t.slice(1)}</button>`
+      )
+      .join('');
+
+    this.container.innerHTML = `
+      <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+        <button id="btn-back" style="background:none;border:none;cursor:pointer;color:${C.sec};font-size:13px;">\u2190 Agents</button>
+        <span style="font-size:16px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
+        <span style="font-size:11px;color:${C.ter};background:${C.bg};padding:2px 8px;border-radius:4px;">v${a.version ?? 0}</span>
+      </div>
+      <div style="border-bottom:1px solid ${C.bdr};margin-bottom:16px;display:flex;gap:0;overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        ${tabBar}
+      </div>
+      <div id="detail-content"></div>`;
+
+    this.container.querySelector('#btn-back')?.addEventListener('click', () => this.showList());
+    this.container.querySelectorAll('.detail-tab').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.activeTab = (btn as HTMLElement).dataset.dtab as DetailTab;
+        this.renderDetail();
+        const vo = this.validationStates.get(a.id ?? '');
+        const existingContext = this.currentDetailContext ?? this.buildDetailPageContext(a, null);
+        const existingValidation =
+          existingContext.validation &&
+          typeof existingContext.validation === 'object' &&
+          !Array.isArray(existingContext.validation)
+            ? (existingContext.validation as Record<string, unknown>)
+            : null;
+        const nextValidation =
+          existingValidation || vo
+            ? {
+                ...(existingValidation ?? {}),
+                ...(vo ? { outcome: vo } : {}),
+              }
+            : null;
+        this.updateDetailPageContext(a, {
+          activeTab: this.activeTab,
+          validation: nextValidation,
+        });
+      });
+    });
+
+    const content = this.container.querySelector('#detail-content') as HTMLElement;
+    if (!content) {
+      return;
+    }
+
+    switch (this.activeTab) {
+      case 'config':
+        this.renderConfigTab(content, a);
+        break;
+      case 'persona':
+        this.renderPersonaTab(content, a);
+        break;
+      case 'tools':
+        this.renderToolsTab(content, a);
+        break;
+      case 'activity':
+        void this.renderActivityTab(content, a);
+        break;
+      case 'validation':
+        void this.renderValidationTab(content, a);
+        break;
+      case 'history':
+        this.renderHistoryTab(content, a);
+        break;
+    }
+  }
+
+  private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
+    const backend = String(a.backend || 'claude');
+    const modelOptions = getModelsForBackend(backend)
+      .map(
+        (m) =>
+          `<option value="${escapeAttr(m)}" ${a.model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`
+      )
+      .join('');
+
+    const tierOptions = [1, 2, 3]
+      .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
+      .join('');
+
+    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', 'gemini', backend]))
+      .map(
+        (b) =>
+          `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
+      )
+      .join('');
+
+    el.innerHTML = `
+      <div class="space-y-3">
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">ID</label>
+          <div class="text-[13px] text-gray-800 px-2.5 py-1.5 border border-gray-200 rounded-md bg-gray-50">${escapeHtml(a.id ?? '')}</div>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Name</label>
+          <input id="cfg-name" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]" value="${escapeAttr(a.display_name || a.name || '')}" />
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Backend</label>
+          <select id="cfg-backend" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${backendOptions}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Model</label>
+          <select id="cfg-model" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${modelOptions}</select>
+        </div>
+        <div>
+          <label class="block text-[11px] text-gray-400 mb-1">Tier</label>
+          <select id="cfg-tier" class="agent-input w-full px-2.5 py-1.5 border border-gray-200 rounded-md text-[13px]">${tierOptions}</select>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cfg-enabled" ${a.enabled !== false ? 'checked' : ''} class="accent-[#FFCE00] w-4 h-4" />
+            <span class="text-[13px]">Enabled</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="cfg-delegate" ${a.can_delegate ? 'checked' : ''} class="accent-[#8b5cf6] w-4 h-4" />
+            <span class="text-[13px]">Can Delegate</span>
+          </label>
+        </div>
+        <div class="pt-2">
+          <button id="btn-save-config" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save</button>
+        </div>
+      </div>`;
+
+    // Backend change → update model options
+    el.querySelector('#cfg-backend')?.addEventListener('change', () => {
+      const newBackend = (el.querySelector('#cfg-backend') as HTMLSelectElement).value;
+      const models = getModelsForBackend(newBackend);
+      const modelSelect = el.querySelector('#cfg-model') as HTMLSelectElement;
+      modelSelect.innerHTML = models
+        .map((m) => `<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`)
+        .join('');
+    });
+
+    // Save via managed-agent API so config sync + version history happen together
+    el.querySelector('#btn-save-config')?.addEventListener('click', async () => {
+      if (!a.id) {
+        return;
+      }
+      const displayName = (el.querySelector('#cfg-name') as HTMLInputElement).value.trim();
+      if (!displayName) {
+        showToast('Name is required');
+        return;
+      }
+      const changes = {
+        name: displayName,
+        display_name: displayName,
+        model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+        backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
+        tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+        enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
+        can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
+      };
+      const version = a.version;
+      if (version === null || version === undefined) {
+        showToast('Version unavailable');
+        return;
+      }
+      try {
+        await API.updateAgent(a.id, {
+          version,
+          changes,
+          change_note: 'Config updated via Agents tab',
+        });
+        showToast('Saved — hot reloaded');
+        this.showDetail(a.id);
+      } catch {
+        showToast('Save failed');
+      }
+    });
+  }
+
+  private renderPersonaTab(el: HTMLElement, a: AgentWithVersion): void {
+    const text = (a as { system?: string }).system || '(No persona loaded)';
+    el.innerHTML = `
+      <textarea id="persona-editor" style="width:100%;min-height:300px;font-family:monospace;font-size:12px;padding:10px;border:1px solid ${C.bdr};border-radius:6px;resize:vertical;line-height:1.5;color:${C.pri};background:#fff;">${escapeHtml(text)}</textarea>
+      <div style="margin-top:12px;display:flex;gap:8px;">
+        <button id="btn-save-persona" style="padding:6px 14px;border:none;border-radius:6px;background:${C.agent};color:#fff;cursor:pointer;font-size:12px;font-weight:500;">Save \u2014 creates v${(a.version ?? 0) + 1}</button>
+      </div>`;
+
+    el.querySelector('#btn-save-persona')?.addEventListener('click', async () => {
+      const textarea = el.querySelector('#persona-editor') as HTMLTextAreaElement;
+      if (!textarea || !a.id) {
+        return;
+      }
+      try {
+        const updatePayload: {
+          version?: number;
+          changes: Record<string, unknown>;
+          change_note: string;
+        } = {
+          changes: { system: textarea.value },
+          change_note: 'Persona updated via viewer',
+        };
+        if (a.version !== null && a.version !== undefined) {
+          updatePayload.version = a.version;
+        }
+        const res = await API.updateAgent(a.id, updatePayload);
+        if ((res as { new_version?: number }).new_version) {
+          showToast(`v${(res as { new_version: number }).new_version} saved`);
+          this.showDetail(a.id);
+        }
+      } catch (err) {
+        showToast('Save failed');
+        logger.error('Persona save failed', err);
+      }
+    });
+  }
+
+  private renderToolsTab(el: HTMLElement, a: AgentWithVersion): void {
+    const allTools = [
+      'Bash',
+      'Read',
+      'Edit',
+      'Write',
+      'Glob',
+      'Grep',
+      'WebFetch',
+      'WebSearch',
+      'NotebookEdit',
+    ];
+    const allowed = a.tool_permissions?.allowed ?? [];
+    const isAll = allowed.includes('*');
+
+    const rows = allTools
+      .map((t) => {
+        const checked = isAll || allowed.includes(t);
+        return `<label class="flex items-center gap-2 py-1.5 border-b border-gray-100 text-[13px] cursor-pointer">
+          <input type="checkbox" ${checked ? 'checked' : ''} data-tool="${t}" class="accent-[#8b5cf6] w-4 h-4" /> ${t}
+        </label>`;
+      })
+      .join('');
+
+    el.innerHTML = `
+      <div class="text-[11px] text-gray-400 mb-2">Tier ${a.tier ?? 1} preset. Toggle tools and save.</div>
+      <div>${rows}</div>
+      <div class="pt-3">
+        <button id="btn-save-tools" class="px-4 py-1.5 rounded-md text-[12px] font-medium text-white bg-[#8b5cf6] hover:bg-[#7c3aed] transition-colors">Save Tools</button>
+      </div>`;
+
+    el.querySelector('#btn-save-tools')?.addEventListener('click', async () => {
+      const checked: string[] = [];
+      el.querySelectorAll<HTMLInputElement>('input[data-tool]').forEach((cb) => {
+        if (cb.checked) {
+          checked.push(cb.dataset.tool!);
+        }
+      });
+      if (!a.id) {
+        return;
+      }
+      const preserveWildcard = (isAll || (a.tier ?? 1) === 1) && checked.length === allTools.length;
+      const normalizedAllowed = preserveWildcard ? ['*'] : checked;
+      const existingBlocked = Array.isArray(a.tool_permissions?.blocked)
+        ? a.tool_permissions.blocked
+        : [];
+      const toolPermissions = {
+        allowed: normalizedAllowed,
+        blocked: existingBlocked,
+      };
+      const version = a.version;
+      if (version === null || version === undefined) {
+        showToast('Version unavailable');
+        return;
+      }
+      try {
+        await API.updateAgent(a.id, {
+          version,
+          changes: { tool_permissions: toolPermissions },
+          change_note: preserveWildcard
+            ? 'Tools: full access'
+            : `Tools: ${normalizedAllowed.join(', ')}`,
+        });
+        showToast('Tools saved - hot reloaded');
+        this.showDetail(a.id);
+      } catch {
+        showToast('Save failed');
+      }
+    });
+  }
+
+  private async renderActivityTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = '<div class="text-[12px] text-gray-400">Loading...</div>';
+    const requestId = this.detailRequestId;
+    const expectedAgentId = this.selectedAgent?.id ?? a.id ?? '';
+    try {
+      const { activity } = await API.getAgentActivity(a.id ?? '', 20);
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      if (!activity.length) {
+        if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+          return;
+        }
+        this.updateDetailPageContext(a, { activity: [] });
+        el.innerHTML =
+          '<div class="text-[12px] text-gray-400 py-4 text-center">No activity yet. Delegate a task to this agent to see logs here.</div>';
+        return;
+      }
+      const rows = activity
+        .map((ev: Record<string, unknown>) => {
+          const typeIcons: Record<string, string> = {
+            test_run: '&#x1F9EA;',
+            task_error: '&#x274C;',
+            config_change: '&#x2699;&#xFE0F;',
+            task_start: '&#x25B6;&#xFE0F;',
+          };
+          const icon = typeIcons[String(ev.type)] || '&#x2705;';
+          const scoreStr =
+            ev.score !== null && ev.score !== undefined ? ` &mdash; ${ev.score}/100` : '';
+          const summary = escapeHtml(String(ev.output_summary || ev.input_summary || ev.type));
+          const errorHtml = ev.error_message
+            ? `<div class="text-[11px] text-red-500 mt-0.5">${escapeHtml(String(ev.error_message))}</div>`
+            : '';
+          const meta = `<div class="text-[10px] text-gray-400 mt-0.5">v${escapeHtml(String(ev.agent_version ?? ''))} &middot; ${escapeHtml(String(ev.duration_ms ?? 0))}ms &middot; ${escapeHtml(String(ev.created_at ?? ''))}</div>`;
+
+          // Expandable card for test_run with per-item pass/fail
+          if (ev.type === 'test_run' && ev.details) {
+            let details: Record<string, unknown> | null = null;
+            try {
+              details =
+                typeof ev.details === 'string'
+                  ? (JSON.parse(ev.details) as Record<string, unknown>)
+                  : (ev.details as Record<string, unknown>);
+            } catch {
+              /* ignore parse errors */
+            }
+            const items = (details?.items as Array<Record<string, unknown>>) ?? [];
+            const itemsHtml = items
+              .map((item) => {
+                const badge =
+                  item.result === 'pass'
+                    ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">PASS</span>'
+                    : '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">FAIL</span>';
+                return `<div class="flex items-center gap-2 py-1 text-[11px]">${badge}<span class="text-gray-600 truncate">${escapeHtml(String(item.input || ''))}</span></div>`;
+              })
+              .join('');
+
+            return `<div class="py-2 border-b border-gray-100">
+              <div role="button" tabindex="0" aria-expanded="false" aria-controls="expand-${Number(ev.id)}" data-expand="${Number(ev.id)}" class="flex items-center gap-2 cursor-pointer">
+                <span class="text-[14px] flex-shrink-0">${icon}</span>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
+                  ${meta}
+                </div>
+                <span class="text-[10px] text-gray-400">&#x25BC;</span>
+              </div>
+              <div id="expand-${Number(ev.id)}" class="hidden mt-2 ml-6 pl-2 border-l-2 border-gray-200">${itemsHtml}</div>
+            </div>`;
+          }
+
+          return `<div class="flex items-start gap-2 py-2 border-b border-gray-100">
+            <span class="text-[14px] flex-shrink-0">${icon}</span>
+            <div class="flex-1 min-w-0">
+              <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
+              ${errorHtml}
+              ${meta}
+            </div>
+          </div>`;
+        })
+        .join('');
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      el.innerHTML = `<div>${rows}</div>`;
+      const activityContext = activity.slice(0, 20).map((ev: Record<string, unknown>) => ({
+        id: ev.id ?? null,
+        type: ev.type ?? null,
+        input_summary: ev.input_summary ?? null,
+        output_summary: ev.output_summary ?? null,
+        execution_status: ev.execution_status ?? null,
+        duration_ms: ev.duration_ms ?? null,
+        tokens_used: ev.tokens_used ?? null,
+        score: ev.score ?? null,
+        created_at: ev.created_at ?? null,
+        error_message: ev.error_message ?? null,
+      }));
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      this.updateDetailPageContext(a, { activity: activityContext });
+
+      // Expand/collapse toggle with ARIA
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      el.querySelectorAll<HTMLElement>('[data-expand]').forEach((toggle) => {
+        const toggleExpand = () => {
+          const id = toggle.dataset.expand;
+          const content = el.querySelector(`#expand-${id}`);
+          if (content) {
+            const isHidden = content.classList.toggle('hidden');
+            toggle.setAttribute('aria-expanded', String(!isHidden));
+          }
+        };
+        toggle.addEventListener('click', toggleExpand);
+        toggle.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleExpand();
+          }
+        });
+      });
+    } catch {
+      el.innerHTML = '<div class="text-[12px] text-red-500">Failed to load activity.</div>';
+    }
+  }
+
+  // ── Validation Tab ─────────────────────────────────────────────────────
+
+  private async renderValidationTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading validation...</div>`;
+    const agentId = a.id ?? '';
+    const requestId = this.detailRequestId;
+    const expectedAgentId = this.selectedAgent?.id ?? agentId;
+    const OC: Record<string, string> = {
+      healthy: '#22c55e',
+      improved: '#3b82f6',
+      regressed: '#ef4444',
+      inconclusive: '#f59e0b',
+    };
+
+    try {
+      const [summaryRes, historyRes] = await Promise.all([
+        API.getValidationSummary(agentId, DEFAULT_VALIDATION_TRIGGER),
+        API.getValidationHistory(agentId, 30, DEFAULT_VALIDATION_TRIGGER),
+      ]);
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+
+      const summary = summaryRes.summary as Record<string, unknown> | null;
+      const history = historyRes.history as Array<Record<string, unknown>>;
+
+      if (!summary && history.length === 0) {
+        el.innerHTML = `<div style="color:${C.ter};font-size:13px;padding:32px 0;text-align:center;">
+          No validation sessions yet.<br/>
+          <span style="font-size:12px;">Run <code style="background:${C.bg};padding:2px 6px;border-radius:4px;">agent_test("${escapeHtml(agentId)}")</code> to create the first session.</span>
+        </div>`;
+        return;
+      }
+
+      const latestId = String(summary?.id ?? '');
+      const outcome = String(summary?.validation_outcome ?? 'none');
+      const execStatus = String(summary?.execution_status ?? '—');
+      const outcomeColor = OC[outcome] ?? C.ter;
+      const baselineVer =
+        summary?.baseline_version !== null && summary?.baseline_version !== undefined
+          ? `v${summary.baseline_version}`
+          : 'none';
+      const endedAt = summary?.ended_at ? new Date(Number(summary.ended_at)).toLocaleString() : '—';
+
+      // ── 1. Fetch session detail with metrics + compare against baseline ──
+      let metricsHtml = '';
+      let compareData: {
+        deltas: Array<{
+          name: string;
+          current: number;
+          baseline: number | null;
+          delta: number | null;
+          direction: string;
+        }>;
+      } | null = null;
+      if (latestId) {
+        try {
+          compareData = await API.getValidationCompare(agentId, latestId, 'approved');
+        } catch {
+          /* no compare data available */
+        }
+      }
+
+      if (compareData && compareData.deltas && compareData.deltas.length > 0) {
+        const metricRows = compareData.deltas
+          .map((d) => {
+            const hasBaseline = d.baseline !== null && d.delta !== null;
+            const isGood = d.direction === 'down_good' ? (d.delta ?? 0) < 0 : (d.delta ?? 0) > 0;
+            const deltaColor = !hasBaseline ? C.ter : isGood ? '#22c55e' : '#ef4444';
+            const deltaSign = (d.delta ?? 0) > 0 ? '+' : '';
+            const pct =
+              hasBaseline && d.baseline ? Math.round(((d.delta ?? 0) / d.baseline) * 100) : null;
+            const pctStr = pct !== null ? ` (${pct > 0 ? '+' : ''}${pct}%)` : '';
+
+            const baseStr = hasBaseline ? String(d.baseline) : '—';
+            const arrow = hasBaseline ? ' → ' : '';
+
+            return `<tr style="border-bottom:1px solid ${C.bdr};">
+            <td style="padding:8px;font-size:12px;color:${C.sec};font-weight:500;">${escapeHtml(d.name)}</td>
+            <td style="padding:8px;font-size:13px;font-weight:600;color:${C.pri};">
+              ${hasBaseline ? `<span style="color:${C.ter};">${baseStr}</span>${arrow}` : ''}${d.current}
+            </td>
+            <td style="padding:8px;font-size:12px;font-weight:600;color:${deltaColor};">
+              ${hasBaseline ? `${deltaSign}${d.delta}${pctStr}` : 'no baseline'}
+            </td>
+            <td style="padding:8px;font-size:11px;color:${C.ter};">${d.direction === 'down_good' ? '↓ lower better' : d.direction === 'up_good' ? '↑ higher better' : '—'}</td>
+          </tr>`;
+          })
+          .join('');
+
+        metricsHtml = `
+          <div style="margin-top:20px;">
+            <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Metrics vs Baseline</div>
+            <table style="width:100%;border-collapse:collapse;">
+              <thead><tr style="border-bottom:2px solid ${C.bdr};">
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Metric</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Value</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Delta</th>
+                <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Direction</th>
+              </tr></thead>
+              <tbody>${metricRows}</tbody>
+            </table>
+          </div>`;
+      }
+
+      // ── 2. Report from Conductor ──
+      let reportHtml = '';
+      let reportContext: Record<string, unknown> | null = null;
+      if (summary?.report_json) {
+        try {
+          const report = JSON.parse(String(summary.report_json));
+          const reportLines = Array.isArray(report.lines)
+            ? report.lines.map((line: unknown) => String(line))
+            : [];
+          const reportHeadline = String(report.headline ?? report.outcome ?? reportLines[0] ?? '');
+          const reportDetails = String(
+            report.details ?? (reportLines.length > 0 ? reportLines.join('\n') : '')
+          );
+          reportContext = {
+            headline: reportHeadline,
+            details: reportDetails,
+            outcome: String(report.outcome ?? outcome),
+          };
+          reportHtml = `
+            <div style="margin-top:20px;">
+              <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation Report</div>
+              <div style="background:${C.bg};padding:12px 16px;border-radius:8px;border-left:3px solid ${outcomeColor};">
+                <div style="font-size:13px;font-weight:600;color:${outcomeColor};margin-bottom:6px;">${escapeHtml(reportHeadline)}</div>
+                <div style="font-size:12px;color:${C.sec};white-space:pre-wrap;line-height:1.6;">${escapeHtml(reportDetails)}</div>
+              </div>
+            </div>`;
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // ── 3. History — version-by-version performance table ──
+      let historyHtml = '';
+      if (history.length > 0) {
+        // Fetch metrics for each session to show performance numbers
+        type HistSession = Record<string, unknown> & { _metrics: Array<Record<string, unknown>> };
+        const sessionDetails: HistSession[] = await Promise.all(
+          history.slice(0, 10).map(async (h) => {
+            try {
+              const detail = await API.getValidationSessionDetail(String(h.id));
+              return { ...h, _metrics: detail.metrics } as HistSession;
+            } catch {
+              return { ...h, _metrics: [] } as HistSession;
+            }
+          })
+        );
+
+        const hRows = sessionDetails
+          .map((h) => {
+            const hOutcome = String(h.validation_outcome ?? '—');
+            const hColor = OC[hOutcome] ?? C.ter;
+            const hTime = h.ended_at ? new Date(Number(h.ended_at)).toLocaleString() : 'running...';
+            const metrics = h._metrics as Array<{
+              name: string;
+              value: number;
+              delta_value: number | null;
+              direction: string;
+            }>;
+
+            // Extract key metrics for display
+            const durMetric = metrics.find(
+              (m) => m.name === 'duration_ms' || m.name === 'publish_latency_ms'
+            );
+            const tokenMetric = metrics.find((m) => m.name === 'token_cost');
+            const scoreMetric = metrics.find(
+              (m) => m.name === 'auto_score' || m.name === 'completion_rate'
+            );
+
+            const fmtMetric = (
+              m: { value: number; delta_value: number | null; direction: string } | undefined,
+              unit: string
+            ) => {
+              if (!m) {
+                return `<span style="color:${C.ter};">—</span>`;
+              }
+              const val =
+                unit === 'ms'
+                  ? `${(m.value / 1000).toFixed(1)}s`
+                  : unit === '%'
+                    ? `${Math.round(m.value * 100)}%`
+                    : String(Math.round(m.value));
+              if (m.delta_value === null) {
+                return `<span>${val}</span>`;
+              }
+              const isGood = m.direction === 'down_good' ? m.delta_value < 0 : m.delta_value > 0;
+              const dColor = isGood ? '#22c55e' : '#ef4444';
+              const sign = m.delta_value > 0 ? '+' : '';
+              const dVal =
+                unit === 'ms'
+                  ? `${sign}${(m.delta_value / 1000).toFixed(1)}s`
+                  : `${sign}${Math.round(m.delta_value)}`;
+              return `<span>${val}</span> <span style="color:${dColor};font-size:10px;">${dVal}</span>`;
+            };
+
+            const cmpBase = (compareData as unknown as Record<string, unknown> | null)?.baseline as
+              | { session?: { id?: string } }
+              | null
+              | undefined;
+            const isApproved =
+              String(summary?.baseline_session_id ?? '') === String(h.id) ||
+              cmpBase?.session?.id === String(h.id);
+
+            return `<tr style="border-bottom:1px solid ${C.bdr};${String(h.id) === latestId ? `background:${C.bg};` : ''}">
+            <td style="padding:6px 8px;font-size:12px;color:${C.sec};">v${h.agent_version ?? '?'}${isApproved ? ` <span style="font-size:9px;padding:1px 4px;border-radius:3px;background:${C.agent}20;color:${C.agent};">baseline</span>` : ''}</td>
+            <td style="padding:6px 8px;font-size:12px;"><span style="color:${hColor};font-weight:600;">${escapeHtml(hOutcome)}</span></td>
+            <td style="padding:6px 8px;font-size:12px;color:${C.sec};">${escapeHtml(String(h.trigger_type ?? '—'))}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(durMetric, 'ms')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(tokenMetric, '')}</td>
+            <td style="padding:6px 8px;font-size:12px;">${fmtMetric(scoreMetric, '%')}</td>
+            <td style="padding:6px 8px;font-size:11px;color:${C.ter};">${escapeHtml(hTime)}</td>
+          </tr>`;
+          })
+          .join('');
+
+        historyHtml = `
+          <div style="margin-top:20px;">
+            <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Version Performance History</div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;min-width:600px;">
+                <thead><tr style="border-bottom:2px solid ${C.bdr};">
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Version</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Outcome</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Trigger</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Latency</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Tokens</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Score</th>
+                  <th style="text-align:left;padding:6px 8px;font-size:11px;color:${C.ter};">Time</th>
+                </tr></thead>
+                <tbody>${hRows}</tbody>
+              </table>
+            </div>
+            </div>`;
+      }
+
+      const validationContext = {
+        ...this.buildDetailValidationContext(summary),
+        latest_session_id: latestId || null,
+        metrics: compareData?.deltas ?? [],
+        report: reportContext,
+        history: history.slice(0, 10).map((h) => ({
+          id: h.id ?? null,
+          agent_version: h.agent_version ?? null,
+          validation_outcome: h.validation_outcome ?? null,
+          execution_status: h.execution_status ?? null,
+          trigger_type: h.trigger_type ?? null,
+          ended_at: h.ended_at ?? null,
+          baseline_version: h.baseline_version ?? null,
+        })),
+      };
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      this.updateDetailPageContext(a, { validation: validationContext });
+
+      // ── 4. Approve button ──
+      const canApprove = outcome === 'improved' || outcome === 'healthy';
+      const sessionVersion = Number(summary?.agent_version ?? a.version ?? 0);
+      const approveBtn = canApprove
+        ? `<button id="btn-approve-validation" style="margin-top:16px;padding:8px 20px;background:${C.agent};color:#131313;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;transition:opacity 0.15s;" onmouseover="this.style.opacity='0.85'" onmouseout="this.style.opacity='1'">Approve v${sessionVersion} as Baseline</button>`
+        : '';
+
+      el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:4px;">
+          <div style="background:${C.bg};padding:14px;border-radius:8px;border-left:3px solid ${outcomeColor};">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Validation Outcome</div>
+            <div style="font-size:18px;font-weight:700;color:${outcomeColor};">${escapeHtml(outcome)}</div>
+          </div>
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Execution</div>
+            <div style="font-size:15px;font-weight:600;color:${execStatus === 'completed' ? '#22c55e' : execStatus === 'failed' ? '#ef4444' : C.pri};">${escapeHtml(execStatus)}</div>
+          </div>
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Approved Baseline</div>
+            <div style="font-size:15px;font-weight:600;color:${C.pri};">${escapeHtml(baselineVer)}</div>
+          </div>
+          <div style="background:${C.bg};padding:14px;border-radius:8px;">
+            <div style="font-size:11px;color:${C.ter};margin-bottom:4px;">Last Validated</div>
+            <div style="font-size:12px;color:${C.sec};">${escapeHtml(endedAt)}</div>
+          </div>
+        </div>
+
+        ${metricsHtml}
+        ${reportHtml}
+        ${historyHtml}
+        ${approveBtn}
+      `;
+
+      // Approve handler
+      const approveEl = el.querySelector('#btn-approve-validation');
+      if (approveEl && latestId) {
+        approveEl.addEventListener('click', async () => {
+          try {
+            await API.approveValidationSession(agentId, latestId);
+            const refreshedSummary = await API.getValidationSummary(
+              agentId,
+              DEFAULT_VALIDATION_TRIGGER
+            ).catch(() => ({
+              summary: null,
+            }));
+            const refreshedValidation = refreshedSummary.summary as Record<string, unknown> | null;
+            if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+              return;
+            }
+            this.currentDetailContext = this.buildDetailPageContext(a, refreshedValidation);
+            if (refreshedValidation?.validation_outcome) {
+              this.validationStates.set(agentId, String(refreshedValidation.validation_outcome));
+            }
+            reportPageContext(
+              'agents',
+              this.currentDetailContext,
+              a.id ? { type: 'agent', id: a.id } : undefined
+            );
+            void this.renderValidationTab(el, a);
+            showToast('Approved as baseline');
+          } catch {
+            showToast('Approval failed');
+          }
+        });
+      }
+    } catch (err) {
+      el.innerHTML = `<div style="color:#ef4444;font-size:12px;">Failed to load validation data: ${escapeHtml(String(err))}</div>`;
+    }
+  }
+
+  private async renderHistoryTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
+    el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading versions...</div>`;
+    const requestId = this.detailRequestId;
+    const expectedAgentId = a.id ?? '';
+    try {
+      const { versions } = await API.getAgentVersions(a.id ?? '');
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      if (!versions.length) {
+        el.innerHTML = `<div style="color:${C.ter};font-size:12px;">No version history.</div>`;
+        return;
+      }
+      const rows = (versions as Array<Record<string, unknown>>)
+        .map(
+          (v) =>
+            `<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid ${C.bdr};">
+            <span style="font-size:13px;font-weight:600;color:${C.pri};min-width:32px;">v${v.version}</span>
+            <span style="font-size:11px;color:${C.ter};">${escapeHtml(String(v.created_at ?? ''))}</span>
+            <span style="font-size:12px;color:${C.sec};flex:1;">${escapeHtml(String(v.change_note || ''))}</span>
+            ${v.version === a.version ? `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${C.agent}15;color:${C.agent};font-weight:600;">current</span>` : ''}
+          </div>`
+        )
+        .join('');
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      el.innerHTML = `<div>${rows}</div>`;
+    } catch {
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
+      el.innerHTML = `<div style="color:${C.red};font-size:12px;">Failed to load versions.</div>`;
+    }
+  }
+
+  // ── Create Modal ────────────────────────────────────────────────────────
+
+  private showCreateModal(): void {
+    if (!this.container) {
+      return;
+    }
+    const overlay = document.createElement('div');
+    overlay.style.cssText =
+      'position:fixed;inset:0;background:rgba(0,0,0,0.3);z-index:100;display:flex;align-items:center;justify-content:center;';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Create new agent');
+    overlay.innerHTML = `
+      <div style="background:#fff;border-radius:12px;padding:24px;width:380px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+        <h3 style="font-size:16px;font-weight:600;color:${C.pri};margin:0 0 16px 0;">New Agent</h3>
+        <div style="margin-bottom:10px;"><label for="new-id" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">ID (slug)</label><input id="new-id" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="qa-specialist" /></div>
+        <div style="margin-bottom:10px;"><label for="new-name" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Name</label><input id="new-name" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" placeholder="QA Specialist" /></div>
+        <div style="margin-bottom:10px;"><label for="new-model" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Model</label><input id="new-model" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;" value="claude-sonnet-4-6" /></div>
+        <div style="margin-bottom:16px;"><label for="new-tier" style="font-size:11px;color:${C.ter};display:block;margin-bottom:4px;">Tier</label><select id="new-tier" class="agent-input" style="width:100%;padding:8px 10px;border:1px solid ${C.bdr};border-radius:6px;font-size:13px;"><option value="1">T1 (Full)</option><option value="2" selected>T2 (Read/Search)</option><option value="3">T3 (Read only)</option></select></div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;">
+          <button id="btn-cancel" style="padding:8px 14px;border:1px solid ${C.bdr};border-radius:6px;background:#fff;cursor:pointer;font-size:12px;">Cancel</button>
+          <button id="btn-create" style="padding:8px 14px;border:none;border-radius:6px;background:${C.agent};color:#fff;cursor:pointer;font-size:12px;font-weight:500;">Create</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    overlay.querySelector('#btn-cancel')?.addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+
+    overlay.querySelector('#btn-create')?.addEventListener('click', async () => {
+      const id = (overlay.querySelector('#new-id') as HTMLInputElement).value.trim();
+      const name = (overlay.querySelector('#new-name') as HTMLInputElement).value.trim();
+      const model = (overlay.querySelector('#new-model') as HTMLInputElement).value.trim();
+      const tier = parseInt((overlay.querySelector('#new-tier') as HTMLSelectElement).value, 10);
+      if (!id || !name) {
+        showToast('ID and Name are required');
+        return;
+      }
+      try {
+        await API.createAgent({ id, name, model, tier });
+        overlay.remove();
+        showToast(`Agent '${name}' created`);
+        await this.showDetail(id);
+      } catch (err) {
+        showToast('Create failed');
+        logger.error('Create agent failed', err);
+      }
+    });
+  }
+
+  // ── Navigation ──────────────────────────────────────────────────────────
+
+  /**
+   * Deep navigation from viewer_navigate command.
+   * Opens agent detail and optionally switches to a specific tab.
+   */
+  async navigateTo(agentId: string, tab?: string): Promise<void> {
+    const tryNav = async (): Promise<boolean> => {
+      const agent = this.agents.find((a) => a.id === agentId);
+      if (agent) {
+        const desiredTab =
+          tab && ['config', 'persona', 'tools', 'activity', 'validation', 'history'].includes(tab)
+            ? (tab as DetailTab)
+            : undefined;
+        await this.showDetail(agentId, desiredTab);
+        return true;
+      }
+      return false;
+    };
+    let navigated = await tryNav();
+    if (!navigated) {
+      try {
+        await this.loadAgents();
+      } catch (error) {
+        logger.error(`Failed to load agents while navigating to ${agentId}`, error);
+        showToast('Failed to load agents');
+        return;
+      }
+      navigated = await tryNav();
+    }
+    if (!navigated) {
+      logger.warn(`Agent not found during navigation: ${agentId}`);
+      this.showList();
+      showToast('Agent not found');
+    }
+  }
+
+  showList(): void {
+    this.detailRequestId++;
+    this.selectedAgent = null;
+    this.currentDetailContext = null;
+    reportPageContext('agents', {
+      ...this.buildListPageContext(),
+      selectedAgent: null,
+      activeTab: null,
+    });
+    void this.loadAgents().catch((error) => {
+      logger.error('Failed to load agents list', error);
+      showToast('Failed to load agents');
+    });
+  }
+}

@@ -14,6 +14,7 @@ import {
   configExists,
   expandPath,
   provisionDefaults,
+  getDefaultMultiAgentConfig,
 } from '../config/config-manager.js';
 import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
@@ -23,6 +24,11 @@ import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { UICommandQueue } from '../../api/ui-command-handler.js';
+import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
+import { initValidationTables } from '../../validation/store.js';
+import { ValidationSessionService } from '../../validation/session-service.js';
 
 import {
   API_PORT,
@@ -289,6 +295,9 @@ export async function runAgentLoop(
   const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
     backend: runtimeBackend,
   });
+  messageRouter.setSessionsDb(db);
+
+  // validationService wired after creation (Phase 5 below)
 
   const { memoryAgentLoop } = await initMemoryAgent(
     oauthManager,
@@ -301,12 +310,26 @@ export async function runAgentLoop(
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
+  // Create singleton UI command queue for Agent↔Viewer communication
+  const uiCommandQueue = new UICommandQueue();
+
   // Prepare graph handler options (will be populated after gateways init)
   const graphHandlerOptions: GraphHandlerOptions = {
     healthService: healthService ?? undefined,
     healthCheckService,
     auditConversation: (job) => messageRouter.auditConversation(job),
+    sessionsDb: db,
+    uiCommandQueue,
   };
+
+  // Wire uiCommandQueue into messageRouter for page context awareness
+  messageRouter.setUICommandQueue(uiCommandQueue);
+
+  // Wire sessionsDb and uiCommandQueue into gateway tool executor
+  toolExecutor.setSessionsDb(db);
+  toolExecutor.setUICommandQueue(uiCommandQueue);
+  agentLoop.setSessionsDb(db);
+  agentLoop.setUICommandQueue(uiCommandQueue);
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
@@ -353,6 +376,100 @@ export async function runAgentLoop(
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
 
+  // Seed initial agent versions from config (version 1 for new agents)
+  // initAgentTables is idempotent (CREATE IF NOT EXISTS) — safe to call before apiServer
+  initAgentTables(db);
+  initValidationTables(db);
+
+  // Wire validation session service into tool executor + message router
+  const validationService = new ValidationSessionService(db);
+  toolExecutor.setValidationService(validationService);
+  messageRouter.setValidationService(validationService);
+  agentLoop.setValidationService(validationService);
+  {
+    // Ensure OS system agents exist in config (memory agent may be missing in older configs)
+    if (!config.multi_agent) {
+      config.multi_agent = getDefaultMultiAgentConfig();
+    }
+    if (!config.multi_agent.agents) {
+      config.multi_agent.agents = {};
+    }
+    const osAgents: Record<
+      string,
+      {
+        name: string;
+        display_name: string;
+        trigger_prefix: string;
+        persona_file: string;
+        tier: 1 | 2 | 3;
+        backend: 'claude' | 'codex-mcp';
+        model: string;
+        can_delegate?: boolean;
+        enabled?: boolean;
+      }
+    > = {
+      'os-agent': {
+        name: 'OS Agent',
+        display_name: '🖥️ OS Agent',
+        trigger_prefix: '!os',
+        persona_file: '~/.mama/personas/os-agent.md',
+        tier: 1,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: true,
+        enabled: true,
+      },
+      memory: {
+        name: 'Memory Agent',
+        display_name: '🧠 Memory',
+        trigger_prefix: '!memory',
+        persona_file: '~/.mama/personas/memory.md',
+        tier: 3,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
+        enabled: true,
+      },
+    };
+    let osAgentsAdded = false;
+    for (const [id, cfg] of Object.entries(osAgents)) {
+      if (!config.multi_agent.agents[id]) {
+        config.multi_agent.agents[id] = cfg;
+        osAgentsAdded = true;
+      }
+    }
+    // Persist to config.yaml so /api/agents sees them too
+    if (osAgentsAdded) {
+      try {
+        const { saveConfig } = await import('../config/config-manager.js');
+        await saveConfig(config);
+        console.log('✓ OS agents added to config.yaml');
+      } catch {
+        /* non-fatal — runtime config still has them */
+      }
+    }
+
+    const agents = config.multi_agent.agents;
+    for (const [id, cfg] of Object.entries(agents)) {
+      if (!getLatestVersion(db, id)) {
+        let personaText: string | null = null;
+        try {
+          const pPath = expandPath(cfg.persona_file);
+          if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
+        } catch {
+          /* ignore */
+        }
+        createAgentVersion(db, {
+          agent_id: id,
+          snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
+          persona_text: personaText,
+          change_note: 'Initial version (migrated from config.yaml)',
+        });
+      }
+    }
+    console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
+  }
+
   await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
@@ -366,7 +483,8 @@ export async function runAgentLoop(
     messageRouter,
     toolExecutor,
     agentLoop,
-    runtimeBackend
+    runtimeBackend,
+    db
   );
 
   // ── Phase 8: Gateway Wiring ──────────────────────────────────────────────
@@ -384,6 +502,15 @@ export async function runAgentLoop(
     agentLoop,
     cronEmitter,
   });
+
+  if (graphHandlerOptions.applyMultiAgentConfig) {
+    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+  }
+  if (graphHandlerOptions.restartMultiAgentAgent) {
+    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+  }
 
   // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
   // If no Discord/Slack handler wired the delegate tool, create standalone
@@ -405,8 +532,23 @@ export async function runAgentLoop(
       }
     );
     const dm = new DelegationManager(agentConfigs);
+    dm.setSessionsDb(db);
     toolExecutor.setAgentProcessManager(pm);
     toolExecutor.setDelegationManager(dm);
+
+    graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+      const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
+      pm.updateConfig(nextConfig);
+      dm.updateAgents(Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg })));
+    };
+    graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
+      pm.reloadPersona(agentId);
+    };
+    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
+
     // Also wire to the main AgentLoop's internal GatewayToolExecutor
     // (MessageRouter uses agentLoop which has its own executor instance)
     agentLoop.setAgentProcessManager(pm);
@@ -426,6 +568,12 @@ export async function runAgentLoop(
 
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } =
     await initConnectors(connectorExtractionFn);
+
+  // Inject rawStore into tool executor for agent_test connector data access
+  if (rawStoreForApi) {
+    toolExecutor.setRawStore(rawStoreForApi);
+    agentLoop.setRawStore(rawStoreForApi);
+  }
 
   // Add connector scheduler to graceful shutdown if active
   if (connectorSchedulerStop) {
@@ -459,6 +607,7 @@ export async function runAgentLoop(
     slackGateway,
     graphHandler,
     getAdapter,
+    sessionsDb: db,
   });
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────

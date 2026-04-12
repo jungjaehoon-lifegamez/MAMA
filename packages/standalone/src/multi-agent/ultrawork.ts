@@ -118,6 +118,12 @@ export class UltraWorkManager {
   /** Session counter for unique IDs */
   private sessionCounter = 0;
 
+  /** Sessions DB for agent_activity logging in delegations */
+  private sessionsDb: import('../sqlite.js').default | null = null;
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.sessionsDb = db;
+  }
+
   constructor(config: UltraWorkConfig, permissionManager?: ToolPermissionManager) {
     this.config = config;
     this.permissionManager = permissionManager ?? new ToolPermissionManager();
@@ -442,6 +448,7 @@ export class UltraWorkManager {
     await notifyCallback(`**Phase 2: Building** - Executing plan...`);
 
     const delegationManager = new DelegationManager(agents, this.permissionManager);
+    if (this.sessionsDb) delegationManager.setSessionsDb(this.sessionsDb);
     const continuationEnforcer = new TaskContinuationEnforcer({
       enabled: true,
       max_retries: 3,
@@ -838,6 +845,7 @@ export class UltraWorkManager {
     responseInterceptor?: ResponseInterceptor
   ): Promise<void> {
     const delegationManager = new DelegationManager(agents, this.permissionManager);
+    if (this.sessionsDb) delegationManager.setSessionsDb(this.sessionsDb);
     const continuationEnforcer = new TaskContinuationEnforcer({
       enabled: true,
       max_retries: 3,

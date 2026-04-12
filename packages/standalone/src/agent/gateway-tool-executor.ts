@@ -20,6 +20,7 @@ import {
   copyFileSync,
   realpathSync,
 } from 'fs';
+import { AsyncLocalStorage } from 'async_hooks';
 import { createHash } from 'crypto';
 import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
@@ -72,8 +73,27 @@ import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
+import type { SQLiteDatabase } from '../sqlite.js';
+import type { UICommandQueue } from '../api/ui-command-handler.js';
+import {
+  getLatestVersion,
+  createAgentVersion,
+  compareVersionMetrics,
+  getActivity,
+  logActivity,
+  updateActivityScore,
+} from '../db/agent-store.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
+import {
+  createManagedAgentRuntime,
+  updateManagedAgentRuntime,
+} from './managed-agent-runtime-sync.js';
+import {
+  validateManagedAgentCreateInput,
+  validateManagedAgentChanges,
+} from './managed-agent-validation.js';
+import type { ValidationSessionRow } from '../validation/types.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -81,6 +101,50 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const AGENT_DETAIL_TABS = new Set([
+  'config',
+  'persona',
+  'tools',
+  'activity',
+  'validation',
+  'history',
+]);
+
+type GatewayExecutionContext = {
+  agentContext?: AgentContext | null;
+  agentId?: string;
+  source?: string;
+  channelId?: string;
+};
+
+type ActiveGatewayExecutionContext = {
+  agentContext: AgentContext | null;
+  agentId: string;
+  source: string;
+  channelId: string;
+};
+
+const managedAgentMutationTails = new Map<string, Promise<void>>();
+
+async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  managedAgentMutationTails.set(agentId, tail);
+
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (managedAgentMutationTails.get(agentId) === tail) {
+      managedAgentMutationTails.delete(agentId);
+    }
+  }
+}
 
 function sanitizeCommandForAudit(command: string): { commandHash: string; commandPreview: string } {
   const commandHash = createHash('sha256').update(command).digest('hex');
@@ -93,6 +157,20 @@ function sanitizeCommandForAudit(command: string): { commandHash: string; comman
     .slice(0, 200);
 
   return { commandHash, commandPreview };
+}
+
+function summarizeActivityOutput(output: unknown): string | undefined {
+  if (output === undefined || output === null) {
+    return undefined;
+  }
+  if (typeof output === 'string') {
+    return output.slice(0, 500);
+  }
+  try {
+    return JSON.stringify(output).slice(0, 500);
+  } catch {
+    return String(output).slice(0, 500);
+  }
 }
 
 /**
@@ -170,6 +248,7 @@ export class GatewayToolExecutor {
   private telegramGateway: TelegramGatewayInterface | null = null;
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
+  private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -203,6 +282,35 @@ export class GatewayToolExecutor {
   getAgentEventBus(): AgentEventBus | null {
     return this.agentEventBus;
   }
+  private sessionsDb: SQLiteDatabase | null = null;
+  setSessionsDb(db: SQLiteDatabase): void {
+    this.sessionsDb = db;
+  }
+  private rawStore: import('../connectors/framework/raw-store.js').RawStore | null = null;
+  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
+    this.rawStore = store;
+  }
+  private testInFlight = new Map<string, Promise<GatewayToolResult>>();
+  private uiCommandQueue: UICommandQueue | null = null;
+  setUICommandQueue(queue: UICommandQueue): void {
+    this.uiCommandQueue = queue;
+  }
+  private applyMultiAgentConfig: ((config: Record<string, unknown>) => Promise<void>) | null = null;
+  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
+    this.applyMultiAgentConfig = fn;
+  }
+  private restartMultiAgentAgent: ((agentId: string) => Promise<void>) | null = null;
+  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
+    this.restartMultiAgentAgent = fn;
+  }
+  private validationService:
+    | import('../validation/session-service.js').ValidationSessionService
+    | null = null;
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.validationService = svc;
+  }
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
   }
@@ -216,14 +324,177 @@ export class GatewayToolExecutor {
   getAgentProcessManager(): AgentProcessManager | null {
     return this.agentProcessManager;
   }
+
+  private normalizeExecutionContext(
+    executionContext?: GatewayExecutionContext
+  ): ActiveGatewayExecutionContext {
+    const agentContext = executionContext?.agentContext ?? null;
+    const source = executionContext?.source ?? agentContext?.source ?? '';
+    const channelId = executionContext?.channelId ?? agentContext?.session?.channelId ?? '';
+    const agentId =
+      executionContext?.agentId ??
+      (source === 'viewer' ? 'os-agent' : (agentContext?.roleName ?? ''));
+    return {
+      agentContext,
+      agentId,
+      source,
+      channelId,
+    };
+  }
+
+  private getExecutionState(): ActiveGatewayExecutionContext {
+    const active = this.executionContextStorage.getStore();
+    if (active) {
+      return active;
+    }
+    return this.normalizeExecutionContext({
+      agentContext: this.currentContext,
+      agentId: this.currentAgentId,
+      source: this.currentSource,
+      channelId: this.currentChannelId,
+    });
+  }
+
+  private getActiveContext(): AgentContext | null {
+    return this.getExecutionState().agentContext;
+  }
+
+  private getActiveRouting(): { agentId: string; source: string; channelId: string } {
+    const state = this.getExecutionState();
+    return {
+      agentId: state.agentId,
+      source: state.source,
+      channelId: state.channelId,
+    };
+  }
+
+  async withExecutionContext<T>(
+    executionContext: GatewayExecutionContext | undefined,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    if (!executionContext) {
+      return fn();
+    }
+    const activeContext = this.normalizeExecutionContext(executionContext);
+    return this.executionContextStorage.run(activeContext, fn);
+  }
+
   setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
     this.currentAgentId = agentId;
     this.currentSource = source;
     this.currentChannelId = channelId;
   }
+  clearCurrentAgentContext(): void {
+    this.currentAgentId = '';
+    this.currentSource = '';
+    this.currentChannelId = '';
+  }
   setDisallowedGatewayTools(tools: string[]): void {
     this.disallowedGatewayTools = new Set(tools);
   }
+
+  private cleanupValidationSessionOnTelemetryFailure(
+    session: ValidationSessionRow | null,
+    error: unknown,
+    label: string
+  ): null {
+    if (!session || !this.validationService) {
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      this.validationService.finalizeSession(session.id, {
+        execution_status: 'failed',
+        error_message: `${label}: ${message}`,
+      });
+    } catch (cleanupErr) {
+      securityLogger.warn(
+        `[Delegation telemetry] Failed to clean up validation session ${session.id}`,
+        cleanupErr
+      );
+    }
+    return null;
+  }
+
+  private getPreferredViewerAgentTab(): string {
+    if (!this.uiCommandQueue) {
+      return 'activity';
+    }
+    const { channelId } = this.getActiveRouting();
+    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
+    if (!currentPageContext || currentPageContext.currentRoute !== 'agents') {
+      return 'activity';
+    }
+    const pageData = currentPageContext.pageData as Record<string, unknown> | undefined;
+    const activeTab = pageData?.activeTab;
+    if (typeof activeTab === 'string' && AGENT_DETAIL_TABS.has(activeTab)) {
+      return activeTab;
+    }
+    return 'activity';
+  }
+
+  private syncViewerToAgentDetail(agentId: string, preferredTab?: string): void {
+    if (!this.uiCommandQueue) {
+      return;
+    }
+    const { source, channelId } = this.getActiveRouting();
+    if (source !== 'viewer') {
+      return;
+    }
+
+    const desiredTab =
+      preferredTab && AGENT_DETAIL_TABS.has(preferredTab)
+        ? preferredTab
+        : this.getPreferredViewerAgentTab();
+    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
+    const currentPageData = currentPageContext?.pageData as Record<string, unknown> | undefined;
+    if (
+      currentPageContext?.currentRoute === 'agents' &&
+      currentPageContext.selectedItem?.type === 'agent' &&
+      currentPageContext.selectedItem.id === agentId &&
+      currentPageData?.pageType === 'agent-detail' &&
+      currentPageData?.activeTab === desiredTab
+    ) {
+      return;
+    }
+
+    this.uiCommandQueue.push({
+      type: 'navigate',
+      payload: {
+        route: 'agents',
+        params: {
+          id: agentId,
+          tab: desiredTab,
+        },
+      },
+    });
+  }
+
+  private resolveManagedAgentId(agentId: string): string {
+    if (!this.sessionsDb) {
+      return agentId;
+    }
+    const normalized = agentId
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, '-');
+    const candidates = Array.from(
+      new Set([
+        agentId,
+        agentId.trim(),
+        normalized,
+        normalized.endsWith('-agent') ? normalized.slice(0, -6) : `${normalized}-agent`,
+      ])
+    ).filter(Boolean);
+
+    for (const candidate of candidates) {
+      if (getLatestVersion(this.sessionsDb, candidate)) {
+        return candidate;
+      }
+    }
+    return agentId;
+  }
+
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
   }
@@ -291,7 +562,7 @@ export class GatewayToolExecutor {
    * Get the current agent context
    */
   getAgentContext(): AgentContext | null {
-    return this.currentContext;
+    return this.getActiveContext();
   }
 
   setDiscordGateway(gateway: DiscordGatewayInterface): void {
@@ -360,16 +631,17 @@ export class GatewayToolExecutor {
    */
   private checkToolPermission(toolName: string): { allowed: boolean; error?: string } {
     // If no context set, allow all tools (backward compatibility)
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return { allowed: true };
     }
 
-    const role = this.currentContext.role;
+    const role = context.role;
 
     if (!this.roleManager.isToolAllowed(role, toolName)) {
       return {
         allowed: false,
-        error: `Permission denied: ${toolName} is not allowed for role "${this.currentContext.roleName}"`,
+        error: `Permission denied: ${toolName} is not allowed for role "${context.roleName}"`,
       };
     }
 
@@ -383,16 +655,17 @@ export class GatewayToolExecutor {
    */
   private checkPathPermission(path: string): { allowed: boolean; error?: string } {
     // If no context set, allow all paths (backward compatibility)
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return { allowed: true };
     }
 
-    const role = this.currentContext.role;
+    const role = context.role;
 
     if (!this.roleManager.isPathAllowed(role, path)) {
       return {
         allowed: false,
-        error: `Permission denied: Access to "${path}" is not allowed for role "${this.currentContext.roleName}"`,
+        error: `Permission denied: Access to "${path}" is not allowed for role "${context.roleName}"`,
       };
     }
 
@@ -407,7 +680,15 @@ export class GatewayToolExecutor {
    * @returns Tool execution result
    * @throws AgentError on tool errors or permission denial
    */
-  async execute(toolName: string, input: GatewayToolInput): Promise<GatewayToolResult> {
+  async execute(
+    toolName: string,
+    input: GatewayToolInput,
+    executionContext?: GatewayExecutionContext
+  ): Promise<GatewayToolResult> {
+    if (executionContext) {
+      return this.withExecutionContext(executionContext, () => this.execute(toolName, input));
+    }
+
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
@@ -510,6 +791,247 @@ export class GatewayToolExecutor {
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
           );
+        // Agent lifecycle tools
+        case 'agent_test':
+          return await this.executeAgentTest(
+            input as {
+              agent_id: string;
+              sample_count?: number;
+              test_data?: Array<{ input: string; expected?: string }>;
+            }
+          );
+        // Agent management tools (Managed Agents pattern)
+        case 'agent_get': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const agentId = this.resolveManagedAgentId((input as { agent_id: string }).agent_id);
+          const latestVer = getLatestVersion(this.sessionsDb, agentId);
+          if (!latestVer) {
+            return { success: false, error: `Agent '${agentId}' not found` };
+          }
+          this.syncViewerToAgentDetail(agentId);
+          return {
+            success: true,
+            agent_id: latestVer.agent_id,
+            version: latestVer.version,
+            config: JSON.parse(latestVer.snapshot),
+            system: latestVer.persona_text,
+            change_note: latestVer.change_note,
+            created_at: latestVer.created_at,
+          };
+        }
+        case 'agent_activity': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const args = input as { agent_id: string; limit?: number };
+          const agentId = this.resolveManagedAgentId(args.agent_id);
+          const rawLimit = Number.parseInt(String(args.limit ?? 20), 10);
+          const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
+          const latestVer = getLatestVersion(this.sessionsDb, agentId);
+          if (!latestVer) {
+            return { success: false, error: `Agent '${args.agent_id}' not found` };
+          }
+          this.syncViewerToAgentDetail(agentId, 'activity');
+          return {
+            success: true,
+            agent_id: agentId,
+            activity: getActivity(this.sessionsDb, agentId, limit),
+          };
+        }
+        case 'agent_update': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const updateArgs = input as {
+            agent_id: string;
+            version: number;
+            changes: Record<string, unknown>;
+            change_note?: string;
+          };
+          const updateError = validateManagedAgentChanges(updateArgs.changes);
+          if (updateError) {
+            return { success: false, error: updateError };
+          }
+          const agentId = this.resolveManagedAgentId(updateArgs.agent_id);
+          const initialLatest = getLatestVersion(this.sessionsDb, agentId);
+          if (!initialLatest) {
+            return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
+          }
+          return withManagedAgentMutationLock(agentId, async () => {
+            const updateLatest = getLatestVersion(this.sessionsDb!, agentId);
+            if (!updateLatest) {
+              return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
+            }
+            if (updateLatest.version !== updateArgs.version) {
+              return {
+                success: false,
+                error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
+              };
+            }
+            const synced = await updateManagedAgentRuntime(
+              {
+                agentId,
+                changes: updateArgs.changes,
+              },
+              {
+                loadConfig,
+                saveConfig:
+                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+                applyMultiAgentConfig: this.applyMultiAgentConfig,
+                restartMultiAgentAgent: this.restartMultiAgentAgent,
+              }
+            );
+            const updatedV = createAgentVersion(this.sessionsDb!, {
+              agent_id: agentId,
+              snapshot: synced.snapshot,
+              persona_text: synced.personaText ?? updateLatest.persona_text,
+              change_note: updateArgs.change_note,
+            });
+            return {
+              success: true,
+              new_version: updatedV.version,
+              runtime_reloaded: synced.runtimeReloaded,
+            };
+          });
+        }
+        case 'agent_create': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const createArgs = input as {
+            id: string;
+            name: string;
+            model: string;
+            tier: number;
+            system?: string;
+            backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+          };
+          const createError = validateManagedAgentCreateInput(
+            createArgs as unknown as Record<string, unknown>
+          );
+          if (createError) {
+            return { success: false, error: createError };
+          }
+          return withManagedAgentMutationLock(createArgs.id, async () => {
+            const existingAgent = getLatestVersion(this.sessionsDb!, createArgs.id);
+            if (existingAgent) {
+              return { success: false, error: `Agent '${createArgs.id}' already exists` };
+            }
+
+            const synced = await createManagedAgentRuntime(
+              {
+                id: createArgs.id,
+                name: createArgs.name,
+                model: createArgs.model,
+                tier: createArgs.tier,
+                backend: createArgs.backend,
+                system: createArgs.system,
+              },
+              {
+                loadConfig,
+                saveConfig:
+                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+                applyMultiAgentConfig: this.applyMultiAgentConfig,
+                restartMultiAgentAgent: this.restartMultiAgentAgent,
+              }
+            );
+
+            const createdV = createAgentVersion(this.sessionsDb!, {
+              agent_id: createArgs.id,
+              snapshot: synced.snapshot,
+              persona_text: synced.personaText,
+              change_note: 'Created via agent_create tool',
+            });
+            return {
+              success: true,
+              id: createArgs.id,
+              version: createdV.version,
+              runtime_reloaded: synced.runtimeReloaded,
+            };
+          });
+        }
+        case 'agent_compare': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const cmpArgs = input as {
+            agent_id: string;
+            version_a: number;
+            version_b: number;
+          };
+          const agentId = this.resolveManagedAgentId(cmpArgs.agent_id);
+          const cmpResult = compareVersionMetrics(
+            this.sessionsDb,
+            agentId,
+            cmpArgs.version_a,
+            cmpArgs.version_b
+          );
+          this.syncViewerToAgentDetail(agentId, 'validation');
+          return { success: true, agent_id: agentId, ...cmpResult };
+        }
+        // Viewer control tools (SmartStore pattern)
+        case 'viewer_state': {
+          if (!this.uiCommandQueue) {
+            return { success: false, error: 'UI command queue not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const { channelId } = this.getActiveRouting();
+          const ctx = this.uiCommandQueue.getPageContext(channelId || undefined);
+          return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
+        }
+        case 'viewer_navigate': {
+          if (!this.uiCommandQueue) {
+            return { success: false, error: 'UI command queue not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const navArgs = input as { route: string; params?: Record<string, string> };
+          this.uiCommandQueue.push({ type: 'navigate', payload: navArgs });
+          return { success: true, navigated: navArgs.route };
+        }
+        case 'viewer_notify': {
+          if (!this.uiCommandQueue) {
+            return { success: false, error: 'UI command queue not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const args = input as {
+            type: string;
+            message: string;
+            action?: Record<string, unknown>;
+          };
+          this.uiCommandQueue.push({ type: 'notify', payload: args });
+          return { success: true, notified: true };
+        }
         // Multi-Agent delegation
         case 'delegate':
           return await this.executeDelegate(
@@ -694,7 +1216,9 @@ export class GatewayToolExecutor {
         }
         case 'agent_notices': {
           const rawLimit = Number((input as { limit?: number }).limit);
-          const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.floor(rawLimit), 1), 100) : 10;
+          const limit = Number.isFinite(rawLimit)
+            ? Math.min(Math.max(Math.floor(rawLimit), 1), 100)
+            : 10;
           if (!this.agentEventBus) {
             return { success: false, error: 'Agent event bus not available' } as GatewayToolResult;
           }
@@ -759,7 +1283,8 @@ export class GatewayToolExecutor {
 
     // Fallback security for contexts without path restrictions:
     // Only allow reading from ~/.mama/ directory
-    if (!this.currentContext?.role.allowedPaths?.length) {
+    const context = this.getActiveContext();
+    if (!context?.role.allowedPaths?.length) {
       const mamaDir = resolve(homeDir, '.mama');
       const resolvedPath = resolve(expandedPath);
       // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -822,7 +1347,8 @@ export class GatewayToolExecutor {
 
     // Fallback security for contexts without path restrictions:
     // Only allow writing to ~/.mama/ directory
-    if (!this.currentContext?.role.allowedPaths?.length) {
+    const context = this.getActiveContext();
+    if (!context?.role.allowedPaths?.length) {
       const mamaDir = resolve(homeDir, '.mama');
       const resolvedPath = resolve(expandedPath);
       // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -860,11 +1386,12 @@ export class GatewayToolExecutor {
       /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama(?:-os)?\b|(?:kill|pkill|killall)\b[^\n]*\bmama(?:-os)?\b|\brm\b(?:\s+(?:-[^\n\s]*[rf][^\n\s]*|--recursive|--force))+\s+(?:\/(?:\s|$)|~(?:\/|\s|$)|\$HOME(?:\/|\s|$)|\/home(?:\/|\s|$)))/i;
     if (destructive.test(command)) {
       const audit = sanitizeCommandForAudit(command);
+      const context = this.getActiveContext();
       const details = {
         category: 'destructive',
         ...audit,
-        source: this.currentContext?.source || null,
-        sessionId: this.currentContext?.session?.sessionId || null,
+        source: context?.source || null,
+        sessionId: context?.session?.sessionId || null,
       };
       securityLogger.warn('[SECURITY] Dangerous Bash command blocked', details);
       recordSecurityEvent({
@@ -901,12 +1428,13 @@ export class GatewayToolExecutor {
     for (const pattern of dangerousPatterns) {
       if (pattern.test(command)) {
         const audit = sanitizeCommandForAudit(command);
+        const context = this.getActiveContext();
         const details = {
           category: 'pattern',
           pattern: pattern.toString(),
           ...audit,
-          source: this.currentContext?.source || null,
-          sessionId: this.currentContext?.session?.sessionId || null,
+          source: context?.source || null,
+          sessionId: context?.session?.sessionId || null,
         };
         securityLogger.warn('[SECURITY] Dangerous Bash pattern blocked', details);
         recordSecurityEvent({
@@ -1269,17 +1797,18 @@ export class GatewayToolExecutor {
    * Returns error message if not allowed
    */
   private checkViewerOnly(): string | null {
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       // No context = backward compatibility, allow
       return null;
     }
 
-    if (this.currentContext.source !== 'viewer') {
-      return `Permission denied: This operation is only available from MAMA OS Viewer. Current source: ${this.currentContext.source}`;
+    if (context.source !== 'viewer') {
+      return `Permission denied: This operation is only available from MAMA OS Viewer. Current source: ${context.source}`;
     }
 
-    if (!this.currentContext.role.systemControl) {
-      return `Permission denied: Role "${this.currentContext.roleName}" does not have system control permissions`;
+    if (!context.role.systemControl) {
+      return `Permission denied: Role "${context.roleName}" does not have system control permissions`;
     }
 
     return null;
@@ -1457,10 +1986,9 @@ export class GatewayToolExecutor {
       const config = await loadConfig();
 
       // Determine if we should show sensitive data
+      const context = this.getActiveContext();
       const showSensitive =
-        includeSensitive &&
-        this.currentContext?.source === 'viewer' &&
-        this.currentContext?.role.sensitiveAccess;
+        includeSensitive && context?.source === 'viewer' && context?.role.sensitiveAccess;
 
       // Mask sensitive data
       const maskedConfig = this.maskSensitiveData(
@@ -1990,7 +2518,8 @@ export class GatewayToolExecutor {
 
         // Fallback security for contexts without path restrictions:
         // Only allow reading from ~/.mama/ directory
-        if (!this.currentContext?.role.allowedPaths?.length) {
+        const context = this.getActiveContext();
+        if (!context?.role.allowedPaths?.length) {
           const mamaDir = resolve(homeDir, '.mama');
           const resolvedPath = resolve(expandedPath);
           // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -2042,6 +2571,300 @@ export class GatewayToolExecutor {
   /**
    * Execute delegate tool — dispatch a task to another agent
    */
+  // ── Agent Test ─────────────────────────────────────────────────────────────
+
+  private async executeAgentTest(input: {
+    agent_id: string;
+    sample_count?: number;
+    test_data?: Array<{ input: string; expected?: string }>;
+  }): Promise<GatewayToolResult> {
+    const permError = this.checkViewerOnly();
+    if (permError) {
+      return { success: false, error: permError } as GatewayToolResult;
+    }
+
+    const { agent_id } = input;
+    const sample_count = Number.parseInt(String(input.sample_count ?? 2), 10);
+    const resolvedAgentId = this.resolveManagedAgentId(agent_id);
+    if (!Number.isFinite(sample_count) || sample_count < 1) {
+      securityLogger.warn('[Agent test] Invalid sample_count received', {
+        agent_id: resolvedAgentId,
+        sample_count: input.sample_count ?? null,
+      });
+      return {
+        success: false,
+        error: `Invalid sample_count for '${resolvedAgentId}': ${String(input.sample_count)}. Must be >= 1.`,
+      } as GatewayToolResult;
+    }
+
+    // Concurrency guard
+    if (this.testInFlight.has(resolvedAgentId)) {
+      return { success: false, error: 'test_already_running' } as GatewayToolResult;
+    }
+
+    const promise = this._runAgentTest(resolvedAgentId, sample_count, input.test_data);
+    this.testInFlight.set(resolvedAgentId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.testInFlight.delete(resolvedAgentId);
+    }
+  }
+
+  private async _runAgentTest(
+    agentId: string,
+    sampleCount: number,
+    testData?: Array<{ input: string; expected?: string }>
+  ): Promise<GatewayToolResult> {
+    if (!this.agentProcessManager || !this.delegationManagerRef) {
+      return {
+        success: false,
+        error: 'agent_timeout: multi-agent not configured',
+      } as GatewayToolResult;
+    }
+
+    const startTime = Date.now();
+
+    // 1. Collect test data
+    let items: Array<{ input: string; expected?: string }>;
+    if (testData && testData.length > 0) {
+      const normalizedItems: Array<{ input: string; expected?: string }> = [];
+      for (let index = 0; index < testData.length; index++) {
+        const rawItem = testData[index] as unknown as Record<string, unknown>;
+        if (typeof rawItem.input !== 'string') {
+          return {
+            success: false,
+            error: `Invalid test_data[${index}].input: expected string`,
+          } as GatewayToolResult;
+        }
+        if (rawItem.expected !== undefined && typeof rawItem.expected !== 'string') {
+          return {
+            success: false,
+            error: `Invalid test_data[${index}].expected: expected string`,
+          } as GatewayToolResult;
+        }
+        normalizedItems.push({
+          input: rawItem.input,
+          ...(typeof rawItem.expected === 'string' ? { expected: rawItem.expected } : {}),
+        });
+      }
+      items = normalizedItems;
+    } else if (this.rawStore) {
+      const agentConfig = this.delegationManagerRef.getAgentConfig(agentId);
+      const connectors: string[] = (agentConfig?.connectors as string[]) ?? [];
+      if (connectors.length === 0) {
+        return {
+          success: false,
+          error: 'connector_unavailable: no connectors configured',
+        } as GatewayToolResult;
+      }
+      const allItems: Array<{ input: string }> = [];
+      const missingConnectors: string[] = [];
+      for (const conn of connectors) {
+        if (!this.rawStore.hasConnector(conn)) {
+          missingConnectors.push(conn);
+          continue;
+        }
+        const recent = this.rawStore.getRecent(conn, sampleCount);
+        for (const item of recent) {
+          allItems.push({ input: `[${item.type}] ${item.content}` });
+        }
+        if (allItems.length >= sampleCount) {
+          break;
+        }
+      }
+      if (allItems.length === 0) {
+        const detail =
+          missingConnectors.length > 0
+            ? `connector(s) not found: ${missingConnectors.join(', ')}`
+            : 'no recent data';
+        return {
+          success: false,
+          error: `connector_unavailable: ${detail}`,
+        } as GatewayToolResult;
+      }
+      items = allItems.slice(0, sampleCount);
+    } else {
+      return {
+        success: false,
+        error: 'connector_unavailable: rawStore not available',
+      } as GatewayToolResult;
+    }
+
+    // 2. Start validation session for agent_test
+    const testVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+    const testAgentVersion = testVer?.version ?? 0;
+    let testValSession: ValidationSessionRow | null = null;
+    try {
+      testValSession =
+        this.validationService?.startSession(agentId, testAgentVersion, 'agent_test', {
+          goal: `Test with ${items.length} items`,
+          customBeforeSnapshot: JSON.stringify({
+            schema_version: 1,
+            test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+            sample_count: items.length,
+          }),
+        }) ?? null;
+    } catch (telemetryErr) {
+      securityLogger.warn('[Agent test telemetry] Failed to start validation session', {
+        agentId,
+        testAgentVersion,
+        error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+      });
+    }
+
+    // 3. Log test_run start
+    let testRunId: number | null = null;
+    if (this.sessionsDb) {
+      try {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: testAgentVersion,
+          type: 'test_run',
+          input_summary: `Testing with ${items.length} items`,
+          run_id: testValSession?.id,
+          execution_status: 'started',
+          trigger_reason: 'agent_test',
+        });
+        testRunId = row.id;
+        if (testValSession && this.validationService) {
+          this.validationService.recordRun(testValSession.id, { activityId: row.id });
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to persist startup activity', {
+          agentId,
+          testValSessionId: testValSession?.id ?? null,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+        testValSession = this.cleanupValidationSessionOnTelemetryFailure(
+          testValSession,
+          telemetryErr,
+          'agent_test startup telemetry failed'
+        );
+        testRunId = null;
+      }
+    }
+
+    // 4. Delegate with a small concurrency limit to keep tests responsive
+    const results: Array<{ input: string; output?: string; error?: string }> = [];
+    const workerCount = Math.min(3, items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: workerCount }, async () => {
+      for (;;) {
+        const currentIndex = nextIndex;
+        nextIndex++;
+        if (currentIndex >= items.length) {
+          return;
+        }
+        const item = items[currentIndex];
+        try {
+          const r = await this.executeDelegate({
+            agentId,
+            task: `Process this data:\n${item.input}`,
+          });
+          const rAny = r as Record<string, unknown>;
+          const output = r.success
+            ? String((rAny.data as Record<string, unknown>)?.response ?? '')
+            : undefined;
+          results[currentIndex] = {
+            input: item.input,
+            output,
+            error: r.success ? undefined : String(rAny.error ?? 'unknown'),
+          };
+        } catch (err) {
+          results[currentIndex] = { input: item.input, error: String(err) };
+        }
+      }
+    });
+    await Promise.all(workers);
+
+    // 5. Auto-score: pass/fail ratio
+    const passed = results.filter((r, index) => {
+      if (r.error) {
+        return false;
+      }
+      const expected = items[index]?.expected;
+      if (expected === undefined) {
+        return true;
+      }
+      return (r.output ?? '').trim() === expected.trim();
+    }).length;
+    const failed = results.length - passed;
+    const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
+
+    if (this.sessionsDb && testRunId) {
+      try {
+        updateActivityScore(
+          this.sessionsDb,
+          testRunId,
+          autoScore,
+          {
+            total: results.length,
+            passed,
+            failed,
+            items: results.map((r, index) => ({
+              input: r.input.slice(0, 100),
+              result:
+                r.error ||
+                (items[index]?.expected !== undefined &&
+                  (r.output ?? '').trim() !== items[index]!.expected!.trim())
+                  ? 'fail'
+                  : 'pass',
+            })),
+          },
+          'completed'
+        );
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to persist test score', {
+          agentId,
+          testRunId,
+          autoScore,
+          totalResults: results.length,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+      }
+    }
+
+    // 6. Finalize validation session with test metrics
+    const testDurationMs = Date.now() - startTime;
+    if (testValSession && this.validationService) {
+      try {
+        this.validationService.finalizeSession(testValSession.id, {
+          execution_status: 'completed',
+          metrics: {
+            duration_ms: testDurationMs,
+            completion_rate: results.length > 0 ? passed / results.length : 0,
+            auto_score: autoScore,
+          },
+          test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+        });
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to finalize validation session', {
+          agentId,
+          testValSessionId: testValSession.id,
+          autoScore,
+          totalResults: results.length,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      data: {
+        test_run_id: testRunId,
+        agent_id: agentId,
+        results,
+        auto_score: autoScore,
+        duration_ms: testDurationMs,
+        validation_session_id: testValSession?.id ?? null,
+        ...(testRunId === null ? { warning: 'score_not_persisted' } : {}),
+      },
+    } as GatewayToolResult;
+  }
+
+  // ── Delegation ────────────────────────────────────────────────────────────
+
   private async executeDelegate(input: {
     agentId: string;
     task: string;
@@ -2070,7 +2893,12 @@ export class GatewayToolExecutor {
     // Permission check using existing DelegationManager
     // Default to 'conductor' when no agent context is set (e.g., MessageRouter path, audit cron)
     // Conductor is the default agent and the only tier-1 agent that should delegate
-    const sourceAgentId = this.currentAgentId || 'conductor';
+    const {
+      agentId: activeAgentId,
+      source: activeSource,
+      channelId: activeChannelId,
+    } = this.getActiveRouting();
+    const sourceAgentId = activeAgentId || 'conductor';
     const check = this.delegationManagerRef.isDelegationAllowed(sourceAgentId, agentId);
     if (!check.allowed) {
       return {
@@ -2079,12 +2907,46 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // Background delegation: fire-and-forget
+    // Background delegation: fire-and-forget with async validation finalize
     if (background) {
-      const source = this.currentSource || 'viewer';
-      const channelId = this.currentChannelId || 'default';
+      const source = activeSource || 'viewer';
+      const channelId = activeChannelId || 'default';
 
-      // Fire-and-forget: spawn process and send message without awaiting result
+      // Start validation session for background delegation
+      let bgAgentVersion = 0;
+      let bgValSession: ValidationSessionRow | null = null;
+      try {
+        const bgVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+        bgAgentVersion = bgVer?.version ?? 0;
+        bgValSession =
+          this.validationService?.startSession(agentId, bgAgentVersion, 'delegate_run') ?? null;
+
+        if (this.sessionsDb) {
+          const row = logActivity(this.sessionsDb, {
+            agent_id: agentId,
+            agent_version: bgAgentVersion,
+            type: 'task_start',
+            input_summary: task?.slice(0, 200),
+            run_id: bgValSession?.id,
+            execution_status: 'started',
+            trigger_reason: 'delegate_run',
+          });
+          if (bgValSession && this.validationService) {
+            this.validationService.recordRun(bgValSession.id, { activityId: row.id });
+          }
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Background bootstrap failed', telemetryErr);
+        bgAgentVersion = 0;
+        bgValSession = this.cleanupValidationSessionOnTelemetryFailure(
+          bgValSession,
+          telemetryErr,
+          'background delegate bootstrap failed'
+        );
+      }
+
+      // Fire-and-forget: finalize validation when complete
+      const bgStartTime = Date.now();
       void (async () => {
         try {
           const process = await this.agentProcessManager!.getProcess(source, channelId, agentId);
@@ -2092,7 +2954,6 @@ export class GatewayToolExecutor {
             sourceAgentId,
             task
           );
-          // Inject skill content if specified
           if (input.skill) {
             const skillPath = resolveSkillPath(input.skill);
             if (skillPath && existsSync(skillPath)) {
@@ -2100,9 +2961,91 @@ export class GatewayToolExecutor {
               delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
             }
           }
-          await process.sendMessage(delegationPrompt);
-        } catch {
-          // Background task failures are silently ignored
+          const result = await process.sendMessage(delegationPrompt);
+          const durationMs = Date.now() - bgStartTime;
+
+          try {
+            if (this.sessionsDb) {
+              const row = logActivity(this.sessionsDb, {
+                agent_id: agentId,
+                agent_version: bgAgentVersion,
+                type: 'task_complete',
+                input_summary: task?.slice(0, 200),
+                output_summary: summarizeActivityOutput(result?.response),
+                duration_ms: durationMs,
+                run_id: bgValSession?.id,
+                execution_status: 'completed',
+                trigger_reason: 'delegate_run',
+              });
+              if (bgValSession && this.validationService) {
+                this.validationService.recordRun(bgValSession.id, {
+                  activityId: row.id,
+                  duration_ms: durationMs,
+                });
+              }
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background completion activity failed',
+              telemetryErr
+            );
+          }
+
+          try {
+            if (bgValSession && this.validationService) {
+              this.validationService.finalizeSession(bgValSession.id, {
+                execution_status: 'completed',
+                metrics: { duration_ms: durationMs },
+              });
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background completion finalize failed',
+              telemetryErr
+            );
+          }
+        } catch (err) {
+          const durationMs = Date.now() - bgStartTime;
+          try {
+            if (this.sessionsDb) {
+              const row = logActivity(this.sessionsDb, {
+                agent_id: agentId,
+                agent_version: bgAgentVersion,
+                type: 'task_error',
+                input_summary: task?.slice(0, 200),
+                error_message: String(err),
+                duration_ms: durationMs,
+                run_id: bgValSession?.id,
+                execution_status: 'failed',
+                trigger_reason: 'delegate_run',
+              });
+              if (bgValSession && this.validationService) {
+                this.validationService.recordRun(bgValSession.id, {
+                  activityId: row.id,
+                  duration_ms: durationMs,
+                });
+              }
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background failure activity failed',
+              telemetryErr
+            );
+          }
+          try {
+            if (bgValSession && this.validationService) {
+              this.validationService.finalizeSession(bgValSession.id, {
+                execution_status: 'failed',
+                error_message: String(err),
+                metrics: { duration_ms: durationMs },
+              });
+            }
+          } catch (telemetryErr) {
+            securityLogger.warn(
+              '[Delegation telemetry] Background failure finalize failed',
+              telemetryErr
+            );
+          }
         }
       })();
 
@@ -2113,9 +3056,42 @@ export class GatewayToolExecutor {
     }
 
     // Synchronous delegation with retry + backoff for resilience
-    const source = this.currentSource || 'viewer';
-    const channelId = this.currentChannelId || 'default';
+    const source = activeSource || 'viewer';
+    const channelId = activeChannelId || 'default';
     const startTime = Date.now();
+
+    // Start validation session for this delegation
+    let agentVersion = 0;
+    let valSession: ValidationSessionRow | null = null;
+    try {
+      const ver = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
+      agentVersion = ver?.version ?? 0;
+      valSession =
+        this.validationService?.startSession(agentId, agentVersion, 'delegate_run') ?? null;
+
+      if (this.sessionsDb) {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_start',
+          input_summary: task?.slice(0, 200),
+          run_id: valSession?.id,
+          execution_status: 'started',
+          trigger_reason: 'delegate_run',
+        });
+        if (valSession && this.validationService) {
+          this.validationService.recordRun(valSession.id, { activityId: row.id });
+        }
+      }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Validation bootstrap failed', telemetryErr);
+      agentVersion = 0;
+      valSession = this.cleanupValidationSessionOnTelemetryFailure(
+        valSession,
+        telemetryErr,
+        'delegate bootstrap failed'
+      );
+    }
 
     const MAX_RETRIES = 3;
     let lastError: Error | null = null;
@@ -2138,7 +3114,6 @@ export class GatewayToolExecutor {
         // Inject channel history for fresh processes (no prior context)
         const sessionId = process.getSessionId?.();
         if (!sessionId || attempt > 0) {
-          // Fresh process or retried after crash — inject channel history for context
           try {
             const { getChannelHistory } = await import('../gateways/channel-history.js');
             const channelHistory = getChannelHistory();
@@ -2149,14 +3124,51 @@ export class GatewayToolExecutor {
               }
             }
           } catch {
-            // Channel history injection is best-effort — proceed without it
+            // Channel history injection is best-effort
           }
         }
 
         const result = await process.sendMessage(delegationPrompt);
+        const durationMs = Date.now() - startTime;
+
+        try {
+          if (this.sessionsDb) {
+            const row = logActivity(this.sessionsDb, {
+              agent_id: agentId,
+              agent_version: agentVersion,
+              type: 'task_complete',
+              input_summary: task?.slice(0, 200),
+              output_summary: summarizeActivityOutput(result.response),
+              duration_ms: durationMs,
+              run_id: valSession?.id,
+              execution_status: 'completed',
+              trigger_reason: 'delegate_run',
+            });
+            if (valSession && this.validationService) {
+              this.validationService.recordRun(valSession.id, {
+                activityId: row.id,
+                duration_ms: durationMs,
+              });
+            }
+          }
+        } catch (telemetryErr) {
+          securityLogger.warn('[Delegation telemetry] Completion activity failed', telemetryErr);
+        }
+
+        try {
+          if (valSession && this.validationService) {
+            this.validationService.finalizeSession(valSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: durationMs },
+            });
+          }
+        } catch (telemetryErr) {
+          securityLogger.warn('[Delegation telemetry] Completion finalize failed', telemetryErr);
+        }
+
         return {
           success: true,
-          data: { agentId, response: result.response, duration_ms: Date.now() - startTime },
+          data: { agentId, response: result.response, duration_ms: durationMs },
         } as GatewayToolResult;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -2164,7 +3176,6 @@ export class GatewayToolExecutor {
         const isCrash = lastError.message.includes('exited with code');
 
         if (isCrash) {
-          // Force remove crashed process so next getProcess() creates a fresh one
           this.agentProcessManager.stopProcess(source, channelId, agentId);
         }
 
@@ -2174,6 +3185,43 @@ export class GatewayToolExecutor {
         }
         break;
       }
+    }
+
+    const failedDurationMs = Date.now() - startTime;
+    try {
+      if (this.sessionsDb) {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_error',
+          input_summary: task?.slice(0, 200),
+          error_message: lastError?.message,
+          duration_ms: failedDurationMs,
+          run_id: valSession?.id,
+          execution_status: 'failed',
+          trigger_reason: 'delegate_run',
+        });
+        if (valSession && this.validationService) {
+          this.validationService.recordRun(valSession.id, {
+            activityId: row.id,
+            duration_ms: failedDurationMs,
+          });
+        }
+      }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Failure activity failed', telemetryErr);
+    }
+
+    try {
+      if (valSession && this.validationService) {
+        this.validationService.finalizeSession(valSession.id, {
+          execution_status: 'failed',
+          error_message: lastError?.message,
+          metrics: { duration_ms: failedDurationMs },
+        });
+      }
+    } catch (telemetryErr) {
+      securityLogger.warn('[Delegation telemetry] Failure finalize failed', telemetryErr);
     }
 
     return {
@@ -2238,8 +3286,9 @@ export class GatewayToolExecutor {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(this);
-    const tier = (this.currentContext?.tier ?? 1) as 1 | 2 | 3;
-    bridge.injectInto(sandbox, tier, this.currentContext?.role);
+    const context = this.getActiveContext();
+    const tier = (context?.tier ?? 1) as 1 | 2 | 3;
+    bridge.injectInto(sandbox, tier, context?.role);
 
     const result = await sandbox.execute(input.code);
 
@@ -2255,7 +3304,8 @@ export class GatewayToolExecutor {
    * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
    */
   private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return {
         success: false,
         error: 'mama_add requires an active agent context',
@@ -2263,9 +3313,9 @@ export class GatewayToolExecutor {
     }
 
     const scopes = deriveMemoryScopes({
-      source: this.currentContext.source,
-      channelId: this.currentContext.session.channelId,
-      userId: this.currentContext.session.userId,
+      source: context.source,
+      channelId: context.session.channelId,
+      userId: context.session.userId,
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
 
@@ -2296,11 +3346,12 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
-      const fallbackScopes = this.currentContext
+      const context = this.getActiveContext();
+      const fallbackScopes = context
         ? deriveMemoryScopes({
-            source: this.currentContext.source,
-            channelId: this.currentContext.session.channelId,
-            userId: this.currentContext.session.userId,
+            source: context.source,
+            channelId: context.session.channelId,
+            userId: context.session.userId,
             projectId: process.env.MAMA_WORKSPACE || process.cwd(),
           })
         : [];
@@ -2325,7 +3376,7 @@ export class GatewayToolExecutor {
         source: {
           package: 'standalone',
           source_type: 'gateway_tool_executor',
-          source: this.currentContext?.source || null,
+          source: context?.source || null,
         },
       });
 
@@ -2352,11 +3403,12 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    const fallbackScopes = this.currentContext
+    const context = this.getActiveContext();
+    const fallbackScopes = context
       ? deriveMemoryScopes({
-          source: this.currentContext.source,
-          channelId: this.currentContext.session.channelId,
-          userId: this.currentContext.session.userId,
+          source: context.source,
+          channelId: context.session.channelId,
+          userId: context.session.userId,
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];

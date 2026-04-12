@@ -308,7 +308,7 @@ Separate from the search tiers above, the **Multi-Agent System** uses a 3-tier p
 
 ### Tier 1: Full Access
 
-All gateway tools available: file I/O, bash execution, browser, communication (Discord/Slack/webchat), OS management, memory, and playgrounds.
+All gateway tools available: file I/O, bash execution, browser, communication (Discord/Slack/webchat), OS management, memory, and viewer navigation/control tools.
 
 **Agents:** Conductor and agents with `tier: 1` in persona config. Can also delegate tasks (`can_delegate: true`).
 

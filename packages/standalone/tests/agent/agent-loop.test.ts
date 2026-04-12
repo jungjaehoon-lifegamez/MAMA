@@ -9,11 +9,22 @@ import { AgentLoop, getGatewayToolsPrompt } from '../../src/agent/agent-loop.js'
 import type { OAuthManager } from '../../src/auth/index.js';
 import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
 
+const { laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
+  laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
+}));
+
 const persistentPromptMock = vi.fn().mockResolvedValue({
   response: 'Mock response',
   usage: { input_tokens: 10, output_tokens: 5 },
   session_id: 'test-session',
 });
+const gatewayExecutorSetAgentContextMock = vi.fn();
+const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
+const gatewayExecutorClearCurrentAgentContextMock = vi.fn();
+const gatewayExecutorSetUICommandQueueMock = vi.fn();
+const gatewayExecutorSetSessionsDbMock = vi.fn();
+const gatewayExecutorSetValidationServiceMock = vi.fn();
+const gatewayExecutorSetRawStoreMock = vi.fn();
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -66,6 +77,13 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
   return {
     GatewayToolExecutor: vi.fn().mockImplementation(() => ({
       setDiscordGateway: vi.fn(),
+      setAgentContext: gatewayExecutorSetAgentContextMock,
+      setCurrentAgentContext: gatewayExecutorSetCurrentAgentContextMock,
+      clearCurrentAgentContext: gatewayExecutorClearCurrentAgentContextMock,
+      setUICommandQueue: gatewayExecutorSetUICommandQueueMock,
+      setSessionsDb: gatewayExecutorSetSessionsDbMock,
+      setValidationService: gatewayExecutorSetValidationServiceMock,
+      setRawStore: gatewayExecutorSetRawStoreMock,
       execute: vi.fn().mockResolvedValue({ success: true }),
     })),
   };
@@ -76,7 +94,7 @@ vi.mock('../../src/concurrency/index.js', () => {
   return {
     LaneManager: vi.fn(),
     getGlobalLaneManager: vi.fn().mockReturnValue({
-      enqueueWithSession: vi.fn((_, fn) => fn()),
+      enqueueWithSession: laneManagerEnqueueWithSessionMock,
     }),
   };
 });
@@ -133,6 +151,14 @@ describe('AgentLoop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     persistentPromptMock.mockClear();
+    gatewayExecutorSetAgentContextMock.mockClear();
+    gatewayExecutorSetCurrentAgentContextMock.mockClear();
+    gatewayExecutorClearCurrentAgentContextMock.mockClear();
+    gatewayExecutorSetUICommandQueueMock.mockClear();
+    gatewayExecutorSetSessionsDbMock.mockClear();
+    gatewayExecutorSetValidationServiceMock.mockClear();
+    gatewayExecutorSetRawStoreMock.mockClear();
+    laneManagerEnqueueWithSessionMock.mockClear();
   });
 
   describe('run()', () => {
@@ -183,6 +209,93 @@ describe('AgentLoop', () => {
       expect(promptOptions.allowedTools).toBeUndefined();
       expect(promptOptions.disallowedTools).toBeUndefined();
     });
+
+    it('should avoid mutating shared gateway executor routing state during run setup', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Hello', {
+        source: 'viewer',
+        channelId: 'mama_os_main',
+        agentContext: {
+          ...createChatBotContext(),
+          source: 'viewer',
+          platform: 'viewer',
+          roleName: 'os_agent',
+          session: {
+            ...createChatBotContext().session,
+            channelId: 'mama_os_main',
+          },
+        },
+      });
+
+      expect(gatewayExecutorSetCurrentAgentContextMock).not.toHaveBeenCalled();
+    });
+
+    it('should not clear shared gateway executor routing state when agentContext is absent', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('First', {
+        source: 'viewer',
+        channelId: 'mama_os_main',
+        agentContext: {
+          ...createChatBotContext(),
+          source: 'viewer',
+          platform: 'viewer',
+          roleName: 'os_agent',
+        },
+      });
+      gatewayExecutorClearCurrentAgentContextMock.mockClear();
+
+      await agentLoop.run('Second');
+
+      expect(gatewayExecutorClearCurrentAgentContextMock).not.toHaveBeenCalled();
+    });
+
+    it('should route viewer frontdoor sessions through a dedicated viewer global lane', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { useLanes: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSessionKey('viewer:mama_os_main:user-1');
+      await agentLoop.run('Hello');
+
+      expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
+        'viewer:mama_os_main:user-1',
+        expect.any(Function),
+        'viewer'
+      );
+    });
+
+    it('should route conductor audit sessions through a dedicated system global lane', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { useLanes: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSessionKey('system:conductor-audit-123:system');
+      await agentLoop.run('Audit');
+
+      expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
+        'system:conductor-audit-123:system',
+        expect.any(Function),
+        'system'
+      );
+    });
   });
 
   describe('setSessionKey()', () => {
@@ -196,6 +309,37 @@ describe('AgentLoop', () => {
 
       agentLoop.setSessionKey('discord:123:456');
       expect(agentLoop.getSessionKey()).toBe('discord:123:456');
+    });
+  });
+
+  describe('runtime dependency proxies', () => {
+    it('should forward ui command queue, sessions db, validation service, and raw store to the internal executor', () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+      const uiCommandQueue = { getPageContext: vi.fn() };
+      const sessionsDb = { prepare: vi.fn(), exec: vi.fn() };
+      const validationService = { startSession: vi.fn(), finalizeSession: vi.fn() };
+      const rawStore = { getRecent: vi.fn(), hasConnector: vi.fn() };
+
+      agentLoop.setUICommandQueue?.(
+        uiCommandQueue as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue
+      );
+      agentLoop.setSessionsDb?.(sessionsDb as unknown as import('../../src/sqlite.js').default);
+      agentLoop.setValidationService?.(
+        validationService as unknown as import('../../src/validation/session-service.js').ValidationSessionService
+      );
+      agentLoop.setRawStore?.(
+        rawStore as unknown as import('../../src/connectors/framework/raw-store.js').RawStore
+      );
+
+      expect(gatewayExecutorSetUICommandQueueMock).toHaveBeenCalledWith(uiCommandQueue);
+      expect(gatewayExecutorSetSessionsDbMock).toHaveBeenCalledWith(sessionsDb);
+      expect(gatewayExecutorSetValidationServiceMock).toHaveBeenCalledWith(validationService);
+      expect(gatewayExecutorSetRawStoreMock).toHaveBeenCalledWith(rawStore);
     });
   });
 

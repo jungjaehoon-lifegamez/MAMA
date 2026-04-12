@@ -13,7 +13,7 @@ import { existsSync } from 'fs';
 import { resolve } from 'path';
 import { loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { ToolRegistry } from '../agent/tool-registry.js';
-import { loadInstalledSkills } from '../agent/skill-loader.js';
+import { filterSkillCatalogForContext, loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
 import { EventEmitter } from 'events';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -671,7 +671,7 @@ ${skillsPrompt}## Guidelines
    * Build installed skills prompt section
    */
   private buildSkillsPrompt(): string {
-    const skillCatalog = loadInstalledSkills();
+    const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(), null);
     if (skillCatalog.length === 0) return '';
 
     return `## Installed Skills
