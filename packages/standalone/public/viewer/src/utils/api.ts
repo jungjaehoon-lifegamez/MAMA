@@ -216,7 +216,7 @@ export interface MultiAgentAgent {
   status?: string;
   model?: string;
   effort?: EffortLevel;
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   bot_token?: string;
   slack_bot_token?: string | null;
   slack_app_token?: string | null;

@@ -112,6 +112,20 @@ function sanitizeCommandForAudit(command: string): { commandHash: string; comman
   return { commandHash, commandPreview };
 }
 
+function summarizeActivityOutput(output: unknown): string | undefined {
+  if (output === undefined || output === null) {
+    return undefined;
+  }
+  if (typeof output === 'string') {
+    return output.slice(0, 500);
+  }
+  try {
+    return JSON.stringify(output).slice(0, 500);
+  } catch {
+    return String(output).slice(0, 500);
+  }
+}
+
 /**
  * Discord gateway interface for sending messages
  */
@@ -643,7 +657,7 @@ export class GatewayToolExecutor {
             model: string;
             tier: number;
             system?: string;
-            backend?: 'claude' | 'codex-mcp';
+            backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
           };
           const createError = validateManagedAgentCreateInput(
             createArgs as unknown as Record<string, unknown>
@@ -2370,6 +2384,9 @@ export class GatewayToolExecutor {
         agent_version: testAgentVersion,
         type: 'test_run',
         input_summary: `Testing with ${items.length} items`,
+        run_id: testValSession?.id,
+        execution_status: 'started',
+        trigger_reason: 'agent_test',
       });
       testRunId = row.id;
       if (testValSession) {
@@ -2528,6 +2545,9 @@ export class GatewayToolExecutor {
           agent_version: bgAgentVersion,
           type: 'task_start',
           input_summary: task?.slice(0, 200),
+          run_id: bgValSession?.id,
+          execution_status: 'started',
+          trigger_reason: 'delegate_run',
         });
         if (bgValSession) {
           this.validationService!.recordRun(bgValSession.id, { activityId: row.id });
@@ -2559,8 +2579,11 @@ export class GatewayToolExecutor {
               agent_version: bgAgentVersion,
               type: 'task_complete',
               input_summary: task?.slice(0, 200),
-              output_summary: result?.response?.slice(0, 500),
+              output_summary: summarizeActivityOutput(result?.response),
               duration_ms: durationMs,
+              run_id: bgValSession?.id,
+              execution_status: 'completed',
+              trigger_reason: 'delegate_run',
             });
             if (bgValSession) {
               this.validationService!.recordRun(bgValSession.id, {
@@ -2587,6 +2610,9 @@ export class GatewayToolExecutor {
               input_summary: task?.slice(0, 200),
               error_message: String(err),
               duration_ms: durationMs,
+              run_id: bgValSession?.id,
+              execution_status: 'failed',
+              trigger_reason: 'delegate_run',
             });
           }
           if (bgValSession && this.validationService) {
@@ -2622,6 +2648,9 @@ export class GatewayToolExecutor {
         agent_version: agentVersion,
         type: 'task_start',
         input_summary: task?.slice(0, 200),
+        run_id: valSession?.id,
+        execution_status: 'started',
+        trigger_reason: 'delegate_run',
       });
       // Link activity to validation session
       if (valSession) {
@@ -2674,11 +2703,11 @@ export class GatewayToolExecutor {
             agent_version: agentVersion,
             type: 'task_complete',
             input_summary: task?.slice(0, 200),
-            output_summary:
-              typeof result.response === 'string'
-                ? result.response.slice(0, 500)
-                : JSON.stringify(result.response).slice(0, 500),
+            output_summary: summarizeActivityOutput(result.response),
             duration_ms: durationMs,
+            run_id: valSession?.id,
+            execution_status: 'completed',
+            trigger_reason: 'delegate_run',
           });
           if (valSession) {
             this.validationService!.recordRun(valSession.id, {
@@ -2726,6 +2755,9 @@ export class GatewayToolExecutor {
         input_summary: task?.slice(0, 200),
         error_message: lastError?.message,
         duration_ms: Date.now() - startTime,
+        run_id: valSession?.id,
+        execution_status: 'failed',
+        trigger_reason: 'delegate_run',
       });
     }
 

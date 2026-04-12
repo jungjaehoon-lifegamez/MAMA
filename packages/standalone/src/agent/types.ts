@@ -953,6 +953,7 @@ export interface AgentLoopOptions {
 export interface TokenUsageRecord {
   channel_key: string;
   agent_id?: string;
+  agent_version?: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;

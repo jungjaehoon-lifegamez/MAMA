@@ -19,6 +19,13 @@ const TERMINAL_ACTIVITY_TYPES = new Set([
   'audit_failed',
 ]);
 
+const TERMINAL_OUTCOME_ACTIVITY_SQL = [
+  "'task_complete'",
+  "'task_error'",
+  "'audit_complete'",
+  "'audit_failed'",
+].join(', ');
+
 // ── Table Init ──────────────────────────────────────────────────────────────
 
 export function initAgentTables(db: SQLiteDatabase): void {
@@ -229,6 +236,9 @@ export interface LogActivityInput {
   score?: number;
   details?: Record<string, unknown>;
   error_message?: string;
+  run_id?: string;
+  execution_status?: string;
+  trigger_reason?: string;
 }
 
 export interface ActivityRow {
@@ -244,6 +254,9 @@ export interface ActivityRow {
   score: number | null;
   details: string | null;
   error_message: string | null;
+  run_id: string | null;
+  execution_status: string | null;
+  trigger_reason: string | null;
   created_at: string;
 }
 
@@ -251,8 +264,11 @@ export interface ActivityRow {
 
 export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
   const stmt = db.prepare(`
-    INSERT INTO agent_activity (agent_id, agent_version, type, input_summary, output_summary, tokens_used, tools_called, duration_ms, score, details, error_message)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO agent_activity (
+      agent_id, agent_version, type, input_summary, output_summary, tokens_used,
+      tools_called, duration_ms, score, details, error_message, run_id, execution_status, trigger_reason
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.agent_id,
@@ -265,7 +281,10 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.duration_ms ?? 0,
     input.score ?? null,
     input.details ? JSON.stringify(input.details) : null,
-    input.error_message ?? null
+    input.error_message ?? null,
+    input.run_id ?? null,
+    input.execution_status ?? null,
+    input.trigger_reason ?? null
   );
   return db
     .prepare('SELECT * FROM agent_activity WHERE id = ?')
@@ -316,11 +335,19 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
         agg AS (
           SELECT
             agent_id,
-            COUNT(*) as total,
-            SUM(CASE WHEN type = 'task_complete' THEN 1 ELSE 0 END) as completed,
-            SUM(CASE WHEN type = 'task_error' THEN 1 ELSE 0 END) as errors,
-            ROUND(SUM(CASE WHEN type = 'task_error' THEN 1.0 ELSE 0 END) / COUNT(*) * 100, 2) as error_rate,
-            AVG(CASE WHEN duration_ms > 0 THEN duration_ms END) as avg_duration_ms
+            COUNT(CASE WHEN type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL}) THEN 1 END) as total,
+            SUM(CASE WHEN type IN ('task_complete', 'audit_complete') THEN 1 ELSE 0 END) as completed,
+            SUM(CASE WHEN type IN ('task_error', 'audit_failed') THEN 1 ELSE 0 END) as errors,
+            ROUND(
+              COALESCE(
+                SUM(CASE WHEN type IN ('task_error', 'audit_failed') THEN 1.0 ELSE 0 END)
+                / NULLIF(COUNT(CASE WHEN type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL}) THEN 1 END), 0)
+                * 100,
+                0
+              ),
+              2
+            ) as error_rate,
+            AVG(CASE WHEN type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL}) AND duration_ms > 0 THEN duration_ms END) as avg_duration_ms
           FROM agent_activity
           WHERE created_at >= ?
           GROUP BY agent_id

@@ -223,7 +223,7 @@ Wiki Agent가 받아가는 흐름:
 
 ### 시나리오 3: 사용자 직접 제어 (Conductor = OS Agent)
 
-```
+```text
 사용자: "wiki 컴파일 멈춰"
   → agent_update(wiki-agent, {enabled: false})
   → Activity: "⚙️ config_change — disabled by user"
@@ -267,17 +267,18 @@ Wiki: "Project Status 페이지 업데이트"
 
 ## Claude Managed Agents → MAMA OS 매핑
 
-| Claude MA                                                                          | MAMA OS 대응                                                          | 현재 상태                                                                                      |
-| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md`    | 구현됨. `agent_create`/`POST /api/agents`가 config.yaml에 기록하고 runtime hot-reload를 트리거 |
-| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                    | N/A                                                                                            |
-| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` + `executeDelegate`로 추적 | 테이블/코드 있음. 프로덕션 row는 아직 별도 실측 검증이 필요                                    |
-| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)           | auto-log 경로 구현됨. 프로덕션 이벤트 수집은 추가 검증 필요                                    |
-| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드             | 구현됨. `packages/standalone/src/agent/gateway-tool-executor.ts`에서 runtime/config sync 수행  |
-| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                     | 구현됨. create/update 시 버전 자동 증가                                                        |
-| **Tool config** (agent_toolset + configs[].enabled)                                | `tool_permissions.allowed/blocked`                                    | 구현됨                                                                                         |
-| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → `executeDelegate`                         | 구현됨                                                                                         |
-| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                                 | UI 있음. 실데이터 연결은 별도 런타임 검증 필요                                                 |
+| Claude MA                                                                          | MAMA OS 대응                                                               | 현재 상태                                                                                      |
+| ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md`         | 구현됨. `agent_create`/`POST /api/agents`가 config.yaml에 기록하고 runtime hot-reload를 트리거 |
+| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                         | N/A                                                                                            |
+| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` + `executeDelegate`로 추적      | 테이블/코드 있음. 프로덕션 row는 아직 별도 실측 검증이 필요                                    |
+| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)                | auto-log 경로 구현됨. 프로덕션 이벤트 수집은 추가 검증 필요                                    |
+| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드                  | 구현됨. `packages/standalone/src/agent/gateway-tool-executor.ts`에서 runtime/config sync 수행  |
+| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                          | 구현됨. create/update 시 버전 자동 증가                                                        |
+| **Claude CLI built-in tools** (`Bash`, `Read`, `Edit`, `Write` 등)                 | `tool_permissions.allowed/blocked`                                         | 구현됨. `packages/standalone`의 per-agent tool permission으로 제어                             |
+| **Gateway tools** (`mama_search`, `agent_*`, `viewer_*` 등)                        | `gateway-tool-executor.ts` + Claude MA의 `agent_toolset/configs[].enabled` | 별도 시스템. `tool_permissions`가 아니라 gateway tool wiring과 tool enablement로 제어          |
+| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → `executeDelegate`                              | 구현됨                                                                                         |
+| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                                      | UI 있음. 실데이터 연결은 별도 런타임 검증 필요                                                 |
 
 ## 현재 config.yaml agents (정리 필요)
 
@@ -414,58 +415,13 @@ curl -s http://localhost:3847/api/agents  # 3개만
 
 ### Task 3: agent_create → config.yaml + persona + 핫리로드
 
-> Eng: "inline yaml read/write가 더 단순 (옵션 B). reloadPersona(agentId)로 단일 에이전트 리로드."
+> 현재 구현 기준으로 agent 생성/갱신은 direct file I/O 스케치가 아니라 managed-agent runtime-sync helper를 통해 처리해야 한다.
 
-**수정** (`gateway-tool-executor.ts:587-606`):
+구현 메모:
 
-```typescript
-case 'agent_create': {
-  if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
-  const createArgs = input as { id: string; name: string; model: string; tier: number; system?: string };
-
-  // 1. config.yaml에 추가 (inline yaml — Eng #10)
-  const configPath = join(homedir(), '.mama', 'config.yaml');
-  const config = yamlLoad(readFileSync(configPath, 'utf-8')) as Record<string, any>;
-  if (!config.multi_agent?.agents) config.multi_agent = { ...config.multi_agent, agents: {} };
-  if (config.multi_agent.agents[createArgs.id]) {
-    return { success: false, error: `Agent '${createArgs.id}' already exists in config` };
-  }
-  config.multi_agent.agents[createArgs.id] = {
-    name: createArgs.name,
-    display_name: createArgs.name,
-    model: createArgs.model,
-    tier: createArgs.tier,
-    persona_file: `~/.mama/personas/${createArgs.id}.md`,
-    enabled: true,
-    can_delegate: false,
-  };
-  writeFileSync(configPath, yamlDump(config, { indent: 2, lineWidth: 120, noRefs: true }));
-
-  // 2. persona 파일 생성
-  const personaDir = join(homedir(), '.mama', 'personas');
-  if (!existsSync(personaDir)) mkdirSync(personaDir, { recursive: true });
-  writeFileSync(
-    join(personaDir, `${createArgs.id}.md`),
-    createArgs.system || `# ${createArgs.name}\n\nYou are ${createArgs.name}.`,
-    'utf-8'
-  );
-
-  // 3. 핫리로드 — reloadPersona (Eng #1: 전체 updateConfig 대신 단일 리로드)
-  if (this.agentProcessManager) {
-    this.agentProcessManager.reloadPersona(createArgs.id);
-  }
-
-  // 4. agent_versions 감사 기록
-  const createdV = createAgentVersion(this.sessionsDb, {
-    agent_id: createArgs.id,
-    snapshot: { model: createArgs.model, tier: createArgs.tier, name: createArgs.name },
-    persona_text: createArgs.system ?? null,
-    change_note: 'Created via agent_create tool',
-  });
-
-  return { success: true, id: createArgs.id, version: createdV.version };
-}
-```
+- `gateway-tool-executor.ts`는 `createManagedAgentRuntime()` / `updateManagedAgentRuntime()` 같은 runtime-sync helper에 위임해야 한다.
+- config/persona persistence는 runtime-sync helper의 책임이고, gateway는 orchestration 계층만 담당한다.
+- `agentProcessManager.reloadPersona(agentId)`는 persistence 대체물이 아니라, helper가 저장을 마친 뒤 런타임 반영을 돕는 orchestration call로만 사용한다.
 
 **검증:**
 

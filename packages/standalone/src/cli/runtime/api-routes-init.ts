@@ -122,6 +122,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         agent_version: agentVersion,
         type: 'task_start',
         input_summary: prompt.slice(0, 200),
+        run_id: session?.id,
+        execution_status: 'started',
+        trigger_reason: 'system_run',
       });
       if (session) {
         validationService?.recordRun(session.id, { activityId: startRow.id });
@@ -147,6 +150,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             output_summary: result?.response?.slice(0, 500),
             duration_ms: durationMs,
             tokens_used: tokensUsed,
+            run_id: session?.id,
+            execution_status: 'completed',
+            trigger_reason: 'system_run',
           });
           completeActivityId = completeRow.id;
           if (session) {
@@ -197,6 +203,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
             input_summary: prompt.slice(0, 200),
             error_message: err instanceof Error ? err.message : String(err),
             duration_ms: durationMs,
+            run_id: session?.id,
+            execution_status: 'failed',
+            trigger_reason: 'system_run',
           });
           errorActivityId = errorRow.id;
           if (session) {
@@ -470,6 +479,9 @@ This saves resources. Only compile when there is genuinely new information to do
             agent_version: auditVersion,
             type: 'audit_start',
             input_summary: 'Hourly system audit',
+            run_id: auditSession?.id,
+            execution_status: 'started',
+            trigger_reason: 'audit',
           });
           if (auditSession) {
             validationService?.recordRun(auditSession.id, { activityId: startRow.id });
@@ -495,6 +507,9 @@ This saves resources. Only compile when there is genuinely new information to do
               type: 'audit_complete',
               input_summary: 'Hourly system audit',
               duration_ms: auditDuration,
+              run_id: auditSession?.id,
+              execution_status: 'completed',
+              trigger_reason: 'audit',
             });
             activityRowId = activityRow.id;
             if (auditSession) {
@@ -536,6 +551,9 @@ This saves resources. Only compile when there is genuinely new information to do
               input_summary: 'Hourly system audit failed',
               error_message: err instanceof Error ? err.message : String(err),
               duration_ms: auditDuration,
+              run_id: auditSession?.id,
+              execution_status: 'failed',
+              trigger_reason: 'audit',
             });
             failActivityId = failRow.id;
             if (auditSession) {

@@ -55,11 +55,17 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         tools_called: ['Read', 'Bash'],
         duration_ms: 2300,
         details: { items: [{ input: 'file.mov', result: 'pass' }] },
+        run_id: 'vs-123',
+        execution_status: 'completed',
+        trigger_reason: 'delegate_run',
       });
       expect(row.id).toBeGreaterThan(0);
       expect(row.type).toBe('task_complete');
       expect(JSON.parse(row.details!).items).toHaveLength(1);
       expect(JSON.parse(row.tools_called!)).toEqual(['Read', 'Bash']);
+      expect(row.run_id).toBe('vs-123');
+      expect(row.execution_status).toBe('completed');
+      expect(row.trigger_reason).toBe('delegate_run');
     });
 
     it('AC #5: retrieves activity by agent_id newest first', () => {

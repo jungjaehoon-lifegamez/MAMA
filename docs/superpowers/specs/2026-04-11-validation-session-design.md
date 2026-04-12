@@ -389,6 +389,11 @@ Baseline selection order:
 3. last completed validation session
 4. otherwise `inconclusive`
 
+All three lookup steps must be restricted to the same `(agent_id, trigger_type)` pair.
+This is required because persisted validation state is keyed by `agent_id + trigger_type`,
+so `delegate_run`, `agent_test`, `system_run`, and `audit` must not borrow baselines from
+one another.
+
 This baseline is used for:
 
 - delta calculations
@@ -555,8 +560,17 @@ Returns:
 
 ### Approval / improvement actions
 
-- `POST /api/agents/:id/validation/approve`
+- `POST /api/agents/:id/validation/approve?session_id=vs-123`
 - `POST /api/agents/:id/validation/request-improvement`
+
+Approval parameters:
+
+- `session_id`: required. The validation session id being approved as the baseline for
+  this agent/trigger track.
+
+Example:
+
+- `POST /api/agents/wiki-agent/validation/approve?session_id=vs-123`
 
 ### Comparison
 

@@ -40,12 +40,27 @@ const SYSTEM_AGENT_IDS = new Set([
   'wiki-agent',
 ]);
 
+const CLAUDE_MODEL_OPTIONS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
+const CODEX_MODEL_OPTIONS = ['gpt-5.3-codex', 'gpt-5.4-mini'];
+const GEMINI_MODEL_OPTIONS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
+
+function getModelsForBackend(backend: string): string[] {
+  if (backend === 'codex-mcp' || backend === 'codex') {
+    return CODEX_MODEL_OPTIONS;
+  }
+  if (backend === 'gemini') {
+    return GEMINI_MODEL_OPTIONS;
+  }
+  return CLAUDE_MODEL_OPTIONS;
+}
+
 export class AgentsModule {
   private container: HTMLElement | null = null;
   private initialized = false;
   private agents: AgentWithVersion[] = [];
   private selectedAgent: AgentWithVersion | null = null;
   private activeTab: DetailTab = 'config';
+  private detailRequestId = 0;
 
   init(): void {
     if (this.initialized) return;
@@ -233,13 +248,20 @@ export class AgentsModule {
   // ── Detail View ─────────────────────────────────────────────────────────
 
   private async showDetail(agentId: string, desiredTab?: DetailTab): Promise<void> {
+    const requestId = ++this.detailRequestId;
     try {
       const agent = await API.getAgent(agentId);
+      if (requestId !== this.detailRequestId) {
+        return;
+      }
       this.selectedAgent = agent;
       this.activeTab = desiredTab ?? 'config';
       this.renderDetail();
       // Fetch validation to include in page context
       const valData = await API.getValidationSummary(agentId).catch(() => ({ summary: null }));
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== agentId) {
+        return;
+      }
       const vs = valData.summary as Record<string, unknown> | null;
       reportPageContext(
         'agents',
@@ -353,12 +375,7 @@ export class AgentsModule {
 
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
     const backend = String(a.backend || 'claude');
-    const isCodexBackend = backend === 'codex-mcp' || backend === 'codex';
-    const modelOptions = (
-      isCodexBackend
-        ? ['gpt-5.3-codex', 'gpt-5.4-mini']
-        : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
-    )
+    const modelOptions = getModelsForBackend(backend)
       .map((m) => `<option value="${m}" ${a.model === m ? 'selected' : ''}>${m}</option>`)
       .join('');
 
@@ -366,7 +383,7 @@ export class AgentsModule {
       .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
       .join('');
 
-    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', backend]))
+    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', 'gemini', backend]))
       .map((b) => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`)
       .join('');
 
@@ -410,10 +427,7 @@ export class AgentsModule {
     // Backend change → update model options
     el.querySelector('#cfg-backend')?.addEventListener('change', () => {
       const newBackend = (el.querySelector('#cfg-backend') as HTMLSelectElement).value;
-      const models =
-        newBackend === 'codex-mcp' || newBackend === 'codex'
-          ? ['gpt-5.3-codex', 'gpt-5.4-mini']
-          : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
+      const models = getModelsForBackend(newBackend);
       const modelSelect = el.querySelector('#cfg-model') as HTMLSelectElement;
       modelSelect.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join('');
     });
@@ -1015,6 +1029,7 @@ export class AgentsModule {
   }
 
   showList(): void {
+    this.detailRequestId++;
     this.selectedAgent = null;
     this.loadAgents();
   }

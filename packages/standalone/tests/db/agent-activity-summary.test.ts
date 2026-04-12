@@ -53,6 +53,20 @@ describe('getActivitySummary', () => {
     expect(a1.consecutive_errors).toBe(2);
   });
 
+  it('counts only terminal outcomes in aggregate totals and rates', () => {
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_complete', duration_ms: 1000 });
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'audit_failed', duration_ms: 2000 });
+
+    const summary = getActivitySummary(db, '2000-01-01');
+    const a1 = summary.find((s) => s.agent_id === 'a1')!;
+    expect(a1.total).toBe(2);
+    expect(a1.completed).toBe(1);
+    expect(a1.errors).toBe(1);
+    expect(a1.error_rate).toBe(50);
+    expect(a1.avg_duration_ms).toBe(1500);
+  });
+
   it('ignores non-terminal task_start rows when computing consecutive errors', () => {
     logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
     logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_error', error_message: 'e1' });
