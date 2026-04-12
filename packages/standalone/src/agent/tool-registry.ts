@@ -359,7 +359,7 @@ register({
   description:
     'Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.',
   category: 'os_management',
-  params: 'route, params?: {id?, tab?, compareV1?, compareV2?}',
+  params: 'route, params?: {id?, tab?, compareV1?, compareV2?, path?}',
   viewerOnly: true,
 });
 register({

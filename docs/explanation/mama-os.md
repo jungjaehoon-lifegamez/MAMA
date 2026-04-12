@@ -7,13 +7,20 @@
 
 ## What is MAMA OS?
 
-MAMA OS is the **unified web interface** for MAMA Standalone that combines three powerful features into a single, mobile-optimized experience:
+MAMA OS is the **unified web interface** for MAMA Standalone. The current Viewer is organized as
+seven tabs plus one global chat overlay:
 
-1. **Graph Viewer** - Visualize your decision evolution as an interactive network
-2. **Mobile Chat** - Chat with Claude Code from any device with voice input and TTS
-3. **Memory Management** - Browse, search, and manage your MAMA decisions
+1. **Dashboard** - System and project overview
+2. **Memory** - Decision graph and memory search
+3. **Feed** - Connector activity stream
+4. **Wiki** - Obsidian-backed document browsing
+5. **Agents** - Managed-agent config, activity, validation, and history
+6. **Logs** - Runtime and daemon log inspection
+7. **Settings** - Gateway and runtime configuration
+8. **Floating Chat** - Claude Code chat shell available from any tab
 
-Think of it as your **personal AI operating system** - accessible from any browser, optimized for mobile, and designed to keep you connected to your AI assistant wherever you are.
+Think of it as your **personal AI operating system** - accessible from any browser, optimized for
+mobile, and designed to keep you connected to your AI assistant wherever you are.
 
 **Access:** `http://localhost:3847/viewer` (when MAMA Standalone server is running)
 
@@ -23,13 +30,16 @@ Think of it as your **personal AI operating system** - accessible from any brows
 
 ### The Problem
 
-Before MAMA OS, you had three separate tools:
+Before MAMA OS, you had several separate tools:
 
 - **Graph Viewer** (v1.4) - Desktop-only decision visualization
-- **Mobile Chat** (v1.5) - Basic chat interface for remote access
+- **Mobile Chat** (v1.5) - Remote chat isolated from the rest of the UI
+- **Logs/admin surfaces** - Operational visibility living elsewhere
 - **MCP Tools** - Command-line only memory management
 
-Each lived in isolation. You couldn't chat while viewing the graph. You couldn't save decisions from mobile. You couldn't see your memory while chatting.
+Each lived in isolation. You couldn't inspect agents while chatting. You couldn't move between
+wiki, feed, memory, and logs with one persistent shell. You couldn't keep the same conversational
+surface open while navigating the rest of the Viewer.
 
 ### The Solution
 

@@ -55,7 +55,7 @@ Call tools via JSON block:
 - **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
 - **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
 - **viewer_state**() — Get current viewer state (current route, selected item, pageData). Call after navigation to verify which item and tab are actually open.
-- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.
+- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?, path?}) — Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.
 - **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
 - **agent_test**(agent_id, sample_count?, test_data?) — Test agent with connector data. Auto-scores pass/fail ratio.
 

@@ -17,6 +17,10 @@ This isn't a memory problem. It's an intelligence problem.
 
 MAMA OS is a local daemon that connects to your apps, reads everything continuously, and turns scattered records into organized knowledge — then delivers actionable briefings so you can make better decisions faster.
 
+The browser viewer is the live operating surface for that work: `Dashboard`, `Memory`, `Feed`,
+`Wiki`, `Agents`, `Logs`, and `Settings`, with a global chat shell layered on top instead of a
+separate chat tab.
+
 **What the knowledge agents do:**
 
 - **Read everything** — 15 connectors poll Slack, Gmail, Trello, Obsidian, and more. Every day, every channel.
@@ -154,7 +158,9 @@ npx @jungjaehoon/mama-os init
 mama start   # starts daemon at localhost:3847
 ```
 
-Web viewer at `http://localhost:3847`. Connects to Discord, Slack, Telegram.
+Web viewer at `http://localhost:3847/viewer`. The current Viewer ships `Dashboard`, `Memory`,
+`Feed`, `Wiki`, `Agents`, `Logs`, and `Settings`; chat opens from the floating shell instead of a
+dedicated tab. Connects to Discord, Slack, Telegram.
 
 > **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.
 
@@ -218,4 +224,4 @@ MIT
 
 ---
 
-_Last updated: 2026-04-10_
+_Last updated: 2026-04-12_
