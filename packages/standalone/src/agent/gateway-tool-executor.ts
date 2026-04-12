@@ -2585,28 +2585,29 @@ export class GatewayToolExecutor {
 
     const { agent_id } = input;
     const sample_count = Number.parseInt(String(input.sample_count ?? 2), 10);
+    const resolvedAgentId = this.resolveManagedAgentId(agent_id);
     if (!Number.isFinite(sample_count) || sample_count < 1) {
       securityLogger.warn('[Agent test] Invalid sample_count received', {
-        agent_id,
+        agent_id: resolvedAgentId,
         sample_count: input.sample_count ?? null,
       });
       return {
         success: false,
-        error: `Invalid sample_count for '${agent_id}': ${String(input.sample_count)}. Must be >= 1.`,
+        error: `Invalid sample_count for '${resolvedAgentId}': ${String(input.sample_count)}. Must be >= 1.`,
       } as GatewayToolResult;
     }
 
     // Concurrency guard
-    if (this.testInFlight.has(agent_id)) {
+    if (this.testInFlight.has(resolvedAgentId)) {
       return { success: false, error: 'test_already_running' } as GatewayToolResult;
     }
 
-    const promise = this._runAgentTest(agent_id, sample_count, input.test_data);
-    this.testInFlight.set(agent_id, promise);
+    const promise = this._runAgentTest(resolvedAgentId, sample_count, input.test_data);
+    this.testInFlight.set(resolvedAgentId, promise);
     try {
       return await promise;
     } finally {
-      this.testInFlight.delete(agent_id);
+      this.testInFlight.delete(resolvedAgentId);
     }
   }
 

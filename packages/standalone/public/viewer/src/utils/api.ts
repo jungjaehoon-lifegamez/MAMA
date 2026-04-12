@@ -156,9 +156,10 @@ export interface ApiAgentToolsConfig {
 }
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+export type ApiValidationTriggerType = 'agent_test' | 'delegate_run' | 'system_run' | 'audit';
 
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   model?: string;
   effort?: EffortLevel;
   tools?: ApiAgentToolsConfig;
@@ -952,16 +953,22 @@ export class API {
   // =============================================
 
   static async getValidationSummary(
-    agentId: string
+    agentId: string,
+    triggerType: ApiValidationTriggerType = 'agent_test'
   ): Promise<{ summary: Record<string, unknown> | null }> {
-    return this.get(`/api/agents/${encodeURIComponent(agentId)}/validation/summary`);
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/summary?trigger_type=${encodeURIComponent(triggerType)}`
+    );
   }
 
   static async getValidationHistory(
     agentId: string,
-    limit = 50
+    limit = 50,
+    triggerType: ApiValidationTriggerType = 'agent_test'
   ): Promise<{ history: Array<Record<string, unknown>> }> {
-    return this.get(`/api/agents/${encodeURIComponent(agentId)}/validation/history?limit=${limit}`);
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/history?limit=${limit}&trigger_type=${encodeURIComponent(triggerType)}`
+    );
   }
 
   static async getValidationSessionDetail(

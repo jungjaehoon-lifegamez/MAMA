@@ -89,6 +89,16 @@ export class DashboardModule {
   private selectedProject: string | null = null;
   private selectedConnector: string | null = null;
 
+  private getCurrentPageType(): 'dashboard-overview' | 'dashboard-project' | 'dashboard-connector' {
+    if (this.selectedConnector) {
+      return 'dashboard-connector';
+    }
+    if (this.selectedProject) {
+      return 'dashboard-project';
+    }
+    return 'dashboard-overview';
+  }
+
   init(): void {
     this.container = document.getElementById('dashboard-slots');
     if (!this.container) return;
@@ -168,7 +178,7 @@ export class DashboardModule {
   }): void {
     if (!this.container) return;
     reportPageContext('dashboard', {
-      pageType: 'dashboard-overview',
+      pageType: this.getCurrentPageType(),
       selectedProject: this.selectedProject,
       selectedConnector: this.selectedConnector,
       noticeCount: data.notices.length,
@@ -291,11 +301,10 @@ export class DashboardModule {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
             this.selectedProject = null;
-            this.selectedConnector = null;
             reportPageContext('dashboard', {
-              pageType: 'dashboard-overview',
+              pageType: this.getCurrentPageType(),
               selectedProject: null,
-              selectedConnector: null,
+              selectedConnector: this.selectedConnector,
             });
           } else {
             detail.style.display = '';
@@ -376,11 +385,10 @@ export class DashboardModule {
           if (isOpen) {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
-            this.selectedProject = null;
             this.selectedConnector = null;
             reportPageContext('dashboard', {
-              pageType: 'dashboard-overview',
-              selectedProject: null,
+              pageType: this.getCurrentPageType(),
+              selectedProject: this.selectedProject,
               selectedConnector: null,
             });
           } else {

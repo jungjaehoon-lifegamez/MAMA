@@ -1006,6 +1006,43 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           });
         }
       });
+
+      it('should resolve agent_test aliases to canonical agent ids', async () => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+        createAgentVersion(db, {
+          agent_id: 'wiki-agent',
+          snapshot: JSON.stringify({ model: 'claude-sonnet-4-6', tier: 2 }),
+          persona_text: 'You are Wiki Agent.',
+          change_note: 'Initial version',
+        });
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setSessionsDb(db);
+        executor.setAgentContext(createViewerContext());
+        const { processManager, delegationManager } = createDelegationHarness([
+          { success: true, data: { response: 'OK' } },
+        ]);
+        executor.setAgentProcessManager(processManager);
+        executor.setDelegationManager(delegationManager);
+
+        const result = await executor.execute('agent_test', {
+          agent_id: 'wiki',
+          test_data: [{ input: 'case-1', expected: 'OK' }],
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          data: expect.objectContaining({
+            agent_id: 'wiki-agent',
+          }),
+        });
+
+        const testRun = db
+          .prepare("SELECT agent_id FROM agent_activity WHERE type = 'test_run' LIMIT 1")
+          .get() as { agent_id: string };
+        expect(testRun.agent_id).toBe('wiki-agent');
+      });
     });
 
     describe('load_checkpoint tool', () => {

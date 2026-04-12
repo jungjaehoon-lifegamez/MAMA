@@ -593,18 +593,15 @@ export class AgentLoop {
   }
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
-    if (!options?.agentContext && !options?.source && !options?.channelId) {
+    if (!options?.agentContext) {
       return null;
     }
     return {
-      agentContext: options?.agentContext ?? null,
-      agentId: options?.agentContext
-        ? options.agentContext.source === 'viewer'
-          ? 'os-agent'
-          : options.agentContext.roleName
-        : undefined,
-      source: options?.source,
-      channelId: options?.channelId,
+      agentContext: options.agentContext,
+      agentId:
+        options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
+      source: options.source,
+      channelId: options.channelId,
     };
   }
 

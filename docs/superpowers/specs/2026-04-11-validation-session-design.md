@@ -541,7 +541,7 @@ Each version row must show:
 
 ### Validation summary
 
-- `GET /api/agents/:id/validation/summary`
+- `GET /api/agents/:id/validation/summary?trigger_type=agent_test|delegate_run|system_run|audit`
 
 Returns:
 
@@ -550,15 +550,23 @@ Returns:
 - top metrics
 - latest recommendation
 
+Because `agent_validation_state` and baseline approval are keyed by
+`(agent_id, trigger_type)`, callers must scope summary reads by `trigger_type`.
+Current viewer usage should request the explicit validation track it is rendering
+(for example `agent_test` in the current Validation tab).
+
 ### Validation history
 
-- `GET /api/agents/:id/validation/history`
+- `GET /api/agents/:id/validation/history?trigger_type=agent_test|delegate_run|system_run|audit`
 
 Returns:
 
 - version timeline
 - version performance summary
 - baseline markers
+
+History is also trigger-scoped for the same reason: `delegate_run` and `agent_test`
+must not share baseline or approval state implicitly.
 
 ### Session detail
 

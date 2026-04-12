@@ -15,6 +15,7 @@ import { showToast, escapeAttr, escapeHtml } from '../utils/dom.js';
 import { reportPageContext } from '../utils/ui-commands.js';
 
 const logger = new DebugLogger('Agents');
+const DEFAULT_VALIDATION_TRIGGER = 'agent_test' as const;
 
 const C = {
   pri: '#1A1A1A',
@@ -188,7 +189,9 @@ export class AgentsModule {
 
       void Promise.all(
         this.agents.map((a) =>
-          API.getValidationSummary(a.id ?? '').catch(() => ({ summary: null }))
+          API.getValidationSummary(a.id ?? '', DEFAULT_VALIDATION_TRIGGER).catch(() => ({
+            summary: null,
+          }))
         )
       ).then((valResults) => {
         if (requestId !== this.listRequestId) {
@@ -389,7 +392,9 @@ export class AgentsModule {
       this.activeTab = desiredTab ?? 'config';
       this.renderDetail();
       // Fetch validation to include in page context
-      const valData = await API.getValidationSummary(agentId).catch(() => ({ summary: null }));
+      const valData = await API.getValidationSummary(agentId, DEFAULT_VALIDATION_TRIGGER).catch(
+        () => ({ summary: null })
+      );
       if (requestId !== this.detailRequestId || this.selectedAgent?.id !== agentId) {
         return;
       }
@@ -837,8 +842,8 @@ export class AgentsModule {
 
     try {
       const [summaryRes, historyRes] = await Promise.all([
-        API.getValidationSummary(agentId),
-        API.getValidationHistory(agentId, 30),
+        API.getValidationSummary(agentId, DEFAULT_VALIDATION_TRIGGER),
+        API.getValidationHistory(agentId, 30, DEFAULT_VALIDATION_TRIGGER),
       ]);
       if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
         return;
@@ -1119,7 +1124,10 @@ export class AgentsModule {
         approveEl.addEventListener('click', async () => {
           try {
             await API.approveValidationSession(agentId, latestId);
-            const refreshedSummary = await API.getValidationSummary(agentId).catch(() => ({
+            const refreshedSummary = await API.getValidationSummary(
+              agentId,
+              DEFAULT_VALIDATION_TRIGGER
+            ).catch(() => ({
               summary: null,
             }));
             const refreshedValidation = refreshedSummary.summary as Record<string, unknown> | null;
@@ -1149,8 +1157,13 @@ export class AgentsModule {
 
   private async renderHistoryTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
     el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading versions...</div>`;
+    const requestId = this.detailRequestId;
+    const expectedAgentId = a.id ?? '';
     try {
       const { versions } = await API.getAgentVersions(a.id ?? '');
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       if (!versions.length) {
         el.innerHTML = `<div style="color:${C.ter};font-size:12px;">No version history.</div>`;
         return;
@@ -1166,8 +1179,14 @@ export class AgentsModule {
           </div>`
         )
         .join('');
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       el.innerHTML = `<div>${rows}</div>`;
     } catch {
+      if (this.detailRequestId !== requestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       el.innerHTML = `<div style="color:${C.red};font-size:12px;">Failed to load versions.</div>`;
     }
   }
@@ -1233,7 +1252,7 @@ export class AgentsModule {
    * Opens agent detail and optionally switches to a specific tab.
    */
   async navigateTo(agentId: string, tab?: string): Promise<void> {
-    const tryNav = async () => {
+    const tryNav = async (): Promise<boolean> => {
       const agent = this.agents.find((a) => a.id === agentId);
       if (agent) {
         const desiredTab =
@@ -1241,13 +1260,25 @@ export class AgentsModule {
             ? (tab as DetailTab)
             : undefined;
         await this.showDetail(agentId, desiredTab);
+        return true;
       }
+      return false;
     };
-    if (this.agents.length > 0) {
-      await tryNav();
-    } else {
-      await this.loadAgents();
-      await tryNav();
+    let navigated = await tryNav();
+    if (!navigated) {
+      try {
+        await this.loadAgents();
+      } catch (error) {
+        logger.error(`Failed to load agents while navigating to ${agentId}`, error);
+        showToast('Failed to load agents');
+        return;
+      }
+      navigated = await tryNav();
+    }
+    if (!navigated) {
+      logger.warn(`Agent not found during navigation: ${agentId}`);
+      this.showList();
+      showToast('Agent not found');
     }
   }
 

@@ -285,9 +285,15 @@ export class MessageRouter {
           : allAgents.slice(0, VIEWER_CONTEXT_AGENT_LIST_LIMIT);
       for (const a of shownAgents) {
         const parts = [`  - ${sanitizeForPrompt(String(a.name || a.id || 'unknown'))}`];
-        if (a.validation) parts.push(`validation:${sanitizeForPrompt(String(a.validation))}`);
-        if (a.enabled === false) parts.push('(disabled)');
-        if (a.system === true) parts.push('(system)');
+        if (a.validation) {
+          parts.push(`validation:${sanitizeForPrompt(String(a.validation))}`);
+        }
+        if (a.enabled === false) {
+          parts.push('(disabled)');
+        }
+        if (a.system === true) {
+          parts.push('(system)');
+        }
         lines.push(parts.join(' '));
       }
       const totalAgents = allAgents.length;
@@ -320,7 +326,9 @@ export class MessageRouter {
           `agent: ${sanitizeForPrompt(String(agent.name))} (${sanitizeForPrompt(String(agent.id))}) v${sanitizeForPrompt(String(agent.version))} tier:${sanitizeForPrompt(String(agent.tier))} model:${sanitizeForPrompt(String(agent.model))}`
         );
       }
-      if (data.activeTab) lines.push(`active_tab: ${sanitizeForPrompt(String(data.activeTab))}`);
+      if (data.activeTab) {
+        lines.push(`active_tab: ${sanitizeForPrompt(String(data.activeTab))}`);
+      }
       const val = data.validation as Record<string, unknown> | null;
       if (val) {
         lines.push(
@@ -1626,7 +1634,9 @@ INSTRUCTION:
     durationMs?: number,
     errorMessage?: string
   ): void {
-    if (!this.sessionsDb) return;
+    if (!this.sessionsDb) {
+      return;
+    }
     try {
       const ver = getLatestVersion(this.sessionsDb, agentId);
       logActivity(this.sessionsDb, {

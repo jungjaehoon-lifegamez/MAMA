@@ -36,6 +36,7 @@ import {
   approveValidationSession,
   getAgentValidationState,
 } from '../validation/store.js';
+import type { ValidationTriggerType } from '../validation/types.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -102,6 +103,12 @@ const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model
 const supportedManagedBackends = ['claude', 'codex', 'codex-mcp', 'gemini'];
 const isCodexFamilyBackend = (backend: string): boolean =>
   backend === 'codex' || backend === 'codex-mcp';
+const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
+  'agent_test',
+  'delegate_run',
+  'system_run',
+  'audit',
+]);
 const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
@@ -567,9 +574,23 @@ async function readBodyOrRespond(
     return await readBody(req);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const statusCode = message === 'Invalid JSON' ? 400 : 500;
+    const statusCode =
+      message === 'Invalid JSON'
+        ? 400
+        : message.includes('Request body too large (max 1MB)')
+          ? 413
+          : 500;
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: message === 'Invalid JSON' ? 'Invalid JSON' : message }));
+    res.end(
+      JSON.stringify({
+        error:
+          message === 'Invalid JSON'
+            ? 'Invalid JSON'
+            : message.includes('Request body too large (max 1MB)')
+              ? 'Request body too large (max 1MB)'
+              : message,
+      })
+    );
     return null;
   }
 }
@@ -1035,6 +1056,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return fallback;
     }
     return Math.min(parsed, max);
+  };
+  const parseValidationTriggerType = (value: string | null): ValidationTriggerType | null => {
+    if (!value) {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase() as ValidationTriggerType;
+    return VALIDATION_TRIGGER_TYPES.has(normalized) ? normalized : null;
   };
 
   return async function graphHandler(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -1666,8 +1694,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const agentId = decodeURIComponent(parts[3]);
       const v1 = parseInt(parts[5], 10);
       const v2 = parseInt(parts[7], 10);
-      if (options.sessionsDb) handleCompareVersions(res, agentId, v1, v2, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleCompareVersions(res, agentId, v1, v2, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1677,8 +1706,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET /api/agents/:id/versions — version history
     if (pathname.match(/^\/api\/agents\/[^/]+\/versions$/) && req.method === 'GET') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
-      if (options.sessionsDb) handleListVersions(res, agentId, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleListVersions(res, agentId, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1694,8 +1724,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
       const from = params.get('from') || '2020-01-01';
       const to = params.get('to') || '2099-12-31';
-      if (options.sessionsDb) handleGetAgentMetrics(res, agentId, from, to, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleGetAgentMetrics(res, agentId, from, to, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1709,8 +1740,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const qIdx = rawUrl.indexOf('?');
       const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
       const limit = parsePositiveInt(params.get('limit'), 20, 100);
-      if (options.sessionsDb) handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
-      else {
+      if (options.sessionsDb) {
+        handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1720,8 +1752,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/agents/:id/archive — archive agent
     if (pathname.match(/^\/api\/agents\/[^/]+\/archive$/) && req.method === 'POST') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
-      if (options.sessionsDb) handleArchiveAgent(res, agentId, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleArchiveAgent(res, agentId, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1730,11 +1763,17 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // ── Validation API ──────────────────────────────────────────────────
 
-    // Route: GET /api/agents/:id/validation/summary
+    // Route: GET /api/agents/:id/validation/summary?trigger_type=
     if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/summary$/) && req.method === 'GET') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) {
-        const summary = getValidationSummary(options.sessionsDb, agentId);
+        const triggerType = parseValidationTriggerType(params.get('trigger_type'));
+        if (!triggerType) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trigger_type required' }));
+          return true;
+        }
+        const summary = getValidationSummary(options.sessionsDb, agentId, triggerType);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ summary }));
       } else {
@@ -1744,7 +1783,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET /api/agents/:id/validation/history
+    // Route: GET /api/agents/:id/validation/history?trigger_type=
     if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/history$/) && req.method === 'GET') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) {
@@ -1752,7 +1791,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         const qIdx = rawUrl.indexOf('?');
         const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
         const limit = parsePositiveInt(params.get('limit'), 50, 200);
-        const history = listValidationHistory(options.sessionsDb, agentId, limit);
+        const triggerType = parseValidationTriggerType(params.get('trigger_type'));
+        if (!triggerType) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trigger_type required' }));
+          return true;
+        }
+        const history = listValidationHistory(options.sessionsDb, agentId, limit, triggerType);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ history }));
       } else {
@@ -1811,9 +1856,16 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             res.end(JSON.stringify({ error: 'session does not belong to requested agent' }));
             return true;
           }
-          approveValidationSession(options.sessionsDb, sessionId);
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: true, approved_session: sessionId }));
+          try {
+            approveValidationSession(options.sessionsDb, sessionId);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, approved_session: sessionId }));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const statusCode = /not found|required|invalid/i.test(message) ? 400 : 500;
+            res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: message }));
+          }
         }
       } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -1917,8 +1969,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
       const since =
         params.get('since') || new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-      if (options.sessionsDb) handleGetActivitySummary(res, options.sessionsDb, since);
-      else {
+      if (options.sessionsDb) {
+        handleGetActivitySummary(res, options.sessionsDb, since);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1928,8 +1981,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET /api/agents — list all agents
     if (pathname === '/api/agents' && req.method === 'GET') {
       const config = loadMAMAConfig();
-      if (options.sessionsDb) handleGetAgents(res, config, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleGetAgents(res, config, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1942,7 +1996,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       if (!body) {
         return true;
       }
-      if (options.sessionsDb)
+      if (options.sessionsDb) {
         await handleCreateAgent(res, body, options.sessionsDb, {
           loadConfig: async () => loadMAMAConfig(),
           saveConfig: async (config) =>
@@ -1950,7 +2004,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
           restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
         });
-      else {
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1961,8 +2015,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'GET') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       const config = loadMAMAConfig();
-      if (options.sessionsDb) handleGetAgent(res, agentId, config, options.sessionsDb);
-      else {
+      if (options.sessionsDb) {
+        handleGetAgent(res, agentId, config, options.sessionsDb);
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }
@@ -1976,7 +2031,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       if (!body) {
         return true;
       }
-      if (options.sessionsDb)
+      if (options.sessionsDb) {
         await handleUpdateAgent(res, agentId, body, options.sessionsDb, {
           loadConfig: async () => loadMAMAConfig(),
           saveConfig: async (config) =>
@@ -1984,7 +2039,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
           restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
         });
-      else {
+      } else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
       }

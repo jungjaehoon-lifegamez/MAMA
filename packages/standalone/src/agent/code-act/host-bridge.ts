@@ -410,7 +410,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
     ],
     returnType:
-      '{ data: { test_run_id?: number | null; agent_id: string; results: Array<Record<string, unknown>>; auto_score: number; duration_ms: number } }',
+      '{ data: { test_run_id?: number | null; agent_id: string; results: Array<Record<string, unknown>>; auto_score: number; duration_ms: number; validation_session_id?: string | null; warning?: string | null } }',
     category: 'os',
   },
   {

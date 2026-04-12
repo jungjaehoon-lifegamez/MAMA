@@ -19,6 +19,7 @@ import {
   type AgentValidationStateRow,
   type UpdateValidationStateInput,
   type ValidationSessionDetail,
+  type ValidationTriggerType,
 } from './types.js';
 
 // ── Table Init ──────────────────────────────────────────────────────────────
@@ -148,8 +149,21 @@ export function saveValidationMetric(db: SQLiteDatabase, input: SaveValidationMe
 
 export function getValidationSummary(
   db: SQLiteDatabase,
-  agentId: string
+  agentId: string,
+  triggerType?: ValidationTriggerType
 ): ValidationSessionRow | null {
+  if (triggerType) {
+    return (
+      (db
+        .prepare(
+          `SELECT * FROM validation_sessions
+           WHERE agent_id = ? AND trigger_type = ?
+           ORDER BY started_at DESC
+           LIMIT 1`
+        )
+        .get(agentId, triggerType) as ValidationSessionRow | undefined) ?? null
+    );
+  }
   return (
     (db
       .prepare(
@@ -167,8 +181,19 @@ export function getValidationSummary(
 export function listValidationHistory(
   db: SQLiteDatabase,
   agentId: string,
-  limit = 50
+  limit = 50,
+  triggerType?: ValidationTriggerType
 ): ValidationSessionRow[] {
+  if (triggerType) {
+    return db
+      .prepare(
+        `SELECT * FROM validation_sessions
+         WHERE agent_id = ? AND trigger_type = ?
+         ORDER BY started_at DESC
+         LIMIT ?`
+      )
+      .all(agentId, triggerType, limit) as ValidationSessionRow[];
+  }
   return db
     .prepare(
       `SELECT * FROM validation_sessions
