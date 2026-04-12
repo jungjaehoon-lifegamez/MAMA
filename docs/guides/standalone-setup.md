@@ -438,7 +438,7 @@ Gateways:
 
 HTTP Server: http://localhost:3847
   Graph Viewer: http://localhost:3847/viewer
-  Mobile Chat: http://localhost:3847/viewer (Chat tab)
+  Chat Shell: http://localhost:3847/viewer (floating overlay)
 ```
 
 ### Step 3: Test the Agent
@@ -453,7 +453,7 @@ HTTP Server: http://localhost:3847
 **If no gateway is configured:**
 
 1. Open browser: http://localhost:3847/viewer
-2. Click "Chat" tab
+2. Open the floating chat button in the viewer shell
 3. Send a message in the web interface
 4. Agent responds in real-time via WebSocket
 
@@ -635,7 +635,7 @@ open http://localhost:3847/viewer
 **MAMA OS features:**
 
 - **Memory tab** - Graph viewer for decision evolution
-- **Chat tab** - Mobile-optimized chat interface with voice input
+- **Floating chat shell** - Mobile-optimized chat overlay with voice input
 
 ---
 

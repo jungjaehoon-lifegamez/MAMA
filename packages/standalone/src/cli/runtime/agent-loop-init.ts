@@ -25,6 +25,7 @@ import type { AgentLoopClient } from './types.js';
 import type { MetricsStore } from '../../observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
+import { getLatestVersion, upsertMetrics } from '../../db/agent-store.js';
 import { syncBuiltinSkills } from './utilities.js';
 
 // __dirname is available globally in CJS output (NodeNext compiles to CommonJS)
@@ -81,18 +82,24 @@ export function initMainAgentLoop(
 
   // OS Agent mode (Viewer context only)
   if (options?.osAgentMode === true) {
-    const osAgentPath = join(__dirname, '../../agent/os-agent-capabilities.md');
-    if (existsSync(osAgentPath)) {
+    const osAgentPaths = [
+      join(__dirname, '../../agent/os-agent-capabilities.md'),
+      join(__dirname, '../../../src/agent/os-agent-capabilities.md'),
+    ];
+    const osAgentPath = osAgentPaths.find((candidate) => existsSync(candidate));
+    if (osAgentPath) {
       osCapabilities = readFileSync(osAgentPath, 'utf-8');
       console.log('[start] ✓ OS Agent mode enabled (system control capabilities)');
     }
   }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
-  // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
-  const conductorConfig =
-    config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
-  const useCodeAct = conductorConfig?.useCodeAct === true;
+  // Viewer frontdoor prefers os-agent config; conductor remains the fallback for legacy installs.
+  const frontdoorConfig =
+    config.multi_agent?.agents?.['os-agent'] ??
+    config.multi_agent?.agents?.conductor ??
+    config.multi_agent?.agents?.Conductor;
+  const useCodeAct = frontdoorConfig?.useCodeAct === true;
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.
@@ -150,9 +157,29 @@ export function initMainAgentLoop(
       },
       onTokenUsage: (record) => {
         try {
-          insertTokenUsage(db, record);
+          const metricVersion =
+            record.agent_id && typeof record.agent_version !== 'number'
+              ? (getLatestVersion(db, record.agent_id)?.version ?? null)
+              : (record.agent_version ?? null);
+          const recordWithVersion =
+            metricVersion !== null ? { ...record, agent_version: metricVersion } : record;
+
+          insertTokenUsage(db, recordWithVersion);
+          // Also upsert agent_metrics if agent_id is known
+          if (record.agent_id) {
+            if (metricVersion !== null) {
+              const today = new Date().toISOString().slice(0, 10);
+              upsertMetrics(db, {
+                agent_id: record.agent_id,
+                agent_version: metricVersion,
+                period_start: today,
+                input_tokens: record.input_tokens,
+                output_tokens: record.output_tokens,
+              });
+            }
+          }
         } catch {
-          /* ignore */
+          /* ignore — agent tables may not be initialized yet */
         }
       },
       onMetric: (name, value, labels) => {

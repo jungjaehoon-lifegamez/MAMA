@@ -706,7 +706,19 @@ export type GatewayToolName =
   | 'kagemusha_tasks'
   | 'kagemusha_messages'
   // System tools
-  | 'agent_notices';
+  | 'agent_notices'
+  // Agent management tools (Managed Agents pattern)
+  | 'agent_get'
+  | 'agent_activity'
+  | 'agent_update'
+  | 'agent_create'
+  | 'agent_compare'
+  // Agent lifecycle tools
+  | 'agent_test'
+  // Viewer control tools (SmartStore pattern)
+  | 'viewer_state'
+  | 'viewer_navigate'
+  | 'viewer_notify';
 
 // ============================================================================
 // MCP Tool Output Types
@@ -942,6 +954,7 @@ export interface AgentLoopOptions {
 export interface TokenUsageRecord {
   channel_key: string;
   agent_id?: string;
+  agent_version?: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;

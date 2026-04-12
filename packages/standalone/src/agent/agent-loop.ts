@@ -13,7 +13,7 @@
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
-import { loadInstalledSkills } from './skill-loader.js';
+import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from './model-runner.js';
@@ -81,6 +81,11 @@ const DEFAULT_TOOLS_CONFIG = {
   gateway: ['*'],
   mcp: [] as string[],
   mcp_config: '~/.mama/mama-mcp-config.json',
+};
+
+const SOURCE_GLOBAL_LANES: Record<string, string> = {
+  viewer: 'viewer',
+  system: 'system',
 };
 
 /**
@@ -169,7 +174,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load skill catalog (on-demand mode — full content injected per-message by PromptEnhancer)
-  const skillCatalog = loadInstalledSkills(verbose);
+  const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(verbose), context);
   if (skillCatalog.length > 0) {
     const skillDirective = [
       '# Installed Skills',
@@ -256,6 +261,13 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
   }
   return filtered;
 }
+
+type AgentToolExecutionContext = {
+  agentContext: AgentContext | null;
+  agentId?: string;
+  source?: string;
+  channelId?: string;
+};
 
 export class AgentLoop {
   private readonly agent: IModelRunner;
@@ -354,7 +366,10 @@ export class AgentLoop {
         const p = join(mamaHome, file);
         if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
       }
-      const skillCatalog = loadInstalledSkills();
+      const skillCatalog = filterSkillCatalogForContext(
+        loadInstalledSkills(),
+        options.agentContext ?? null
+      );
       // Only load ONBOARDING.md during initial setup (before SOUL.md exists)
       const onboardingContent = !existsSync(join(mamaHome, 'SOUL.md'))
         ? (() => {
@@ -569,9 +584,25 @@ export class AgentLoop {
     return this.sessionKey;
   }
 
-  private resolveGlobalLaneForSession(_sessionKey: string): string | undefined {
-    // Cron jobs no longer flow through agentLoop (uses dedicated CronWorker process)
-    return undefined;
+  private resolveGlobalLaneForSession(sessionKey: string): string | undefined {
+    const source = sessionKey.split(':', 1)[0]?.trim().toLowerCase();
+    if (!source) {
+      return undefined;
+    }
+    return SOURCE_GLOBAL_LANES[source];
+  }
+
+  private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
+    if (!options?.agentContext) {
+      return null;
+    }
+    return {
+      agentContext: options.agentContext,
+      agentId:
+        options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
+      source: options.source,
+      channelId: options.channelId,
+    };
   }
 
   /**
@@ -602,6 +633,36 @@ export class AgentLoop {
     sendSticker(chatId: string | number, emotion: string): Promise<boolean>;
   }): void {
     this.mcpExecutor.setTelegramGateway(gateway);
+  }
+
+  /**
+   * Set shared sessions DB for agent management and validation-aware tools.
+   */
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.mcpExecutor.setSessionsDb(db);
+  }
+
+  /**
+   * Set UI command queue for viewer_state / viewer_navigate tools.
+   */
+  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
+    this.mcpExecutor.setUICommandQueue(queue);
+  }
+
+  /**
+   * Set validation service for agent_test / delegate validation flows.
+   */
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.mcpExecutor.setValidationService(svc);
+  }
+
+  /**
+   * Set raw store for connector-backed agent_test input gathering.
+   */
+  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
+    this.mcpExecutor.setRawStore(store);
   }
 
   /**
@@ -644,6 +705,20 @@ export class AgentLoop {
    */
   setDelegationManager(dm: import('../multi-agent/delegation-manager.js').DelegationManager): void {
     this.mcpExecutor.setDelegationManager(dm);
+  }
+
+  /**
+   * Set runtime multi-agent config applier for agent management tools.
+   */
+  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
+    this.mcpExecutor.setApplyMultiAgentConfig(fn);
+  }
+
+  /**
+   * Set per-agent runtime restarter for agent management tools.
+   */
+  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
+    this.mcpExecutor.setRestartMultiAgentAgent(fn);
   }
 
   /**
@@ -731,16 +806,16 @@ export class AgentLoop {
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
-    // Propagate agentContext to executor for tier-aware tool permissions
+    const toolExecutionContext = this.buildToolExecutionContext(options);
+
+    // Track current tier for code-act execution and prompt sizing.
     if (options?.agentContext) {
-      this.mcpExecutor.setAgentContext?.(options.agentContext);
       const rawTier = options.agentContext.tier ?? 1;
       this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
         | 1
         | 2
         | 3;
     } else {
-      this.mcpExecutor.setAgentContext?.(null);
       this.currentTier = 1;
     }
 
@@ -1173,7 +1248,8 @@ export class AgentLoop {
 
           const toolResults = await this.executeTools(
             response.content,
-            options?.stopAfterSuccessfulTools ?? []
+            options?.stopAfterSuccessfulTools ?? [],
+            toolExecutionContext
           );
 
           // Add tool results to history
@@ -1240,7 +1316,8 @@ export class AgentLoop {
    */
   private async executeTools(
     content: ContentBlock[],
-    stopAfterSuccessfulTools: string[] = []
+    stopAfterSuccessfulTools: string[] = [],
+    executionContext: AgentToolExecutionContext | null = null
   ): Promise<ToolResultBlock[]> {
     const toolUseBlocks = content.filter(
       (block): block is ToolUseBlock => block.type === 'tool_use'
@@ -1288,13 +1365,15 @@ export class AgentLoop {
           if (toolUse.name === 'Write' && toolUse.input) {
             contractContext = await this.searchContractsForTool(
               toolUse.name,
-              toolUse.input as GatewayToolInput
+              toolUse.input as GatewayToolInput,
+              executionContext
             );
           }
 
           const toolResult = await this.mcpExecutor.execute(
             toolUse.name,
-            toolUse.input as GatewayToolInput
+            toolUse.input as GatewayToolInput,
+            executionContext ?? undefined
           );
           result = JSON.stringify(toolResult, null, 2);
 
@@ -1362,7 +1441,8 @@ export class AgentLoop {
    */
   private async searchContractsForTool(
     _toolName: string,
-    input: GatewayToolInput
+    input: GatewayToolInput,
+    executionContext: AgentToolExecutionContext | null = null
   ): Promise<string> {
     try {
       const filePath = (input as { path?: string }).path;
@@ -1373,10 +1453,14 @@ export class AgentLoop {
       const fileName = filePath.split('/').pop() || filePath;
       const searchQuery = `contract ${fileName}`;
 
-      const searchResult = await this.mcpExecutor.execute('mama_search', {
-        query: searchQuery,
-        limit: 3,
-      });
+      const searchResult = await this.mcpExecutor.execute(
+        'mama_search',
+        {
+          query: searchQuery,
+          limit: 3,
+        },
+        executionContext ?? undefined
+      );
 
       if (searchResult && typeof searchResult === 'object' && 'results' in searchResult) {
         const typedResult = searchResult as {

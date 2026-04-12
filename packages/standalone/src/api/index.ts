@@ -15,6 +15,8 @@ import {
   type HeartbeatTracker,
 } from './heartbeat-handler.js';
 import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
+import { initAgentTables } from '../db/agent-store.js';
+import { applyTokenUsageAgentVersionMigration } from '../db/migrations/token-usage-agent-version.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
 import { requireAuth } from './auth-middleware.js';
@@ -190,6 +192,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
+    applyTokenUsageAgentVersionMigration(db);
+    initAgentTables(db);
     const tokenRouter = createTokenRouter(db);
     app.use('/api/tokens', tokenRouter);
 

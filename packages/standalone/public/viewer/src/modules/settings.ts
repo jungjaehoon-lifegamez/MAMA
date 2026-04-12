@@ -15,6 +15,7 @@
 import { showToast, escapeHtml, escapeAttr, getElementByIdOrNull } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 import {
   API,
   type ApiConfigResponse,
@@ -24,7 +25,6 @@ import {
   type EffortLevel,
   type McpServer,
   type McpServersResponse,
-  type MultiAgentAgent,
   type MultiAgentAgentsResponse,
   type SkillsResponse,
 } from '../utils/api.js';
@@ -352,6 +352,14 @@ export class SettingsModule {
         }
         return;
       }
+
+      const goAgentsButton = target.closest<HTMLElement>('[data-action="go-agents-tab"]');
+      if (goAgentsButton) {
+        e.preventDefault();
+        if (typeof window.switchTab === 'function') {
+          window.switchTab('agents');
+        }
+      }
     });
   }
 
@@ -459,6 +467,24 @@ export class SettingsModule {
     this.populateSkillsSection();
     this.populateTokenSection();
     this.populateCronSection();
+
+    reportPageContext('settings', {
+      pageType: 'settings-overview',
+      gateways: {
+        discord: this.config.discord?.enabled ?? false,
+        slack: this.config.slack?.enabled ?? false,
+        telegram: this.config.telegram?.enabled ?? false,
+        chatwork: this.config.chatwork?.enabled ?? false,
+      },
+      agent: {
+        backend: this.config.agent?.backend ?? 'claude',
+        model: this.config.agent?.model ?? null,
+        max_turns: this.config.agent?.max_turns ?? null,
+        timeout: this.config.agent?.timeout ?? null,
+      },
+      multiAgentCount: this.multiAgentData.agents.length,
+      mcpServerCount: this.mcpServersData.servers.length,
+    });
   }
 
   /**
@@ -1140,6 +1166,7 @@ export class SettingsModule {
 
   /**
    * Populate Multi-Agent Team section (F3)
+   * Agent editing has moved to the Agents tab — show redirect notice.
    */
   populateMultiAgentSection(): void {
     const container = getElementByIdOrNull<HTMLElement>('settings-multi-agent-container');
@@ -1147,101 +1174,14 @@ export class SettingsModule {
       return;
     }
 
-    const agents = this.multiAgentData?.agents || [];
-
-    if (agents.length === 0) {
-      container.innerHTML = `
-        <div class="bg-white border border-gray-200 rounded-lg p-3 text-xs text-gray-500">
-          No agents configured. Add agents in <code class="bg-gray-100 px-1 rounded">config.yaml</code>
-        </div>
-      `;
-      return;
-    }
-
-    // Tier badge colors
-    const tierColors: Record<number, string> = {
-      1: 'bg-indigo-100 text-indigo-700',
-      2: 'bg-green-100 text-green-700',
-      3: 'bg-yellow-100 text-yellow-700',
-    };
-
-    const agentCards = agents
-      .map((agent: MultiAgentAgent) => {
-        const tierValue = Number(agent.tier) || 1;
-        const tierColor = tierColors[tierValue] || tierColors[1];
-        const backend = (agent.backend || this.config?.agent?.backend || 'claude') as AgentBackend;
-        const normalizedModel = this.getNormalizedModelForBackend(backend, agent.model || '');
-        const agentId = agent.id || '';
-        const backendOptions = ['codex-mcp', 'claude']
-          .map(
-            (b) =>
-              `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`
-          )
-          .join('');
-        const modelOptions = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
-        const modelOptionHtml = modelOptions
-          .map(
-            (m) =>
-              `<option value="${escapeAttr(m)}" ${m === normalizedModel ? 'selected' : ''}>${escapeHtml(formatModelName(m))}</option>`
-          )
-          .join('');
-
-        // Effort level (Claude 4.6 models only, max on Opus).
-        const supportsAgentEffort = this.supportsEffortModel(normalizedModel);
-        const selectedAgentEffort = this.normalizeEffortForModel(
-          normalizedModel,
-          (agent.effort || 'medium') as EffortLevel
-        );
-        const effortOptions = this.buildEffortOptions(normalizedModel, selectedAgentEffort);
-
-        // Permission flags — only check explicit tool_permissions, not tier
-        const canDelegate = agent.can_delegate ?? false;
-        const hasAllTools = agent.tool_permissions?.allowed?.includes('*') ?? false;
-
-        return `
-          <div class="bg-white border border-gray-200 rounded-lg p-3 hover:shadow-md transition-shadow">
-            <!-- Header: Tier + Name + Toggle -->
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-1.5">
-                <span class="${tierColor} text-[10px] font-bold px-1.5 py-0.5 rounded">T${escapeHtml(String(tierValue))}</span>
-                <span class="font-medium text-gray-900 text-xs" title="${escapeAttr(agent.display_name || agent.name)}">${escapeHtml(agent.display_name || agent.name)}</span>
-              </div>
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" class="sr-only peer" data-action="agent-toggle" data-agent-id="${escapeAttr(agentId)}" ${agent.enabled ? 'checked' : ''}>
-                <div class="w-7 h-4 bg-gray-200 rounded-full peer peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-green-500"></div>
-              </label>
-            </div>
-
-            <!-- Backend -->
-            <select id="agent-backend-${escapeAttr(agentId)}" data-action="agent-backend" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50 mb-1">${backendOptions}</select>
-            <!-- Model -->
-            <select id="agent-model-${escapeAttr(agentId)}" data-action="agent-model" data-agent-id="${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50 mb-1">${modelOptionHtml}</select>
-            <!-- Effort (Claude 4.6 only) -->
-            <div id="agent-effort-container-${escapeAttr(agentId)}" class="mb-1" style="display: ${supportsAgentEffort ? 'block' : 'none'}">
-              <select id="agent-effort-${escapeAttr(agentId)}" class="w-full text-[11px] rounded border border-gray-200 px-1.5 py-1 bg-gray-50">${effortOptions}</select>
-            </div>
-
-            <!-- Permissions + Save -->
-            <div class="flex items-center justify-between mt-2">
-              <div class="flex items-center gap-2 text-[10px] text-gray-600">
-                <label class="flex items-center gap-0.5 cursor-pointer">
-                  <input type="checkbox" id="agent-delegate-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${canDelegate ? 'checked' : ''}>
-                  <span>Delegate</span>
-                </label>
-                <label class="flex items-center gap-0.5 cursor-pointer">
-                  <input type="checkbox" id="agent-alltools-${escapeAttr(agentId)}" class="w-3 h-3 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400" ${hasAllTools ? 'checked' : ''}>
-                  <span>All Tools</span>
-                </label>
-              </div>
-              <button type="button" data-action="agent-save" data-agent-id="${escapeAttr(agentId)}" class="text-[10px] px-3 py-1 rounded bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">Save</button>
-            </div>
-          </div>
-        `;
-      })
-      .join('');
-
-    // Grid layout: 2 cols on mobile, 3 cols on md+
-    container.innerHTML = `<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">${agentCards}</div>`;
+    container.innerHTML = `
+      <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
+        <p class="text-sm text-gray-600 mb-2">Agent management has moved to the Agents tab.</p>
+        <button data-action="go-agents-tab"
+          class="text-sm px-4 py-1.5 rounded-md bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">
+          Go to Agents
+        </button>
+      </div>`;
   }
 
   /**

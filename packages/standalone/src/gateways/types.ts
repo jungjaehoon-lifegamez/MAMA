@@ -5,7 +5,14 @@
 /**
  * Supported messenger platforms
  */
-export type MessageSource = 'discord' | 'slack' | 'telegram' | 'chatwork' | 'mobile' | 'viewer';
+export type MessageSource =
+  | 'discord'
+  | 'slack'
+  | 'telegram'
+  | 'chatwork'
+  | 'mobile'
+  | 'viewer'
+  | 'system';
 
 /**
  * Content block for multimodal input (OpenClaw-style)

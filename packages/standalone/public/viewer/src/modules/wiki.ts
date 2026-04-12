@@ -1,6 +1,7 @@
 import { API, type WikiTreeNode, type WikiPageResponse } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { createResizeHandle } from '../utils/dom.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 
 declare const marked: { parse(md: string): string };
 declare const DOMPurify: { sanitize(html: string): string };
@@ -70,7 +71,12 @@ function renderTreeNode(node: WikiTreeNode, depth: number = 0): string {
 }
 
 function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 export class WikiModule {
@@ -79,15 +85,46 @@ export class WikiModule {
   private resizeHandler: (() => void) | null = null;
   private mobileShowingPage = false;
   private initialized = false;
+  private treeLoadPromise: Promise<void> | null = null;
 
   init(): void {
-    if (this.initialized) { return; }
+    if (this.initialized) {
+      return;
+    }
     this.container = document.getElementById('wiki-content');
-    if (!this.container) { return; }
+    if (!this.container) {
+      return;
+    }
     this.initialized = true;
     this.resizeHandler = () => this.handleResize();
     window.addEventListener('resize', this.resizeHandler);
-    this.loadTree();
+    this.treeLoadPromise = this.loadTree();
+  }
+
+  private publishListContext(): void {
+    reportPageContext('wiki', {
+      pageType: 'wiki-list',
+      path: null,
+      activePath: this.currentPath,
+    });
+  }
+
+  private publishPageContext(page: WikiPageResponse): void {
+    const title =
+      String(page.frontmatter.title ?? '').trim() ||
+      page.path.split('/').pop()?.replace(/\.md$/, '') ||
+      page.path;
+    reportPageContext(
+      'wiki',
+      {
+        pageType: 'wiki-page',
+        path: page.path,
+        title,
+        frontmatter: page.frontmatter,
+        content_preview: page.raw.slice(0, 400),
+      },
+      { type: 'wiki-page', id: page.path }
+    );
   }
 
   private async loadTree(): Promise<void> {
@@ -171,9 +208,13 @@ export class WikiModule {
     document.getElementById('wiki-new-btn')?.addEventListener('click', () => this.promptNewPage());
 
     // Auto-open index page only on initial load (no page selected yet)
-    if (!mobile && !this.currentPath) {
+    if (!this.currentPath) {
       const indexNode = tree.find((n) => n.name === 'index.md');
-      if (indexNode) { this.openPage(indexNode.path); }
+      if (!mobile && indexNode) {
+        this.openPage(indexNode.path);
+      } else {
+        this.publishListContext();
+      }
     }
   }
 
@@ -194,6 +235,7 @@ export class WikiModule {
     try {
       const page = await API.getWikiPage(path);
       this.renderPageView(pageEl, page);
+      this.publishPageContext(page);
     } catch {
       pageEl.innerHTML = `<div style="color:#D94F4F;padding:20px">Failed to load ${path}</div>`;
     }
@@ -213,10 +255,12 @@ export class WikiModule {
 
   private showMobileTree(): void {
     this.mobileShowingPage = false;
+    this.currentPath = null;
     const treeEl = document.getElementById('wiki-tree');
     const pageEl = document.getElementById('wiki-page');
     if (treeEl) treeEl.style.display = '';
     if (pageEl) pageEl.style.display = 'none';
+    this.publishListContext();
   }
 
   private handleResize(): void {
@@ -398,5 +442,28 @@ export class WikiModule {
       window.removeEventListener('resize', this.resizeHandler);
       this.resizeHandler = null;
     }
+  }
+
+  async navigateTo(path?: string): Promise<void> {
+    if (!this.initialized) {
+      this.init();
+    }
+    if (this.treeLoadPromise) {
+      await this.treeLoadPromise;
+    }
+    if (path) {
+      await this.openPage(path);
+      return;
+    }
+    if (this.currentPath) {
+      try {
+        const page = await API.getWikiPage(this.currentPath);
+        this.publishPageContext(page);
+        return;
+      } catch {
+        /* fall through to list context */
+      }
+    }
+    this.publishListContext();
   }
 }

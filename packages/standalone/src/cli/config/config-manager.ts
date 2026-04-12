@@ -561,6 +561,15 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
     free_chat: true,
     default_agent: 'conductor',
     agents: {
+      'os-agent': {
+        name: 'OS Agent',
+        display_name: '🖥️ OS Agent',
+        trigger_prefix: '!os',
+        persona_file: '~/.mama/personas/os-agent.md',
+        tier: 1,
+        can_delegate: true,
+        enabled: true,
+      },
       conductor: {
         name: 'Conductor',
         display_name: '🎯 Conductor',
@@ -569,38 +578,14 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         tier: 1,
         can_delegate: true,
       },
-      developer: {
-        name: 'DevBot',
-        display_name: '🔧 DevBot',
-        trigger_prefix: '!dev',
-        persona_file: '~/.mama/personas/developer.md',
-        tier: 1,
-        can_delegate: true,
-        tool_permissions: {
-          allowed: ['*'],
-          blocked: [],
-        },
-      },
-      reviewer: {
-        name: 'Reviewer',
-        display_name: '📝 Reviewer',
-        trigger_prefix: '!review',
-        persona_file: '~/.mama/personas/reviewer.md',
+      memory: {
+        name: 'Memory Agent',
+        display_name: '🧠 Memory',
+        trigger_prefix: '!memory',
+        persona_file: '~/.mama/personas/memory.md',
         tier: 3,
-      },
-      architect: {
-        name: 'Architect',
-        display_name: '🏛️ Architect',
-        trigger_prefix: '!arch',
-        persona_file: '~/.mama/personas/architect.md',
-        tier: 2,
-      },
-      pm: {
-        name: 'PM',
-        display_name: '📋 PM',
-        trigger_prefix: '!pm',
-        persona_file: '~/.mama/personas/pm.md',
-        tier: 2,
+        can_delegate: false,
+        enabled: true,
       },
     },
     loop_prevention: {

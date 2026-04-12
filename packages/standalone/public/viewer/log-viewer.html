@@ -1172,7 +1172,7 @@ $('selCopy').addEventListener('click', () => {
 $('selSend').addEventListener('click', () => {
   const text = getSelectedText();
   const msg = '[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + S.selected.size + '\uc904]:\n```\n' + text + '\n```';
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, POST_MSG_ORIGIN);
+  window.parent.postMessage({ type: 'viewer:sendToChat', message: msg }, POST_MSG_ORIGIN);
   S.selected.clear();
   logArea.querySelectorAll('.ll.selected').forEach((el) => { el.classList.remove('selected'); });
   updateSelectionBar();
@@ -1367,7 +1367,7 @@ $('promptSend').addEventListener('click', () => {
     S.selected.forEach((idx) => { if (S.logs[idx]) selLogs.push(S.logs[idx].raw); });
     msg += '\n\n[\uc120\ud0dd\ub41c \ub85c\uadf8 ' + selLogs.length + '\uc904]:\n```\n' + selLogs.join('\n') + '\n```';
   }
-  window.parent.postMessage({ type: 'playground:sendToChat', message: msg }, POST_MSG_ORIGIN);
+  window.parent.postMessage({ type: 'viewer:sendToChat', message: msg }, POST_MSG_ORIGIN);
   $('promptInput').value = '';
 });
 $('promptCopy').addEventListener('click', () => {

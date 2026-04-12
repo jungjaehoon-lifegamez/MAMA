@@ -4,7 +4,7 @@
  * Uses the project's existing Database wrapper (sqlite.ts).
  */
 
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
 import Database from '../../sqlite.js';
@@ -57,6 +57,24 @@ export class RawStore {
     return db;
   }
 
+  private getDbPath(connectorName: string): string {
+    return join(this.basePath, connectorName, 'raw.db');
+  }
+
+  private mapRawRowToNormalizedItem(row: RawRow): NormalizedItem {
+    return {
+      source: row.source,
+      sourceId: row.source_id,
+      channel: row.channel,
+      author: row.author,
+      content: row.content,
+      timestamp: new Date(row.timestamp),
+      type: row.type as NormalizedItem['type'],
+      metadata:
+        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+    };
+  }
+
   save(connectorName: string, items: NormalizedItem[]): void {
     if (items.length === 0) return;
     const db = this.getDb(connectorName);
@@ -85,17 +103,27 @@ export class RawStore {
       .prepare('SELECT * FROM raw_items WHERE timestamp >= ? ORDER BY timestamp ASC')
       .all(since.getTime()) as RawRow[];
 
-    return rows.map((row) => ({
-      source: row.source,
-      sourceId: row.source_id,
-      channel: row.channel,
-      author: row.author,
-      content: row.content,
-      timestamp: new Date(row.timestamp),
-      type: row.type as NormalizedItem['type'],
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
-    }));
+    return rows.map((row) => this.mapRawRowToNormalizedItem(row));
+  }
+
+  hasConnector(connectorName: string): boolean {
+    return this.dbs.has(connectorName) || existsSync(this.getDbPath(connectorName));
+  }
+
+  getRecent(connectorName: string, count: number): NormalizedItem[] {
+    if (!this.hasConnector(connectorName)) {
+      return [];
+    }
+    const sanitizedCount = Math.min(1000, Math.max(0, Math.floor(count)));
+    if (sanitizedCount === 0) {
+      return [];
+    }
+    const db = this.getDb(connectorName);
+    const rows = db
+      .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')
+      .all(sanitizedCount) as RawRow[];
+
+    return rows.map((row) => this.mapRawRowToNormalizedItem(row));
   }
 
   close(): void {
