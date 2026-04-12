@@ -30,6 +30,11 @@ import {
   handlePostUICommand,
 } from './ui-command-handler.js';
 import {
+  handleGetEntityCandidate,
+  handleListEntityCandidates,
+  handleReviewEntityCandidate,
+} from './entity-review-handler.js';
+import {
   getValidationSummary,
   listValidationHistory,
   getValidationSessionDetail,
@@ -2150,6 +2155,54 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname === '/api/code-act' && req.method === 'POST') {
       await handleCodeActRequest(req, res, options);
       return true;
+    }
+
+    // Route: GET /api/entities/candidates - list pending review candidates
+    if (pathname === '/api/entities/candidates' && req.method === 'GET') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Authentication required' }));
+        return true;
+      }
+      await initDB();
+      await handleListEntityCandidates(req, res, getAdapter());
+      return true;
+    }
+
+    // Route: POST /api/entities/candidates/:id/{approve,reject,defer}
+    {
+      const reviewMatch = pathname.match(
+        /^\/api\/entities\/candidates\/([^/]+)\/(approve|reject|defer)$/
+      );
+      if (reviewMatch && req.method === 'POST') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Authentication required' }));
+          return true;
+        }
+        await initDB();
+        const action = reviewMatch[2] as 'approve' | 'reject' | 'defer';
+        await handleReviewEntityCandidate(req, res, getAdapter(), action);
+        return true;
+      }
+    }
+
+    // Route: GET /api/entities/candidates/:id - candidate detail
+    {
+      const detailMatch = pathname.match(/^\/api\/entities\/candidates\/([^/]+)$/);
+      if (detailMatch && req.method === 'GET') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Authentication required' }));
+          return true;
+        }
+        await initDB();
+        await handleGetEntityCandidate(req, res, getAdapter());
+        return true;
+      }
     }
 
     return false;
