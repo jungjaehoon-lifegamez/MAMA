@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-04-12
+
 ### Added
 
 - **OS Agent same-view groundwork** — Viewer page context now propagates richer agent/wiki/dashboard/feed/settings state so `os-agent` can navigate and inspect the same surface the user sees

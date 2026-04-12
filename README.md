@@ -204,8 +204,8 @@ Anyone who installs MAMA OS and connects their apps gets:
 | **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                                                         |
 | **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                   |
 | **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                                                 |
-| **Next** | v0.19   | Merge and release the agent-management foundation: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation             |
-|          | v0.20   | Canonical entity memory + `os-agent` / auditor architecture reset: alias resolution substrate, same-view main-agent vertical slice, functional workers, and reviewable entity merges |
+| **Done** | v0.19   | Agent-management foundation shipped: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation                           |
+| **Next** | v0.20   | Canonical entity memory + `os-agent` / auditor architecture reset: alias resolution substrate, same-view main-agent vertical slice, functional workers, and reviewable entity merges |
 |          | Later   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design)                                 |
 |          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                                                |
 
