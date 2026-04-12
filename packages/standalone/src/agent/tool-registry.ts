@@ -308,9 +308,18 @@ register({
 // Agent management tools (Managed Agents pattern)
 register({
   name: 'agent_get',
-  description: 'Get agent config, persona, and current version',
+  description:
+    'Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail so you and the user stay on the same page.',
   category: 'os_management',
   params: 'agent_id',
+  viewerOnly: true,
+});
+register({
+  name: 'agent_activity',
+  description:
+    'Get recent agent activity rows and sync the viewer to that agent activity tab so you and the user inspect the same logs.',
+  category: 'os_monitoring',
+  params: 'agent_id, limit?',
   viewerOnly: true,
 });
 register({
@@ -340,14 +349,15 @@ register({
 register({
   name: 'viewer_state',
   description:
-    'Get current viewer state (active tab, page context). Call this to know what the user is looking at.',
+    'Get current viewer state (current route, selected item, pageData). Call after navigation to verify which item and tab are actually open.',
   category: 'os_management',
   params: '',
   viewerOnly: true,
 });
 register({
   name: 'viewer_navigate',
-  description: 'Navigate viewer to a specific page/tab (e.g., agent detail, metrics)',
+  description:
+    'Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.',
   category: 'os_management',
   params: 'route, params?: {id?, tab?, compareV1?, compareV2?}',
   viewerOnly: true,

@@ -87,7 +87,6 @@ function getViewerDirectory(): string {
 const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
-const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
@@ -396,10 +395,6 @@ function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
 
 function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_CSS_PATH, 'text/css');
-}
-
-function handleJsRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, VIEWER_JS_PATH, 'application/javascript');
 }
 
 async function handleGraphRequest(
@@ -1077,18 +1072,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET/HEAD /viewer.css - serve stylesheet (legacy path)
-    if (pathname === '/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleCssRequest(req, res);
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer.js - serve JavaScript
-    if (pathname === '/viewer.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleJsRequest(req, res);
-      return true;
-    }
-
     // Route: GET/HEAD /sw.js - serve Service Worker
     if (pathname === '/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, SW_JS_PATH, 'application/javascript');
@@ -1103,12 +1086,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
-      return true;
-    }
-
-    // Route: GET/HEAD /manifest.json - legacy or custom host compatibility
-    if (pathname === '/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
       return true;
     }
@@ -1158,30 +1135,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET/HEAD /viewer/js/modules/*.js - serve feature modules
     if (
       pathname.startsWith('/viewer/js/modules/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /js/utils/*.js - serve utility modules (legacy path)
-    if (
-      pathname.startsWith('/js/utils/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /js/modules/*.js - serve feature modules (legacy path)
-    if (
-      pathname.startsWith('/js/modules/') &&
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
@@ -1654,6 +1607,23 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/commands/ack — viewer acknowledges applied commands
+    if (pathname === '/api/ui/commands/ack' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBody(req);
+        const { handlePostUICommandAck } = await import('./ui-command-handler.js');
+        handlePostUICommandAck(
+          res,
+          body as unknown as import('./ui-command-handler.js').UICommandAck,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, acknowledged: 0 }));
       }
       return true;
     }
@@ -3697,7 +3667,6 @@ export {
   filterEdgesByNodes,
   VIEWER_HTML_PATH,
   VIEWER_CSS_PATH,
-  VIEWER_JS_PATH,
 };
 
 export type {

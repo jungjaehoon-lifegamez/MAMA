@@ -10,7 +10,12 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
 import Database from '../../src/sqlite.js';
-import { initAgentTables, getLatestVersion, createAgentVersion } from '../../src/db/agent-store.js';
+import {
+  initAgentTables,
+  getLatestVersion,
+  createAgentVersion,
+  logActivity,
+} from '../../src/db/agent-store.js';
 import { saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
@@ -583,6 +588,104 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           success: false,
           error: expect.stringContaining('Permission denied'),
         });
+      });
+
+      it('should sync the viewer to the requested agent detail when agent_get runs in viewer mode', async () => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+        createAgentVersion(db, {
+          agent_id: 'qa-monitor',
+          snapshot: { name: 'QA Monitor', model: 'claude-sonnet-4-6', tier: 2 },
+        });
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const queue = new UICommandQueue();
+        queue.setPageContext({
+          currentRoute: 'agents',
+          channelId: 'viewer-a',
+          selectedItem: { type: 'agent', id: 'alpha' },
+          pageData: {
+            pageType: 'agent-detail',
+            activeTab: 'validation',
+          },
+        });
+        executor.setSessionsDb(db);
+        executor.setUICommandQueue(queue);
+        executor.setAgentContext(createViewerContext());
+        executor.setCurrentAgentContext('os-agent', 'viewer', 'viewer-a');
+
+        const result = await executor.execute('agent_get', {
+          agent_id: 'qa-monitor',
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          agent_id: 'qa-monitor',
+        });
+        expect(queue.drain()).toEqual([
+          expect.objectContaining({
+            type: 'navigate',
+            payload: {
+              route: 'agents',
+              params: {
+                id: 'qa-monitor',
+                tab: 'validation',
+              },
+            },
+          }),
+        ]);
+      });
+
+      it('should return agent activity and sync the viewer to the activity tab', async () => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+        createAgentVersion(db, {
+          agent_id: 'wiki-agent',
+          snapshot: { name: 'Wiki Agent', model: 'claude-sonnet-4-6', tier: 2 },
+        });
+        logActivity(db, {
+          agent_id: 'wiki-agent',
+          agent_version: 1,
+          type: 'task_complete',
+          input_summary: 'Compiled wiki pages',
+          execution_status: 'finished',
+        });
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const queue = new UICommandQueue();
+        executor.setSessionsDb(db);
+        executor.setUICommandQueue(queue);
+        executor.setAgentContext(createViewerContext());
+        executor.setCurrentAgentContext('os-agent', 'viewer', 'mama_os_main');
+
+        const result = await executor.execute('agent_activity', {
+          agent_id: 'wiki',
+          limit: 5,
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          agent_id: 'wiki-agent',
+          activity: [
+            expect.objectContaining({
+              agent_id: 'wiki-agent',
+              type: 'task_complete',
+              input_summary: 'Compiled wiki pages',
+            }),
+          ],
+        });
+        expect(queue.drain()).toEqual([
+          expect.objectContaining({
+            type: 'navigate',
+            payload: {
+              route: 'agents',
+              params: {
+                id: 'wiki-agent',
+                tab: 'activity',
+              },
+            },
+          }),
+        ]);
       });
 
       it('should reject uppercase agent ids with shared validation', async () => {

@@ -78,6 +78,7 @@ import {
   getLatestVersion,
   createAgentVersion,
   compareVersionMetrics,
+  getActivity,
   logActivity,
   updateActivityScore,
 } from '../db/agent-store.js';
@@ -99,6 +100,14 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const AGENT_DETAIL_TABS = new Set([
+  'config',
+  'persona',
+  'tools',
+  'activity',
+  'validation',
+  'history',
+]);
 
 function sanitizeCommandForAudit(command: string): { commandHash: string; commandPreview: string } {
   const commandHash = createHash('sha256').update(command).digest('hex');
@@ -313,6 +322,89 @@ export class GatewayToolExecutor {
     }
     return null;
   }
+
+  private getPreferredViewerAgentTab(): string {
+    if (!this.uiCommandQueue) {
+      return 'activity';
+    }
+    const currentPageContext = this.uiCommandQueue.getPageContext(
+      this.currentChannelId || undefined
+    );
+    if (!currentPageContext || currentPageContext.currentRoute !== 'agents') {
+      return 'activity';
+    }
+    const pageData = currentPageContext.pageData as Record<string, unknown> | undefined;
+    const activeTab = pageData?.activeTab;
+    if (typeof activeTab === 'string' && AGENT_DETAIL_TABS.has(activeTab)) {
+      return activeTab;
+    }
+    return 'activity';
+  }
+
+  private syncViewerToAgentDetail(agentId: string, preferredTab?: string): void {
+    if (!this.uiCommandQueue) {
+      return;
+    }
+    const source = this.currentSource || this.currentContext?.source || '';
+    if (source !== 'viewer') {
+      return;
+    }
+
+    const desiredTab =
+      preferredTab && AGENT_DETAIL_TABS.has(preferredTab)
+        ? preferredTab
+        : this.getPreferredViewerAgentTab();
+    const currentPageContext = this.uiCommandQueue.getPageContext(
+      this.currentChannelId || undefined
+    );
+    const currentPageData = currentPageContext?.pageData as Record<string, unknown> | undefined;
+    if (
+      currentPageContext?.currentRoute === 'agents' &&
+      currentPageContext.selectedItem?.type === 'agent' &&
+      currentPageContext.selectedItem.id === agentId &&
+      currentPageData?.pageType === 'agent-detail' &&
+      currentPageData?.activeTab === desiredTab
+    ) {
+      return;
+    }
+
+    this.uiCommandQueue.push({
+      type: 'navigate',
+      payload: {
+        route: 'agents',
+        params: {
+          id: agentId,
+          tab: desiredTab,
+        },
+      },
+    });
+  }
+
+  private resolveManagedAgentId(agentId: string): string {
+    if (!this.sessionsDb) {
+      return agentId;
+    }
+    const normalized = agentId
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, '-');
+    const candidates = Array.from(
+      new Set([
+        agentId,
+        agentId.trim(),
+        normalized,
+        normalized.endsWith('-agent') ? normalized.slice(0, -6) : `${normalized}-agent`,
+      ])
+    ).filter(Boolean);
+
+    for (const candidate of candidates) {
+      if (getLatestVersion(this.sessionsDb, candidate)) {
+        return candidate;
+      }
+    }
+    return agentId;
+  }
+
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
   }
@@ -617,11 +709,12 @@ export class GatewayToolExecutor {
           if (permError) {
             return { success: false, error: permError };
           }
-          const agentId = (input as { agent_id: string }).agent_id;
+          const agentId = this.resolveManagedAgentId((input as { agent_id: string }).agent_id);
           const latestVer = getLatestVersion(this.sessionsDb, agentId);
           if (!latestVer) {
             return { success: false, error: `Agent '${agentId}' not found` };
           }
+          this.syncViewerToAgentDetail(agentId);
           return {
             success: true,
             agent_id: latestVer.agent_id,
@@ -630,6 +723,29 @@ export class GatewayToolExecutor {
             system: latestVer.persona_text,
             change_note: latestVer.change_note,
             created_at: latestVer.created_at,
+          };
+        }
+        case 'agent_activity': {
+          if (!this.sessionsDb) {
+            return { success: false, error: 'Sessions DB not available' };
+          }
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
+          const args = input as { agent_id: string; limit?: number };
+          const agentId = this.resolveManagedAgentId(args.agent_id);
+          const rawLimit = Number.parseInt(String(args.limit ?? 20), 10);
+          const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
+          const latestVer = getLatestVersion(this.sessionsDb, agentId);
+          if (!latestVer) {
+            return { success: false, error: `Agent '${args.agent_id}' not found` };
+          }
+          this.syncViewerToAgentDetail(agentId, 'activity');
+          return {
+            success: true,
+            agent_id: agentId,
+            activity: getActivity(this.sessionsDb, agentId, limit),
           };
         }
         case 'agent_update': {
@@ -756,13 +872,15 @@ export class GatewayToolExecutor {
             version_a: number;
             version_b: number;
           };
+          const agentId = this.resolveManagedAgentId(cmpArgs.agent_id);
           const cmpResult = compareVersionMetrics(
             this.sessionsDb,
-            cmpArgs.agent_id,
+            agentId,
             cmpArgs.version_a,
             cmpArgs.version_b
           );
-          return { success: true, ...cmpResult };
+          this.syncViewerToAgentDetail(agentId, 'validation');
+          return { success: true, agent_id: agentId, ...cmpResult };
         }
         // Viewer control tools (SmartStore pattern)
         case 'viewer_state': {

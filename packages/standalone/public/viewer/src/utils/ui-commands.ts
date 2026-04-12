@@ -9,7 +9,7 @@
 import { API } from './api.js';
 import { showToast } from './dom.js';
 
-type SwitchTabFn = (tab: string, params?: Record<string, string>) => void;
+type SwitchTabFn = (tab: string, params?: Record<string, string>) => void | Promise<void>;
 
 let polling = false;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
@@ -51,18 +51,29 @@ export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
     pollInFlight = true;
     try {
       const { commands } = await API.getUICommands();
+      const acknowledgedCommandIds: string[] = [];
       for (const cmd of commands) {
         if (cmd.type === 'navigate') {
           const p = cmd.payload as { route?: string; params?: Record<string, string> };
           if (p.route) {
-            switchTab(p.route, p.params);
+            await switchTab(p.route, p.params);
+            if (cmd.id) {
+              acknowledgedCommandIds.push(cmd.id);
+            }
           }
         } else if (cmd.type === 'notify') {
           const p = cmd.payload as { message?: string };
           if (p.message) {
             showToast(p.message);
+            if (cmd.id) {
+              acknowledgedCommandIds.push(cmd.id);
+            }
           }
         }
+      }
+
+      if (acknowledgedCommandIds.length > 0) {
+        await API.ackUICommands(acknowledgedCommandIds);
       }
 
       if (

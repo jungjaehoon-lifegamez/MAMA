@@ -350,75 +350,6 @@
       <div id="content-area" class="flex-1 flex min-h-0 overflow-hidden">
       <!-- Main Content -->
       <main class="flex-1 overflow-hidden flex flex-col min-w-0">
-        <!-- Setup tab hidden: runs on port 3848 -->
-        <div class="tab-content" id="tab-setup" style="display: none">
-          <div class="setup-container">
-            <div class="progress-section" id="progress-section" style="display: none">
-              <div class="progress-header">
-                <span class="progress-label" id="progress-label">Getting started...</span>
-                <span class="progress-count" id="progress-count">1 / 9</span>
-              </div>
-              <div class="progress-bar" id="progress-bar">
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-                <div class="progress-step"></div>
-              </div>
-            </div>
-
-            <div class="chat-container" id="setup-chat">
-              <div class="chat-messages" id="setup-messages"></div>
-
-              <div class="typing-indicator" id="setup-typing">
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-                <div class="typing-dot"></div>
-              </div>
-
-              <div class="chat-input-area">
-                <div class="input-row">
-                  <div class="input-wrapper">
-                    <textarea
-                      class="chat-input"
-                      id="setup-input"
-                      placeholder="Type your message..."
-                      rows="1"
-                      disabled
-                    ></textarea>
-                  </div>
-                  <button
-                    class="btn btn-send"
-                    id="setup-send"
-                    onclick="sendSetupMessage()"
-                    disabled
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    >
-                      <line x1="22" y1="2" x2="11" y2="13" />
-                      <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                    </svg>
-                    <span>Send</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- Dashboard Tab -->
         <div class="tab-content" id="tab-dashboard">
           <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
@@ -777,59 +708,6 @@
           <div id="decision-resize-handle" class="decision-resize-handle" aria-label="Resize decision modal"></div>
         </div>
 
-        <!-- Skills Marketplace Tab -->
-        <div class="tab-content" id="tab-skills">
-          <div class="flex-1 flex flex-col w-full max-w-6xl mx-auto p-4 h-full overflow-y-auto">
-            <!-- Search Bar -->
-            <div class="mb-4">
-              <input id="skills-search" type="text"
-                class="w-full bg-white border border-gray-200 rounded-lg px-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-mama-yellow focus:ring-2 focus:ring-yellow-200"
-                placeholder="Search skills...">
-            </div>
-
-            <!-- URL Install -->
-            <div class="flex gap-2 mb-4">
-              <input id="skills-url-input" type="text"
-                class="flex-1 bg-white border border-gray-200 rounded-lg px-3 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-mama-yellow focus:ring-2 focus:ring-yellow-200"
-                placeholder="https://github.com/owner/repo">
-              <button id="skills-url-install-btn"
-                class="px-4 py-1.5 text-xs rounded-lg bg-mama-yellow text-mama-black font-medium hover:bg-mama-yellow-hover whitespace-nowrap">
-                Install URL
-              </button>
-            </div>
-
-            <!-- Filter Bar -->
-            <div id="skills-filter-bar" class="flex gap-2 mb-4 flex-wrap">
-              <button data-filter="all" class="px-3 py-1 text-xs rounded-full bg-mama-yellow text-mama-black font-medium">All</button>
-              <button data-filter="installed" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">Installed</button>
-              <button data-filter="mama" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">MAMA</button>
-              <button data-filter="cowork" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">Cowork</button>
-              <button data-filter="external" class="px-3 py-1 text-xs rounded-full bg-white text-gray-600">External</button>
-            </div>
-
-            <!-- Skills Content (rendered by skills.js) -->
-            <div id="skills-content">
-              <div class="flex items-center justify-center p-12 text-gray-500">
-                <p class="text-sm">Loading skills...</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Skill Detail Modal -->
-        <div id="skill-detail-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div class="bg-gray-900 border border-gray-700 rounded-xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl mx-4">
-            <div class="flex items-center justify-between p-4 border-b border-gray-700">
-              <h2 class="text-lg font-bold text-white">Skill Details</h2>
-              <button onclick="window.skillsModule && window.skillsModule.closeDetail()"
-                class="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
-            </div>
-            <div id="skill-detail-content" class="p-4 overflow-y-auto flex-1 text-sm text-gray-300">
-            </div>
-          </div>
-        </div>
-
-
       </main>
 
       <!-- Chat Resize Handle (SmartStore pattern) -->
@@ -1150,7 +1028,6 @@
       import { MemoryModule } from '/viewer/js/modules/memory.js';
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
-      import { SkillsModule } from '/viewer/js/modules/skills.js';
       import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { AgentsModule } from '/viewer/js/modules/agents.js';
@@ -1162,7 +1039,6 @@
       const graph = new GraphModule();
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
-      const skills = SkillsModule;
       const connectorFeed = new ConnectorFeedModule();
       const wiki = new WikiModule();
       const agentsModule = new AgentsModule();
@@ -1246,7 +1122,6 @@
       window.memoryModule = memory;
       window.dashboardModule = dashboard;
       window.settingsModule = settings;
-      window.skillsModule = skills;
 
       // Quiz choice button handler
       window.sendQuizChoice = (choice) => {
@@ -1261,15 +1136,6 @@
 
       async function switchTab(tabName, params) {
         STATE.currentTab = tabName;
-
-        // Report tab context to agent (SmartStore pattern)
-        const selectedItem =
-          tabName === 'agents' && params?.id ? { type: 'agent', id: params.id } : undefined;
-        reportPageContext(
-          tabName,
-          { pageType: 'tab-switch', tab: tabName, ...(params || {}) },
-          selectedItem
-        );
 
         // Close mobile More menu if open
         const moreMenu = document.getElementById('mama-mobile-more');
@@ -1324,11 +1190,23 @@
           }
         }
 
+        const publishBasicTabContext = () => {
+          const selectedItem =
+            tabName === 'agents' && params?.id ? { type: 'agent', id: params.id } : undefined;
+          reportPageContext(
+            tabName,
+            { pageType: 'tab-switch', tab: tabName, ...(params || {}) },
+            selectedItem
+          );
+        };
+
         if (tabName === 'dashboard') {
           dashboard.init();
+          publishBasicTabContext();
         } else if (tabName === 'settings') {
           settings.init();
           loadConnectorsList();
+          publishBasicTabContext();
         } else if (tabName === 'memory') {
           // Initialize sidebar state for current screen size
           updateCheckpointSidebarForScreenSize();
@@ -1353,21 +1231,31 @@
               if (loadingEl) loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
             }
           }
+          publishBasicTabContext();
         } else if (tabName === 'feed') {
           connectorFeed.init();
+          publishBasicTabContext();
         } else if (tabName === 'agents') {
           agentsModule.init();
           // Handle deep navigation: params.id opens agent detail, params.tab selects tab
           if (params?.id) {
-            agentsModule.navigateTo(params.id, params.tab);
+            await agentsModule.navigateTo(params.id, params.tab);
+          } else {
+            agentsModule.showList();
           }
         } else if (tabName === 'wiki') {
           wiki.init();
+          await wiki.navigateTo(params?.path);
         } else if (tabName === 'logs') {
           const iframe = document.getElementById('logs-iframe');
           if (iframe && !iframe.getAttribute('src')) {
             iframe.src = '/viewer/log-viewer.html';
           }
+          publishBasicTabContext();
+        } else if (tabName === 'chat') {
+          publishBasicTabContext();
+        } else {
+          publishBasicTabContext();
         }
       }
 
@@ -2164,10 +2052,16 @@
       window.addEventListener('message', (event) => {
         if (!event.data) return;
 
-        // skill:deployed — refresh Skills Tab list
-        if (event.data.type === 'skill:deployed') {
-          if (skills && skills.loadSkills) {
-            skills.loadSkills().then(() => skills.render());
+        // viewer:sendToChat — generic child iframe → chat handoff
+        if (event.data.type === 'viewer:sendToChat') {
+          const message = typeof event.data.message === 'string' ? event.data.message : '';
+          if (!message) {
+            return;
+          }
+          const input = document.getElementById('chat-input');
+          if (input && chat) {
+            input.value = message;
+            setTimeout(() => chat.send(), 50);
           }
         }
       });
@@ -2195,15 +2089,6 @@ Please explain what this tab shows:
 - Token usage and cost tracking
 - Scheduled jobs (Cron) status
 Explain what each section means and what actions the user can take. Be friendly and concise.`,
-
-        skills: `The user clicked the help button on the Skills tab.
-Please explain this tab's features:
-- Installed: List of installed skills (toggle enable/disable, edit, remove)
-- Available: Skills from the Cowork marketplace that can be installed
-- Install from GitHub URL for external plugins
-- [+ New Skill] button to create skills in Skill Lab
-- [Edit] button to modify existing skills in Skill Lab
-Explain what skills are and how they enhance the agent's capabilities. Be friendly and concise.`,
 
         memory: `The user clicked the help button on the Memory tab.
 Please explain this tab's features:

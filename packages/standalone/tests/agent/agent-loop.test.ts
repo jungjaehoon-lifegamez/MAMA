@@ -9,6 +9,10 @@ import { AgentLoop, getGatewayToolsPrompt } from '../../src/agent/agent-loop.js'
 import type { OAuthManager } from '../../src/auth/index.js';
 import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
 
+const { laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
+  laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
+}));
+
 const persistentPromptMock = vi.fn().mockResolvedValue({
   response: 'Mock response',
   usage: { input_tokens: 10, output_tokens: 5 },
@@ -90,7 +94,7 @@ vi.mock('../../src/concurrency/index.js', () => {
   return {
     LaneManager: vi.fn(),
     getGlobalLaneManager: vi.fn().mockReturnValue({
-      enqueueWithSession: vi.fn((_, fn) => fn()),
+      enqueueWithSession: laneManagerEnqueueWithSessionMock,
     }),
   };
 });
@@ -154,6 +158,7 @@ describe('AgentLoop', () => {
     gatewayExecutorSetSessionsDbMock.mockClear();
     gatewayExecutorSetValidationServiceMock.mockClear();
     gatewayExecutorSetRawStoreMock.mockClear();
+    laneManagerEnqueueWithSessionMock.mockClear();
   });
 
   describe('run()', () => {
@@ -258,6 +263,42 @@ describe('AgentLoop', () => {
       await agentLoop.run('Second');
 
       expect(gatewayExecutorClearCurrentAgentContextMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('should route viewer frontdoor sessions through a dedicated viewer global lane', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { useLanes: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSessionKey('viewer:mama_os_main:user-1');
+      await agentLoop.run('Hello');
+
+      expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
+        'viewer:mama_os_main:user-1',
+        expect.any(Function),
+        'viewer'
+      );
+    });
+
+    it('should route conductor audit sessions through a dedicated system global lane', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { useLanes: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSessionKey('system:conductor-audit-123:system');
+      await agentLoop.run('Audit');
+
+      expect(laneManagerEnqueueWithSessionMock).toHaveBeenCalledWith(
+        'system:conductor-audit-123:system',
+        expect.any(Function),
+        'system'
+      );
     });
   });
 

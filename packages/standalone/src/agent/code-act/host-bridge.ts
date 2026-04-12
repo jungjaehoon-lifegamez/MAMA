@@ -342,10 +342,22 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'agent_get',
-    description: 'Get agent config, persona, and current version',
+    description:
+      'Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail.',
     params: [{ name: 'agent_id', type: 'string', required: true }],
     returnType:
       '{ success: boolean; agent_id: string; version: number; config: Record<string, unknown>; system?: string | null; change_note?: string | null; created_at?: string }',
+    category: 'os',
+  },
+  {
+    name: 'agent_activity',
+    description: 'Get recent agent activity rows and sync the viewer to that agent activity tab.',
+    params: [
+      { name: 'agent_id', type: 'string', required: true },
+      { name: 'limit', type: 'number', required: false },
+    ],
+    returnType:
+      '{ success: boolean; agent_id: string; activity: Array<{ id: number; type: string; input_summary?: string | null; output_summary?: string | null; execution_status?: string | null; created_at: string }> }',
     category: 'os',
   },
   {
@@ -405,19 +417,21 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'viewer_state',
-    description: 'Get current viewer route and page context',
+    description: 'Get current viewer route, selected item, and page context',
     params: [],
-    returnType: '{ context: { currentRoute?: string; pageData?: unknown } }',
+    returnType:
+      '{ success: boolean; context: { currentRoute?: string; selectedItem?: { type?: string; id?: string }; pageData?: unknown } }',
     category: 'os',
   },
   {
     name: 'viewer_navigate',
-    description: 'Navigate viewer to a route',
+    description:
+      'Navigate viewer to a route. To open agent detail, pass route="agents" with params {id, tab}. To open a wiki document, pass route="wiki" with params {path}.',
     params: [
       { name: 'route', type: 'string', required: true },
       { name: 'params', type: 'Record<string, string>', required: false },
     ],
-    returnType: '{ navigated: string }',
+    returnType: '{ success: boolean; navigated: string }',
     category: 'os',
   },
   {
@@ -578,6 +592,7 @@ export const READ_ONLY_TOOLS = new Set([
   'mama_search',
   'mama_load_checkpoint',
   'agent_get',
+  'agent_activity',
   'viewer_state',
   'Read',
   'browser_get_text',

@@ -709,6 +709,7 @@ export type GatewayToolName =
   | 'agent_notices'
   // Agent management tools (Managed Agents pattern)
   | 'agent_get'
+  | 'agent_activity'
   | 'agent_update'
   | 'agent_create'
   | 'agent_compare'

@@ -10,8 +10,13 @@
 import type { ServerResponse } from 'node:http';
 
 export interface UICommand {
+  id?: string;
   type: 'navigate' | 'notify' | 'suggest_change' | 'refresh';
   payload: Record<string, unknown>;
+}
+
+export interface UICommandAck {
+  command_ids: string[];
 }
 
 export interface PageContext {
@@ -24,23 +29,57 @@ export interface PageContext {
 const MAX_QUEUE = 50;
 const VIEWER_FRONTDOOR_CHANNEL_ID = 'mama_os_main';
 const LEGACY_VIEWER_SESSION_PREFIX = 'session_';
+const COMMAND_REDELIVERY_MS = 4000;
+
+type QueuedUICommand = {
+  id: string;
+  type: UICommand['type'];
+  payload: Record<string, unknown>;
+  delivered_at: number | null;
+};
 
 export class UICommandQueue {
-  private commands: UICommand[] = [];
+  private commands: QueuedUICommand[] = [];
   private pageContext: PageContext | null = null;
   private pageContexts = new Map<string, PageContext>();
+  private nextCommandSeq = 0;
 
-  push(cmd: UICommand): void {
-    this.commands.push(cmd);
+  push(cmd: UICommand): UICommand {
+    const queued: QueuedUICommand = {
+      id: cmd.id ?? `ui_${Date.now()}_${++this.nextCommandSeq}`,
+      type: cmd.type,
+      payload: cmd.payload,
+      delivered_at: null,
+    };
+    this.commands.push(queued);
     if (this.commands.length > MAX_QUEUE) {
       this.commands = this.commands.slice(-MAX_QUEUE);
     }
+    return {
+      id: queued.id,
+      type: queued.type,
+      payload: queued.payload,
+    };
   }
 
   drain(): UICommand[] {
-    const cmds = this.commands;
-    this.commands = [];
-    return cmds;
+    const now = Date.now();
+    const cmds = this.commands.filter(
+      (cmd) => cmd.delivered_at === null || now - cmd.delivered_at >= COMMAND_REDELIVERY_MS
+    );
+    for (const cmd of cmds) {
+      cmd.delivered_at = now;
+    }
+    return cmds.map((cmd) => ({
+      id: cmd.id,
+      type: cmd.type,
+      payload: cmd.payload,
+    }));
+  }
+
+  ack(commandIds: string[]): void {
+    const ids = new Set(commandIds);
+    this.commands = this.commands.filter((cmd) => !ids.has(cmd.id));
   }
 
   setPageContext(ctx: PageContext): void {
@@ -110,6 +149,13 @@ function isValidUICommand(body: unknown): body is UICommand {
   return true;
 }
 
+function isValidUICommandAck(body: unknown): body is UICommandAck {
+  if (!isRecord(body) || !Array.isArray(body.command_ids)) {
+    return false;
+  }
+  return body.command_ids.every((id) => typeof id === 'string' && id.length > 0);
+}
+
 /** GET /api/ui/commands — viewer drains pending commands */
 export function handleGetUICommands(res: ServerResponse, queue: UICommandQueue): void {
   json(res, 200, { commands: queue.drain() });
@@ -147,4 +193,18 @@ export function handlePostUICommand(
   }
   queue.push(body);
   json(res, 200, { success: true });
+}
+
+/** POST /api/ui/commands/ack — viewer acknowledges applied commands */
+export function handlePostUICommandAck(
+  res: ServerResponse,
+  body: UICommandAck,
+  queue: UICommandQueue
+): void {
+  if (!isValidUICommandAck(body)) {
+    json(res, 400, { error: 'invalid payload' });
+    return;
+  }
+  queue.ack(body.command_ids);
+  json(res, 200, { success: true, acknowledged: body.command_ids.length });
 }

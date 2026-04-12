@@ -5,7 +5,7 @@
  * Called automatically during `pnpm build`.
  */
 
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, mkdirSync, copyFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { ToolRegistry } from '../src/agent/tool-registry.js';
 
@@ -109,6 +109,10 @@ const distDir = join(__dirname, '..', 'dist', 'agent');
 try {
   mkdirSync(distDir, { recursive: true });
   writeFileSync(join(distDir, 'gateway-tools.md'), output, 'utf-8');
+  const osAgentCapabilitiesSrc = join(__dirname, '..', 'src', 'agent', 'os-agent-capabilities.md');
+  if (existsSync(osAgentCapabilitiesSrc)) {
+    copyFileSync(osAgentCapabilitiesSrc, join(distDir, 'os-agent-capabilities.md'));
+  }
 } catch {
   // dist may not exist yet during first build
 }

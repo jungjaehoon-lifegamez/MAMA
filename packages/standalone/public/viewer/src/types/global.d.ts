@@ -155,15 +155,6 @@ declare global {
       toggleCronJob?: (id: string, enabled: boolean) => Promise<void>;
       deleteCronJob?: (id: string) => Promise<void>;
     };
-    skillsModule?: {
-      closeDetail?: () => void;
-      install?: (source: string, name: string) => Promise<void>;
-      uninstall?: (source: string, name: string) => Promise<void>;
-      toggle?: (source: string, name: string, enabled: boolean) => Promise<void>;
-      init?: () => Promise<void>;
-      loadSkills?: () => Promise<void>;
-      render?: () => void;
-    };
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
     lucideConfig?: unknown;

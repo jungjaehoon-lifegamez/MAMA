@@ -13,7 +13,7 @@
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { PromptSizeMonitor } from './prompt-size-monitor.js';
 import type { PromptLayer } from './prompt-size-monitor.js';
-import { loadInstalledSkills } from './skill-loader.js';
+import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from './model-runner.js';
@@ -81,6 +81,11 @@ const DEFAULT_TOOLS_CONFIG = {
   gateway: ['*'],
   mcp: [] as string[],
   mcp_config: '~/.mama/mama-mcp-config.json',
+};
+
+const SOURCE_GLOBAL_LANES: Record<string, string> = {
+  viewer: 'viewer',
+  system: 'system',
 };
 
 /**
@@ -169,7 +174,7 @@ export function loadComposedSystemPrompt(verbose = false, context?: AgentContext
   }
 
   // Load skill catalog (on-demand mode — full content injected per-message by PromptEnhancer)
-  const skillCatalog = loadInstalledSkills(verbose);
+  const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(verbose), context);
   if (skillCatalog.length > 0) {
     const skillDirective = [
       '# Installed Skills',
@@ -354,7 +359,10 @@ export class AgentLoop {
         const p = join(mamaHome, file);
         if (existsSync(p)) personaParts.push(readFileSync(p, 'utf-8'));
       }
-      const skillCatalog = loadInstalledSkills();
+      const skillCatalog = filterSkillCatalogForContext(
+        loadInstalledSkills(),
+        options.agentContext ?? null
+      );
       // Only load ONBOARDING.md during initial setup (before SOUL.md exists)
       const onboardingContent = !existsSync(join(mamaHome, 'SOUL.md'))
         ? (() => {
@@ -569,9 +577,12 @@ export class AgentLoop {
     return this.sessionKey;
   }
 
-  private resolveGlobalLaneForSession(_sessionKey: string): string | undefined {
-    // Cron jobs no longer flow through agentLoop (uses dedicated CronWorker process)
-    return undefined;
+  private resolveGlobalLaneForSession(sessionKey: string): string | undefined {
+    const source = sessionKey.split(':', 1)[0]?.trim().toLowerCase();
+    if (!source) {
+      return undefined;
+    }
+    return SOURCE_GLOBAL_LANES[source];
   }
 
   /**

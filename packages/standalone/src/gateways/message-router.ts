@@ -772,14 +772,14 @@ This protects your credentials from being exposed in chat logs.`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
-        this.logConductorActivity(message.text, response, Date.now() - conductorStart);
+        this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       } else {
         const pageCtx = this.getPageContextPrefix(message);
         const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
-        this.logConductorActivity(message.text, response, Date.now() - conductorStart);
+        this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       }
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
@@ -800,7 +800,7 @@ This protects your credentials from being exposed in chat logs.`;
     } catch (error) {
       const durationMs = Date.now() - startTime;
       this.logAgentActivity(
-        'conductor',
+        this.resolveFrontdoorAgentId(message),
         'task_error',
         message.text?.slice(0, 200),
         undefined,
@@ -1564,9 +1564,18 @@ INSTRUCTION:
 
   // ── Activity Logging (shared by conductor + memory agent) ───────────
 
-  private logConductorActivity(inputText: string, responseText: string, durationMs: number): void {
+  private resolveFrontdoorAgentId(message: NormalizedMessage): string {
+    return message.source === 'viewer' ? 'os-agent' : 'conductor';
+  }
+
+  private logFrontdoorActivity(
+    message: NormalizedMessage,
+    inputText: string,
+    responseText: string,
+    durationMs: number
+  ): void {
     this.logAgentActivity(
-      'conductor',
+      this.resolveFrontdoorAgentId(message),
       'task_complete',
       inputText?.slice(0, 200),
       responseText?.slice(0, 500),

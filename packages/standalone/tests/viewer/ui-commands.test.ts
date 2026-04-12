@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getUICommands = vi.fn();
 const pushPageContext = vi.fn();
+const ackUICommands = vi.fn();
 const showToast = vi.fn();
 
 vi.mock('../../public/viewer/src/utils/api.js', () => ({
   API: {
     getUICommands,
+    ackUICommands: ackUICommands.mockResolvedValue({ success: true }),
     pushPageContext: pushPageContext.mockResolvedValue({ success: true }),
   },
 }));
@@ -91,6 +93,29 @@ describe('viewer ui-commands', () => {
       undefined,
       'mama_os_main'
     );
+
+    stopPolling();
+  });
+
+  it('acknowledges navigation commands after the async tab switch completes', async () => {
+    const switchTab = vi.fn().mockResolvedValue(undefined);
+    getUICommands.mockResolvedValue({
+      commands: [
+        {
+          id: 'ui_1',
+          type: 'navigate',
+          payload: { route: 'agents', params: { id: 'wiki-agent', tab: 'activity' } },
+        },
+      ],
+    });
+
+    const { startUICommandPolling } = await import('../../public/viewer/src/utils/ui-commands.js');
+    const stopPolling = startUICommandPolling(switchTab);
+
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(switchTab).toHaveBeenCalledWith('agents', { id: 'wiki-agent', tab: 'activity' });
+    expect(ackUICommands).toHaveBeenCalledWith(['ui_1']);
 
     stopPolling();
   });

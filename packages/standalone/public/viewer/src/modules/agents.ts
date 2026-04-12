@@ -139,6 +139,32 @@ export class AgentsModule {
     };
   }
 
+  private updateDetailPageContext(
+    agent: AgentWithVersion,
+    patch: Record<string, unknown> = {}
+  ): void {
+    const existingContext = this.currentDetailContext ?? this.buildDetailPageContext(agent, null);
+    const nextContext: Record<string, unknown> = {
+      ...existingContext,
+      ...patch,
+      activeTab: patch.activeTab ?? this.activeTab,
+    };
+    const validation =
+      nextContext.validation &&
+      typeof nextContext.validation === 'object' &&
+      !Array.isArray(nextContext.validation)
+        ? (nextContext.validation as Record<string, unknown>)
+        : null;
+    const validationOutcome = typeof validation?.outcome === 'string' ? validation.outcome : 'none';
+    nextContext.summary = `${agent.display_name || agent.name} v${agent.version ?? 0} | validation: ${validationOutcome} | tab: ${String(nextContext.activeTab ?? this.activeTab)}`;
+    this.currentDetailContext = nextContext;
+    reportPageContext(
+      'agents',
+      nextContext,
+      agent.id ? { type: 'agent', id: agent.id } : undefined
+    );
+  }
+
   private async loadAgents(): Promise<void> {
     if (!this.container) {
       return;
@@ -417,19 +443,10 @@ export class AgentsModule {
                 ...(vo ? { outcome: vo } : {}),
               }
             : null;
-        const validationOutcome =
-          typeof nextValidation?.outcome === 'string' ? nextValidation.outcome : 'none';
-        this.currentDetailContext = {
-          ...existingContext,
+        this.updateDetailPageContext(a, {
           activeTab: this.activeTab,
           validation: nextValidation,
-          summary: `${a.display_name || a.name} v${a.version ?? 0} | validation: ${validationOutcome} | tab: ${this.activeTab}`,
-        };
-        reportPageContext(
-          'agents',
-          this.currentDetailContext,
-          a.id ? { type: 'agent', id: a.id } : undefined
-        );
+        });
       });
     });
 
@@ -671,6 +688,7 @@ export class AgentsModule {
     try {
       const { activity } = await API.getAgentActivity(a.id ?? '', 20);
       if (!activity.length) {
+        this.updateDetailPageContext(a, { activity: [] });
         el.innerHTML =
           '<div class="text-[12px] text-gray-400 py-4 text-center">No activity yet. Delegate a task to this agent to see logs here.</div>';
         return;
@@ -738,6 +756,19 @@ export class AgentsModule {
         })
         .join('');
       el.innerHTML = `<div>${rows}</div>`;
+      const activityContext = activity.slice(0, 20).map((ev: Record<string, unknown>) => ({
+        id: ev.id ?? null,
+        type: ev.type ?? null,
+        input_summary: ev.input_summary ?? null,
+        output_summary: ev.output_summary ?? null,
+        execution_status: ev.execution_status ?? null,
+        duration_ms: ev.duration_ms ?? null,
+        tokens_used: ev.tokens_used ?? null,
+        score: ev.score ?? null,
+        created_at: ev.created_at ?? null,
+        error_message: ev.error_message ?? null,
+      }));
+      this.updateDetailPageContext(a, { activity: activityContext });
 
       // Expand/collapse toggle with ARIA
       el.querySelectorAll<HTMLElement>('[data-expand]').forEach((toggle) => {
@@ -864,6 +895,7 @@ export class AgentsModule {
 
       // ── 2. Report from Conductor ──
       let reportHtml = '';
+      let reportContext: Record<string, unknown> | null = null;
       if (summary?.report_json) {
         try {
           const report = JSON.parse(String(summary.report_json));
@@ -874,6 +906,11 @@ export class AgentsModule {
           const reportDetails = String(
             report.details ?? (reportLines.length > 0 ? reportLines.join('\n') : '')
           );
+          reportContext = {
+            headline: reportHeadline,
+            details: reportDetails,
+            outcome: String(report.outcome ?? outcome),
+          };
           reportHtml = `
             <div style="margin-top:20px;">
               <div style="font-size:13px;font-weight:600;color:${C.pri};margin-bottom:8px;">Validation Report</div>
@@ -987,8 +1024,25 @@ export class AgentsModule {
                 <tbody>${hRows}</tbody>
               </table>
             </div>
-          </div>`;
+            </div>`;
       }
+
+      const validationContext = {
+        ...this.buildDetailValidationContext(summary),
+        latest_session_id: latestId || null,
+        metrics: compareData?.deltas ?? [],
+        report: reportContext,
+        history: history.slice(0, 10).map((h) => ({
+          id: h.id ?? null,
+          agent_version: h.agent_version ?? null,
+          validation_outcome: h.validation_outcome ?? null,
+          execution_status: h.execution_status ?? null,
+          trigger_type: h.trigger_type ?? null,
+          ended_at: h.ended_at ?? null,
+          baseline_version: h.baseline_version ?? null,
+        })),
+      };
+      this.updateDetailPageContext(a, { validation: validationContext });
 
       // ── 4. Approve button ──
       const canApprove = outcome === 'improved' || outcome === 'healthy';
@@ -1139,21 +1193,22 @@ export class AgentsModule {
    * Deep navigation from viewer_navigate command.
    * Opens agent detail and optionally switches to a specific tab.
    */
-  navigateTo(agentId: string, tab?: string): void {
-    const tryNav = () => {
+  async navigateTo(agentId: string, tab?: string): Promise<void> {
+    const tryNav = async () => {
       const agent = this.agents.find((a) => a.id === agentId);
       if (agent) {
         const desiredTab =
           tab && ['config', 'persona', 'tools', 'activity', 'validation', 'history'].includes(tab)
             ? (tab as DetailTab)
             : undefined;
-        void this.showDetail(agentId, desiredTab);
+        await this.showDetail(agentId, desiredTab);
       }
     };
     if (this.agents.length > 0) {
-      tryNav();
+      await tryNav();
     } else {
-      void this.loadAgents().then(tryNav);
+      await this.loadAgents();
+      await tryNav();
     }
   }
 

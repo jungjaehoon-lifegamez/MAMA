@@ -15,6 +15,7 @@
 import { showToast, escapeHtml, escapeAttr, getElementByIdOrNull } from '../utils/dom.js';
 import { formatModelName } from '../utils/format.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 import {
   API,
   type ApiConfigResponse,
@@ -466,6 +467,24 @@ export class SettingsModule {
     this.populateSkillsSection();
     this.populateTokenSection();
     this.populateCronSection();
+
+    reportPageContext('settings', {
+      pageType: 'settings-overview',
+      gateways: {
+        discord: this.config.discord?.enabled ?? false,
+        slack: this.config.slack?.enabled ?? false,
+        telegram: this.config.telegram?.enabled ?? false,
+        chatwork: this.config.chatwork?.enabled ?? false,
+      },
+      agent: {
+        backend: this.config.agent?.backend ?? 'claude',
+        model: this.config.agent?.model ?? null,
+        max_turns: this.config.agent?.max_turns ?? null,
+        timeout: this.config.agent?.timeout ?? null,
+      },
+      multiAgentCount: this.multiAgentData.agents.length,
+      mcpServerCount: this.mcpServersData.servers.length,
+    });
   }
 
   /**

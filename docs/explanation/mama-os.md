@@ -39,11 +39,11 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         MAMA OS (Browser)                            │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Dashboard │ Memory │ Skills │ Playground │ Settings  + Floating Chat │
+│  Dashboard │ Memory │ Feed │ Wiki │ Agents │ Logs │ Settings + Chat │
 │                                                                      │
-│  • System status      • Decision search   • Skill management        │
-│  • Gateway health     • Graph visual      • Interactive HTML tools   │
-│  • Memory stats       • Agent config      • Real-time daemon logs   │
+│  • System status      • Decision search   • Connector activity      │
+│  • Gateway health     • Graph visual      • Wiki document browsing  │
+│  • Memory stats       • Agent inspection  • Real-time daemon logs   │
 └──────────────────────────────────────────────────────────────────────┘
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
@@ -77,19 +77,18 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  MAMA OS Viewer (viewer.html)                         │
 │  ┌─────────────────────────────────────────────────────────────┐  │
 │  │  Tab Navigation                                             │  │
-│  │  • Dashboard • Memory • Skills • Playground • Settings      │  │
-│  │  + Floating Chat (global overlay, visible on all tabs)      │  │
+│  │  • Dashboard • Memory • Feed • Wiki • Agents • Logs • Settings │  │
+│  │  + Chat shell (shared across tabs)                          │  │
 │  └─────────────────────────────────────────────────────────────┘  │
 │                                                        │
-│  JavaScript Modules (viewer.html imports 7 modules)  │
-│  ┌────────────┬────────────┬──────────────┐         │
-│  │ chat.js    │ graph.js   │ memory.js    │         │
-│  │ (WebSocket)│ (vis.js)   │ (Search API) │         │
-│  ├────────────┼────────────┼──────────────┤         │
-│  │dashboard.js│ settings.js│ skills.js    │         │
-│  ├────────────┴────────────┴──────────────┤         │
-│  │ playground.js (iframe + card grid)     │         │
-│  └────────────────────────────────────────┘         │
+│  JavaScript Modules (viewer.html imports feature modules)   │
+│  ┌────────────┬────────────┬──────────────┬──────────────┐  │
+│  │ chat.js    │ graph.js   │ memory.js    │ dashboard.js │  │
+│  ├────────────┼────────────┼──────────────┼──────────────┤  │
+│  │connector-feed.js │ wiki.js │ agents.js  │ settings.js  │  │
+│  ├────────────┴────────────┴──────────────┴──────────────┤  │
+│  │ logs + shared UI command/page-context utilities       │  │
+│  └───────────────────────────────────────────────────────┘  │
 │                                                        │
 └──────────────────────────────────────────────────────┘
                       ↕ HTTP/WebSocket
@@ -239,35 +238,31 @@ When an agent responds, a Reasoning Header is displayed above the message. If to
 
 ---
 
-### 3. Skills Tab
+### 3. Agents Tab
 
-**Purpose:** Standalone skills management
+**Purpose:** Managed-agent inspection and control
 
 **What you see:**
 
-- **Skill list** - Card grid of installed skills
-- **Enable/Disable** - Toggle individual skills on/off
-- **Skill Lab integration** - Create and edit skills interactively via the Skill Lab in the Playground tab
+- **Agent list** - Managed agents exposed in the current runtime
+- **Config** - Model, backend, enablement, and tool permissions
+- **Activity / Validation / History** - Run traces, validation outcomes, and version history
 
-**Use case:** Check which skills are active and disable any that are not needed.
+**Use case:** Inspect `os-agent`, `wiki-agent`, `dashboard-agent`, and other managed agents from the same Viewer surface the user sees.
 
 ---
 
-### 4. Playground Tab
+### 4. Wiki and Logs
 
-**Purpose:** Interactive HTML tool management and execution
+**Purpose:** Shared operational context for documents and runtime output
 
 **Features:**
 
-- **Card grid** - Displays registered Playgrounds in a card grid
-- **iframe load** - Clicking a card loads the Playground HTML in an iframe
-- **Open in new tab** - Opens the Playground in a separate browser tab
-- **Delete** - Remove Playgrounds that are no longer needed
-- **4 built-in Playgrounds** - Wave Visualizer, Skill Lab, Cron Workflow Lab, Log Viewer
+- **Wiki tab** - Browse vault-backed documents from the same Viewer shell
+- **Logs tab** - Read live daemon logs without leaving the Viewer
+- **Same-view context** - Selected wiki pages and agent detail tabs are published back to the frontdoor agent
 
-The **Log Viewer** is one of the 4 built-in Playgrounds (not a separate tab). It provides real-time daemon log streaming via WebSocket, with filtering by level (info, warn, error) and full-text search.
-
-**Use case:** Manage and run custom tools created by agents. See the [Playground Guide](../guides/playgrounds.md) for details.
+Legacy `Skills` and `Playground` tabs were removed. Their remaining responsibilities were folded into the current `Agents`, `Wiki`, and `Logs` surfaces.
 
 ---
 

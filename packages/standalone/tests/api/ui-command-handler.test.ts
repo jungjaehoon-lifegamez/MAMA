@@ -3,6 +3,7 @@ import {
   UICommandQueue,
   handlePostPageContext,
   handlePostUICommand,
+  handlePostUICommandAck,
 } from '../../src/api/ui-command-handler.js';
 
 function mockRes() {
@@ -39,8 +40,10 @@ describe('UICommandQueue', () => {
   });
 
   it('drain clears the queue', () => {
-    queue.push({ type: 'navigate', payload: { route: 'agents' } });
-    queue.drain();
+    const queued = queue.push({ type: 'navigate', payload: { route: 'agents' } });
+    expect(queue.drain()).toHaveLength(1);
+    expect(queue.drain()).toHaveLength(0);
+    queue.ack([queued.id!]);
     expect(queue.drain()).toHaveLength(0);
   });
 
@@ -113,5 +116,12 @@ describe('UICommandQueue', () => {
 
     expect(res._status).toBe(400);
     expect(queue.drain()).toHaveLength(0);
+  });
+
+  it('rejects invalid ui-command ack payloads', () => {
+    const res = mockRes();
+    handlePostUICommandAck(res as never, { command_ids: ['ok', 123] } as never, queue);
+
+    expect(res._status).toBe(400);
   });
 });

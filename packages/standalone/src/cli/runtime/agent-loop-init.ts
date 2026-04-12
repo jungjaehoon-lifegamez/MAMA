@@ -82,18 +82,24 @@ export function initMainAgentLoop(
 
   // OS Agent mode (Viewer context only)
   if (options?.osAgentMode === true) {
-    const osAgentPath = join(__dirname, '../../agent/os-agent-capabilities.md');
-    if (existsSync(osAgentPath)) {
+    const osAgentPaths = [
+      join(__dirname, '../../agent/os-agent-capabilities.md'),
+      join(__dirname, '../../../src/agent/os-agent-capabilities.md'),
+    ];
+    const osAgentPath = osAgentPaths.find((candidate) => existsSync(candidate));
+    if (osAgentPath) {
       osCapabilities = readFileSync(osAgentPath, 'utf-8');
       console.log('[start] ✓ OS Agent mode enabled (system control capabilities)');
     }
   }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
-  // Inherit useCodeAct from Conductor agent config (webchat uses main agentLoop)
-  const conductorConfig =
-    config.multi_agent?.agents?.conductor || config.multi_agent?.agents?.Conductor;
-  const useCodeAct = conductorConfig?.useCodeAct === true;
+  // Viewer frontdoor prefers os-agent config; conductor remains the fallback for legacy installs.
+  const frontdoorConfig =
+    config.multi_agent?.agents?.['os-agent'] ??
+    config.multi_agent?.agents?.conductor ??
+    config.multi_agent?.agents?.Conductor;
+  const useCodeAct = frontdoorConfig?.useCodeAct === true;
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.

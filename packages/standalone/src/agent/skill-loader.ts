@@ -13,6 +13,7 @@ import { join, resolve, normalize } from 'path';
 import { homedir } from 'os';
 import { getConfig } from '../cli/config/config-manager.js';
 import { countTokens } from './token-estimator.js';
+import type { AgentContext } from './types.js';
 import * as debugLoggerModule from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLoggerModule as {
@@ -43,6 +44,8 @@ const EXCLUDED_SKILL_FILES = new Set([
 
 /** Max tokens per skill file to prevent prompt bloat */
 const MAX_SKILL_TOKENS = () => getConfig().prompt?.skill_max_tokens ?? 2_000;
+const UNSUPPORTED_SKILL_IDS = new Set(['mama/playground']);
+const VIEWER_HIDDEN_SKILL_IDS = new Set<string>([]);
 
 /**
  * Result of loading a skill's content.
@@ -519,4 +522,35 @@ export function loadInstalledSkills(
   _options: { onlyCommands?: boolean } = {}
 ): string[] {
   return buildSkillCatalog(verbose);
+}
+
+export function filterSkillCatalogForContext(
+  catalog: string[],
+  context?: AgentContext | null
+): string[] {
+  const globallyFiltered = catalog.filter((line) => {
+    for (const skillId of UNSUPPORTED_SKILL_IDS) {
+      if (line.includes(`[${skillId}]`)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  if (!context) {
+    return globallyFiltered;
+  }
+  const isViewerOsAgent =
+    context.source === 'viewer' || context.platform === 'viewer' || context.roleName === 'os_agent';
+  if (!isViewerOsAgent) {
+    return globallyFiltered;
+  }
+  return globallyFiltered.filter((line) => {
+    for (const skillId of VIEWER_HIDDEN_SKILL_IDS) {
+      if (line.includes(`[${skillId}]`)) {
+        return false;
+      }
+    }
+    return true;
+  });
 }

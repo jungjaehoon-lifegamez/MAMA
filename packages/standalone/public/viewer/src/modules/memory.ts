@@ -16,6 +16,7 @@ import { escapeHtml, debounce, showToast, getElementByIdOrNull } from '../utils/
 import { formatRelativeTime, truncateText } from '../utils/format.js';
 import { API, type MemorySearchItem } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 
 const logger = new DebugLogger('Memory');
 
@@ -121,6 +122,17 @@ export class MemoryModule {
       this.searchData = data.results || [];
       this.renderResults(this.searchData, query);
       this.setStatus(`Found ${this.searchData.length} decision(s)`, '');
+      reportPageContext('memory', {
+        pageType: 'memory-search',
+        query,
+        resultCount: this.searchData.length,
+        results: this.searchData.slice(0, 10).map((item) => ({
+          id: item.id ?? null,
+          topic: item.topic ?? null,
+          outcome: item.outcome ?? null,
+          similarity: item.similarity ?? null,
+        })),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       logger.error('Search error:', message);
@@ -167,6 +179,17 @@ export class MemoryModule {
       // Render results
       this.renderResults(results, message);
       this.setStatus(`${results.length} related decision(s) found`, '');
+      reportPageContext('memory', {
+        pageType: 'memory-related',
+        query: message,
+        resultCount: results.length,
+        results: results.slice(0, 10).map((item) => ({
+          id: item.id ?? null,
+          topic: item.topic ?? null,
+          outcome: item.outcome ?? null,
+          similarity: item.similarity ?? null,
+        })),
+      });
 
       // Show notification
       showToast(`🧠 ${results.length} related MAMA decision(s) found`);
@@ -253,6 +276,12 @@ export class MemoryModule {
       </div>
     `;
     this.setStatus('', '');
+    reportPageContext('memory', {
+      pageType: 'memory-search',
+      query: '',
+      resultCount: 0,
+      results: [],
+    });
     // Reinitialize Lucide icons for dynamic content
     if (typeof lucide !== 'undefined' && typeof window.lucideConfig !== 'undefined') {
       lucide.createIcons(window.lucideConfig);

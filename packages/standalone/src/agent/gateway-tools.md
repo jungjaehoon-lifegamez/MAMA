@@ -51,11 +51,11 @@ Call tools via JSON block:
 - **os_set_permissions**() — Set tool/path permissions for a role
 - **os_get_config**() — Get current configuration
 - **os_set_model**() — Set AI model for a role
-- **agent_get**(agent_id) — Get agent config, persona, and current version
+- **agent_get**(agent_id) — Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail so you and the user stay on the same page.
 - **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
 - **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
-- **viewer_state**() — Get current viewer state (active tab, page context). Call this to know what the user is looking at.
-- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab (e.g., agent detail, metrics)
+- **viewer_state**() — Get current viewer state (current route, selected item, pageData). Call after navigation to verify which item and tab are actually open.
+- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?}) — Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.
 - **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
 - **agent_test**(agent_id, sample_count?, test_data?) — Test agent with connector data. Auto-scores pass/fail ratio.
 
@@ -67,6 +67,7 @@ Call tools via JSON block:
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform
+- **agent_activity**(agent_id, limit?) — Get recent agent activity rows and sync the viewer to that agent activity tab so you and the user inspect the same logs.
 - **agent_compare**(agent_id, version_a, version_b) — Compare metrics between two versions of an agent (Before/After)
 
 ## PR Review

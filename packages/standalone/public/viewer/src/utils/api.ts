@@ -1005,9 +1005,15 @@ export class API {
   // =============================================
 
   static async getUICommands(): Promise<{
-    commands: Array<{ type: string; payload: Record<string, unknown> }>;
+    commands: Array<{ id?: string; type: string; payload: Record<string, unknown> }>;
   }> {
     return this.get('/api/ui/commands');
+  }
+
+  static async ackUICommands(commandIds: string[]): Promise<JsonRecord> {
+    return this.post('/api/ui/commands/ack', {
+      command_ids: commandIds,
+    });
   }
 
   static async pushPageContext(

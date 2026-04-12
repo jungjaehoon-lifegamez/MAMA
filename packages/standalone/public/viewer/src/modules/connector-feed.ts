@@ -1,6 +1,7 @@
 import { API, type ConnectorActivitySummary, type ConnectorFeedChannel } from '../utils/api.js';
 import { DebugLogger } from '../utils/debug-logger.js';
 import { createCollapsible, createResizeHandle } from '../utils/dom.js';
+import { reportPageContext } from '../utils/ui-commands.js';
 
 const logger = new DebugLogger('ConnectorFeed');
 
@@ -101,6 +102,17 @@ export class ConnectorFeedModule {
 
   private renderConnectorList(connectors: ConnectorActivitySummary[]): void {
     if (!this.container) return;
+    reportPageContext('feed', {
+      pageType: 'connector-list',
+      selectedConnector: this.selectedConnector,
+      connectorCount: connectors.length,
+      connectors: connectors.slice(0, 10).map((c) => ({
+        connector: c.connector,
+        status: c.status,
+        channel: c.channel,
+        timestamp: c.timestamp,
+      })),
+    });
 
     if (connectors.length === 0) {
       this.container.innerHTML =
@@ -280,6 +292,15 @@ export class ConnectorFeedModule {
     name: string,
     feed: ConnectorFeedChannel[]
   ): void {
+    reportPageContext('feed', {
+      pageType: 'connector-detail',
+      selectedConnector: name,
+      channelCount: feed.length,
+      channels: feed.slice(0, 10).map((channel) => ({
+        channel: channel.channel,
+        itemCount: channel.items.length,
+      })),
+    });
     const icon = CONNECTOR_ICON[name] || '\u{1F517}';
 
     // Clear and build header

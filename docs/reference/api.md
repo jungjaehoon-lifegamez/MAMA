@@ -885,22 +885,6 @@ Read daemon.log with tail support.
 
 ---
 
-### Playground API
-
-#### GET /api/playgrounds
-
-List playground HTML files from index.json.
-
-**Response:** `[{ "name": "Skill Lab", "slug": "skill-lab", "description": "...", "created_at": "2026-02-22T..." }]`
-
-#### DELETE /api/playgrounds/:slug
-
-Delete a playground HTML file.
-
-**Response:** `{ "success": true }`
-
----
-
 ### Workspace Skills API
 
 #### GET /api/workspace/skills

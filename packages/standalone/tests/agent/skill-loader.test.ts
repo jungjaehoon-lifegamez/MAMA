@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  filterSkillCatalogForContext,
   parseSkillSections,
   truncateSkillBySections,
   parseSkillFrontmatter,
@@ -171,6 +172,60 @@ describe('SkillLoader', () => {
       const content = 'x'.repeat(500);
       const result = truncateSkillBySections(content, 50);
       expect(result.originalChars).toBe(500);
+    });
+  });
+
+  describe('filterSkillCatalogForContext()', () => {
+    it('filters viewer-hidden legacy skills for viewer os-agent context', () => {
+      const catalog = [
+        '- [mama/playground] keywords: playground | Legacy interactive playground skill.',
+        '- [mama/wiki-rules] keywords: wiki-rules | Wiki guidance',
+      ];
+
+      const filtered = filterSkillCatalogForContext(catalog, {
+        source: 'viewer',
+        platform: 'viewer',
+        roleName: 'os_agent',
+        role: {
+          allowedTools: ['*'],
+          systemControl: true,
+          sensitiveAccess: true,
+        },
+        session: {
+          sessionId: 'test-session',
+          startedAt: new Date(),
+        },
+        capabilities: [],
+        limitations: [],
+      });
+
+      expect(filtered).toEqual(['- [mama/wiki-rules] keywords: wiki-rules | Wiki guidance']);
+    });
+
+    it('filters unsupported legacy skills even for non-viewer contexts', () => {
+      const catalog = [
+        '- [mama/playground] keywords: playground | Legacy interactive playground skill.',
+        '- [mama/wiki-rules] keywords: wiki-rules | Wiki guidance',
+      ];
+
+      const filtered = filterSkillCatalogForContext(catalog, {
+        source: 'discord',
+        platform: 'discord',
+        roleName: 'chat_bot',
+        role: {
+          allowedTools: ['*'],
+          systemControl: false,
+          sensitiveAccess: false,
+        },
+        session: {
+          sessionId: 'test-session',
+          startedAt: new Date(),
+        },
+        capabilities: [],
+        limitations: [],
+      });
+
+      expect(filtered).toEqual(['- [mama/wiki-rules] keywords: wiki-rules | Wiki guidance']);
     });
   });
 });
