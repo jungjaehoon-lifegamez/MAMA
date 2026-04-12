@@ -11,6 +11,7 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 type LooseConfig = MAMAConfig;
 type ManagedAgentConfig = Omit<AgentPersonaConfig, 'id'>;
@@ -51,6 +52,12 @@ export interface ManagedAgentRuntimeSyncResult {
 }
 
 let configMutationChain: Promise<void> = Promise.resolve();
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    warn: (...args: unknown[]) => void;
+  };
+};
+const logger = new DebugLogger('ManagedAgentRuntimeSync');
 
 function expandHomePath(inputPath: string): string {
   if (inputPath.startsWith('~/')) {
@@ -95,14 +102,22 @@ async function applyRuntimeHooks(
   if (config.multi_agent && options.applyMultiAgentConfig) {
     try {
       await options.applyMultiAgentConfig(config.multi_agent as unknown as Record<string, unknown>);
-    } catch {
+    } catch (error) {
+      logger.warn(
+        `[${agentId}] applyMultiAgentConfig failed:`,
+        error instanceof Error ? error.message : String(error)
+      );
       runtimeReloaded = false;
     }
   }
   if (options.restartMultiAgentAgent) {
     try {
       await options.restartMultiAgentAgent(agentId);
-    } catch {
+    } catch (error) {
+      logger.warn(
+        `[${agentId}] restartMultiAgentAgent failed:`,
+        error instanceof Error ? error.message : String(error)
+      );
       runtimeReloaded = false;
     }
   }
@@ -210,7 +225,11 @@ export async function updateManagedAgentRuntime(
       'persona_file',
     ]) {
       if (key in input.changes) {
-        (updatedAgent as Record<string, unknown>)[key] = input.changes[key];
+        const value =
+          key === 'backend'
+            ? normalizeCreateBackend(input.changes[key] as string | undefined, updatedAgent.backend)
+            : input.changes[key];
+        (updatedAgent as Record<string, unknown>)[key] = value;
       }
     }
 
@@ -222,7 +241,12 @@ export async function updateManagedAgentRuntime(
     const systemText =
       typeof input.changes.system === 'string' ? input.changes.system.trim() : null;
     if (systemText) {
-      await writePersonaFile(updatedAgent.persona_file, systemText);
+      const personaFile =
+        typeof updatedAgent.persona_file === 'string' && updatedAgent.persona_file.trim().length > 0
+          ? updatedAgent.persona_file
+          : defaultPersonaFile(input.agentId);
+      updatedAgent.persona_file = personaFile;
+      await writePersonaFile(personaFile, systemText);
     }
 
     await saveConfig(config);

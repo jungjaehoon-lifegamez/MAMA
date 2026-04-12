@@ -158,7 +158,7 @@ export interface ApiAgentToolsConfig {
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
 
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   model?: string;
   effort?: EffortLevel;
   tools?: ApiAgentToolsConfig;

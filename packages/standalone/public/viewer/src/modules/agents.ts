@@ -366,7 +366,7 @@ export class AgentsModule {
       .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
       .join('');
 
-    const backendOptions = Array.from(new Set(['claude', 'codex-mcp', backend]))
+    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', backend]))
       .map((b) => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`)
       .join('');
 

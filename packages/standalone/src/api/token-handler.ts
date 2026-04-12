@@ -8,6 +8,7 @@
 import { Router } from 'express';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { asyncHandler } from './error-handler.js';
+import { applyTokenUsageAgentVersionMigration } from '../db/migrations/token-usage-agent-version.js';
 
 /**
  * Token usage record for insertion
@@ -38,12 +39,7 @@ export function initTokenUsageTable(db: SQLiteDatabase): void {
       created_at INTEGER NOT NULL
     )
   `);
-  const columns = (
-    db.prepare('PRAGMA table_info(token_usage)').all() as Array<{ name: string }>
-  ).map((column) => column.name);
-  if (!columns.includes('agent_version')) {
-    db.exec('ALTER TABLE token_usage ADD COLUMN agent_version INTEGER');
-  }
+  applyTokenUsageAgentVersionMigration(db);
   // Index for time-range queries
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at)

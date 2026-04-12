@@ -25,6 +25,7 @@ import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
 import { ValidationSessionService } from '../../validation/session-service.js';
+import type { ValidationSessionRow } from '../../validation/types.js';
 import { getLatestVersion, logActivity } from '../../db/agent-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
@@ -421,16 +422,19 @@ This saves resources. Only compile when there is genuinely new information to do
       'After all fixes and reports, save audit results to memory.';
 
     const runConductorAudit = async () => {
+      let auditSession: ValidationSessionRow | null = null;
+      let auditVersion = 0;
+      const auditStart = Date.now();
       try {
         console.log('[Conductor Audit] Starting hourly audit...');
 
         // Log audit to activity + validation session
         const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
-        const auditVersion = ver?.version ?? 0;
-        const auditSession = validationService?.startSession('conductor', auditVersion, 'audit', {
-          goal: 'hourly system audit',
-        });
-        const auditStart = Date.now();
+        auditVersion = ver?.version ?? 0;
+        auditSession =
+          validationService?.startSession('conductor', auditVersion, 'audit', {
+            goal: 'hourly system audit',
+          }) ?? null;
 
         if (sessionsDb) {
           const startRow = logActivity(sessionsDb, {
@@ -445,7 +449,7 @@ This saves resources. Only compile when there is genuinely new information to do
         }
 
         await messageRouter.process({
-          source: 'viewer' as const,
+          source: 'system' as const,
           channelId: 'conductor-audit',
           userId: 'system',
           text: auditPrompt,
@@ -472,6 +476,27 @@ This saves resources. Only compile when there is genuinely new information to do
 
         console.log('[Conductor Audit] Audit complete');
       } catch (err) {
+        const auditDuration = Date.now() - auditStart;
+        if (sessionsDb) {
+          const failRow = logActivity(sessionsDb, {
+            agent_id: 'conductor',
+            agent_version: auditVersion,
+            type: 'audit_failed',
+            input_summary: 'Hourly system audit failed',
+            error_message: err instanceof Error ? err.message : String(err),
+            duration_ms: auditDuration,
+          });
+          if (auditSession) {
+            validationService?.recordRun(auditSession.id, { activityId: failRow.id });
+          }
+        }
+        if (auditSession && validationService) {
+          validationService.finalizeSession(auditSession.id, {
+            execution_status: 'failed',
+            error_message: err instanceof Error ? err.message : String(err),
+            metrics: { duration_ms: auditDuration },
+          });
+        }
         console.error(
           '[Conductor Audit] Failed:',
           err instanceof Error ? err.message : String(err)

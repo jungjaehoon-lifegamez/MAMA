@@ -205,7 +205,9 @@ export function approveValidationSession(db: SQLiteDatabase, sessionId: string):
     | ValidationSessionRow
     | undefined;
 
-  if (!session) return;
+  if (!session) {
+    throw new Error(`Validation session not found: ${sessionId}`);
+  }
 
   updateAgentValidationState(db, session.agent_id, session.trigger_type, {
     approved_version: session.agent_version,

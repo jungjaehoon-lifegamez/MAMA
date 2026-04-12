@@ -83,7 +83,7 @@ MAMA 메모리 시스템은 이미 지식 그래프를 갖추고 있다:
 - `● Error 15m` (빨강) — 마지막이 task_error
 - `● Disabled` (회색) — enabled: false
 
-데이터: `GET /api/agents` (last_activity + is_running) + `GET /api/agents/activity-summary` (alerts)
+데이터: 현재 구현 기준 `GET /api/agents`는 `last_activity`만 제공하고, alert/summary는 `GET /api/agents/activity-summary`에서 온다. `is_running`은 아래 4b의 future work다.
 
 ### 화면 2: Activity 탭 — 에이전트별 실행 이력
 
@@ -267,17 +267,17 @@ Wiki: "Project Status 페이지 업데이트"
 
 ## Claude Managed Agents → MAMA OS 매핑
 
-| Claude MA                                                                          | MAMA OS 대응                                                       | 현재 상태                                     |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------- |
-| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md` | 구조 있음. agent_create가 config.yaml에 안 씀 |
-| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                 | N/A                                           |
-| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` 테이블로 추적           | 테이블 있음. 데이터 0건 (미검증)              |
-| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)        | auto-log 코드 있음. 미검증                    |
-| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드          | **미구현.** DB에만 기록                       |
-| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                  | 구현됨                                        |
-| **Tool config** (agent_toolset + configs[].enabled)                                | `tool_permissions.allowed/blocked`                                 | 구현됨                                        |
-| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → executeDelegate                        | 구현됨                                        |
-| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                              | UI 있음. 데이터 없음                          |
+| Claude MA                                                                          | MAMA OS 대응                                                       | 현재 상태                                                                                     |
+| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md` | 구조 있음. agent_create가 config.yaml에 안 씀                                                 |
+| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                 | N/A                                                                                           |
+| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` 테이블로 추적           | 테이블 있음. 데이터 0건 (미검증)                                                              |
+| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)        | auto-log 코드 있음. 미검증                                                                    |
+| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드          | 구현됨. `packages/standalone/src/agent/gateway-tool-executor.ts`에서 runtime/config sync 수행 |
+| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                  | 구현됨                                                                                        |
+| **Tool config** (agent_toolset + configs[].enabled)                                | `tool_permissions.allowed/blocked`                                 | 구현됨                                                                                        |
+| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → executeDelegate                        | 구현됨                                                                                        |
+| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                              | UI 있음. 데이터 없음                                                                          |
 
 ## 현재 config.yaml agents (정리 필요)
 

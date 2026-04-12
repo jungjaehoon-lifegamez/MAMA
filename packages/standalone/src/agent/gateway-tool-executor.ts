@@ -697,7 +697,7 @@ export class GatewayToolExecutor {
         case 'viewer_state': {
           if (!this.uiCommandQueue)
             return { success: false, error: 'UI command queue not available' };
-          const ctx = this.uiCommandQueue.getPageContext();
+          const ctx = this.uiCommandQueue.getPageContext(this.currentChannelId || undefined);
           return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
         }
         case 'viewer_navigate': {
@@ -2402,7 +2402,16 @@ export class GatewayToolExecutor {
     await Promise.all(workers);
 
     // 5. Auto-score: pass/fail ratio
-    const passed = results.filter((r) => !r.error).length;
+    const passed = results.filter((r, index) => {
+      if (r.error) {
+        return false;
+      }
+      const expected = items[index]?.expected;
+      if (!expected) {
+        return true;
+      }
+      return (r.output ?? '').trim() === expected.trim();
+    }).length;
     const failed = results.length - passed;
     const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
 
@@ -2411,9 +2420,13 @@ export class GatewayToolExecutor {
         total: results.length,
         passed,
         failed,
-        items: results.map((r) => ({
+        items: results.map((r, index) => ({
           input: r.input.slice(0, 100),
-          result: r.error ? 'fail' : 'pass',
+          result:
+            r.error ||
+            (items[index]?.expected && (r.output ?? '').trim() !== items[index]!.expected!.trim())
+              ? 'fail'
+              : 'pass',
         })),
       });
     }

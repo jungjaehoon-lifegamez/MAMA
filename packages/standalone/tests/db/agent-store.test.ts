@@ -160,7 +160,7 @@ describe('agent-store', () => {
       upsertMetrics(db, { ...base, avg_response_ms: 900 });
       const rows = getMetrics(db, 'dev', '2026-04-10', '2026-04-11');
       expect(rows).toHaveLength(1);
-      expect(rows[0].avg_response_ms).toBe(900);
+      expect(rows[0].avg_response_ms).toBe(1050);
     });
 
     it('compareVersionMetrics returns aggregated diff', () => {

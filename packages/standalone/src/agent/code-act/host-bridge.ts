@@ -345,19 +345,20 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description: 'Get agent config, persona, and current version',
     params: [{ name: 'agent_id', type: 'string', required: true }],
     returnType:
-      '{ agent_id: string; version: number; config: Record<string, unknown>; system?: string | null }',
+      '{ success: boolean; agent_id: string; version: number; config: Record<string, unknown>; system?: string | null; change_note?: string | null; created_at?: string }',
     category: 'os',
   },
   {
     name: 'agent_update',
-    description: 'Update agent config with optimistic concurrency',
+    description: 'Update agent config with optimistic concurrency version check',
     params: [
       { name: 'agent_id', type: 'string', required: true },
       { name: 'version', type: 'number', required: true },
       { name: 'changes', type: 'Record<string, unknown>', required: true },
       { name: 'change_note', type: 'string', required: false },
     ],
-    returnType: '{ new_version?: number }',
+    returnType:
+      '{ success: boolean; new_version?: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
   },
   {
@@ -369,9 +370,10 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'model', type: 'string', required: true },
       { name: 'tier', type: 'number', required: true },
       { name: 'system', type: 'string', required: false },
-      { name: 'backend', type: "'claude' | 'codex-mcp'", required: false },
+      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp' | 'gemini'", required: false },
     ],
-    returnType: '{ id: string; version: number; runtime_reloaded?: boolean }',
+    returnType:
+      '{ success: boolean; id: string; version: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
   },
   {

@@ -14,6 +14,7 @@ import { initAgentTables, getLatestVersion } from '../../src/db/agent-store.js';
 import { saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
+import { UICommandQueue } from '../../src/api/ui-command-handler.js';
 
 describe('GatewayToolExecutor', () => {
   const createMockApi = (): MAMAApiInterface => ({
@@ -493,6 +494,89 @@ describe('GatewayToolExecutor', () => {
       expect(result).toMatchObject({
         success: false,
         error: expect.stringContaining('Invalid agent'),
+      });
+    });
+
+    it('should reject unsupported backend values through shared validation', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+
+      const result = await executor.execute('agent_create', {
+        id: 'qa-monitor',
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+        backend: 'invalid-backend',
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: 'Invalid backend.',
+      });
+    });
+
+    it('should use the caller channel when reading viewer_state', async () => {
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      const queue = new UICommandQueue();
+      queue.setPageContext({
+        currentRoute: 'agents',
+        channelId: 'viewer-a',
+        selectedItem: { type: 'agent', id: 'alpha' },
+      });
+      queue.setPageContext({
+        currentRoute: 'dashboard',
+        channelId: 'viewer-b',
+        selectedItem: { type: 'agent', id: 'beta' },
+      });
+      executor.setUICommandQueue(queue);
+      executor.setCurrentAgentContext('os-agent', 'viewer', 'viewer-a');
+
+      const result = await executor.execute('viewer_state', {});
+
+      expect(result).toMatchObject({
+        success: true,
+        context: expect.objectContaining({
+          currentRoute: 'agents',
+          selectedItem: { type: 'agent', id: 'alpha' },
+        }),
+      });
+    });
+
+    it('should score agent_test using expected outputs when provided', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() }) as unknown as {
+        execute: GatewayToolExecutor['execute'];
+        setSessionsDb: GatewayToolExecutor['setSessionsDb'];
+        agentProcessManager: object | null;
+        delegationManagerRef: object | null;
+        executeDelegate: ReturnType<typeof vi.fn>;
+      };
+      executor.setSessionsDb(db);
+      executor.agentProcessManager = {};
+      executor.delegationManagerRef = {};
+      executor.executeDelegate = vi
+        .fn()
+        .mockResolvedValueOnce({ success: true, data: { response: 'Alpha exact' } })
+        .mockResolvedValueOnce({ success: true, data: { response: 'Mismatch' } });
+
+      const result = await executor.execute('agent_test', {
+        agent_id: 'qa-monitor',
+        test_data: [
+          { input: 'case-1', expected: 'Alpha exact' },
+          { input: 'case-2', expected: 'Beta exact' },
+        ],
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        data: expect.objectContaining({
+          auto_score: 50,
+        }),
       });
     });
   });

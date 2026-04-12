@@ -226,7 +226,7 @@ export class ValidationSessionService {
   }
 
   private validateFinalizeInput(input: FinalizeInput): void {
-    const validStatuses: ExecutionStatus[] = ['started', 'completed', 'failed', 'timeout'];
+    const validStatuses: ExecutionStatus[] = ['completed', 'failed', 'timeout'];
     if (!validStatuses.includes(input.execution_status)) {
       throw new Error(`Invalid execution status: ${input.execution_status}`);
     }

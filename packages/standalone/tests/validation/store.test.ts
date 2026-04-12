@@ -229,6 +229,10 @@ describe('Validation Store', () => {
       expect(state!.approved_version).toBe(3);
       expect(state!.approved_session_id).toBe('vs-a1');
     });
+
+    it('throws when approving a missing session', () => {
+      expect(() => approveValidationSession(db, 'missing-session')).toThrow('missing-session');
+    });
   });
 
   describe('agent_validation_state with composite PK', () => {

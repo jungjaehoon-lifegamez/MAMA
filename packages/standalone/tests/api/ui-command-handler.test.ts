@@ -71,6 +71,17 @@ describe('UICommandQueue', () => {
     expect(queue.getPageContext('viewer-session-2')?.currentRoute).toBe('dashboard');
   });
 
+  it('does not fall back to global context for a missing channel', () => {
+    queue.setPageContext({ currentRoute: 'agents', pageData: { pageType: 'agent-list' } });
+    queue.setPageContext({
+      currentRoute: 'dashboard',
+      channelId: 'viewer-session-1',
+      pageData: { pageType: 'dashboard' },
+    });
+
+    expect(queue.getPageContext('viewer-session-2')).toBeNull();
+  });
+
   it('limits queue size to 50', () => {
     for (let i = 0; i < 60; i++) {
       queue.push({ type: 'notify', payload: { message: `msg-${i}`, severity: 'info' } });

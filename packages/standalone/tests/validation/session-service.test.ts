@@ -187,6 +187,16 @@ describe('ValidationSessionService', () => {
         })
       ).toThrow('Invalid validation metrics payload');
     });
+
+    it('rejects non-terminal finalize statuses', () => {
+      const session = service.startSession('wiki-agent', 1, 'agent_test');
+
+      expect(() =>
+        service.finalizeSession(session.id, {
+          execution_status: 'started',
+        })
+      ).toThrow('Invalid execution status');
+    });
   });
 
   describe('classifyStatus', () => {

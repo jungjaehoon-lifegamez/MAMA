@@ -7,7 +7,7 @@ import {
   updateActivityScore,
 } from '../../src/db/agent-store.js';
 
-describe('agent_activity', () => {
+describe('Story V19.6 - Agent Activity Logging', () => {
   let db: InstanceType<typeof Database>;
 
   beforeEach(() => {
@@ -15,34 +15,36 @@ describe('agent_activity', () => {
     initAgentTables(db);
   });
 
-  it('creates agent_activity table', () => {
-    const tables = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_activity'")
-      .all();
-    expect(tables).toHaveLength(1);
+  describe('Acceptance Criteria - schema bootstrap', () => {
+    it('AC #1: creates agent_activity table', () => {
+      const tables = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_activity'")
+        .all();
+      expect(tables).toHaveLength(1);
+    });
+
+    it('AC #2: initAgentTables is idempotent with agent_activity', () => {
+      initAgentTables(db);
+      const tables = db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agent_versions','agent_metrics','agent_activity')"
+        )
+        .all();
+      expect(tables).toHaveLength(3);
+    });
+
+    it('AC #3: creates agent_activity with validation linkage columns', () => {
+      const columns = db.prepare('PRAGMA table_info(agent_activity)').all() as Array<{
+        name: string;
+      }>;
+      expect(columns.some((column) => column.name === 'run_id')).toBe(true);
+      expect(columns.some((column) => column.name === 'execution_status')).toBe(true);
+      expect(columns.some((column) => column.name === 'trigger_reason')).toBe(true);
+    });
   });
 
-  it('initAgentTables is idempotent with agent_activity', () => {
-    initAgentTables(db);
-    const tables = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('agent_versions','agent_metrics','agent_activity')"
-      )
-      .all();
-    expect(tables).toHaveLength(3);
-  });
-
-  it('creates agent_activity with validation linkage columns', () => {
-    const columns = db.prepare('PRAGMA table_info(agent_activity)').all() as Array<{
-      name: string;
-    }>;
-    expect(columns.some((column) => column.name === 'run_id')).toBe(true);
-    expect(columns.some((column) => column.name === 'execution_status')).toBe(true);
-    expect(columns.some((column) => column.name === 'trigger_reason')).toBe(true);
-  });
-
-  describe('activity CRUD', () => {
-    it('logs activity with details JSON', () => {
+  describe('Acceptance Criteria - activity CRUD', () => {
+    it('AC #4: logs activity with details JSON', () => {
       const row = logActivity(db, {
         agent_id: 'test-agent',
         agent_version: 1,
@@ -60,7 +62,7 @@ describe('agent_activity', () => {
       expect(JSON.parse(row.tools_called!)).toEqual(['Read', 'Bash']);
     });
 
-    it('retrieves activity by agent_id newest first', () => {
+    it('AC #5: retrieves activity by agent_id newest first', () => {
       logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_complete' });
       logActivity(db, {
         agent_id: 'a1',
@@ -75,7 +77,7 @@ describe('agent_activity', () => {
       expect(a1[0].type).toBe('task_error');
     });
 
-    it('logs test_run with score and details', () => {
+    it('AC #6: logs test_run with score and details', () => {
       const row = logActivity(db, {
         agent_id: 'test-agent',
         agent_version: 2,
@@ -88,7 +90,7 @@ describe('agent_activity', () => {
       expect(row.score).toBe(95);
     });
 
-    it('respects limit parameter', () => {
+    it('AC #7: respects limit parameter', () => {
       for (let i = 0; i < 5; i++) {
         logActivity(db, { agent_id: 'dev', agent_version: 1, type: 'task_complete' });
       }
@@ -96,7 +98,7 @@ describe('agent_activity', () => {
       expect(rows).toHaveLength(3);
     });
 
-    it('defaults tokens_used and duration_ms to 0', () => {
+    it('AC #8: defaults tokens_used and duration_ms to 0', () => {
       const row = logActivity(db, {
         agent_id: 'dev',
         agent_version: 1,
@@ -106,7 +108,7 @@ describe('agent_activity', () => {
       expect(row.duration_ms).toBe(0);
     });
 
-    it('updates activity score and details', () => {
+    it('AC #9: updates activity score and details', () => {
       const row = logActivity(db, {
         agent_id: 'test-agent',
         agent_version: 1,

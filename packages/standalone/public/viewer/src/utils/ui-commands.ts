@@ -13,6 +13,7 @@ type SwitchTabFn = (tab: string, params?: Record<string, string>) => void;
 
 let polling = false;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
+let pollInFlight = false;
 
 function getViewerSessionId(): string | undefined {
   try {
@@ -24,23 +25,35 @@ function getViewerSessionId(): string | undefined {
 }
 
 export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
-  if (polling) return () => {};
+  if (polling) {
+    return () => {};
+  }
   polling = true;
 
   pollingInterval = setInterval(async () => {
+    if (pollInFlight) {
+      return;
+    }
+    pollInFlight = true;
     try {
       const { commands } = await API.getUICommands();
       for (const cmd of commands) {
         if (cmd.type === 'navigate') {
           const p = cmd.payload as { route?: string; params?: Record<string, string> };
-          if (p.route) switchTab(p.route, p.params);
+          if (p.route) {
+            switchTab(p.route, p.params);
+          }
         } else if (cmd.type === 'notify') {
           const p = cmd.payload as { message?: string };
-          if (p.message) showToast(p.message);
+          if (p.message) {
+            showToast(p.message);
+          }
         }
       }
     } catch {
       // Silently ignore polling errors (server may be restarting)
+    } finally {
+      pollInFlight = false;
     }
   }, 1000);
 
@@ -49,6 +62,7 @@ export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
       clearInterval(pollingInterval);
       pollingInterval = null;
     }
+    pollInFlight = false;
     polling = false;
   };
 }

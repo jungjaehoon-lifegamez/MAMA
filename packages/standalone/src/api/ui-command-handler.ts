@@ -50,7 +50,7 @@ export class UICommandQueue {
 
   getPageContext(channelId?: string): PageContext | null {
     if (channelId) {
-      return this.pageContexts.get(channelId) ?? this.pageContext;
+      return this.pageContexts.get(channelId) ?? null;
     }
     return this.pageContext;
   }

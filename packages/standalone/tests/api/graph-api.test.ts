@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
+import type { IncomingMessage, ServerResponse } from 'http';
+import Database from '../../src/sqlite.js';
+import { initValidationTables, createValidationSession } from '../../src/validation/store.js';
+import { initAgentTables } from '../../src/db/agent-store.js';
 
 import {
   DEFAULT_GRAPH_LIMIT,
@@ -6,9 +10,18 @@ import {
   filterEdgesByNodes,
   mapDecisionRowToGraphNode,
   parseGraphLimit,
+  createGraphHandler,
 } from '../../src/api/graph-api.js';
 
 describe('graph api helpers', () => {
+  let db: Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initAgentTables(db);
+    initValidationTables(db);
+  });
+
   it('should map decision rows to lightweight overview nodes', () => {
     const node = mapDecisionRowToGraphNode({
       id: 'decision_1',
@@ -66,4 +79,77 @@ describe('graph api helpers', () => {
     const filtered = filterEdgesByNodes(edges, nodes as never);
     expect(filtered).toEqual([{ from: 'a', to: 'b', relationship: 'builds_on', reason: null }]);
   });
+
+  it('rejects validation approval when the session belongs to another agent', async () => {
+    createValidationSession(db, {
+      id: 'vs-foreign',
+      agent_id: 'wiki-agent',
+      agent_version: 1,
+      trigger_type: 'agent_test',
+      metric_profile_json: '{}',
+      execution_status: 'completed',
+      validation_outcome: 'healthy',
+      started_at: Date.now(),
+      ended_at: Date.now(),
+    });
+
+    const handler = createGraphHandler({ sessionsDb: db });
+    const req = {
+      method: 'POST',
+      url: '/api/agents/dashboard-agent/validation/approve?session_id=vs-foreign',
+      headers: { host: 'localhost' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage;
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(403);
+  });
+
+  it('rejects validation comparison when the session belongs to another agent', async () => {
+    createValidationSession(db, {
+      id: 'vs-foreign',
+      agent_id: 'wiki-agent',
+      agent_version: 1,
+      trigger_type: 'agent_test',
+      metric_profile_json: '{}',
+      execution_status: 'completed',
+      validation_outcome: 'healthy',
+      started_at: Date.now(),
+      ended_at: Date.now(),
+    });
+
+    const handler = createGraphHandler({ sessionsDb: db });
+    const req = {
+      method: 'GET',
+      url: '/api/agents/dashboard-agent/validation/compare?session=vs-foreign&baseline=approved',
+      headers: { host: 'localhost' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage;
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(403);
+  });
 });
+
+function createMockRes() {
+  return {
+    _status: 0,
+    _body: '',
+    _headers: {} as Record<string, string>,
+    setHeader(name: string, value: string) {
+      this._headers[name] = value;
+    },
+    writeHead(status: number) {
+      this._status = status;
+    },
+    end(body: string) {
+      this._body = body;
+    },
+  };
+}

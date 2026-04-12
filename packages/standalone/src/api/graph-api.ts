@@ -1016,6 +1016,14 @@ async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerRespon
 }
 
 function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
+  const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
+    const parsed = Number.parseInt(value ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return fallback;
+    }
+    return Math.min(parsed, max);
+  };
+
   return async function graphHandler(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (!req.url) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
@@ -1703,7 +1711,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       const rawUrl = req.url || pathname;
       const qIdx = rawUrl.indexOf('?');
       const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
-      const limit = Math.min(parseInt(params.get('limit') || '20', 10), 100);
+      const limit = parsePositiveInt(params.get('limit'), 20, 100);
       if (options.sessionsDb) handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
       else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
@@ -1746,7 +1754,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         const rawUrl = req.url || pathname;
         const qIdx = rawUrl.indexOf('?');
         const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
-        const limit = Math.min(parseInt(params.get('limit') || '50', 10), 200);
+        const limit = parsePositiveInt(params.get('limit'), 50, 200);
         const history = listValidationHistory(options.sessionsDb, agentId, limit);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ history }));
@@ -1778,6 +1786,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: POST /api/agents/:id/validation/approve
     if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/approve$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) {
         const rawUrl = req.url || pathname;
         const qIdx = rawUrl.indexOf('?');
@@ -1791,6 +1800,17 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'session_id required' }));
         } else {
+          const detail = getValidationSessionDetail(options.sessionsDb, sessionId);
+          if (!detail) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Session not found' }));
+            return true;
+          }
+          if (detail.session.agent_id !== agentId) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'session does not belong to requested agent' }));
+            return true;
+          }
           approveValidationSession(options.sessionsDb, sessionId);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, approved_session: sessionId }));
@@ -1820,6 +1840,9 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           if (!current) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Session not found' }));
+          } else if (current.session.agent_id !== agentId) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'session does not belong to requested agent' }));
           } else {
             let baselineSessionId: string | null = null;
             if (baselineMode === 'approved') {
@@ -1836,6 +1859,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             const baseline = baselineSessionId
               ? getValidationSessionDetail(options.sessionsDb, baselineSessionId)
               : null;
+            if (baseline && baseline.session.agent_id !== agentId) {
+              res.writeHead(403, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'baseline session does not belong to requested agent' })
+              );
+              return true;
+            }
             const baselineMetrics = new Map(
               (baseline?.metrics ?? []).map((m: { name: string; value: number }) => [
                 m.name,

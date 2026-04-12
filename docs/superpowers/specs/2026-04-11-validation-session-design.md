@@ -158,31 +158,30 @@ CREATE TABLE validation_sessions (
   metric_profile_json TEXT NOT NULL,
   baseline_version INTEGER,
   baseline_session_id TEXT,
-  status TEXT NOT NULL,                -- healthy | improved | regressed | inconclusive
+  execution_status TEXT NOT NULL,      -- started | completed | failed | timeout
+  validation_outcome TEXT NOT NULL,    -- healthy | improved | regressed | inconclusive
   summary TEXT,
   recommendation TEXT,
+  before_snapshot_json TEXT,
+  after_snapshot_json TEXT,
+  report_json TEXT,
+  schema_version INTEGER NOT NULL DEFAULT 1,
   requires_approval INTEGER DEFAULT 0,
   started_at INTEGER NOT NULL,
   ended_at INTEGER
 );
 ```
 
-### 3. New table: `validation_snapshots`
+### 3. Snapshot payloads on `validation_sessions`
 
-Stores summarized before/after observable state.
+현재 브랜치의 v1 구현은 별도 `validation_snapshots` 테이블을 두지 않고,
+`validation_sessions`에 JSON blob으로 보관한다.
 
-```sql
-CREATE TABLE validation_snapshots (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  validation_session_id TEXT NOT NULL,
-  phase TEXT NOT NULL,                 -- before | after
-  html_snapshot_json TEXT,
-  api_snapshot_json TEXT,
-  db_snapshot_json TEXT,
-  activity_snapshot_json TEXT,
-  created_at INTEGER NOT NULL
-);
-```
+- `before_snapshot_json`
+- `after_snapshot_json`
+- `report_json`
+
+별도 `validation_snapshots` / `validation_reports` 테이블 분리는 future work다.
 
 ### 4. New table: `validation_metrics`
 
@@ -201,24 +200,7 @@ CREATE TABLE validation_metrics (
 );
 ```
 
-### 5. New table: `validation_reports`
-
-Stores Conductor-authored human-readable summary.
-
-```sql
-CREATE TABLE validation_reports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  validation_session_id TEXT NOT NULL,
-  headline TEXT NOT NULL,
-  what_changed TEXT,
-  why_it_matters TEXT,
-  recommendation TEXT,
-  report_json TEXT,
-  created_at INTEGER NOT NULL
-);
-```
-
-### 6. New table: `agent_validation_state`
+### 5. New table: `agent_validation_state`
 
 Stores the current approved baseline and validation posture of an agent.
 
@@ -621,10 +603,9 @@ Checks:
 
 - raw run envelope convergence
 - `validation_sessions`
-- `validation_snapshots`
 - `validation_metrics`
-- `validation_reports`
 - `agent_validation_state`
+- `before_snapshot_json` / `after_snapshot_json` / `report_json` on `validation_sessions`
 - baseline comparison rules
 - Validation / Diff / History viewer surfaces
 - unified handling for `delegate`, `agent_test`, `system_run`, `audit`

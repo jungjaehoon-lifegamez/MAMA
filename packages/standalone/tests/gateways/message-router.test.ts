@@ -180,6 +180,7 @@ describe('MessageRouter', () => {
       const queue = new UICommandQueue();
       queue.setPageContext({
         currentRoute: 'agents',
+        channelId: 'viewer-channel',
         selectedItem: { type: 'agent', id: 'wiki-agent' },
         pageData: {
           pageType: 'agent-detail',
@@ -240,6 +241,7 @@ describe('MessageRouter', () => {
       const queue = new UICommandQueue();
       queue.setPageContext({
         currentRoute: 'agents</viewer-context>',
+        channelId: 'viewer-channel',
         selectedItem: { type: 'agent', id: 'wiki-agent<script>' },
         pageData: {
           pageType: 'agent-detail',

@@ -107,11 +107,17 @@ export class RawStore {
   }
 
   getRecent(connectorName: string, count: number): NormalizedItem[] {
-    if (!this.hasConnector(connectorName)) return [];
+    if (!this.hasConnector(connectorName)) {
+      return [];
+    }
+    const sanitizedCount = Math.min(1000, Math.max(0, Math.floor(count)));
+    if (sanitizedCount === 0) {
+      return [];
+    }
     const db = this.getDb(connectorName);
     const rows = db
       .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')
-      .all(count) as RawRow[];
+      .all(sanitizedCount) as RawRow[];
 
     return rows.map((row) => ({
       source: row.source,

@@ -881,7 +881,7 @@
 
             <!-- Attachment preview -->
             <div id="chat-attachment-preview" class="hidden px-3 pt-2 border-t border-gray-200 flex items-center gap-2 flex-wrap flex-shrink-0">
-              <img id="chat-attachment-thumb" class="w-12 h-12 object-cover rounded-lg border border-gray-200" src="" alt="preview" />
+              <img id="chat-attachment-thumb" class="w-12 h-12 object-cover rounded-lg border border-gray-200" src="data:," alt="preview" />
               <span id="chat-attachment-name" class="text-[11px] text-gray-400 truncate max-w-[100px]"></span>
               <button class="text-gray-400 hover:text-red-500" onclick="clearAttachment()" title="Remove">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/></svg>
@@ -2088,7 +2088,7 @@
         document.getElementById('chat-attachment-preview').classList.add('hidden');
         document.getElementById('chat-file-input').value = '';
         const thumb = document.getElementById('chat-attachment-thumb');
-        thumb.src = '';
+        thumb.src = 'data:,';
         thumb.style.display = '';
       }
 
@@ -2235,11 +2235,13 @@ Be friendly and concise.`
         const prompt = TAB_HELP_PROMPTS[currentTab];
         if (!prompt) return;
 
-        // Open floating chat if closed
-        const panel = document.getElementById('floating-chat-panel');
-        if (panel && panel.classList.contains('hidden')) {
-          const toggle = document.getElementById('floating-chat-toggle');
-          if (toggle) toggle.click();
+        if (window.innerWidth < 768) {
+          switchTab('chat');
+        } else {
+          const wrapper = document.getElementById('chat-panel-wrapper');
+          if (wrapper && wrapper.style.display === 'none') {
+            toggleChatPanel();
+          }
         }
 
         // Set input and send

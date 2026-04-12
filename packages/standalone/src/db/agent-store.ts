@@ -6,69 +6,16 @@
  */
 
 import type { SQLiteDatabase } from '../sqlite.js';
+import { applyAgentStoreTablesMigration } from './migrations/agent-store-tables.js';
+import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-metrics-response-avg.js';
 
 type DB = SQLiteDatabase;
 
 // ── Table Init ──────────────────────────────────────────────────────────────
 
 export function initAgentTables(db: SQLiteDatabase): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS agent_versions (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      agent_id     TEXT NOT NULL,
-      version      INTEGER NOT NULL,
-      snapshot     TEXT NOT NULL,
-      persona_text TEXT,
-      change_note  TEXT,
-      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(agent_id, version)
-    )
-  `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_versions_agent ON agent_versions(agent_id)`);
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS agent_metrics (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      agent_id        TEXT NOT NULL,
-      agent_version   INTEGER NOT NULL,
-      period_start    TEXT NOT NULL,
-      period_end      TEXT NOT NULL,
-      input_tokens    INTEGER DEFAULT 0,
-      output_tokens   INTEGER DEFAULT 0,
-      tool_calls      INTEGER DEFAULT 0,
-      delegations     INTEGER DEFAULT 0,
-      errors          INTEGER DEFAULT 0,
-      avg_response_ms REAL DEFAULT 0,
-      UNIQUE(agent_id, agent_version, period_start)
-    )
-  `);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_agent_metrics_agent ON agent_metrics(agent_id, agent_version)`
-  );
-
-  // ── agent_activity ──
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS agent_activity (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      agent_id        TEXT NOT NULL,
-      agent_version   INTEGER NOT NULL,
-      type            TEXT NOT NULL,
-      input_summary   TEXT,
-      output_summary  TEXT,
-      tokens_used     INTEGER DEFAULT 0,
-      tools_called    TEXT,
-      duration_ms     INTEGER DEFAULT 0,
-      score           REAL,
-      details         TEXT,
-      error_message   TEXT,
-      run_id          TEXT,
-      execution_status TEXT,
-      trigger_reason  TEXT,
-      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
-  db.exec(
-    `CREATE INDEX IF NOT EXISTS idx_agent_activity_agent ON agent_activity(agent_id, created_at)`
-  );
+  applyAgentStoreTablesMigration(db);
+  applyAgentMetricsResponseAverageMigration(db);
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -113,6 +60,8 @@ export interface MetricsRow {
   delegations: number;
   errors: number;
   avg_response_ms: number;
+  response_ms_sum?: number;
+  response_count?: number;
 }
 
 export interface VersionComparison {
@@ -124,33 +73,37 @@ export interface VersionComparison {
 
 export function createAgentVersion(db: SQLiteDatabase, input: CreateVersionInput): AgentVersionRow {
   const snapshotJson = JSON.stringify(input.snapshot);
-  const latest = getLatestVersion(db, input.agent_id);
+  const tx = db.transaction(() => {
+    const latest = getLatestVersion(db, input.agent_id);
 
-  // No-op detection: identical snapshot and persona_text → return existing
-  if (
-    latest &&
-    latest.snapshot === snapshotJson &&
-    latest.persona_text === (input.persona_text ?? null)
-  ) {
-    return latest;
-  }
+    if (
+      latest &&
+      latest.snapshot === snapshotJson &&
+      latest.persona_text === (input.persona_text ?? null)
+    ) {
+      return latest;
+    }
 
-  const nextVersion = latest ? latest.version + 1 : 1;
-  const result = db
-    .prepare(
-      `INSERT INTO agent_versions (agent_id, version, snapshot, persona_text, change_note)
-     VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
-      input.agent_id,
-      nextVersion,
-      snapshotJson,
-      input.persona_text ?? null,
-      input.change_note ?? null
-    );
-  return db
-    .prepare('SELECT * FROM agent_versions WHERE id = ?')
-    .get(result.lastInsertRowid) as AgentVersionRow;
+    const result = db
+      .prepare(
+        `INSERT INTO agent_versions (agent_id, version, snapshot, persona_text, change_note)
+         SELECT ?, COALESCE(MAX(version), 0) + 1, ?, ?, ?
+         FROM agent_versions
+         WHERE agent_id = ?`
+      )
+      .run(
+        input.agent_id,
+        snapshotJson,
+        input.persona_text ?? null,
+        input.change_note ?? null,
+        input.agent_id
+      );
+    return db
+      .prepare('SELECT * FROM agent_versions WHERE id = ?')
+      .get(result.lastInsertRowid) as AgentVersionRow;
+  });
+
+  return tx();
 }
 
 export function getLatestVersion(db: SQLiteDatabase, agentId: string): AgentVersionRow | null {
@@ -182,17 +135,25 @@ export function listVersions(db: SQLiteDatabase, agentId: string): AgentVersionR
 // ── Metrics ─────────────────────────────────────────────────────────────────
 
 export function upsertMetrics(db: SQLiteDatabase, input: UpsertMetricsInput): void {
+  const responseMs = input.avg_response_ms ?? 0;
+  const responseCount = input.avg_response_ms !== undefined ? 1 : 0;
   db.prepare(
     `INSERT INTO agent_metrics (agent_id, agent_version, period_start, period_end,
-      input_tokens, output_tokens, tool_calls, delegations, errors, avg_response_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      input_tokens, output_tokens, tool_calls, delegations, errors, avg_response_ms, response_ms_sum, response_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(agent_id, agent_version, period_start) DO UPDATE SET
       input_tokens = input_tokens + excluded.input_tokens,
       output_tokens = output_tokens + excluded.output_tokens,
       tool_calls = tool_calls + excluded.tool_calls,
       delegations = delegations + excluded.delegations,
       errors = errors + excluded.errors,
-      avg_response_ms = excluded.avg_response_ms`
+      response_ms_sum = response_ms_sum + excluded.response_ms_sum,
+      response_count = response_count + excluded.response_count,
+      avg_response_ms = CASE
+        WHEN (response_count + excluded.response_count) > 0
+          THEN (response_ms_sum + excluded.response_ms_sum) * 1.0 / (response_count + excluded.response_count)
+        ELSE 0
+      END`
   ).run(
     input.agent_id,
     input.agent_version,
@@ -203,7 +164,9 @@ export function upsertMetrics(db: SQLiteDatabase, input: UpsertMetricsInput): vo
     input.tool_calls ?? 0,
     input.delegations ?? 0,
     input.errors ?? 0,
-    input.avg_response_ms ?? 0
+    responseCount > 0 ? responseMs : 0,
+    responseMs,
+    responseCount
   );
 }
 

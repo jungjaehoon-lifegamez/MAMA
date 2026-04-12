@@ -76,4 +76,20 @@ describe('RawStore.getRecent', () => {
     expect(recent).toHaveLength(1);
     expect(recent[0].sourceId).toBe('file-1');
   });
+
+  it('sanitizes negative count values', () => {
+    store.save('drive', [
+      {
+        source: 'drive',
+        sourceId: 'file-1',
+        channel: 'folder-a',
+        author: 'user',
+        content: 'File 1',
+        timestamp: new Date(2026, 3, 10, 12, 0),
+        type: 'file_change' as const,
+      },
+    ]);
+
+    expect(store.getRecent('drive', -5)).toEqual([]);
+  });
 });

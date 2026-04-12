@@ -158,6 +158,22 @@ describe('agent-handler', () => {
       await handleCreateAgent(res, { id: 'qa', name: 'QA', model: 42, tier: '2' }, db);
       expect(res._status).toBe(400);
     });
+
+    it('accepts supported gemini backend values', async () => {
+      const config = makeConfig({});
+      const res = mockRes();
+      await handleCreateAgent(
+        res,
+        { id: 'qa', name: 'QA', model: 'gemini-2.5-pro', tier: 1, backend: 'gemini' },
+        db,
+        {
+          loadConfig: vi.fn().mockResolvedValue(config),
+          saveConfig: vi.fn().mockResolvedValue(undefined),
+          writePersonaFile: vi.fn(),
+        }
+      );
+      expect(res._status).toBe(201);
+    });
   });
 
   describe('handleUpdateAgent', () => {

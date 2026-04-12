@@ -25,6 +25,12 @@ function isValidToolPermissions(value: unknown): boolean {
   return true;
 }
 
+const SUPPORTED_BACKENDS = new Set(['claude', 'codex', 'codex-mcp', 'gemini']);
+
+function isSupportedBackend(value: unknown): boolean {
+  return typeof value === 'string' && SUPPORTED_BACKENDS.has(value.trim());
+}
+
 export function validateManagedAgentCreateInput(input: Record<string, unknown>): string | null {
   if (typeof input.id !== 'string' || !isValidAgentId(input.id)) {
     return 'Invalid agent id. Use lowercase alphanumeric, dash, underscore.';
@@ -38,7 +44,7 @@ export function validateManagedAgentCreateInput(input: Record<string, unknown>):
   if (!Number.isInteger(input.tier) || ![1, 2, 3].includes(Number(input.tier))) {
     return 'Invalid tier. Use 1, 2, or 3.';
   }
-  if (input.backend !== undefined && typeof input.backend !== 'string') {
+  if (input.backend !== undefined && !isSupportedBackend(input.backend)) {
     return 'Invalid backend.';
   }
   if (input.system !== undefined && typeof input.system !== 'string') {
@@ -56,7 +62,7 @@ export function validateManagedAgentChanges(changes: unknown): string | null {
     name: (value) => typeof value === 'string' && value.trim().length > 0,
     display_name: (value) => typeof value === 'string' && value.trim().length > 0,
     tier: (value) => Number.isInteger(value) && [1, 2, 3].includes(Number(value)),
-    backend: (value) => typeof value === 'string' && value.trim().length > 0,
+    backend: isSupportedBackend,
     model: (value) => typeof value === 'string' && value.trim().length > 0,
     enabled: (value) => typeof value === 'boolean',
     trigger_prefix: (value) => typeof value === 'string' && value.trim().length > 0,
