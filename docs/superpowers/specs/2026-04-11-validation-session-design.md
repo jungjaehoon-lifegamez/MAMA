@@ -118,7 +118,9 @@ Validation sessions are created for all of the following:
 - `system_run`
 - `audit`
 
-This is intentional. v1 must not create separate "real run" and "validation run" worlds.
+Current branch note: `agent_test` / `delegate_run` are created in
+`packages/standalone/src/agent/gateway-tool-executor.ts`, while `system_run` / `audit`
+are created in `packages/standalone/src/cli/runtime/api-routes-init.ts`.
 
 ### Trigger semantics
 

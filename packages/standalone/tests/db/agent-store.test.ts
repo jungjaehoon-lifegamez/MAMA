@@ -184,5 +184,18 @@ describe('STORY-V019 - agent-store', () => {
       expect(cmp.version_a.input_tokens).toBe(1000);
       expect(cmp.version_b.input_tokens).toBe(400);
     });
+
+    it('compareVersionMetrics throws when a requested version has no metrics rows', () => {
+      upsertMetrics(db, {
+        agent_id: 'dev',
+        agent_version: 1,
+        period_start: '2026-04-10',
+        input_tokens: 100,
+      });
+
+      expect(() => compareVersionMetrics(db, 'dev', 1, 99)).toThrow(
+        "No metrics found for agent 'dev' version 99"
+      );
+    });
   });
 });

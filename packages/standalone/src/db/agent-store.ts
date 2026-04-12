@@ -204,8 +204,19 @@ export function compareVersionMetrics(
   versionA: number,
   versionB: number
 ): VersionComparison {
-  const sumForVersion = (ver: number) =>
-    db
+  const ensureMetricsVersionExists = (ver: number): void => {
+    const exists = db
+      .prepare(
+        'SELECT EXISTS(SELECT 1 FROM agent_metrics WHERE agent_id = ? AND agent_version = ?) as present'
+      )
+      .get(agentId, ver) as { present: number };
+    if (!exists.present) {
+      throw new Error(`No metrics found for agent '${agentId}' version ${ver}`);
+    }
+  };
+  const sumForVersion = (ver: number) => {
+    ensureMetricsVersionExists(ver);
+    return db
       .prepare(
         `SELECT COALESCE(SUM(input_tokens),0) as input_tokens,
            COALESCE(SUM(output_tokens),0) as output_tokens,
@@ -215,6 +226,7 @@ export function compareVersionMetrics(
     FROM agent_metrics WHERE agent_id = ? AND agent_version = ?`
       )
       .get(agentId, ver) as MetricsRow;
+  };
 
   return {
     version_a: { version: versionA, ...sumForVersion(versionA) },
@@ -295,13 +307,14 @@ export function updateActivityScore(
   db: DB,
   activityId: number,
   score: number,
-  details: Record<string, unknown>
+  details: Record<string, unknown>,
+  executionStatus?: string
 ): ActivityRow {
-  db.prepare('UPDATE agent_activity SET score = ?, details = ? WHERE id = ?').run(
-    score,
-    JSON.stringify(details),
-    activityId
-  );
+  db.prepare(
+    `UPDATE agent_activity
+     SET score = ?, details = ?, execution_status = COALESCE(?, execution_status)
+     WHERE id = ?`
+  ).run(score, JSON.stringify(details), executionStatus ?? null, activityId);
   return db.prepare('SELECT * FROM agent_activity WHERE id = ?').get(activityId) as ActivityRow;
 }
 
@@ -356,6 +369,7 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
           SELECT agent_id, type as last_type, created_at as last_at,
             ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
           FROM agent_activity
+          WHERE created_at >= ?
         ),
         recent AS (
           SELECT agent_id, type, rn
@@ -365,6 +379,7 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
               type,
               ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
             FROM agent_activity
+            WHERE created_at >= ?
           )
           WHERE rn <= 10
         ),
@@ -387,7 +402,7 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
       LEFT JOIN recent_joined ON agg.agent_id = recent_joined.agent_id
       ORDER BY agg.total DESC`
     )
-    .all(since) as Array<Record<string, unknown>>;
+    .all(since, since, since) as Array<Record<string, unknown>>;
 
   return rows.map((row) => {
     const agentId = String(row.agent_id);

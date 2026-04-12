@@ -221,16 +221,18 @@ Wiki Agent가 받아가는 흐름:
   → Activity: "2 pages: AI-Industry-Updates(new from news-monitor)"
 ```
 
-### 시나리오 3: 사용자 직접 제어 (Conductor = OS Agent)
+### 시나리오 3: 사용자 직접 제어 (Conductor → os-agent 전환 준비)
+
+아직 Conductor와 `os-agent`의 rename/routing은 구현 완료 상태가 아니다. 이 시나리오는 향후 frontdoor를 `os-agent`로 매핑하는 전환을 가정한 계획이다.
 
 ```text
 사용자: "wiki 컴파일 멈춰"
-  → agent_update(wiki-agent, {enabled: false})
+  → Conductor (향후 os-agent frontdoor) → agent_update(wiki-agent, {enabled: false})
   → Activity: "⚙️ config_change — disabled by user"
   → 카드: ● Disabled [OFF]
 
 사용자: "news-monitor 퀄리티 낮아. 프롬프트 수정해"
-  → agent_update(news-monitor, v1→v2, {system: "개선"})
+  → Conductor / os-agent 전환 경로 → agent_update(news-monitor, v1→v2, {system: "개선"})
   → agent_test → retest
   → Activity: "🧪 v1: 60점 → v2: 85점" (Before/After)
 ```
@@ -283,6 +285,7 @@ Wiki: "Project Status 페이지 업데이트"
 ## 현재 config.yaml agents (정리 필요)
 
 ```yaml
+os-agent        — 유지 (시스템 에이전트)
 conductor       — 유지 (오케스트레이터)
 dashboard-agent — 유지 (시스템 에이전트)
 wiki-agent      — 유지 (시스템 에이전트)

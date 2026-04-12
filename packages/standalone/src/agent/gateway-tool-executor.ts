@@ -2433,7 +2433,7 @@ export class GatewayToolExecutor {
         return false;
       }
       const expected = items[index]?.expected;
-      if (!expected) {
+      if (expected === undefined) {
         return true;
       }
       return (r.output ?? '').trim() === expected.trim();
@@ -2442,19 +2442,26 @@ export class GatewayToolExecutor {
     const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
 
     if (this.sessionsDb && testRunId) {
-      updateActivityScore(this.sessionsDb, testRunId, autoScore, {
-        total: results.length,
-        passed,
-        failed,
-        items: results.map((r, index) => ({
-          input: r.input.slice(0, 100),
-          result:
-            r.error ||
-            (items[index]?.expected && (r.output ?? '').trim() !== items[index]!.expected!.trim())
-              ? 'fail'
-              : 'pass',
-        })),
-      });
+      updateActivityScore(
+        this.sessionsDb,
+        testRunId,
+        autoScore,
+        {
+          total: results.length,
+          passed,
+          failed,
+          items: results.map((r, index) => ({
+            input: r.input.slice(0, 100),
+            result:
+              r.error ||
+              (items[index]?.expected !== undefined &&
+                (r.output ?? '').trim() !== items[index]!.expected!.trim())
+                ? 'fail'
+                : 'pass',
+          })),
+        },
+        'completed'
+      );
     }
 
     // 6. Finalize validation session with test metrics

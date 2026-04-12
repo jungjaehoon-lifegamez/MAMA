@@ -61,6 +61,7 @@ export class AgentsModule {
   private selectedAgent: AgentWithVersion | null = null;
   private activeTab: DetailTab = 'config';
   private detailRequestId = 0;
+  private listRequestId = 0;
 
   init(): void {
     if (this.initialized) return;
@@ -78,6 +79,7 @@ export class AgentsModule {
 
   private async loadAgents(): Promise<void> {
     if (!this.container) return;
+    const requestId = ++this.listRequestId;
     try {
       const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
       const [{ agents }, summaryRes] = await Promise.all([
@@ -89,22 +91,27 @@ export class AgentsModule {
         return !(LEGACY_SWARM_AGENT_IDS.has(id) && agent.enabled === false);
       });
       this.alerts = summaryRes.alerts;
+      this.validationStates.clear();
+      this.renderList();
 
-      // Fetch validation state for each agent (non-blocking)
-      const valResults = await Promise.all(
+      void Promise.all(
         this.agents.map((a) =>
           API.getValidationSummary(a.id ?? '').catch(() => ({ summary: null }))
         )
-      );
-      this.validationStates.clear();
-      for (let i = 0; i < this.agents.length; i++) {
-        const vs = valResults[i]?.summary as Record<string, unknown> | null;
-        if (vs?.validation_outcome) {
-          this.validationStates.set(this.agents[i].id ?? '', String(vs.validation_outcome));
+      ).then((valResults) => {
+        if (requestId !== this.listRequestId) {
+          return;
         }
-      }
+        this.validationStates.clear();
+        for (let i = 0; i < this.agents.length; i++) {
+          const vs = valResults[i]?.summary as Record<string, unknown> | null;
+          if (vs?.validation_outcome) {
+            this.validationStates.set(this.agents[i].id ?? '', String(vs.validation_outcome));
+          }
+        }
+        this.renderList();
+      });
 
-      this.renderList();
       reportPageContext('agents', {
         pageType: 'agent-list',
         total: this.agents.length,
@@ -165,7 +172,7 @@ export class AgentsModule {
           ? AgentsModule.relativeTime(String(lastAct.created_at))
           : '';
         return `
-        <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}"
+        <div class="agent-card" data-agent-id="${escapeHtml(a.id ?? '')}" tabindex="0" role="button"
              style="background:#fff;border:1px solid ${C.bdr};border-radius:12px;padding:16px;cursor:pointer;transition:box-shadow 0.15s,transform 0.15s;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
             <span style="font-size:15px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
@@ -235,9 +242,21 @@ export class AgentsModule {
     });
 
     this.container.querySelectorAll('.agent-card').forEach((card) => {
-      card.addEventListener('click', () => {
+      const openCard = () => {
         const agentId = (card as HTMLElement).dataset.agentId;
-        if (agentId) this.showDetail(agentId);
+        if (agentId) {
+          this.showDetail(agentId);
+        }
+      };
+      card.addEventListener('click', openCard);
+      card.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.target !== card) {
+          return;
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openCard();
+        }
       });
     });
     this.container

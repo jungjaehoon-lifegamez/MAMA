@@ -108,27 +108,36 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const pm = toolExecutor.getAgentProcessManager();
     if (!pm) throw new Error(`AgentProcessManager not available`);
 
-    const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
-    const agentVersion = ver?.version ?? 0;
-
-    // Start validation session
-    const session = validationService?.startSession(agentId, agentVersion, 'system_run');
+    let agentVersion = 0;
+    let session: ValidationSessionRow | null = null;
     const startTime = Date.now();
 
-    // Log task_start to agent_activity
-    if (sessionsDb) {
-      const startRow = logActivity(sessionsDb, {
-        agent_id: agentId,
-        agent_version: agentVersion,
-        type: 'task_start',
-        input_summary: prompt.slice(0, 200),
-        run_id: session?.id,
-        execution_status: 'started',
-        trigger_reason: 'system_run',
-      });
-      if (session) {
-        validationService?.recordRun(session.id, { activityId: startRow.id });
+    try {
+      const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
+      agentVersion = ver?.version ?? 0;
+      session = validationService?.startSession(agentId, agentVersion, 'system_run') ?? null;
+
+      if (sessionsDb) {
+        const startRow = logActivity(sessionsDb, {
+          agent_id: agentId,
+          agent_version: agentVersion,
+          type: 'task_start',
+          input_summary: prompt.slice(0, 200),
+          run_id: session?.id,
+          execution_status: 'started',
+          trigger_reason: 'system_run',
+        });
+        if (session) {
+          validationService?.recordRun(session.id, { activityId: startRow.id });
+        }
       }
+    } catch (bootstrapErr) {
+      routesLogger.warn(
+        '[executeValidatedRun] Failed to initialize validation bootstrap:',
+        bootstrapErr
+      );
+      agentVersion = 0;
+      session = null;
     }
 
     try {
@@ -465,27 +474,35 @@ This saves resources. Only compile when there is genuinely new information to do
       try {
         routesLogger.debug('[Conductor Audit] Starting hourly audit...');
 
-        // Log audit to activity + validation session
-        const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
-        auditVersion = ver?.version ?? 0;
-        auditSession =
-          validationService?.startSession('conductor', auditVersion, 'audit', {
-            goal: 'hourly system audit',
-          }) ?? null;
+        try {
+          const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
+          auditVersion = ver?.version ?? 0;
+          auditSession =
+            validationService?.startSession('conductor', auditVersion, 'audit', {
+              goal: 'hourly system audit',
+            }) ?? null;
 
-        if (sessionsDb) {
-          const startRow = logActivity(sessionsDb, {
-            agent_id: 'conductor',
-            agent_version: auditVersion,
-            type: 'audit_start',
-            input_summary: 'Hourly system audit',
-            run_id: auditSession?.id,
-            execution_status: 'started',
-            trigger_reason: 'audit',
-          });
-          if (auditSession) {
-            validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+          if (sessionsDb) {
+            const startRow = logActivity(sessionsDb, {
+              agent_id: 'conductor',
+              agent_version: auditVersion,
+              type: 'audit_start',
+              input_summary: 'Hourly system audit',
+              run_id: auditSession?.id,
+              execution_status: 'started',
+              trigger_reason: 'audit',
+            });
+            if (auditSession) {
+              validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+            }
           }
+        } catch (bootstrapErr) {
+          routesLogger.warn(
+            '[Conductor Audit] Failed to initialize audit telemetry:',
+            bootstrapErr
+          );
+          auditVersion = 0;
+          auditSession = null;
         }
 
         const auditChannelId = `conductor-audit-${Date.now()}`;

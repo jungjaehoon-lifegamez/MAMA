@@ -624,6 +624,45 @@ describe('GatewayToolExecutor', () => {
           auto_score: 50,
         }),
       });
+
+      const testRun = db
+        .prepare(
+          "SELECT execution_status, score FROM agent_activity WHERE type = 'test_run' LIMIT 1"
+        )
+        .get() as { execution_status: string | null; score: number | null };
+      expect(testRun.execution_status).toBe('completed');
+      expect(testRun.score).toBe(50);
+    });
+
+    it('should treat empty-string expectations as real expected outputs', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() }) as unknown as {
+        execute: GatewayToolExecutor['execute'];
+        setSessionsDb: GatewayToolExecutor['setSessionsDb'];
+        agentProcessManager: object | null;
+        delegationManagerRef: object | null;
+        executeDelegate: ReturnType<typeof vi.fn>;
+      };
+      executor.setSessionsDb(db);
+      executor.agentProcessManager = {};
+      executor.delegationManagerRef = {};
+      executor.executeDelegate = vi
+        .fn()
+        .mockResolvedValueOnce({ success: true, data: { response: 'not-empty' } });
+
+      const result = await executor.execute('agent_test', {
+        agent_id: 'qa-monitor',
+        test_data: [{ input: 'case-1', expected: '' }],
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        data: expect.objectContaining({
+          auto_score: 0,
+        }),
+      });
     });
   });
 
