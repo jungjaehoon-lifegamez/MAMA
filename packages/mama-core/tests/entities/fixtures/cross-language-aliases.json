@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "extractor_version": "history-extractor@v1",
+  "embedding_model_version": "multilingual-e5-large",
+  "description": "Synthetic cross-language alias pairs for measuring cross_language_candidate_recall@10.",
+  "pairs": [
+    {
+      "canonical_id": "gold_project_alpha",
+      "left": { "label": "Project Alpha", "lang": "en" },
+      "right": { "label": "알파 프로젝트", "lang": "ko" }
+    },
+    {
+      "canonical_id": "gold_project_alpha",
+      "left": { "label": "Project Alpha", "lang": "en" },
+      "right": { "label": "アルファプロジェクト", "lang": "ja" }
+    },
+    {
+      "canonical_id": "gold_org_acme_lab",
+      "left": { "label": "Acme Lab", "lang": "en" },
+      "right": { "label": "에이크미 랩", "lang": "ko" }
+    },
+    {
+      "canonical_id": "gold_work_release",
+      "left": { "label": "Q2 Release", "lang": "en" },
+      "right": { "label": "2분기 릴리스", "lang": "ko" }
+    }
+  ]
+}
