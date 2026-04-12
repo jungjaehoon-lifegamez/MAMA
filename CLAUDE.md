@@ -370,3 +370,37 @@ curl -X PUT 'http://localhost:3847/api/multi-agent/agents/developer' \
 - **Issues:** https://github.com/jungjaehoon-lifegamez/MAMA/issues
 - **Docs:** docs/index.md
 - **Developer Playbook:** docs/development/developer-playbook.md
+
+## Skill routing
+
+When the user's request matches an available skill, ALWAYS invoke it using the Skill
+tool as your FIRST action. Do NOT answer directly, do NOT use other tools first.
+The skill has specialized workflows that produce better results than ad-hoc answers.
+
+Key routing rules:
+
+- Product ideas, "is this worth building", brainstorming → invoke office-hours
+- Bugs, errors, "why is this broken", 500 errors → invoke investigate
+- Ship, deploy, push, create PR → invoke ship
+- QA, test the site, find bugs → invoke qa
+- Code review, check my diff → invoke review
+- Update docs after shipping → invoke document-release
+- Weekly retro → invoke retro
+- Design system, brand → invoke design-consultation
+- Visual audit, design polish → invoke design-review
+- Architecture review → invoke plan-eng-review
+- Save progress, checkpoint, resume → invoke checkpoint
+- Code quality, health check → invoke health
+
+When multiple skills match:
+
+- First priority: an explicitly user-requested skill name
+- Second priority: exact intent match over keyword-only match
+- Third priority: `investigate` > `ship` > `qa` > `review` > `document-release` > `design-review` > `design-consultation` > `plan-eng-review` > `office-hours` > `retro` > `checkpoint` > `health`
+- Always invoke the highest-priority matching skill as the FIRST action
+
+When no skill clearly matches:
+
+- Ask one short clarifying question if the request is ambiguous
+- Default to `investigate` for breakage, errors, failing behavior, or unknown regressions
+- Default to `office-hours` for ideation, product shaping, or open-ended planning

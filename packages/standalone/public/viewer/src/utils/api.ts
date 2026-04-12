@@ -156,9 +156,10 @@ export interface ApiAgentToolsConfig {
 }
 
 export type EffortLevel = 'low' | 'medium' | 'high' | 'max';
+export type ApiValidationTriggerType = 'agent_test' | 'delegate_run' | 'system_run' | 'audit';
 
 export interface ApiAgentConfig {
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   model?: string;
   effort?: EffortLevel;
   tools?: ApiAgentToolsConfig;
@@ -216,7 +217,7 @@ export interface MultiAgentAgent {
   status?: string;
   model?: string;
   effort?: EffortLevel;
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   bot_token?: string;
   slack_bot_token?: string | null;
   slack_app_token?: string | null;
@@ -881,6 +882,159 @@ export class API {
 
   static async stopAgent(agentId: string): Promise<JsonRecord> {
     return this.post(`/api/multi-agent/agents/${encodeURIComponent(agentId)}/stop`, {});
+  }
+
+  // =============================================
+  // Agent Management API (Managed Agents pattern)
+  // =============================================
+
+  static async getAgents(): Promise<{ agents: MultiAgentAgent[] }> {
+    return this.get('/api/agents');
+  }
+
+  static async getAgent(
+    agentId: string
+  ): Promise<MultiAgentAgent & { system?: string; version?: number }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}`);
+  }
+
+  static async createAgent(body: {
+    id: string;
+    name: string;
+    model: string;
+    tier: number;
+    system?: string;
+  }): Promise<JsonRecord> {
+    return this.post('/api/agents', body);
+  }
+
+  static async updateAgent(
+    agentId: string,
+    body: { version?: number; changes: Record<string, unknown>; change_note?: string }
+  ): Promise<JsonRecord> {
+    return this.post(`/api/agents/${encodeURIComponent(agentId)}`, body);
+  }
+
+  static async archiveAgent(agentId: string): Promise<JsonRecord> {
+    return this.post(`/api/agents/${encodeURIComponent(agentId)}/archive`, {});
+  }
+
+  static async getAgentVersions(agentId: string): Promise<{ versions: JsonRecord[] }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/versions`);
+  }
+
+  static async compareAgentVersions(agentId: string, v1: number, v2: number): Promise<JsonRecord> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/versions/${v1}/compare/${v2}`);
+  }
+
+  static async getAgentMetrics(
+    agentId: string,
+    from: string,
+    to: string
+  ): Promise<{ metrics: JsonRecord[] }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/metrics`, { from, to });
+  }
+
+  static async getAgentActivity(
+    agentId: string,
+    limit = 20
+  ): Promise<{ activity: Array<Record<string, unknown>> }> {
+    return this.get(`/api/agents/${encodeURIComponent(agentId)}/activity?limit=${limit}`);
+  }
+
+  static async getActivitySummary(
+    since: string
+  ): Promise<{ summary: Array<Record<string, unknown>>; alerts: string[] }> {
+    return this.get(`/api/agents/activity-summary?since=${encodeURIComponent(since)}`);
+  }
+
+  // =============================================
+  // Validation API
+  // =============================================
+
+  static async getValidationSummary(
+    agentId: string,
+    triggerType: ApiValidationTriggerType = 'agent_test'
+  ): Promise<{ summary: Record<string, unknown> | null }> {
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/summary?trigger_type=${encodeURIComponent(triggerType)}`
+    );
+  }
+
+  static async getValidationHistory(
+    agentId: string,
+    limit = 50,
+    triggerType: ApiValidationTriggerType = 'agent_test'
+  ): Promise<{ history: Array<Record<string, unknown>> }> {
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/history?limit=${limit}&trigger_type=${encodeURIComponent(triggerType)}`
+    );
+  }
+
+  static async getValidationSessionDetail(
+    sessionId: string
+  ): Promise<{ session: Record<string, unknown>; metrics: Array<Record<string, unknown>> }> {
+    return this.get(`/api/validation-sessions/${encodeURIComponent(sessionId)}`);
+  }
+
+  static async approveValidationSession(
+    agentId: string,
+    sessionId: string
+  ): Promise<{ success: boolean }> {
+    return this.post(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/approve?session_id=${encodeURIComponent(sessionId)}`,
+      {}
+    );
+  }
+
+  static async getValidationCompare(
+    agentId: string,
+    sessionId: string,
+    baseline = 'approved'
+  ): Promise<{
+    current: { session: Record<string, unknown>; metrics: Array<Record<string, unknown>> };
+    baseline: { session: Record<string, unknown>; metrics: Array<Record<string, unknown>> } | null;
+    deltas: Array<{
+      name: string;
+      current: number;
+      baseline: number | null;
+      delta: number | null;
+      direction: string;
+    }>;
+  }> {
+    return this.get(
+      `/api/agents/${encodeURIComponent(agentId)}/validation/compare?session=${encodeURIComponent(sessionId)}&baseline=${encodeURIComponent(baseline)}`
+    );
+  }
+
+  // =============================================
+  // UI Command API (SmartStore pattern)
+  // =============================================
+
+  static async getUICommands(): Promise<{
+    commands: Array<{ id?: string; type: string; payload: Record<string, unknown> }>;
+  }> {
+    return this.get('/api/ui/commands');
+  }
+
+  static async ackUICommands(commandIds: string[]): Promise<JsonRecord> {
+    return this.post('/api/ui/commands/ack', {
+      command_ids: commandIds,
+    });
+  }
+
+  static async pushPageContext(
+    route: string,
+    data: Record<string, unknown>,
+    selectedItem?: { type: string; id: string },
+    channelId?: string
+  ): Promise<JsonRecord> {
+    return this.post('/api/ui/page-context', {
+      currentRoute: route,
+      pageData: data,
+      ...(selectedItem ? { selectedItem } : {}),
+      ...(channelId ? { channelId } : {}),
+    });
   }
 
   // =============================================

@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v3 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v4 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
@@ -22,18 +22,22 @@ Write only the briefing section — analysis and insights that the API does not 
 
 ## Tools
 - mama_search({query, limit}) — search decisions and memory
+- agent_notices({limit}) — inspect recent agent notices for delegations, errors, and warnings
 - report_publish({slots: {briefing: "<html>"}}) — publish a briefing. Only the "briefing" slot is allowed.
 
 ## What to Write
 - Project status summary (3-5 lines max)
 - Items requiring immediate attention
 - Cross-project patterns or risks
+- Agent activity summary (if agents are active): delegations, errors, test scores
 
 ## How to Write
 1. Query recent decisions with mama_search (limit 20)
 2. Analyze content and identify patterns
-3. Write a concise briefing — no raw data listings, only analysis and insights
-4. Publish with report_publish
+3. Check agent_notices for recent agent activity (delegations, errors)
+4. If active agents exist, add "Agent Activity" section to briefing
+5. Write a concise briefing — no raw data listings, only analysis and insights
+6. Publish with report_publish
 
 ## HTML Rules
 - Inline styles only

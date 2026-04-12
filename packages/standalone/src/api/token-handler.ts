@@ -15,6 +15,7 @@ import { asyncHandler } from './error-handler.js';
 export interface TokenUsageRecord {
   channel_key: string;
   agent_id?: string;
+  agent_version?: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens?: number;
@@ -30,6 +31,7 @@ export function initTokenUsageTable(db: SQLiteDatabase): void {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       channel_key TEXT NOT NULL,
       agent_id TEXT,
+      agent_version INTEGER,
       input_tokens INTEGER NOT NULL,
       output_tokens INTEGER NOT NULL,
       cache_read_tokens INTEGER DEFAULT 0,
@@ -51,12 +53,13 @@ export function initTokenUsageTable(db: SQLiteDatabase): void {
  */
 export function insertTokenUsage(db: SQLiteDatabase, record: TokenUsageRecord): void {
   const stmt = db.prepare(`
-    INSERT INTO token_usage (channel_key, agent_id, input_tokens, output_tokens, cache_read_tokens, cost_usd, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO token_usage (channel_key, agent_id, agent_version, input_tokens, output_tokens, cache_read_tokens, cost_usd, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   stmt.run(
     record.channel_key,
     record.agent_id || null,
+    record.agent_version ?? null,
     record.input_tokens,
     record.output_tokens,
     record.cache_read_tokens || 0,
