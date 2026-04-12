@@ -198,15 +198,16 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                              |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                        |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                                       |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                 |
-| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                               |
-| **Next** | v0.19   | Release prep for the agent-management foundation: os-agent same-view frontdoor, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation |
-|          | v0.20   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design)               |
-|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                              |
+| Phase    | Version | Focus                                                                                                                                                                                |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                                          |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                                                         |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                   |
+| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                                                 |
+| **Next** | v0.19   | Merge and release the agent-management foundation: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation             |
+|          | v0.20   | Canonical entity memory + `os-agent` / auditor architecture reset: alias resolution substrate, same-view main-agent vertical slice, functional workers, and reviewable entity merges |
+|          | Later   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design)                                 |
+|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                                                |
 
 ## Development
 
