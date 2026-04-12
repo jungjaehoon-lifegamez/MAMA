@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { AgentError } from '../../src/agent/types.js';
 import Database from '../../src/sqlite.js';
-import { initAgentTables, getLatestVersion } from '../../src/db/agent-store.js';
+import { initAgentTables, getLatestVersion, createAgentVersion } from '../../src/db/agent-store.js';
 import { saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
@@ -477,6 +477,51 @@ describe('GatewayToolExecutor', () => {
       expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa-monitor');
     });
 
+    it('should deny agent_create from non-viewer sources when context is present', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('agent_create', {
+        id: 'qa-monitor',
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
+    it('should deny agent_update from non-viewer sources when context is present', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+      createAgentVersion(db, {
+        agent_id: 'qa-monitor',
+        snapshot: { name: 'QA Monitor', model: 'claude-sonnet-4-6', tier: 2 },
+      });
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+      executor.setAgentContext(createDiscordContext());
+
+      const result = await executor.execute('agent_update', {
+        agent_id: 'qa-monitor',
+        version: 1,
+        changes: { model: 'claude-opus-4-6' },
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Permission denied'),
+      });
+    });
+
     it('should reject uppercase agent ids with shared validation', async () => {
       const db = new Database(':memory:');
       initAgentTables(db);
@@ -548,6 +593,7 @@ describe('GatewayToolExecutor', () => {
     it('should score agent_test using expected outputs when provided', async () => {
       const db = new Database(':memory:');
       initAgentTables(db);
+      const longExpected = `Alpha exact ${'x'.repeat(600)}`;
 
       const executor = new GatewayToolExecutor({ mamaApi: createMockApi() }) as unknown as {
         execute: GatewayToolExecutor['execute'];
@@ -561,13 +607,13 @@ describe('GatewayToolExecutor', () => {
       executor.delegationManagerRef = {};
       executor.executeDelegate = vi
         .fn()
-        .mockResolvedValueOnce({ success: true, data: { response: 'Alpha exact' } })
+        .mockResolvedValueOnce({ success: true, data: { response: longExpected } })
         .mockResolvedValueOnce({ success: true, data: { response: 'Mismatch' } });
 
       const result = await executor.execute('agent_test', {
         agent_id: 'qa-monitor',
         test_data: [
-          { input: 'case-1', expected: 'Alpha exact' },
+          { input: 'case-1', expected: longExpected },
           { input: 'case-2', expected: 'Beta exact' },
         ],
       });

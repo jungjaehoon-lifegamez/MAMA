@@ -6,7 +6,7 @@
 
 완벽한 에이전트를 한번에 만드는 것이 아니다. **추적 → 검증 → 개선 루프가 돌아가는 시스템**을 만드는 것이다.
 
-```
+```text
 에이전트 동작
   → activity 기록 (뭘 했는지, 결과, 소요시간, 에러)
   → 사용자가 Activity 탭에서 확인 (투명성)
@@ -54,7 +54,7 @@ MAMA 메모리 시스템은 이미 지식 그래프를 갖추고 있다:
 
 ### 화면 1: Agents 탭 — 한눈에 상태 파악
 
-```
+```text
 ┌─── Agents ──────────────────────────────────────────────┐
 │                                                          │
 │ ⚠ 1 agent needs attention: wiki-agent 3 consecutive errors │
@@ -87,7 +87,7 @@ MAMA 메모리 시스템은 이미 지식 그래프를 갖추고 있다:
 
 ### 화면 2: Activity 탭 — 에이전트별 실행 이력
 
-```
+```text
 ┌─── 📚 Wiki Agent ─────────────────────────────────┐
 │ ← Agents    📚 Wiki Agent  v3                      │
 │ [Config] [Persona] [Tools] [Activity] [History]    │
@@ -121,7 +121,7 @@ MAMA 메모리 시스템은 이미 지식 그래프를 갖추고 있다:
 
 ### 화면 3: 채팅 — Conductor가 능동적으로 보고
 
-```
+```text
 ┌─── Chat ───────────────────────────────────────────┐
 │                                                     │
 │ [Conductor] 매시간 감사 결과:                       │
@@ -157,7 +157,7 @@ Conductor 보고 시점:
 
 ### 전체 데이터 흐름
 
-```
+```text
 Conductor가 delegate(wiki-agent, task) 호출
   │
   ├── [실시간] viewer_notify → toast "wiki-agent working..."
@@ -185,7 +185,7 @@ Conductor가 delegate(wiki-agent, task) 호출
 
 현재 Wiki Agent는 메모리 기반 델타 업데이트를 하지만 사용자가 볼 수 없음. activity 기록으로:
 
-```
+```text
 Activity 탭 (wiki-agent):
 │ ✅ wiki compilation — 12 pages (3 new, 9 delta)  │ ← 유용한 작업
 │    v3 · 23400ms · 14:30                           │
@@ -203,7 +203,7 @@ Activity 탭 (wiki-agent):
 
 ### 시나리오 2: 사용자가 만든 에이전트 (News Monitor)
 
-```
+```text
 사용자: "외부 뉴스 모니터 에이전트 만들어줘"
   → agent_create → config.yaml 추가 → 테스트
 
@@ -237,7 +237,7 @@ Wiki Agent가 받아가는 흐름:
 
 ### 시나리오 4: Issue Tracker Agent — 커넥터 연결 + 에이전트 간 전달
 
-```
+```text
 issue-tracker → 커넥터(Kagemusha) raw 데이터 수집
              → 분석 → mama_save(topic: "daily_brief")
              → Conductor에게 보고 → Dashboard/Wiki가 참조
@@ -267,17 +267,17 @@ Wiki: "Project Status 페이지 업데이트"
 
 ## Claude Managed Agents → MAMA OS 매핑
 
-| Claude MA                                                                          | MAMA OS 대응                                                       | 현재 상태                                                                                     |
-| ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md` | 구조 있음. agent_create가 config.yaml에 안 씀                                                 |
-| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                 | N/A                                                                                           |
-| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` 테이블로 추적           | 테이블 있음. 데이터 0건 (미검증)                                                              |
-| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)        | auto-log 코드 있음. 미검증                                                                    |
-| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드          | 구현됨. `packages/standalone/src/agent/gateway-tool-executor.ts`에서 runtime/config sync 수행 |
-| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                  | 구현됨                                                                                        |
-| **Tool config** (agent_toolset + configs[].enabled)                                | `tool_permissions.allowed/blocked`                                 | 구현됨                                                                                        |
-| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → executeDelegate                        | 구현됨                                                                                        |
-| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                              | UI 있음. 데이터 없음                                                                          |
+| Claude MA                                                                          | MAMA OS 대응                                                          | 현재 상태                                                                                      |
+| ---------------------------------------------------------------------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Agent** (model + system + tools)                                                 | config.yaml `multi_agent.agents.{id}` + `~/.mama/personas/{id}.md`    | 구현됨. `agent_create`/`POST /api/agents`가 config.yaml에 기록하고 runtime hot-reload를 트리거 |
+| **Environment** (컨테이너)                                                         | 불필요 (로컬 실행)                                                    | N/A                                                                                            |
+| **Session** (실행 인스턴스, idle/running/terminated)                               | delegation 1회 = session. `agent_activity` + `executeDelegate`로 추적 | 테이블/코드 있음. 프로덕션 row는 아직 별도 실측 검증이 필요                                    |
+| **Events** (SSE: user.message, agent.message, agent.tool_use, session.status_idle) | `agent_activity` 행 (task_start, task_complete, task_error)           | auto-log 경로 구현됨. 프로덕션 이벤트 수집은 추가 검증 필요                                    |
+| **Agent 생성** (POST /v1/agents → id, version)                                     | `agent_create` gateway tool → config.yaml 추가 + 핫리로드             | 구현됨. `packages/standalone/src/agent/gateway-tool-executor.ts`에서 runtime/config sync 수행  |
+| **Agent 버전관리** (agent.version, 업데이트 시 자동 증가)                          | `agent_versions` 테이블 (snapshot + persona_text)                     | 구현됨. create/update 시 버전 자동 증가                                                        |
+| **Tool config** (agent_toolset + configs[].enabled)                                | `tool_permissions.allowed/blocked`                                    | 구현됨                                                                                         |
+| **Session 시작** (POST /v1/sessions → session_id)                                  | `delegate(agentId, task)` → `executeDelegate`                         | 구현됨                                                                                         |
+| **Events 스트리밍** (GET /v1/sessions/{id}/stream SSE)                             | Activity 탭 (페이지 로드 시 API 호출)                                 | UI 있음. 실데이터 연결은 별도 런타임 검증 필요                                                 |
 
 ## 현재 config.yaml agents (정리 필요)
 
@@ -295,7 +295,7 @@ pm              — ❌ 제거
 
 ### Conductor Audit (매시간 cron)
 
-```
+```text
 ~/.mama/skills/audit-checklist.md
   Step 4: Agent Health — agent_notices로 에이전트 상태 확인
   → agent_activity 기반 체크로 확장 가능
@@ -303,14 +303,14 @@ pm              — ❌ 제거
 
 ### PUT /api/multi-agent/agents/:id (config.yaml 수정 + 핫리로드)
 
-```
+```text
 graph-api.ts:handleMultiAgentUpdateAgentRequest
   → loadMAMAConfig() → 필드 업데이트 → saveMAMAConfig() → applyMultiAgentConfig()
 ```
 
 ### executeDelegate (gateway tool delegate)
 
-```
+```text
 gateway-tool-executor.ts:executeDelegate
   → AgentProcessManager.getProcess(agentId)
   → process.sendMessage(prompt)
@@ -560,14 +560,14 @@ const outputSummary = summaryMatch ? summaryMatch[1].trim() : response.slice(0, 
 
 Activity 빈 상태 메시지 개선:
 
-```
+```text
 "No activity yet. This agent will show logs here when Conductor delegates tasks to it.
  Try: ask Conductor to run a task for this agent."
 ```
 
 Agents 탭 첫 진입 시 3개 시스템 에이전트 + 설명:
 
-```
+```text
 "These are your system agents. Conductor orchestrates, Dashboard generates briefings,
  Wiki compiles knowledge. Create your own agents with [+ New Agent]."
 ```
@@ -586,7 +586,7 @@ Agents 탭 첫 진입 시 3개 시스템 에이전트 + 설명:
 
 `~/.mama/skills/audit-checklist.md`:
 
-```
+```text
 ### Step 4: Check Agent Health
 Run via Bash tool (DX #1 — Conductor has Tier 1 Bash access):
 curl -s "http://localhost:3847/api/agents/activity-summary?since=$(node -e \"const d=new Date(Date.now()-86400000); console.log(d.toISOString().slice(0,10))\")"
@@ -617,23 +617,23 @@ DELETE FROM agent_activity WHERE created_at < datetime('now', '-30 days');
 
 ## 코드 위치 참조
 
-| 기능                                             | 파일                                | 줄                             |
-| ------------------------------------------------ | ----------------------------------- | ------------------------------ |
-| agent_create case                                | gateway-tool-executor.ts            | 587-606                        |
-| executeDelegate + auto-log                       | gateway-tool-executor.ts            | sync: 2444-2506, bg: 2375-2428 |
-| executeAgentTest                                 | gateway-tool-executor.ts            | 2183-2328                      |
-| PUT multi-agent (config.yaml 수정)               | graph-api.ts                        | 2954-3175                      |
-| loadMAMAConfig / saveMAMAConfig                  | graph-api.ts                        | 1968 / 2670                    |
-| config-manager 기본 에이전트                     | config-manager.ts                   | 455-602                        |
-| AgentProcessManager.updateConfig                 | agent-process-manager.ts            | 134                            |
-| AgentProcessManager.reloadPersona                | agent-process-manager.ts            | 890                            |
-| standalone wiring (applyMultiAgentConfig 미설정) | start.ts                            | 444-452                        |
-| gateway wiring (applyMultiAgentConfig 설정)      | gateway-wiring.ts                   | 264                            |
-| Conductor 페르소나                               | ~/.mama/personas/conductor.md       | 전체                           |
-| audit-checklist                                  | ~/.mama/skills/audit-checklist.md   | 전체                           |
-| agent_activity 테이블                            | db/agent-store.ts                   | initAgentTables                |
-| Activity 탭 UI                                   | public/viewer/src/modules/agents.ts | renderActivityTab              |
-| 상태 뱃지/카드                                   | public/viewer/src/modules/agents.ts | renderList                     |
+| 기능                               | 파일                                | 심볼 / 위치자                        |
+| ---------------------------------- | ----------------------------------- | ------------------------------------ |
+| agent_create case                  | gateway-tool-executor.ts            | `case 'agent_create'`                |
+| executeDelegate + auto-log         | gateway-tool-executor.ts            | `executeDelegate`                    |
+| executeAgentTest                   | gateway-tool-executor.ts            | `executeAgentTest`                   |
+| PUT multi-agent (config.yaml 수정) | graph-api.ts                        | `handleMultiAgentUpdateAgentRequest` |
+| loadMAMAConfig / saveMAMAConfig    | graph-api.ts                        | `loadMAMAConfig`, `saveMAMAConfig`   |
+| config-manager 기본 에이전트       | config-manager.ts                   | default agent config logic           |
+| AgentProcessManager.updateConfig   | agent-process-manager.ts            | `updateConfig`                       |
+| AgentProcessManager.reloadPersona  | agent-process-manager.ts            | `reloadPersona`                      |
+| standalone wiring                  | start.ts                            | `applyMultiAgentConfig` wiring       |
+| gateway wiring                     | gateway-wiring.ts                   | `applyMultiAgentConfig` usage        |
+| Conductor 페르소나                 | ~/.mama/personas/conductor.md       | persona document                     |
+| audit-checklist                    | ~/.mama/skills/audit-checklist.md   | checklist document                   |
+| agent_activity 테이블              | db/agent-store.ts                   | `initAgentTables`                    |
+| Activity 탭 UI                     | public/viewer/src/modules/agents.ts | `renderActivityTab`                  |
+| 상태 뱃지/카드                     | public/viewer/src/modules/agents.ts | `renderList`                         |
 
 ## 데드코드 (이 브랜치에서 삭제하지 않음, 별도 정리)
 

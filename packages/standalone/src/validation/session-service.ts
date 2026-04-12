@@ -29,6 +29,7 @@ import {
   type ValidationOutcome,
   type MetricDirection,
   type ValidationMetricRow,
+  type MetricProfile,
 } from './types.js';
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -46,6 +47,7 @@ export interface FinalizeInput {
   metrics?: Record<string, number>;
   error_message?: string;
   test_input_summary?: string;
+  activity_row_id?: number;
 }
 
 interface StartSessionOptions {
@@ -115,6 +117,9 @@ export class ValidationSessionService {
       throw new Error(`Session ${sessionId} not found`);
     }
     const session = detail.session;
+    if (input.activity_row_id !== undefined) {
+      this.recordRun(sessionId, { activityId: input.activity_row_id });
+    }
 
     // If execution failed, mark inconclusive
     if (input.execution_status === 'failed' || input.execution_status === 'timeout') {
@@ -130,7 +135,7 @@ export class ValidationSessionService {
     }
 
     // Compute metrics and deltas against baseline
-    const profile = JSON.parse(session.metric_profile_json);
+    const profile = JSON.parse(session.metric_profile_json) as MetricProfile;
     const baselineMetrics = this.loadBaselineMetrics(session.baseline_session_id);
     let outcome: ValidationOutcome = 'inconclusive';
 
@@ -265,13 +270,13 @@ export class ValidationSessionService {
     sessionId: string,
     metrics: Record<string, number>,
     baselineMetrics: Map<string, ValidationMetricRow>,
-    _profile: { thresholds?: Record<string, { warn: number; critical: number }> }
+    profile: MetricProfile
   ): { hasImprovement: boolean; hasRegression: boolean } {
     let hasImprovement = false;
     let hasRegression = false;
 
     for (const [name, value] of Object.entries(metrics)) {
-      const direction = this.inferDirection(name);
+      const direction = profile.directions?.[name] ?? this.inferDirection(name);
       const baselineMetric = baselineMetrics.get(name);
       const baselineValue = baselineMetric?.value ?? null;
       let deltaValue: number | null = null;
@@ -304,7 +309,7 @@ export class ValidationSessionService {
 
   private classifyOutcome(
     metrics: Record<string, number>,
-    profile: { thresholds?: Record<string, { warn: number; critical: number }> },
+    profile: MetricProfile,
     hasImprovement: boolean,
     hasRegression: boolean
   ): ValidationOutcome {
@@ -323,8 +328,15 @@ export class ValidationSessionService {
     return 'healthy';
   }
 
+  /**
+   * Infer metric direction from naming conventions when the metric profile does not
+   * provide an explicit override.
+   *
+   * `down_good`: names containing latency, duration, cost, error, meaningless, staleness
+   * `up_good`: names containing rate, efficiency, accuracy, signal
+   * default: neutral
+   */
   private inferDirection(metricName: string): MetricDirection {
-    // Metrics where lower is better
     if (
       metricName.includes('latency') ||
       metricName.includes('duration') ||

@@ -18,7 +18,7 @@ import type {
   SaveValidationMetricInput,
 } from '../../src/validation/types.js';
 
-describe('Validation Store', () => {
+describe('STORY-V019 - validation store', () => {
   let db: InstanceType<typeof Database>;
 
   beforeEach(() => {
@@ -27,7 +27,7 @@ describe('Validation Store', () => {
     initValidationTables(db);
   });
 
-  describe('initValidationTables', () => {
+  describe('AC1 - validation tables bootstrap correctly', () => {
     it('creates validation_sessions table', () => {
       const tables = db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='validation_sessions'")
@@ -61,7 +61,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('agent_activity migration', () => {
+  describe('AC2 - agent_activity gains validation tracking columns', () => {
     it('adds run_id column to agent_activity', () => {
       const cols = db.prepare('PRAGMA table_info(agent_activity)').all() as Array<{
         name: string;
@@ -84,7 +84,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('createValidationSession', () => {
+  describe('AC3 - validation sessions are created with stored snapshots', () => {
     it('creates a session and returns it', () => {
       const input: CreateValidationSessionInput = {
         id: 'vs-001',
@@ -120,7 +120,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('saveValidationMetric', () => {
+  describe('AC4 - validation metrics persist with deltas', () => {
     it('saves metrics for a session', () => {
       createValidationSession(db, {
         id: 'vs-m1',
@@ -151,7 +151,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('getValidationSummary', () => {
+  describe('AC5 - validation summary queries return latest session state', () => {
     it('returns null for agent with no sessions', () => {
       const summary = getValidationSummary(db, 'nonexistent');
       expect(summary).toBeNull();
@@ -175,7 +175,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('listValidationHistory', () => {
+  describe('AC6 - validation history stays ordered by newest session', () => {
     it('returns sessions ordered by started_at desc', () => {
       const now = Date.now();
       createValidationSession(db, {
@@ -208,7 +208,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('approveValidationSession', () => {
+  describe('AC7 - approval updates per-trigger validation state', () => {
     it('updates agent_validation_state', () => {
       createValidationSession(db, {
         id: 'vs-a1',
@@ -235,7 +235,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('agent_validation_state with composite PK', () => {
+  describe('AC8 - validation state is tracked independently per trigger', () => {
     it('tracks state per trigger_type independently', () => {
       createValidationSession(db, {
         id: 'vs-pk1',
@@ -275,7 +275,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('baseline selection', () => {
+  describe('AC9 - approved sessions remain the baseline source of truth', () => {
     it('finds approved session first', () => {
       const now = Date.now();
       createValidationSession(db, {
@@ -308,7 +308,7 @@ describe('Validation Store', () => {
     });
   });
 
-  describe('stale session cleanup', () => {
+  describe('AC10 - stale sessions can be identified for cleanup', () => {
     it('lists sessions with ended_at IS NULL', () => {
       createValidationSession(db, {
         id: 'vs-stale1',

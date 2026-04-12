@@ -583,6 +583,10 @@ export class GatewayToolExecutor {
         }
         case 'agent_update': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const updateArgs = input as {
             agent_id: string;
             version: number;
@@ -629,6 +633,10 @@ export class GatewayToolExecutor {
         }
         case 'agent_create': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
+          const permError = this.checkViewerOnly();
+          if (permError) {
+            return { success: false, error: permError };
+          }
           const createArgs = input as {
             id: string;
             name: string;
@@ -2387,11 +2395,12 @@ export class GatewayToolExecutor {
             task: `Process this data:\n${item.input}`,
           });
           const rAny = r as Record<string, unknown>;
+          const output = r.success
+            ? String((rAny.data as Record<string, unknown>)?.response ?? '')
+            : undefined;
           results[currentIndex] = {
             input: item.input,
-            output: r.success
-              ? String((rAny.data as Record<string, unknown>)?.response ?? '').slice(0, 500)
-              : undefined,
+            output,
             error: r.success ? undefined : String(rAny.error ?? 'unknown'),
           };
         } catch (err) {

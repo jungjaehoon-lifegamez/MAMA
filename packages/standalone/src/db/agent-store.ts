@@ -11,6 +11,14 @@ import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-me
 
 type DB = SQLiteDatabase;
 
+const TERMINAL_ACTIVITY_TYPES = new Set([
+  'task_complete',
+  'task_error',
+  'task_skipped',
+  'audit_complete',
+  'audit_failed',
+]);
+
 // ── Table Init ──────────────────────────────────────────────────────────────
 
 export function initAgentTables(db: SQLiteDatabase): void {
@@ -359,6 +367,7 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
     const recentTypes = String(row.recent_types ?? '')
       .split('|')
       .filter((value) => value.length > 0)
+      .filter((type) => TERMINAL_ACTIVITY_TYPES.has(type))
       .map((type) => ({ type }));
     let consecutiveErrors = 0;
     for (const r of recentTypes) {

@@ -177,6 +177,57 @@ describe('ValidationSessionService', () => {
       expect(latencyMetric!.delta_value).toBeLessThan(0); // negative = improvement for down_good
     });
 
+    it('prefers explicit metric directions over name-based inference', () => {
+      createValidationSession(db, {
+        id: 'bl-direction',
+        agent_id: 'wiki-agent',
+        agent_version: 1,
+        trigger_type: 'agent_test',
+        metric_profile_json: JSON.stringify({
+          primary_metrics: ['signal_to_noise'],
+          thresholds: {},
+          directions: { signal_to_noise: 'down_good' },
+        }),
+        execution_status: 'completed',
+        validation_outcome: 'healthy',
+        started_at: Date.now() - 5000,
+        ended_at: Date.now() - 4000,
+      });
+      approveValidationSession(db, 'bl-direction');
+      saveValidationMetric(db, {
+        validation_session_id: 'bl-direction',
+        name: 'signal_to_noise',
+        value: 10,
+        direction: 'down_good',
+      });
+
+      createValidationSession(db, {
+        id: 'run-direction',
+        agent_id: 'wiki-agent',
+        agent_version: 2,
+        trigger_type: 'agent_test',
+        metric_profile_json: JSON.stringify({
+          primary_metrics: ['signal_to_noise'],
+          thresholds: {},
+          directions: { signal_to_noise: 'down_good' },
+        }),
+        baseline_version: 1,
+        baseline_session_id: 'bl-direction',
+        execution_status: 'started',
+        validation_outcome: 'inconclusive',
+        started_at: Date.now(),
+      });
+
+      const finalized = service.finalizeSession('run-direction', {
+        execution_status: 'completed',
+        metrics: { signal_to_noise: 5 },
+      });
+
+      expect(finalized.validation_outcome).toBe('improved');
+      const detail = getValidationSessionDetail(db, 'run-direction');
+      expect(detail?.metrics[0]?.direction).toBe('down_good');
+    });
+
     it('rejects invalid finalize payload metrics', () => {
       const session = service.startSession('wiki-agent', 1, 'agent_test');
 

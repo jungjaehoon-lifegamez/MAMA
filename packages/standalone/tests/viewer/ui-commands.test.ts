@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getUICommands = vi.fn();
-const pushPageContext = vi.fn();
 const showToast = vi.fn();
 
 vi.mock('../../public/viewer/src/utils/api.js', () => ({
   API: {
     getUICommands,
-    pushPageContext,
+    // reportPageContext references this export, but these tests only cover polling.
+    pushPageContext: vi.fn(),
   },
 }));
 

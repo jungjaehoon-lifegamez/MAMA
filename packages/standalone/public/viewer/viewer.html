@@ -1275,7 +1275,10 @@
         const moreMenu = document.getElementById('mama-mobile-more');
         if (moreMenu) moreMenu.style.display = 'none';
         const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        if (moreBtn) moreBtn.classList.remove('mama-nav-active');
+        const overflowTabs = ['feed', 'wiki', 'logs', 'settings'];
+        if (moreBtn) {
+          moreBtn.classList.toggle('mama-nav-active', overflowTabs.includes(tabName));
+        }
 
         // Also highlight the source tab in More menu if it was selected from there
         document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach(btn => {

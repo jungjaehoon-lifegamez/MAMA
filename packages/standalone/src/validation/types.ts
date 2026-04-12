@@ -138,6 +138,7 @@ export interface MetricThreshold {
 export interface MetricProfile {
   primary_metrics: string[];
   thresholds: Record<string, MetricThreshold>;
+  directions?: Record<string, MetricDirection>;
   extensions?: string[];
 }
 

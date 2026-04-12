@@ -52,4 +52,14 @@ describe('getActivitySummary', () => {
     const a1 = summary.find((s) => s.agent_id === 'a1')!;
     expect(a1.consecutive_errors).toBe(2);
   });
+
+  it('ignores non-terminal task_start rows when computing consecutive errors', () => {
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_error', error_message: 'e1' });
+    logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_error', error_message: 'e2' });
+
+    const summary = getActivitySummary(db, '2000-01-01');
+    const a1 = summary.find((s) => s.agent_id === 'a1')!;
+    expect(a1.consecutive_errors).toBe(2);
+  });
 });

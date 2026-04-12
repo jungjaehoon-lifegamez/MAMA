@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initTokenUsageTable, insertTokenUsage } from '../../src/api/token-handler.js';
+import { applyTokenUsageAgentVersionMigration } from '../../src/db/migrations/token-usage-agent-version.js';
 
 describe('Story V19.8: token_usage agent_version tracking', () => {
   let db: InstanceType<typeof Database>;
@@ -39,5 +40,11 @@ describe('Story V19.8: token_usage agent_version tracking', () => {
       .prepare('SELECT agent_version FROM token_usage WHERE agent_id = ?')
       .get('conductor');
     expect(row.agent_version).toBeNull();
+  });
+
+  it('AC #3: token_usage migration no-ops when the table is absent', () => {
+    const isolatedDb = new Database(':memory:');
+    expect(() => applyTokenUsageAgentVersionMigration(isolatedDb)).not.toThrow();
+    isolatedDb.close();
   });
 });

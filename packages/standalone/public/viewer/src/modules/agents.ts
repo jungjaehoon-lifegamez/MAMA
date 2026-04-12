@@ -418,45 +418,37 @@ export class AgentsModule {
       modelSelect.innerHTML = models.map((m) => `<option value="${m}">${m}</option>`).join('');
     });
 
-    // Save uses existing PUT /api/multi-agent/agents/:id (same as Settings)
+    // Save via managed-agent API so config sync + version history happen together
     el.querySelector('#btn-save-config')?.addEventListener('click', async () => {
-      if (!a.id) return;
+      if (!a.id) {
+        return;
+      }
       const displayName = (el.querySelector('#cfg-name') as HTMLInputElement).value.trim();
       if (!displayName) {
         showToast('Name is required');
         return;
       }
+      const changes = {
+        name: displayName,
+        display_name: displayName,
+        model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
+        backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
+        tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+        enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
+        can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
+      };
+      const version = a.version;
+      if (version === null || version === undefined) {
+        showToast('Version unavailable');
+        return;
+      }
       try {
-        await API.put(`/api/multi-agent/agents/${a.id}`, {
-          name: displayName,
-          display_name: displayName,
-          model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
-          backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
-          tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
-          enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
-          can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
+        await API.updateAgent(a.id, {
+          version,
+          changes,
+          change_note: 'Config updated via Agents tab',
         });
         showToast('Saved — hot reloaded');
-
-        // Also record in agent_versions for audit trail
-        if (a.version !== null && a.version !== undefined) {
-          await API.updateAgent(a.id, {
-            version: a.version,
-            changes: {
-              name: displayName,
-              display_name: displayName,
-              backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
-              model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
-              tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
-              enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
-              can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
-            },
-            change_note: 'Config updated via Agents tab',
-          }).catch(() => {
-            /* audit trail is best-effort */
-          });
-        }
-
         this.showDetail(a.id);
       } catch {
         showToast('Save failed');
@@ -526,24 +518,33 @@ export class AgentsModule {
     el.querySelector('#btn-save-tools')?.addEventListener('click', async () => {
       const checked: string[] = [];
       el.querySelectorAll<HTMLInputElement>('input[data-tool]').forEach((cb) => {
-        if (cb.checked) checked.push(cb.dataset.tool!);
+        if (cb.checked) {
+          checked.push(cb.dataset.tool!);
+        }
       });
-      if (!a.id) return;
+      if (!a.id) {
+        return;
+      }
+      const preserveWildcard = (isAll || (a.tier ?? 1) === 1) && checked.length === allTools.length;
+      const normalizedAllowed = preserveWildcard ? ['*'] : checked;
+      const toolPermissions = {
+        allowed: normalizedAllowed,
+        blocked: [],
+      };
+      const version = a.version;
+      if (version === null || version === undefined) {
+        showToast('Version unavailable');
+        return;
+      }
       try {
-        await API.put(`/api/multi-agent/agents/${a.id}`, {
-          tool_permissions: { allowed: checked },
+        await API.updateAgent(a.id, {
+          version,
+          changes: { tool_permissions: toolPermissions },
+          change_note: preserveWildcard
+            ? 'Tools: full access'
+            : `Tools: ${normalizedAllowed.join(', ')}`,
         });
         showToast('Tools saved - hot reloaded');
-
-        // Audit trail (best-effort)
-        if (a.version !== null && a.version !== undefined) {
-          await API.updateAgent(a.id, {
-            version: a.version,
-            changes: { tool_permissions: { allowed: checked } },
-            change_note: `Tools: ${checked.join(', ')}`,
-          }).catch(() => {});
-        }
-
         this.showDetail(a.id);
       } catch {
         showToast('Save failed');

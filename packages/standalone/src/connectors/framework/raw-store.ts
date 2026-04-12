@@ -61,6 +61,20 @@ export class RawStore {
     return join(this.basePath, connectorName, 'raw.db');
   }
 
+  private mapRawRowToNormalizedItem(row: RawRow): NormalizedItem {
+    return {
+      source: row.source,
+      sourceId: row.source_id,
+      channel: row.channel,
+      author: row.author,
+      content: row.content,
+      timestamp: new Date(row.timestamp),
+      type: row.type as NormalizedItem['type'],
+      metadata:
+        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
+    };
+  }
+
   save(connectorName: string, items: NormalizedItem[]): void {
     if (items.length === 0) return;
     const db = this.getDb(connectorName);
@@ -89,17 +103,7 @@ export class RawStore {
       .prepare('SELECT * FROM raw_items WHERE timestamp >= ? ORDER BY timestamp ASC')
       .all(since.getTime()) as RawRow[];
 
-    return rows.map((row) => ({
-      source: row.source,
-      sourceId: row.source_id,
-      channel: row.channel,
-      author: row.author,
-      content: row.content,
-      timestamp: new Date(row.timestamp),
-      type: row.type as NormalizedItem['type'],
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
-    }));
+    return rows.map((row) => this.mapRawRowToNormalizedItem(row));
   }
 
   hasConnector(connectorName: string): boolean {
@@ -119,17 +123,7 @@ export class RawStore {
       .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')
       .all(sanitizedCount) as RawRow[];
 
-    return rows.map((row) => ({
-      source: row.source,
-      sourceId: row.source_id,
-      channel: row.channel,
-      author: row.author,
-      content: row.content,
-      timestamp: new Date(row.timestamp),
-      type: row.type as NormalizedItem['type'],
-      metadata:
-        row.metadata !== null ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined,
-    }));
+    return rows.map((row) => this.mapRawRowToNormalizedItem(row));
   }
 
   close(): void {

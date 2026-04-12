@@ -59,7 +59,7 @@ The key rule is:
 
 > **Execution paths may differ, but validation paths must converge.**
 
-This means `delegate`, `agent_test`, `system agent run`, and `audit` all feed the same validation model.
+This means `delegate_run`, `agent_test`, `system_run`, and `audit` all feed the same validation model.
 
 ## Non-Goals
 
@@ -114,8 +114,8 @@ trigger
 Validation sessions are created for all of the following:
 
 - `agent_test`
-- `delegate` run
-- `system agent run`
+- `delegate_run`
+- `system_run`
 - `audit`
 
 This is intentional. v1 must not create separate "real run" and "validation run" worlds.
@@ -124,7 +124,7 @@ This is intentional. v1 must not create separate "real run" and "validation run"
 
 - `agent_test`
   Explicit benchmark/test session
-- `delegate`
+- `delegate_run`
   Real task execution session
 - `system_run`
   Direct system-agent execution (e.g. Wiki Agent, Dashboard Agent)
@@ -231,11 +231,11 @@ v1 requirement is behavioral, not storage-specific:
 ```json
 {
   "run_id": "uuid",
-  "source": "delegate | agent_test | system_run | audit",
+  "source": "delegate_run | agent_test | system_run | audit",
   "agent_id": "wiki-agent",
   "agent_version": 3,
   "trigger_reason": "html_changed",
-  "status": "started | completed | failed | timeout | crashed",
+  "status": "started | completed | failed | timeout",
   "started_at": 1775891676488,
   "ended_at": 1775891679000,
   "duration_ms": 2512,
@@ -560,7 +560,12 @@ Returns:
 
 ### Comparison
 
-- `GET /api/agents/:id/compare?version=vX&baseline=approved`
+- `GET /api/agents/:id/validation/compare?session=vs-123&baseline=approved`
+
+Parameters:
+
+- `session`: validation session id to compare
+- `baseline`: `approved` or explicit baseline session id
 
 ## Review Validation Flow
 
@@ -608,7 +613,7 @@ Checks:
 - `before_snapshot_json` / `after_snapshot_json` / `report_json` on `validation_sessions`
 - baseline comparison rules
 - Validation / Diff / History viewer surfaces
-- unified handling for `delegate`, `agent_test`, `system_run`, `audit`
+- unified handling for `delegate_run`, `agent_test`, `system_run`, `audit`
 
 ### Deferred
 

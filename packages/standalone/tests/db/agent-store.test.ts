@@ -11,14 +11,14 @@ import {
   compareVersionMetrics,
 } from '../../src/db/agent-store.js';
 
-describe('agent-store', () => {
+describe('STORY-V019 - agent-store', () => {
   let db: Database;
 
   beforeEach(() => {
     db = new Database(':memory:');
   });
 
-  describe('initAgentTables', () => {
+  describe('AC1 - initAgentTables creates required tables', () => {
     it('creates agent_versions and agent_metrics tables', () => {
       initAgentTables(db);
       const tables = db
@@ -41,7 +41,7 @@ describe('agent-store', () => {
     });
   });
 
-  describe('version CRUD', () => {
+  describe('AC2 - version history is persisted and versioned', () => {
     beforeEach(() => initAgentTables(db));
 
     it('creates version 1 for new agent', () => {
@@ -119,7 +119,7 @@ describe('agent-store', () => {
     });
   });
 
-  describe('metrics', () => {
+  describe('AC3 - metrics aggregate and compare across versions', () => {
     beforeEach(() => initAgentTables(db));
 
     it('inserts new metrics row', () => {
