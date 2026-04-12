@@ -135,6 +135,55 @@ describe('graph api helpers', () => {
     expect(handled).toBe(true);
     expect(res._status).toBe(403);
   });
+
+  it('returns 404 when an explicit baseline session does not exist', async () => {
+    createValidationSession(db, {
+      id: 'vs-current',
+      agent_id: 'dashboard-agent',
+      agent_version: 1,
+      trigger_type: 'agent_test',
+      metric_profile_json: '{}',
+      execution_status: 'completed',
+      validation_outcome: 'healthy',
+      started_at: Date.now(),
+      ended_at: Date.now(),
+    });
+
+    const handler = createGraphHandler({ sessionsDb: db });
+    const req = {
+      method: 'GET',
+      url: '/api/agents/dashboard-agent/validation/compare?session=vs-current&baseline=vs-missing',
+      headers: { host: 'localhost' },
+      socket: { remoteAddress: '127.0.0.1' },
+    } as IncomingMessage;
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(404);
+    expect(res._body).toContain('baseline session not found');
+  });
+
+  it('returns 400 for malformed JSON on ui page-context POST', async () => {
+    const handler = createGraphHandler({
+      uiCommandQueue: {
+        setPageContext: () => {},
+        getPageContext: () => null,
+        push: () => ({ id: 1, type: 'navigate', payload: {} }),
+        drain: () => [],
+        ack: () => 0,
+      } as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue,
+    });
+    const req = createBodyReq('/api/ui/page-context', '{bad-json');
+    const res = createMockRes();
+
+    const handled = await handler(req, res as unknown as ServerResponse);
+
+    expect(handled).toBe(true);
+    expect(res._status).toBe(400);
+    expect(res._body).toContain('Invalid JSON');
+  });
 });
 
 function createMockRes() {
@@ -152,4 +201,34 @@ function createMockRes() {
       this._body = body;
     },
   };
+}
+
+function createBodyReq(url: string, body: string): IncomingMessage {
+  const listeners = new Map<string, Array<(value?: unknown) => void>>();
+  const req = {
+    method: 'POST',
+    url,
+    headers: { host: 'localhost', 'content-type': 'application/json' },
+    socket: { remoteAddress: '127.0.0.1' },
+    on(event: string, handler: (value?: unknown) => void) {
+      const bucket = listeners.get(event) ?? [];
+      bucket.push(handler);
+      listeners.set(event, bucket);
+      return this;
+    },
+    destroy() {
+      return this;
+    },
+  } as IncomingMessage;
+
+  queueMicrotask(() => {
+    for (const handler of listeners.get('data') ?? []) {
+      handler(Buffer.from(body));
+    }
+    for (const handler of listeners.get('end') ?? []) {
+      handler();
+    }
+  });
+
+  return req;
 }

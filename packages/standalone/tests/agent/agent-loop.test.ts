@@ -210,7 +210,7 @@ describe('AgentLoop', () => {
       expect(promptOptions.disallowedTools).toBeUndefined();
     });
 
-    it('should propagate stable viewer channel context to the gateway executor', async () => {
+    it('should avoid mutating shared gateway executor routing state during run setup', async () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         {},
@@ -233,14 +233,10 @@ describe('AgentLoop', () => {
         },
       });
 
-      expect(gatewayExecutorSetCurrentAgentContextMock).toHaveBeenCalledWith(
-        'os-agent',
-        'viewer',
-        'mama_os_main'
-      );
+      expect(gatewayExecutorSetCurrentAgentContextMock).not.toHaveBeenCalled();
     });
 
-    it('should clear stale routing state when agentContext is absent', async () => {
+    it('should not clear shared gateway executor routing state when agentContext is absent', async () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         {},
@@ -262,7 +258,7 @@ describe('AgentLoop', () => {
 
       await agentLoop.run('Second');
 
-      expect(gatewayExecutorClearCurrentAgentContextMock).toHaveBeenCalledTimes(1);
+      expect(gatewayExecutorClearCurrentAgentContextMock).not.toHaveBeenCalled();
     });
 
     it('should route viewer frontdoor sessions through a dedicated viewer global lane', async () => {

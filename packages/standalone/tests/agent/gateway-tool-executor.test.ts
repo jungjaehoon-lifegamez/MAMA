@@ -935,6 +935,34 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           error: expect.stringContaining('Invalid sample_count'),
         });
       });
+
+      it('should reject malformed expected values in agent_test data without crashing', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        const { processManager, delegationManager } = createDelegationHarness([
+          { success: true, data: { response: 'OK' } },
+        ]);
+        executor.setAgentProcessManager(processManager);
+        executor.setDelegationManager(delegationManager);
+
+        const cases = [
+          { input: 'case-number', expected: 123 },
+          { input: 'case-object', expected: { text: 'OK' } },
+          { input: 'case-null', expected: null },
+        ] as Array<Record<string, unknown>>;
+
+        for (const badCase of cases) {
+          const result = await executor.execute('agent_test', {
+            agent_id: 'qa-monitor',
+            test_data: [badCase] as unknown as Array<{ input: string; expected?: string }>,
+          });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid test_data'),
+          });
+        }
+      });
     });
 
     describe('load_checkpoint tool', () => {

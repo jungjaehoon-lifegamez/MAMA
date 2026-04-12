@@ -346,7 +346,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       'Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail.',
     params: [{ name: 'agent_id', type: 'string', required: true }],
     returnType:
-      '{ success: boolean; agent_id: string; version: number; config: Record<string, unknown>; system?: string | null; change_note?: string | null; created_at?: string }',
+      '{ agent_id: string; version: number; config: Record<string, unknown>; system?: string | null; change_note?: string | null; created_at?: string }',
     category: 'os',
   },
   {
@@ -357,7 +357,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'limit', type: 'number', required: false },
     ],
     returnType:
-      '{ success: boolean; agent_id: string; activity: Array<{ id: number; type: string; input_summary?: string | null; output_summary?: string | null; execution_status?: string | null; created_at: string }> }',
+      '{ agent_id: string; activity: Array<{ id: number; type: string; input_summary?: string | null; output_summary?: string | null; execution_status?: string | null; created_at: string }> }',
     category: 'os',
   },
   {
@@ -369,8 +369,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'changes', type: 'Record<string, unknown>', required: true },
       { name: 'change_note', type: 'string', required: false },
     ],
-    returnType:
-      '{ success: boolean; new_version?: number; runtime_reloaded?: boolean; error?: string }',
+    returnType: '{ new_version?: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
   },
   {
@@ -384,8 +383,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'system', type: 'string', required: false },
       { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp' | 'gemini'", required: false },
     ],
-    returnType:
-      '{ success: boolean; id: string; version: number; runtime_reloaded?: boolean; error?: string }',
+    returnType: '{ id: string; version: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
   },
   {
@@ -420,7 +418,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description: 'Get current viewer route, selected item, and page context',
     params: [],
     returnType:
-      '{ success: boolean; context: { currentRoute?: string; selectedItem?: { type?: string; id?: string }; pageData?: unknown } }',
+      '{ context: { currentRoute?: string; selectedItem?: { type?: string; id?: string }; pageData?: unknown } }',
     category: 'os',
   },
   {
@@ -431,7 +429,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'route', type: 'string', required: true },
       { name: 'params', type: 'Record<string, string>', required: false },
     ],
-    returnType: '{ success: boolean; navigated: string }',
+    returnType: '{ navigated: string }',
     category: 'os',
   },
   {

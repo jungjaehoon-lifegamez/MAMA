@@ -562,7 +562,7 @@ Returns:
 
 ### Session detail
 
-- `GET /api/validation/session/:id`
+- `GET /api/validation-sessions/:id`
 
 Returns:
 

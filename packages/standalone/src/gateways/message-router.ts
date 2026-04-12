@@ -146,6 +146,8 @@ const SENSITIVE_PATTERNS = [
 ];
 
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
+const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
+const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 
 /**
  * Sanitize user-supplied text before injecting into prompts.
@@ -267,17 +269,39 @@ export class MessageRouter {
 
     if (data?.pageType === 'agent-list' && Array.isArray(data.agents)) {
       lines.push(`agents:`);
-      for (const a of data.agents as Array<Record<string, unknown>>) {
+      const selectedAgentId = ctx.selectedItem?.type === 'agent' ? ctx.selectedItem.id : null;
+      const allAgents = data.agents as Array<Record<string, unknown>>;
+      const shownAgents =
+        selectedAgentId !== null
+          ? allAgents.filter((agent) => String(agent.id ?? '') === selectedAgentId).slice(0, 1)
+          : allAgents.slice(0, VIEWER_CONTEXT_AGENT_LIST_LIMIT);
+      for (const a of shownAgents) {
         const parts = [`  - ${sanitizeForPrompt(String(a.name || a.id || 'unknown'))}`];
         if (a.validation) parts.push(`validation:${sanitizeForPrompt(String(a.validation))}`);
         if (a.enabled === false) parts.push('(disabled)');
         if (a.system === true) parts.push('(system)');
         lines.push(parts.join(' '));
       }
+      const totalAgents = allAgents.length;
+      const enabledAgents = allAgents.filter((agent) => agent.enabled !== false).length;
+      const disabledAgents = totalAgents - enabledAgents;
+      const systemAgents = allAgents.filter((agent) => agent.system === true).length;
+      const hiddenAgents = Math.max(0, totalAgents - shownAgents.length);
+      lines.push(
+        `agent_counts: total=${totalAgents} enabled=${enabledAgents} disabled=${disabledAgents} system=${systemAgents}`
+      );
+      if (hiddenAgents > 0) {
+        lines.push(`(+${hiddenAgents} more agents)`);
+      }
       if (Array.isArray(data.alerts) && (data.alerts as string[]).length > 0) {
+        const shownAlerts = (data.alerts as string[]).slice(0, VIEWER_CONTEXT_ALERT_LIMIT);
         lines.push(
-          `alerts: ${(data.alerts as string[]).map((item) => sanitizeForPrompt(String(item))).join(', ')}`
+          `alerts: ${shownAlerts.map((item) => sanitizeForPrompt(String(item))).join(', ')}`
         );
+        const hiddenAlerts = (data.alerts as string[]).length - shownAlerts.length;
+        if (hiddenAlerts > 0) {
+          lines.push(`(+${hiddenAlerts} more alerts)`);
+        }
       }
     }
 

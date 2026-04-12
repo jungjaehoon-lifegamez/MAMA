@@ -208,13 +208,13 @@ export class WikiModule {
     document.getElementById('wiki-new-btn')?.addEventListener('click', () => this.promptNewPage());
 
     // Auto-open index page only on initial load (no page selected yet)
-    if (!mobile && !this.currentPath) {
+    if (!this.currentPath) {
       const indexNode = tree.find((n) => n.name === 'index.md');
-      if (indexNode) {
+      if (!mobile && indexNode) {
         this.openPage(indexNode.path);
+      } else {
+        this.publishListContext();
       }
-    } else if (!this.currentPath) {
-      this.publishListContext();
     }
   }
 

@@ -166,6 +166,17 @@ export class MemoryModule {
    */
   async showRelatedForMessage(message: string): Promise<void> {
     const results = await this.searchRelated(message);
+    reportPageContext('memory', {
+      pageType: 'memory-related',
+      query: message,
+      resultCount: results.length,
+      results: results.slice(0, 10).map((item) => ({
+        id: item.id ?? null,
+        topic: item.topic ?? null,
+        outcome: item.outcome ?? null,
+        similarity: item.similarity ?? null,
+      })),
+    });
 
     if (results.length > 0) {
       this.searchData = results;
@@ -179,20 +190,11 @@ export class MemoryModule {
       // Render results
       this.renderResults(results, message);
       this.setStatus(`${results.length} related decision(s) found`, '');
-      reportPageContext('memory', {
-        pageType: 'memory-related',
-        query: message,
-        resultCount: results.length,
-        results: results.slice(0, 10).map((item) => ({
-          id: item.id ?? null,
-          topic: item.topic ?? null,
-          outcome: item.outcome ?? null,
-          similarity: item.similarity ?? null,
-        })),
-      });
 
       // Show notification
       showToast(`🧠 ${results.length} related MAMA decision(s) found`);
+    } else {
+      this.setStatus('No related decisions found', '');
     }
   }
 

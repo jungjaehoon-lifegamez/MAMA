@@ -39,11 +39,12 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         MAMA OS (Browser)                            │
 ├──────────────────────────────────────────────────────────────────────┤
-│  Dashboard │ Memory │ Feed │ Wiki │ Agents │ Logs │ Settings + Chat │
+│  Dashboard │ Memory │ Feed │ Wiki │ Agents │ Logs │ Settings         │
 │                                                                      │
 │  • System status      • Decision search   • Connector activity      │
 │  • Gateway health     • Graph visual      • Wiki document browsing  │
 │  • Memory stats       • Agent inspection  • Real-time daemon logs   │
+│                                                        [Chat Overlay]│
 └──────────────────────────────────────────────────────────────────────┘
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
@@ -54,6 +55,8 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
 │  • HTTP embedding server (port 3849)             │
 └─────────────────────────────────────────────────┘
 ```
+
+Chat is a global overlay opened from a floating control, not a top-level tab.
 
 **Key Benefits:**
 

@@ -20,6 +20,7 @@ import {
   copyFileSync,
   realpathSync,
 } from 'fs';
+import { AsyncLocalStorage } from 'async_hooks';
 import { createHash } from 'crypto';
 import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
@@ -108,6 +109,42 @@ const AGENT_DETAIL_TABS = new Set([
   'validation',
   'history',
 ]);
+
+type GatewayExecutionContext = {
+  agentContext?: AgentContext | null;
+  agentId?: string;
+  source?: string;
+  channelId?: string;
+};
+
+type ActiveGatewayExecutionContext = {
+  agentContext: AgentContext | null;
+  agentId: string;
+  source: string;
+  channelId: string;
+};
+
+const managedAgentMutationTails = new Map<string, Promise<void>>();
+
+async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  managedAgentMutationTails.set(agentId, tail);
+
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (managedAgentMutationTails.get(agentId) === tail) {
+      managedAgentMutationTails.delete(agentId);
+    }
+  }
+}
 
 function sanitizeCommandForAudit(command: string): { commandHash: string; commandPreview: string } {
   const commandHash = createHash('sha256').update(command).digest('hex');
@@ -211,6 +248,7 @@ export class GatewayToolExecutor {
   private telegramGateway: TelegramGatewayInterface | null = null;
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
+  private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -286,6 +324,61 @@ export class GatewayToolExecutor {
   getAgentProcessManager(): AgentProcessManager | null {
     return this.agentProcessManager;
   }
+
+  private normalizeExecutionContext(
+    executionContext?: GatewayExecutionContext
+  ): ActiveGatewayExecutionContext {
+    const agentContext = executionContext?.agentContext ?? null;
+    const source = executionContext?.source ?? agentContext?.source ?? '';
+    const channelId = executionContext?.channelId ?? agentContext?.session?.channelId ?? '';
+    const agentId =
+      executionContext?.agentId ??
+      (source === 'viewer' ? 'os-agent' : (agentContext?.roleName ?? ''));
+    return {
+      agentContext,
+      agentId,
+      source,
+      channelId,
+    };
+  }
+
+  private getExecutionState(): ActiveGatewayExecutionContext {
+    const active = this.executionContextStorage.getStore();
+    if (active) {
+      return active;
+    }
+    return this.normalizeExecutionContext({
+      agentContext: this.currentContext,
+      agentId: this.currentAgentId,
+      source: this.currentSource,
+      channelId: this.currentChannelId,
+    });
+  }
+
+  private getActiveContext(): AgentContext | null {
+    return this.getExecutionState().agentContext;
+  }
+
+  private getActiveRouting(): { agentId: string; source: string; channelId: string } {
+    const state = this.getExecutionState();
+    return {
+      agentId: state.agentId,
+      source: state.source,
+      channelId: state.channelId,
+    };
+  }
+
+  async withExecutionContext<T>(
+    executionContext: GatewayExecutionContext | undefined,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    if (!executionContext) {
+      return fn();
+    }
+    const activeContext = this.normalizeExecutionContext(executionContext);
+    return this.executionContextStorage.run(activeContext, fn);
+  }
+
   setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
     this.currentAgentId = agentId;
     this.currentSource = source;
@@ -327,9 +420,8 @@ export class GatewayToolExecutor {
     if (!this.uiCommandQueue) {
       return 'activity';
     }
-    const currentPageContext = this.uiCommandQueue.getPageContext(
-      this.currentChannelId || undefined
-    );
+    const { channelId } = this.getActiveRouting();
+    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
     if (!currentPageContext || currentPageContext.currentRoute !== 'agents') {
       return 'activity';
     }
@@ -345,7 +437,7 @@ export class GatewayToolExecutor {
     if (!this.uiCommandQueue) {
       return;
     }
-    const source = this.currentSource || this.currentContext?.source || '';
+    const { source, channelId } = this.getActiveRouting();
     if (source !== 'viewer') {
       return;
     }
@@ -354,9 +446,7 @@ export class GatewayToolExecutor {
       preferredTab && AGENT_DETAIL_TABS.has(preferredTab)
         ? preferredTab
         : this.getPreferredViewerAgentTab();
-    const currentPageContext = this.uiCommandQueue.getPageContext(
-      this.currentChannelId || undefined
-    );
+    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
     const currentPageData = currentPageContext?.pageData as Record<string, unknown> | undefined;
     if (
       currentPageContext?.currentRoute === 'agents' &&
@@ -472,7 +562,7 @@ export class GatewayToolExecutor {
    * Get the current agent context
    */
   getAgentContext(): AgentContext | null {
-    return this.currentContext;
+    return this.getActiveContext();
   }
 
   setDiscordGateway(gateway: DiscordGatewayInterface): void {
@@ -541,16 +631,17 @@ export class GatewayToolExecutor {
    */
   private checkToolPermission(toolName: string): { allowed: boolean; error?: string } {
     // If no context set, allow all tools (backward compatibility)
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return { allowed: true };
     }
 
-    const role = this.currentContext.role;
+    const role = context.role;
 
     if (!this.roleManager.isToolAllowed(role, toolName)) {
       return {
         allowed: false,
-        error: `Permission denied: ${toolName} is not allowed for role "${this.currentContext.roleName}"`,
+        error: `Permission denied: ${toolName} is not allowed for role "${context.roleName}"`,
       };
     }
 
@@ -564,16 +655,17 @@ export class GatewayToolExecutor {
    */
   private checkPathPermission(path: string): { allowed: boolean; error?: string } {
     // If no context set, allow all paths (backward compatibility)
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return { allowed: true };
     }
 
-    const role = this.currentContext.role;
+    const role = context.role;
 
     if (!this.roleManager.isPathAllowed(role, path)) {
       return {
         allowed: false,
-        error: `Permission denied: Access to "${path}" is not allowed for role "${this.currentContext.roleName}"`,
+        error: `Permission denied: Access to "${path}" is not allowed for role "${context.roleName}"`,
       };
     }
 
@@ -588,7 +680,15 @@ export class GatewayToolExecutor {
    * @returns Tool execution result
    * @throws AgentError on tool errors or permission denial
    */
-  async execute(toolName: string, input: GatewayToolInput): Promise<GatewayToolResult> {
+  async execute(
+    toolName: string,
+    input: GatewayToolInput,
+    executionContext?: GatewayExecutionContext
+  ): Promise<GatewayToolResult> {
+    if (executionContext) {
+      return this.withExecutionContext(executionContext, () => this.execute(toolName, input));
+    }
+
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
@@ -766,40 +866,42 @@ export class GatewayToolExecutor {
           if (updateError) {
             return { success: false, error: updateError };
           }
-          const updateLatest = getLatestVersion(this.sessionsDb, updateArgs.agent_id);
-          if (!updateLatest) {
-            return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
-          }
-          if (updateLatest.version !== updateArgs.version) {
-            return {
-              success: false,
-              error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
-            };
-          }
-          const synced = await updateManagedAgentRuntime(
-            {
-              agentId: updateArgs.agent_id,
-              changes: updateArgs.changes,
-            },
-            {
-              loadConfig,
-              saveConfig:
-                saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
-              applyMultiAgentConfig: this.applyMultiAgentConfig,
-              restartMultiAgentAgent: this.restartMultiAgentAgent,
+          return withManagedAgentMutationLock(updateArgs.agent_id, async () => {
+            const updateLatest = getLatestVersion(this.sessionsDb!, updateArgs.agent_id);
+            if (!updateLatest) {
+              return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
             }
-          );
-          const updatedV = createAgentVersion(this.sessionsDb, {
-            agent_id: updateArgs.agent_id,
-            snapshot: synced.snapshot,
-            persona_text: synced.personaText ?? updateLatest.persona_text,
-            change_note: updateArgs.change_note,
+            if (updateLatest.version !== updateArgs.version) {
+              return {
+                success: false,
+                error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
+              };
+            }
+            const synced = await updateManagedAgentRuntime(
+              {
+                agentId: updateArgs.agent_id,
+                changes: updateArgs.changes,
+              },
+              {
+                loadConfig,
+                saveConfig:
+                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+                applyMultiAgentConfig: this.applyMultiAgentConfig,
+                restartMultiAgentAgent: this.restartMultiAgentAgent,
+              }
+            );
+            const updatedV = createAgentVersion(this.sessionsDb!, {
+              agent_id: updateArgs.agent_id,
+              snapshot: synced.snapshot,
+              persona_text: synced.personaText ?? updateLatest.persona_text,
+              change_note: updateArgs.change_note,
+            });
+            return {
+              success: true,
+              new_version: updatedV.version,
+              runtime_reloaded: synced.runtimeReloaded,
+            };
           });
-          return {
-            success: true,
-            new_version: updatedV.version,
-            runtime_reloaded: synced.runtimeReloaded,
-          };
         }
         case 'agent_create': {
           if (!this.sessionsDb) {
@@ -823,41 +925,43 @@ export class GatewayToolExecutor {
           if (createError) {
             return { success: false, error: createError };
           }
-          const existingAgent = getLatestVersion(this.sessionsDb, createArgs.id);
-          if (existingAgent) {
-            return { success: false, error: `Agent '${createArgs.id}' already exists` };
-          }
-
-          const synced = await createManagedAgentRuntime(
-            {
-              id: createArgs.id,
-              name: createArgs.name,
-              model: createArgs.model,
-              tier: createArgs.tier,
-              backend: createArgs.backend,
-              system: createArgs.system,
-            },
-            {
-              loadConfig,
-              saveConfig:
-                saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
-              applyMultiAgentConfig: this.applyMultiAgentConfig,
-              restartMultiAgentAgent: this.restartMultiAgentAgent,
+          return withManagedAgentMutationLock(createArgs.id, async () => {
+            const existingAgent = getLatestVersion(this.sessionsDb!, createArgs.id);
+            if (existingAgent) {
+              return { success: false, error: `Agent '${createArgs.id}' already exists` };
             }
-          );
 
-          const createdV = createAgentVersion(this.sessionsDb, {
-            agent_id: createArgs.id,
-            snapshot: synced.snapshot,
-            persona_text: synced.personaText,
-            change_note: 'Created via agent_create tool',
+            const synced = await createManagedAgentRuntime(
+              {
+                id: createArgs.id,
+                name: createArgs.name,
+                model: createArgs.model,
+                tier: createArgs.tier,
+                backend: createArgs.backend,
+                system: createArgs.system,
+              },
+              {
+                loadConfig,
+                saveConfig:
+                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+                applyMultiAgentConfig: this.applyMultiAgentConfig,
+                restartMultiAgentAgent: this.restartMultiAgentAgent,
+              }
+            );
+
+            const createdV = createAgentVersion(this.sessionsDb!, {
+              agent_id: createArgs.id,
+              snapshot: synced.snapshot,
+              persona_text: synced.personaText,
+              change_note: 'Created via agent_create tool',
+            });
+            return {
+              success: true,
+              id: createArgs.id,
+              version: createdV.version,
+              runtime_reloaded: synced.runtimeReloaded,
+            };
           });
-          return {
-            success: true,
-            id: createArgs.id,
-            version: createdV.version,
-            runtime_reloaded: synced.runtimeReloaded,
-          };
         }
         case 'agent_compare': {
           if (!this.sessionsDb) {
@@ -891,7 +995,8 @@ export class GatewayToolExecutor {
           if (permError) {
             return { success: false, error: permError };
           }
-          const ctx = this.uiCommandQueue.getPageContext(this.currentChannelId || undefined);
+          const { channelId } = this.getActiveRouting();
+          const ctx = this.uiCommandQueue.getPageContext(channelId || undefined);
           return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
         }
         case 'viewer_navigate': {
@@ -1173,7 +1278,8 @@ export class GatewayToolExecutor {
 
     // Fallback security for contexts without path restrictions:
     // Only allow reading from ~/.mama/ directory
-    if (!this.currentContext?.role.allowedPaths?.length) {
+    const context = this.getActiveContext();
+    if (!context?.role.allowedPaths?.length) {
       const mamaDir = resolve(homeDir, '.mama');
       const resolvedPath = resolve(expandedPath);
       // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -1236,7 +1342,8 @@ export class GatewayToolExecutor {
 
     // Fallback security for contexts without path restrictions:
     // Only allow writing to ~/.mama/ directory
-    if (!this.currentContext?.role.allowedPaths?.length) {
+    const context = this.getActiveContext();
+    if (!context?.role.allowedPaths?.length) {
       const mamaDir = resolve(homeDir, '.mama');
       const resolvedPath = resolve(expandedPath);
       // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -1274,11 +1381,12 @@ export class GatewayToolExecutor {
       /(systemctl\s+(?:--user\s+)?(?:stop|disable)\s+mama(?:-os)?\b|(?:kill|pkill|killall)\b[^\n]*\bmama(?:-os)?\b|\brm\b(?:\s+(?:-[^\n\s]*[rf][^\n\s]*|--recursive|--force))+\s+(?:\/(?:\s|$)|~(?:\/|\s|$)|\$HOME(?:\/|\s|$)|\/home(?:\/|\s|$)))/i;
     if (destructive.test(command)) {
       const audit = sanitizeCommandForAudit(command);
+      const context = this.getActiveContext();
       const details = {
         category: 'destructive',
         ...audit,
-        source: this.currentContext?.source || null,
-        sessionId: this.currentContext?.session?.sessionId || null,
+        source: context?.source || null,
+        sessionId: context?.session?.sessionId || null,
       };
       securityLogger.warn('[SECURITY] Dangerous Bash command blocked', details);
       recordSecurityEvent({
@@ -1315,12 +1423,13 @@ export class GatewayToolExecutor {
     for (const pattern of dangerousPatterns) {
       if (pattern.test(command)) {
         const audit = sanitizeCommandForAudit(command);
+        const context = this.getActiveContext();
         const details = {
           category: 'pattern',
           pattern: pattern.toString(),
           ...audit,
-          source: this.currentContext?.source || null,
-          sessionId: this.currentContext?.session?.sessionId || null,
+          source: context?.source || null,
+          sessionId: context?.session?.sessionId || null,
         };
         securityLogger.warn('[SECURITY] Dangerous Bash pattern blocked', details);
         recordSecurityEvent({
@@ -1683,17 +1792,18 @@ export class GatewayToolExecutor {
    * Returns error message if not allowed
    */
   private checkViewerOnly(): string | null {
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       // No context = backward compatibility, allow
       return null;
     }
 
-    if (this.currentContext.source !== 'viewer') {
-      return `Permission denied: This operation is only available from MAMA OS Viewer. Current source: ${this.currentContext.source}`;
+    if (context.source !== 'viewer') {
+      return `Permission denied: This operation is only available from MAMA OS Viewer. Current source: ${context.source}`;
     }
 
-    if (!this.currentContext.role.systemControl) {
-      return `Permission denied: Role "${this.currentContext.roleName}" does not have system control permissions`;
+    if (!context.role.systemControl) {
+      return `Permission denied: Role "${context.roleName}" does not have system control permissions`;
     }
 
     return null;
@@ -1871,10 +1981,9 @@ export class GatewayToolExecutor {
       const config = await loadConfig();
 
       // Determine if we should show sensitive data
+      const context = this.getActiveContext();
       const showSensitive =
-        includeSensitive &&
-        this.currentContext?.source === 'viewer' &&
-        this.currentContext?.role.sensitiveAccess;
+        includeSensitive && context?.source === 'viewer' && context?.role.sensitiveAccess;
 
       // Mask sensitive data
       const maskedConfig = this.maskSensitiveData(
@@ -2404,7 +2513,8 @@ export class GatewayToolExecutor {
 
         // Fallback security for contexts without path restrictions:
         // Only allow reading from ~/.mama/ directory
-        if (!this.currentContext?.role.allowedPaths?.length) {
+        const context = this.getActiveContext();
+        if (!context?.role.allowedPaths?.length) {
           const mamaDir = resolve(homeDir, '.mama');
           const resolvedPath = resolve(expandedPath);
           // Use path.relative to prevent path traversal (e.g., ~/.mama-evil/)
@@ -2512,7 +2622,27 @@ export class GatewayToolExecutor {
     // 1. Collect test data
     let items: Array<{ input: string; expected?: string }>;
     if (testData && testData.length > 0) {
-      items = testData;
+      const normalizedItems: Array<{ input: string; expected?: string }> = [];
+      for (let index = 0; index < testData.length; index++) {
+        const rawItem = testData[index] as unknown as Record<string, unknown>;
+        if (typeof rawItem.input !== 'string') {
+          return {
+            success: false,
+            error: `Invalid test_data[${index}].input: expected string`,
+          } as GatewayToolResult;
+        }
+        if (rawItem.expected !== undefined && typeof rawItem.expected !== 'string') {
+          return {
+            success: false,
+            error: `Invalid test_data[${index}].expected: expected string`,
+          } as GatewayToolResult;
+        }
+        normalizedItems.push({
+          input: rawItem.input,
+          ...(typeof rawItem.expected === 'string' ? { expected: rawItem.expected } : {}),
+        });
+      }
+      items = normalizedItems;
     } else if (this.rawStore) {
       const agentConfig = this.delegationManagerRef.getAgentConfig(agentId);
       const connectors: string[] = (agentConfig?.connectors as string[]) ?? [];
@@ -2533,7 +2663,9 @@ export class GatewayToolExecutor {
         for (const item of recent) {
           allItems.push({ input: `[${item.type}] ${item.content}` });
         }
-        if (allItems.length >= sampleCount) break;
+        if (allItems.length >= sampleCount) {
+          break;
+        }
       }
       if (allItems.length === 0) {
         const detail =
@@ -2755,7 +2887,12 @@ export class GatewayToolExecutor {
     // Permission check using existing DelegationManager
     // Default to 'conductor' when no agent context is set (e.g., MessageRouter path, audit cron)
     // Conductor is the default agent and the only tier-1 agent that should delegate
-    const sourceAgentId = this.currentAgentId || 'conductor';
+    const {
+      agentId: activeAgentId,
+      source: activeSource,
+      channelId: activeChannelId,
+    } = this.getActiveRouting();
+    const sourceAgentId = activeAgentId || 'conductor';
     const check = this.delegationManagerRef.isDelegationAllowed(sourceAgentId, agentId);
     if (!check.allowed) {
       return {
@@ -2766,8 +2903,8 @@ export class GatewayToolExecutor {
 
     // Background delegation: fire-and-forget with async validation finalize
     if (background) {
-      const source = this.currentSource || 'viewer';
-      const channelId = this.currentChannelId || 'default';
+      const source = activeSource || 'viewer';
+      const channelId = activeChannelId || 'default';
 
       // Start validation session for background delegation
       let bgAgentVersion = 0;
@@ -2913,8 +3050,8 @@ export class GatewayToolExecutor {
     }
 
     // Synchronous delegation with retry + backoff for resilience
-    const source = this.currentSource || 'viewer';
-    const channelId = this.currentChannelId || 'default';
+    const source = activeSource || 'viewer';
+    const channelId = activeChannelId || 'default';
     const startTime = Date.now();
 
     // Start validation session for this delegation
@@ -3143,8 +3280,9 @@ export class GatewayToolExecutor {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
     const bridge = new HostBridge(this);
-    const tier = (this.currentContext?.tier ?? 1) as 1 | 2 | 3;
-    bridge.injectInto(sandbox, tier, this.currentContext?.role);
+    const context = this.getActiveContext();
+    const tier = (context?.tier ?? 1) as 1 | 2 | 3;
+    bridge.injectInto(sandbox, tier, context?.role);
 
     const result = await sandbox.execute(input.code);
 
@@ -3160,7 +3298,8 @@ export class GatewayToolExecutor {
    * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
    */
   private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
-    if (!this.currentContext) {
+    const context = this.getActiveContext();
+    if (!context) {
       return {
         success: false,
         error: 'mama_add requires an active agent context',
@@ -3168,9 +3307,9 @@ export class GatewayToolExecutor {
     }
 
     const scopes = deriveMemoryScopes({
-      source: this.currentContext.source,
-      channelId: this.currentContext.session.channelId,
-      userId: this.currentContext.session.userId,
+      source: context.source,
+      channelId: context.session.channelId,
+      userId: context.session.userId,
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
 
@@ -3201,11 +3340,12 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
-      const fallbackScopes = this.currentContext
+      const context = this.getActiveContext();
+      const fallbackScopes = context
         ? deriveMemoryScopes({
-            source: this.currentContext.source,
-            channelId: this.currentContext.session.channelId,
-            userId: this.currentContext.session.userId,
+            source: context.source,
+            channelId: context.session.channelId,
+            userId: context.session.userId,
             projectId: process.env.MAMA_WORKSPACE || process.cwd(),
           })
         : [];
@@ -3230,7 +3370,7 @@ export class GatewayToolExecutor {
         source: {
           package: 'standalone',
           source_type: 'gateway_tool_executor',
-          source: this.currentContext?.source || null,
+          source: context?.source || null,
         },
       });
 
@@ -3257,11 +3397,12 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    const fallbackScopes = this.currentContext
+    const context = this.getActiveContext();
+    const fallbackScopes = context
       ? deriveMemoryScopes({
-          source: this.currentContext.source,
-          channelId: this.currentContext.session.channelId,
-          userId: this.currentContext.session.userId,
+          source: context.source,
+          channelId: context.session.channelId,
+          userId: context.session.userId,
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];

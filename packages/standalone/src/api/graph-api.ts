@@ -556,6 +556,21 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
+async function readBodyOrRespond(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await readBody(req);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode = message === 'Invalid JSON' ? 400 : 500;
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: message === 'Invalid JSON' ? 'Invalid JSON' : message }));
+    return null;
+  }
+}
+
 async function handleUpdateRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
   try {
     const body = await readBody(req);
@@ -1582,7 +1597,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/ui/page-context — viewer reports current page state
     if (pathname === '/api/ui/page-context' && req.method === 'POST') {
       if (options.uiCommandQueue) {
-        const body = await readBody(req);
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
         handlePostPageContext(
           res,
           body as unknown as import('./ui-command-handler.js').PageContext,
@@ -1598,7 +1616,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/ui/commands — agent pushes UI commands
     if (pathname === '/api/ui/commands' && req.method === 'POST') {
       if (options.uiCommandQueue) {
-        const body = await readBody(req);
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
         handlePostUICommand(
           res,
           body as unknown as import('./ui-command-handler.js').UICommand,
@@ -1614,7 +1635,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/ui/commands/ack — viewer acknowledges applied commands
     if (pathname === '/api/ui/commands/ack' && req.method === 'POST') {
       if (options.uiCommandQueue) {
-        const body = await readBody(req);
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
         const { handlePostUICommandAck } = await import('./ui-command-handler.js');
         handlePostUICommandAck(
           res,
@@ -1763,7 +1787,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
         let sessionId = params.get('session_id');
         if (!sessionId) {
-          const body = await readBody(req);
+          const body = await readBodyOrRespond(req, res);
+          if (!body) {
+            return true;
+          }
           sessionId = body?.session_id as string | null;
         }
         if (!sessionId) {
@@ -1829,6 +1856,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
             const baseline = baselineSessionId
               ? getValidationSessionDetail(options.sessionsDb, baselineSessionId)
               : null;
+            if (baselineMode !== 'approved' && baselineSessionId && !baseline) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'baseline session not found' }));
+              return true;
+            }
             if (baseline && baseline.session.agent_id !== agentId) {
               res.writeHead(403, { 'Content-Type': 'application/json' });
               res.end(
@@ -1894,7 +1926,10 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: POST /api/agents — create new agent
     if (pathname === '/api/agents' && req.method === 'POST') {
-      const body = await readBody(req);
+      const body = await readBodyOrRespond(req, res);
+      if (!body) {
+        return true;
+      }
       if (options.sessionsDb)
         await handleCreateAgent(res, body, options.sessionsDb, {
           loadConfig: async () => loadMAMAConfig(),

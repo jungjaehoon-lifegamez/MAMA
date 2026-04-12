@@ -262,6 +262,13 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
   return filtered;
 }
 
+type AgentToolExecutionContext = {
+  agentContext: AgentContext | null;
+  agentId?: string;
+  source?: string;
+  channelId?: string;
+};
+
 export class AgentLoop {
   private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
@@ -585,6 +592,22 @@ export class AgentLoop {
     return SOURCE_GLOBAL_LANES[source];
   }
 
+  private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
+    if (!options?.agentContext && !options?.source && !options?.channelId) {
+      return null;
+    }
+    return {
+      agentContext: options?.agentContext ?? null,
+      agentId: options?.agentContext
+        ? options.agentContext.source === 'viewer'
+          ? 'os-agent'
+          : options.agentContext.roleName
+        : undefined,
+      source: options?.source,
+      channelId: options?.channelId,
+    };
+  }
+
   /**
    * Set system prompt override (for per-message context injection)
    */
@@ -786,28 +809,16 @@ export class AgentLoop {
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
 
-    // Propagate agentContext to executor for tier-aware tool permissions
+    const toolExecutionContext = this.buildToolExecutionContext(options);
+
+    // Track current tier for code-act execution and prompt sizing.
     if (options?.agentContext) {
-      this.mcpExecutor.setAgentContext?.(options.agentContext);
-      if (options.source && options.channelId) {
-        const currentAgentId =
-          options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName;
-        this.mcpExecutor.setCurrentAgentContext?.(
-          currentAgentId,
-          options.source,
-          options.channelId
-        );
-      } else {
-        this.mcpExecutor.clearCurrentAgentContext?.();
-      }
       const rawTier = options.agentContext.tier ?? 1;
       this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
         | 1
         | 2
         | 3;
     } else {
-      this.mcpExecutor.setAgentContext?.(null);
-      this.mcpExecutor.clearCurrentAgentContext?.();
       this.currentTier = 1;
     }
 
@@ -1240,7 +1251,8 @@ export class AgentLoop {
 
           const toolResults = await this.executeTools(
             response.content,
-            options?.stopAfterSuccessfulTools ?? []
+            options?.stopAfterSuccessfulTools ?? [],
+            toolExecutionContext
           );
 
           // Add tool results to history
@@ -1307,7 +1319,8 @@ export class AgentLoop {
    */
   private async executeTools(
     content: ContentBlock[],
-    stopAfterSuccessfulTools: string[] = []
+    stopAfterSuccessfulTools: string[] = [],
+    executionContext: AgentToolExecutionContext | null = null
   ): Promise<ToolResultBlock[]> {
     const toolUseBlocks = content.filter(
       (block): block is ToolUseBlock => block.type === 'tool_use'
@@ -1355,13 +1368,15 @@ export class AgentLoop {
           if (toolUse.name === 'Write' && toolUse.input) {
             contractContext = await this.searchContractsForTool(
               toolUse.name,
-              toolUse.input as GatewayToolInput
+              toolUse.input as GatewayToolInput,
+              executionContext
             );
           }
 
           const toolResult = await this.mcpExecutor.execute(
             toolUse.name,
-            toolUse.input as GatewayToolInput
+            toolUse.input as GatewayToolInput,
+            executionContext ?? undefined
           );
           result = JSON.stringify(toolResult, null, 2);
 
@@ -1429,7 +1444,8 @@ export class AgentLoop {
    */
   private async searchContractsForTool(
     _toolName: string,
-    input: GatewayToolInput
+    input: GatewayToolInput,
+    executionContext: AgentToolExecutionContext | null = null
   ): Promise<string> {
     try {
       const filePath = (input as { path?: string }).path;
@@ -1440,10 +1456,14 @@ export class AgentLoop {
       const fileName = filePath.split('/').pop() || filePath;
       const searchQuery = `contract ${fileName}`;
 
-      const searchResult = await this.mcpExecutor.execute('mama_search', {
-        query: searchQuery,
-        limit: 3,
-      });
+      const searchResult = await this.mcpExecutor.execute(
+        'mama_search',
+        {
+          query: searchQuery,
+          limit: 3,
+        },
+        executionContext ?? undefined
+      );
 
       if (searchResult && typeof searchResult === 'object' && 'results' in searchResult) {
         const typedResult = searchResult as {

@@ -290,6 +290,13 @@ export class DashboardModule {
           if (isOpen) {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
+            this.selectedProject = null;
+            this.selectedConnector = null;
+            reportPageContext('dashboard', {
+              pageType: 'dashboard-overview',
+              selectedProject: null,
+              selectedConnector: null,
+            });
           } else {
             detail.style.display = '';
             arrow.textContent = '\u25BC';
@@ -369,6 +376,13 @@ export class DashboardModule {
           if (isOpen) {
             detail.style.display = 'none';
             arrow.textContent = '\u25B6';
+            this.selectedProject = null;
+            this.selectedConnector = null;
+            reportPageContext('dashboard', {
+              pageType: 'dashboard-overview',
+              selectedProject: null,
+              selectedConnector: null,
+            });
           } else {
             detail.style.display = '';
             arrow.textContent = '\u25BC';

@@ -247,10 +247,24 @@ export class ConnectorFeedModule {
 
   private showMobileList(): void {
     this.mobileShowingDetail = false;
+    this.selectedConnector = null;
     const list = document.getElementById('connector-list');
     const detail = document.getElementById('connector-detail');
     if (list) list.style.display = '';
     if (detail) detail.style.display = 'none';
+    reportPageContext('feed', {
+      pageType: 'connector-list',
+      selectedConnector: null,
+      connectorCount: this.cachedConnectors.length,
+      channelCount: 0,
+      channels: [],
+      connectors: this.cachedConnectors.slice(0, 10).map((c) => ({
+        connector: c.connector,
+        status: c.status,
+        channel: c.channel,
+        timestamp: c.timestamp,
+      })),
+    });
   }
 
   private handleResize(): void {

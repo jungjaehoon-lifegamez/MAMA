@@ -73,7 +73,6 @@ export class AgentsModule {
     if (!this.container) {
       return;
     }
-    this.loadAgents();
   }
 
   // ── List View ───────────────────────────────────────────────────────────
@@ -685,9 +684,17 @@ export class AgentsModule {
 
   private async renderActivityTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
     el.innerHTML = '<div class="text-[12px] text-gray-400">Loading...</div>';
+    const requestId = this.detailRequestId;
+    const expectedAgentId = this.selectedAgent?.id ?? a.id ?? '';
     try {
       const { activity } = await API.getAgentActivity(a.id ?? '', 20);
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       if (!activity.length) {
+        if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+          return;
+        }
         this.updateDetailPageContext(a, { activity: [] });
         el.innerHTML =
           '<div class="text-[12px] text-gray-400 py-4 text-center">No activity yet. Delegate a task to this agent to see logs here.</div>';
@@ -755,6 +762,9 @@ export class AgentsModule {
           </div>`;
         })
         .join('');
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       el.innerHTML = `<div>${rows}</div>`;
       const activityContext = activity.slice(0, 20).map((ev: Record<string, unknown>) => ({
         id: ev.id ?? null,
@@ -768,9 +778,15 @@ export class AgentsModule {
         created_at: ev.created_at ?? null,
         error_message: ev.error_message ?? null,
       }));
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       this.updateDetailPageContext(a, { activity: activityContext });
 
       // Expand/collapse toggle with ARIA
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       el.querySelectorAll<HTMLElement>('[data-expand]').forEach((toggle) => {
         const toggleExpand = () => {
           const id = toggle.dataset.expand;
@@ -798,6 +814,8 @@ export class AgentsModule {
   private async renderValidationTab(el: HTMLElement, a: AgentWithVersion): Promise<void> {
     el.innerHTML = `<div style="color:${C.ter};font-size:12px;">Loading validation...</div>`;
     const agentId = a.id ?? '';
+    const requestId = this.detailRequestId;
+    const expectedAgentId = this.selectedAgent?.id ?? agentId;
     const OC: Record<string, string> = {
       healthy: '#22c55e',
       improved: '#3b82f6',
@@ -810,6 +828,9 @@ export class AgentsModule {
         API.getValidationSummary(agentId),
         API.getValidationHistory(agentId, 30),
       ]);
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
 
       const summary = summaryRes.summary as Record<string, unknown> | null;
       const history = historyRes.history as Array<Record<string, unknown>>;
@@ -1042,6 +1063,9 @@ export class AgentsModule {
           baseline_version: h.baseline_version ?? null,
         })),
       };
+      if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+        return;
+      }
       this.updateDetailPageContext(a, { validation: validationContext });
 
       // ── 4. Approve button ──
@@ -1087,6 +1111,9 @@ export class AgentsModule {
               summary: null,
             }));
             const refreshedValidation = refreshedSummary.summary as Record<string, unknown> | null;
+            if (requestId !== this.detailRequestId || this.selectedAgent?.id !== expectedAgentId) {
+              return;
+            }
             this.currentDetailContext = this.buildDetailPageContext(a, refreshedValidation);
             if (refreshedValidation?.validation_outcome) {
               this.validationStates.set(agentId, String(refreshedValidation.validation_outcome));

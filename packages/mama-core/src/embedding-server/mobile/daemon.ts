@@ -142,7 +142,8 @@ export class ClaudeDaemon extends EventEmitter {
       let settled = false;
 
       try {
-        // Use stream-json mode for bidirectional JSON communication
+        // Requires a modern Claude CLI build with stream-json support
+        // for --print/--verbose/--session-id/--setting-sources.
         const args = [
           '--print',
           '--verbose',

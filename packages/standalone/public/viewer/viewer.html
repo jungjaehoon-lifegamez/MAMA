@@ -36,7 +36,10 @@
     <script defer src="https://unpkg.com/vis-network@9/dist/vis-network.min.js"></script>
     <script defer src="https://unpkg.com/lucide@0.460.0"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
-    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"></script>
+    <script
+      defer
+      src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.5/purify.min.js"
+    ></script>
     <!-- Tailwind must load synchronously -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -72,7 +75,7 @@
               },
             },
             spacing: {
-              'sidebar': 'var(--sidebar-width)',
+              sidebar: 'var(--sidebar-width)',
             },
             borderRadius: {
               DEFAULT: 'var(--radius)',
@@ -87,25 +90,25 @@
               mono: ['var(--font-mono)', 'monospace'],
             },
             boxShadow: {
-              'soft': '0 4px 20px rgba(19, 19, 19, 0.08)',
-              'medium': '0 8px 32px rgba(19, 19, 19, 0.12)',
-              'float': '0 12px 40px rgba(19, 19, 19, 0.15)',
-              'yellow': '0 4px 20px rgba(255, 206, 0, 0.4)',
+              soft: '0 4px 20px rgba(19, 19, 19, 0.08)',
+              medium: '0 8px 32px rgba(19, 19, 19, 0.12)',
+              float: '0 12px 40px rgba(19, 19, 19, 0.15)',
+              yellow: '0 4px 20px rgba(255, 206, 0, 0.4)',
             },
-          }
-        }
-      }
+          },
+        },
+      };
     </script>
     <style>
       :root {
         /* MAMA Brand Colors */
-        --mama-yellow: #FFCE00;
-        --mama-yellow-hover: #E6B800;
-        --mama-lavender: #EDDBF7;
-        --mama-lavender-light: #F5EBF9;
-        --mama-lavender-dark: #D4C4E0;
+        --mama-yellow: #ffce00;
+        --mama-yellow-hover: #e6b800;
+        --mama-lavender: #eddbf7;
+        --mama-lavender-light: #f5ebf9;
+        --mama-lavender-dark: #d4c4e0;
         --mama-black: #131313;
-        --mama-blush: #FF9999;
+        --mama-blush: #ff9999;
 
         /* Radius hierarchy: outer > inner > button */
         --radius-card: 12px;
@@ -114,23 +117,23 @@
         --radius-pill: 9999px;
 
         /* Semantic Colors (HSL for Tailwind) */
-        --background: 40 20% 97%;   /* warm off-white */
-        --foreground: 0 0% 7%;      /* black */
-        --card: 0 0% 100%;          /* white */
+        --background: 40 20% 97%; /* warm off-white */
+        --foreground: 0 0% 7%; /* black */
+        --card: 0 0% 100%; /* white */
         --card-foreground: 0 0% 7%;
-        --border: 0 0% 89%;         /* light gray */
-        --muted: 40 15% 95%;        /* warm muted */
+        --border: 0 0% 89%; /* light gray */
+        --muted: 40 15% 95%; /* warm muted */
         --muted-foreground: 0 0% 45%;
-        --primary: 48 100% 50%;     /* yellow */
+        --primary: 48 100% 50%; /* yellow */
         --primary-foreground: 0 0% 7%;
-        --secondary: 280 40% 95%;   /* subtle lavender accent */
+        --secondary: 280 40% 95%; /* subtle lavender accent */
         --secondary-foreground: 0 0% 7%;
         --destructive: 0 84% 60%;
         --destructive-foreground: 0 0% 98%;
         --success: 142 76% 36%;
         --warning: 38 92% 50%;
         --info: 199 89% 48%;
-        --ring: 48 100% 50%;        /* yellow */
+        --ring: 48 100% 50%; /* yellow */
 
         /* Layout */
         --radius: 0.75rem;
@@ -145,95 +148,174 @@
 
       /* ── Sidebar Navigation ── */
       #mama-sidebar {
-        position: fixed; left: 0; top: 0; height: 100vh;
-        width: var(--sidebar-width); background: #FFFFFF;
-        border-right: 1px solid #EDE9E1;
-        display: flex; flex-direction: column; align-items: center;
-        padding: 16px 0; z-index: 100; transition: width 0.2s ease;
+        position: fixed;
+        left: 0;
+        top: 0;
+        height: 100vh;
+        width: var(--sidebar-width);
+        background: #ffffff;
+        border-right: 1px solid #ede9e1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 16px 0;
+        z-index: 100;
+        transition: width 0.2s ease;
         overflow: hidden;
       }
       #mama-sidebar:hover {
         width: var(--sidebar-width-expanded);
-        box-shadow: 4px 0 24px rgba(0,0,0,0.06);
+        box-shadow: 4px 0 24px rgba(0, 0, 0, 0.06);
       }
       .mama-sidebar-logo {
-        display: flex; align-items: center; gap: 10px;
-        width: 100%; padding: 0 14px; margin-bottom: 24px;
-        text-decoration: none; color: #1A1A1A; white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: 100%;
+        padding: 0 14px;
+        margin-bottom: 24px;
+        text-decoration: none;
+        color: #1a1a1a;
+        white-space: nowrap;
       }
-      .mama-sidebar-logo img { flex-shrink: 0; }
+      .mama-sidebar-logo img {
+        flex-shrink: 0;
+      }
       .mama-sidebar-logo span {
-        font-family: 'Inter', 'Noto Sans KR', sans-serif; font-weight: 700;
-        font-size: 16px; opacity: 0; transition: opacity 0.15s ease;
+        font-family: 'Inter', 'Noto Sans KR', sans-serif;
+        font-weight: 700;
+        font-size: 16px;
+        opacity: 0;
+        transition: opacity 0.15s ease;
       }
-      #mama-sidebar:hover .mama-sidebar-logo span { opacity: 1; }
+      #mama-sidebar:hover .mama-sidebar-logo span {
+        opacity: 1;
+      }
 
       .mama-nav-items {
-        display: flex; flex-direction: column; gap: 4px;
-        width: 100%; padding: 0 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 100%;
+        padding: 0 8px;
       }
       .mama-nav-item {
-        position: relative; display: flex; align-items: center; gap: 12px;
-        width: 100%; height: 40px; padding: 0 12px;
-        border-radius: 6px; border: none; background: transparent;
-        color: #6B6560; font-family: 'Inter', 'Noto Sans KR', sans-serif;
-        font-size: 13px; font-weight: 600; cursor: pointer;
-        transition: background 0.15s ease, color 0.15s ease;
-        white-space: nowrap; overflow: hidden;
+        position: relative;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        width: 100%;
+        height: 40px;
+        padding: 0 12px;
+        border-radius: 6px;
+        border: none;
+        background: transparent;
+        color: #6b6560;
+        font-family: 'Inter', 'Noto Sans KR', sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition:
+          background 0.15s ease,
+          color 0.15s ease;
+        white-space: nowrap;
+        overflow: hidden;
       }
-      .mama-nav-item:hover { background: #F9F7F4; color: #1A1A1A; }
+      .mama-nav-item:hover {
+        background: #f9f7f4;
+        color: #1a1a1a;
+      }
       .mama-nav-item i,
-      .mama-nav-item svg { flex-shrink: 0; width: 18px; height: 18px; }
-      .mama-nav-item span {
-        opacity: 0; transition: opacity 0.15s ease;
+      .mama-nav-item svg {
+        flex-shrink: 0;
+        width: 18px;
+        height: 18px;
       }
-      #mama-sidebar:hover .mama-nav-item span { opacity: 1; }
+      .mama-nav-item span {
+        opacity: 0;
+        transition: opacity 0.15s ease;
+      }
+      #mama-sidebar:hover .mama-nav-item span {
+        opacity: 1;
+      }
 
       .mama-nav-item.mama-nav-active {
-        color: #1A1A1A; background: #FEF9E7;
+        color: #1a1a1a;
+        background: #fef9e7;
       }
       .mama-nav-item.mama-nav-active::before {
-        content: ''; position: absolute; left: -8px; top: 8px;
-        width: 3px; height: 24px; border-radius: 0 3px 3px 0;
-        background: #FFCE00;
+        content: '';
+        position: absolute;
+        left: -8px;
+        top: 8px;
+        width: 3px;
+        height: 24px;
+        border-radius: 0 3px 3px 0;
+        background: #ffce00;
       }
 
       /* ── Mobile bottom tab bar ── */
       #mama-mobile-tabs {
-        display: none; position: fixed; bottom: 0; left: 0; right: 0;
-        height: 64px; background: #FFFFFF; border-top: 1px solid #EDE9E1;
-        z-index: 100; padding: 0 8px;
-        align-items: center; justify-content: space-around;
+        display: none;
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 64px;
+        background: #ffffff;
+        border-top: 1px solid #ede9e1;
+        z-index: 100;
+        padding: 0 8px;
+        align-items: center;
+        justify-content: space-around;
       }
       .mama-mobile-tab {
-        display: flex; flex-direction: column; align-items: center; gap: 2px;
-        padding: 8px 12px; border: none; background: transparent;
-        color: #6B6560; font-size: 10px; font-weight: 600;
-        font-family: 'Inter', 'Noto Sans KR', sans-serif; cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        padding: 8px 12px;
+        border: none;
+        background: transparent;
+        color: #6b6560;
+        font-size: 10px;
+        font-weight: 600;
+        font-family: 'Inter', 'Noto Sans KR', sans-serif;
+        cursor: pointer;
         transition: color 0.15s ease;
       }
       .mama-mobile-tab i,
-      .mama-mobile-tab svg { width: 20px; height: 20px; }
+      .mama-mobile-tab svg {
+        width: 20px;
+        height: 20px;
+      }
       .mama-mobile-tab.mama-nav-active {
-        color: #FFCE00;
+        color: #ffce00;
         position: relative;
       }
       .mama-mobile-tab.mama-nav-active::after {
         content: '';
-        position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-        width: 24px; height: 2px; border-radius: 1px;
-        background: #FFCE00;
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 24px;
+        height: 2px;
+        border-radius: 1px;
+        background: #ffce00;
       }
 
       /* ── Slot container ── */
       .mama-slots-container {
-        display: flex; flex-direction: column; gap: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
         min-height: 200px;
       }
 
       /* ── Settings Sections ── */
       .mama-settings-section {
-        border-bottom: 1px solid #EDE9E1;
+        border-bottom: 1px solid #ede9e1;
         padding: 16px 0;
         border-radius: 4px;
       }
@@ -244,7 +326,7 @@
         font-family: 'Inter', 'Noto Sans KR', sans-serif;
         font-size: 16px;
         font-weight: 600;
-        color: #1A1A1A;
+        color: #1a1a1a;
         cursor: pointer;
         display: flex;
         align-items: center;
@@ -257,41 +339,70 @@
         width: 100%;
         text-align: left;
       }
-      .mama-settings-heading:hover { color: #3D3630; }
+      .mama-settings-heading:hover {
+        color: #3d3630;
+      }
       .mama-collapse-icon {
         font-size: 14px;
-        color: #9B9389;
+        color: #9b9389;
         transition: transform 0.2s ease;
         display: inline-block;
       }
-      .mama-settings-section.collapsed .mama-settings-body { display: none; }
-      .mama-settings-section.collapsed .mama-collapse-icon { transform: rotate(-90deg); }
+      .mama-settings-section.collapsed .mama-settings-body {
+        display: none;
+      }
+      .mama-settings-section.collapsed .mama-collapse-icon {
+        transform: rotate(-90deg);
+      }
 
       /* ── Responsive ── */
       @media (max-width: 767px) {
-        #mama-sidebar { display: none; }
-        #mama-mobile-tabs { display: flex; }
-        main.flex-1 { margin-left: 0 !important; padding-bottom: 72px; }
+        #mama-sidebar {
+          display: none;
+        }
+        #mama-mobile-tabs {
+          display: flex;
+        }
+        main.flex-1 {
+          margin-left: 0 !important;
+          padding-bottom: 72px;
+        }
         /* Hide right panel chat on mobile — use full-screen chat tab instead */
-        #chat-resize-handle-bar { display: none !important; }
-        #chat-panel-wrapper { display: none !important; }
-        #chat-collapsed-bar { display: none !important; }
+        #chat-resize-handle-bar {
+          display: none !important;
+        }
+        #chat-panel-wrapper {
+          display: none !important;
+        }
+        #chat-collapsed-bar {
+          display: none !important;
+        }
         /* Full-screen chat overlay when chat tab is active */
         #chat-panel-wrapper.mobile-chat-active {
           display: flex !important;
-          position: fixed; top: 0; left: 0; right: 0; bottom: 64px;
-          width: 100% !important; height: auto !important;
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 64px;
+          width: 100% !important;
+          height: auto !important;
           z-index: 90;
           border-left: none;
           flex-direction: column;
         }
         #chat-panel-wrapper.mobile-chat-active #chat-panel {
-          flex: 1; display: flex; flex-direction: column;
-          height: 100% !important; min-height: 0;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          height: 100% !important;
+          min-height: 0;
           overflow: visible;
         }
         #chat-panel-wrapper.mobile-chat-active #chat-messages {
-          flex: 1; min-height: 0; overflow-y: auto;
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
         }
         #chat-panel-wrapper.mobile-chat-active .chat-input-area,
         #chat-panel-wrapper.mobile-chat-active > div:last-child {
@@ -300,7 +411,9 @@
         }
       }
       @media (min-width: 768px) {
-        main.flex-1 { margin-left: var(--sidebar-width); }
+        main.flex-1 {
+          margin-left: var(--sidebar-width);
+        }
       }
     </style>
 
@@ -311,35 +424,63 @@
       <!-- Sidebar Navigation -->
       <nav id="mama-sidebar">
         <a href="/" class="mama-sidebar-logo">
-          <img src="/viewer/icons/mama-icon.svg" alt="MAMA" width="28" height="28">
+          <img src="/viewer/icons/mama-icon.svg" alt="MAMA" width="28" height="28" />
           <span>MAMA</span>
         </a>
         <div class="mama-nav-items">
-          <button class="mama-nav-item mama-nav-active" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+          <button
+            class="mama-nav-item mama-nav-active"
+            data-tab="dashboard"
+            onclick="window.switchTab && window.switchTab('dashboard')"
+          >
             <i data-lucide="layout-dashboard"></i>
             <span>Dashboard</span>
           </button>
-          <button class="mama-nav-item" data-tab="feed" onclick="window.switchTab && window.switchTab('feed')">
+          <button
+            class="mama-nav-item"
+            data-tab="feed"
+            onclick="window.switchTab && window.switchTab('feed')"
+          >
             <i data-lucide="rss"></i>
             <span>Feed</span>
           </button>
-          <button class="mama-nav-item" data-tab="wiki" onclick="window.switchTab && window.switchTab('wiki')">
+          <button
+            class="mama-nav-item"
+            data-tab="wiki"
+            onclick="window.switchTab && window.switchTab('wiki')"
+          >
             <i data-lucide="book-open"></i>
             <span>Wiki</span>
           </button>
-          <button class="mama-nav-item" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+          <button
+            class="mama-nav-item"
+            data-tab="memory"
+            onclick="window.switchTab && window.switchTab('memory')"
+          >
             <i data-lucide="brain"></i>
             <span>Memory</span>
           </button>
-          <button class="mama-nav-item" data-tab="logs" onclick="window.switchTab && window.switchTab('logs')">
+          <button
+            class="mama-nav-item"
+            data-tab="logs"
+            onclick="window.switchTab && window.switchTab('logs')"
+          >
             <i data-lucide="terminal"></i>
             <span>Logs</span>
           </button>
-          <button class="mama-nav-item" data-tab="agents" onclick="window.switchTab && window.switchTab('agents')">
+          <button
+            class="mama-nav-item"
+            data-tab="agents"
+            onclick="window.switchTab && window.switchTab('agents')"
+          >
             <i data-lucide="bot"></i>
             <span>Agents</span>
           </button>
-          <button class="mama-nav-item" data-tab="settings" onclick="window.switchTab && window.switchTab('settings')">
+          <button
+            class="mama-nav-item"
+            data-tab="settings"
+            onclick="window.switchTab && window.switchTab('settings')"
+          >
             <i data-lucide="settings"></i>
             <span>Settings</span>
           </button>
@@ -348,518 +489,1121 @@
 
       <!-- Content Area: Main + Chat Panel (SmartStore layout) -->
       <div id="content-area" class="flex-1 flex min-h-0 overflow-hidden">
-      <!-- Main Content -->
-      <main class="flex-1 overflow-hidden flex flex-col min-w-0">
-        <!-- Dashboard Tab -->
-        <div class="tab-content" id="tab-dashboard">
-          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-            <div id="dashboard-slots" class="mama-slots-container">
-              <div id="slots-empty" style="padding:40px;text-align:center;color:#9E9891;font-size:14px">
-                No briefing yet. Run the orchestrator to generate the first report.
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Feed Tab -->
-        <div class="tab-content" id="tab-feed">
-          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-            <div id="feed-content">
-              <div style="padding:40px;text-align:center;color:#9E9891;font-size:14px">Loading connectors...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Wiki Tab -->
-        <div class="tab-content" id="tab-wiki">
-          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-            <div id="wiki-content">
-              <div style="padding:40px;text-align:center;color:#9E9891;font-size:14px">Loading wiki...</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Logs Tab -->
-        <div class="tab-content" id="tab-logs">
-          <iframe id="logs-iframe" style="width:100%;height:100%;border:none;border-radius:8px;" loading="lazy"></iframe>
-        </div>
-
-        <!-- Agents Tab -->
-        <div class="tab-content" id="tab-agents">
-          <div class="flex-1 overflow-y-auto p-4" id="agents-content"></div>
-        </div>
-
-        <!-- Settings Tab -->
-        <div class="tab-content" id="tab-settings">
-          <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-2 md:p-3">
-            <!-- Compact Header -->
-            <div class="flex items-center justify-between mb-3">
-              <h1 class="text-sm font-bold text-gray-900">Settings</h1>
-              <span class="text-[10px] text-gray-400">MAMA OS Configuration</span>
-            </div>
-
-            <!-- Section 1: Connectors -->
-            <div class="mama-settings-section">
-              <h3 class="mama-settings-heading" onclick="this.parentElement.classList.toggle('collapsed')">
-                Connectors <span class="mama-collapse-icon">&#9662;</span>
-              </h3>
-              <div class="mama-settings-body">
-                <p class="text-[10px] text-gray-500 mb-2">Data source connectors for polling external channels. Configure in <code>~/.mama/connectors.json</code>.</p>
-                <div id="settings-connectors-list" class="space-y-1.5">
-                  <p class="text-[10px] text-gray-400">Loading connectors...</p>
+        <!-- Main Content -->
+        <main class="flex-1 overflow-hidden flex flex-col min-w-0">
+          <!-- Dashboard Tab -->
+          <div class="tab-content" id="tab-dashboard">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+              <div id="dashboard-slots" class="mama-slots-container">
+                <div
+                  id="slots-empty"
+                  style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px"
+                >
+                  No briefing yet. Run the orchestrator to generate the first report.
                 </div>
               </div>
             </div>
+          </div>
 
-            <!-- Section 3: System -->
-            <div class="mama-settings-section">
-              <h3 class="mama-settings-heading" onclick="this.parentElement.classList.toggle('collapsed')">
-                System <span class="mama-collapse-icon">&#9662;</span>
-              </h3>
-              <div class="mama-settings-body">
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          <!-- Feed Tab -->
+          <div class="tab-content" id="tab-feed">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+              <div id="feed-content">
+                <div style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px">
+                  Loading connectors...
+                </div>
+              </div>
+            </div>
+          </div>
 
-                  <!-- Left: Health + DB Info -->
-                  <div class="space-y-3">
+          <!-- Wiki Tab -->
+          <div class="tab-content" id="tab-wiki">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
+              <div id="wiki-content">
+                <div style="padding: 40px; text-align: center; color: #9e9891; font-size: 14px">
+                  Loading wiki...
+                </div>
+              </div>
+            </div>
+          </div>
 
-                    <!-- Health Check -->
-                    <section>
-                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Health</h2>
-                      <div id="settings-system-health" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                        <p class="text-[10px] text-gray-400">Health status will appear here.</p>
-                      </div>
-                    </section>
+          <!-- Logs Tab -->
+          <div class="tab-content" id="tab-logs">
+            <iframe
+              id="logs-iframe"
+              style="width: 100%; height: 100%; border: none; border-radius: 8px"
+              loading="lazy"
+            ></iframe>
+          </div>
 
-                    <!-- Database Info -->
-                    <section>
-                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Database</h2>
-                      <div id="settings-system-db" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                        <p class="text-[10px] text-gray-400">Database info will appear here.</p>
-                      </div>
-                    </section>
+          <!-- Agents Tab -->
+          <div class="tab-content" id="tab-agents">
+            <div class="flex-1 overflow-y-auto p-4" id="agents-content"></div>
+          </div>
 
+          <!-- Settings Tab -->
+          <div class="tab-content" id="tab-settings">
+            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-2 md:p-3">
+              <!-- Compact Header -->
+              <div class="flex items-center justify-between mb-3">
+                <h1 class="text-sm font-bold text-gray-900">Settings</h1>
+                <span class="text-[10px] text-gray-400">MAMA OS Configuration</span>
+              </div>
+
+              <!-- Section 1: Connectors -->
+              <div class="mama-settings-section">
+                <h3
+                  class="mama-settings-heading"
+                  onclick="this.parentElement.classList.toggle('collapsed')"
+                >
+                  Connectors <span class="mama-collapse-icon">&#9662;</span>
+                </h3>
+                <div class="mama-settings-body">
+                  <p class="text-[10px] text-gray-500 mb-2">
+                    Data source connectors for polling external channels. Configure in
+                    <code>~/.mama/connectors.json</code>.
+                  </p>
+                  <div id="settings-connectors-list" class="space-y-1.5">
+                    <p class="text-[10px] text-gray-400">Loading connectors...</p>
                   </div>
+                </div>
+              </div>
 
-                  <!-- Right: Token Usage + Metrics + Cron -->
-                  <div class="space-y-3">
-
-                    <!-- Token Usage -->
-                    <section>
-                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Token Budget</h2>
-                      <div id="settings-system-tokens" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                        <div class="grid grid-cols-2 gap-1.5">
-                          <div>
-                            <label class="block text-[9px] text-gray-500 mb-0.5">Daily Limit</label>
-                            <input type="number" id="settings-token-daily-limit" placeholder="1000000" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                          </div>
-                          <div>
-                            <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
-                            <input type="number" id="settings-token-alert-threshold" step="0.01" placeholder="5.00" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                          </div>
+              <!-- Section 3: System -->
+              <div class="mama-settings-section">
+                <h3
+                  class="mama-settings-heading"
+                  onclick="this.parentElement.classList.toggle('collapsed')"
+                >
+                  System <span class="mama-collapse-icon">&#9662;</span>
+                </h3>
+                <div class="mama-settings-body">
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                    <!-- Left: Health + DB Info -->
+                    <div class="space-y-3">
+                      <!-- Health Check -->
+                      <section>
+                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Health</h2>
+                        <div
+                          id="settings-system-health"
+                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
+                        >
+                          <p class="text-[10px] text-gray-400">Health status will appear here.</p>
                         </div>
-                      </div>
-                    </section>
+                      </section>
 
-                    <!-- Metrics -->
-                    <section>
-                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Metrics</h2>
-                      <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
-                        <div class="grid grid-cols-2 gap-1.5">
-                          <div>
-                            <label class="block text-[9px] text-gray-500 mb-0.5">Enable metrics</label>
-                            <input type="checkbox" id="settings-metrics-enabled" checked class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400">
-                          </div>
-                          <div>
-                            <label class="block text-[9px] text-gray-500 mb-0.5">Retention (days)</label>
-                            <input type="number" id="settings-metrics-retention" min="1" max="90" value="7" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                          </div>
+                      <!-- Database Info -->
+                      <section>
+                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Database</h2>
+                        <div
+                          id="settings-system-db"
+                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
+                        >
+                          <p class="text-[10px] text-gray-400">Database info will appear here.</p>
                         </div>
-                      </div>
-                    </section>
+                      </section>
+                    </div>
 
-                    <!-- Scheduled Jobs -->
-                    <section>
-                      <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Scheduled Jobs</h2>
-                      <div id="settings-cron-container" class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5">
-                        <p class="text-[10px] text-gray-500">Loading...</p>
-                      </div>
-                      <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
-                        <summary class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50">+ Add New Job</summary>
-                        <div class="p-2 border-t border-gray-100 space-y-1.5" id="settings-cron-form">
+                    <!-- Right: Token Usage + Metrics + Cron -->
+                    <div class="space-y-3">
+                      <!-- Token Usage -->
+                      <section>
+                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Token Budget</h2>
+                        <div
+                          id="settings-system-tokens"
+                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm"
+                        >
                           <div class="grid grid-cols-2 gap-1.5">
-                            <input type="text" id="settings-cron-name" placeholder="Job Name" aria-label="Cron job name" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
-                            <input type="text" id="settings-cron-expr" placeholder="0 * * * *" aria-label="Cron expression" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50">
+                            <div>
+                              <label class="block text-[9px] text-gray-500 mb-0.5"
+                                >Daily Limit</label
+                              >
+                              <input
+                                type="number"
+                                id="settings-token-daily-limit"
+                                placeholder="1000000"
+                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
+                              />
+                            </div>
+                            <div>
+                              <label class="block text-[9px] text-gray-500 mb-0.5">Alert ($)</label>
+                              <input
+                                type="number"
+                                id="settings-token-alert-threshold"
+                                step="0.01"
+                                placeholder="5.00"
+                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
+                              />
+                            </div>
                           </div>
-                          <textarea id="settings-cron-prompt" rows="2" placeholder="Task prompt..." aria-label="Cron job task prompt" class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"></textarea>
-                          <button onclick="settingsModule.addCronJob()" class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded">Add</button>
                         </div>
-                      </details>
-                    </section>
+                      </section>
 
+                      <!-- Metrics -->
+                      <section>
+                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Metrics</h2>
+                        <div class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm">
+                          <div class="grid grid-cols-2 gap-1.5">
+                            <div>
+                              <label class="block text-[9px] text-gray-500 mb-0.5"
+                                >Enable metrics</label
+                              >
+                              <input
+                                type="checkbox"
+                                id="settings-metrics-enabled"
+                                checked
+                                class="w-4 h-4 rounded border-gray-300 text-yellow-500 focus:ring-yellow-400"
+                              />
+                            </div>
+                            <div>
+                              <label class="block text-[9px] text-gray-500 mb-0.5"
+                                >Retention (days)</label
+                              >
+                              <input
+                                type="number"
+                                id="settings-metrics-retention"
+                                min="1"
+                                max="90"
+                                value="7"
+                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+
+                      <!-- Scheduled Jobs -->
+                      <section>
+                        <h2 class="text-xs font-semibold text-gray-700 mb-1.5">Scheduled Jobs</h2>
+                        <div
+                          id="settings-cron-container"
+                          class="bg-white border border-gray-200 rounded-lg p-2 shadow-sm mb-1.5"
+                        >
+                          <p class="text-[10px] text-gray-500">Loading...</p>
+                        </div>
+                        <details class="bg-white border border-gray-200 rounded-lg shadow-sm">
+                          <summary
+                            class="px-2 py-1.5 text-[10px] font-medium text-gray-600 cursor-pointer hover:bg-gray-50"
+                          >
+                            + Add New Job
+                          </summary>
+                          <div
+                            class="p-2 border-t border-gray-100 space-y-1.5"
+                            id="settings-cron-form"
+                          >
+                            <div class="grid grid-cols-2 gap-1.5">
+                              <input
+                                type="text"
+                                id="settings-cron-name"
+                                placeholder="Job Name"
+                                aria-label="Cron job name"
+                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
+                              />
+                              <input
+                                type="text"
+                                id="settings-cron-expr"
+                                placeholder="0 * * * *"
+                                aria-label="Cron expression"
+                                class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50"
+                              />
+                            </div>
+                            <textarea
+                              id="settings-cron-prompt"
+                              rows="2"
+                              placeholder="Task prompt..."
+                              aria-label="Cron job task prompt"
+                              class="w-full px-1.5 py-0.5 text-[10px] border border-gray-200 rounded bg-gray-50 resize-none"
+                            ></textarea>
+                            <button
+                              onclick="settingsModule.addCronJob()"
+                              class="w-full px-2 py-1 text-[10px] font-medium bg-yellow-400 hover:bg-yellow-300 rounded"
+                            >
+                              Add
+                            </button>
+                          </div>
+                        </details>
+                      </section>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <!-- Action Buttons -->
-            <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
-              <button onclick="settingsModule.resetForm()" class="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition-colors">Reset</button>
-              <div class="flex items-center gap-2">
-                <span id="settings-status" class="text-[10px] text-gray-500"></span>
-                <button onclick="settingsModule.saveAndRestart()" class="px-4 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-300 rounded transition-colors flex items-center gap-1.5">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-                  Save &amp; Restart
+              <!-- Action Buttons -->
+              <div class="flex items-center justify-between mt-3 pt-3 border-t border-gray-200">
+                <button
+                  onclick="settingsModule.resetForm()"
+                  class="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                >
+                  Reset
                 </button>
+                <div class="flex items-center gap-2">
+                  <span id="settings-status" class="text-[10px] text-gray-500"></span>
+                  <button
+                    onclick="settingsModule.saveAndRestart()"
+                    class="px-4 py-1.5 text-xs font-medium text-black bg-yellow-400 hover:bg-yellow-300 rounded transition-colors flex items-center gap-1.5"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                    >
+                      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                      <polyline points="17 21 17 13 7 13 7 21" />
+                      <polyline points="7 3 7 8 15 8" />
+                    </svg>
+                    Save &amp; Restart
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <div class="tab-content" id="tab-memory">
-          <div class="flex-1 flex flex-col min-h-0">
-            <!-- Compact Filter Bar (full width, top) -->
-            <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white">
-              <!-- Toggle sidebar -->
-              <button
-                id="checkpoint-sidebar-toggle"
-                class="w-7 h-7 bg-white border border-gray-200 rounded flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700"
-                onclick="toggleCheckpointSidebar()"
-                title="Toggle Decision List"
-                aria-controls="checkpoint-sidebar"
-                aria-expanded="true"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                  <line x1="3" y1="9" x2="21" y2="9" />
-                  <line x1="9" y1="21" x2="9" y2="9" />
-                </svg>
-              </button>
-              <!-- Stats (compact inline) -->
-              <span id="memory-stats-total" style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:13px;font-weight:600;color:#1A1A1A">-</span>
-              <span style="font-size:11px;color:#9E9891">decisions</span>
-              <span style="color:#EDE9E1">|</span>
-              <span id="memory-stats-week" style="font-size:11px;color:#6B6560">- this week</span>
-              <!-- Spacer -->
-              <div style="flex:1"></div>
-              <!-- Topic filter -->
-              <input list="topic-filter-list" class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="topic-filter" placeholder="Filter topics..." oninput="filterByTopic(this.value)" style="width:160px">
-              <datalist id="topic-filter-list"></datalist>
-              <select class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="outcome-filter" onchange="filterByOutcome(this.value)" style="display:none">
-                <option value="">All Outcomes</option>
-                <option value="success">Success</option>
-                <option value="failed">Failed</option>
-                <option value="partial">Partial</option>
-                <option value="pending">Pending</option>
-              </select>
-              <!-- Search -->
-              <input type="text" class="px-2 py-1 bg-white border border-gray-200 rounded text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-yellow-400" id="search-input" placeholder="Search content..." onkeyup="handleGraphSearch(event)" style="width:160px" />
-              <button onclick="clearFilters()" class="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-600">Clear</button>
-              <!-- Export (collapsed) -->
-              <details style="position:relative">
-                <summary style="font-size:10px;color:#9E9891;cursor:pointer;padding:4px 8px;border:1px solid #EDE9E1;border-radius:4px">Export</summary>
-                <div style="position:absolute;right:0;top:100%;background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:4px;z-index:10;display:flex;gap:4px;margin-top:2px">
-                  <button onclick="exportDecisions('json')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">JSON</button>
-                  <button onclick="exportDecisions('markdown')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">MD</button>
-                  <button onclick="exportDecisions('csv')" style="font-size:10px;padding:2px 8px;background:#F5F2ED;border:none;border-radius:2px;cursor:pointer">CSV</button>
+          <div class="tab-content" id="tab-memory">
+            <div class="flex-1 flex flex-col min-h-0">
+              <!-- Compact Filter Bar (full width, top) -->
+              <div class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-white">
+                <!-- Toggle sidebar -->
+                <button
+                  id="checkpoint-sidebar-toggle"
+                  class="w-7 h-7 bg-white border border-gray-200 rounded flex items-center justify-center text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                  onclick="toggleCheckpointSidebar()"
+                  title="Toggle Decision List"
+                  aria-controls="checkpoint-sidebar"
+                  aria-expanded="true"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
+                  </svg>
+                </button>
+                <!-- Stats (compact inline) -->
+                <span
+                  id="memory-stats-total"
+                  style="
+                    font-family: Inter, 'Noto Sans KR', sans-serif;
+                    font-size: 13px;
+                    font-weight: 600;
+                    color: #1a1a1a;
+                  "
+                  >-</span
+                >
+                <span style="font-size: 11px; color: #9e9891">decisions</span>
+                <span style="color: #ede9e1">|</span>
+                <span id="memory-stats-week" style="font-size: 11px; color: #6b6560"
+                  >- this week</span
+                >
+                <!-- Spacer -->
+                <div style="flex: 1"></div>
+                <!-- Topic filter -->
+                <input
+                  list="topic-filter-list"
+                  class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                  id="topic-filter"
+                  placeholder="Filter topics..."
+                  oninput="filterByTopic(this.value)"
+                  style="width: 160px"
+                />
+                <datalist id="topic-filter-list"></datalist>
+                <select
+                  class="px-2 py-1 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                  id="outcome-filter"
+                  onchange="filterByOutcome(this.value)"
+                  style="display: none"
+                >
+                  <option value="">All Outcomes</option>
+                  <option value="success">Success</option>
+                  <option value="failed">Failed</option>
+                  <option value="partial">Partial</option>
+                  <option value="pending">Pending</option>
+                </select>
+                <!-- Search -->
+                <input
+                  type="text"
+                  class="px-2 py-1 bg-white border border-gray-200 rounded text-xs placeholder-gray-400 focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                  id="search-input"
+                  placeholder="Search content..."
+                  onkeyup="handleGraphSearch(event)"
+                  style="width: 160px"
+                />
+                <button
+                  onclick="clearFilters()"
+                  class="px-2 py-1 text-[10px] text-gray-400 hover:text-gray-600"
+                >
+                  Clear
+                </button>
+                <!-- Export (collapsed) -->
+                <details style="position: relative">
+                  <summary
+                    style="
+                      font-size: 10px;
+                      color: #9e9891;
+                      cursor: pointer;
+                      padding: 4px 8px;
+                      border: 1px solid #ede9e1;
+                      border-radius: 4px;
+                    "
+                  >
+                    Export
+                  </summary>
+                  <div
+                    style="
+                      position: absolute;
+                      right: 0;
+                      top: 100%;
+                      background: #fff;
+                      border: 1px solid #ede9e1;
+                      border-radius: 4px;
+                      padding: 4px;
+                      z-index: 10;
+                      display: flex;
+                      gap: 4px;
+                      margin-top: 2px;
+                    "
+                  >
+                    <button
+                      onclick="exportDecisions('json')"
+                      style="
+                        font-size: 10px;
+                        padding: 2px 8px;
+                        background: #f5f2ed;
+                        border: none;
+                        border-radius: 2px;
+                        cursor: pointer;
+                      "
+                    >
+                      JSON
+                    </button>
+                    <button
+                      onclick="exportDecisions('markdown')"
+                      style="
+                        font-size: 10px;
+                        padding: 2px 8px;
+                        background: #f5f2ed;
+                        border: none;
+                        border-radius: 2px;
+                        cursor: pointer;
+                      "
+                    >
+                      MD
+                    </button>
+                    <button
+                      onclick="exportDecisions('csv')"
+                      style="
+                        font-size: 10px;
+                        padding: 2px 8px;
+                        background: #f5f2ed;
+                        border: none;
+                        border-radius: 2px;
+                        cursor: pointer;
+                      "
+                    >
+                      CSV
+                    </button>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Main content area: Sidebar + Graph -->
+              <div class="flex-1 flex min-h-0 relative">
+                <!-- Decision List Sidebar -->
+                <aside
+                  id="checkpoint-sidebar"
+                  class="checkpoint-sidebar w-64 border-r border-gray-200 bg-white flex flex-col min-h-0 overflow-hidden"
+                  style="min-width: 180px; max-width: 400px"
+                >
+                  <div class="p-2 border-b border-gray-200 flex items-center justify-between">
+                    <span
+                      style="
+                        font-family: Inter, 'Noto Sans KR', sans-serif;
+                        font-size: 12px;
+                        font-weight: 600;
+                        color: #1a1a1a;
+                      "
+                      >Decisions</span
+                    >
+                    <span id="decision-list-count" style="font-size: 10px; color: #9e9891">0</span>
+                  </div>
+                  <div class="flex-1 overflow-y-auto" id="decision-list" style="padding: 4px">
+                    <div style="padding: 16px; text-align: center; color: #9e9891; font-size: 11px">
+                      Loading decisions...
+                    </div>
+                  </div>
+                </aside>
+
+                <!-- Resize handle for sidebar -->
+                <div
+                  id="sidebar-resize-handle"
+                  class="w-1 bg-transparent hover:bg-yellow-400 cursor-col-resize transition-colors flex-shrink-0"
+                  title="Drag to resize"
+                ></div>
+
+                <!-- Graph Container -->
+                <div class="flex-1 flex flex-col relative min-h-0" id="graph-container">
+                  <div
+                    class="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-200 bg-white/80"
+                    id="graph-stats"
+                    style="display: none"
+                  ></div>
+
+                  <div
+                    id="graph-canvas"
+                    class="flex-1 w-full h-full min-h-[400px]"
+                    style="background: #fafafa"
+                  ></div>
+
+                  <div
+                    class="absolute inset-0 flex flex-col items-center justify-center bg-white/95"
+                    id="graph-loading"
+                  >
+                    <div
+                      class="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"
+                    ></div>
+                    <span class="mt-2 text-xs text-gray-500">Loading graph...</span>
+                  </div>
+
+                  <div
+                    class="legend-panel absolute bottom-16 right-4 w-48 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-3 z-10"
+                    id="legend-panel"
+                  >
+                    <button
+                      class="absolute top-2 right-2 p-1 rounded hover:bg-gray-100 transition-colors"
+                      onclick="toggleLegend()"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                    <h4
+                      class="text-xs font-semibold text-gray-700 text-gray-700 flex items-center gap-1.5 mb-3"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="16" x2="12" y2="12" />
+                        <line x1="12" y1="8" x2="12.01" y2="8" />
+                      </svg>
+                      Legend
+                    </h4>
+                    <div class="legend-content space-y-3">
+                      <div>
+                        <div
+                          class="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5"
+                        >
+                          Edge Types
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
+                          <span class="w-6 h-0.5" style="background: #666666"></span>
+                          <span>supersedes</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
+                          <span
+                            class="w-6 h-0.5"
+                            style="background: #b8860b; border-bottom: 2px dashed #b8860b"
+                          ></span>
+                          <span>builds_on</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
+                          <span
+                            class="w-6 h-0.5"
+                            style="background: #dc143c; border-bottom: 2px dashed #dc143c"
+                          ></span>
+                          <span>debates</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-gray-700">
+                          <span class="w-6 h-1" style="background: #6b4c9a"></span>
+                          <span>synthesizes</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div
+                          class="text-[10px] font-semibold text-gray-500 text-gray-600 uppercase tracking-wide mb-1.5"
+                        >
+                          Node Size
+                        </div>
+                        <div
+                          class="flex items-center gap-2 text-xs text-gray-600 text-gray-600 mb-1"
+                        >
+                          <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+                          <span>1-2 connections</span>
+                        </div>
+                        <div
+                          class="flex items-center gap-2 text-xs text-gray-600 text-gray-600 mb-1"
+                        >
+                          <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
+                          <span>3-5 connections</span>
+                        </div>
+                        <div class="flex items-center gap-2 text-xs text-gray-600 text-gray-600">
+                          <span class="w-4 h-4 rounded-full bg-indigo-500"></span>
+                          <span>6+ connections</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    class="legend-toggle absolute bottom-4 right-4 px-3 py-1.5 text-xs font-medium bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 border border-gray-200 border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 z-10"
+                    onclick="toggleLegend()"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="16" x2="12" y2="12" />
+                      <line x1="12" y1="8" x2="12.01" y2="8" />
+                    </svg>
+                    Legend
+                  </button>
                 </div>
-              </details>
+                <!-- close graph-container -->
+              </div>
+              <!-- close flex-1 flex relative -->
             </div>
+          </div>
 
-            <!-- Main content area: Sidebar + Graph -->
-            <div class="flex-1 flex min-h-0 relative">
-              <!-- Decision List Sidebar -->
-              <aside id="checkpoint-sidebar" class="checkpoint-sidebar w-64 border-r border-gray-200 bg-white flex flex-col min-h-0 overflow-hidden" style="min-width: 180px; max-width: 400px;">
-                <div class="p-2 border-b border-gray-200 flex items-center justify-between">
-                  <span style="font-family:Inter,'Noto Sans KR',sans-serif;font-size:12px;font-weight:600;color:#1A1A1A">Decisions</span>
-                  <span id="decision-list-count" style="font-size:10px;color:#9E9891">0</span>
-                </div>
-                <div class="flex-1 overflow-y-auto" id="decision-list" style="padding:4px">
-                  <div style="padding:16px;text-align:center;color:#9E9891;font-size:11px">Loading decisions...</div>
-                </div>
-              </aside>
-
-              <!-- Resize handle for sidebar -->
-              <div id="sidebar-resize-handle" class="w-1 bg-transparent hover:bg-yellow-400 cursor-col-resize transition-colors flex-shrink-0" title="Drag to resize"></div>
-
-              <!-- Graph Container -->
-              <div class="flex-1 flex flex-col relative min-h-0" id="graph-container">
-                <div class="px-3 py-1.5 text-[10px] text-gray-500 border-b border-gray-200 bg-white/80" id="graph-stats" style="display:none"></div>
-
-                <div id="graph-canvas" class="flex-1 w-full h-full min-h-[400px]" style="background: #FAFAFA;"></div>
-
-                <div class="absolute inset-0 flex flex-col items-center justify-center bg-white/95" id="graph-loading">
-                  <div class="w-6 h-6 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
-                  <span class="mt-2 text-xs text-gray-500">Loading graph...</span>
-                </div>
-
-            <div class="legend-panel absolute bottom-16 right-4 w-48 bg-white/95 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-3 z-10" id="legend-panel">
-              <button class="absolute top-2 right-2 p-1 rounded hover:bg-gray-100 transition-colors" onclick="toggleLegend()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <div
+            class="floating-panel fixed w-[360px] min-w-[280px] max-w-[90vw] h-[400px] min-h-[200px] max-h-[80vh] bg-white/95 backdrop-blur-sm border border-gray-200 rounded-xl shadow-2xl z-[1000] flex-col overflow-hidden resize"
+            id="decision-detail-modal"
+            style="top: 100px; right: 20px; left: auto; transform: none"
+          >
+            <div
+              class="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50/80 cursor-move select-none"
+              id="detail-modal-header"
+            >
+              <h3 class="text-sm font-semibold text-gray-900 truncate flex-1" id="detail-topic">
+                Decision Detail
+              </h3>
+              <button
+                class="p-1 rounded hover:bg-gray-200 transition-colors text-gray-500 hover:text-gray-700 ml-2"
+                onclick="closeDetailModal()"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <line x1="18" y1="6" x2="6" y2="18" />
                   <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
               </button>
-              <h4 class="text-xs font-semibold text-gray-700 text-gray-700 flex items-center gap-1.5 mb-3">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="16" x2="12" y2="12" />
-                  <line x1="12" y1="8" x2="12.01" y2="8" />
-                </svg>
-                Legend
-              </h4>
-              <div class="legend-content space-y-3">
-                <div>
-                  <div class="text-[10px] font-semibold text-gray-600 uppercase tracking-wide mb-1.5">Edge Types</div>
-                  <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
-                    <span class="w-6 h-0.5" style="background: #666666;"></span>
-                    <span>supersedes</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
-                    <span class="w-6 h-0.5" style="background: #B8860B; border-bottom: 2px dashed #B8860B;"></span>
-                    <span>builds_on</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-gray-700 mb-1">
-                    <span class="w-6 h-0.5" style="background: #DC143C; border-bottom: 2px dashed #DC143C;"></span>
-                    <span>debates</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-gray-700">
-                    <span class="w-6 h-1" style="background: #6B4C9A;"></span>
-                    <span>synthesizes</span>
-                  </div>
-                </div>
-                <div>
-                  <div class="text-[10px] font-semibold text-gray-500 text-gray-600 uppercase tracking-wide mb-1.5">Node Size</div>
-                  <div class="flex items-center gap-2 text-xs text-gray-600 text-gray-600 mb-1">
-                    <span class="w-2 h-2 rounded-full bg-indigo-500"></span>
-                    <span>1-2 connections</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-gray-600 text-gray-600 mb-1">
-                    <span class="w-3 h-3 rounded-full bg-indigo-500"></span>
-                    <span>3-5 connections</span>
-                  </div>
-                  <div class="flex items-center gap-2 text-xs text-gray-600 text-gray-600">
-                    <span class="w-4 h-4 rounded-full bg-indigo-500"></span>
-                    <span>6+ connections</span>
-                  </div>
-                </div>
-              </div>
             </div>
-            <button class="legend-toggle absolute bottom-4 right-4 px-3 py-1.5 text-xs font-medium bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 border border-gray-200 border-gray-300 rounded-lg transition-colors flex items-center gap-1.5 z-10" onclick="toggleLegend()">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-              Legend
-            </button>
-              </div><!-- close graph-container -->
-            </div><!-- close flex-1 flex relative -->
-          </div>
-        </div>
-
-        <div class="floating-panel fixed w-[360px] min-w-[280px] max-w-[90vw] h-[400px] min-h-[200px] max-h-[80vh] bg-white/95 backdrop-blur-sm border border-gray-200 rounded-xl shadow-2xl z-[1000] flex-col overflow-hidden resize" id="decision-detail-modal" style="top: 100px; right: 20px; left: auto; transform: none;">
-          <div class="flex items-center justify-between px-3 py-2 border-b border-gray-200 bg-gray-50/80 cursor-move select-none" id="detail-modal-header">
-            <h3 class="text-sm font-semibold text-gray-900 truncate flex-1" id="detail-topic">Decision Detail</h3>
-            <button class="p-1 rounded hover:bg-gray-200 transition-colors text-gray-500 hover:text-gray-700 ml-2" onclick="closeDetailModal()">
-              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          </div>
-          <div class="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
-            <div>
-              <div class="font-semibold text-gray-500 uppercase tracking-wide mb-1">Decision</div>
-              <div class="text-gray-900 leading-relaxed markdown-content" id="detail-decision"></div>
-            </div>
-            <div>
-              <div class="font-semibold text-gray-500 uppercase tracking-wide mb-1 cursor-pointer hover:text-gray-700" onclick="toggleReasoning()">
-                <span id="reasoning-arrow">▶</span> Reasoning
-              </div>
-              <div class="text-gray-900 leading-relaxed markdown-content hidden" id="detail-reasoning"></div>
-            </div>
-            <div class="flex items-center gap-3">
-              <div class="flex items-center gap-2">
-                <span class="font-semibold text-gray-500 uppercase">Outcome:</span>
-                <select class="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400" id="detail-outcome-select">
-                  <option value="PENDING">PENDING</option>
-                  <option value="SUCCESS">SUCCESS</option>
-                  <option value="FAILED">FAILED</option>
-                  <option value="PARTIAL">PARTIAL</option>
-                </select>
-                <button class="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 rounded transition-colors" onclick="saveOutcome()">Save</button>
-                <span id="outcome-status"></span>
-              </div>
-            </div>
-            <div class="flex gap-4">
+            <div class="flex-1 p-3 overflow-y-auto space-y-3 text-xs">
               <div>
-                <span class="font-semibold text-gray-500 uppercase">Confidence:</span>
-                <span class="text-gray-900" id="detail-confidence"></span>
+                <div class="font-semibold text-gray-500 uppercase tracking-wide mb-1">Decision</div>
+                <div
+                  class="text-gray-900 leading-relaxed markdown-content"
+                  id="detail-decision"
+                ></div>
               </div>
               <div>
-                <span class="font-semibold text-gray-500 uppercase">Created:</span>
-                <span class="text-gray-900" id="detail-created"></span>
+                <div
+                  class="font-semibold text-gray-500 uppercase tracking-wide mb-1 cursor-pointer hover:text-gray-700"
+                  onclick="toggleReasoning()"
+                >
+                  <span id="reasoning-arrow">▶</span> Reasoning
+                </div>
+                <div
+                  class="text-gray-900 leading-relaxed markdown-content hidden"
+                  id="detail-reasoning"
+                ></div>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold text-gray-500 uppercase">Outcome:</span>
+                  <select
+                    class="px-1.5 py-0.5 bg-white border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-yellow-400"
+                    id="detail-outcome-select"
+                  >
+                    <option value="PENDING">PENDING</option>
+                    <option value="SUCCESS">SUCCESS</option>
+                    <option value="FAILED">FAILED</option>
+                    <option value="PARTIAL">PARTIAL</option>
+                  </select>
+                  <button
+                    class="px-1.5 py-0.5 bg-gray-100 hover:bg-gray-200 rounded transition-colors"
+                    onclick="saveOutcome()"
+                  >
+                    Save
+                  </button>
+                  <span id="outcome-status"></span>
+                </div>
+              </div>
+              <div class="flex gap-4">
+                <div>
+                  <span class="font-semibold text-gray-500 uppercase">Confidence:</span>
+                  <span class="text-gray-900" id="detail-confidence"></span>
+                </div>
+                <div>
+                  <span class="font-semibold text-gray-500 uppercase">Created:</span>
+                  <span class="text-gray-900" id="detail-created"></span>
+                </div>
+              </div>
+              <div>
+                <div class="font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                  Similar Decisions
+                </div>
+                <div class="text-gray-900" id="detail-similar">
+                  <span class="text-gray-400">Searching...</span>
+                </div>
               </div>
             </div>
-            <div>
-              <div class="font-semibold text-gray-500 uppercase tracking-wide mb-1">Similar Decisions</div>
-              <div class="text-gray-900" id="detail-similar">
-                <span class="text-gray-400">Searching...</span>
-              </div>
-            </div>
+            <div
+              id="decision-resize-handle"
+              class="decision-resize-handle"
+              aria-label="Resize decision modal"
+            ></div>
           </div>
-          <div id="decision-resize-handle" class="decision-resize-handle" aria-label="Resize decision modal"></div>
-        </div>
+        </main>
 
-      </main>
+        <!-- Chat Resize Handle (SmartStore pattern) -->
+        <div
+          id="chat-resize-handle-bar"
+          class="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-mama-yellow/30 active:bg-mama-yellow/50 transition-colors chat-resize-visible"
+        ></div>
 
-      <!-- Chat Resize Handle (SmartStore pattern) -->
-      <div id="chat-resize-handle-bar" class="w-1 flex-shrink-0 cursor-col-resize bg-transparent hover:bg-mama-yellow/30 active:bg-mama-yellow/50 transition-colors chat-resize-visible"></div>
-
-      <!-- Right Chat Panel (always visible, SmartStore Layout pattern) -->
-      <div id="chat-panel-wrapper" class="flex-shrink-0 border-l border-gray-200" style="width:380px; background:#F5F3EF;">
-        <div id="chat-panel" class="flex flex-col">
+        <!-- Right Chat Panel (always visible, SmartStore Layout pattern) -->
+        <div
+          id="chat-panel-wrapper"
+          class="flex-shrink-0 border-l border-gray-200"
+          style="width: 380px; background: #f5f3ef"
+        >
+          <div id="chat-panel" class="flex flex-col">
             <!-- Header (SmartStore ChatPanel pattern) -->
-            <div id="chat-header" class="px-4 py-3 border-b border-gray-200 flex items-center gap-2.5 bg-white flex-shrink-0">
-              <div class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style="background:#FFCE00;">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+            <div
+              id="chat-header"
+              class="px-4 py-3 border-b border-gray-200 flex items-center gap-2.5 bg-white flex-shrink-0"
+            >
+              <div
+                class="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                style="background: #ffce00"
+              >
+                <svg
+                  class="w-4 h-4 text-white"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
+                  />
                 </svg>
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-1.5">
                   <span class="text-[13px] font-semibold text-mama-black">MAMA Chat</span>
-                  <span id="chat-tab-indicator" class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md font-medium">Dashboard</span>
-                  <span class="status-indicator w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0" id="chat-status"></span>
+                  <span
+                    id="chat-tab-indicator"
+                    class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md font-medium"
+                    >Dashboard</span
+                  >
+                  <span
+                    class="status-indicator w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0"
+                    id="chat-status"
+                  ></span>
                 </div>
               </div>
               <div class="flex items-center gap-1 flex-shrink-0">
-                <button class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" id="chat-clear-btn" onclick="clearChatHistory()" title="Clear chat" style="display:none">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"/>
+                <button
+                  class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  id="chat-clear-btn"
+                  onclick="clearChatHistory()"
+                  title="Clear chat"
+                  style="display: none"
+                >
+                  <svg
+                    class="w-3.5 h-3.5"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0"
+                    />
                   </svg>
                 </button>
-                <button id="chat-collapse-btn" class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-black hover:bg-gray-100 transition-colors" title="Collapse chat" onclick="toggleChatPanel()">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+                <button
+                  id="chat-collapse-btn"
+                  class="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-black hover:bg-gray-100 transition-colors"
+                  title="Collapse chat"
+                  onclick="toggleChatPanel()"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               </div>
             </div>
 
             <!-- Messages (SmartStore pattern: flex-1 overflow-auto) -->
-            <div class="flex-1 overflow-auto p-4 space-y-3" id="chat-messages" style="background:#F5F3EF;">
+            <div
+              class="flex-1 overflow-auto p-4 space-y-3"
+              id="chat-messages"
+              style="background: #f5f3ef"
+            >
               <div class="flex flex-col items-center justify-center h-full text-center px-6">
-                <div class="w-12 h-12 rounded-lg bg-mama-yellow/10 flex items-center justify-center mb-4">
-                  <svg class="w-6 h-6 text-mama-yellow" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+                <div
+                  class="w-12 h-12 rounded-lg bg-mama-yellow/10 flex items-center justify-center mb-4"
+                >
+                  <svg
+                    class="w-6 h-6 text-mama-yellow"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"
+                    />
                   </svg>
                 </div>
                 <p class="text-[13px] text-gray-500 font-medium">Ask MAMA anything</p>
-                <p class="text-[11px] text-gray-400 mt-1">Current page context is sent automatically</p>
+                <p class="text-[11px] text-gray-400 mt-1">
+                  Current page context is sent automatically
+                </p>
               </div>
             </div>
 
             <!-- Attachment preview -->
-            <div id="chat-attachment-preview" class="hidden px-3 pt-2 border-t border-gray-200 flex items-center gap-2 flex-wrap flex-shrink-0">
-              <img id="chat-attachment-thumb" class="w-12 h-12 object-cover rounded-lg border border-gray-200" src="data:," alt="preview" />
-              <span id="chat-attachment-name" class="text-[11px] text-gray-400 truncate max-w-[100px]"></span>
-              <button class="text-gray-400 hover:text-red-500" onclick="clearAttachment()" title="Remove">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round"/><line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round"/></svg>
+            <div
+              id="chat-attachment-preview"
+              class="hidden px-3 pt-2 border-t border-gray-200 flex items-center gap-2 flex-wrap flex-shrink-0"
+            >
+              <img
+                id="chat-attachment-thumb"
+                class="w-12 h-12 object-cover rounded-lg border border-gray-200"
+                src="data:,"
+                alt="preview"
+              />
+              <span
+                id="chat-attachment-name"
+                class="text-[11px] text-gray-400 truncate max-w-[100px]"
+              ></span>
+              <button
+                class="text-gray-400 hover:text-red-500"
+                onclick="clearAttachment()"
+                title="Remove"
+              >
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <line x1="18" y1="6" x2="6" y2="18" stroke-width="2" stroke-linecap="round" />
+                  <line x1="6" y1="6" x2="18" y2="18" stroke-width="2" stroke-linecap="round" />
+                </svg>
               </button>
             </div>
 
             <!-- Input (SmartStore ChatPanel pattern: inline row) -->
             <div class="p-3 border-t border-gray-200 bg-white flex-shrink-0">
-              <input type="file" id="chat-file-input" class="hidden" accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx" onchange="handleFileSelect(event)" />
+              <input
+                type="file"
+                id="chat-file-input"
+                class="hidden"
+                accept="image/*,.pdf,.doc,.docx,.txt,.csv,.xls,.xlsx,.md,.json,.html,.htm,.xml,.zip,.gz,.ppt,.pptx"
+                onchange="handleFileSelect(event)"
+              />
               <div class="flex gap-2">
-                <button class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all" id="chat-attach" onclick="document.getElementById('chat-file-input').click()" title="Attach file">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"/>
+                <button
+                  class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all"
+                  id="chat-attach"
+                  onclick="document.getElementById('chat-file-input').click()"
+                  title="Attach file"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13"
+                    />
                   </svg>
                 </button>
-                <button class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all relative" id="chat-mic" onclick="toggleVoiceInput()" title="Voice input">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"/>
+                <button
+                  class="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 bg-gray-100 text-gray-400 hover:text-mama-black hover:bg-gray-200 transition-all relative"
+                  id="chat-mic"
+                  onclick="toggleVoiceInput()"
+                  title="Voice input"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z"
+                    />
                   </svg>
-                  <span class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"></span>
+                  <span
+                    class="recording-dot absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full hidden"
+                  ></span>
                 </button>
-                <input type="text" id="chat-input" placeholder="Type your message..."
-                  class="flex-1 bg-gray-100 border-0 rounded-lg px-3.5 py-2 text-[13px] text-mama-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-mama-yellow/20 transition-all disabled:opacity-50" disabled />
-                <button id="chat-send" onclick="sendChatMessage()" disabled
-                  class="w-9 h-9 rounded-lg bg-mama-yellow text-mama-black flex items-center justify-center flex-shrink-0 hover:bg-mama-yellow-hover disabled:opacity-40 transition-all">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"/>
+                <input
+                  type="text"
+                  id="chat-input"
+                  placeholder="Type your message..."
+                  class="flex-1 bg-gray-100 border-0 rounded-lg px-3.5 py-2 text-[13px] text-mama-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-mama-yellow/20 transition-all disabled:opacity-50"
+                  disabled
+                />
+                <button
+                  id="chat-send"
+                  onclick="sendChatMessage()"
+                  disabled
+                  class="w-9 h-9 rounded-lg bg-mama-yellow text-mama-black flex items-center justify-center flex-shrink-0 hover:bg-mama-yellow-hover disabled:opacity-40 transition-all"
+                >
+                  <svg
+                    class="w-4 h-4"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.876L5.999 12zm0 0h7.5"
+                    />
                   </svg>
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+
+        <!-- Chat Collapsed Bar (visible when chat is collapsed) -->
+        <div
+          id="chat-collapsed-bar"
+          class="hidden flex-shrink-0 border-l border-gray-200 bg-white flex flex-col items-center py-3 w-10"
+        >
+          <button
+            onclick="toggleChatPanel()"
+            class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-yellow hover:bg-mama-yellow/10 transition-colors"
+            title="Open chat"
+          >
+            <svg
+              class="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              viewBox="0 0 24 24"
+            >
+              <path
+                d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+          </button>
+          <span
+            id="chat-badge-collapsed"
+            class="hidden w-2 h-2 bg-red-500 rounded-full mt-1 animate-pulse"
+          ></span>
         </div>
       </div>
-
-      <!-- Chat Collapsed Bar (visible when chat is collapsed) -->
-      <div id="chat-collapsed-bar" class="hidden flex-shrink-0 border-l border-gray-200 bg-white flex flex-col items-center py-3 w-10">
-        <button onclick="toggleChatPanel()" class="w-8 h-8 rounded-lg flex items-center justify-center text-gray-400 hover:text-mama-yellow hover:bg-mama-yellow/10 transition-colors" title="Open chat">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </button>
-        <span id="chat-badge-collapsed" class="hidden w-2 h-2 bg-red-500 rounded-full mt-1 animate-pulse"></span>
-      </div>
-
-      </div><!-- /content-area -->
+      <!-- /content-area -->
 
       <!-- Mobile Bottom Tab Bar -->
       <div id="mama-mobile-tabs">
-        <button class="mama-mobile-tab mama-nav-active" data-tab="dashboard" onclick="window.switchTab && window.switchTab('dashboard')">
+        <button
+          class="mama-mobile-tab mama-nav-active"
+          data-tab="dashboard"
+          onclick="window.switchTab && window.switchTab('dashboard')"
+        >
           <i data-lucide="layout-dashboard"></i>
           <span>Home</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="chat" onclick="window.switchTab && window.switchTab('chat')">
+        <button
+          class="mama-mobile-tab"
+          data-tab="chat"
+          onclick="window.switchTab && window.switchTab('chat')"
+        >
           <i data-lucide="message-circle"></i>
           <span>Chat</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="agents" onclick="window.switchTab && window.switchTab('agents')">
+        <button
+          class="mama-mobile-tab"
+          data-tab="agents"
+          onclick="window.switchTab && window.switchTab('agents')"
+        >
           <i data-lucide="bot"></i>
           <span>Agents</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="memory" onclick="window.switchTab && window.switchTab('memory')">
+        <button
+          class="mama-mobile-tab"
+          data-tab="memory"
+          onclick="window.switchTab && window.switchTab('memory')"
+        >
           <i data-lucide="brain"></i>
           <span>Memory</span>
         </button>
-        <button class="mama-mobile-tab" data-tab="more" onclick="window.toggleMobileMore && window.toggleMobileMore()">
+        <button
+          class="mama-mobile-tab"
+          data-tab="more"
+          onclick="window.toggleMobileMore && window.toggleMobileMore()"
+        >
           <i data-lucide="menu"></i>
           <span>More</span>
         </button>
       </div>
       <!-- Mobile "More" overflow menu -->
-      <div id="mama-mobile-more" style="display:none; position:fixed; bottom:64px; left:0; right:0; background:#fff; border-top:1px solid #EDE9E1; z-index:99; padding:8px;">
-        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:4px;">
-          <button class="mama-mobile-tab" data-tab="feed" onclick="window.switchTab && window.switchTab('feed'); window.closeMobileMore && window.closeMobileMore()">
+      <div
+        id="mama-mobile-more"
+        style="
+          display: none;
+          position: fixed;
+          bottom: 64px;
+          left: 0;
+          right: 0;
+          background: #fff;
+          border-top: 1px solid #ede9e1;
+          z-index: 99;
+          padding: 8px;
+        "
+      >
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px">
+          <button
+            class="mama-mobile-tab"
+            data-tab="feed"
+            onclick="window.switchTab && window.switchTab('feed')"
+          >
             <i data-lucide="rss"></i><span>Feed</span>
           </button>
-          <button class="mama-mobile-tab" data-tab="wiki" onclick="window.switchTab && window.switchTab('wiki'); window.closeMobileMore && window.closeMobileMore()">
+          <button
+            class="mama-mobile-tab"
+            data-tab="wiki"
+            onclick="window.switchTab && window.switchTab('wiki')"
+          >
             <i data-lucide="book-open"></i><span>Wiki</span>
           </button>
-          <button class="mama-mobile-tab" data-tab="logs" onclick="window.switchTab && window.switchTab('logs'); window.closeMobileMore && window.closeMobileMore()">
+          <button
+            class="mama-mobile-tab"
+            data-tab="logs"
+            onclick="window.switchTab && window.switchTab('logs')"
+          >
             <i data-lucide="scroll-text"></i><span>Logs</span>
           </button>
-          <button class="mama-mobile-tab" data-tab="settings" onclick="window.switchTab && window.switchTab('settings'); window.closeMobileMore && window.closeMobileMore()">
+          <button
+            class="mama-mobile-tab"
+            data-tab="settings"
+            onclick="window.switchTab && window.switchTab('settings')"
+          >
             <i data-lucide="settings"></i><span>Settings</span>
           </button>
         </div>
       </div>
 
-      <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="save-decision-modal">
-        <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
-            <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <div
+        class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
+        id="save-decision-modal"
+      >
+        <div
+          class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-md max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          <div
+            class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50"
+          >
+            <h3
+              class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
                 <polyline points="17 21 17 13 7 13 7 21" />
                 <polyline points="7 3 7 8 15 8" />
               </svg>
               Save Decision
             </h3>
-            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideSaveDecisionForm()">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button
+              class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black"
+              onclick="hideSaveDecisionForm()"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
@@ -867,7 +1611,9 @@
           </div>
           <div class="p-4 space-y-4">
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-topic">Topic</label>
+              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-topic"
+                >Topic</label
+              >
               <input
                 type="text"
                 class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
@@ -877,7 +1623,9 @@
               />
             </div>
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-decision">Decision</label>
+              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-decision"
+                >Decision</label
+              >
               <textarea
                 class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[60px]"
                 id="save-decision"
@@ -887,7 +1635,9 @@
               ></textarea>
             </div>
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-reasoning">Reasoning</label>
+              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-reasoning"
+                >Reasoning</label
+              >
               <textarea
                 class="w-full px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors resize-y min-h-[100px]"
                 id="save-reasoning"
@@ -897,7 +1647,9 @@
               ></textarea>
             </div>
             <div class="flex flex-col gap-2">
-              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-confidence">Confidence (0.0 - 1.0)</label>
+              <label class="text-sm font-medium text-gray-900 text-mama-black" for="save-confidence"
+                >Confidence (0.0 - 1.0)</label
+              >
               <input
                 type="number"
                 class="w-28 px-3 py-2 bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-lg text-sm text-gray-900 text-mama-black focus:outline-none focus:ring-2 focus:ring-mama-yellow transition-colors"
@@ -909,31 +1661,74 @@
               />
             </div>
           </div>
-          <div class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
-            <button class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 rounded-lg transition-colors" onclick="hideSaveDecisionForm()">Cancel</button>
+          <div
+            class="flex justify-end gap-2 px-4 py-3 border-t border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50"
+          >
+            <button
+              class="px-4 py-2 text-sm font-medium text-gray-700 text-gray-700 bg-gray-100 bg-white hover:bg-gray-200 hover:bg-gray-100 rounded-lg transition-colors"
+              onclick="hideSaveDecisionForm()"
+            >
+              Cancel
+            </button>
             <button
               class="px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors"
               id="save-form-submit"
               onclick="submitSaveDecision()"
-            >Save</button>
+            >
+              Save
+            </button>
           </div>
           <div id="save-form-status" class="px-5 pb-4 text-center text-sm"></div>
         </div>
       </div>
 
-      <div class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center" id="tunnel-setup-modal">
-        <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden">
-          <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50">
-            <h3 class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <div
+        class="modal-overlay fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center"
+        id="tunnel-setup-modal"
+      >
+        <div
+          class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded-xl shadow-2xl w-[90%] max-w-[600px] max-h-[90vh] flex flex-col overflow-hidden"
+        >
+          <div
+            class="flex items-center justify-between px-4 py-3 border-b border-gray-200 border-gray-300 bg-gray-50 bg-gray-50/50"
+          >
+            <h3
+              class="flex items-center gap-2 text-base font-semibold text-gray-900 text-mama-black"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <circle cx="12" cy="12" r="10" />
                 <line x1="2" y1="12" x2="22" y2="12" />
-                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                <path
+                  d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"
+                />
               </svg>
               External Access Setup
             </h3>
-            <button class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black" onclick="hideTunnelSetup()">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <button
+              class="p-1.5 rounded-lg hover:bg-gray-200 hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-700 hover:text-mama-black"
+              onclick="hideTunnelSetup()"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <line x1="18" y1="6" x2="6" y2="18" />
                 <line x1="6" y1="6" x2="18" y2="18" />
               </svg>
@@ -943,23 +1738,67 @@
             <!-- ngrok section -->
             <div class="bg-gray-100 bg-white border border-gray-200 border-gray-300 rounded-lg p-4">
               <h4 class="text-sm text-mama-black text-mama-black mb-2 flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
                 </svg>
                 ngrok (Quick Setup)
               </h4>
-              <p class="text-xs text-gray-500 text-gray-600 mb-3">Tunnel your local server to a public URL</p>
-              <div class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-3 py-2 flex items-center justify-between gap-2 mb-2">
-                <code id="ngrok-command" class="font-mono text-sm text-green-600 text-green-600">ngrok http 3847</code>
-                <button class="p-1.5 rounded hover:bg-gray-100 transition-colors" onclick="copyNgrokCommand()">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <p class="text-xs text-gray-500 text-gray-600 mb-3">
+                Tunnel your local server to a public URL
+              </p>
+              <div
+                class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-3 py-2 flex items-center justify-between gap-2 mb-2"
+              >
+                <code id="ngrok-command" class="font-mono text-sm text-green-600 text-green-600"
+                  >ngrok http 3847</code
+                >
+                <button
+                  class="p-1.5 rounded hover:bg-gray-100 transition-colors"
+                  onclick="copyNgrokCommand()"
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                   </svg>
                 </button>
               </div>
-              <a href="https://ngrok.com/download" target="_blank" rel="noopener noreferrer" class="text-xs text-mama-black text-mama-black hover:underline flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <a
+                href="https://ngrok.com/download"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-mama-black text-mama-black hover:underline flex items-center gap-1"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                   <polyline points="7 10 12 15 17 10" />
                   <line x1="12" y1="15" x2="12" y2="3" />
@@ -971,14 +1810,41 @@
             <!-- Cloudflare section -->
             <div class="bg-gray-100 bg-white border border-gray-200 border-gray-300 rounded-lg p-4">
               <h4 class="text-sm text-mama-black text-mama-black mb-2 flex items-center gap-1.5">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" />
                 </svg>
                 Cloudflare Tunnel (Production)
               </h4>
-              <p class="text-xs text-gray-500 text-gray-600 mb-2">Secure tunnel with custom domain support</p>
-              <a href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/" target="_blank" rel="noopener noreferrer" class="text-xs text-mama-black text-mama-black hover:underline flex items-center gap-1">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <p class="text-xs text-gray-500 text-gray-600 mb-2">
+                Secure tunnel with custom domain support
+              </p>
+              <a
+                href="https://developers.cloudflare.com/cloudflare-one/connections/connect-apps/"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-xs text-mama-black text-mama-black hover:underline flex items-center gap-1"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z" />
                   <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z" />
                 </svg>
@@ -987,23 +1853,58 @@
             </div>
 
             <!-- Security warning -->
-            <div class="bg-amber-50 bg-amber-100/20 border border-amber-200 border-amber-300/50 rounded-lg p-3 flex gap-3">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-amber-500 flex-shrink-0 mt-0.5">
-                <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z" />
+            <div
+              class="bg-amber-50 bg-amber-100/20 border border-amber-200 border-amber-300/50 rounded-lg p-3 flex gap-3"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="text-amber-500 flex-shrink-0 mt-0.5"
+              >
+                <path
+                  d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"
+                />
                 <line x1="12" y1="9" x2="12" y2="13" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
               <div class="text-xs">
                 <strong class="text-amber-600 text-amber-600 block mb-1">Security Notice</strong>
-                <span class="text-gray-700 text-gray-700">Always set MAMA_AUTH_TOKEN environment variable before exposing your server externally.</span>
-                <pre class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-2 py-1.5 mt-2 text-[11px] text-green-600 text-green-600 overflow-x-auto">export MAMA_AUTH_TOKEN="your-secure-token-here"</pre>
+                <span class="text-gray-700 text-gray-700"
+                  >Always set MAMA_AUTH_TOKEN environment variable before exposing your server
+                  externally.</span
+                >
+                <pre
+                  class="bg-white bg-gray-50 border border-gray-200 border-gray-300 rounded px-2 py-1.5 mt-2 text-[11px] text-green-600 text-green-600 overflow-x-auto"
+                >
+export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
+                >
               </div>
             </div>
 
             <!-- Test connection -->
             <div class="border-t border-gray-200 border-gray-300 pt-4">
-              <button class="w-full px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center justify-center gap-2" onclick="testConnection()">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <button
+                class="w-full px-4 py-2 text-sm font-medium text-white bg-mama-yellow hover:bg-mama-yellow-hover rounded-lg transition-colors flex items-center justify-center gap-2"
+                onclick="testConnection()"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
                   <path d="M5 12.55a11 11 0 0 1 14.08 0" />
                   <path d="M1.42 9a16 16 0 0 1 21.16 0" />
                   <path d="M8.53 16.11a6 6 0 0 1 6.95 0" />
@@ -1131,7 +2032,7 @@
       const STATE = {
         currentTab: 'dashboard',
         theme: 'dark',
-        graphLoaded: false
+        graphLoaded: false,
       };
 
       async function switchTab(tabName, params) {
@@ -1147,7 +2048,7 @@
         }
 
         // Also highlight the source tab in More menu if it was selected from there
-        document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach(btn => {
+        document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach((btn) => {
           btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
         });
 
@@ -1158,17 +2059,17 @@
         }
 
         // Update sidebar nav items
-        document.querySelectorAll('#mama-sidebar .mama-nav-item').forEach(btn => {
+        document.querySelectorAll('#mama-sidebar .mama-nav-item').forEach((btn) => {
           btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
         });
 
         // Update mobile tab bar
-        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach(btn => {
+        document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach((btn) => {
           btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
         });
 
         // Legacy: update any remaining [data-tab] buttons outside sidebar/mobile
-        document.querySelectorAll('[data-tab]').forEach(btn => {
+        document.querySelectorAll('[data-tab]').forEach((btn) => {
           if (btn.closest('#mama-sidebar') || btn.closest('#mama-mobile-tabs')) return;
           const isActive = btn.dataset.tab === tabName;
           btn.classList.toggle('bg-indigo-100', isActive);
@@ -1176,7 +2077,7 @@
           btn.classList.toggle('text-mama-black', isActive);
         });
 
-        document.querySelectorAll('.tab-content').forEach(content => {
+        document.querySelectorAll('.tab-content').forEach((content) => {
           content.classList.toggle('active', content.id === `tab-${tabName}`);
         });
 
@@ -1228,7 +2129,8 @@
             } catch (error) {
               console.error('[MAMA] Failed to load graph:', error);
               const loadingEl = document.getElementById('graph-loading');
-              if (loadingEl) loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
+              if (loadingEl)
+                loadingEl.innerHTML = '<span class="text-red-500">Failed to load graph data</span>';
             }
           }
           publishBasicTabContext();
@@ -1318,35 +2220,44 @@
         });
 
         // Touch drag for mobile
-        header.addEventListener('touchstart', (e) => {
-          if (e.target.tagName === 'BUTTON') return;
-          const touch = e.touches[0];
-          if (!touch) return;
-          e.preventDefault();
-          e.stopPropagation();
-          document.body.classList.add('no-scroll');
-          isDragging = true;
-          startX = touch.clientX;
-          startY = touch.clientY;
-          const rect = modal.getBoundingClientRect();
-          startLeft = rect.left;
-          startTop = rect.top;
-          modal.style.transition = 'none';
-        }, { passive: false });
+        header.addEventListener(
+          'touchstart',
+          (e) => {
+            if (e.target.tagName === 'BUTTON') return;
+            const touch = e.touches[0];
+            if (!touch) return;
+            e.preventDefault();
+            e.stopPropagation();
+            document.body.classList.add('no-scroll');
+            isDragging = true;
+            startX = touch.clientX;
+            startY = touch.clientY;
+            const rect = modal.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+            modal.style.transition = 'none';
+          },
+          { passive: false }
+        );
 
-        document.addEventListener('touchmove', (e) => {
-          if (!isDragging) return;
-          const touch = e.touches[0];
-          if (!touch) return;
-          e.preventDefault();
-          e.stopPropagation();
-          const dx = touch.clientX - startX;
-          const dy = touch.clientY - startY;
-          modal.style.left = Math.max(0, Math.min(window.innerWidth - 100, startLeft + dx)) + 'px';
-          modal.style.top = Math.max(0, Math.min(window.innerHeight - 50, startTop + dy)) + 'px';
-          modal.style.right = 'auto';
-          modal.style.transform = 'none';
-        }, { passive: false });
+        document.addEventListener(
+          'touchmove',
+          (e) => {
+            if (!isDragging) return;
+            const touch = e.touches[0];
+            if (!touch) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const dx = touch.clientX - startX;
+            const dy = touch.clientY - startY;
+            modal.style.left =
+              Math.max(0, Math.min(window.innerWidth - 100, startLeft + dx)) + 'px';
+            modal.style.top = Math.max(0, Math.min(window.innerHeight - 50, startTop + dy)) + 'px';
+            modal.style.right = 'auto';
+            modal.style.transform = 'none';
+          },
+          { passive: false }
+        );
 
         document.addEventListener('touchend', () => {
           if (isDragging) {
@@ -1394,22 +2305,30 @@
           document.addEventListener('mousemove', (e) => doResize(e.clientX, e.clientY));
           document.addEventListener('mouseup', endResize);
 
-          resizeHandle.addEventListener('touchstart', (e) => {
-            const touch = e.touches[0];
-            if (!touch) return;
-            e.preventDefault();
-            e.stopPropagation();
-            startResize(touch.clientX, touch.clientY);
-            document.body.classList.add('no-scroll');
-          }, { passive: false });
-          document.addEventListener('touchmove', (e) => {
-            const touch = e.touches[0];
-            if (!touch) return;
-            if (!resizing) return;
-            e.preventDefault();
-            e.stopPropagation();
-            doResize(touch.clientX, touch.clientY);
-          }, { passive: false });
+          resizeHandle.addEventListener(
+            'touchstart',
+            (e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              e.preventDefault();
+              e.stopPropagation();
+              startResize(touch.clientX, touch.clientY);
+              document.body.classList.add('no-scroll');
+            },
+            { passive: false }
+          );
+          document.addEventListener(
+            'touchmove',
+            (e) => {
+              const touch = e.touches[0];
+              if (!touch) return;
+              if (!resizing) return;
+              e.preventDefault();
+              e.stopPropagation();
+              doResize(touch.clientX, touch.clientY);
+            },
+            { passive: false }
+          );
           document.addEventListener('touchend', () => {
             endResize();
             document.body.classList.remove('no-scroll');
@@ -1610,9 +2529,12 @@
         const result = document.getElementById('tunnel-test-result');
         result.innerHTML = '<span class="text-gray-500">Testing...</span>';
         fetch('/health')
-          .then(r => r.ok ? result.innerHTML = '<span class="text-green-500">Connection OK</span>'
-            : result.innerHTML = '<span class="text-red-500">Connection failed</span>')
-          .catch(() => result.innerHTML = '<span class="text-red-500">Connection failed</span>');
+          .then((r) =>
+            r.ok
+              ? (result.innerHTML = '<span class="text-green-500">Connection OK</span>')
+              : (result.innerHTML = '<span class="text-red-500">Connection failed</span>')
+          )
+          .catch(() => (result.innerHTML = '<span class="text-red-500">Connection failed</span>'));
       }
 
       async function sendChatMessage() {
@@ -1640,21 +2562,31 @@
             const message = input.value.trim() || defaultMsg;
 
             const mediaUrl = '/api/media/' + encodeURIComponent(data.filename);
-            const attachMeta = { mediaUrl, filename: data.filename, originalName: file.name, contentType: file.type, isImage };
+            const attachMeta = {
+              mediaUrl,
+              filename: data.filename,
+              originalName: file.name,
+              contentType: file.type,
+              isImage,
+            };
 
             // Save with attachment metadata for history persistence
             chat.addUserMessageWithAttachment(message, attachMeta);
 
             chat.enableSend(false);
-            chat.ws.send(JSON.stringify({
-              type: 'send',
-              sessionId: chat.sessionId,
-              content: message,
-              attachments: [{
-                filename: data.filename,
-                contentType: data.contentType,
-              }],
-            }));
+            chat.ws.send(
+              JSON.stringify({
+                type: 'send',
+                sessionId: chat.sessionId,
+                content: message,
+                attachments: [
+                  {
+                    filename: data.filename,
+                    contentType: data.contentType,
+                  },
+                ],
+              })
+            );
 
             // Clear attachment only after successful send
             clearAttachment();
@@ -1669,7 +2601,7 @@
       }
 
       // Send quiz choice as message
-      window.sendQuizChoice = function(choice) {
+      window.sendQuizChoice = function (choice) {
         if (chat && chat.ws && chat.ws.readyState === WebSocket.OPEN) {
           // Set the input to the choice and send
           const input = document.getElementById('chat-input');
@@ -1724,8 +2656,9 @@
           if (!response.ok) throw new Error('Export failed');
 
           const blob = await response.blob();
-          const filename = response.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1]
-            || `mama-export.${format}`;
+          const filename =
+            response.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] ||
+            `mama-export.${format}`;
 
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
@@ -1799,9 +2732,10 @@
           console.log('[MAMA] Loaded', checkpointsData.length, 'checkpoints');
 
           if (checkpointsData.length > 0) {
-            container.innerHTML = checkpointsData.map((cp, idx) => {
-              const fullSummary = renderMarkdown(cp.summary || '');
-              return `
+            container.innerHTML = checkpointsData
+              .map((cp, idx) => {
+                const fullSummary = renderMarkdown(cp.summary || '');
+                return `
               <div class="checkpoint-item p-3 bg-white bg-white border border-gray-200 border-gray-300 rounded-lg cursor-pointer hover:border-indigo-500 transition-colors" onclick="toggleCheckpoint(${idx})">
                 <div class="text-xs font-semibold text-mama-black text-mama-black mb-1">${new Date(cp.timestamp).toLocaleString()}</div>
                 <div class="checkpoint-summary text-sm text-gray-700 text-gray-700 markdown-content line-clamp-3 overflow-hidden">${fullSummary}</div>
@@ -1809,13 +2743,17 @@
                   <div class="text-sm text-gray-700 text-gray-700 markdown-content max-h-64 overflow-y-auto">${fullSummary}</div>
                 </div>
               </div>
-            `}).join('');
+            `;
+              })
+              .join('');
           } else {
-            container.innerHTML = '<div class="text-center text-sm text-gray-500 py-4">No checkpoints found</div>';
+            container.innerHTML =
+              '<div class="text-center text-sm text-gray-500 py-4">No checkpoints found</div>';
           }
         } catch (error) {
           console.error('[MAMA] Failed to load checkpoints:', error);
-          container.innerHTML = '<div class="text-center text-sm text-red-500 py-4">Failed to load checkpoints</div>';
+          container.innerHTML =
+            '<div class="text-center text-sm text-red-500 py-4">Failed to load checkpoints</div>';
         }
       }
 
@@ -1838,13 +2776,27 @@
       }
 
       // Connector list loader for Settings
-      const CONNECTOR_NAMES = ['slack','telegram','discord','chatwork','gmail','calendar','notion','obsidian','kagemusha','sheets','trello','drive','imessage'];
+      const CONNECTOR_NAMES = [
+        'slack',
+        'telegram',
+        'discord',
+        'chatwork',
+        'gmail',
+        'calendar',
+        'notion',
+        'obsidian',
+        'kagemusha',
+        'sheets',
+        'trello',
+        'drive',
+        'imessage',
+      ];
       const CONNECTOR_CATEGORIES = {
-        'Messaging': ['slack','telegram','discord','chatwork'],
-        'Google': ['gmail','calendar','drive','sheets'],
-        'Knowledge': ['notion','obsidian','kagemusha'],
+        Messaging: ['slack', 'telegram', 'discord', 'chatwork'],
+        Google: ['gmail', 'calendar', 'drive', 'sheets'],
+        Knowledge: ['notion', 'obsidian', 'kagemusha'],
         'Dev Tools': ['claude-code'],
-        'Other': ['trello','imessage'],
+        Other: ['trello', 'imessage'],
       };
       async function loadConnectorsList() {
         const container = document.getElementById('settings-connectors-list');
@@ -1854,7 +2806,7 @@
           const res = await fetch('/api/connectors/status');
           if (res.ok) {
             const data = await res.json();
-            for (const c of (data.connectors || [])) connectorStatus[c.name] = c;
+            for (const c of data.connectors || []) connectorStatus[c.name] = c;
           }
         } catch {}
         // Load config
@@ -1872,17 +2824,24 @@
           for (const name of names) {
             const status = connectorStatus[name];
             const cfg = config[name];
-            const enabled = cfg?.enabled || (status?.enabled) || false;
+            const enabled = cfg?.enabled || status?.enabled || false;
             const healthy = status?.healthy || false;
-            const lastPoll = status?.lastPollTime ? new Date(status.lastPollTime).toLocaleTimeString('ko-KR', {hour:'2-digit',minute:'2-digit'}) : null;
+            const lastPoll = status?.lastPollTime
+              ? new Date(status.lastPollTime).toLocaleTimeString('ko-KR', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })
+              : null;
             const channels = status?.channelCount || Object.keys(cfg?.channels || {}).length || 0;
             const statusDot = enabled ? (healthy ? '#3A9E7E' : '#E8A040') : '#9E9891';
             html += `<div style="background:#fff;border:1px solid #EDE9E1;border-radius:4px;padding:8px 10px;font-size:12px;display:flex;align-items:center;gap:8px">`;
             html += `<span style="display:inline-block;width:6px;height:6px;background:${statusDot};border-radius:1px;flex-shrink:0"></span>`;
             html += `<span style="font-weight:600;color:#1A1A1A;flex:1">${name}</span>`;
-            if (channels > 0) html += `<span style="font-size:10px;color:#9E9891">${channels}ch</span>`;
+            if (channels > 0)
+              html += `<span style="font-size:10px;color:#9E9891">${channels}ch</span>`;
             if (lastPoll) html += `<span style="font-size:10px;color:#9E9891">${lastPoll}</span>`;
-            if (!enabled) html += `<span style="font-size:9px;color:#9E9891;background:#F5F2ED;padding:1px 4px;border-radius:2px">off</span>`;
+            if (!enabled)
+              html += `<span style="font-size:9px;color:#9E9891;background:#F5F2ED;padding:1px 4px;border-radius:2px">off</span>`;
             html += `</div>`;
           }
           html += `</div></div>`;
@@ -1956,7 +2915,9 @@
 
         if (file.type.startsWith('image/')) {
           const reader = new FileReader();
-          reader.onload = (e) => { thumb.src = e.target.result; };
+          reader.onload = (e) => {
+            thumb.src = e.target.result;
+          };
           reader.readAsDataURL(file);
           thumb.style.display = '';
         } else {
@@ -1990,38 +2951,76 @@
       const chatMessages = document.getElementById('chat-messages');
       if (chatMessages) {
         const panel = chatMessages.closest('#chat-panel') || chatMessages.parentElement;
-        ['dragenter', 'dragover'].forEach(evt => {
-          panel.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.add('ring-2', 'ring-mama-yellow'); });
+        ['dragenter', 'dragover'].forEach((evt) => {
+          panel.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            panel.classList.add('ring-2', 'ring-mama-yellow');
+          });
         });
-        ['dragleave', 'drop'].forEach(evt => {
-          panel.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); panel.classList.remove('ring-2', 'ring-mama-yellow'); });
+        ['dragleave', 'drop'].forEach((evt) => {
+          panel.addEventListener(evt, (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            panel.classList.remove('ring-2', 'ring-mama-yellow');
+          });
         });
         panel.addEventListener('drop', (e) => {
           const file = e.dataTransfer.files[0];
           if (!file) return;
 
           // Allowed MIME types and extensions (match file input accept attribute)
-          const allowedTypes = ['image/', 'application/pdf', 'application/msword',
+          const allowedTypes = [
+            'image/',
+            'application/pdf',
+            'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'text/plain', 'text/csv', 'text/markdown', 'text/html', 'text/xml',
-            'application/json', 'application/xml',
+            'text/plain',
+            'text/csv',
+            'text/markdown',
+            'text/html',
+            'text/xml',
+            'application/json',
+            'application/xml',
             'application/vnd.ms-excel',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'application/vnd.ms-powerpoint',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            'application/zip', 'application/gzip'];
-          const allowedExts = ['.pdf', '.doc', '.docx', '.txt', '.csv', '.xls', '.xlsx',
-            '.md', '.json', '.html', '.htm', '.xml', '.zip', '.gz', '.ppt', '.pptx'];
+            'application/zip',
+            'application/gzip',
+          ];
+          const allowedExts = [
+            '.pdf',
+            '.doc',
+            '.docx',
+            '.txt',
+            '.csv',
+            '.xls',
+            '.xlsx',
+            '.md',
+            '.json',
+            '.html',
+            '.htm',
+            '.xml',
+            '.zip',
+            '.gz',
+            '.ppt',
+            '.pptx',
+          ];
           const ext = '.' + (file.name.split('.').pop() || '').toLowerCase();
 
-          const isAllowed = allowedTypes.some(t => file.type.startsWith(t)) || allowedExts.includes(ext);
+          const isAllowed =
+            allowedTypes.some((t) => file.type.startsWith(t)) || allowedExts.includes(ext);
           if (isAllowed) {
             const dt = new DataTransfer();
             dt.items.add(file);
             document.getElementById('chat-file-input').files = dt.files;
             handleFileSelect({ target: { files: [file] } });
           } else {
-            chat.addSystemMessage('Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS, PPT, MD, JSON, HTML, ZIP', 'error');
+            chat.addSystemMessage(
+              'Unsupported file type. Allowed: images, PDF, DOC, TXT, CSV, XLS, PPT, MD, JSON, HTML, ZIP',
+              'error'
+            );
           }
         });
       }
@@ -2115,10 +3114,10 @@ Please explain this tab's features:
 - Filter by log level (ERROR, WARN, INFO, DEBUG)
 - Search logs by keyword
 - Pause/Resume auto-refresh
-Be friendly and concise.`
+Be friendly and concise.`,
       };
 
-      window.askContextHelp = function() {
+      window.askContextHelp = function () {
         const currentTab = STATE.currentTab || 'dashboard';
         const prompt = TAB_HELP_PROMPTS[currentTab];
         if (!prompt) return;
@@ -2143,17 +3142,31 @@ Be friendly and concise.`
       // Register Service Worker for PWA
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/viewer/sw.js')
-            .then(reg => console.log('[PWA] Service Worker registered:', reg.scope))
-            .catch(err => console.warn('[PWA] Service Worker registration failed:', err));
+          navigator.serviceWorker
+            .register('/viewer/sw.js')
+            .then((reg) => console.log('[PWA] Service Worker registered:', reg.scope))
+            .catch((err) => console.warn('[PWA] Service Worker registration failed:', err));
         });
       }
     </script>
 
     <!-- Image Lightbox -->
-    <div id="image-lightbox" class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/80 backdrop-blur-sm cursor-pointer" onclick="closeLightbox()">
-      <img id="lightbox-img" class="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl" onclick="event.stopPropagation()" />
-      <button class="absolute top-4 right-4 text-white text-3xl font-bold hover:text-gray-300" onclick="closeLightbox()">&times;</button>
+    <div
+      id="image-lightbox"
+      class="fixed inset-0 z-[9999] hidden items-center justify-center bg-black/80 backdrop-blur-sm cursor-pointer"
+      onclick="closeLightbox()"
+    >
+      <img
+        id="lightbox-img"
+        class="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl"
+        onclick="event.stopPropagation()"
+      />
+      <button
+        class="absolute top-4 right-4 text-white text-3xl font-bold hover:text-gray-300"
+        onclick="closeLightbox()"
+      >
+        &times;
+      </button>
     </div>
     <script>
       function openLightbox(src) {
@@ -2167,11 +3180,16 @@ Be friendly and concise.`
         lb.classList.add('hidden');
         lb.classList.remove('flex');
       }
-      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeLightbox();
+      });
       // Event delegation for lightbox — avoids inline onclick XSS
-      document.addEventListener('click', e => {
+      document.addEventListener('click', (e) => {
         const el = e.target.closest('[data-lightbox]');
-        if (el) { e.stopPropagation(); openLightbox(el.dataset.lightbox); }
+        if (el) {
+          e.stopPropagation();
+          openLightbox(el.dataset.lightbox);
+        }
       });
     </script>
   </body>
