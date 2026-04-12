@@ -12,12 +12,22 @@ import { showToast } from './dom.js';
 type SwitchTabFn = (tab: string, params?: Record<string, string>) => void;
 
 let polling = false;
+let pollingInterval: ReturnType<typeof setInterval> | null = null;
 
-export function startUICommandPolling(switchTab: SwitchTabFn): void {
-  if (polling) return;
+function getViewerSessionId(): string | undefined {
+  try {
+    const sessionId = window.localStorage.getItem('mama_chat_session_id');
+    return sessionId || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
+  if (polling) return () => {};
   polling = true;
 
-  setInterval(async () => {
+  pollingInterval = setInterval(async () => {
     try {
       const { commands } = await API.getUICommands();
       for (const cmd of commands) {
@@ -33,6 +43,14 @@ export function startUICommandPolling(switchTab: SwitchTabFn): void {
       // Silently ignore polling errors (server may be restarting)
     }
   }, 1000);
+
+  return () => {
+    if (pollingInterval) {
+      clearInterval(pollingInterval);
+      pollingInterval = null;
+    }
+    polling = false;
+  };
 }
 
 export function reportPageContext(
@@ -40,7 +58,7 @@ export function reportPageContext(
   data: Record<string, unknown>,
   selectedItem?: { type: string; id: string }
 ): void {
-  API.pushPageContext(route, data, selectedItem).catch(() => {
+  API.pushPageContext(route, data, selectedItem, getViewerSessionId()).catch(() => {
     /* ignore */
   });
 }

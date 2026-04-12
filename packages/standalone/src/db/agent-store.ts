@@ -60,6 +60,9 @@ export function initAgentTables(db: SQLiteDatabase): void {
       score           REAL,
       details         TEXT,
       error_message   TEXT,
+      run_id          TEXT,
+      execution_status TEXT,
+      trigger_reason  TEXT,
       created_at      TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
@@ -123,8 +126,12 @@ export function createAgentVersion(db: SQLiteDatabase, input: CreateVersionInput
   const snapshotJson = JSON.stringify(input.snapshot);
   const latest = getLatestVersion(db, input.agent_id);
 
-  // No-op detection: identical snapshot → return existing
-  if (latest && latest.snapshot === snapshotJson) {
+  // No-op detection: identical snapshot and persona_text → return existing
+  if (
+    latest &&
+    latest.snapshot === snapshotJson &&
+    latest.persona_text === (input.persona_text ?? null)
+  ) {
     return latest;
   }
 
@@ -184,7 +191,8 @@ export function upsertMetrics(db: SQLiteDatabase, input: UpsertMetricsInput): vo
       output_tokens = output_tokens + excluded.output_tokens,
       tool_calls = tool_calls + excluded.tool_calls,
       delegations = delegations + excluded.delegations,
-      errors = errors + excluded.errors`
+      errors = errors + excluded.errors,
+      avg_response_ms = excluded.avg_response_ms`
   ).run(
     input.agent_id,
     input.agent_version,
@@ -330,7 +338,7 @@ export interface ActivitySummaryRow {
 }
 
 export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] {
-  // Single query with CTEs — avoids N+1 sub-queries per agent
+  // Single query with CTEs — includes recent types per agent to avoid N+1 lookups.
   const rows = db
     .prepare(
       `WITH
@@ -350,25 +358,45 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
           SELECT agent_id, type as last_type, created_at as last_at,
             ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
           FROM agent_activity
+        ),
+        recent AS (
+          SELECT agent_id, type, rn
+          FROM (
+            SELECT
+              agent_id,
+              type,
+              ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
+            FROM agent_activity
+          )
+          WHERE rn <= 10
+        ),
+        recent_joined AS (
+          SELECT agent_id, GROUP_CONCAT(type, '|') as recent_types
+          FROM (
+            SELECT agent_id, type, rn
+            FROM recent
+            ORDER BY agent_id, rn
+          )
+          GROUP BY agent_id
         )
       SELECT
         agg.*,
         latest.last_type,
-        latest.last_at
+        latest.last_at,
+        recent_joined.recent_types
       FROM agg
       LEFT JOIN latest ON agg.agent_id = latest.agent_id AND latest.rn = 1
+      LEFT JOIN recent_joined ON agg.agent_id = recent_joined.agent_id
       ORDER BY agg.total DESC`
     )
     .all(since) as Array<Record<string, unknown>>;
 
-  // Consecutive errors still need per-agent scan (no clean single-query solution for "streak from head")
-  const consecutiveStmt = db.prepare(
-    'SELECT type FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT 10'
-  );
-
   return rows.map((row) => {
     const agentId = String(row.agent_id);
-    const recentTypes = consecutiveStmt.all(agentId) as Array<{ type: string }>;
+    const recentTypes = String(row.recent_types ?? '')
+      .split('|')
+      .filter((value) => value.length > 0)
+      .map((type) => ({ type }));
     let consecutiveErrors = 0;
     for (const r of recentTypes) {
       if (r.type === 'task_error') consecutiveErrors++;

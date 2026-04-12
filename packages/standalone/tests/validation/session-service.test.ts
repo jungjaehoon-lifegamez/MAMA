@@ -176,6 +176,17 @@ describe('ValidationSessionService', () => {
       expect(latencyMetric).toBeDefined();
       expect(latencyMetric!.delta_value).toBeLessThan(0); // negative = improvement for down_good
     });
+
+    it('rejects invalid finalize payload metrics', () => {
+      const session = service.startSession('wiki-agent', 1, 'agent_test');
+
+      expect(() =>
+        service.finalizeSession(session.id, {
+          execution_status: 'completed',
+          metrics: { publish_latency_ms: Number.NaN },
+        })
+      ).toThrow('Invalid validation metrics payload');
+    });
   });
 
   describe('classifyStatus', () => {
@@ -230,6 +241,33 @@ describe('ValidationSessionService', () => {
       expect(detail!.session.execution_status).toBe('timeout');
       expect(detail!.session.validation_outcome).toBe('inconclusive');
       expect(detail!.session.ended_at).not.toBeNull();
+    });
+
+    it('refreshes validation state when stale sessions are cleaned', () => {
+      createValidationSession(db, {
+        id: 'stale-2',
+        agent_id: 'wiki-agent',
+        agent_version: 2,
+        trigger_type: 'system_run',
+        metric_profile_json: '{}',
+        execution_status: 'started',
+        validation_outcome: 'inconclusive',
+        started_at: Date.now() - 600_000,
+      });
+
+      service.cleanupStaleSessions(300_000);
+
+      const state = db
+        .prepare(
+          'SELECT current_status, last_validation_at FROM agent_validation_state WHERE agent_id = ? AND trigger_type = ?'
+        )
+        .get('wiki-agent', 'system_run') as {
+        current_status: string | null;
+        last_validation_at: number | null;
+      };
+
+      expect(state.current_status).toBe('inconclusive');
+      expect(state.last_validation_at).not.toBeNull();
     });
   });
 

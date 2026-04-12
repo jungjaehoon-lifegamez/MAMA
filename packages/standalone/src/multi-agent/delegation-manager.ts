@@ -333,22 +333,24 @@ export class DelegationManager {
     durationMs?: number,
     errorMessage?: string
   ): void {
-    if (!this.sessionsDb) return;
-    try {
-      const { logActivity, getLatestVersion } = require('../db/agent-store.js');
-      const ver = getLatestVersion(this.sessionsDb, agentId);
-      logActivity(this.sessionsDb, {
-        agent_id: agentId,
-        agent_version: ver?.version ?? 0,
-        type,
-        input_summary: inputSummary,
-        output_summary: outputSummary,
-        duration_ms: durationMs ?? 0,
-        error_message: errorMessage,
+    const sessionsDb = this.sessionsDb;
+    if (!sessionsDb) return;
+    void import('../db/agent-store.js')
+      .then(({ logActivity, getLatestVersion }) => {
+        const ver = getLatestVersion(sessionsDb, agentId);
+        logActivity(sessionsDb, {
+          agent_id: agentId,
+          agent_version: ver?.version ?? 0,
+          type,
+          input_summary: inputSummary,
+          output_summary: outputSummary,
+          duration_ms: durationMs ?? 0,
+          error_message: errorMessage,
+        });
+      })
+      .catch(() => {
+        // Activity logging is best-effort — never block delegation
       });
-    } catch {
-      // Activity logging is best-effort — never block delegation
-    }
   }
 
   /**

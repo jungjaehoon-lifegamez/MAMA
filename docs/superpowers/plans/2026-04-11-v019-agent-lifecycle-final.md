@@ -408,7 +408,7 @@ graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
 
 ```bash
 mama stop && mama start
-curl -s /api/agents  # 3개만
+curl -s http://localhost:3847/api/agents  # 3개만
 # Config 편집 → Save → config.yaml 반영 + 재시작 불필요 확인
 ```
 
@@ -473,7 +473,7 @@ case 'agent_create': {
 # Agents 탭 + New Agent → 생성
 grep "new-agent-id" ~/.mama/config.yaml     # 존재
 cat ~/.mama/personas/new-agent-id.md         # 존재
-curl -s /api/agents                          # 목록에 포함
+curl -s http://localhost:3847/api/agents     # 목록에 포함
 # 채팅에서 delegate(new-agent-id, "hello") → 응답 반환
 ```
 
@@ -589,7 +589,7 @@ Agents 탭 첫 진입 시 3개 시스템 에이전트 + 설명:
 ```
 ### Step 4: Check Agent Health
 Run via Bash tool (DX #1 — Conductor has Tier 1 Bash access):
-curl -s http://localhost:3847/api/agents/activity-summary?since=$(date -v-1d +%Y-%m-%d)
+curl -s "http://localhost:3847/api/agents/activity-summary?since=$(node -e \"const d=new Date(Date.now()-86400000); console.log(d.toISOString().slice(0,10))\")"
 - error_rate > 30%? → MAJOR
 - consecutive_errors >= 3? → MAJOR
 - enabled agent with no activity in 24h? → check

@@ -1013,12 +1013,14 @@ export class API {
   static async pushPageContext(
     route: string,
     data: Record<string, unknown>,
-    selectedItem?: { type: string; id: string }
+    selectedItem?: { type: string; id: string },
+    channelId?: string
   ): Promise<JsonRecord> {
     return this.post('/api/ui/page-context', {
       currentRoute: route,
       pageData: data,
       ...(selectedItem ? { selectedItem } : {}),
+      ...(channelId ? { channelId } : {}),
     });
   }
 

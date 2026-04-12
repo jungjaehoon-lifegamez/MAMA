@@ -29,8 +29,13 @@ import {
   handlePostPageContext,
   handlePostUICommand,
 } from './ui-command-handler.js';
-// Validation store functions are loaded via require() in route handlers below
-// (graph-api.ts uses raw Node HTTP, not Express middleware)
+import {
+  getValidationSummary,
+  listValidationHistory,
+  getValidationSessionDetail,
+  approveValidationSession,
+  getAgentValidationState,
+} from '../validation/store.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -1724,8 +1729,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/summary$/) && req.method === 'GET') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) {
-        const { getValidationSummary: getValSummary } = require('../validation/store.js');
-        const summary = getValSummary(options.sessionsDb, agentId);
+        const summary = getValidationSummary(options.sessionsDb, agentId);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ summary }));
       } else {
@@ -1743,8 +1747,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         const qIdx = rawUrl.indexOf('?');
         const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
         const limit = Math.min(parseInt(params.get('limit') || '50', 10), 200);
-        const { listValidationHistory: listValHist } = require('../validation/store.js');
-        const history = listValHist(options.sessionsDb, agentId, limit);
+        const history = listValidationHistory(options.sessionsDb, agentId, limit);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ history }));
       } else {
@@ -1758,8 +1761,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname.match(/^\/api\/validation-sessions\/[^/]+$/) && req.method === 'GET') {
       const sessionId = decodeURIComponent(pathname.split('/')[3]);
       if (options.sessionsDb) {
-        const { getValidationSessionDetail: getDetail } = require('../validation/store.js');
-        const detail = getDetail(options.sessionsDb, sessionId);
+        const detail = getValidationSessionDetail(options.sessionsDb, sessionId);
         if (!detail) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'Session not found' }));
@@ -1789,8 +1791,7 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'session_id required' }));
         } else {
-          const { approveValidationSession: approveVal } = require('../validation/store.js');
-          approveVal(options.sessionsDb, sessionId);
+          approveValidationSession(options.sessionsDb, sessionId);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ success: true, approved_session: sessionId }));
         }
@@ -1815,26 +1816,25 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
           res.writeHead(400, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: 'session query parameter required' }));
         } else {
-          const {
-            getValidationSessionDetail: getDetail,
-            getAgentValidationState: getState,
-          } = require('../validation/store.js');
-
-          const current = getDetail(options.sessionsDb, sessionId);
+          const current = getValidationSessionDetail(options.sessionsDb, sessionId);
           if (!current) {
             res.writeHead(404, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: 'Session not found' }));
           } else {
             let baselineSessionId: string | null = null;
             if (baselineMode === 'approved') {
-              const state = getState(options.sessionsDb, agentId, current.session.trigger_type);
+              const state = getAgentValidationState(
+                options.sessionsDb,
+                agentId,
+                current.session.trigger_type
+              );
               baselineSessionId = state?.approved_session_id ?? null;
             } else {
               baselineSessionId = baselineMode;
             }
 
             const baseline = baselineSessionId
-              ? getDetail(options.sessionsDb, baselineSessionId)
+              ? getValidationSessionDetail(options.sessionsDb, baselineSessionId)
               : null;
             const baselineMetrics = new Map(
               (baseline?.metrics ?? []).map((m: { name: string; value: number }) => [
@@ -1895,7 +1895,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: POST /api/agents — create new agent
     if (pathname === '/api/agents' && req.method === 'POST') {
       const body = await readBody(req);
-      if (options.sessionsDb) handleCreateAgent(res, body, options.sessionsDb);
+      if (options.sessionsDb)
+        await handleCreateAgent(res, body, options.sessionsDb, {
+          loadConfig: async () => loadMAMAConfig(),
+          saveConfig: async (config) =>
+            saveMAMAConfig(config as Parameters<typeof saveMAMAConfig>[0]),
+          applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
+          restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
+        });
       else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));
@@ -1919,7 +1926,14 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'POST') {
       const agentId = decodeURIComponent(pathname.split('/')[3]);
       const body = await readBody(req);
-      if (options.sessionsDb) handleUpdateAgent(res, agentId, body, options.sessionsDb);
+      if (options.sessionsDb)
+        await handleUpdateAgent(res, agentId, body, options.sessionsDb, {
+          loadConfig: async () => loadMAMAConfig(),
+          saveConfig: async (config) =>
+            saveMAMAConfig(config as Parameters<typeof saveMAMAConfig>[0]),
+          applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
+          restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
+        });
       else {
         res.writeHead(503, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Sessions DB not available' }));

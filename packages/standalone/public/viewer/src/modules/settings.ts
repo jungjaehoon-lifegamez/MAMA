@@ -351,6 +351,14 @@ export class SettingsModule {
         }
         return;
       }
+
+      const goAgentsButton = target.closest<HTMLElement>('[data-action="go-agents-tab"]');
+      if (goAgentsButton) {
+        e.preventDefault();
+        if (typeof window.switchTab === 'function') {
+          window.switchTab('agents');
+        }
+      }
     });
   }
 
@@ -1150,7 +1158,7 @@ export class SettingsModule {
     container.innerHTML = `
       <div class="bg-white border border-gray-200 rounded-lg p-4 text-center">
         <p class="text-sm text-gray-600 mb-2">Agent management has moved to the Agents tab.</p>
-        <button onclick="window.switchTab && window.switchTab('agents')"
+        <button data-action="go-agents-tab"
           class="text-sm px-4 py-1.5 rounded-md bg-mama-yellow text-mama-black hover:bg-mama-yellow-hover font-medium">
           Go to Agents
         </button>

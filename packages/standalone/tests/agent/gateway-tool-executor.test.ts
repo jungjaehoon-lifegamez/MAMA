@@ -418,6 +418,83 @@ describe('GatewayToolExecutor', () => {
       expect(applyMultiAgentConfig).toHaveBeenCalledTimes(1);
       expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa-monitor');
     });
+
+    it('should update an agent in config.yaml, persona file, and runtime version store', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+
+      const applyMultiAgentConfig = vi.fn().mockResolvedValue(undefined);
+      const restartMultiAgentAgent = vi.fn().mockResolvedValue(undefined);
+      executor.setApplyMultiAgentConfig(applyMultiAgentConfig);
+      executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
+
+      const createResult = await executor.execute('agent_create', {
+        id: 'qa-monitor',
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+        backend: 'claude',
+        system: 'You watch for QA regressions.',
+      });
+      expect(createResult).toMatchObject({ success: true, version: 1 });
+
+      const updateResult = await executor.execute('agent_update', {
+        agent_id: 'qa-monitor',
+        version: 1,
+        changes: {
+          model: 'claude-opus-4-6',
+          system: 'You watch for QA regressions and summarize fixes.',
+        },
+        change_note: 'Upgrade model and persona',
+      });
+
+      expect(updateResult).toMatchObject({
+        success: true,
+        new_version: 2,
+        runtime_reloaded: true,
+      });
+
+      const configPath = join(testDir, '.mama', 'config.yaml');
+      const configText = await readFile(configPath, 'utf8');
+      expect(configText).toContain('model: claude-opus-4-6');
+
+      const personaPath = join(testDir, '.mama', 'personas', 'qa-monitor.md');
+      await expect(readFile(personaPath, 'utf8')).resolves.toContain(
+        'You watch for QA regressions and summarize fixes.'
+      );
+
+      const latestVersion = getLatestVersion(db, 'qa-monitor');
+      expect(latestVersion?.version).toBe(2);
+      expect(latestVersion ? JSON.parse(latestVersion.snapshot) : null).toMatchObject({
+        model: 'claude-opus-4-6',
+      });
+
+      expect(applyMultiAgentConfig).toHaveBeenCalledTimes(2);
+      expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa-monitor');
+    });
+
+    it('should reject uppercase agent ids with shared validation', async () => {
+      const db = new Database(':memory:');
+      initAgentTables(db);
+
+      const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+      executor.setSessionsDb(db);
+
+      const result = await executor.execute('agent_create', {
+        id: 'QA-Monitor',
+        name: 'QA Monitor',
+        model: 'claude-sonnet-4-6',
+        tier: 2,
+      });
+
+      expect(result).toMatchObject({
+        success: false,
+        error: expect.stringContaining('Invalid agent'),
+      });
+    });
   });
 
   describe('load_checkpoint tool', () => {

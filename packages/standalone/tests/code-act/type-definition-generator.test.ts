@@ -29,7 +29,7 @@ describe('TypeDefinitionGenerator', () => {
         '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
       );
       expect(dts).toContain('declare function mama_search');
-      expect(dts).not.toContain('/** Search decisions and checkpoints */');
+      expect(dts).not.toContain('/**');
     });
 
     it('marks optional params with ?', () => {

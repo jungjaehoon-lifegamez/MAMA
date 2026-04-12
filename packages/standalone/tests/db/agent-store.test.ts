@@ -100,6 +100,23 @@ describe('agent-store', () => {
       expect(v2.version).toBe(1);
       expect(listVersions(db, 'dev')).toHaveLength(1);
     });
+
+    it('creates a new version when only persona text changes', () => {
+      const snap = { model: 'sonnet', tier: 1 };
+      createAgentVersion(db, {
+        agent_id: 'dev',
+        snapshot: snap,
+        persona_text: 'Old persona',
+      });
+      const v2 = createAgentVersion(db, {
+        agent_id: 'dev',
+        snapshot: snap,
+        persona_text: 'New persona',
+      });
+      expect(v2.version).toBe(2);
+      expect(v2.persona_text).toBe('New persona');
+      expect(listVersions(db, 'dev')).toHaveLength(2);
+    });
   });
 
   describe('metrics', () => {
@@ -131,6 +148,19 @@ describe('agent-store', () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].input_tokens).toBe(300);
       expect(rows[0].tool_calls).toBe(8);
+    });
+
+    it('updates avg_response_ms on metric upsert', () => {
+      const base = {
+        agent_id: 'dev',
+        agent_version: 2,
+        period_start: '2026-04-10',
+      };
+      upsertMetrics(db, { ...base, avg_response_ms: 1200 });
+      upsertMetrics(db, { ...base, avg_response_ms: 900 });
+      const rows = getMetrics(db, 'dev', '2026-04-10', '2026-04-11');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].avg_response_ms).toBe(900);
     });
 
     it('compareVersionMetrics returns aggregated diff', () => {

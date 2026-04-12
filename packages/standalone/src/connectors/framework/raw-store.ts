@@ -4,7 +4,7 @@
  * Uses the project's existing Database wrapper (sqlite.ts).
  */
 
-import { mkdirSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
 import Database from '../../sqlite.js';
@@ -57,6 +57,10 @@ export class RawStore {
     return db;
   }
 
+  private getDbPath(connectorName: string): string {
+    return join(this.basePath, connectorName, 'raw.db');
+  }
+
   save(connectorName: string, items: NormalizedItem[]): void {
     if (items.length === 0) return;
     const db = this.getDb(connectorName);
@@ -99,11 +103,11 @@ export class RawStore {
   }
 
   hasConnector(connectorName: string): boolean {
-    return this.dbs.has(connectorName);
+    return this.dbs.has(connectorName) || existsSync(this.getDbPath(connectorName));
   }
 
   getRecent(connectorName: string, count: number): NormalizedItem[] {
-    if (!this.dbs.has(connectorName)) return [];
+    if (!this.hasConnector(connectorName)) return [];
     const db = this.getDb(connectorName);
     const rows = db
       .prepare('SELECT * FROM raw_items ORDER BY timestamp DESC LIMIT ?')

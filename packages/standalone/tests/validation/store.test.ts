@@ -54,6 +54,11 @@ describe('Validation Store', () => {
     it('is idempotent', () => {
       expect(() => initValidationTables(db)).not.toThrow();
     });
+
+    it('does not require agent_activity to exist before validation bootstrap', () => {
+      const isolatedDb = new Database(':memory:');
+      expect(() => initValidationTables(isolatedDb)).not.toThrow();
+    });
   });
 
   describe('agent_activity migration', () => {

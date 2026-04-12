@@ -1,8 +1,8 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { initTokenUsageTable, insertTokenUsage } from '../../src/api/token-handler.js';
 
-describe('token_usage agent_version tracking', () => {
+describe('Story V19.8: token_usage agent_version tracking', () => {
   let db: InstanceType<typeof Database>;
 
   beforeEach(() => {
@@ -10,7 +10,11 @@ describe('token_usage agent_version tracking', () => {
     initTokenUsageTable(db);
   });
 
-  it('stores agent_version when provided', () => {
+  afterEach(() => {
+    db.close();
+  });
+
+  it('AC #1: stores agent_version when provided', () => {
     insertTokenUsage(db, {
       channel_key: 'discord:123',
       agent_id: 'conductor',
@@ -24,7 +28,7 @@ describe('token_usage agent_version tracking', () => {
     expect(row.agent_version).toBe(4);
   });
 
-  it('defaults agent_version to null when not provided', () => {
+  it('AC #2: defaults agent_version to null when not provided', () => {
     insertTokenUsage(db, {
       channel_key: 'discord:123',
       agent_id: 'conductor',

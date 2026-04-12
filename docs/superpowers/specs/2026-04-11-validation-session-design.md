@@ -224,12 +224,14 @@ Stores the current approved baseline and validation posture of an agent.
 
 ```sql
 CREATE TABLE agent_validation_state (
-  agent_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  trigger_type TEXT NOT NULL,
   approved_version INTEGER,
   approved_session_id TEXT,
   current_status TEXT,
   last_validation_at INTEGER,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, trigger_type)
 );
 ```
 

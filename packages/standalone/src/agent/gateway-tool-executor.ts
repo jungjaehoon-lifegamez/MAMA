@@ -68,12 +68,7 @@ import {
 } from './mama-tool-handlers.js';
 import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
-import {
-  loadConfig,
-  saveConfig,
-  getConfig,
-  getDefaultMultiAgentConfig,
-} from '../cli/config/config-manager.js';
+import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
@@ -88,6 +83,14 @@ import {
 } from '../db/agent-store.js';
 import type { RoleConfig } from '../cli/config/types.js';
 import { DEFAULT_ROLES } from '../cli/config/types.js';
+import {
+  createManagedAgentRuntime,
+  updateManagedAgentRuntime,
+} from './managed-agent-runtime-sync.js';
+import {
+  validateManagedAgentCreateInput,
+  validateManagedAgentChanges,
+} from './managed-agent-validation.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -586,6 +589,10 @@ export class GatewayToolExecutor {
             changes: Record<string, unknown>;
             change_note?: string;
           };
+          const updateError = validateManagedAgentChanges(updateArgs.changes);
+          if (updateError) {
+            return { success: false, error: updateError };
+          }
           const updateLatest = getLatestVersion(this.sessionsDb, updateArgs.agent_id);
           if (!updateLatest)
             return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
@@ -595,15 +602,30 @@ export class GatewayToolExecutor {
               error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
             };
           }
-          const curSnap = JSON.parse(updateLatest.snapshot);
-          const newSnap = { ...curSnap, ...updateArgs.changes };
+          const synced = await updateManagedAgentRuntime(
+            {
+              agentId: updateArgs.agent_id,
+              changes: updateArgs.changes,
+            },
+            {
+              loadConfig,
+              saveConfig:
+                saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+              applyMultiAgentConfig: this.applyMultiAgentConfig,
+              restartMultiAgentAgent: this.restartMultiAgentAgent,
+            }
+          );
           const updatedV = createAgentVersion(this.sessionsDb, {
             agent_id: updateArgs.agent_id,
-            snapshot: newSnap,
-            persona_text: (updateArgs.changes.system as string) ?? updateLatest.persona_text,
+            snapshot: synced.snapshot,
+            persona_text: synced.personaText ?? updateLatest.persona_text,
             change_note: updateArgs.change_note,
           });
-          return { success: true, new_version: updatedV.version };
+          return {
+            success: true,
+            new_version: updatedV.version,
+            runtime_reloaded: synced.runtimeReloaded,
+          };
         }
         case 'agent_create': {
           if (!this.sessionsDb) return { success: false, error: 'Sessions DB not available' };
@@ -615,86 +637,45 @@ export class GatewayToolExecutor {
             system?: string;
             backend?: 'claude' | 'codex-mcp';
           };
-          if (!createArgs.id || !/^[a-z0-9_-]+$/i.test(createArgs.id)) {
-            return { success: false, error: 'Invalid agent ID' };
+          const createError = validateManagedAgentCreateInput(
+            createArgs as unknown as Record<string, unknown>
+          );
+          if (createError) {
+            return { success: false, error: createError };
           }
           const existingAgent = getLatestVersion(this.sessionsDb, createArgs.id);
           if (existingAgent)
             return { success: false, error: `Agent '${createArgs.id}' already exists` };
 
-          const config = await loadConfig();
-          if (!config.multi_agent) {
-            config.multi_agent = getDefaultMultiAgentConfig();
-          }
-          if (!config.multi_agent.agents) {
-            config.multi_agent.agents = {};
-          }
-          if (config.multi_agent.agents[createArgs.id]) {
-            return { success: false, error: `Agent '${createArgs.id}' already exists in config` };
-          }
-
-          const personaFile = `~/.mama/personas/${createArgs.id}.md`;
-          const personaDir = join(homedir(), '.mama', 'personas');
-          const personaPath = join(personaDir, `${createArgs.id}.md`);
-          if (!existsSync(personaDir)) {
-            mkdirSync(personaDir, { recursive: true });
-          }
-
-          const agentBackend = createArgs.backend ?? config.agent.backend ?? 'claude';
-          config.multi_agent.enabled = true;
-          config.multi_agent.agents[createArgs.id] = {
-            name: createArgs.name,
-            display_name: createArgs.name,
-            trigger_prefix: `!${createArgs.id}`,
-            persona_file: personaFile,
-            tier: createArgs.tier as 1 | 2 | 3,
-            can_delegate: false,
-            backend: agentBackend,
-            model: createArgs.model,
-            enabled: true,
-          };
-
-          writeFileSync(
-            personaPath,
-            createArgs.system?.trim() || `# ${createArgs.name}\n\nYou are ${createArgs.name}.`,
-            'utf8'
-          );
-          await saveConfig(config);
-
-          let runtimeReloaded = true;
-          if (this.applyMultiAgentConfig) {
-            try {
-              await this.applyMultiAgentConfig(
-                config.multi_agent as unknown as Record<string, unknown>
-              );
-            } catch {
-              runtimeReloaded = false;
-            }
-          }
-          if (this.restartMultiAgentAgent) {
-            try {
-              await this.restartMultiAgentAgent(createArgs.id);
-            } catch {
-              runtimeReloaded = false;
-            }
-          }
-
-          const createdV = createAgentVersion(this.sessionsDb, {
-            agent_id: createArgs.id,
-            snapshot: {
+          const synced = await createManagedAgentRuntime(
+            {
+              id: createArgs.id,
               name: createArgs.name,
               model: createArgs.model,
               tier: createArgs.tier,
-              backend: agentBackend,
+              backend: createArgs.backend,
+              system: createArgs.system,
             },
-            persona_text: createArgs.system ?? null,
+            {
+              loadConfig,
+              saveConfig:
+                saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
+              applyMultiAgentConfig: this.applyMultiAgentConfig,
+              restartMultiAgentAgent: this.restartMultiAgentAgent,
+            }
+          );
+
+          const createdV = createAgentVersion(this.sessionsDb, {
+            agent_id: createArgs.id,
+            snapshot: synced.snapshot,
+            persona_text: synced.personaText,
             change_note: 'Created via agent_create tool',
           });
           return {
             success: true,
             id: createArgs.id,
             version: createdV.version,
-            runtime_reloaded: runtimeReloaded,
+            runtime_reloaded: synced.runtimeReloaded,
           };
         }
         case 'agent_compare': {
@@ -2388,26 +2369,37 @@ export class GatewayToolExecutor {
       }
     }
 
-    // 4. Delegate sequentially (v0.19 — parallel in v0.20)
+    // 4. Delegate with a small concurrency limit to keep tests responsive
     const results: Array<{ input: string; output?: string; error?: string }> = [];
-    for (const item of items) {
-      try {
-        const r = await this.executeDelegate({
-          agentId,
-          task: `Process this data:\n${item.input}`,
-        });
-        const rAny = r as Record<string, unknown>;
-        results.push({
-          input: item.input,
-          output: r.success
-            ? String((rAny.data as Record<string, unknown>)?.response ?? '').slice(0, 500)
-            : undefined,
-          error: r.success ? undefined : String(rAny.error ?? 'unknown'),
-        });
-      } catch (err) {
-        results.push({ input: item.input, error: String(err) });
+    const workerCount = Math.min(3, items.length);
+    let nextIndex = 0;
+    const workers = Array.from({ length: workerCount }, async () => {
+      for (;;) {
+        const currentIndex = nextIndex;
+        nextIndex++;
+        if (currentIndex >= items.length) {
+          return;
+        }
+        const item = items[currentIndex];
+        try {
+          const r = await this.executeDelegate({
+            agentId,
+            task: `Process this data:\n${item.input}`,
+          });
+          const rAny = r as Record<string, unknown>;
+          results[currentIndex] = {
+            input: item.input,
+            output: r.success
+              ? String((rAny.data as Record<string, unknown>)?.response ?? '').slice(0, 500)
+              : undefined,
+            error: r.success ? undefined : String(rAny.error ?? 'unknown'),
+          };
+        } catch (err) {
+          results[currentIndex] = { input: item.input, error: String(err) };
+        }
       }
-    }
+    });
+    await Promise.all(workers);
 
     // 5. Auto-score: pass/fail ratio
     const passed = results.filter((r) => !r.error).length;

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { ServerResponse } from 'node:http';
 import Database from '../../src/sqlite.js';
 import {
@@ -92,68 +92,188 @@ describe('agent-handler', () => {
   });
 
   describe('handleCreateAgent', () => {
-    it('creates agent with version 1', () => {
+    it('creates agent with version 1 and syncs runtime config', async () => {
+      const config = makeConfig({});
+      const loadConfig = vi.fn().mockResolvedValue(config);
+      const saveConfig = vi.fn().mockResolvedValue(undefined);
+      const applyMultiAgentConfig = vi.fn().mockResolvedValue(undefined);
+      const restartMultiAgentAgent = vi.fn().mockResolvedValue(undefined);
       const res = mockRes();
-      handleCreateAgent(res, { id: 'qa', name: 'QA Bot', model: 'sonnet', tier: 2 }, db);
+      await handleCreateAgent(res, { id: 'qa', name: 'QA Bot', model: 'sonnet', tier: 2 }, db, {
+        loadConfig,
+        saveConfig,
+        applyMultiAgentConfig,
+        restartMultiAgentAgent,
+        writePersonaFile: vi.fn(),
+      });
       expect(res._status).toBe(201);
       const body = JSON.parse(res._body);
       expect(body.id).toBe('qa');
       expect(body.version).toBe(1);
+      expect(config.multi_agent.agents.qa).toBeDefined();
+      expect(saveConfig).toHaveBeenCalledTimes(1);
+      expect(applyMultiAgentConfig).toHaveBeenCalledTimes(1);
+      expect(restartMultiAgentAgent).toHaveBeenCalledWith('qa');
     });
 
-    it('rejects duplicate id with 409', () => {
-      handleCreateAgent(mockRes(), { id: 'qa', name: 'QA', model: 'sonnet', tier: 1 }, db);
+    it('rejects duplicate id with 409', async () => {
+      const config = makeConfig({});
+      const runtimeOptions = {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        applyMultiAgentConfig: vi.fn().mockResolvedValue(undefined),
+        restartMultiAgentAgent: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      };
+      await handleCreateAgent(
+        mockRes(),
+        { id: 'qa', name: 'QA', model: 'sonnet', tier: 1 },
+        db,
+        runtimeOptions
+      );
       const res = mockRes();
-      handleCreateAgent(res, { id: 'qa', name: 'QA2', model: 'sonnet', tier: 1 }, db);
+      await handleCreateAgent(
+        res,
+        { id: 'qa', name: 'QA2', model: 'sonnet', tier: 1 },
+        db,
+        runtimeOptions
+      );
       expect(res._status).toBe(409);
     });
 
-    it('rejects invalid id with 400', () => {
+    it('rejects invalid id with 400', async () => {
       const res = mockRes();
-      handleCreateAgent(res, { id: 'has spaces', name: 'Bad', model: 'x', tier: 1 }, db);
+      await handleCreateAgent(res, { id: 'has spaces', name: 'Bad', model: 'x', tier: 1 }, db);
+      expect(res._status).toBe(400);
+    });
+
+    it('rejects uppercase id with 400', async () => {
+      const res = mockRes();
+      await handleCreateAgent(res, { id: 'UpperCase', name: 'Bad', model: 'x', tier: 1 }, db);
+      expect(res._status).toBe(400);
+    });
+
+    it('rejects invalid create field types with 400', async () => {
+      const res = mockRes();
+      await handleCreateAgent(res, { id: 'qa', name: 'QA', model: 42, tier: '2' }, db);
       expect(res._status).toBe(400);
     });
   });
 
   describe('handleUpdateAgent', () => {
-    it('updates agent and increments version', () => {
+    it('updates agent, syncs runtime config, and increments version', async () => {
       createAgentVersion(db, { agent_id: 'dev', snapshot: { model: 'sonnet', tier: 1 } });
+      const config = makeConfig({
+        dev: {
+          name: 'Dev',
+          display_name: 'Dev',
+          model: 'sonnet',
+          tier: 1,
+          persona_file: '~/.mama/personas/dev.md',
+        },
+      });
+      const loadConfig = vi.fn().mockResolvedValue(config);
+      const saveConfig = vi.fn().mockResolvedValue(undefined);
+      const applyMultiAgentConfig = vi.fn().mockResolvedValue(undefined);
+      const restartMultiAgentAgent = vi.fn().mockResolvedValue(undefined);
+      const writePersonaFile = vi.fn();
       const res = mockRes();
-      handleUpdateAgent(
+      await handleUpdateAgent(
         res,
         'dev',
-        { version: 1, changes: { model: 'opus' }, change_note: 'Upgrade' },
-        db
+        { version: 1, changes: { model: 'opus', system: 'New persona' }, change_note: 'Upgrade' },
+        db,
+        {
+          loadConfig,
+          saveConfig,
+          applyMultiAgentConfig,
+          restartMultiAgentAgent,
+          writePersonaFile,
+        }
       );
       const body = JSON.parse(res._body);
       expect(body.new_version).toBe(2);
+      expect(config.multi_agent.agents.dev.model).toBe('opus');
+      expect(saveConfig).toHaveBeenCalledTimes(1);
+      expect(applyMultiAgentConfig).toHaveBeenCalledTimes(1);
+      expect(restartMultiAgentAgent).toHaveBeenCalledWith('dev');
+      expect(writePersonaFile).toHaveBeenCalled();
     });
 
-    it('rejects version mismatch with 409', () => {
+    it('rejects version mismatch with 409', async () => {
       createAgentVersion(db, { agent_id: 'dev', snapshot: { tier: 1 } });
       const res = mockRes();
-      handleUpdateAgent(res, 'dev', { version: 99, changes: { tier: 2 } }, db);
+      await handleUpdateAgent(res, 'dev', { version: 99, changes: { tier: 2 } }, db, {
+        loadConfig: vi.fn().mockResolvedValue(makeConfig({ dev: { tier: 1 } })),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      });
       expect(res._status).toBe(409);
     });
 
-    it('returns 404 for unknown agent', () => {
+    it('returns 404 for unknown agent', async () => {
       const res = mockRes();
-      handleUpdateAgent(res, 'ghost', { version: 1, changes: {} }, db);
+      await handleUpdateAgent(res, 'ghost', { version: 1, changes: {} }, db, {
+        loadConfig: vi.fn().mockResolvedValue(makeConfig({})),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      });
       expect(res._status).toBe(404);
     });
 
-    it('preserves omitted fields', () => {
+    it('preserves omitted fields', async () => {
       createAgentVersion(db, {
         agent_id: 'dev',
         snapshot: { model: 'sonnet', tier: 1, effort: 'high' },
       });
+      const config = makeConfig({
+        dev: {
+          name: 'Dev',
+          display_name: 'Dev',
+          model: 'sonnet',
+          tier: 1,
+          effort: 'high',
+          persona_file: '~/.mama/personas/dev.md',
+        },
+      });
       const res = mockRes();
-      handleUpdateAgent(res, 'dev', { version: 1, changes: { tier: 2 } }, db);
+      await handleUpdateAgent(res, 'dev', { version: 1, changes: { tier: 2 } }, db, {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      });
       // Check the new snapshot has effort preserved
       const versions = listVersions(db, 'dev');
       const latest = JSON.parse(versions[0].snapshot);
       expect(latest.effort).toBe('high');
       expect(latest.tier).toBe(2);
+    });
+
+    it('rejects invalid update field types with 400', async () => {
+      createAgentVersion(db, { agent_id: 'dev', snapshot: { model: 'sonnet', tier: 1 } });
+      const res = mockRes();
+      await handleUpdateAgent(
+        res,
+        'dev',
+        { version: 1, changes: { tier: '2', enabled: 'yes' } },
+        db,
+        {
+          loadConfig: vi.fn().mockResolvedValue(
+            makeConfig({
+              dev: {
+                name: 'Dev',
+                display_name: 'Dev',
+                model: 'sonnet',
+                tier: 1,
+                persona_file: '~/.mama/personas/dev.md',
+              },
+            })
+          ),
+          saveConfig: vi.fn().mockResolvedValue(undefined),
+          writePersonaFile: vi.fn(),
+        }
+      );
+      expect(res._status).toBe(400);
     });
   });
 

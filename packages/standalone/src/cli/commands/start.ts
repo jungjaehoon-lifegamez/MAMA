@@ -399,6 +399,8 @@ export async function runAgentLoop(
         trigger_prefix: string;
         persona_file: string;
         tier: 1 | 2 | 3;
+        backend: 'claude' | 'codex-mcp';
+        model: string;
         can_delegate?: boolean;
         enabled?: boolean;
       }
@@ -409,6 +411,8 @@ export async function runAgentLoop(
         trigger_prefix: '!os',
         persona_file: '~/.mama/personas/os-agent.md',
         tier: 1,
+        backend: runtimeBackend,
+        model: config.agent.model,
         can_delegate: true,
         enabled: true,
       },
@@ -418,6 +422,9 @@ export async function runAgentLoop(
         trigger_prefix: '!memory',
         persona_file: '~/.mama/personas/memory.md',
         tier: 3,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
         enabled: true,
       },
     };

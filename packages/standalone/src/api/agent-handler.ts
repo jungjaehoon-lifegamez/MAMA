@@ -22,6 +22,15 @@ import {
   compareVersionMetrics,
   type AgentVersionRow,
 } from '../db/agent-store.js';
+import {
+  createManagedAgentRuntime,
+  updateManagedAgentRuntime,
+  type ManagedAgentRuntimeSyncOptions,
+} from '../agent/managed-agent-runtime-sync.js';
+import {
+  validateManagedAgentCreateInput,
+  validateManagedAgentChanges,
+} from '../agent/managed-agent-validation.js';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -101,31 +110,44 @@ export function handleGetAgent(
 }
 
 /** POST /api/agents — create new agent */
-export function handleCreateAgent(
+export async function handleCreateAgent(
   res: ServerResponse,
   body: Record<string, unknown>,
-  db: SQLiteDatabase
-): void {
-  const id = body.id as string;
-  if (!id || typeof id !== 'string' || !/^[a-z0-9_-]+$/i.test(id)) {
-    json(res, 400, { error: 'Invalid agent id. Use lowercase alphanumeric, dash, underscore.' });
+  db: SQLiteDatabase,
+  options: ManagedAgentRuntimeSyncOptions = {}
+): Promise<void> {
+  const createError = validateManagedAgentCreateInput(body);
+  if (createError) {
+    json(res, 400, { error: createError });
     return;
   }
+  const id = body.id as string;
   const existing = getLatestVersion(db, id);
   if (existing) {
     json(res, 409, { error: `Agent '${id}' already exists` });
     return;
   }
-  const snapshot = {
-    model: body.model ?? null,
-    tier: body.tier ?? 1,
-    backend: body.backend ?? 'claude',
-    name: body.name ?? id,
-  };
+  let synced;
+  try {
+    synced = await createManagedAgentRuntime(
+      {
+        id,
+        name: (body.name as string) ?? id,
+        model: (body.model as string) ?? '',
+        tier: (body.tier as number) ?? 1,
+        backend: body.backend as string | undefined,
+        system: body.system as string | undefined,
+      },
+      options
+    );
+  } catch (error) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
   const v = createAgentVersion(db, {
     agent_id: id,
-    snapshot,
-    persona_text: (body.system as string) ?? null,
+    snapshot: synced.snapshot,
+    persona_text: synced.personaText,
     change_note: 'Initial creation',
   });
   json(res, 201, {
@@ -133,16 +155,18 @@ export function handleCreateAgent(
     name: body.name ?? id,
     version: v.version,
     created_at: v.created_at,
+    runtime_reloaded: synced.runtimeReloaded,
   });
 }
 
 /** POST /api/agents/:id — update agent (Managed Agents pattern: version required) */
-export function handleUpdateAgent(
+export async function handleUpdateAgent(
   res: ServerResponse,
   agentId: string,
   body: Record<string, unknown>,
-  db: SQLiteDatabase
-): void {
+  db: SQLiteDatabase,
+  options: ManagedAgentRuntimeSyncOptions = {}
+): Promise<void> {
   const latest = getLatestVersion(db, agentId);
   if (!latest) {
     json(res, 404, { error: `Agent '${agentId}' not found` });
@@ -157,35 +181,35 @@ export function handleUpdateAgent(
     return;
   }
   const changes = (body.changes ?? body) as Record<string, unknown>;
-  const currentSnapshot = JSON.parse(latest.snapshot);
-  const newSnapshot = { ...currentSnapshot };
-
-  // Apply only provided fields
-  for (const key of [
-    'model',
-    'tier',
-    'backend',
-    'name',
-    'effort',
-    'enabled',
-    'can_delegate',
-    'trigger_prefix',
-    'cooldown_ms',
-    'auto_continue',
-    'tool_permissions',
-  ]) {
-    if (key in changes) {
-      newSnapshot[key] = changes[key];
-    }
+  const updateError = validateManagedAgentChanges(changes);
+  if (updateError) {
+    json(res, 400, { error: updateError });
+    return;
   }
-
+  let synced;
+  try {
+    synced = await updateManagedAgentRuntime(
+      {
+        agentId,
+        changes,
+      },
+      options
+    );
+  } catch (error) {
+    json(res, 400, { error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
   const v = createAgentVersion(db, {
     agent_id: agentId,
-    snapshot: newSnapshot,
-    persona_text: (changes.system as string) ?? latest.persona_text,
+    snapshot: synced.snapshot,
+    persona_text: synced.personaText ?? latest.persona_text,
     change_note: (body.change_note as string) ?? null,
   });
-  json(res, 200, { success: true, new_version: v.version });
+  json(res, 200, {
+    success: true,
+    new_version: v.version,
+    runtime_reloaded: synced.runtimeReloaded,
+  });
 }
 
 /** POST /api/agents/:id/archive — archive (soft delete) */

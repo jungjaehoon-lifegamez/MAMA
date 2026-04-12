@@ -109,6 +109,7 @@ export class ValidationSessionService {
    * classify status, update validation state.
    */
   finalizeSession(sessionId: string, input: FinalizeInput): ValidationSessionRow {
+    this.validateFinalizeInput(input);
     const detail = getValidationSessionDetail(this.db, sessionId);
     if (!detail) {
       throw new Error(`Session ${sessionId} not found`);
@@ -176,6 +177,7 @@ export class ValidationSessionService {
         summary: 'Session timed out (stale cleanup)',
         ended_at: Date.now(),
       });
+      this.updateState(session.agent_id, session.trigger_type, 'inconclusive');
     }
     return stale.length;
   }
@@ -221,6 +223,29 @@ export class ValidationSessionService {
       error_message: input.error_message ?? null,
       test_input_summary: input.test_input_summary ?? null,
     });
+  }
+
+  private validateFinalizeInput(input: FinalizeInput): void {
+    const validStatuses: ExecutionStatus[] = ['started', 'completed', 'failed', 'timeout'];
+    if (!validStatuses.includes(input.execution_status)) {
+      throw new Error(`Invalid execution status: ${input.execution_status}`);
+    }
+    if (input.error_message !== undefined && typeof input.error_message !== 'string') {
+      throw new Error('Invalid validation error payload');
+    }
+    if (input.test_input_summary !== undefined && typeof input.test_input_summary !== 'string') {
+      throw new Error('Invalid validation test input payload');
+    }
+    if (input.metrics !== undefined) {
+      if (typeof input.metrics !== 'object' || input.metrics === null) {
+        throw new Error('Invalid validation metrics payload');
+      }
+      for (const value of Object.values(input.metrics)) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+          throw new Error('Invalid validation metrics payload');
+        }
+      }
+    }
   }
 
   private loadBaselineMetrics(baselineSessionId: string | null): Map<string, ValidationMetricRow> {

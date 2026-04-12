@@ -391,3 +391,16 @@ Key routing rules:
 - Architecture review → invoke plan-eng-review
 - Save progress, checkpoint, resume → invoke checkpoint
 - Code quality, health check → invoke health
+
+When multiple skills match:
+
+- First priority: an explicitly user-requested skill name
+- Second priority: exact intent match over keyword-only match
+- Third priority: `investigate` > `ship` > `qa` > `review` > `document-release` > `design-review` > `design-consultation` > `plan-eng-review` > `office-hours` > `retro` > `checkpoint` > `health`
+- Always invoke the highest-priority matching skill as the FIRST action
+
+When no skill clearly matches:
+
+- Ask one short clarifying question if the request is ambiguous
+- Default to `investigate` for breakage, errors, failing behavior, or unknown regressions
+- Default to `office-hours` for ideation, product shaping, or open-ended planning

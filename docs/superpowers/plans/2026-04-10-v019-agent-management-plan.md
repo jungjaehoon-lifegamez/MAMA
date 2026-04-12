@@ -1789,7 +1789,7 @@ git commit -m "feat(agents): viewer Agents module with card grid list view"
 
 Replace the placeholder `renderDetail()` and `showCreateModal()` in agents.ts with full implementations. Each tab renders its own content panel.
 
-**Config tab**: form fields for name, backend, model, tier, effort, delegate, trigger, cooldown. Save button calls `API.updateAgent()` with version.
+**Config tab**: form fields for name, backend, model, tier, effort, delegate, trigger, cooldown. Save button updates the live runtime through the existing `PUT /api/multi-agent/agents/:id` path and then appends an audit/version entry through `API.updateAgent()` when possible.
 
 **Persona tab**: textarea (monospace, 20 rows) pre-filled with `agent.system`. Save calls `API.updateAgent()` with `changes: { system: newText }`.
 

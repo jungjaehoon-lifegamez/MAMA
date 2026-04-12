@@ -16,6 +16,7 @@ export interface UICommand {
 
 export interface PageContext {
   currentRoute: string;
+  channelId?: string;
   selectedItem?: { type: string; id: string };
   pageData?: Record<string, unknown>;
 }
@@ -25,6 +26,7 @@ const MAX_QUEUE = 50;
 export class UICommandQueue {
   private commands: UICommand[] = [];
   private pageContext: PageContext | null = null;
+  private pageContexts = new Map<string, PageContext>();
 
   push(cmd: UICommand): void {
     this.commands.push(cmd);
@@ -41,9 +43,15 @@ export class UICommandQueue {
 
   setPageContext(ctx: PageContext): void {
     this.pageContext = ctx;
+    if (ctx.channelId) {
+      this.pageContexts.set(ctx.channelId, ctx);
+    }
   }
 
-  getPageContext(): PageContext | null {
+  getPageContext(channelId?: string): PageContext | null {
+    if (channelId) {
+      return this.pageContexts.get(channelId) ?? this.pageContext;
+    }
     return this.pageContext;
   }
 }
@@ -53,6 +61,45 @@ export class UICommandQueue {
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isValidPageContext(body: unknown): body is PageContext {
+  if (!isRecord(body) || typeof body.currentRoute !== 'string') {
+    return false;
+  }
+  if (body.channelId !== undefined && typeof body.channelId !== 'string') {
+    return false;
+  }
+  if (body.selectedItem !== undefined) {
+    if (
+      !isRecord(body.selectedItem) ||
+      typeof body.selectedItem.type !== 'string' ||
+      typeof body.selectedItem.id !== 'string'
+    ) {
+      return false;
+    }
+  }
+  if (body.pageData !== undefined && !isRecord(body.pageData)) {
+    return false;
+  }
+  return true;
+}
+
+function isValidUICommand(body: unknown): body is UICommand {
+  if (!isRecord(body)) {
+    return false;
+  }
+  if (!['navigate', 'notify', 'suggest_change', 'refresh'].includes(String(body.type))) {
+    return false;
+  }
+  if (!isRecord(body.payload)) {
+    return false;
+  }
+  return true;
 }
 
 /** GET /api/ui/commands — viewer drains pending commands */
@@ -72,6 +119,10 @@ export function handlePostPageContext(
   body: PageContext,
   queue: UICommandQueue
 ): void {
+  if (!isValidPageContext(body)) {
+    json(res, 400, { error: 'invalid payload' });
+    return;
+  }
   queue.setPageContext(body);
   json(res, 200, { success: true });
 }
@@ -82,6 +133,10 @@ export function handlePostUICommand(
   body: UICommand,
   queue: UICommandQueue
 ): void {
+  if (!isValidUICommand(body)) {
+    json(res, 400, { error: 'invalid payload' });
+    return;
+  }
   queue.push(body);
   json(res, 200, { success: true });
 }

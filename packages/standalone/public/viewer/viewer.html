@@ -1263,7 +1263,13 @@
         STATE.currentTab = tabName;
 
         // Report tab context to agent (SmartStore pattern)
-        reportPageContext(tabName, { pageType: 'tab-switch', tab: tabName });
+        const selectedItem =
+          tabName === 'agents' && params?.id ? { type: 'agent', id: params.id } : undefined;
+        reportPageContext(
+          tabName,
+          { pageType: 'tab-switch', tab: tabName, ...(params || {}) },
+          selectedItem
+        );
 
         // Close mobile More menu if open
         const moreMenu = document.getElementById('mama-mobile-more');

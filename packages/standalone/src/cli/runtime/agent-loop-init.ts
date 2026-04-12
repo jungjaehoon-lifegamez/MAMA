@@ -154,12 +154,16 @@ export function initMainAgentLoop(
           insertTokenUsage(db, record);
           // Also upsert agent_metrics if agent_id is known
           if (record.agent_id) {
-            const latest = getLatestVersion(db, record.agent_id);
-            if (latest) {
+            const recordWithVersion = record as typeof record & { agent_version?: number };
+            const metricVersion =
+              typeof recordWithVersion.agent_version === 'number'
+                ? recordWithVersion.agent_version
+                : (getLatestVersion(db, record.agent_id)?.version ?? null);
+            if (metricVersion !== null) {
               const today = new Date().toISOString().slice(0, 10);
               upsertMetrics(db, {
                 agent_id: record.agent_id,
-                agent_version: latest.version,
+                agent_version: metricVersion,
                 period_start: today,
                 input_tokens: record.input_tokens,
                 output_tokens: record.output_tokens,

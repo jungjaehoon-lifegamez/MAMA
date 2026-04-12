@@ -172,7 +172,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
       // Log task_error to agent_activity
       if (sessionsDb) {
-        logActivity(sessionsDb, {
+        const errorRow = logActivity(sessionsDb, {
           agent_id: agentId,
           agent_version: agentVersion,
           type: 'task_error',
@@ -180,6 +180,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           error_message: err instanceof Error ? err.message : String(err),
           duration_ms: durationMs,
         });
+        if (session) {
+          validationService?.recordRun(session.id, {
+            activityId: errorRow.id,
+            duration_ms: durationMs,
+          });
+        }
       }
 
       // Finalize validation session as failed

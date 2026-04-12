@@ -38,11 +38,11 @@ export function initTokenUsageTable(db: SQLiteDatabase): void {
       created_at INTEGER NOT NULL
     )
   `);
-  // Migration: add agent_version column for existing databases
-  try {
+  const columns = (
+    db.prepare('PRAGMA table_info(token_usage)').all() as Array<{ name: string }>
+  ).map((column) => column.name);
+  if (!columns.includes('agent_version')) {
     db.exec('ALTER TABLE token_usage ADD COLUMN agent_version INTEGER');
-  } catch {
-    /* column already exists */
   }
   // Index for time-range queries
   db.exec(`

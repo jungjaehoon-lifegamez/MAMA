@@ -352,9 +352,10 @@ export class AgentsModule {
   }
 
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
-    const backend = a.backend || 'claude';
+    const backend = String(a.backend || 'claude');
+    const isCodexBackend = backend === 'codex-mcp' || backend === 'codex';
     const modelOptions = (
-      backend === 'codex-mcp'
+      isCodexBackend
         ? ['gpt-5.3-codex', 'gpt-5.4-mini']
         : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001']
     )
@@ -365,7 +366,7 @@ export class AgentsModule {
       .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
       .join('');
 
-    const backendOptions = ['claude', 'codex-mcp']
+    const backendOptions = Array.from(new Set(['claude', 'codex-mcp', backend]))
       .map((b) => `<option value="${b}" ${backend === b ? 'selected' : ''}>${b}</option>`)
       .join('');
 
@@ -410,7 +411,7 @@ export class AgentsModule {
     el.querySelector('#cfg-backend')?.addEventListener('change', () => {
       const newBackend = (el.querySelector('#cfg-backend') as HTMLSelectElement).value;
       const models =
-        newBackend === 'codex-mcp'
+        newBackend === 'codex-mcp' || newBackend === 'codex'
           ? ['gpt-5.3-codex', 'gpt-5.4-mini']
           : ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
       const modelSelect = el.querySelector('#cfg-model') as HTMLSelectElement;
@@ -420,8 +421,15 @@ export class AgentsModule {
     // Save uses existing PUT /api/multi-agent/agents/:id (same as Settings)
     el.querySelector('#btn-save-config')?.addEventListener('click', async () => {
       if (!a.id) return;
+      const displayName = (el.querySelector('#cfg-name') as HTMLInputElement).value.trim();
+      if (!displayName) {
+        showToast('Name is required');
+        return;
+      }
       try {
         await API.put(`/api/multi-agent/agents/${a.id}`, {
+          name: displayName,
+          display_name: displayName,
           model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
           backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
           tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
@@ -435,8 +443,13 @@ export class AgentsModule {
           await API.updateAgent(a.id, {
             version: a.version,
             changes: {
+              name: displayName,
+              display_name: displayName,
+              backend: (el.querySelector('#cfg-backend') as HTMLSelectElement).value,
               model: (el.querySelector('#cfg-model') as HTMLSelectElement).value,
               tier: parseInt((el.querySelector('#cfg-tier') as HTMLSelectElement).value, 10),
+              enabled: (el.querySelector('#cfg-enabled') as HTMLInputElement).checked,
+              can_delegate: (el.querySelector('#cfg-delegate') as HTMLInputElement).checked,
             },
             change_note: 'Config updated via Agents tab',
           }).catch(() => {
@@ -587,7 +600,7 @@ export class AgentsModule {
               .join('');
 
             return `<div class="py-2 border-b border-gray-100">
-              <div role="button" aria-expanded="false" aria-controls="expand-${Number(ev.id)}" data-expand="${Number(ev.id)}" class="flex items-center gap-2 cursor-pointer">
+              <div role="button" tabindex="0" aria-expanded="false" aria-controls="expand-${Number(ev.id)}" data-expand="${Number(ev.id)}" class="flex items-center gap-2 cursor-pointer">
                 <span class="text-[14px] flex-shrink-0">${icon}</span>
                 <div class="flex-1 min-w-0">
                   <div class="text-[12px] font-medium text-gray-800">${summary}${scoreStr}</div>
@@ -613,12 +626,19 @@ export class AgentsModule {
 
       // Expand/collapse toggle with ARIA
       el.querySelectorAll<HTMLElement>('[data-expand]').forEach((toggle) => {
-        toggle.addEventListener('click', () => {
+        const toggleExpand = () => {
           const id = toggle.dataset.expand;
           const content = el.querySelector(`#expand-${id}`);
           if (content) {
             const isHidden = content.classList.toggle('hidden');
             toggle.setAttribute('aria-expanded', String(!isHidden));
+          }
+        };
+        toggle.addEventListener('click', toggleExpand);
+        toggle.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            toggleExpand();
           }
         });
       });
@@ -989,7 +1009,7 @@ export class AgentsModule {
     if (this.agents.length > 0) {
       tryNav();
     } else {
-      setTimeout(tryNav, 500);
+      void this.loadAgents().then(tryNav);
     }
   }
 

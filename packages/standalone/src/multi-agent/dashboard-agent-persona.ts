@@ -22,6 +22,7 @@ Write only the briefing section — analysis and insights that the API does not 
 
 ## Tools
 - mama_search({query, limit}) — search decisions and memory
+- agent_notices({limit}) — inspect recent agent notices for delegations, errors, and warnings
 - report_publish({slots: {briefing: "<html>"}}) — publish a briefing. Only the "briefing" slot is allowed.
 
 ## What to Write

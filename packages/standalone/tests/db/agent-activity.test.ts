@@ -32,6 +32,15 @@ describe('agent_activity', () => {
     expect(tables).toHaveLength(3);
   });
 
+  it('creates agent_activity with validation linkage columns', () => {
+    const columns = db.prepare('PRAGMA table_info(agent_activity)').all() as Array<{
+      name: string;
+    }>;
+    expect(columns.some((column) => column.name === 'run_id')).toBe(true);
+    expect(columns.some((column) => column.name === 'execution_status')).toBe(true);
+    expect(columns.some((column) => column.name === 'trigger_reason')).toBe(true);
+  });
+
   describe('activity CRUD', () => {
     it('logs activity with details JSON', () => {
       const row = logActivity(db, {
