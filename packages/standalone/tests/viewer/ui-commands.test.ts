@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getUICommands = vi.fn();
+const pushPageContext = vi.fn();
 const showToast = vi.fn();
 
 vi.mock('../../public/viewer/src/utils/api.js', () => ({
   API: {
     getUICommands,
-    // reportPageContext references this export, but these tests only cover polling.
-    pushPageContext: vi.fn(),
+    pushPageContext: pushPageContext.mockResolvedValue({ success: true }),
   },
 }));
 
@@ -19,10 +19,21 @@ describe('viewer ui-commands', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.stubGlobal('window', {
+      localStorage: {
+        getItem: vi.fn((key: string) => {
+          if (key === 'mama_chat_session_id') {
+            return 'session_legacy_viewer_id';
+          }
+          return null;
+        }),
+      },
+    });
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it('does not start overlapping polls while a request is in flight', async () => {
@@ -45,5 +56,19 @@ describe('viewer ui-commands', () => {
     resolveCommands?.({ commands: [] });
     await Promise.resolve();
     stopPolling();
+  });
+
+  it('reports page context to the stable viewer frontdoor channel', async () => {
+    const { reportPageContext } = await import('../../public/viewer/src/utils/ui-commands.js');
+
+    reportPageContext('agents', { pageType: 'agent-list' });
+    await Promise.resolve();
+
+    expect(pushPageContext).toHaveBeenCalledWith(
+      'agents',
+      { pageType: 'agent-list' },
+      undefined,
+      'mama_os_main'
+    );
   });
 });

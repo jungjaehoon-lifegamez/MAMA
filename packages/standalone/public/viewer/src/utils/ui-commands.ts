@@ -14,14 +14,18 @@ type SwitchTabFn = (tab: string, params?: Record<string, string>) => void;
 let polling = false;
 let pollingInterval: ReturnType<typeof setInterval> | null = null;
 let pollInFlight = false;
+const VIEWER_FRONTDOOR_CHANNEL_ID = 'mama_os_main';
 
-function getViewerSessionId(): string | undefined {
+function getViewerChannelId(): string {
   try {
     const sessionId = window.localStorage.getItem('mama_chat_session_id');
-    return sessionId || undefined;
+    if (sessionId && !sessionId.startsWith('session_')) {
+      return sessionId;
+    }
   } catch {
-    return undefined;
+    /* ignore */
   }
+  return VIEWER_FRONTDOOR_CHANNEL_ID;
 }
 
 export function startUICommandPolling(switchTab: SwitchTabFn): () => void {
@@ -72,7 +76,7 @@ export function reportPageContext(
   data: Record<string, unknown>,
   selectedItem?: { type: string; id: string }
 ): void {
-  API.pushPageContext(route, data, selectedItem, getViewerSessionId()).catch(() => {
+  API.pushPageContext(route, data, selectedItem, getViewerChannelId()).catch(() => {
     /* ignore */
   });
 }

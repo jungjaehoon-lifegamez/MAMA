@@ -14,6 +14,8 @@ const persistentPromptMock = vi.fn().mockResolvedValue({
   usage: { input_tokens: 10, output_tokens: 5 },
   session_id: 'test-session',
 });
+const gatewayExecutorSetAgentContextMock = vi.fn();
+const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -66,6 +68,8 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
   return {
     GatewayToolExecutor: vi.fn().mockImplementation(() => ({
       setDiscordGateway: vi.fn(),
+      setAgentContext: gatewayExecutorSetAgentContextMock,
+      setCurrentAgentContext: gatewayExecutorSetCurrentAgentContextMock,
       execute: vi.fn().mockResolvedValue({ success: true }),
     })),
   };
@@ -133,6 +137,8 @@ describe('AgentLoop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     persistentPromptMock.mockClear();
+    gatewayExecutorSetAgentContextMock.mockClear();
+    gatewayExecutorSetCurrentAgentContextMock.mockClear();
   });
 
   describe('run()', () => {
@@ -182,6 +188,36 @@ describe('AgentLoop', () => {
       const promptOptions = persistentPromptMock.mock.calls[0]?.[2];
       expect(promptOptions.allowedTools).toBeUndefined();
       expect(promptOptions.disallowedTools).toBeUndefined();
+    });
+
+    it('should propagate stable viewer channel context to the gateway executor', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Hello', {
+        source: 'viewer',
+        channelId: 'mama_os_main',
+        agentContext: {
+          ...createChatBotContext(),
+          source: 'viewer',
+          platform: 'viewer',
+          roleName: 'os_agent',
+          session: {
+            ...createChatBotContext().session,
+            channelId: 'mama_os_main',
+          },
+        },
+      });
+
+      expect(gatewayExecutorSetCurrentAgentContextMock).toHaveBeenCalledWith(
+        'os-agent',
+        'viewer',
+        'mama_os_main'
+      );
     });
   });
 

@@ -71,6 +71,16 @@ describe('UICommandQueue', () => {
     expect(queue.getPageContext('viewer-session-2')?.currentRoute).toBe('dashboard');
   });
 
+  it('aliases legacy viewer session channel ids to the stable frontdoor channel', () => {
+    queue.setPageContext({
+      currentRoute: 'agents',
+      channelId: 'session_legacy_viewer_id',
+      pageData: { pageType: 'agent-list' },
+    });
+
+    expect(queue.getPageContext('mama_os_main')?.currentRoute).toBe('agents');
+  });
+
   it('does not fall back to global context for a missing channel', () => {
     queue.setPageContext({ currentRoute: 'agents', pageData: { pageType: 'agent-list' } });
     queue.setPageContext({

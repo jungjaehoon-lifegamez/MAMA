@@ -22,6 +22,8 @@ export interface PageContext {
 }
 
 const MAX_QUEUE = 50;
+const VIEWER_FRONTDOOR_CHANNEL_ID = 'mama_os_main';
+const LEGACY_VIEWER_SESSION_PREFIX = 'session_';
 
 export class UICommandQueue {
   private commands: UICommand[] = [];
@@ -45,6 +47,12 @@ export class UICommandQueue {
     this.pageContext = ctx;
     if (ctx.channelId) {
       this.pageContexts.set(ctx.channelId, ctx);
+      if (ctx.channelId.startsWith(LEGACY_VIEWER_SESSION_PREFIX)) {
+        this.pageContexts.set(VIEWER_FRONTDOOR_CHANNEL_ID, {
+          ...ctx,
+          channelId: VIEWER_FRONTDOOR_CHANNEL_ID,
+        });
+      }
     }
   }
 
