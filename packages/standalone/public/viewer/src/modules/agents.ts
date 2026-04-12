@@ -31,6 +31,15 @@ const C = {
 type AgentWithVersion = MultiAgentAgent & { system?: string; version?: number };
 type DetailTab = 'config' | 'persona' | 'tools' | 'activity' | 'validation' | 'history';
 
+const LEGACY_SWARM_AGENT_IDS = new Set(['developer', 'reviewer', 'architect', 'pm']);
+const SYSTEM_AGENT_IDS = new Set([
+  'os-agent',
+  'conductor',
+  'memory',
+  'dashboard-agent',
+  'wiki-agent',
+]);
+
 export class AgentsModule {
   private container: HTMLElement | null = null;
   private initialized = false;
@@ -60,35 +69,41 @@ export class AgentsModule {
         API.getAgents(),
         API.getActivitySummary(yesterday).catch(() => ({ summary: [], alerts: [] })),
       ]);
-      this.agents = agents;
+      this.agents = agents.filter((agent) => {
+        const id = agent.id ?? '';
+        return !(LEGACY_SWARM_AGENT_IDS.has(id) && agent.enabled === false);
+      });
       this.alerts = summaryRes.alerts;
 
       // Fetch validation state for each agent (non-blocking)
       const valResults = await Promise.all(
-        agents.map((a) => API.getValidationSummary(a.id ?? '').catch(() => ({ summary: null })))
+        this.agents.map((a) =>
+          API.getValidationSummary(a.id ?? '').catch(() => ({ summary: null }))
+        )
       );
       this.validationStates.clear();
-      for (let i = 0; i < agents.length; i++) {
+      for (let i = 0; i < this.agents.length; i++) {
         const vs = valResults[i]?.summary as Record<string, unknown> | null;
         if (vs?.validation_outcome) {
-          this.validationStates.set(agents[i].id ?? '', String(vs.validation_outcome));
+          this.validationStates.set(this.agents[i].id ?? '', String(vs.validation_outcome));
         }
       }
 
       this.renderList();
       reportPageContext('agents', {
         pageType: 'agent-list',
-        total: agents.length,
-        agents: agents.map((a) => ({
+        total: this.agents.length,
+        agents: this.agents.map((a) => ({
           id: a.id,
           name: a.display_name || a.name,
           enabled: a.enabled !== false,
           tier: a.tier,
           model: a.model,
           validation: this.validationStates.get(a.id ?? '') ?? null,
+          system: SYSTEM_AGENT_IDS.has(a.id ?? ''),
         })),
         alerts: this.alerts,
-        summary: `${agents.length} agents: ${agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
+        summary: `${this.agents.length} agents: ${this.agents.map((a) => `${a.display_name || a.id}(${this.validationStates.get(a.id ?? '') ?? 'no-data'})`).join(', ')}`,
       });
     } catch (err) {
       logger.error('Failed to load agents', err);
@@ -141,6 +156,7 @@ export class AgentsModule {
             <span style="font-size:15px;font-weight:600;color:${C.pri}">${escapeHtml(a.display_name || a.name || a.id || '')}</span>
             <div style="display:flex;align-items:center;gap:6px;">
               <span style="font-size:11px;font-weight:600;padding:2px 8px;border-radius:4px;background:${C.agent}15;color:${C.agent}">T${a.tier ?? 1}</span>
+              ${SYSTEM_AGENT_IDS.has(a.id ?? '') ? `<span style="font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:${C.bg};color:${C.sec};border:1px solid ${C.bdr};">system</span>` : ''}
               <label class="agent-toggle-label" style="position:relative;display:inline-flex;align-items:center;cursor:pointer;" title="${a.enabled !== false ? 'Disable' : 'Enable'} agent">
                 <input type="checkbox" data-toggle-id="${escapeHtml(a.id ?? '')}" ${a.enabled !== false ? 'checked' : ''} style="position:absolute;opacity:0;width:0;height:0;" />
                 <div style="width:28px;height:16px;background:${a.enabled !== false ? C.green : '#D1D5DB'};border-radius:8px;position:relative;transition:background 0.2s;">
@@ -216,39 +232,43 @@ export class AgentsModule {
 
   // ── Detail View ─────────────────────────────────────────────────────────
 
-  private async showDetail(agentId: string): Promise<void> {
+  private async showDetail(agentId: string, desiredTab?: DetailTab): Promise<void> {
     try {
       const agent = await API.getAgent(agentId);
       this.selectedAgent = agent;
-      this.activeTab = 'config';
+      this.activeTab = desiredTab ?? 'config';
       this.renderDetail();
       // Fetch validation to include in page context
       const valData = await API.getValidationSummary(agentId).catch(() => ({ summary: null }));
       const vs = valData.summary as Record<string, unknown> | null;
-      reportPageContext('agents', {
-        pageType: 'agent-detail',
-        selectedAgent: agentId,
-        activeTab: this.activeTab,
-        agent: {
-          id: agent.id,
-          name: agent.display_name || agent.name,
-          model: agent.model,
-          tier: agent.tier,
-          enabled: agent.enabled !== false,
-          version: agent.version,
-          backend: agent.backend,
+      reportPageContext(
+        'agents',
+        {
+          pageType: 'agent-detail',
+          selectedAgent: agentId,
+          activeTab: this.activeTab,
+          agent: {
+            id: agent.id,
+            name: agent.display_name || agent.name,
+            model: agent.model,
+            tier: agent.tier,
+            enabled: agent.enabled !== false,
+            version: agent.version,
+            backend: agent.backend,
+          },
+          validation: vs
+            ? {
+                outcome: vs.validation_outcome,
+                execution: vs.execution_status,
+                baseline_version: vs.baseline_version,
+                trigger_type: vs.trigger_type,
+                ended_at: vs.ended_at,
+              }
+            : null,
+          summary: `${agent.display_name || agent.name} v${agent.version} | validation: ${vs?.validation_outcome ?? 'none'} | tab: ${this.activeTab}`,
         },
-        validation: vs
-          ? {
-              outcome: vs.validation_outcome,
-              execution: vs.execution_status,
-              baseline_version: vs.baseline_version,
-              trigger_type: vs.trigger_type,
-              ended_at: vs.ended_at,
-            }
-          : null,
-        summary: `${agent.display_name || agent.name} v${agent.version} | validation: ${vs?.validation_outcome ?? 'none'} | tab: ${this.activeTab}`,
-      });
+        { type: 'agent', id: agentId }
+      );
     } catch (err) {
       logger.error(`Failed to load agent ${agentId}`, err);
       showToast('Failed to load agent details');
@@ -284,21 +304,25 @@ export class AgentsModule {
         this.activeTab = (btn as HTMLElement).dataset.dtab as DetailTab;
         this.renderDetail();
         const vo = this.validationStates.get(a.id ?? '');
-        reportPageContext('agents', {
-          pageType: 'agent-detail',
-          selectedAgent: a.id,
-          activeTab: this.activeTab,
-          agent: {
-            id: a.id,
-            name: a.display_name || a.name,
-            model: a.model,
-            tier: a.tier,
-            enabled: a.enabled !== false,
-            version: a.version,
+        reportPageContext(
+          'agents',
+          {
+            pageType: 'agent-detail',
+            selectedAgent: a.id,
+            activeTab: this.activeTab,
+            agent: {
+              id: a.id,
+              name: a.display_name || a.name,
+              model: a.model,
+              tier: a.tier,
+              enabled: a.enabled !== false,
+              version: a.version,
+            },
+            validation: vo ? { outcome: vo } : null,
+            summary: `${a.display_name || a.name} v${a.version} | validation: ${vo ?? 'none'} | tab: ${this.activeTab}`,
           },
-          validation: vo ? { outcome: vo } : null,
-          summary: `${a.display_name || a.name} v${a.version} | validation: ${vo ?? 'none'} | tab: ${this.activeTab}`,
-        });
+          a.id ? { type: 'agent', id: a.id } : undefined
+        );
       });
     });
 
@@ -955,14 +979,11 @@ export class AgentsModule {
     const tryNav = () => {
       const agent = this.agents.find((a) => a.id === agentId);
       if (agent) {
-        this.selectedAgent = agent;
-        if (
-          tab &&
-          ['config', 'persona', 'tools', 'activity', 'validation', 'history'].includes(tab)
-        ) {
-          this.activeTab = tab as DetailTab;
-        }
-        this.renderDetail();
+        const desiredTab =
+          tab && ['config', 'persona', 'tools', 'activity', 'validation', 'history'].includes(tab)
+            ? (tab as DetailTab)
+            : undefined;
+        void this.showDetail(agentId, desiredTab);
       }
     };
     if (this.agents.length > 0) {

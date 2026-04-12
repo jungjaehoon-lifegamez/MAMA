@@ -1010,8 +1010,16 @@ export class API {
     return this.get('/api/ui/commands');
   }
 
-  static async pushPageContext(route: string, data: Record<string, unknown>): Promise<JsonRecord> {
-    return this.post('/api/ui/page-context', { currentRoute: route, pageData: data });
+  static async pushPageContext(
+    route: string,
+    data: Record<string, unknown>,
+    selectedItem?: { type: string; id: string }
+  ): Promise<JsonRecord> {
+    return this.post('/api/ui/page-context', {
+      currentRoute: route,
+      pageData: data,
+      ...(selectedItem ? { selectedItem } : {}),
+    });
   }
 
   // =============================================

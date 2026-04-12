@@ -188,6 +188,13 @@ describe('ConfigManager', () => {
   });
 
   describe('getDefaultMultiAgentConfig()', () => {
+    it('should include os-agent in the default system agent set', () => {
+      const multiAgentConfig = getDefaultMultiAgentConfig();
+
+      expect(multiAgentConfig.agents['os-agent']).toBeDefined();
+      expect(multiAgentConfig.agents['os-agent']?.enabled).toBe(true);
+    });
+
     it('should exclude legacy swarm agents from the default agent set', () => {
       const multiAgentConfig = getDefaultMultiAgentConfig();
 

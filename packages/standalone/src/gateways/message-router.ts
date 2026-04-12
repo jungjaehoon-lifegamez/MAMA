@@ -249,20 +249,23 @@ export class MessageRouter {
     if (!this.uiCommandQueue) return '';
     const ctx = this.uiCommandQueue.getPageContext();
     if (!ctx || !ctx.currentRoute) return '';
-    const data = ctx.pageData as Record<string, unknown> | null;
-    if (!data) return '';
+    const data = (ctx.pageData as Record<string, unknown> | null) ?? null;
 
     // Build rich context that tells conductor exactly what the user sees
     const lines: string[] = ['<viewer-context>'];
     lines.push(`route: ${ctx.currentRoute}`);
-    if (data.summary) lines.push(`summary: ${data.summary}`);
+    if (ctx.selectedItem?.type && ctx.selectedItem?.id) {
+      lines.push(`selected_item: ${ctx.selectedItem.type}:${ctx.selectedItem.id}`);
+    }
+    if (data?.summary) lines.push(`summary: ${data.summary}`);
 
-    if (data.pageType === 'agent-list' && Array.isArray(data.agents)) {
+    if (data?.pageType === 'agent-list' && Array.isArray(data.agents)) {
       lines.push(`agents:`);
       for (const a of data.agents as Array<Record<string, unknown>>) {
         const parts = [`  - ${a.name || a.id}`];
         if (a.validation) parts.push(`validation:${a.validation}`);
         if (a.enabled === false) parts.push('(disabled)');
+        if (a.system === true) parts.push('(system)');
         lines.push(parts.join(' '));
       }
       if (Array.isArray(data.alerts) && (data.alerts as string[]).length > 0) {
@@ -270,7 +273,7 @@ export class MessageRouter {
       }
     }
 
-    if (data.pageType === 'agent-detail') {
+    if (data?.pageType === 'agent-detail') {
       const agent = data.agent as Record<string, unknown> | null;
       if (agent) {
         lines.push(

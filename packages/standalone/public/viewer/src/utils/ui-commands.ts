@@ -35,8 +35,12 @@ export function startUICommandPolling(switchTab: SwitchTabFn): void {
   }, 1000);
 }
 
-export function reportPageContext(route: string, data: Record<string, unknown>): void {
-  API.pushPageContext(route, data).catch(() => {
+export function reportPageContext(
+  route: string,
+  data: Record<string, unknown>,
+  selectedItem?: { type: string; id: string }
+): void {
+  API.pushPageContext(route, data, selectedItem).catch(() => {
     /* ignore */
   });
 }

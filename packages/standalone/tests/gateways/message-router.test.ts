@@ -8,6 +8,7 @@ import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-r
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { createMockMamaApi, type SearchResult } from '../../src/gateways/context-injector.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
+import { UICommandQueue } from '../../src/api/ui-command-handler.js';
 
 describe('MessageRouter', () => {
   let db: SQLiteDatabase;
@@ -165,6 +166,38 @@ describe('MessageRouter', () => {
       expect(receivedOptions.resumeSession).toBe(false);
       expect(typeof receivedOptions.systemPrompt).toBe('string');
       expect(receivedOptions.systemPrompt!.length).toBeGreaterThan(0);
+    });
+
+    it('should include selected viewer item in injected page context', async () => {
+      let receivedPrompt = '';
+      const agentLoop = createMockAgentLoop((prompt) => {
+        receivedPrompt = prompt;
+        return 'Agent response';
+      });
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+      const queue = new UICommandQueue();
+      queue.setPageContext({
+        currentRoute: 'agents',
+        selectedItem: { type: 'agent', id: 'wiki-agent' },
+        pageData: {
+          pageType: 'agent-detail',
+          summary: 'Wiki Agent detail',
+          agent: { id: 'wiki-agent', name: 'Wiki Agent', version: 3, tier: 2, model: 'claude' },
+        },
+      });
+      customRouter.setUICommandQueue(queue);
+
+      await customRouter.process({
+        source: 'viewer',
+        channelId: 'viewer-channel',
+        userId: 'user-456',
+        text: 'What am I looking at?',
+      });
+
+      expect(receivedPrompt).toContain('<viewer-context>');
+      expect(receivedPrompt).toContain('route: agents');
+      expect(receivedPrompt).toContain('selected_item: agent:wiki-agent');
     });
 
     it('should use resumeSession for subsequent messages to same channel', async () => {

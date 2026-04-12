@@ -561,6 +561,15 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
     free_chat: true,
     default_agent: 'conductor',
     agents: {
+      'os-agent': {
+        name: 'OS Agent',
+        display_name: '🖥️ OS Agent',
+        trigger_prefix: '!os',
+        persona_file: '~/.mama/personas/os-agent.md',
+        tier: 1,
+        can_delegate: true,
+        enabled: true,
+      },
       conductor: {
         name: 'Conductor',
         display_name: '🎯 Conductor',

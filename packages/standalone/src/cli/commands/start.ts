@@ -403,6 +403,15 @@ export async function runAgentLoop(
         enabled?: boolean;
       }
     > = {
+      'os-agent': {
+        name: 'OS Agent',
+        display_name: '🖥️ OS Agent',
+        trigger_prefix: '!os',
+        persona_file: '~/.mama/personas/os-agent.md',
+        tier: 1,
+        can_delegate: true,
+        enabled: true,
+      },
       memory: {
         name: 'Memory Agent',
         display_name: '🧠 Memory',
