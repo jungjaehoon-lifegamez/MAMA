@@ -39,6 +39,35 @@ describe('STORY-V019 - agent-store', () => {
         .all();
       expect(tables).toHaveLength(2);
     });
+
+    it('upgrades legacy agent_activity tables with validation linkage columns', () => {
+      db.exec(`
+        CREATE TABLE agent_activity (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          agent_id TEXT NOT NULL,
+          agent_version INTEGER NOT NULL,
+          type TEXT NOT NULL,
+          input_summary TEXT,
+          output_summary TEXT,
+          tokens_used INTEGER DEFAULT 0,
+          tools_called TEXT,
+          duration_ms INTEGER DEFAULT 0,
+          score REAL,
+          details TEXT,
+          error_message TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+      `);
+
+      initAgentTables(db);
+
+      const columns = db.prepare('PRAGMA table_info(agent_activity)').all() as Array<{
+        name: string;
+      }>;
+      expect(columns.some((column) => column.name === 'run_id')).toBe(true);
+      expect(columns.some((column) => column.name === 'execution_status')).toBe(true);
+      expect(columns.some((column) => column.name === 'trigger_reason')).toBe(true);
+    });
   });
 
   describe('AC2 - version history is persisted and versioned', () => {

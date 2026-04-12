@@ -276,8 +276,19 @@ export class AgentsModule {
       toggle.addEventListener('change', async () => {
         const agentId = toggle.dataset.toggleId;
         if (!agentId) return;
+        const agent = this.agents.find((item) => item.id === agentId);
+        const version = agent?.version;
+        if (version === null || version === undefined) {
+          showToast('Version unavailable');
+          toggle.checked = !toggle.checked;
+          return;
+        }
         try {
-          await API.put(`/api/multi-agent/agents/${agentId}`, { enabled: toggle.checked });
+          await API.updateAgent(agentId, {
+            version,
+            changes: { enabled: toggle.checked },
+            change_note: toggle.checked ? 'Enabled via Agents tab' : 'Disabled via Agents tab',
+          });
           showToast(`${agentId} ${toggle.checked ? 'enabled' : 'disabled'}`);
           this.loadAgents();
         } catch {
@@ -595,9 +606,12 @@ export class AgentsModule {
       }
       const preserveWildcard = (isAll || (a.tier ?? 1) === 1) && checked.length === allTools.length;
       const normalizedAllowed = preserveWildcard ? ['*'] : checked;
+      const existingBlocked = Array.isArray(a.tool_permissions?.blocked)
+        ? a.tool_permissions.blocked
+        : [];
       const toolPermissions = {
         allowed: normalizedAllowed,
-        blocked: [],
+        blocked: existingBlocked,
       };
       const version = a.version;
       if (version === null || version === undefined) {
@@ -1094,6 +1108,11 @@ export class AgentsModule {
     this.detailRequestId++;
     this.selectedAgent = null;
     this.currentDetailContext = null;
+    reportPageContext('agents', {
+      ...this.buildListPageContext(),
+      selectedAgent: null,
+      activeTab: null,
+    });
     this.loadAgents();
   }
 }

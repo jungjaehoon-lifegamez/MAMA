@@ -486,7 +486,10 @@ Current viewer tabs in `agents.ts` are:
 
 3. `Tools`
    - Claude built-in tool permissions
-   - gateway tool enablement snapshot
+   - current viewer scope: edits Claude CLI built-in `tool_permissions` only
+   - gateway tools (`mama_search`, `agent_*`, `viewer_*`, `browser_*`) are implemented in
+     `packages/standalone/src/agent/gateway-tool-executor.ts` and are not surfaced by the
+     current viewer Tools tab
 
 4. `Activity`
    - task / audit activity feed

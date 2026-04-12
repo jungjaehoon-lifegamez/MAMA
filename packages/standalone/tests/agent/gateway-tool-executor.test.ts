@@ -732,6 +732,91 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           }),
         });
       });
+
+      it('should continue agent_test when startup telemetry persistence fails', async () => {
+        const db = new Database(':memory:');
+        db.exec(`
+          CREATE TABLE agent_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            agent_id TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            snapshot TEXT NOT NULL,
+            persona_text TEXT,
+            change_note TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          )
+        `);
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setSessionsDb(db);
+        executor.setAgentContext(createViewerContext());
+        const validationService = {
+          startSession: vi.fn().mockReturnValue({ id: 'vs-test-startup' }),
+          recordRun: vi.fn(),
+          finalizeSession: vi.fn(),
+        } as unknown as import('../../src/validation/session-service.js').ValidationSessionService;
+        executor.setValidationService(validationService);
+        const { processManager, delegationManager } = createDelegationHarness([
+          { success: true, data: { response: 'OK' } },
+        ]);
+        executor.setAgentProcessManager(processManager);
+        executor.setDelegationManager(delegationManager);
+
+        const result = await executor.execute('agent_test', {
+          agent_id: 'qa-monitor',
+          test_data: [{ input: 'case-1' }],
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          data: expect.objectContaining({
+            auto_score: 100,
+            validation_session_id: null,
+            warning: 'score_not_persisted',
+          }),
+        });
+        expect(validationService.finalizeSession).toHaveBeenCalledWith(
+          'vs-test-startup',
+          expect.objectContaining({
+            execution_status: 'failed',
+          })
+        );
+      });
+
+      it('should continue agent_test when finalizeSession throws after a successful run', async () => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setSessionsDb(db);
+        executor.setAgentContext(createViewerContext());
+        const validationService = {
+          startSession: vi.fn().mockReturnValue({ id: 'vs-test-finalize' }),
+          recordRun: vi.fn(),
+          finalizeSession: vi.fn().mockImplementation(() => {
+            throw new Error('finalize failed');
+          }),
+        } as unknown as import('../../src/validation/session-service.js').ValidationSessionService;
+        executor.setValidationService(validationService);
+        const { processManager, delegationManager } = createDelegationHarness([
+          { success: true, data: { response: 'OK' } },
+        ]);
+        executor.setAgentProcessManager(processManager);
+        executor.setDelegationManager(delegationManager);
+
+        const result = await executor.execute('agent_test', {
+          agent_id: 'qa-monitor',
+          test_data: [{ input: 'case-1' }],
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          data: expect.objectContaining({
+            auto_score: 100,
+            validation_session_id: 'vs-test-finalize',
+          }),
+        });
+      });
     });
 
     describe('load_checkpoint tool', () => {
@@ -1007,8 +1092,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
         executor.setAgentContext(createViewerContext());
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = await executor.execute('os_restart_bot', {} as any);
+        const result = await executor.execute('os_restart_bot', {} as Record<string, unknown>);
 
         expect(result).toMatchObject({
           success: false,
@@ -1020,8 +1104,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
         executor.setAgentContext(createViewerContext());
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = await executor.execute('os_stop_bot', {} as any);
+        const result = await executor.execute('os_stop_bot', {} as Record<string, unknown>);
 
         expect(result).toMatchObject({
           success: false,

@@ -524,11 +524,11 @@ Activity 빈 상태 메시지 개선:
  Try: ask Conductor to run a task for this agent."
 ```
 
-Agents 탭 첫 진입 시 3개 시스템 에이전트 + 설명:
+Agents 탭 첫 진입 시 4개 시스템 에이전트 + 설명:
 
 ```text
-"These are your system agents. Conductor orchestrates, Dashboard generates briefings,
- Wiki compiles knowledge. Create your own agents with [+ New Agent]."
+"These are your system agents. os-agent manages OS-level tasks, Conductor orchestrates,
+ Dashboard generates briefings, Wiki compiles knowledge. Create your own agents with [+ New Agent]."
 ```
 
 **검증:** 빈 상태 메시지 표시 확인 + delegate 후 메시지 사라지고 로그 표시

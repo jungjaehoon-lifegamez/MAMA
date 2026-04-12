@@ -285,6 +285,29 @@ export class GatewayToolExecutor {
   setDisallowedGatewayTools(tools: string[]): void {
     this.disallowedGatewayTools = new Set(tools);
   }
+
+  private cleanupValidationSessionOnTelemetryFailure(
+    session: ValidationSessionRow | null,
+    error: unknown,
+    label: string
+  ): null {
+    if (!session || !this.validationService) {
+      return null;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      this.validationService.finalizeSession(session.id, {
+        execution_status: 'failed',
+        error_message: `${label}: ${message}`,
+      });
+    } catch (cleanupErr) {
+      securityLogger.warn(
+        `[Delegation telemetry] Failed to clean up validation session ${session.id}`,
+        cleanupErr
+      );
+    }
+    return null;
+  }
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
   }
@@ -2383,35 +2406,54 @@ export class GatewayToolExecutor {
     // 2. Start validation session for agent_test
     const testVer = this.sessionsDb ? getLatestVersion(this.sessionsDb, agentId) : null;
     const testAgentVersion = testVer?.version ?? 0;
-    const testValSession = this.validationService?.startSession(
-      agentId,
-      testAgentVersion,
-      'agent_test',
-      {
-        goal: `Test with ${items.length} items`,
-        customBeforeSnapshot: JSON.stringify({
-          schema_version: 1,
-          test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
-          sample_count: items.length,
-        }),
-      }
-    );
+    let testValSession: ValidationSessionRow | null = null;
+    try {
+      testValSession =
+        this.validationService?.startSession(agentId, testAgentVersion, 'agent_test', {
+          goal: `Test with ${items.length} items`,
+          customBeforeSnapshot: JSON.stringify({
+            schema_version: 1,
+            test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+            sample_count: items.length,
+          }),
+        }) ?? null;
+    } catch (telemetryErr) {
+      securityLogger.warn('[Agent test telemetry] Failed to start validation session', {
+        agentId,
+        testAgentVersion,
+        error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+      });
+    }
 
     // 3. Log test_run start
     let testRunId: number | null = null;
     if (this.sessionsDb) {
-      const row = logActivity(this.sessionsDb, {
-        agent_id: agentId,
-        agent_version: testAgentVersion,
-        type: 'test_run',
-        input_summary: `Testing with ${items.length} items`,
-        run_id: testValSession?.id,
-        execution_status: 'started',
-        trigger_reason: 'agent_test',
-      });
-      testRunId = row.id;
-      if (testValSession) {
-        this.validationService!.recordRun(testValSession.id, { activityId: row.id });
+      try {
+        const row = logActivity(this.sessionsDb, {
+          agent_id: agentId,
+          agent_version: testAgentVersion,
+          type: 'test_run',
+          input_summary: `Testing with ${items.length} items`,
+          run_id: testValSession?.id,
+          execution_status: 'started',
+          trigger_reason: 'agent_test',
+        });
+        testRunId = row.id;
+        if (testValSession && this.validationService) {
+          this.validationService.recordRun(testValSession.id, { activityId: row.id });
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to persist startup activity', {
+          agentId,
+          testValSessionId: testValSession?.id ?? null,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+        testValSession = this.cleanupValidationSessionOnTelemetryFailure(
+          testValSession,
+          telemetryErr,
+          'agent_test startup telemetry failed'
+        );
+        testRunId = null;
       }
     }
 
@@ -2463,40 +2505,60 @@ export class GatewayToolExecutor {
     const autoScore = results.length > 0 ? Math.round((passed / results.length) * 100) : 0;
 
     if (this.sessionsDb && testRunId) {
-      updateActivityScore(
-        this.sessionsDb,
-        testRunId,
-        autoScore,
-        {
-          total: results.length,
-          passed,
-          failed,
-          items: results.map((r, index) => ({
-            input: r.input.slice(0, 100),
-            result:
-              r.error ||
-              (items[index]?.expected !== undefined &&
-                (r.output ?? '').trim() !== items[index]!.expected!.trim())
-                ? 'fail'
-                : 'pass',
-          })),
-        },
-        'completed'
-      );
+      try {
+        updateActivityScore(
+          this.sessionsDb,
+          testRunId,
+          autoScore,
+          {
+            total: results.length,
+            passed,
+            failed,
+            items: results.map((r, index) => ({
+              input: r.input.slice(0, 100),
+              result:
+                r.error ||
+                (items[index]?.expected !== undefined &&
+                  (r.output ?? '').trim() !== items[index]!.expected!.trim())
+                  ? 'fail'
+                  : 'pass',
+            })),
+          },
+          'completed'
+        );
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to persist test score', {
+          agentId,
+          testRunId,
+          autoScore,
+          totalResults: results.length,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+      }
     }
 
     // 6. Finalize validation session with test metrics
     const testDurationMs = Date.now() - startTime;
     if (testValSession && this.validationService) {
-      this.validationService.finalizeSession(testValSession.id, {
-        execution_status: 'completed',
-        metrics: {
-          duration_ms: testDurationMs,
-          completion_rate: results.length > 0 ? passed / results.length : 0,
-          auto_score: autoScore,
-        },
-        test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
-      });
+      try {
+        this.validationService.finalizeSession(testValSession.id, {
+          execution_status: 'completed',
+          metrics: {
+            duration_ms: testDurationMs,
+            completion_rate: results.length > 0 ? passed / results.length : 0,
+            auto_score: autoScore,
+          },
+          test_input_summary: items.map((i) => i.input.slice(0, 80)).join('; '),
+        });
+      } catch (telemetryErr) {
+        securityLogger.warn('[Agent test telemetry] Failed to finalize validation session', {
+          agentId,
+          testValSessionId: testValSession.id,
+          autoScore,
+          totalResults: results.length,
+          error: telemetryErr instanceof Error ? telemetryErr.message : String(telemetryErr),
+        });
+      }
     }
 
     return {
@@ -2583,7 +2645,11 @@ export class GatewayToolExecutor {
       } catch (telemetryErr) {
         securityLogger.warn('[Delegation telemetry] Background bootstrap failed', telemetryErr);
         bgAgentVersion = 0;
-        bgValSession = null;
+        bgValSession = this.cleanupValidationSessionOnTelemetryFailure(
+          bgValSession,
+          telemetryErr,
+          'background delegate bootstrap failed'
+        );
       }
 
       // Fire-and-forget: finalize validation when complete

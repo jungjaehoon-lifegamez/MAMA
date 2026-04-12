@@ -8,6 +8,7 @@
 import type { SQLiteDatabase } from '../sqlite.js';
 import { applyAgentStoreTablesMigration } from './migrations/agent-store-tables.js';
 import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-metrics-response-avg.js';
+import { applyAgentActivityValidationColumnsMigration } from './migrations/agent-activity-validation-columns.js';
 
 type DB = SQLiteDatabase;
 
@@ -32,6 +33,7 @@ const TERMINAL_OUTCOME_ACTIVITY_SQL = [
 export function initAgentTables(db: SQLiteDatabase): void {
   applyAgentStoreTablesMigration(db);
   applyAgentMetricsResponseAverageMigration(db);
+  applyAgentActivityValidationColumnsMigration(db);
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────

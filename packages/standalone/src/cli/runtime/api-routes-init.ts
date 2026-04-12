@@ -116,8 +116,17 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
       agentVersion = ver?.version ?? 0;
       session = validationService?.startSession(agentId, agentVersion, 'system_run') ?? null;
+    } catch (bootstrapErr) {
+      routesLogger.warn(
+        '[executeValidatedRun] Failed to initialize validation bootstrap:',
+        bootstrapErr
+      );
+      agentVersion = 0;
+      session = null;
+    }
 
-      if (sessionsDb) {
+    if (sessionsDb) {
+      try {
         const startRow = logActivity(sessionsDb, {
           agent_id: agentId,
           agent_version: agentVersion,
@@ -128,16 +137,18 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           trigger_reason: 'system_run',
         });
         if (session) {
-          validationService?.recordRun(session.id, { activityId: startRow.id });
+          try {
+            validationService?.recordRun(session.id, { activityId: startRow.id });
+          } catch (telemetryErr) {
+            routesLogger.warn(
+              '[executeValidatedRun] Failed to link startup activity to validation session:',
+              telemetryErr
+            );
+          }
         }
+      } catch (telemetryErr) {
+        routesLogger.warn('[executeValidatedRun] Failed to write startup telemetry:', telemetryErr);
       }
-    } catch (bootstrapErr) {
-      routesLogger.warn(
-        '[executeValidatedRun] Failed to initialize validation bootstrap:',
-        bootstrapErr
-      );
-      agentVersion = 0;
-      session = null;
     }
 
     try {
@@ -473,8 +484,17 @@ This saves resources. Only compile when there is genuinely new information to do
             validationService?.startSession('conductor', auditVersion, 'audit', {
               goal: 'hourly system audit',
             }) ?? null;
+        } catch (bootstrapErr) {
+          routesLogger.warn(
+            '[Conductor Audit] Failed to initialize audit telemetry:',
+            bootstrapErr
+          );
+          auditVersion = 0;
+          auditSession = null;
+        }
 
-          if (sessionsDb) {
+        if (sessionsDb) {
+          try {
             const startRow = logActivity(sessionsDb, {
               agent_id: 'conductor',
               agent_version: auditVersion,
@@ -485,16 +505,18 @@ This saves resources. Only compile when there is genuinely new information to do
               trigger_reason: 'audit',
             });
             if (auditSession) {
-              validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+              try {
+                validationService?.recordRun(auditSession.id, { activityId: startRow.id });
+              } catch (telemetryErr) {
+                routesLogger.warn(
+                  '[Conductor Audit] Failed to link startup activity to validation session:',
+                  telemetryErr
+                );
+              }
             }
+          } catch (telemetryErr) {
+            routesLogger.warn('[Conductor Audit] Failed to write startup telemetry:', telemetryErr);
           }
-        } catch (bootstrapErr) {
-          routesLogger.warn(
-            '[Conductor Audit] Failed to initialize audit telemetry:',
-            bootstrapErr
-          );
-          auditVersion = 0;
-          auditSession = null;
         }
 
         const auditChannelId = `conductor-audit-${Date.now()}`;

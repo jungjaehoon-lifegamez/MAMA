@@ -366,6 +366,7 @@ register({
   description: 'Test agent with connector data. Auto-scores pass/fail ratio.',
   category: 'os_management',
   params: 'agent_id, sample_count?, test_data?',
+  viewerOnly: true,
 });
 
 // ─── Public API ──────────────────────────────────────────────────────────────
