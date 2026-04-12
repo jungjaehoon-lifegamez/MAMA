@@ -5,6 +5,7 @@ import {
   buildSpokeExtractionPrompt,
   buildProjectTruth,
   buildActivityExtractionPrompt,
+  buildEntityObservations,
 } from '../../src/memory/history-extractor.js';
 import type { NormalizedItem, ChannelConfig } from '../../src/connectors/framework/types.js';
 import type { HubContextEntry, ProjectTruth } from '../../src/memory/history-extractor.js';
@@ -497,6 +498,55 @@ describe('History Extractor', () => {
       const prompt = buildSpokeExtractionPrompt(items, hubContext, truth);
 
       expect(prompt).not.toContain('Project truth state');
+    });
+  });
+
+  describe('buildEntityObservations', () => {
+    it('builds person and project observations while preserving Slack raw provenance', () => {
+      const koreanProjectAlpha = '\uD504\uB85C\uC81D\uD2B8 \uC54C\uD30C';
+      const items: NormalizedItem[] = [
+        makeItem({
+          source: 'slack',
+          sourceId: 'C123:1710000000.000100',
+          channel: koreanProjectAlpha,
+          author: 'Alice Kim',
+          content: 'Alpha launch status updated',
+          metadata: {
+            channelId: 'C123',
+            channelName: koreanProjectAlpha,
+          },
+        }),
+      ];
+
+      const observations = buildEntityObservations(items, {
+        extractorVersion: 'history-extractor@v1',
+        embeddingModelVersion: 'multilingual-e5-large',
+        rawDbRefForSource: (source) => `/tmp/${source}/raw.db`,
+      });
+
+      expect(observations).toHaveLength(2);
+      expect(observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            entity_kind_hint: 'person',
+            surface_form: 'Alice Kim',
+            source_connector: 'slack',
+            source_raw_record_id: 'C123:1710000000.000100',
+            source_raw_db_ref: '/tmp/slack/raw.db',
+            scope_kind: 'channel',
+            scope_id: 'C123',
+          }),
+          expect.objectContaining({
+            entity_kind_hint: 'project',
+            surface_form: koreanProjectAlpha,
+            normalized_form: koreanProjectAlpha,
+            source_connector: 'slack',
+            source_raw_record_id: 'C123:1710000000.000100',
+            scope_kind: 'channel',
+            scope_id: 'C123',
+          }),
+        ])
+      );
     });
   });
 });

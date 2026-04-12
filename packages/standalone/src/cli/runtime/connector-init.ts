@@ -51,12 +51,14 @@ export async function initConnectors(
     buildActivityExtractionPrompt,
     buildSpokeExtractionPrompt,
     groupByChannel,
+    buildEntityObservations,
   } = await import('../../memory/history-extractor.js');
-  const { saveMemory, MEMORY_KINDS } = await import('@jungjaehoon/mama-core');
+  const { saveMemory, MEMORY_KINDS, MODEL_NAME } = await import('@jungjaehoon/mama-core');
   type MemoryKind = import('@jungjaehoon/mama-core').MemoryKind;
   type ConnectorsJson = import('../../connectors/framework/types.js').ConnectorsConfig;
   type ChannelConfigMap = import('../../connectors/framework/types.js').ChannelConfig;
   type NormalizedItem = import('../../connectors/framework/types.js').NormalizedItem;
+  type EntityObservationDraft = import('../../memory/history-extractor.js').EntityObservationDraft;
 
   let connectorsConfig: ConnectorsJson;
   if (existsSync(connectorsConfigPath)) {
@@ -125,6 +127,13 @@ export async function initConnectors(
     );
 
     const validKinds = new Set<string>(MEMORY_KINDS);
+    const observationExtractorVersion = 'history-extractor@v1';
+    const upsertEntityObservation = (await import('@jungjaehoon/mama-core')) as unknown as {
+      upsertEntityObservation?: (input: EntityObservationDraft) => Promise<unknown>;
+    };
+    const rawDbRefForSource = (source: string): string => {
+      return join(homedir(), '.mama', 'connectors', source, 'raw.db');
+    };
 
     const extractAndSave = async (
       label: string,
@@ -140,6 +149,16 @@ export async function initConnectors(
           continue;
         }
         try {
+          if (upsertEntityObservation.upsertEntityObservation) {
+            const observations = buildEntityObservations(channelItems, {
+              extractorVersion: observationExtractorVersion,
+              embeddingModelVersion: MODEL_NAME,
+              rawDbRefForSource,
+            });
+            for (const observation of observations) {
+              await upsertEntityObservation.upsertEntityObservation(observation);
+            }
+          }
           if (!connectorExtractionFn) throw new Error('Extraction not available');
           const responseText = await connectorExtractionFn(prompt);
           const jsonMatch = responseText.match(/\[[\s\S]*\]/);
