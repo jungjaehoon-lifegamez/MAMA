@@ -5,9 +5,11 @@
 
 ---
 
+> Current frontdoor note: in the viewer and webchat, `os-agent` is the user-facing main agent. `conductor` remains available for audit/background orchestration and advanced multi-agent flows.
+
 ## Council Engine
 
-A structured multi-agent discussion system. When the Conductor generates a `council_plan` block, the designated agents engage in round-by-round sequential discussions.
+A structured multi-agent discussion system. When the lead orchestration agent generates a `council_plan` block, the designated agents engage in round-by-round sequential discussions.
 
 ### Configuration
 
@@ -21,7 +23,7 @@ multi_agent:
 
 ### Trigger
 
-Automatically executed when the Conductor includes a `council_plan` JSON block in its response:
+Automatically executed when the lead orchestration agent includes a `council_plan` JSON block in its response:
 
 ```json
 {
@@ -35,7 +37,7 @@ Automatically executed when the Conductor includes a `council_plan` JSON block i
 
 ### Execution Flow
 
-1. Conductor generates `council_plan` -> System validates agent existence
+1. Lead agent generates `council_plan` -> System validates agent existence
 2. For each round:
    - All participating agents speak in order
    - The full conversation from previous rounds is passed as context
@@ -52,7 +54,7 @@ Automatically executed when the Conductor includes a `council_plan` JSON block i
 
 ## Dynamic Workflow DAG
 
-When the Conductor defines tasks as a DAG (Directed Acyclic Graph), ephemeral (temporary) agents are created and executed in parallel/sequential order based on dependencies.
+When the lead orchestration agent defines tasks as a DAG (Directed Acyclic Graph), ephemeral (temporary) agents are created and executed in parallel/sequential order based on dependencies.
 
 ### Configuration
 
@@ -66,7 +68,7 @@ multi_agent:
     backend_balancing: true # Claude <-> Codex round-robin
 ```
 
-### Conductor Output Example
+### Lead Agent Output Example
 
 ```json
 {
@@ -194,13 +196,13 @@ ULTRAWORK: Implement OAuth2 authentication module
 
 **Phase 1: PLANNING**
 
-- Conductor analyzes the task and generates a plan
+- Lead agent analyzes the task and generates a plan
 - Multi-perspective review via Council discussion (optional)
 - Output: `~/.mama/workspace/ultrawork/{session_id}/plan.md`
 
 **Phase 2: BUILDING**
 
-- Conductor delegates plan tasks using the `DELEGATE::` pattern
+- Lead agent delegates plan tasks using the `delegate()` gateway tool
 - Records each step's result in `progress.json`
 - Continues until `BUILD_COMPLETE` marker or max_steps is reached
 
@@ -291,11 +293,11 @@ multi_agent:
 
 ### Permissions by Tier
 
-| Tier       | Access Scope                              | Use Case              |
-| ---------- | ----------------------------------------- | --------------------- |
-| **Tier 1** | All tools (Read, Edit, Write, Bash, etc.) | Conductor, Developer  |
-| **Tier 2** | Read-only + limited write                 | Implementer           |
-| **Tier 3** | Custom tool list only                     | Reviewer, QA, Analyst |
+| Tier       | Access Scope                              | Use Case                       |
+| ---------- | ----------------------------------------- | ------------------------------ |
+| **Tier 1** | All tools (Read, Edit, Write, Bash, etc.) | os-agent, conductor, developer |
+| **Tier 2** | Read-only + limited write                 | Implementer                    |
+| **Tier 3** | Custom tool list only                     | Reviewer, QA, Analyst          |
 
 ---
 

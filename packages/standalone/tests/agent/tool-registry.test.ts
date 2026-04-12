@@ -159,6 +159,11 @@ describe('ToolRegistry', () => {
       expect(tool?.viewerOnly).toBe(true);
     });
 
+    it('should mark agent_test as viewerOnly', () => {
+      const tool = ToolRegistry.getTool('agent_test');
+      expect(tool?.viewerOnly).toBe(true);
+    });
+
     it('should not mark utility tools as viewerOnly', () => {
       const tool = ToolRegistry.getTool('Read');
       expect(tool?.viewerOnly).toBeUndefined();

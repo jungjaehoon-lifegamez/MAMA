@@ -28,6 +28,7 @@
 import type { MAMAConfig } from '../config/types.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import type { SQLiteDatabase } from '../../sqlite.js';
 import {
   DiscordGateway,
   SlackGateway,
@@ -69,7 +70,8 @@ export async function initGateways(
   messageRouter: MessageRouter,
   toolExecutor: GatewayToolExecutor,
   agentLoop: AgentLoop,
-  runtimeBackend: 'claude' | 'codex-mcp'
+  runtimeBackend: 'claude' | 'codex-mcp',
+  db: SQLiteDatabase
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
@@ -132,6 +134,8 @@ export async function initGateways(
         // Wire delegate dependencies so code-act sandbox can call delegate()
         toolExecutor.setAgentProcessManager(multiAgentDiscord.getProcessManager());
         toolExecutor.setDelegationManager(multiAgentDiscord.getDelegationManager());
+        // Wire sessions DB to delegation manager for agent_activity logging
+        multiAgentDiscord.getDelegationManager().setSessionsDb(db);
         console.log('[start] ✓ Gateway tool executor wired to multi-agent handler');
       }
 
@@ -179,6 +183,8 @@ export async function initGateways(
         // Wire delegate dependencies so code-act sandbox can call delegate()
         toolExecutor.setAgentProcessManager(multiAgentSlack.getProcessManager());
         toolExecutor.setDelegationManager(multiAgentSlack.getDelegationManager());
+        // Wire sessions DB to delegation manager for agent_activity logging
+        multiAgentSlack.getDelegationManager().setSessionsDb(db);
         console.log('[start] ✓ Gateway tool executor wired to Slack multi-agent handler');
       }
 

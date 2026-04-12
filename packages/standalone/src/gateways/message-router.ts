@@ -44,6 +44,7 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
+import { getLatestVersion, logActivity } from '../db/agent-store.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -145,6 +146,8 @@ const SENSITIVE_PATTERNS = [
 ];
 
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
+const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
+const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 
 /**
  * Sanitize user-supplied text before injecting into prompts.
@@ -162,7 +165,9 @@ function sanitizeForPrompt(text: string): string {
     .replace(/`/g, '\\`')
     .replace(/\$/g, '\\$')
     .replace(/\{/g, '\\{')
-    .replace(/\}/g, '\\}');
+    .replace(/\}/g, '\\}')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 function stripGatewayDecorations(text: string): string {
@@ -222,6 +227,119 @@ export class MessageRouter {
       status: 'applied' | 'skipped' | 'failed';
     }>,
   };
+
+  // Sessions DB for conductor activity logging
+  private sessionsDb: import('../sqlite.js').default | null = null;
+  setSessionsDb(db: import('../sqlite.js').default): void {
+    this.sessionsDb = db;
+  }
+
+  // UI command queue for page context awareness
+  private uiCommandQueue: import('../api/ui-command-handler.js').UICommandQueue | null = null;
+  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
+    this.uiCommandQueue = queue;
+  }
+
+  // Validation service for memory agent + conductor sessions
+  private validationService:
+    | import('../validation/session-service.js').ValidationSessionService
+    | null = null;
+  setValidationService(
+    svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {
+    this.validationService = svc;
+  }
+
+  private getPageContextPrefix(message: NormalizedMessage): string {
+    if (!this.uiCommandQueue) {
+      return '';
+    }
+    if (message.source !== 'viewer') {
+      return '';
+    }
+    const ctx = this.uiCommandQueue.getPageContext(message.channelId);
+    if (!ctx || !ctx.currentRoute) {
+      return '';
+    }
+    const data = (ctx.pageData as Record<string, unknown> | null) ?? null;
+
+    // Build rich context that tells conductor exactly what the user sees
+    const lines: string[] = ['<viewer-context>'];
+    lines.push(`route: ${sanitizeForPrompt(ctx.currentRoute)}`);
+    if (ctx.selectedItem?.type && ctx.selectedItem?.id) {
+      lines.push(
+        `selected_item: ${sanitizeForPrompt(ctx.selectedItem.type)}:${sanitizeForPrompt(ctx.selectedItem.id)}`
+      );
+    }
+    if (data?.summary) {
+      lines.push(`summary: ${sanitizeForPrompt(String(data.summary))}`);
+    }
+
+    if (data?.pageType === 'agent-list' && Array.isArray(data.agents)) {
+      lines.push(`agents:`);
+      const selectedAgentId = ctx.selectedItem?.type === 'agent' ? ctx.selectedItem.id : null;
+      const allAgents = data.agents as Array<Record<string, unknown>>;
+      const shownAgents =
+        selectedAgentId !== null
+          ? allAgents.filter((agent) => String(agent.id ?? '') === selectedAgentId).slice(0, 1)
+          : allAgents.slice(0, VIEWER_CONTEXT_AGENT_LIST_LIMIT);
+      for (const a of shownAgents) {
+        const parts = [`  - ${sanitizeForPrompt(String(a.name || a.id || 'unknown'))}`];
+        if (a.validation) {
+          parts.push(`validation:${sanitizeForPrompt(String(a.validation))}`);
+        }
+        if (a.enabled === false) {
+          parts.push('(disabled)');
+        }
+        if (a.system === true) {
+          parts.push('(system)');
+        }
+        lines.push(parts.join(' '));
+      }
+      const totalAgents = allAgents.length;
+      const enabledAgents = allAgents.filter((agent) => agent.enabled !== false).length;
+      const disabledAgents = totalAgents - enabledAgents;
+      const systemAgents = allAgents.filter((agent) => agent.system === true).length;
+      const hiddenAgents = Math.max(0, totalAgents - shownAgents.length);
+      lines.push(
+        `agent_counts: total=${totalAgents} enabled=${enabledAgents} disabled=${disabledAgents} system=${systemAgents}`
+      );
+      if (hiddenAgents > 0) {
+        lines.push(`(+${hiddenAgents} more agents)`);
+      }
+      if (Array.isArray(data.alerts) && (data.alerts as string[]).length > 0) {
+        const shownAlerts = (data.alerts as string[]).slice(0, VIEWER_CONTEXT_ALERT_LIMIT);
+        lines.push(
+          `alerts: ${shownAlerts.map((item) => sanitizeForPrompt(String(item))).join(', ')}`
+        );
+        const hiddenAlerts = (data.alerts as string[]).length - shownAlerts.length;
+        if (hiddenAlerts > 0) {
+          lines.push(`(+${hiddenAlerts} more alerts)`);
+        }
+      }
+    }
+
+    if (data?.pageType === 'agent-detail') {
+      const agent = data.agent as Record<string, unknown> | null;
+      if (agent) {
+        lines.push(
+          `agent: ${sanitizeForPrompt(String(agent.name))} (${sanitizeForPrompt(String(agent.id))}) v${sanitizeForPrompt(String(agent.version))} tier:${sanitizeForPrompt(String(agent.tier))} model:${sanitizeForPrompt(String(agent.model))}`
+        );
+      }
+      if (data.activeTab) {
+        lines.push(`active_tab: ${sanitizeForPrompt(String(data.activeTab))}`);
+      }
+      const val = data.validation as Record<string, unknown> | null;
+      if (val) {
+        lines.push(
+          `validation: outcome=${sanitizeForPrompt(String(val.outcome))} execution=${sanitizeForPrompt(String(val.execution))} baseline=v${sanitizeForPrompt(String(val.baseline_version ?? 'none'))}`
+        );
+      }
+    }
+
+    lines.push('</viewer-context>');
+    return lines.join('\n') + '\n';
+  }
 
   setGatewayRegistry(registry: GatewayRegistry): void {
     this.gatewayRegistry = registry;
@@ -667,8 +785,9 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
-        // Add text content (with memory context and skill context if matched)
-        const effectiveMessageText = `${memoryPrefix}${skillPrefix}${messageText || ''}`;
+        // Add text content (with memory context, skill context, and page context)
+        const pageCtx = this.getPageContextPrefix(message);
+        const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -690,12 +809,17 @@ This protects your credentials from being exposed in chat logs.`;
           }
         }
 
+        const conductorStart = Date.now();
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
+        this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       } else {
-        const effectiveText = `${memoryPrefix}${skillPrefix}${message.text}`;
+        const pageCtx = this.getPageContextPrefix(message);
+        const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}`;
+        const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
+        this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       }
 
       // Auto-extract facts from conversation (fire-and-forget, non-blocking)
@@ -714,6 +838,15 @@ This protects your credentials from being exposed in chat logs.`;
         this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
       }
     } catch (error) {
+      const durationMs = Date.now() - startTime;
+      this.logAgentActivity(
+        this.resolveFrontdoorAgentId(message),
+        'task_error',
+        message.text?.slice(0, 200),
+        undefined,
+        durationMs,
+        error instanceof Error ? error.message : String(error)
+      );
       // CLI timeout or resume failure - invalidate session to force fresh start next time
       const errorMsg = error instanceof Error ? error.message : String(error);
       const isCriticalError =
@@ -1336,7 +1469,10 @@ INSTRUCTION:
     botResponse: string,
     message?: NormalizedMessage
   ): Promise<void> {
-    if (!this.memoryAgentProcessManager || !this.memoryAuditQueue) return;
+    const memoryAuditQueue = this.memoryAuditQueue;
+    if (!this.memoryAgentProcessManager || !memoryAuditQueue) {
+      return;
+    }
 
     const now = Date.now();
     const source = message?.source ?? 'memory-agent';
@@ -1406,15 +1542,115 @@ INSTRUCTION:
     const deltaKeySource = candidates[0]?.id || userText;
     const deltaKey = createHash('sha256').update(deltaKeySource).digest('hex').slice(0, 16);
 
-    this.memoryAuditQueue
-      .enqueue(job)
-      .then((ack) => {
+    const memoryStart = Date.now();
+    // Start validation session for memory agent
+    let memValSession: { id: string } | null = null;
+    if (this.validationService && this.sessionsDb) {
+      try {
+        const ver = getLatestVersion(this.sessionsDb, 'memory');
+        memValSession = this.validationService.startSession('memory', ver?.version ?? 0, 'audit', {
+          goal: `Extract: ${displayTopic.slice(0, 100)}`,
+        });
+      } catch {
+        /* non-fatal */
+      }
+    }
+
+    void (async () => {
+      try {
+        const ack = await memoryAuditQueue.enqueue(job);
         this.recordMemoryAuditAck(ack, topic, channelKey, displayTopic, deltaKey);
-      })
-      .catch((err) => {
+        const dur = Date.now() - memoryStart;
+        this.logAgentActivity(
+          'memory',
+          'task_complete',
+          displayTopic.slice(0, 200),
+          undefined,
+          dur
+        );
+        if (memValSession && this.validationService) {
+          try {
+            this.validationService.finalizeSession(memValSession.id, {
+              execution_status: 'completed',
+              metrics: { duration_ms: dur },
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
+      } catch (err) {
         this.memoryAgentStats.acksFailed++;
+        const dur = Date.now() - memoryStart;
+        this.logAgentActivity(
+          'memory',
+          'task_error',
+          displayTopic.slice(0, 200),
+          undefined,
+          dur,
+          err instanceof Error ? err.message : String(err)
+        );
+        if (memValSession && this.validationService) {
+          try {
+            this.validationService.finalizeSession(memValSession.id, {
+              execution_status: 'failed',
+              error_message: err instanceof Error ? err.message : String(err),
+              metrics: { duration_ms: dur },
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
         logger.warn(`[memory-agent] Failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    })();
+  }
+
+  // ── Activity Logging (shared by conductor + memory agent) ───────────
+
+  private resolveFrontdoorAgentId(message: NormalizedMessage): string {
+    return message.source === 'viewer' ? 'os-agent' : 'conductor';
+  }
+
+  private logFrontdoorActivity(
+    message: NormalizedMessage,
+    inputText: string,
+    responseText: string,
+    durationMs: number
+  ): void {
+    this.logAgentActivity(
+      this.resolveFrontdoorAgentId(message),
+      'task_complete',
+      inputText?.slice(0, 200),
+      responseText?.slice(0, 500),
+      durationMs
+    );
+  }
+
+  private logAgentActivity(
+    agentId: string,
+    type: string,
+    inputSummary?: string,
+    outputSummary?: string,
+    durationMs?: number,
+    errorMessage?: string
+  ): void {
+    if (!this.sessionsDb) {
+      return;
+    }
+    try {
+      const ver = getLatestVersion(this.sessionsDb, agentId);
+      logActivity(this.sessionsDb, {
+        agent_id: agentId,
+        agent_version: ver?.version ?? 0,
+        type,
+        input_summary: inputSummary,
+        output_summary: outputSummary,
+        duration_ms: durationMs ?? 0,
+        error_message: errorMessage,
       });
+    } catch {
+      // Non-fatal — activity logging should never break message handling
+    }
   }
 }
 

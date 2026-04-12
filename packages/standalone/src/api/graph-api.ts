@@ -12,6 +12,31 @@ import os from 'os';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
+import {
+  handleGetAgents,
+  handleGetAgent,
+  handleCreateAgent,
+  handleUpdateAgent,
+  handleArchiveAgent,
+  handleListVersions,
+  handleGetAgentMetrics,
+  handleGetAgentActivity,
+  handleGetActivitySummary,
+  handleCompareVersions,
+} from './agent-handler.js';
+import {
+  handleGetUICommands,
+  handlePostPageContext,
+  handlePostUICommand,
+} from './ui-command-handler.js';
+import {
+  getValidationSummary,
+  listValidationHistory,
+  getValidationSessionDetail,
+  approveValidationSession,
+  getAgentValidationState,
+} from '../validation/store.js';
+import type { ValidationTriggerType } from '../validation/types.js';
 import type {
   GraphNode,
   GraphEdge,
@@ -63,7 +88,6 @@ function getViewerDirectory(): string {
 const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
-const VIEWER_JS_PATH = path.join(VIEWER_DIR, 'viewer.js');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
@@ -76,6 +100,15 @@ const SIMILAR_QUERY_DECISION_CHARS = 400;
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
+const supportedManagedBackends = ['claude', 'codex', 'codex-mcp', 'gemini'];
+const isCodexFamilyBackend = (backend: string): boolean =>
+  backend === 'codex' || backend === 'codex-mcp';
+const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
+  'agent_test',
+  'delegate_run',
+  'system_run',
+  'audit',
+]);
 const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
@@ -374,10 +407,6 @@ function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_CSS_PATH, 'text/css');
 }
 
-function handleJsRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, VIEWER_JS_PATH, 'application/javascript');
-}
-
 async function handleGraphRequest(
   _req: IncomingMessage,
   res: ServerResponse,
@@ -535,6 +564,35 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
     });
     req.on('error', reject);
   });
+}
+
+async function readBodyOrRespond(
+  req: IncomingMessage,
+  res: ServerResponse
+): Promise<Record<string, unknown> | null> {
+  try {
+    return await readBody(req);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusCode =
+      message === 'Invalid JSON'
+        ? 400
+        : message.includes('Request body too large (max 1MB)')
+          ? 413
+          : 500;
+    res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error:
+          message === 'Invalid JSON'
+            ? 'Invalid JSON'
+            : message.includes('Request body too large (max 1MB)')
+              ? 'Request body too large (max 1MB)'
+              : message,
+      })
+    );
+    return null;
+  }
 }
 
 async function handleUpdateRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -992,6 +1050,21 @@ async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerRespon
 }
 
 function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
+  const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
+    const parsed = Number.parseInt(value ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed < 1) {
+      return fallback;
+    }
+    return Math.min(parsed, max);
+  };
+  const parseValidationTriggerType = (value: string | null): ValidationTriggerType | null => {
+    if (!value) {
+      return null;
+    }
+    const normalized = value.trim().toLowerCase() as ValidationTriggerType;
+    return VALIDATION_TRIGGER_TYPES.has(normalized) ? normalized : null;
+  };
+
   return async function graphHandler(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     if (!req.url) {
       res.writeHead(400, { 'Content-Type': 'text/plain' });
@@ -1045,18 +1118,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET/HEAD /viewer.css - serve stylesheet (legacy path)
-    if (pathname === '/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleCssRequest(req, res);
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer.js - serve JavaScript
-    if (pathname === '/viewer.js' && (req.method === 'GET' || req.method === 'HEAD')) {
-      handleJsRequest(req, res);
-      return true;
-    }
-
     // Route: GET/HEAD /sw.js - serve Service Worker
     if (pathname === '/sw.js' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, SW_JS_PATH, 'application/javascript');
@@ -1071,12 +1132,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
 
     // Route: GET/HEAD /viewer/manifest.json - serve PWA manifest
     if (pathname === '/viewer/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
-      serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
-      return true;
-    }
-
-    // Route: GET/HEAD /manifest.json - legacy or custom host compatibility
-    if (pathname === '/manifest.json' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, MANIFEST_JSON_PATH, 'application/json');
       return true;
     }
@@ -1126,30 +1181,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET/HEAD /viewer/js/modules/*.js - serve feature modules
     if (
       pathname.startsWith('/viewer/js/modules/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'modules', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /js/utils/*.js - serve utility modules (legacy path)
-    if (
-      pathname.startsWith('/js/utils/') &&
-      pathname.endsWith('.js') &&
-      (req.method === 'GET' || req.method === 'HEAD')
-    ) {
-      const fileName = pathname.split('/').pop()!;
-      const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
-      serveStaticFile(res, filePath, 'application/javascript');
-      return true;
-    }
-
-    // Route: GET/HEAD /js/modules/*.js - serve feature modules (legacy path)
-    if (
-      pathname.startsWith('/js/modules/') &&
       pathname.endsWith('.js') &&
       (req.method === 'GET' || req.method === 'HEAD')
     ) {
@@ -1568,6 +1599,454 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       await handleExportRequest(req, res, params);
       return true;
     }
+
+    // ── UI Command API (SmartStore bidirectional communication) ──
+
+    // Route: GET /api/ui/commands — viewer polls for pending commands
+    if (pathname === '/api/ui/commands' && req.method === 'GET') {
+      if (options.uiCommandQueue) {
+        handleGetUICommands(res, options.uiCommandQueue);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ commands: [] }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/ui/page-context — agent reads current viewer state
+    if (pathname === '/api/ui/page-context' && req.method === 'GET') {
+      if (options.uiCommandQueue) {
+        const { handleGetPageContext } = await import('./ui-command-handler.js');
+        handleGetPageContext(res, options.uiCommandQueue);
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, context: null }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/page-context — viewer reports current page state
+    if (pathname === '/api/ui/page-context' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
+        handlePostPageContext(
+          res,
+          body as unknown as import('./ui-command-handler.js').PageContext,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/commands — agent pushes UI commands
+    if (pathname === '/api/ui/commands' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
+        handlePostUICommand(
+          res,
+          body as unknown as import('./ui-command-handler.js').UICommand,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/ui/commands/ack — viewer acknowledges applied commands
+    if (pathname === '/api/ui/commands/ack' && req.method === 'POST') {
+      if (options.uiCommandQueue) {
+        const body = await readBodyOrRespond(req, res);
+        if (!body) {
+          return true;
+        }
+        const { handlePostUICommandAck } = await import('./ui-command-handler.js');
+        handlePostUICommandAck(
+          res,
+          body as unknown as import('./ui-command-handler.js').UICommandAck,
+          options.uiCommandQueue
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, acknowledged: 0 }));
+      }
+      return true;
+    }
+
+    // ── Agent Management API (Managed Agents pattern) ──
+
+    // Route: GET /api/agents/:id/versions/:v1/compare/:v2 — before/after (must be before /api/agents/:id)
+    if (
+      pathname.match(/^\/api\/agents\/[^/]+\/versions\/\d+\/compare\/\d+$/) &&
+      req.method === 'GET'
+    ) {
+      const parts = pathname.split('/');
+      const agentId = decodeURIComponent(parts[3]);
+      const v1 = parseInt(parts[5], 10);
+      const v2 = parseInt(parts[7], 10);
+      if (options.sessionsDb) {
+        handleCompareVersions(res, agentId, v1, v2, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/versions — version history
+    if (pathname.match(/^\/api\/agents\/[^/]+\/versions$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        handleListVersions(res, agentId, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/metrics?from=&to= — metrics for period
+    if (pathname.match(/^\/api\/agents\/[^/]+\/metrics$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      // Parse query params from raw URL
+      const rawUrl = req.url || pathname;
+      const qIdx = rawUrl.indexOf('?');
+      const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+      const from = params.get('from') || '2020-01-01';
+      const to = params.get('to') || '2099-12-31';
+      if (options.sessionsDb) {
+        handleGetAgentMetrics(res, agentId, from, to, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/activity?limit= — activity log
+    if (pathname.match(/^\/api\/agents\/[^/]+\/activity$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const rawUrl = req.url || pathname;
+      const qIdx = rawUrl.indexOf('?');
+      const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+      const limit = parsePositiveInt(params.get('limit'), 20, 100);
+      if (options.sessionsDb) {
+        handleGetAgentActivity(res, agentId, options.sessionsDb, limit);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id/archive — archive agent
+    if (pathname.match(/^\/api\/agents\/[^/]+\/archive$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        handleArchiveAgent(res, agentId, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // ── Validation API ──────────────────────────────────────────────────
+
+    // Route: GET /api/agents/:id/validation/summary?trigger_type=
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/summary$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const triggerType = parseValidationTriggerType(params.get('trigger_type'));
+        if (!triggerType) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trigger_type required' }));
+          return true;
+        }
+        const summary = getValidationSummary(options.sessionsDb, agentId, triggerType);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ summary }));
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/validation/history?trigger_type=
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/history$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        const limit = parsePositiveInt(params.get('limit'), 50, 200);
+        const triggerType = parseValidationTriggerType(params.get('trigger_type'));
+        if (!triggerType) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'trigger_type required' }));
+          return true;
+        }
+        const history = listValidationHistory(options.sessionsDb, agentId, limit, triggerType);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ history }));
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/validation-sessions/:id
+    if (pathname.match(/^\/api\/validation-sessions\/[^/]+$/) && req.method === 'GET') {
+      const sessionId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const detail = getValidationSessionDetail(options.sessionsDb, sessionId);
+        if (!detail) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Session not found' }));
+        } else {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(detail));
+        }
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id/validation/approve
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/approve$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        let sessionId = params.get('session_id');
+        if (!sessionId) {
+          const body = await readBodyOrRespond(req, res);
+          if (!body) {
+            return true;
+          }
+          sessionId = body?.session_id as string | null;
+        }
+        if (!sessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'session_id required' }));
+        } else {
+          const detail = getValidationSessionDetail(options.sessionsDb, sessionId);
+          if (!detail) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Session not found' }));
+            return true;
+          }
+          if (detail.session.agent_id !== agentId) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'session does not belong to requested agent' }));
+            return true;
+          }
+          try {
+            approveValidationSession(options.sessionsDb, sessionId);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true, approved_session: sessionId }));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            const statusCode = /not found|required|invalid/i.test(message) ? 400 : 500;
+            res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: message }));
+          }
+        }
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id/validation/compare?session=X&baseline=approved
+    if (pathname.match(/^\/api\/agents\/[^/]+\/validation\/compare$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      if (options.sessionsDb) {
+        const rawUrl = req.url || pathname;
+        const qIdx = rawUrl.indexOf('?');
+        const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+        const sessionId = params.get('session');
+        const baselineMode = params.get('baseline') || 'approved';
+
+        if (!sessionId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'session query parameter required' }));
+        } else {
+          const current = getValidationSessionDetail(options.sessionsDb, sessionId);
+          if (!current) {
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Session not found' }));
+          } else if (current.session.agent_id !== agentId) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'session does not belong to requested agent' }));
+          } else {
+            let baselineSessionId: string | null = null;
+            if (baselineMode === 'approved') {
+              const state = getAgentValidationState(
+                options.sessionsDb,
+                agentId,
+                current.session.trigger_type
+              );
+              baselineSessionId = state?.approved_session_id ?? null;
+            } else {
+              baselineSessionId = baselineMode;
+            }
+
+            const baseline = baselineSessionId
+              ? getValidationSessionDetail(options.sessionsDb, baselineSessionId)
+              : null;
+            if (baselineMode !== 'approved' && baselineSessionId && !baseline) {
+              res.writeHead(404, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: 'baseline session not found' }));
+              return true;
+            }
+            if (baseline && baseline.session.agent_id !== agentId) {
+              res.writeHead(403, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({ error: 'baseline session does not belong to requested agent' })
+              );
+              return true;
+            }
+            if (baseline && baseline.session.trigger_type !== current.session.trigger_type) {
+              res.writeHead(400, { 'Content-Type': 'application/json' });
+              res.end(
+                JSON.stringify({
+                  error: 'baseline session trigger_type does not match current session',
+                })
+              );
+              return true;
+            }
+            const baselineMetrics = new Map(
+              (baseline?.metrics ?? []).map((m: { name: string; value: number }) => [
+                m.name,
+                m.value,
+              ])
+            );
+            const deltas = current.metrics.map(
+              (m: { name: string; value: number; direction: string }) => {
+                const bVal = baselineMetrics.get(m.name) as number | undefined;
+                return {
+                  name: m.name,
+                  current: m.value,
+                  baseline: bVal ?? null,
+                  delta: bVal !== undefined ? m.value - bVal : null,
+                  direction: m.direction,
+                };
+              }
+            );
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ current, baseline, deltas }));
+          }
+        }
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/activity-summary — aggregated activity with alerts
+    if (pathname === '/api/agents/activity-summary' && req.method === 'GET') {
+      const rawUrl = req.url || pathname;
+      const qIdx = rawUrl.indexOf('?');
+      const params = qIdx >= 0 ? new URLSearchParams(rawUrl.slice(qIdx)) : new URLSearchParams();
+      const since =
+        params.get('since') || new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      if (options.sessionsDb) {
+        handleGetActivitySummary(res, options.sessionsDb, since);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents — list all agents
+    if (pathname === '/api/agents' && req.method === 'GET') {
+      const config = loadMAMAConfig();
+      if (options.sessionsDb) {
+        handleGetAgents(res, config, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents — create new agent
+    if (pathname === '/api/agents' && req.method === 'POST') {
+      const body = await readBodyOrRespond(req, res);
+      if (!body) {
+        return true;
+      }
+      if (options.sessionsDb) {
+        await handleCreateAgent(res, body, options.sessionsDb, {
+          loadConfig: async () => loadMAMAConfig(),
+          saveConfig: async (config) =>
+            saveMAMAConfig(config as Parameters<typeof saveMAMAConfig>[0]),
+          applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
+          restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
+        });
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: GET /api/agents/:id — single agent detail (must be after /api/agents/:id/*)
+    if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'GET') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const config = loadMAMAConfig();
+      if (options.sessionsDb) {
+        handleGetAgent(res, agentId, config, options.sessionsDb);
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // Route: POST /api/agents/:id — update agent (Managed Agents: version required)
+    if (pathname.match(/^\/api\/agents\/[^/]+$/) && req.method === 'POST') {
+      const agentId = decodeURIComponent(pathname.split('/')[3]);
+      const body = await readBodyOrRespond(req, res);
+      if (!body) {
+        return true;
+      }
+      if (options.sessionsDb) {
+        await handleUpdateAgent(res, agentId, body, options.sessionsDb, {
+          loadConfig: async () => loadMAMAConfig(),
+          saveConfig: async (config) =>
+            saveMAMAConfig(config as Parameters<typeof saveMAMAConfig>[0]),
+          applyMultiAgentConfig: options.applyMultiAgentConfig ?? null,
+          restartMultiAgentAgent: options.restartMultiAgentAgent ?? null,
+        });
+      } else {
+        res.writeHead(503, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Sessions DB not available' }));
+      }
+      return true;
+    }
+
+    // ── Legacy Multi-Agent API (redirect-compatible) ──
 
     // Route: GET /api/multi-agent/status - get multi-agent system status
     if (pathname === '/api/multi-agent/status' && req.method === 'GET') {
@@ -2393,9 +2872,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
     }
     if (
       config.agent.backend &&
-      !['claude', 'codex-mcp'].includes(String(config.agent.backend).toLowerCase())
+      !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude" or "codex-mcp"');
+      errors.push('agent.backend must be "claude", "codex", "codex-mcp", or "gemini"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -2403,8 +2882,8 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backend === 'claude' && !isClaudeModel(model)) {
         errors.push('agent.model must be a Claude model when agent.backend is "claude"');
       }
-      if (backend === 'codex-mcp' && !isCodexModel(model)) {
-        errors.push('agent.model must be a Codex/OpenAI model when agent.backend is "codex-mcp"');
+      if (isCodexFamilyBackend(backend) && !isCodexModel(model)) {
+        errors.push(`agent.model must be a Codex/OpenAI model when agent.backend is "${backend}"`);
       }
     }
   }
@@ -2433,8 +2912,10 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       const modelRaw = cfg.model;
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
-        if (!['claude', 'codex-mcp'].includes(backend)) {
-          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex-mcp"`);
+        if (!supportedManagedBackends.includes(backend)) {
+          errors.push(
+            `multi_agent.agents.${agentId}.backend must be "claude", "codex", "codex-mcp", or "gemini"`
+          );
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -2443,9 +2924,9 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
               `multi_agent.agents.${agentId}.model must be a Claude model when backend is "claude"`
             );
           }
-          if (backend === 'codex-mcp' && !isCodexModel(modelRaw)) {
+          if (isCodexFamilyBackend(backend) && !isCodexModel(modelRaw)) {
             errors.push(
-              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "codex-mcp"`
+              `multi_agent.agents.${agentId}.model must be a Codex/OpenAI model when backend is "${backend}"`
             );
           }
         }
@@ -2836,9 +3317,9 @@ async function handleMultiAgentUpdateAgentRequest(
     if (
       body.backend !== undefined &&
       (typeof body.backend !== 'string' ||
-        !['claude', 'codex-mcp'].includes(String(body.backend).toLowerCase()))
+        !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude" or "codex-mcp"');
+      validationErrors.push('backend must be "claude", "codex", "codex-mcp", or "gemini"');
     }
 
     const nextBackend = (
@@ -2851,8 +3332,10 @@ async function handleMultiAgentUpdateAgentRequest(
       if (nextBackend === 'claude' && !isClaudeModel(nextModel)) {
         validationErrors.push('model must be a Claude model when backend is "claude"');
       }
-      if (nextBackend === 'codex-mcp' && !isCodexModel(nextModel)) {
-        validationErrors.push('model must be a Codex/OpenAI model when backend is "codex-mcp"');
+      if (isCodexFamilyBackend(nextBackend) && !isCodexModel(nextModel)) {
+        validationErrors.push(
+          `model must be a Codex/OpenAI model when backend is "${nextBackend}"`
+        );
       }
     }
     if (body.effort !== undefined) {
@@ -3285,6 +3768,7 @@ export {
   mapDecisionRowToGraphNode,
   parseGraphLimit,
   buildGraphMeta,
+  validateConfigUpdate,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,
@@ -3293,7 +3777,6 @@ export {
   filterEdgesByNodes,
   VIEWER_HTML_PATH,
   VIEWER_CSS_PATH,
-  VIEWER_JS_PATH,
 };
 
 export type {
