@@ -39,6 +39,121 @@ export interface ProjectTruth {
   >;
 }
 
+export interface EntityObservationDraft {
+  id: string;
+  entity_kind_hint: 'project' | 'person' | 'organization' | 'work_item' | null;
+  surface_form: string;
+  normalized_form: string;
+  lang: string | null;
+  script: string | null;
+  context_summary: string | null;
+  related_surface_forms: string[];
+  timestamp_observed: number | null;
+  scope_kind: 'project' | 'channel' | 'user' | 'global';
+  scope_id: string | null;
+  extractor_version: string;
+  embedding_model_version: string | null;
+  source_connector: string;
+  source_raw_db_ref: string | null;
+  source_raw_record_id: string;
+}
+
+function detectObservationScript(input: string): EntityObservationDraft['script'] {
+  if (/\p{Script=Hangul}/u.test(input)) {
+    return 'Hang';
+  }
+  if (/\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u.test(input)) {
+    return 'Jpan';
+  }
+  if (/\p{Script=Latin}/u.test(input)) {
+    return 'Latn';
+  }
+  return null;
+}
+
+function normalizeObservationLabel(input: string): string {
+  const collapsed = input.normalize('NFKC').trim().replace(/\s+/gu, ' ');
+  const script = detectObservationScript(collapsed);
+  return script === 'Latn' ? collapsed.toLowerCase() : collapsed;
+}
+
+function buildObservationScope(
+  item: NormalizedItem
+): Pick<EntityObservationDraft, 'scope_kind' | 'scope_id'> {
+  const channelId =
+    typeof item.metadata?.channelId === 'string' ? (item.metadata.channelId as string) : null;
+  if (item.source === 'slack' && channelId) {
+    return { scope_kind: 'channel', scope_id: channelId };
+  }
+  return { scope_kind: 'channel', scope_id: item.channel };
+}
+
+export function buildEntityObservations(
+  items: NormalizedItem[],
+  options: {
+    extractorVersion: string;
+    embeddingModelVersion: string | null;
+    rawDbRefForSource?: (source: string) => string | null;
+  }
+): EntityObservationDraft[] {
+  const observations: EntityObservationDraft[] = [];
+
+  for (const item of items) {
+    const scope = buildObservationScope(item);
+    const sourceRawDbRef = options.rawDbRefForSource?.(item.source) ?? null;
+    const channelLabel =
+      typeof item.metadata?.channelName === 'string'
+        ? (item.metadata.channelName as string)
+        : item.channel;
+
+    const relatedSurfaceForms = [channelLabel].filter(Boolean);
+
+    if (item.author.trim().length > 0) {
+      observations.push({
+        id: `obs_${item.sourceId}_author`,
+        entity_kind_hint: 'person',
+        surface_form: item.author,
+        normalized_form: normalizeObservationLabel(item.author),
+        lang: null,
+        script: detectObservationScript(item.author),
+        context_summary: item.content.slice(0, 240),
+        related_surface_forms: relatedSurfaceForms,
+        timestamp_observed: item.timestamp.getTime(),
+        scope_kind: scope.scope_kind,
+        scope_id: scope.scope_id,
+        extractor_version: options.extractorVersion,
+        embedding_model_version: options.embeddingModelVersion,
+        source_connector: item.source,
+        source_raw_db_ref: sourceRawDbRef,
+        source_raw_record_id: item.sourceId,
+      });
+    }
+
+    if (channelLabel.trim().length > 0) {
+      observations.push({
+        id: `obs_${item.sourceId}_channel`,
+        entity_kind_hint: 'project',
+        surface_form: channelLabel,
+        normalized_form: normalizeObservationLabel(channelLabel),
+        lang: null,
+        script: detectObservationScript(channelLabel),
+        context_summary: item.content.slice(0, 240),
+        related_surface_forms: [item.author].filter(Boolean),
+        timestamp_observed: item.timestamp.getTime(),
+        scope_kind: scope.scope_kind,
+        scope_id: scope.scope_id,
+        extractor_version: options.extractorVersion,
+        embedding_model_version: options.embeddingModelVersion,
+        source_connector: item.source,
+        source_raw_db_ref: sourceRawDbRef,
+        source_raw_record_id: item.sourceId,
+      });
+    }
+  }
+
+  return observations;
+}
+
 /**
  * Classify NormalizedItems into truth, activity, and spoke groups based on channel configs.
  * Items with role 'ignore' or no matching config are dropped.
