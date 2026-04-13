@@ -126,4 +126,57 @@ describe('Story E1.8: Canonical entity recall bridge', () => {
 
     expect(rows.map((row) => row.id)).not.toContain('entity_project_alpha_merged');
   });
+
+  it('follows the merged_into chain when searching by a merged source label', async () => {
+    // Regression for Codex finding #1 on PR #82: after merging source→target,
+    // searching by the source's old label must still return the canonical
+    // target via chain walking. Without chain walk, the alias of the merged
+    // source is orphaned in recall because the n.status='active' AND
+    // n.merged_into IS NULL filter drops the source row.
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `INSERT INTO entity_nodes (id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        'entity_legacy_source',
+        'project',
+        'Project Legacy Name',
+        'merged',
+        'project',
+        'scope-alpha',
+        'entity_project_alpha',
+        1710000000000,
+        1710000001000
+      );
+    adapter
+      .prepare(
+        `INSERT INTO entity_aliases (id, entity_id, label, normalized_label, lang, script, label_type, source_type, source_ref, confidence, status, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        'alias_legacy_unique',
+        'entity_legacy_source',
+        'Alpha Prime Codename',
+        'alpha prime codename',
+        'en',
+        'Latn',
+        'alt',
+        'slack',
+        'slack:C123',
+        0.9,
+        'active',
+        1710000002000
+      );
+
+    const rows = await queryCanonicalEntities(
+      'Alpha Prime Codename',
+      [{ kind: 'project', id: 'scope-alpha' }],
+      { limit: 10 }
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('entity_project_alpha');
+  });
 });
