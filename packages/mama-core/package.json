@@ -26,7 +26,8 @@
     "./time-formatter": "./dist/time-formatter.js",
     "./outcome-tracker": "./dist/outcome-tracker.js",
     "./query-intent": "./dist/query-intent.js",
-    "./test-utils": "./dist/test-utils.js"
+    "./test-utils": "./dist/test-utils.js",
+    "./entities/store": "./dist/entities/store.js"
   },
   "scripts": {
     "build": "tsc",
