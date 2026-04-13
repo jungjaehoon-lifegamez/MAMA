@@ -28,7 +28,10 @@ function requireStringField(row: Record<string, unknown>, field: string): string
 }
 
 function optionalStringField(row: Record<string, unknown>, field: string): string | null {
-  if (row[field] === null || row[field] === undefined) {
+  if (!Object.prototype.hasOwnProperty.call(row, field)) {
+    throw new Error(`Invalid entity observation row: ${field} must be present`);
+  }
+  if (row[field] === null) {
     return null;
   }
   if (typeof row[field] !== 'string') {
@@ -38,7 +41,10 @@ function optionalStringField(row: Record<string, unknown>, field: string): strin
 }
 
 function optionalNumberField(row: Record<string, unknown>, field: string): number | null {
-  if (row[field] === null || row[field] === undefined) {
+  if (!Object.prototype.hasOwnProperty.call(row, field)) {
+    throw new Error(`Invalid entity observation row: ${field} must be present`);
+  }
+  if (row[field] === null) {
     return null;
   }
   if (typeof row[field] !== 'number') {
@@ -93,6 +99,8 @@ export function parseObservationRow(row: Record<string, unknown>): EntityObserva
     );
   }
 
+  const sourceRawDbRef = optionalStringField(row, 'source_raw_db_ref');
+
   return {
     id,
     observation_type: observationType as EntityObservation['observation_type'],
@@ -109,11 +117,7 @@ export function parseObservationRow(row: Record<string, unknown>): EntityObserva
     extractor_version: requireStringField(row, 'extractor_version'),
     embedding_model_version: optionalStringField(row, 'embedding_model_version'),
     source_connector: requireStringField(row, 'source_connector'),
-    source_raw_db_ref:
-      optionalStringField(row, 'source_raw_db_ref') &&
-      optionalStringField(row, 'source_raw_db_ref')!.length > 0
-        ? optionalStringField(row, 'source_raw_db_ref')
-        : null,
+    source_raw_db_ref: sourceRawDbRef && sourceRawDbRef.length > 0 ? sourceRawDbRef : null,
     source_raw_record_id: requireStringField(row, 'source_raw_record_id'),
     created_at: createdAt,
   };
