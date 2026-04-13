@@ -36,6 +36,7 @@ import {
 } from './entity-review-handler.js';
 import { createEntityAuditHandler, type EntityAuditHandlerDeps } from './entity-audit-handler.js';
 import { EntityAuditRunQueue } from './entity-audit-queue.js';
+import { runEntityAuditInBackground } from './entity-audit-runner.js';
 import {
   getValidationSummary,
   listValidationHistory,
@@ -1057,6 +1058,29 @@ async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerRespon
 }
 
 function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
+  let entityAuditQueue: EntityAuditRunQueue | null = null;
+  let entityAuditQueuePromise: Promise<EntityAuditRunQueue> | null = null;
+
+  const getEntityAuditQueue = async (): Promise<EntityAuditRunQueue> => {
+    if (entityAuditQueue) {
+      return entityAuditQueue;
+    }
+    if (entityAuditQueuePromise) {
+      return entityAuditQueuePromise;
+    }
+    entityAuditQueuePromise = (async () => {
+      await initDB();
+      const queue = new EntityAuditRunQueue({ adapter: getAdapter() });
+      const recovered = queue.recoverOrphans();
+      if (recovered > 0) {
+        logger.warn('[entity-audit] Recovered orphaned audit runs on boot', { recovered });
+      }
+      entityAuditQueue = queue;
+      return queue;
+    })();
+    return entityAuditQueuePromise;
+  };
+
   const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
     const parsed = Number.parseInt(value ?? '', 10);
     if (!Number.isFinite(parsed) || parsed < 1) {
@@ -2164,7 +2188,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       if (!isAuthenticated(req)) {
         logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Authentication required' }));
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
         return true;
       }
       await initDB();
@@ -2181,7 +2211,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         if (!isAuthenticated(req)) {
           logUnauthorizedAttempt(req);
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Authentication required' }));
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
           return true;
         }
         await initDB();
@@ -2198,7 +2234,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         if (!isAuthenticated(req)) {
           logUnauthorizedAttempt(req);
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Authentication required' }));
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
           return true;
         }
         await initDB();
@@ -2212,12 +2254,25 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       if (!isAuthenticated(req)) {
         logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Authentication required' }));
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
         return true;
       }
-      await initDB();
+      const queue = await getEntityAuditQueue();
       const deps: EntityAuditHandlerDeps = {
-        queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+        queue,
+        runAuditInBackground: (runId: string) => {
+          void runEntityAuditInBackground({
+            queue,
+            adapter: getAdapter(),
+            runId,
+          });
+        },
       };
       const handler = createEntityAuditHandler(deps);
       await handler.handleStartAuditRun(req, res);
@@ -2229,12 +2284,18 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       if (!isAuthenticated(req)) {
         logUnauthorizedAttempt(req);
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Authentication required' }));
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
         return true;
       }
-      await initDB();
+      const queue = await getEntityAuditQueue();
       const handler = createEntityAuditHandler({
-        queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+        queue,
       });
       await handler.handleListAuditRuns(req, res);
       return true;
@@ -2247,12 +2308,18 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
         if (!isAuthenticated(req)) {
           logUnauthorizedAttempt(req);
           res.writeHead(401, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Authentication required' }));
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
           return true;
         }
-        await initDB();
+        const queue = await getEntityAuditQueue();
         const handler = createEntityAuditHandler({
-          queue: new EntityAuditRunQueue({ adapter: getAdapter() }),
+          queue,
         });
         await handler.handleGetAuditRun(req, res);
         return true;

@@ -41,6 +41,7 @@ export interface ProjectTruth {
 
 export interface EntityObservationDraft {
   id: string;
+  observation_type: 'generic' | 'author' | 'channel';
   entity_kind_hint: 'project' | 'person' | 'organization' | 'work_item' | null;
   surface_form: string;
   normalized_form: string;
@@ -88,19 +89,35 @@ function buildObservationScope(
   return { scope_kind: 'channel', scope_id: item.channel };
 }
 
+function getRawConnectorSource(item: NormalizedItem): string {
+  if (typeof item.metadata?.rawConnector === 'string' && item.metadata.rawConnector.length > 0) {
+    return item.metadata.rawConnector;
+  }
+  return item.source;
+}
+
+function getStableChannelKey(item: NormalizedItem): string {
+  const channelId =
+    item.source === 'slack' && typeof item.metadata?.channelId === 'string'
+      ? item.metadata.channelId
+      : item.channel;
+  return `${item.source}:${channelId}`;
+}
+
 export function buildEntityObservations(
   items: NormalizedItem[],
   options: {
     extractorVersion: string;
     embeddingModelVersion: string | null;
-    rawDbRefForSource?: (source: string) => string | null;
+    rawDbRefForSource?: (source: string, item?: NormalizedItem) => string | null;
   }
 ): EntityObservationDraft[] {
   const observations: EntityObservationDraft[] = [];
 
   for (const item of items) {
     const scope = buildObservationScope(item);
-    const sourceRawDbRef = options.rawDbRefForSource?.(item.source) ?? null;
+    const rawConnector = getRawConnectorSource(item);
+    const sourceRawDbRef = options.rawDbRefForSource?.(rawConnector, item) ?? null;
     const channelLabel =
       typeof item.metadata?.channelName === 'string'
         ? (item.metadata.channelName as string)
@@ -111,6 +128,7 @@ export function buildEntityObservations(
     if (item.author.trim().length > 0) {
       observations.push({
         id: `obs_${item.sourceId}_author`,
+        observation_type: 'author',
         entity_kind_hint: 'person',
         surface_form: item.author,
         normalized_form: normalizeObservationLabel(item.author),
@@ -132,6 +150,7 @@ export function buildEntityObservations(
     if (channelLabel.trim().length > 0) {
       observations.push({
         id: `obs_${item.sourceId}_channel`,
+        observation_type: 'channel',
         entity_kind_hint: 'project',
         surface_form: channelLabel,
         normalized_form: normalizeObservationLabel(channelLabel),
@@ -269,7 +288,7 @@ function formatItemLine(item: NormalizedItem): string {
 export function groupByChannel(items: NormalizedItem[]): Map<string, NormalizedItem[]> {
   const groups = new Map<string, NormalizedItem[]>();
   for (const item of items) {
-    const key = `${item.source}:${item.channel}`;
+    const key = getStableChannelKey(item);
     const existing = groups.get(key) ?? [];
     existing.push(item);
     groups.set(key, existing);

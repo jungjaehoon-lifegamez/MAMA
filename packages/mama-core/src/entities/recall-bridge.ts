@@ -49,6 +49,10 @@ function mapTimeline(row: Record<string, unknown>): EntityTimelineEvent {
   };
 }
 
+function escapeLikeQuery(query: string): string {
+  return query.replace(/[\\%_]/g, '\\$&');
+}
+
 export async function queryCanonicalEntities(
   query: string,
   scopes: MemoryScopeRef[],
@@ -56,6 +60,7 @@ export async function queryCanonicalEntities(
 ): Promise<MemoryRecord[]> {
   await initDB();
   const adapter = getAdapter();
+  const escapedQuery = escapeLikeQuery(query);
   const rows = adapter
     .prepare(
       `
@@ -63,43 +68,79 @@ export async function queryCanonicalEntities(
         FROM entity_nodes n
         LEFT JOIN entity_aliases a ON a.entity_id = n.id
         WHERE (
-          lower(n.preferred_label) LIKE '%' || lower(?) || '%'
-          OR lower(COALESCE(a.label, '')) LIKE '%' || lower(?) || '%'
+          lower(n.preferred_label) LIKE '%' || lower(?) || '%' ESCAPE '\\'
+          OR lower(COALESCE(a.label, '')) LIKE '%' || lower(?) || '%' ESCAPE '\\'
         )
+          AND n.status = 'active'
+          AND n.merged_into IS NULL
         ORDER BY n.updated_at DESC
       `
     )
-    .all(query, query) as Array<Record<string, unknown>>;
+    .all(escapedQuery, escapedQuery) as Array<Record<string, unknown>>;
 
   const scopedRows =
     scopes.length === 0
       ? rows
       : rows.filter((row) =>
-          scopes.some(
-            (scope) => scope.kind === row.scope_kind && scope.id === (row.scope_id ?? scope.id)
-          )
+          scopes.some((scope) => scope.kind === row.scope_kind && row.scope_id === scope.id)
         );
 
   const limitedRows = scopedRows.slice(0, options.limit ?? 10);
   const nodeLookup = Object.fromEntries(limitedRows.map((row) => [String(row.id), mapNode(row)]));
+  const entityIds = limitedRows.map((row) => String(row.id));
+
+  const aliasesByEntity = new Map<string, EntityAlias[]>();
+  const latestTimelineByEntity = new Map<string, EntityTimelineEvent>();
+
+  if (entityIds.length > 0) {
+    const placeholders = entityIds.map(() => '?').join(', ');
+    const aliasRows = adapter
+      .prepare(
+        `
+        SELECT * FROM entity_aliases
+        WHERE entity_id IN (${placeholders})
+        ORDER BY entity_id ASC, created_at ASC
+      `
+      )
+      .all(...entityIds) as Array<Record<string, unknown>>;
+    for (const row of aliasRows) {
+      const alias = mapAlias(row);
+      const existing = aliasesByEntity.get(alias.entity_id) ?? [];
+      existing.push(alias);
+      aliasesByEntity.set(alias.entity_id, existing);
+    }
+
+    const timelineRows = adapter
+      .prepare(
+        `
+        SELECT *
+        FROM (
+          SELECT *,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY entity_id
+                   ORDER BY COALESCE(observed_at, created_at) DESC
+                 ) AS row_num
+          FROM entity_timeline_events
+          WHERE entity_id IN (${placeholders})
+        )
+        WHERE row_num = 1
+      `
+      )
+      .all(...entityIds) as Array<Record<string, unknown>>;
+    for (const row of timelineRows) {
+      const timeline = mapTimeline(row);
+      latestTimelineByEntity.set(timeline.entity_id, timeline);
+    }
+  }
 
   const result: MemoryRecord[] = [];
   for (const row of limitedRows) {
     const node = mapNode(row);
-    const aliases = adapter
-      .prepare('SELECT * FROM entity_aliases WHERE entity_id = ? ORDER BY created_at ASC')
-      .all(node.id) as Array<Record<string, unknown>>;
-    const latestEvent = adapter
-      .prepare(
-        'SELECT * FROM entity_timeline_events WHERE entity_id = ? ORDER BY COALESCE(observed_at, created_at) DESC LIMIT 1'
-      )
-      .get(node.id) as Record<string, unknown> | undefined;
-
     result.push(
       projectEntityToRecallSummary(
         node,
-        aliases.map((alias) => mapAlias(alias)),
-        latestEvent ? mapTimeline(latestEvent) : null,
+        aliasesByEntity.get(node.id) ?? [],
+        latestTimelineByEntity.get(node.id) ?? null,
         { nodeLookup }
       )
     );
