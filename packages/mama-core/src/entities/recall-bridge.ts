@@ -1,6 +1,7 @@
 import { getAdapter, initDB } from '../db-manager.js';
 import type { MemoryRecord, MemoryScopeRef } from '../memory/types.js';
 import { projectEntityToRecallSummary } from './projection.js';
+import { EntityMergeError, resolveCanonicalEntityId } from './store.js';
 import type { EntityAlias, EntityNode, EntityTimelineEvent } from './types.js';
 
 function mapNode(row: Record<string, unknown>): EntityNode {
@@ -61,22 +62,59 @@ export async function queryCanonicalEntities(
   await initDB();
   const adapter = getAdapter();
   const escapedQuery = escapeLikeQuery(query);
-  const rows = adapter
+
+  // Match aliases and labels regardless of whether the owning node is merged,
+  // then chain-walk each match to its canonical terminal. Without this,
+  // searching by the old name of a merged entity returns nothing because the
+  // filter `n.status='active' AND n.merged_into IS NULL` would drop the
+  // source row. Matches Policy A2 in
+  // docs/superpowers/specs/2026-04-13-canonical-entity-merge-design.md.
+  const matchedRows = adapter
     .prepare(
       `
-        SELECT DISTINCT n.*
+        SELECT DISTINCT n.id AS matched_id
         FROM entity_nodes n
         LEFT JOIN entity_aliases a ON a.entity_id = n.id
         WHERE (
           lower(n.preferred_label) LIKE '%' || lower(?) || '%' ESCAPE '\\'
           OR lower(COALESCE(a.label, '')) LIKE '%' || lower(?) || '%' ESCAPE '\\'
         )
-          AND n.status = 'active'
-          AND n.merged_into IS NULL
-        ORDER BY n.updated_at DESC
       `
     )
-    .all(escapedQuery, escapedQuery) as Array<Record<string, unknown>>;
+    .all(escapedQuery, escapedQuery) as Array<{ matched_id: string }>;
+
+  const canonicalIdSet = new Set<string>();
+  for (const match of matchedRows) {
+    try {
+      canonicalIdSet.add(resolveCanonicalEntityId(adapter, match.matched_id));
+    } catch (err) {
+      // Cycle or missing node — skip this match rather than poison the whole
+      // recall. Merge integrity errors are surfaced elsewhere (the review
+      // handler 409 path) where the user can actually act on them.
+      if (!(err instanceof EntityMergeError)) {
+        throw err;
+      }
+    }
+  }
+
+  if (canonicalIdSet.size === 0) {
+    return [];
+  }
+
+  const canonicalIds = Array.from(canonicalIdSet);
+  const placeholders = canonicalIds.map(() => '?').join(', ');
+  const rows = adapter
+    .prepare(
+      `
+        SELECT *
+        FROM entity_nodes
+        WHERE id IN (${placeholders})
+          AND status = 'active'
+          AND merged_into IS NULL
+        ORDER BY updated_at DESC
+      `
+    )
+    .all(...canonicalIds) as Array<Record<string, unknown>>;
 
   const scopedRows =
     scopes.length === 0
