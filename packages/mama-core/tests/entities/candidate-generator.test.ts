@@ -200,6 +200,38 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
         )
       ).rejects.toBeInstanceOf(EmbeddingUnavailableError);
     });
+
+    it('keeps zero-score pairs when an embedding scorer is available', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_ko_zero', {
+            surface_form: KOREAN_PROJECT_ALPHA,
+            normalized_form: KOREAN_PROJECT_ALPHA,
+            lang: 'ko',
+            script: 'Hang',
+            context_summary: 'launch alpha',
+            related_surface_forms: ['runtime-linked'],
+          }),
+          makeObservation('alpha_ja_zero', {
+            surface_form: JAPANESE_PROJECT_ALPHA,
+            normalized_form: JAPANESE_PROJECT_ALPHA,
+            lang: 'ja',
+            script: 'Jpan',
+            context_summary: 'milestone beta',
+            related_surface_forms: ['runtime-linked'],
+            source_raw_record_id: 'raw_alpha_ja_zero',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0.88),
+        }
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.score_structural).toBe(0);
+      expect(candidates[0]?.score_string).toBe(0);
+      expect(candidates[0]?.score_embedding).toBe(0.88);
+    });
   });
 
   describe('AC #4: top-N gate prevents candidate blowouts', () => {
