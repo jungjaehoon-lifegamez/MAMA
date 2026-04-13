@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import {
+  attachEntityAlias,
   createEntityNode,
   upsertEntityObservation,
 } from '../../../mama-core/src/entities/store.js';
@@ -23,11 +24,17 @@ function createMockRequest(input: {
   method: string;
   url: string;
   body?: Record<string, unknown>;
+  rawBody?: Buffer;
   headers?: Record<string, string>;
   remoteAddress?: string;
 }): IncomingMessage {
   const stream = new Readable({
     read() {
+      if (input.rawBody) {
+        this.push(input.rawBody);
+        this.push(null);
+        return;
+      }
       if (input.body !== undefined) {
         this.push(JSON.stringify(input.body));
       }
@@ -265,6 +272,125 @@ describe('Story E1.8: Entity review API', () => {
       expect(body.candidate.evidence).toHaveLength(2);
       expect(body.candidate.rule_trace).toEqual(['normalized_form_match', 'scope_match']);
     });
+
+    it('parses object-shaped rule_trace payloads into a readable array', async () => {
+      await seedCandidate({
+        candidateId: 'candidate_rule_trace_object',
+        leftId: 'obs_rule_object_left',
+        rightId: 'obs_rule_object_right',
+        leftLabel: 'Project Rule Left',
+        rightLabel: 'Project Rule Right',
+        scoreTotal: 0.77,
+        scopeId: 'C556',
+      });
+
+      getAdapter()
+        .prepare(
+          `
+            UPDATE entity_resolution_candidates
+            SET rule_trace = ?
+            WHERE id = ?
+          `
+        )
+        .run(JSON.stringify({ structural: 1, context: 0.25 }), 'candidate_rule_trace_object');
+
+      const req = createMockRequest({
+        method: 'GET',
+        url: '/api/entities/candidates/candidate_rule_trace_object',
+      });
+      const res = createMockResponse();
+      await handleGetEntityCandidate(req, res.res, getAdapter());
+
+      const body = res.readJson() as { candidate: { rule_trace: string[] } };
+      expect(body.candidate.rule_trace).toEqual(['1', '0.25']);
+    });
+
+    it('resolves alias refs through entity aliases before building the candidate summary', async () => {
+      await createEntityNode({
+        id: 'entity_alias_target',
+        kind: 'project',
+        preferred_label: 'Alias Backed Project',
+        status: 'active',
+        scope_kind: 'channel',
+        scope_id: 'C558',
+        merged_into: null,
+      });
+      await attachEntityAlias({
+        id: 'alias_runtime_target',
+        entity_id: 'entity_alias_target',
+        label: 'Alias Runtime Target',
+        normalized_label: 'alias runtime target',
+        lang: 'en',
+        script: 'Latn',
+        label_type: 'alt',
+        source_type: 'synthetic',
+        source_ref: 'synthetic:alias',
+        confidence: 0.9,
+        status: 'active',
+      });
+      await upsertEntityObservation({
+        id: 'obs_alias_right',
+        observation_type: 'generic',
+        entity_kind_hint: 'project',
+        surface_form: 'Alias Backed Project',
+        normalized_form: 'alias backed project',
+        lang: 'en',
+        script: 'Latn',
+        context_summary: 'alias backed context',
+        related_surface_forms: ['Alias Runtime Target'],
+        timestamp_observed: 1710000000000,
+        scope_kind: 'channel',
+        scope_id: 'C558',
+        extractor_version: 'history-extractor@v1',
+        embedding_model_version: 'multilingual-e5-large',
+        source_connector: 'synthetic',
+        source_raw_db_ref: '/tmp/alias-runtime.db',
+        source_raw_record_id: 'raw_alias_right',
+      });
+
+      getAdapter()
+        .prepare(
+          `
+            INSERT INTO entity_resolution_candidates (
+              id, candidate_kind, left_ref, right_ref, status, score_total,
+              score_structural, score_string, score_context, score_graph, score_embedding,
+              rule_trace, extractor_version, embedding_model_version, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(
+          'candidate_alias_ref',
+          'alias_to_entity',
+          'alias_runtime_target',
+          'obs_alias_right',
+          'pending',
+          0.81,
+          0.2,
+          0.1,
+          0.3,
+          0,
+          0,
+          JSON.stringify({ structural: 0.2 }),
+          'history-extractor@v1',
+          'multilingual-e5-large',
+          Date.now(),
+          Date.now()
+        );
+
+      const req = createMockRequest({
+        method: 'GET',
+        url: '/api/entities/candidates/candidate_alias_ref',
+      });
+      const res = createMockResponse();
+      await handleGetEntityCandidate(req, res.res, getAdapter());
+
+      const body = res.readJson() as {
+        candidate: { left_ref: { id: string; label: string } };
+      };
+      expect(body.candidate.left_ref.id).toBe('entity_alias_target');
+      expect(body.candidate.left_ref.label).toBe('Alias Backed Project');
+    });
   });
 
   describe('AC #3: POST /api/entities/candidates/:id/approve', () => {
@@ -303,7 +429,7 @@ describe('Story E1.8: Entity review API', () => {
       expect(replayBody.merge_action_id).toBe(firstBody.merge_action_id);
     });
 
-    it('prefers authenticated identity headers over remote address for actor_id', async () => {
+    it('prefers authenticated UUID headers over email and remote address for actor_id', async () => {
       await seedCandidate({
         candidateId: 'candidate_auth_actor',
         leftId: 'obs_auth_left',
@@ -319,6 +445,7 @@ describe('Story E1.8: Entity review API', () => {
         url: '/api/entities/candidates/candidate_auth_actor/approve',
         body: {},
         headers: {
+          'cf-access-authenticated-user-uuid': '  user-123  ',
           'cf-access-authenticated-user-email': 'reviewer@example.com',
         },
         remoteAddress: '10.0.0.7',
@@ -327,7 +454,7 @@ describe('Story E1.8: Entity review API', () => {
       await handleReviewEntityCandidate(req, res.res, getAdapter(), 'approve');
 
       const body = res.readJson() as { actor_id: string };
-      expect(body.actor_id).toBe('user:reviewer@example.com');
+      expect(body.actor_id).toBe('user_uuid:user-123');
     });
   });
 
@@ -391,6 +518,32 @@ describe('Story E1.8: Entity review API', () => {
       expect(rejectRes.getStatus()).toBe(409);
       const body = rejectRes.readJson() as { error: { code: string } };
       expect(body.error.code).toBe('entity.candidate_stale');
+    });
+
+    it('rejects oversized multibyte request bodies using the byte limit', async () => {
+      await seedCandidate({
+        candidateId: 'candidate_body_limit',
+        leftId: 'obs_limit_left',
+        rightId: 'obs_limit_right',
+        leftLabel: 'Project Limit Left',
+        rightLabel: 'Project Limit Right',
+        scoreTotal: 0.7,
+        scopeId: 'C557',
+      });
+
+      const oversized = Buffer.from(`{"reason":"${'\\uAC00'.repeat(400000)}"}`, 'utf8');
+      const req = createMockRequest({
+        method: 'POST',
+        url: '/api/entities/candidates/candidate_body_limit/defer',
+        rawBody: oversized,
+      });
+      const res = createMockResponse();
+
+      await handleReviewEntityCandidate(req, res.res, getAdapter(), 'defer');
+
+      expect(res.getStatus()).toBe(400);
+      const body = res.readJson() as { error: { message: string } };
+      expect(body.error.message).toContain('Request body too large');
     });
   });
 });

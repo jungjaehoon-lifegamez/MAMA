@@ -96,6 +96,9 @@ function shouldConsiderPair(left: EntityObservation, right: EntityObservation): 
 function buildBlockKeys(observation: EntityObservation): string[] {
   const keys = new Set<string>();
   keys.add(`norm:${observation.normalized_form}`);
+  for (const related of observation.related_surface_forms) {
+    keys.add(`related:${related}`);
+  }
 
   const ids = extractStructuredIdentifiers(observation.surface_form);
   for (const email of ids.emails) {
@@ -182,10 +185,6 @@ export async function generateResolutionCandidates(
         const score_total = score_structural + score_string + score_context + score_graph;
 
         if (score_total <= 0 && !options.embeddingScorer) {
-          continue;
-        }
-
-        if (score_total <= 0 && options.embeddingScorer) {
           continue;
         }
 

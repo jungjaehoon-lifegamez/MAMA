@@ -118,8 +118,10 @@ export function createEntityAuditHandler(deps: EntityAuditHandlerDeps) {
       if (run.metric_summary_json) {
         try {
           metrics = JSON.parse(run.metric_summary_json);
-        } catch {
-          metrics = null;
+        } catch (error) {
+          throw new Error(
+            `Failed to parse entity audit metric_summary_json for run ${run.id}: ${error instanceof Error ? error.message : String(error)}`
+          );
         }
       }
       json(res, 200, { ...run, metrics });

@@ -99,14 +99,14 @@ function encodeCursor(score: number, id: string): string {
 }
 
 function canonicalizeActorId(req: IncomingMessage): string {
-  const email = req.headers['cf-access-authenticated-user-email'];
-  if (typeof email === 'string' && email.trim().length > 0) {
-    return `user:${email.trim().toLowerCase()}`;
-  }
-
   const uuid = req.headers['cf-access-authenticated-user-uuid'];
   if (typeof uuid === 'string' && uuid.trim().length > 0) {
     return `user_uuid:${uuid.trim()}`;
+  }
+
+  const email = req.headers['cf-access-authenticated-user-email'];
+  if (typeof email === 'string' && email.trim().length > 0) {
+    return `user:${email.trim().toLowerCase()}`;
   }
 
   const forwardedFor = req.headers['x-forwarded-for'];
@@ -123,18 +123,24 @@ function canonicalizeActorId(req: IncomingMessage): string {
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const pre = (req as unknown as { body?: Record<string, unknown> }).body;
-  if (pre && typeof pre === 'object') return pre;
+  if (pre && typeof pre === 'object') {
+    return pre;
+  }
 
   return new Promise((resolve, reject) => {
-    let data = '';
+    const chunks: Buffer[] = [];
+    let byteCount = 0;
     req.on('data', (chunk: Buffer) => {
-      data += chunk.toString('utf8');
-      if (data.length > 1_048_576) {
+      byteCount += chunk.length;
+      if (byteCount > 1_048_576) {
         req.destroy();
         reject(new Error('Request body too large'));
+        return;
       }
+      chunks.push(chunk);
     });
     req.on('end', () => {
+      const data = Buffer.concat(chunks).toString('utf8');
       if (!data) {
         resolve({});
         return;
@@ -155,7 +161,13 @@ function parseRuleTrace(value: string | null): string[] {
   }
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed.map((x) => String(x)) : [];
+    if (Array.isArray(parsed)) {
+      return parsed.map((x) => String(x));
+    }
+    if (parsed && typeof parsed === 'object') {
+      return Object.values(parsed as Record<string, unknown>).map((x) => String(x));
+    }
+    return [];
   } catch {
     return [];
   }
@@ -167,12 +179,41 @@ interface ResolvedRef {
   label: string;
 }
 
-function resolveRef(adapter: Adapter, refId: string): ResolvedRef {
-  const obs = adapter
-    .prepare(`SELECT id, surface_form, entity_kind_hint FROM entity_observations WHERE id = ?`)
-    .get(refId) as
-    | { id: string; surface_form: string; entity_kind_hint: string | null }
-    | undefined;
+function resolveAliasEntityId(
+  adapter: Adapter,
+  refId: string
+): { entityId: string; label: string } | null {
+  try {
+    const alias = adapter
+      .prepare(`SELECT entity_id, label FROM entity_aliases WHERE id = ?`)
+      .get(refId) as { entity_id: string; label: string } | undefined;
+    if (!alias) {
+      return null;
+    }
+    return { entityId: alias.entity_id, label: alias.label };
+  } catch (error) {
+    throw new Error(
+      `Failed to resolve entity review alias ref ${refId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function resolveRef(adapter: Adapter, initialRefId: string): ResolvedRef {
+  const aliasEntity = resolveAliasEntityId(adapter, initialRefId);
+  const refId = aliasEntity?.entityId ?? initialRefId;
+
+  let obs: { id: string; surface_form: string; entity_kind_hint: string | null } | undefined;
+  try {
+    obs = adapter
+      .prepare(`SELECT id, surface_form, entity_kind_hint FROM entity_observations WHERE id = ?`)
+      .get(refId) as
+      | { id: string; surface_form: string; entity_kind_hint: string | null }
+      | undefined;
+  } catch (error) {
+    throw new Error(
+      `Failed to resolve entity review observation ref ${initialRefId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   if (obs) {
     return {
       kind: obs.entity_kind_hint ?? 'observation',
@@ -181,20 +222,36 @@ function resolveRef(adapter: Adapter, refId: string): ResolvedRef {
     };
   }
 
-  const entity = adapter
-    .prepare(`SELECT id, kind, preferred_label FROM entity_nodes WHERE id = ?`)
-    .get(refId) as { id: string; kind: string; preferred_label: string } | undefined;
+  let entity: { id: string; kind: string; preferred_label: string } | undefined;
+  try {
+    entity = adapter
+      .prepare(`SELECT id, kind, preferred_label FROM entity_nodes WHERE id = ?`)
+      .get(refId) as { id: string; kind: string; preferred_label: string } | undefined;
+  } catch (error) {
+    throw new Error(
+      `Failed to resolve entity review node ref ${initialRefId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   if (entity) {
     return { kind: entity.kind, id: entity.id, label: entity.preferred_label };
   }
 
-  return { kind: 'unknown', id: refId, label: refId };
+  return { kind: 'unknown', id: initialRefId, label: aliasEntity?.label ?? initialRefId };
 }
 
-function resolveEvidence(adapter: Adapter, refId: string): unknown[] {
-  const obs = adapter.prepare(`SELECT * FROM entity_observations WHERE id = ?`).get(refId) as
-    | Record<string, unknown>
-    | undefined;
+function resolveEvidence(adapter: Adapter, initialRefId: string): unknown[] {
+  const aliasEntity = resolveAliasEntityId(adapter, initialRefId);
+  const refId = aliasEntity?.entityId ?? initialRefId;
+  let obs: Record<string, unknown> | undefined;
+  try {
+    obs = adapter.prepare(`SELECT * FROM entity_observations WHERE id = ?`).get(refId) as
+      | Record<string, unknown>
+      | undefined;
+  } catch (error) {
+    throw new Error(
+      `Failed to resolve entity review evidence for ${initialRefId}: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   if (obs) {
     return [
       {
