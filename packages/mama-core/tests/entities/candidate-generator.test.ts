@@ -16,6 +16,7 @@ function makeObservation(
 ): EntityObservation {
   return {
     id,
+    observation_type: 'generic',
     entity_kind_hint: 'project',
     surface_form: `Project ${id}`,
     normalized_form: `project ${id}`.toLowerCase(),
@@ -41,10 +42,12 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
     it('should dedupe observations by connector and raw record id', () => {
       const deduped = dedupeObservationsBySource([
         makeObservation('one', {
+          observation_type: 'generic',
           source_raw_record_id: 'raw_dup',
           context_summary: 'older',
         }),
         makeObservation('two', {
+          observation_type: 'generic',
           source_raw_record_id: 'raw_dup',
           context_summary: 'newer',
           timestamp_observed: 1710000000001,
@@ -53,6 +56,28 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
 
       expect(deduped).toHaveLength(1);
       expect(deduped[0]?.id).toBe('one');
+    });
+
+    it('should keep observations distinct when raw db ref or observation type differs', () => {
+      const deduped = dedupeObservationsBySource([
+        makeObservation('one', {
+          observation_type: 'author',
+          source_raw_record_id: 'raw_dup',
+          source_raw_db_ref: '~/.mama/connectors/slack/raw-a.db',
+        }),
+        makeObservation('two', {
+          observation_type: 'channel',
+          source_raw_record_id: 'raw_dup',
+          source_raw_db_ref: '~/.mama/connectors/slack/raw-a.db',
+        }),
+        makeObservation('three', {
+          observation_type: 'author',
+          source_raw_record_id: 'raw_dup',
+          source_raw_db_ref: '~/.mama/connectors/slack/raw-b.db',
+        }),
+      ]);
+
+      expect(deduped).toHaveLength(3);
     });
   });
 
@@ -77,6 +102,28 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
         status: 'pending',
       });
       expect(candidates[0]?.score_structural).toBeGreaterThan(0);
+    });
+
+    it('should generate a stable candidate id regardless of observation input order', async () => {
+      const observations = [
+        makeObservation('zeta_b', {
+          surface_form: 'Project Zeta',
+          normalized_form: 'project zeta',
+          source_raw_record_id: 'raw_zeta_b',
+        }),
+        makeObservation('zeta_a', {
+          surface_form: 'Project Zeta',
+          normalized_form: 'project zeta',
+          source_raw_record_id: 'raw_zeta_a',
+        }),
+      ];
+
+      const candidates = await generateResolutionCandidates(observations);
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.id).toBe('candidate_zeta_a_zeta_b');
+      expect(candidates[0]?.left_ref).toBe('zeta_a');
+      expect(candidates[0]?.right_ref).toBe('zeta_b');
     });
 
     it('should generate a candidate when structured identifiers match', async () => {
@@ -167,9 +214,39 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
       );
 
       const embeddingScorer = vi.fn(async () => 0.51);
-      await generateResolutionCandidates(observations, { embeddingScorer });
+      const candidates = await generateResolutionCandidates(observations, { embeddingScorer });
 
-      expect(embeddingScorer.mock.calls.length).toBeLessThanOrEqual(ENTITY_EMBEDDING_TOPN);
+      expect(candidates).toHaveLength(ENTITY_EMBEDDING_TOPN);
+      expect(embeddingScorer).toHaveBeenCalledTimes(ENTITY_EMBEDDING_TOPN);
+    });
+
+    it('should not call the embedding scorer for unrelated observations outside deterministic blocks', async () => {
+      const observations = [
+        makeObservation('alpha', {
+          surface_form: 'Project Alpha',
+          normalized_form: 'project alpha',
+          context_summary: 'alpha launch milestone',
+          source_raw_record_id: 'raw_alpha',
+        }),
+        makeObservation('beta', {
+          surface_form: 'Project Beta',
+          normalized_form: 'project beta',
+          context_summary: 'beta hiring plan',
+          source_raw_record_id: 'raw_beta',
+        }),
+        makeObservation('gamma', {
+          surface_form: 'Project Gamma',
+          normalized_form: 'project gamma',
+          context_summary: 'gamma finance review',
+          source_raw_record_id: 'raw_gamma',
+        }),
+      ];
+
+      const embeddingScorer = vi.fn(async () => 0.7);
+      const candidates = await generateResolutionCandidates(observations, { embeddingScorer });
+
+      expect(candidates).toHaveLength(0);
+      expect(embeddingScorer).not.toHaveBeenCalled();
     });
   });
 });

@@ -78,6 +78,7 @@ describe('Story E1.1: Canonical entity domain contracts', () => {
     it('should require provenance on entity observations', () => {
       expectTypeOf<EntityObservation>().toMatchTypeOf<{
         id: string;
+        observation_type: 'generic' | 'author' | 'channel';
         entity_kind_hint: EntityKind | null;
         surface_form: string;
         normalized_form: string;

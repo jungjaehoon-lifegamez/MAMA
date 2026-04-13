@@ -68,6 +68,7 @@ describe('Story E1.3: Canonical entity persistence', () => {
 
       expect(names).toContain('scope_kind');
       expect(names).toContain('scope_id');
+      expect(names).toContain('observation_type');
       expect(names).toContain('extractor_version');
       expect(names).toContain('embedding_model_version');
       expect(names).toContain('source_connector');
@@ -157,6 +158,7 @@ describe('Story E1.3: Canonical entity persistence', () => {
     it('should upsert observations keyed by source record identity', async () => {
       const first = await upsertEntityObservation({
         id: 'obs_project_alpha_1',
+        observation_type: 'generic',
         entity_kind_hint: 'project',
         surface_form: 'Project Alpha',
         normalized_form: 'project alpha',
@@ -176,6 +178,7 @@ describe('Story E1.3: Canonical entity persistence', () => {
 
       const second = await upsertEntityObservation({
         id: 'obs_project_alpha_1b',
+        observation_type: 'generic',
         entity_kind_hint: 'project',
         surface_form: 'Project Alpha',
         normalized_form: 'project alpha',
@@ -195,6 +198,60 @@ describe('Story E1.3: Canonical entity persistence', () => {
 
       expect(first.id).toBe(second.id);
       expect(second.context_summary).toContain('Updated');
+    });
+
+    it('should keep distinct observation types for the same raw source record', async () => {
+      const author = await upsertEntityObservation({
+        id: 'obs_project_alpha_author',
+        observation_type: 'author',
+        entity_kind_hint: 'person',
+        surface_form: 'Alice',
+        normalized_form: 'alice',
+        lang: 'en',
+        script: 'Latn',
+        context_summary: 'Slack mention in launch planning',
+        related_surface_forms: ['Project Alpha'],
+        timestamp_observed: 1710000000000,
+        scope_kind: 'channel',
+        scope_id: 'C1234567890',
+        extractor_version: 'history-extractor@v1',
+        embedding_model_version: 'multilingual-e5-large',
+        source_connector: 'slack',
+        source_raw_db_ref: '~/.mama/connectors/slack/raw.db',
+        source_raw_record_id: 'raw_slack_002',
+      });
+
+      const project = await upsertEntityObservation({
+        id: 'obs_project_alpha_channel',
+        observation_type: 'channel',
+        entity_kind_hint: 'project',
+        surface_form: 'Project Alpha',
+        normalized_form: 'project alpha',
+        lang: 'en',
+        script: 'Latn',
+        context_summary: 'Slack mention in launch planning',
+        related_surface_forms: ['Alice'],
+        timestamp_observed: 1710000000000,
+        scope_kind: 'channel',
+        scope_id: 'C1234567890',
+        extractor_version: 'history-extractor@v1',
+        embedding_model_version: 'multilingual-e5-large',
+        source_connector: 'slack',
+        source_raw_db_ref: '~/.mama/connectors/slack/raw.db',
+        source_raw_record_id: 'raw_slack_002',
+      });
+
+      expect(author.id).not.toBe(project.id);
+      const count = getAdapter()
+        .prepare(
+          `
+            SELECT COUNT(*) as total
+            FROM entity_observations
+            WHERE source_connector = ? AND source_raw_record_id = ?
+          `
+        )
+        .get('slack', 'raw_slack_002') as { total: number };
+      expect(count.total).toBe(2);
     });
   });
 });

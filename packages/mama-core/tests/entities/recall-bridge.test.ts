@@ -88,4 +88,42 @@ describe('Story E1.8: Canonical entity recall bridge', () => {
     expect(rows[0]?.source.source_type).toBe('entity_canonical');
     expect(rows[0]?.summary).toBe('Project Alpha');
   });
+
+  it('does not treat wildcard characters in the query as match-all patterns', async () => {
+    const rows = await queryCanonicalEntities('%', [{ kind: 'project', id: 'scope-alpha' }], {
+      limit: 10,
+    });
+
+    expect(rows).toEqual([]);
+  });
+
+  it('filters out merged or non-active entities from recall results', async () => {
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `INSERT INTO entity_nodes (id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        'entity_project_alpha_merged',
+        'project',
+        'Project Alpha Legacy',
+        'merged',
+        'project',
+        'scope-alpha',
+        'entity_project_alpha',
+        1710000000000,
+        1710000001000
+      );
+
+    const rows = await queryCanonicalEntities(
+      'Project Alpha',
+      [{ kind: 'project', id: 'scope-alpha' }],
+      {
+        limit: 10,
+      }
+    );
+
+    expect(rows.map((row) => row.id)).not.toContain('entity_project_alpha_merged');
+  });
 });
