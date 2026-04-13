@@ -1,5 +1,12 @@
 import { getAdapter, initDB } from '../db-manager.js';
-import type { EntityAlias, EntityNode, EntityObservation } from './types.js';
+import {
+  ENTITY_KINDS,
+  ENTITY_OBSERVATION_TYPES,
+  ENTITY_SCOPE_KINDS,
+  type EntityAlias,
+  type EntityNode,
+  type EntityObservation,
+} from './types.js';
 
 type CreateEntityNodeInput = Omit<EntityNode, 'created_at' | 'updated_at'>;
 type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
@@ -13,39 +20,102 @@ function normalizeSourceRawDbRef(value: string | null): string {
   return value ?? '';
 }
 
-function parseObservationRow(row: Record<string, unknown>): EntityObservation {
+function requireStringField(row: Record<string, unknown>, field: string): string {
+  if (typeof row[field] !== 'string' || row[field].length === 0) {
+    throw new Error(`Invalid entity observation row: ${field} must be a non-empty string`);
+  }
+  return row[field] as string;
+}
+
+function optionalStringField(row: Record<string, unknown>, field: string): string | null {
+  if (row[field] === null || row[field] === undefined) {
+    return null;
+  }
+  if (typeof row[field] !== 'string') {
+    throw new Error(`Invalid entity observation row: ${field} must be a string or null`);
+  }
+  return row[field] as string;
+}
+
+function optionalNumberField(row: Record<string, unknown>, field: string): number | null {
+  if (row[field] === null || row[field] === undefined) {
+    return null;
+  }
+  if (typeof row[field] !== 'number') {
+    throw new Error(`Invalid entity observation row: ${field} must be a number or null`);
+  }
+  return row[field] as number;
+}
+
+export function parseObservationRow(row: Record<string, unknown>): EntityObservation {
+  const id = requireStringField(row, 'id');
+  const observationType = requireStringField(row, 'observation_type');
+  if (
+    !ENTITY_OBSERVATION_TYPES.includes(observationType as EntityObservation['observation_type'])
+  ) {
+    throw new Error(`Invalid entity observation row: observation_type=${observationType}`);
+  }
+  const entityKindHint = optionalStringField(row, 'entity_kind_hint');
+  if (
+    entityKindHint !== null &&
+    !ENTITY_KINDS.includes(entityKindHint as (typeof ENTITY_KINDS)[number])
+  ) {
+    throw new Error(`Invalid entity observation row: entity_kind_hint=${entityKindHint}`);
+  }
+  const scopeKind = optionalStringField(row, 'scope_kind');
+  if (scopeKind === null) {
+    throw new Error('Invalid entity observation row: scope_kind must not be null');
+  }
+  if (!ENTITY_SCOPE_KINDS.includes(scopeKind as EntityObservation['scope_kind'])) {
+    throw new Error(`Invalid entity observation row: scope_kind=${scopeKind}`);
+  }
+  const createdAt = row.created_at;
+  if (typeof createdAt !== 'number') {
+    throw new Error('Invalid entity observation row: created_at must be a number');
+  }
+
+  let relatedSurfaceForms: string[] = [];
+  if (typeof row.related_surface_forms === 'string') {
+    try {
+      const parsed = JSON.parse(row.related_surface_forms);
+      if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string')) {
+        throw new Error('parsed value is not a string[]');
+      }
+      relatedSurfaceForms = parsed as string[];
+    } catch (error) {
+      throw new Error(
+        `Invalid entity observation row: related_surface_forms must be valid JSON string[] (${error instanceof Error ? error.message : String(error)})`
+      );
+    }
+  } else if (row.related_surface_forms !== undefined && row.related_surface_forms !== null) {
+    throw new Error(
+      'Invalid entity observation row: related_surface_forms must be a JSON string or null'
+    );
+  }
+
   return {
-    id: String(row.id),
-    observation_type:
-      typeof row.observation_type === 'string'
-        ? (row.observation_type as EntityObservation['observation_type'])
-        : 'generic',
-    entity_kind_hint:
-      typeof row.entity_kind_hint === 'string'
-        ? (row.entity_kind_hint as EntityObservation['entity_kind_hint'])
-        : null,
-    surface_form: String(row.surface_form),
-    normalized_form: String(row.normalized_form),
-    lang: typeof row.lang === 'string' ? row.lang : null,
-    script: typeof row.script === 'string' ? row.script : null,
-    context_summary: typeof row.context_summary === 'string' ? row.context_summary : null,
-    related_surface_forms:
-      typeof row.related_surface_forms === 'string'
-        ? (JSON.parse(row.related_surface_forms) as string[])
-        : [],
-    timestamp_observed: typeof row.timestamp_observed === 'number' ? row.timestamp_observed : null,
-    scope_kind: row.scope_kind as EntityObservation['scope_kind'],
-    scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
-    extractor_version: String(row.extractor_version),
-    embedding_model_version:
-      typeof row.embedding_model_version === 'string' ? row.embedding_model_version : null,
-    source_connector: String(row.source_connector),
+    id,
+    observation_type: observationType as EntityObservation['observation_type'],
+    entity_kind_hint: entityKindHint as EntityObservation['entity_kind_hint'] | null,
+    surface_form: requireStringField(row, 'surface_form'),
+    normalized_form: requireStringField(row, 'normalized_form'),
+    lang: optionalStringField(row, 'lang'),
+    script: optionalStringField(row, 'script'),
+    context_summary: optionalStringField(row, 'context_summary'),
+    related_surface_forms: relatedSurfaceForms,
+    timestamp_observed: optionalNumberField(row, 'timestamp_observed'),
+    scope_kind: scopeKind as EntityObservation['scope_kind'],
+    scope_id: optionalStringField(row, 'scope_id'),
+    extractor_version: requireStringField(row, 'extractor_version'),
+    embedding_model_version: optionalStringField(row, 'embedding_model_version'),
+    source_connector: requireStringField(row, 'source_connector'),
     source_raw_db_ref:
-      typeof row.source_raw_db_ref === 'string' && row.source_raw_db_ref.length > 0
-        ? row.source_raw_db_ref
+      optionalStringField(row, 'source_raw_db_ref') &&
+      optionalStringField(row, 'source_raw_db_ref')!.length > 0
+        ? optionalStringField(row, 'source_raw_db_ref')
         : null,
-    source_raw_record_id: String(row.source_raw_record_id),
-    created_at: Number(row.created_at),
+    source_raw_record_id: requireStringField(row, 'source_raw_record_id'),
+    created_at: createdAt,
   };
 }
 
