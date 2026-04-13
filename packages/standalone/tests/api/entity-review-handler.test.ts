@@ -717,6 +717,122 @@ describe('Story E1.8: Entity review API', () => {
       expect(action.action_type).toBe('merge');
     });
 
+    it('propagates merge chain cycle errors as 409 instead of silent audit-only fallback', async () => {
+      // Regression for Codex finding #2 on PR #82: resolveRefToEntityId used
+      // to swallow ALL EntityMergeError types, letting a cyclic merged_into
+      // chain return 200 with merge_applied=false. The fix narrows the catch
+      // to entity.node_not_found so cycles/depth-cap errors propagate to the
+      // outer 409 envelope.
+      // Create A first without merge, then B pointing to A, then update A to
+      // point back at B. This forms the cycle without violating the
+      // entity_nodes.merged_into foreign key.
+      await createEntityNode({
+        id: 'entity_cycle_a',
+        kind: 'project',
+        preferred_label: 'Cycle A',
+        status: 'active',
+        scope_kind: 'channel',
+        scope_id: 'C_cycle',
+        merged_into: null,
+      });
+      await createEntityNode({
+        id: 'entity_cycle_b',
+        kind: 'project',
+        preferred_label: 'Cycle B',
+        status: 'active',
+        scope_kind: 'channel',
+        scope_id: 'C_cycle',
+        merged_into: 'entity_cycle_a',
+      });
+      getAdapter()
+        .prepare(
+          `UPDATE entity_nodes SET merged_into = 'entity_cycle_b' WHERE id = 'entity_cycle_a'`
+        )
+        .run();
+      await createEntityNode({
+        id: 'entity_cycle_target',
+        kind: 'project',
+        preferred_label: 'Cycle Target',
+        status: 'active',
+        scope_kind: 'channel',
+        scope_id: 'C_cycle',
+        merged_into: null,
+      });
+      await attachEntityAlias({
+        id: 'alias_cycle_a',
+        entity_id: 'entity_cycle_a',
+        label: 'Cycle A',
+        normalized_label: 'cycle a',
+        lang: 'en',
+        script: 'Latn',
+        label_type: 'pref',
+        source_type: 'synthetic',
+        source_ref: 'synthetic:test',
+        confidence: 0.9,
+        status: 'active',
+      });
+      await attachEntityAlias({
+        id: 'alias_cycle_target',
+        entity_id: 'entity_cycle_target',
+        label: 'Cycle Target',
+        normalized_label: 'cycle target',
+        lang: 'en',
+        script: 'Latn',
+        label_type: 'pref',
+        source_type: 'synthetic',
+        source_ref: 'synthetic:test',
+        confidence: 0.9,
+        status: 'active',
+      });
+      getAdapter()
+        .prepare(
+          `
+            INSERT INTO entity_resolution_candidates (
+              id, candidate_kind, left_ref, right_ref, status, score_total,
+              score_structural, score_string, score_context, score_graph, score_embedding,
+              rule_trace, extractor_version, embedding_model_version, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(
+          'candidate_cycle_broken',
+          'entity_to_entity',
+          'alias_cycle_a',
+          'alias_cycle_target',
+          'pending',
+          0.9,
+          0.9,
+          0.8,
+          0.5,
+          0,
+          0,
+          JSON.stringify(['broken_chain']),
+          'history-extractor@v1',
+          'multilingual-e5-large',
+          Date.now(),
+          Date.now()
+        );
+
+      const req = createMockRequest({
+        method: 'POST',
+        url: '/api/entities/candidates/candidate_cycle_broken/approve',
+        body: { reason: 'attempt to approve cyclic chain' },
+      });
+      const res = createMockResponse();
+      await handleReviewEntityCandidate(req, res.res, getAdapter(), 'approve');
+
+      expect(res.getStatus()).toBe(409);
+      const body = res.readJson() as { error: { code: string } };
+      expect(body.error.code).toBe('entity.merge_chain_cycle');
+
+      // Candidate stays pending — no silent approve-then-audit-only.
+      const candidateRow = getAdapter()
+        .prepare('SELECT status FROM entity_resolution_candidates WHERE id = ?')
+        .get('candidate_cycle_broken') as { status: string };
+      expect(candidateRow.status).toBe('pending');
+    });
+
     it('returns 409 entity.merge_scope_mismatch when entities cross scopes', async () => {
       await createEntityNode({
         id: 'entity_scope_a',
