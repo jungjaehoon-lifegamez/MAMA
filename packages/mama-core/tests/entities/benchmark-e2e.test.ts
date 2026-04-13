@@ -74,6 +74,7 @@ function observationFor(group: GoldGroup, alias: GoldAlias, index: number): Enti
   const id = `obs_${group.canonical_id}_${index}`;
   return {
     id,
+    observation_type: 'generic',
     entity_kind_hint: group.kind,
     surface_form: alias.label,
     normalized_form: normalizeEntityLabel(alias.label),

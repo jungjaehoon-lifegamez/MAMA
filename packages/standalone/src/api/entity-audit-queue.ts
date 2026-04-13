@@ -106,7 +106,7 @@ export class EntityAuditRunQueue {
         .run(id, spec.baseline_run_id ?? null, spec.reason ?? null, createdAt);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes('UNIQUE') || message.includes('constraint')) {
+      if (message.includes('UNIQUE')) {
         throw new AuditRunInProgressError();
       }
       throw error;
