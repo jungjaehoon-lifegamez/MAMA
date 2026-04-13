@@ -18,22 +18,29 @@ function parseUrl(req: IncomingMessage): URL {
 function parseRunIdFromPath(url: URL): string | null {
   const parts = url.pathname.split('/').filter(Boolean);
   const idx = parts.indexOf('runs');
-  if (idx < 0 || idx + 1 >= parts.length) return null;
+  if (idx < 0 || idx + 1 >= parts.length) {
+    return null;
+  }
   const id = parts[idx + 1];
   return id ?? null;
 }
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const pre = (req as unknown as { body?: Record<string, unknown> }).body;
-  if (pre && typeof pre === 'object') return pre;
+  if (pre && typeof pre === 'object') {
+    return pre;
+  }
   return new Promise((resolve, reject) => {
     let data = '';
+    let size = 0;
     req.on('data', (chunk: Buffer) => {
-      data += chunk.toString('utf8');
-      if (data.length > 1_048_576) {
+      size += chunk.length;
+      if (size > 1_048_576) {
         req.destroy();
         reject(new Error('Request body too large'));
+        return;
       }
+      data += chunk.toString('utf8');
     });
     req.on('end', () => {
       if (!data) {

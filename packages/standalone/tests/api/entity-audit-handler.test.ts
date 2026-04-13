@@ -1,6 +1,6 @@
 import { Readable } from 'node:stream';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { EntityAuditRunQueue } from '../../src/api/entity-audit-queue.js';
@@ -10,10 +10,16 @@ function createMockRequest(input: {
   method: string;
   url: string;
   body?: Record<string, unknown>;
+  rawBody?: Buffer;
   remoteAddress?: string;
 }): IncomingMessage {
   const stream = new Readable({
     read() {
+      if (input.rawBody) {
+        this.push(input.rawBody);
+        this.push(null);
+        return;
+      }
       if (input.body !== undefined) {
         this.push(JSON.stringify(input.body));
       }
@@ -83,6 +89,20 @@ describe('entity audit handler', () => {
     expect(res.getStatus()).toBe(202);
     const body = res.readJson() as { run_id: string };
     expect(body.run_id).toMatch(/^audit_/);
+  });
+
+  it('POST /audit/run triggers the background audit callback with the new run id', async () => {
+    const queue = new EntityAuditRunQueue({ adapter: getAdapter() });
+    const runAuditInBackground = vi.fn();
+    const handler = createEntityAuditHandler({ queue, runAuditInBackground });
+
+    const req = createMockRequest({ method: 'POST', url: '/api/entities/audit/run', body: {} });
+    const res = createMockResponse();
+    await handler.handleStartAuditRun(req, res.res);
+
+    expect(res.getStatus()).toBe(202);
+    const body = res.readJson() as { run_id: string };
+    expect(runAuditInBackground).toHaveBeenCalledWith(body.run_id);
   });
 
   it('POST /audit/run returns 409 when a run is already in progress', async () => {
@@ -170,5 +190,25 @@ describe('entity audit handler', () => {
     expect(body.status).toBe('complete');
     expect(body.classification).toBe('stable');
     expect(body.metrics.false_merge_rate).toBe(0.01);
+  });
+
+  it('rejects oversized multibyte request bodies using the byte limit', async () => {
+    const queue = new EntityAuditRunQueue({ adapter: getAdapter() });
+    const handler = createEntityAuditHandler({ queue });
+    const oversized = Buffer.from(`{"note":"${'\\uAC00'.repeat(400000)}"}`, 'utf8');
+    const res = createMockResponse();
+
+    await handler.handleStartAuditRun(
+      createMockRequest({
+        method: 'POST',
+        url: '/api/entities/audit/run',
+        rawBody: oversized,
+      }),
+      res.res
+    );
+
+    expect(res.getStatus()).toBe(400);
+    const body = res.readJson() as { error: { message: string } };
+    expect(body.error.message).toContain('Request body too large');
   });
 });

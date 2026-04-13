@@ -25,6 +25,7 @@ interface Adapter {
     get: (...params: unknown[]) => unknown;
     all: (...params: unknown[]) => unknown[];
   };
+  transaction?: <T extends (...args: never[]) => unknown>(fn: T) => T;
 }
 
 interface CandidateRow {
@@ -73,14 +74,20 @@ function parseUrl(req: IncomingMessage): URL {
 }
 
 function parseCursor(cursor: string | null): { score: number; id: string } | null {
-  if (!cursor) return null;
+  if (!cursor) {
+    return null;
+  }
   try {
     const decoded = Buffer.from(cursor, 'base64').toString('utf8');
     const sep = decoded.indexOf(':');
-    if (sep < 0) return null;
+    if (sep < 0) {
+      return null;
+    }
     const score = Number(decoded.slice(0, sep));
     const id = decoded.slice(sep + 1);
-    if (!Number.isFinite(score) || !id) return null;
+    if (!Number.isFinite(score) || !id) {
+      return null;
+    }
     return { score, id };
   } catch {
     return null;
@@ -92,6 +99,24 @@ function encodeCursor(score: number, id: string): string {
 }
 
 function canonicalizeActorId(req: IncomingMessage): string {
+  const email = req.headers['cf-access-authenticated-user-email'];
+  if (typeof email === 'string' && email.trim().length > 0) {
+    return `user:${email.trim().toLowerCase()}`;
+  }
+
+  const uuid = req.headers['cf-access-authenticated-user-uuid'];
+  if (typeof uuid === 'string' && uuid.trim().length > 0) {
+    return `user_uuid:${uuid.trim()}`;
+  }
+
+  const forwardedFor = req.headers['x-forwarded-for'];
+  if (typeof forwardedFor === 'string' && forwardedFor.trim().length > 0) {
+    const first = forwardedFor.split(',')[0]?.trim();
+    if (first) {
+      return `local:${first}`;
+    }
+  }
+
   const remote = req.socket?.remoteAddress ?? 'unknown';
   return `local:${remote}`;
 }
@@ -125,7 +150,9 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 function parseRuleTrace(value: string | null): string[] {
-  if (!value) return [];
+  if (!value) {
+    return [];
+  }
   try {
     const parsed = JSON.parse(value);
     return Array.isArray(parsed) ? parsed.map((x) => String(x)) : [];
@@ -260,12 +287,18 @@ export async function handleListEntityCandidates(
 function extractIdFromPath(url: URL, suffix?: string): string | null {
   const parts = url.pathname.split('/').filter(Boolean);
   const idx = parts.indexOf('candidates');
-  if (idx < 0 || idx + 1 >= parts.length) return null;
+  if (idx < 0 || idx + 1 >= parts.length) {
+    return null;
+  }
   const id = parts[idx + 1]!;
-  if (!id) return null;
+  if (!id) {
+    return null;
+  }
   if (suffix) {
     const tail = parts[idx + 2];
-    if (tail !== suffix) return null;
+    if (tail !== suffix) {
+      return null;
+    }
   }
   return id;
 }
@@ -404,38 +437,49 @@ export async function handleReviewEntityCandidate(
     rule_trace: parseRuleTrace(candidate.rule_trace),
   });
 
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_merge_actions (
-          id, action_type, source_entity_id, target_entity_id, candidate_id,
-          actor_type, actor_id, reason, evidence_json, created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      mergeActionId,
-      actionType,
-      null,
-      null,
-      id,
-      'user',
-      actorId,
-      reason,
-      evidenceJson,
-      createdAt
-    );
+  const persistDecision = () => {
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_merge_actions (
+            id, action_type, source_entity_id, target_entity_id, candidate_id,
+            actor_type, actor_id, reason, evidence_json, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        mergeActionId,
+        actionType,
+        null,
+        null,
+        id,
+        'user',
+        actorId,
+        reason,
+        evidenceJson,
+        createdAt
+      );
 
-  adapter
-    .prepare(
-      `
-        UPDATE entity_resolution_candidates
-        SET status = ?, updated_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(candidateStatus, createdAt, id);
+    adapter
+      .prepare(
+        `
+          UPDATE entity_resolution_candidates
+          SET status = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(candidateStatus, createdAt, id);
+  };
+
+  if (typeof adapter.transaction === 'function') {
+    const txResult = adapter.transaction(persistDecision as never) as unknown;
+    if (typeof txResult === 'function') {
+      txResult();
+    }
+  } else {
+    persistDecision();
+  }
 
   json(res, 200, {
     candidate_id: id,

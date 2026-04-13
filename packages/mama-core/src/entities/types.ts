@@ -25,6 +25,9 @@ export type EntityNodeStatus = (typeof ENTITY_NODE_STATUSES)[number];
 export const ENTITY_ALIAS_STATUSES = ['active', 'suppressed'] as const;
 export type EntityAliasStatus = (typeof ENTITY_ALIAS_STATUSES)[number];
 
+export const ENTITY_OBSERVATION_TYPES = ['generic', 'author', 'channel'] as const;
+export type EntityObservationType = (typeof ENTITY_OBSERVATION_TYPES)[number];
+
 export const ENTITY_CANDIDATE_KINDS = ['alias_to_entity', 'entity_to_entity', 'cluster'] as const;
 export type EntityCandidateKind = (typeof ENTITY_CANDIDATE_KINDS)[number];
 
@@ -60,6 +63,7 @@ export interface EntityAlias {
 
 export interface EntityObservation {
   id: string;
+  observation_type: EntityObservationType;
   entity_kind_hint: EntityKind | null;
   surface_form: string;
   normalized_form: string;

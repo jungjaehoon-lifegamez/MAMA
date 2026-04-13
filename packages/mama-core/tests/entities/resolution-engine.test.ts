@@ -17,6 +17,7 @@ function makeObservation(
 ): EntityObservation {
   return {
     id,
+    observation_type: 'generic',
     entity_kind_hint: 'project',
     surface_form: `Project ${id}`,
     normalized_form: `project ${id}`.toLowerCase(),

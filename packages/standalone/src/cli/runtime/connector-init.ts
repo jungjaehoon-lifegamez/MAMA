@@ -54,6 +54,9 @@ export async function initConnectors(
     buildEntityObservations,
   } = await import('../../memory/history-extractor.js');
   const { saveMemory, MEMORY_KINDS, MODEL_NAME } = await import('@jungjaehoon/mama-core');
+  const entityObservationStore = (await import('@jungjaehoon/mama-core')) as unknown as {
+    upsertEntityObservations?: (inputs: EntityObservationDraft[]) => Promise<unknown>;
+  };
   type MemoryKind = import('@jungjaehoon/mama-core').MemoryKind;
   type ConnectorsJson = import('../../connectors/framework/types.js').ConnectorsConfig;
   type ChannelConfigMap = import('../../connectors/framework/types.js').ChannelConfig;
@@ -128,9 +131,6 @@ export async function initConnectors(
 
     const validKinds = new Set<string>(MEMORY_KINDS);
     const observationExtractorVersion = 'history-extractor@v1';
-    const upsertEntityObservation = (await import('@jungjaehoon/mama-core')) as unknown as {
-      upsertEntityObservation?: (input: EntityObservationDraft) => Promise<unknown>;
-    };
     const rawDbRefForSource = (source: string): string => {
       return join(homedir(), '.mama', 'connectors', source, 'raw.db');
     };
@@ -141,23 +141,25 @@ export async function initConnectors(
       buildPrompt: (items: NormalizedItem[]) => string
     ): Promise<void> => {
       for (const [channelKey, channelItems] of groups) {
-        const prompt = buildPrompt(channelItems);
-        if (prompt.length > 20000) {
-          console.log(
-            `[connector] ${label}:${channelKey} skipped (prompt too large: ${prompt.length})`
-          );
-          continue;
-        }
         try {
-          if (upsertEntityObservation.upsertEntityObservation) {
+          if (typeof entityObservationStore.upsertEntityObservations === 'function') {
             const observations = buildEntityObservations(channelItems, {
               extractorVersion: observationExtractorVersion,
               embeddingModelVersion: MODEL_NAME,
               rawDbRefForSource,
             });
-            for (const observation of observations) {
-              await upsertEntityObservation.upsertEntityObservation(observation);
+            if (observations.length > 0) {
+              await entityObservationStore.upsertEntityObservations(
+                observations as EntityObservationDraft[]
+              );
             }
+          }
+          const prompt = buildPrompt(channelItems);
+          if (prompt.length > 20000) {
+            console.log(
+              `[connector] ${label}:${channelKey} skipped (prompt too large: ${prompt.length})`
+            );
+            continue;
           }
           if (!connectorExtractionFn) throw new Error('Extraction not available');
           const responseText = await connectorExtractionFn(prompt);

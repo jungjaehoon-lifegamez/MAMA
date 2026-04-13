@@ -9,6 +9,16 @@ export interface CandidateGeneratorOptions {
   topN?: number;
 }
 
+interface ScoredPair {
+  left: EntityObservation;
+  right: EntityObservation;
+  score_structural: number;
+  score_string: number;
+  score_context: number;
+  score_graph: number;
+  score_total: number;
+}
+
 function tokenize(input: string): string[] {
   return input
     .toLowerCase()
@@ -83,12 +93,40 @@ function shouldConsiderPair(left: EntityObservation, right: EntityObservation): 
   return true;
 }
 
+function buildBlockKeys(observation: EntityObservation): string[] {
+  const keys = new Set<string>();
+  keys.add(`norm:${observation.normalized_form}`);
+
+  const ids = extractStructuredIdentifiers(observation.surface_form);
+  for (const email of ids.emails) {
+    keys.add(`email:${email}`);
+  }
+  for (const handle of ids.handles) {
+    keys.add(`handle:${handle}`);
+  }
+  for (const domain of ids.domains) {
+    keys.add(`domain:${domain}`);
+  }
+
+  const contextTokens = tokenize(observation.context_summary ?? '').slice(0, 3);
+  for (const token of contextTokens) {
+    keys.add(`ctx:${observation.scope_kind}:${observation.scope_id ?? 'global'}:${token}`);
+  }
+
+  return Array.from(keys);
+}
+
 export function dedupeObservationsBySource(observations: EntityObservation[]): EntityObservation[] {
   const seen = new Set<string>();
   const deduped: EntityObservation[] = [];
 
   for (const observation of observations) {
-    const key = `${observation.source_connector}:${observation.source_raw_record_id}`;
+    const key = JSON.stringify([
+      observation.source_connector,
+      observation.source_raw_db_ref ?? '',
+      observation.source_raw_record_id,
+      observation.observation_type,
+    ]);
     if (seen.has(key)) {
       continue;
     }
@@ -104,44 +142,63 @@ export async function generateResolutionCandidates(
   options: CandidateGeneratorOptions = {}
 ): Promise<EntityResolutionCandidate[]> {
   const deduped = dedupeObservationsBySource(observations);
-  const preliminary: Array<{
-    left: EntityObservation;
-    right: EntityObservation;
-    score_structural: number;
-    score_string: number;
-    score_context: number;
-    score_graph: number;
-    score_total: number;
-  }> = [];
+  const blockMap = new Map<string, EntityObservation[]>();
+  for (const observation of deduped) {
+    const keys = buildBlockKeys(observation);
+    for (const key of keys) {
+      const existing = blockMap.get(key) ?? [];
+      existing.push(observation);
+      blockMap.set(key, existing);
+    }
+  }
 
-  for (let i = 0; i < deduped.length; i += 1) {
-    for (let j = i + 1; j < deduped.length; j += 1) {
-      const left = deduped[i];
-      const right = deduped[j];
+  const preliminary: ScoredPair[] = [];
+  const seenPairs = new Set<string>();
 
-      if (!shouldConsiderPair(left, right)) {
-        continue;
+  for (const bucket of blockMap.values()) {
+    if (bucket.length < 2) {
+      continue;
+    }
+    for (let i = 0; i < bucket.length; i += 1) {
+      for (let j = i + 1; j < bucket.length; j += 1) {
+        const first = bucket[i]!;
+        const second = bucket[j]!;
+        const [left, right] =
+          first.id.localeCompare(second.id) <= 0 ? [first, second] : [second, first];
+        const pairKey = `${left.id}::${right.id}`;
+        if (seenPairs.has(pairKey)) {
+          continue;
+        }
+        seenPairs.add(pairKey);
+
+        if (!shouldConsiderPair(left, right)) {
+          continue;
+        }
+
+        const score_structural = structuralScore(left, right);
+        const score_string = stringScore(left, right);
+        const score_context = contextScore(left, right);
+        const score_graph = 0;
+        const score_total = score_structural + score_string + score_context + score_graph;
+
+        if (score_total <= 0 && !options.embeddingScorer) {
+          continue;
+        }
+
+        if (score_total <= 0 && options.embeddingScorer) {
+          continue;
+        }
+
+        preliminary.push({
+          left,
+          right,
+          score_structural,
+          score_string,
+          score_context,
+          score_graph,
+          score_total,
+        });
       }
-
-      const score_structural = structuralScore(left, right);
-      const score_string = stringScore(left, right);
-      const score_context = contextScore(left, right);
-      const score_graph = 0;
-      const score_total = score_structural + score_string + score_context + score_graph;
-
-      if (score_total <= 0 && !options.embeddingScorer) {
-        continue;
-      }
-
-      preliminary.push({
-        left,
-        right,
-        score_structural,
-        score_string,
-        score_context,
-        score_graph,
-        score_total,
-      });
     }
   }
 
