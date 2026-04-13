@@ -28,7 +28,7 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 
 const auditLogger = new DebugLogger('EntityAuditRunner');
-const DEFAULT_FIXTURE_DIR = resolve(__dirname, '../../../mama-core/tests/entities/fixtures');
+const DEFAULT_FIXTURE_DIR = resolve(__dirname, '../../templates/entity-audit-fixtures');
 
 interface AuditCandidateSnapshot {
   id: string;
