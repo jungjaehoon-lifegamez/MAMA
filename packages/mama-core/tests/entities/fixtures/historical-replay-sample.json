@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "extractor_version": "history-extractor@v1",
+  "embedding_model_version": "multilingual-e5-large",
+  "description": "Synthetic historical observation replay sample for baseline comparison.",
+  "observations": [
+    {
+      "id": "replay_obs_1",
+      "surface_form": "Project Alpha",
+      "normalized_form": "project alpha",
+      "lang": "en",
+      "script": "Latn",
+      "scope_kind": "channel",
+      "scope_id": "C-SYNTH-ALPHA",
+      "source_connector": "synthetic",
+      "source_raw_record_id": "synthetic_alpha_en",
+      "context_summary": "Alpha kickoff note"
+    },
+    {
+      "id": "replay_obs_2",
+      "surface_form": "알파 프로젝트",
+      "normalized_form": "알파 프로젝트",
+      "lang": "ko",
+      "script": "Hang",
+      "scope_kind": "channel",
+      "scope_id": "C-SYNTH-ALPHA",
+      "source_connector": "synthetic",
+      "source_raw_record_id": "synthetic_alpha_ko",
+      "context_summary": "알파 착수 메모"
+    }
+  ]
+}
