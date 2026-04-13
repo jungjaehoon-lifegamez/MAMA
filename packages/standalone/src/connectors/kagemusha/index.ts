@@ -123,6 +123,7 @@ export class KagemushaConnector implements IConnector {
           metadata: {
             channel: row.channel,
             channelId: row.channel_id,
+            rawConnector: 'kagemusha',
             userId: row.user_id,
             role: row.role,
           },
@@ -159,6 +160,7 @@ export class KagemushaConnector implements IConnector {
             priority: task.priority,
             deadline: task.deadline,
             sourceRoom: task.source_room,
+            rawConnector: 'kagemusha',
             autoCreated: task.auto_created === 1,
           },
         });
@@ -205,6 +207,7 @@ export class KagemushaConnector implements IConnector {
         metadata: {
           channel: row.channel,
           channelId: row.channel_id,
+          rawConnector: 'kagemusha',
           userId: row.user_id,
           role: row.role,
         },
@@ -241,6 +244,7 @@ export class KagemushaConnector implements IConnector {
               priority: task.priority,
               deadline: task.deadline,
               sourceRoom: task.source_room,
+              rawConnector: 'kagemusha',
               autoCreated: task.auto_created === 1,
             },
           };

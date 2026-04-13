@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "extractor_version": "history-extractor@v1",
+  "embedding_model_version": "multilingual-e5-large",
+  "description": "Synthetic gold canonical identity groups used by the entity audit. All names are fabricated - no operator data.",
+  "groups": [
+    {
+      "canonical_id": "gold_project_alpha",
+      "kind": "project",
+      "preferred_label": "Project Alpha",
+      "aliases": [
+        { "label": "Project Alpha", "lang": "en", "script": "Latn" },
+        { "label": "알파 프로젝트", "lang": "ko", "script": "Hang" },
+        { "label": "アルファプロジェクト", "lang": "ja", "script": "Jpan" }
+      ]
+    },
+    {
+      "canonical_id": "gold_person_synthia",
+      "kind": "person",
+      "preferred_label": "Synthia Benchmark",
+      "aliases": [
+        { "label": "Synthia Benchmark", "lang": "en", "script": "Latn" },
+        { "label": "신시아 벤치마크", "lang": "ko", "script": "Hang" }
+      ]
+    },
+    {
+      "canonical_id": "gold_org_acme_lab",
+      "kind": "organization",
+      "preferred_label": "Acme Lab",
+      "aliases": [
+        { "label": "Acme Lab", "lang": "en", "script": "Latn" },
+        { "label": "에이크미 랩", "lang": "ko", "script": "Hang" },
+        { "label": "アクメラボ", "lang": "ja", "script": "Jpan" }
+      ]
+    },
+    {
+      "canonical_id": "gold_work_release",
+      "kind": "work_item",
+      "preferred_label": "Q2 Release",
+      "aliases": [
+        { "label": "Q2 Release", "lang": "en", "script": "Latn" },
+        { "label": "2분기 릴리스", "lang": "ko", "script": "Hang" }
+      ]
+    }
+  ]
+}

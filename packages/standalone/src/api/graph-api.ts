@@ -30,6 +30,14 @@ import {
   handlePostUICommand,
 } from './ui-command-handler.js';
 import {
+  handleGetEntityCandidate,
+  handleListEntityCandidates,
+  handleReviewEntityCandidate,
+} from './entity-review-handler.js';
+import { createEntityAuditHandler, type EntityAuditHandlerDeps } from './entity-audit-handler.js';
+import { EntityAuditRunQueue } from './entity-audit-queue.js';
+import { runEntityAuditInBackground } from './entity-audit-runner.js';
+import {
   getValidationSummary,
   listValidationHistory,
   getValidationSessionDetail,
@@ -1050,6 +1058,29 @@ async function handleCheckpointsRequest(_req: IncomingMessage, res: ServerRespon
 }
 
 function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
+  let entityAuditQueue: EntityAuditRunQueue | null = null;
+  let entityAuditQueuePromise: Promise<EntityAuditRunQueue> | null = null;
+
+  const getEntityAuditQueue = async (): Promise<EntityAuditRunQueue> => {
+    if (entityAuditQueue) {
+      return entityAuditQueue;
+    }
+    if (entityAuditQueuePromise) {
+      return entityAuditQueuePromise;
+    }
+    entityAuditQueuePromise = (async () => {
+      await initDB();
+      const queue = new EntityAuditRunQueue({ adapter: getAdapter() });
+      const recovered = queue.recoverOrphans();
+      if (recovered > 0) {
+        logger.warn('[entity-audit] Recovered orphaned audit runs on boot', { recovered });
+      }
+      entityAuditQueue = queue;
+      return queue;
+    })();
+    return entityAuditQueuePromise;
+  };
+
   const parsePositiveInt = (value: string | null, fallback: number, max: number): number => {
     const parsed = Number.parseInt(value ?? '', 10);
     if (!Number.isFinite(parsed) || parsed < 1) {
@@ -2150,6 +2181,149 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     if (pathname === '/api/code-act' && req.method === 'POST') {
       await handleCodeActRequest(req, res, options);
       return true;
+    }
+
+    // Route: GET /api/entities/candidates - list pending review candidates
+    if (pathname === '/api/entities/candidates' && req.method === 'GET') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
+        return true;
+      }
+      await initDB();
+      await handleListEntityCandidates(req, res, getAdapter());
+      return true;
+    }
+
+    // Route: POST /api/entities/candidates/:id/{approve,reject,defer}
+    {
+      const reviewMatch = pathname.match(
+        /^\/api\/entities\/candidates\/([^/]+)\/(approve|reject|defer)$/
+      );
+      if (reviewMatch && req.method === 'POST') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
+          return true;
+        }
+        await initDB();
+        const action = reviewMatch[2] as 'approve' | 'reject' | 'defer';
+        await handleReviewEntityCandidate(req, res, getAdapter(), action);
+        return true;
+      }
+    }
+
+    // Route: GET /api/entities/candidates/:id - candidate detail
+    {
+      const detailMatch = pathname.match(/^\/api\/entities\/candidates\/([^/]+)$/);
+      if (detailMatch && req.method === 'GET') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
+          return true;
+        }
+        await initDB();
+        await handleGetEntityCandidate(req, res, getAdapter());
+        return true;
+      }
+    }
+
+    // Route: POST /api/entities/audit/run - start a new audit run
+    if (pathname === '/api/entities/audit/run' && req.method === 'POST') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
+        return true;
+      }
+      const queue = await getEntityAuditQueue();
+      const deps: EntityAuditHandlerDeps = {
+        queue,
+        runAuditInBackground: (runId: string) => {
+          void runEntityAuditInBackground({
+            queue,
+            adapter: getAdapter(),
+            runId,
+          });
+        },
+      };
+      const handler = createEntityAuditHandler(deps);
+      await handler.handleStartAuditRun(req, res);
+      return true;
+    }
+
+    // Route: GET /api/entities/audit/runs - list recent audit runs
+    if (pathname === '/api/entities/audit/runs' && req.method === 'GET') {
+      if (!isAuthenticated(req)) {
+        logUnauthorizedAttempt(req);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            error: true,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+          })
+        );
+        return true;
+      }
+      const queue = await getEntityAuditQueue();
+      const handler = createEntityAuditHandler({
+        queue,
+      });
+      await handler.handleListAuditRuns(req, res);
+      return true;
+    }
+
+    // Route: GET /api/entities/audit/runs/:id - single run detail
+    {
+      const runDetail = pathname.match(/^\/api\/entities\/audit\/runs\/([^/]+)$/);
+      if (runDetail && req.method === 'GET') {
+        if (!isAuthenticated(req)) {
+          logUnauthorizedAttempt(req);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              error: true,
+              code: 'UNAUTHORIZED',
+              message: 'Authentication required. Provide Authorization: Bearer <token> header.',
+            })
+          );
+          return true;
+        }
+        const queue = await getEntityAuditQueue();
+        const handler = createEntityAuditHandler({
+          queue,
+        });
+        await handler.handleGetAuditRun(req, res);
+        return true;
+      }
     }
 
     return false;
