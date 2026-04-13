@@ -526,7 +526,7 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
   }
 
   const source = adapter.prepare('SELECT * FROM entity_nodes WHERE id = ?').get(source_id) as
-    | Record<string, unknown>
+    | EntityNode
     | undefined;
   if (!source) {
     throw new EntityMergeError(
@@ -536,7 +536,7 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
   }
 
   const target = adapter.prepare('SELECT * FROM entity_nodes WHERE id = ?').get(target_id) as
-    | Record<string, unknown>
+    | EntityNode
     | undefined;
   if (!target) {
     throw new EntityMergeError(
@@ -545,19 +545,13 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
     );
   }
 
-  if (
-    source.status === 'merged' ||
-    (typeof source.merged_into === 'string' && source.merged_into.length > 0)
-  ) {
+  if (source.status === 'merged' || source.merged_into) {
     throw new EntityMergeError(
       'entity.merge_source_already_merged',
       `Source entity ${source_id} is already merged`
     );
   }
-  if (
-    target.status === 'merged' ||
-    (typeof target.merged_into === 'string' && target.merged_into.length > 0)
-  ) {
+  if (target.status === 'merged' || target.merged_into) {
     throw new EntityMergeError(
       'entity.merge_target_already_merged',
       `Target entity ${target_id} is already merged`
@@ -569,13 +563,13 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
   if (source.kind !== target.kind) {
     throw new EntityMergeError(
       'entity.merge_kind_mismatch',
-      `Cannot merge ${String(source.kind)} into ${String(target.kind)}`
+      `Cannot merge ${source.kind} into ${target.kind}`
     );
   }
   if (source.scope_kind !== target.scope_kind || source.scope_id !== target.scope_id) {
     throw new EntityMergeError(
       'entity.merge_scope_mismatch',
-      `Cannot merge across scopes: ${String(source.scope_kind)}/${String(source.scope_id)} vs ${String(target.scope_kind)}/${String(target.scope_id)}`
+      `Cannot merge across scopes: ${source.scope_kind}/${source.scope_id ?? 'null'} vs ${target.scope_kind}/${target.scope_id ?? 'null'}`
     );
   }
 

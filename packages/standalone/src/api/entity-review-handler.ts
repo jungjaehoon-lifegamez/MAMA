@@ -503,6 +503,10 @@ export async function handleReviewEntityCandidate(
   // entity) intentionally return null — the approve path then falls back to
   // audit-only behavior for backward compat, matching the v1 scope in
   // docs/superpowers/specs/2026-04-13-canonical-entity-merge-design.md.
+  //
+  // Merge-chain integrity errors (cycle, depth cap) are NOT swallowed — they
+  // propagate to the outer try/catch so the handler returns 409 with a stable
+  // code instead of silently downgrading to an audit-only write.
   const resolveRefToEntityId = (refId: string): string | null => {
     const alias = adapter
       .prepare(`SELECT entity_id FROM entity_aliases WHERE id = ?`)
@@ -517,13 +521,37 @@ export async function handleReviewEntityCandidate(
     }
     try {
       return resolveCanonicalEntityId(adapter, node.id);
-    } catch {
-      return null;
+    } catch (err) {
+      if (err instanceof EntityMergeError && err.code === 'entity.node_not_found') {
+        return null;
+      }
+      throw err;
     }
   };
 
-  const leftEntityId = resolveRefToEntityId(candidate.left_ref);
-  const rightEntityId = resolveRefToEntityId(candidate.right_ref);
+  let leftEntityId: string | null;
+  let rightEntityId: string | null;
+  try {
+    leftEntityId = resolveRefToEntityId(candidate.left_ref);
+    rightEntityId = resolveRefToEntityId(candidate.right_ref);
+  } catch (err) {
+    if (err instanceof EntityMergeError) {
+      json(res, 409, {
+        error: {
+          code: err.code,
+          message: err.message,
+          hint: 'Inspect entity_nodes state for the candidate refs before retrying.',
+          doc_url: 'docs/operations/entity-substrate-runbook.md#merge-failed',
+        },
+        context: {
+          candidate_id: id,
+          attempted_action: action,
+        },
+      });
+      return;
+    }
+    throw err;
+  }
   const canRealMerge =
     action === 'approve' &&
     leftEntityId !== null &&
