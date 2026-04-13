@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { URL } from 'node:url';
+import {
+  EntityMergeError,
+  mergeEntityNodes,
+  resolveCanonicalEntityId,
+} from '@jungjaehoon/mama-core/entities/store';
 
 function candidateStaleEnvelope(context: Record<string, unknown>): {
   error: { code: string; message: string; hint: string; doc_url: string };
@@ -484,8 +489,6 @@ export async function handleReviewEntityCandidate(
     return;
   }
 
-  const mergeActionId = `mact_${randomUUID()}`;
-  const createdAt = Date.now();
   const evidenceJson = JSON.stringify({
     candidate_id: id,
     left_ref: candidate.left_ref,
@@ -494,7 +497,68 @@ export async function handleReviewEntityCandidate(
     rule_trace: parseRuleTrace(candidate.rule_trace),
   });
 
-  const persistDecision = () => {
+  // Best-effort resolve each candidate ref to an owning entity_node id.
+  // Supported: ref is a direct entity_nodes.id, or an entity_aliases.id that
+  // points at one. Observation-only refs (cluster candidates with no backing
+  // entity) intentionally return null — the approve path then falls back to
+  // audit-only behavior for backward compat, matching the v1 scope in
+  // docs/superpowers/specs/2026-04-13-canonical-entity-merge-design.md.
+  const resolveRefToEntityId = (refId: string): string | null => {
+    const alias = adapter
+      .prepare(`SELECT entity_id FROM entity_aliases WHERE id = ?`)
+      .get(refId) as { entity_id: string } | undefined;
+    const initialEntityId = alias?.entity_id ?? refId;
+
+    const node = adapter
+      .prepare(`SELECT id FROM entity_nodes WHERE id = ?`)
+      .get(initialEntityId) as { id: string } | undefined;
+    if (!node) {
+      return null;
+    }
+    try {
+      return resolveCanonicalEntityId(adapter, node.id);
+    } catch {
+      return null;
+    }
+  };
+
+  const leftEntityId = resolveRefToEntityId(candidate.left_ref);
+  const rightEntityId = resolveRefToEntityId(candidate.right_ref);
+  const canRealMerge =
+    action === 'approve' &&
+    leftEntityId !== null &&
+    rightEntityId !== null &&
+    leftEntityId !== rightEntityId;
+
+  let mergeActionId = `mact_${randomUUID()}`;
+  let createdAt = Date.now();
+
+  const runRealMerge = () => {
+    const result = mergeEntityNodes({
+      adapter,
+      source_id: leftEntityId as string,
+      target_id: rightEntityId as string,
+      actor_type: 'user',
+      actor_id: actorId,
+      reason,
+      candidate_id: id,
+      evidence_json: evidenceJson,
+    });
+    mergeActionId = result.merge_action_id;
+    createdAt = result.merged_at;
+
+    adapter
+      .prepare(
+        `
+          UPDATE entity_resolution_candidates
+          SET status = ?, updated_at = ?
+          WHERE id = ?
+        `
+      )
+      .run(candidateStatus, createdAt, id);
+  };
+
+  const runAuditOnly = () => {
     adapter
       .prepare(
         `
@@ -508,8 +572,8 @@ export async function handleReviewEntityCandidate(
       .run(
         mergeActionId,
         actionType,
-        null,
-        null,
+        leftEntityId,
+        rightEntityId,
         id,
         'user',
         actorId,
@@ -529,13 +593,36 @@ export async function handleReviewEntityCandidate(
       .run(candidateStatus, createdAt, id);
   };
 
-  if (typeof adapter.transaction === 'function') {
-    const txResult = adapter.transaction(persistDecision as never) as unknown;
-    if (typeof txResult === 'function') {
-      txResult();
+  const persistDecision = canRealMerge ? runRealMerge : runAuditOnly;
+
+  try {
+    if (typeof adapter.transaction === 'function') {
+      const txResult = adapter.transaction(persistDecision as never) as unknown;
+      if (typeof txResult === 'function') {
+        txResult();
+      }
+    } else {
+      persistDecision();
     }
-  } else {
-    persistDecision();
+  } catch (err) {
+    if (err instanceof EntityMergeError) {
+      json(res, 409, {
+        error: {
+          code: err.code,
+          message: err.message,
+          hint: 'Inspect entity_nodes state for the candidate refs before retrying.',
+          doc_url: 'docs/operations/entity-substrate-runbook.md#merge-failed',
+        },
+        context: {
+          candidate_id: id,
+          attempted_action: action,
+          left_entity_id: leftEntityId,
+          right_entity_id: rightEntityId,
+        },
+      });
+      return;
+    }
+    throw err;
   }
 
   json(res, 200, {
@@ -544,5 +631,6 @@ export async function handleReviewEntityCandidate(
     action: actionType,
     actor_id: actorId,
     created_at: new Date(createdAt).toISOString(),
+    merge_applied: canRealMerge,
   });
 }
