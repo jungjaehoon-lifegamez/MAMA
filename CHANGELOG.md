@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Canonical entity substrate foundation** — Added first-class entity types, errors, normalization,
+  persistence, candidate generation, resolution rules, recall bridge wiring, and audit metrics for
+  multilingual canonical identity handling across MAMA core
+- **Entity review and audit APIs** — Added standalone candidate review flows, entity audit queue and
+  runner paths, and authenticated `/api/entities/candidates*` and `/api/entities/audit/*` routes
+- **Entity benchmark and synthetic audit fixtures** — Added gold canonical identity fixtures,
+  cross-language alias fixtures, perturbation/replay samples, and benchmark coverage for entity
+  candidate and audit quality gates
+- **Entity operations runbook and viewer design** — Added the entity substrate operations runbook
+  plus a dedicated operations-viewer design for Feed, Lineage, Entities, Review, Integrity, and
+  Memory surfaces
+
+### Changed
+
+- **Slack-to-entity ingest path** — Connector ingestion now preserves raw provenance into
+  `entity_observations` so connector evidence can be traced from raw rows through observations and
+  downstream entity workflows
+- **Canonical recall integration** — `recallMemory()` now probes canonical entities through the
+  recall bridge under `MAMA_ENTITY_PROJECTION_MODE`, keeping `off`, `shadow`, and `dual-write`
+  modes distinct and reviewable
+- **Entity audit runtime packaging** — Standalone audit runs now resolve packaged runtime fixtures by
+  default instead of depending on test-only paths
+
+### Fixed
+
+- **Entity review follow-up hardening** — Review handlers now prefer stable actor UUID identity,
+  validate byte-sized request bodies, resolve alias-backed evidence correctly, and fail loudly on
+  malformed persisted audit metrics
+- **Observation row validation** — Entity observation parsing now rejects missing or malformed
+  optional columns instead of coercing undefined values into silent fallbacks
+- **Embedding-backed candidate preservation** — Zero-score blocked pairs are no longer discarded
+  when an embedding scorer is available, allowing cross-language recovery during candidate ranking
+
 ## [0.19.0] - 2026-04-12
 
 ### Added
