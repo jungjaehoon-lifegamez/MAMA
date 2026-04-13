@@ -5,6 +5,7 @@ import {
   getEntityNode,
   listEntityAliases,
   listEntityNodes,
+  parseObservationRow,
   upsertEntityObservation,
 } from '../../src/entities/store.js';
 import { getAdapter } from '../../src/db-manager.js';
@@ -252,6 +253,58 @@ describe('Story E1.3: Canonical entity persistence', () => {
         )
         .get('slack', 'raw_slack_002') as { total: number };
       expect(count.total).toBe(2);
+    });
+  });
+
+  describe('AC #5: observation row parsing validates malformed DB values', () => {
+    it('should throw when required string fields are missing', () => {
+      expect(() =>
+        parseObservationRow({
+          id: 'obs_invalid_required',
+          observation_type: 'generic',
+          entity_kind_hint: 'project',
+          surface_form: 'Project Alpha',
+          normalized_form: 'project alpha',
+          lang: null,
+          script: null,
+          context_summary: null,
+          related_surface_forms: '[]',
+          timestamp_observed: null,
+          scope_kind: 'channel',
+          scope_id: 'C123',
+          extractor_version: 'history-extractor@v1',
+          embedding_model_version: null,
+          source_raw_db_ref: null,
+          source_connector: 'slack',
+          source_raw_record_id: 42,
+          created_at: Date.now(),
+        } as unknown as Record<string, unknown>)
+      ).toThrow(/source_raw_record_id/i);
+    });
+
+    it('should throw when related_surface_forms is malformed JSON', () => {
+      expect(() =>
+        parseObservationRow({
+          id: 'obs_invalid_json',
+          observation_type: 'generic',
+          entity_kind_hint: 'project',
+          surface_form: 'Project Alpha',
+          normalized_form: 'project alpha',
+          lang: null,
+          script: null,
+          context_summary: null,
+          related_surface_forms: '{bad-json',
+          timestamp_observed: null,
+          scope_kind: 'channel',
+          scope_id: 'C123',
+          extractor_version: 'history-extractor@v1',
+          embedding_model_version: null,
+          source_connector: 'slack',
+          source_raw_db_ref: null,
+          source_raw_record_id: 'raw_slack_003',
+          created_at: Date.now(),
+        })
+      ).toThrow(/related_surface_forms/i);
     });
   });
 });

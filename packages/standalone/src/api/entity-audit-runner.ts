@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import type { EntityAuditQueueAdapter, EntityAuditRunQueue } from './entity-audit-queue.js';
@@ -28,7 +28,7 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 
 const auditLogger = new DebugLogger('EntityAuditRunner');
-const FIXTURE_DIR = resolve(__dirname, '../../../mama-core/tests/entities/fixtures');
+const DEFAULT_FIXTURE_DIR = resolve(__dirname, '../../../mama-core/tests/entities/fixtures');
 
 interface AuditCandidateSnapshot {
   id: string;
@@ -104,8 +104,17 @@ interface ResolvedRefRow {
   kind: string | null;
 }
 
-function loadJson<T>(filename: string): T {
-  return JSON.parse(readFileSync(resolve(FIXTURE_DIR, filename), 'utf8')) as T;
+export function resolveEntityAuditFixturesPath(fixturesPath?: string): string {
+  const candidate =
+    fixturesPath ?? process.env.MAMA_ENTITY_AUDIT_FIXTURES_PATH ?? DEFAULT_FIXTURE_DIR;
+  if (!existsSync(candidate)) {
+    throw new Error(`Entity audit fixtures path does not exist: ${candidate}`);
+  }
+  return candidate;
+}
+
+function loadJson<T>(fixturesPath: string, filename: string): T {
+  return JSON.parse(readFileSync(resolve(fixturesPath, filename), 'utf8')) as T;
 }
 
 function normalizeAuditLabel(input: string): string {
@@ -322,13 +331,14 @@ export async function runEntityAuditInBackground(args: {
   queue: EntityAuditRunQueue;
   adapter: EntityAuditQueueAdapter;
   runId: string;
+  fixturesPath?: string;
 }): Promise<void> {
-  const gold = loadJson<GoldFixture>('gold-canonical-identities.json');
-  const crossLang = loadJson<CrossLangFixture>('cross-language-aliases.json');
-  const canonicalLookup = buildCanonicalLookup(gold);
-  const goldPairs = buildGoldPairs(crossLang);
-
   try {
+    const fixturesPath = resolveEntityAuditFixturesPath(args.fixturesPath);
+    const gold = loadJson<GoldFixture>(fixturesPath, 'gold-canonical-identities.json');
+    const crossLang = loadJson<CrossLangFixture>(fixturesPath, 'cross-language-aliases.json');
+    const canonicalLookup = buildCanonicalLookup(gold);
+    const goldPairs = buildGoldPairs(crossLang);
     const { snapshots, candidateMatches } = buildCandidateSnapshots(args.adapter, canonicalLookup);
     const projectionCounts = buildProjectionCounts(args.adapter, canonicalLookup);
     const summary = computeAuditMetrics({
