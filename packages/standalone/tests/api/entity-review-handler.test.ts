@@ -95,6 +95,7 @@ async function seedCandidate(input: {
 
   await upsertEntityObservation({
     id: input.leftId,
+    observation_type: 'generic',
     entity_kind_hint: 'project',
     surface_form: input.leftLabel,
     normalized_form: input.leftLabel.toLowerCase(),
@@ -114,6 +115,7 @@ async function seedCandidate(input: {
 
   await upsertEntityObservation({
     id: input.rightId,
+    observation_type: 'generic',
     entity_kind_hint: 'project',
     surface_form: input.rightLabel,
     normalized_form: input.rightLabel.toLowerCase(),
@@ -299,6 +301,33 @@ describe('Story E1.8: Entity review API', () => {
 
       const replayBody = replay.readJson() as { merge_action_id: string };
       expect(replayBody.merge_action_id).toBe(firstBody.merge_action_id);
+    });
+
+    it('prefers authenticated identity headers over remote address for actor_id', async () => {
+      await seedCandidate({
+        candidateId: 'candidate_auth_actor',
+        leftId: 'obs_auth_left',
+        rightId: 'obs_auth_right',
+        leftLabel: 'Project Lambda',
+        rightLabel: 'Lambda Project',
+        scoreTotal: 0.9,
+        scopeId: 'C101',
+      });
+
+      const req = createMockRequest({
+        method: 'POST',
+        url: '/api/entities/candidates/candidate_auth_actor/approve',
+        body: {},
+        headers: {
+          'cf-access-authenticated-user-email': 'reviewer@example.com',
+        },
+        remoteAddress: '10.0.0.7',
+      });
+      const res = createMockResponse();
+      await handleReviewEntityCandidate(req, res.res, getAdapter(), 'approve');
+
+      const body = res.readJson() as { actor_id: string };
+      expect(body.actor_id).toBe('user:reviewer@example.com');
     });
   });
 

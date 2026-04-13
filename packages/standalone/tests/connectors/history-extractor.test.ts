@@ -6,6 +6,7 @@ import {
   buildProjectTruth,
   buildActivityExtractionPrompt,
   buildEntityObservations,
+  groupByChannel,
 } from '../../src/memory/history-extractor.js';
 import type { NormalizedItem, ChannelConfig } from '../../src/connectors/framework/types.js';
 import type { HubContextEntry, ProjectTruth } from '../../src/memory/history-extractor.js';
@@ -528,6 +529,7 @@ describe('History Extractor', () => {
       expect(observations).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
+            observation_type: 'author',
             entity_kind_hint: 'person',
             surface_form: 'Alice Kim',
             source_connector: 'slack',
@@ -537,16 +539,49 @@ describe('History Extractor', () => {
             scope_id: 'C123',
           }),
           expect.objectContaining({
+            observation_type: 'channel',
             entity_kind_hint: 'project',
             surface_form: koreanProjectAlpha,
             normalized_form: koreanProjectAlpha,
             source_connector: 'slack',
             source_raw_record_id: 'C123:1710000000.000100',
+            source_raw_db_ref: '/tmp/slack/raw.db',
             scope_kind: 'channel',
             scope_id: 'C123',
           }),
         ])
       );
+    });
+  });
+
+  describe('groupByChannel', () => {
+    it('uses Slack channelId as the stable grouping key across channel renames', () => {
+      const items: NormalizedItem[] = [
+        makeItem({
+          source: 'slack',
+          sourceId: 'C123:1',
+          channel: 'alpha-launch',
+          metadata: {
+            channelId: 'C123',
+            channelName: 'alpha-launch',
+          },
+        }),
+        makeItem({
+          source: 'slack',
+          sourceId: 'C123:2',
+          channel: 'alpha-renamed',
+          metadata: {
+            channelId: 'C123',
+            channelName: 'alpha-renamed',
+          },
+        }),
+      ];
+
+      const groups = groupByChannel(items);
+
+      expect(groups.size).toBe(1);
+      expect(Array.from(groups.keys())).toEqual(['slack:C123']);
+      expect(groups.get('slack:C123')).toHaveLength(2);
     });
   });
 });
