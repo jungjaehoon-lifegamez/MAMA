@@ -306,5 +306,29 @@ describe('Story E1.3: Canonical entity persistence', () => {
         })
       ).toThrow(/related_surface_forms/i);
     });
+
+    it('should throw when optional columns are missing instead of coercing undefined', () => {
+      expect(() =>
+        parseObservationRow({
+          id: 'obs_missing_optional',
+          observation_type: 'generic',
+          entity_kind_hint: 'project',
+          surface_form: 'Project Alpha',
+          normalized_form: 'project alpha',
+          lang: null,
+          script: null,
+          context_summary: null,
+          related_surface_forms: '[]',
+          timestamp_observed: null,
+          scope_kind: 'channel',
+          scope_id: 'C123',
+          extractor_version: 'history-extractor@v1',
+          embedding_model_version: null,
+          source_connector: 'slack',
+          source_raw_record_id: 'raw_slack_004',
+          created_at: Date.now(),
+        })
+      ).toThrow(/source_raw_db_ref must be present/i);
+    });
   });
 });
