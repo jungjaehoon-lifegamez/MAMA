@@ -609,6 +609,17 @@ function casCheck(input: {
   });
 
   if (!payload || payload.current_value_hash_hex !== sha256Hex(input.current_value_json)) {
+    if (payload) {
+      const replayEventId = deterministicEventId(payload.nonce);
+      if (memoryEventExists(input.adapter, replayEventId)) {
+        return {
+          kind: 'rejected',
+          code: 'case.reconfirm_token_replayed',
+          message: 'Reconfirm token has already been consumed.',
+          case_id: input.case_id,
+        };
+      }
+    }
     return buildRequiresReconfirm({
       case_id: input.case_id,
       target_ref_json: input.target_ref_json,

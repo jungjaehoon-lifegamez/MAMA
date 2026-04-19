@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getAdapter, initDB } from '../db-manager.js';
+import type { DatabaseAdapter } from '../db-manager.js';
 import type { EntityIngestRun, EntityLineageLink } from './types.js';
 import type { EntityStoreAdapter } from './store.js';
 
@@ -33,12 +34,8 @@ interface CompleteEntityIngestRunInput {
   audit_classification?: EntityIngestRun['audit_classification'];
 }
 
-interface SupersedeEntityLineageOptions {
-  replacement_entity_id?: string | null;
-}
-
 interface AdoptLineageAfterMergeInput {
-  adapter?: ReturnType<typeof getAdapter>;
+  adapter?: LineageMutationAdapter;
   source_entity_id: string;
   target_entity_id: string;
   candidate_id?: string | null;
@@ -47,11 +44,18 @@ interface AdoptLineageAfterMergeInput {
   capture_mode?: EntityLineageLink['capture_mode'];
 }
 
+type LineageMutationAdapter = Pick<DatabaseAdapter, 'prepare'>;
+
+export interface AppendEntityLineageLinkResult {
+  link: EntityLineageLink;
+  created: boolean;
+}
+
 function now(): number {
   return Date.now();
 }
 
-function parseEntityIngestRunRow(row: Record<string, unknown>): EntityIngestRun {
+export function parseEntityIngestRunRow(row: Record<string, unknown>): EntityIngestRun {
   return {
     id: String(row.id),
     connector: String(row.connector),
@@ -206,7 +210,7 @@ export async function failEntityIngestRun(
 
 export async function appendEntityLineageLink(
   input: AppendEntityLineageLinkInput
-): Promise<EntityLineageLink> {
+): Promise<AppendEntityLineageLinkResult> {
   await initDB();
   const adapter = getAdapter();
 
@@ -225,8 +229,14 @@ export async function appendEntityLineageLink(
     | Record<string, unknown>
     | undefined;
 
+  // Idempotent by (canonical_entity_id, entity_observation_id, status='active').
+  // If an active row already exists for the pair, the existing row is returned
+  // and the caller-provided metadata is ignored.
   if (existing) {
-    return parseEntityLineageLinkRow(existing);
+    return {
+      link: parseEntityLineageLinkRow(existing),
+      created: false,
+    };
   }
 
   const id = `elin_${randomUUID()}`;
@@ -260,12 +270,14 @@ export async function appendEntityLineageLink(
     string,
     unknown
   >;
-  return parseEntityLineageLinkRow(row);
+  return {
+    link: parseEntityLineageLinkRow(row),
+    created: true,
+  };
 }
 
 export async function supersedeEntityLineageForEntity(
-  entityId: string,
-  _options: SupersedeEntityLineageOptions = {}
+  entityId: string
 ): Promise<number> {
   await initDB();
   const adapter = getAdapter();
@@ -292,7 +304,7 @@ export async function seedLineageForEntityMaterialization(input: {
   confidence?: number;
   capture_mode?: EntityLineageLink['capture_mode'];
 }): Promise<EntityLineageLink> {
-  return appendEntityLineageLink({
+  const result = await appendEntityLineageLink({
     canonical_entity_id: input.canonical_entity_id,
     entity_observation_id: input.entity_observation_id,
     source_entity_id: null,
@@ -303,13 +315,51 @@ export async function seedLineageForEntityMaterialization(input: {
     capture_mode: input.capture_mode ?? 'direct',
     confidence: input.confidence ?? 1,
   });
+  return result.link;
 }
 
-export function adoptLineageAfterMerge(input: AdoptLineageAfterMergeInput): EntityLineageLink[] {
-  const adapter = input.adapter ?? getAdapter();
+function runLineageTransaction<T>(adapter: LineageMutationAdapter, fn: () => T): T {
+  const savepoint = `adopt_lineage_${randomUUID().replace(/-/g, '')}`;
+  adapter.prepare(`SAVEPOINT ${savepoint}`).run();
+  try {
+    const result = fn();
+    adapter.prepare(`RELEASE SAVEPOINT ${savepoint}`).run();
+    return result;
+  } catch (error) {
+    try {
+      adapter.prepare(`ROLLBACK TO SAVEPOINT ${savepoint}`).run();
+    } catch {
+      // Ignore rollback errors when the connection already unwound the savepoint.
+    }
+    try {
+      adapter.prepare(`RELEASE SAVEPOINT ${savepoint}`).run();
+    } catch {
+      // Ignore cleanup failures after rollback.
+    }
+    throw error;
+  }
+}
+
+export function adoptLineageAfterMerge(
+  input: AdoptLineageAfterMergeInput
+): Promise<EntityLineageLink[]> {
+  if (!input.adapter) {
+    return initDB().then(() =>
+      runLineageTransaction(getAdapter(), () => adoptLineageAfterMergeWithAdapter(getAdapter(), input))
+    );
+  }
+
+  return Promise.resolve(
+    runLineageTransaction(input.adapter, () => adoptLineageAfterMergeWithAdapter(input.adapter!, input))
+  );
+}
+
+function adoptLineageAfterMergeWithAdapter(
+  adapter: LineageMutationAdapter,
+  input: AdoptLineageAfterMergeInput
+): EntityLineageLink[] {
   const createdAt = now();
   const supersededAt = now();
-
   const sourceRows = adapter
     .prepare(
       `
