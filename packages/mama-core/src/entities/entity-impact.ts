@@ -1,5 +1,6 @@
 import { getAdapter, initDB } from '../db-manager.js';
 import { detectSourceLocatorKind, type SourceLocatorKind } from './source-locator.js';
+import { parseEntityIngestRunRow } from './lineage-store.js';
 import type { EntityIngestRun, EntityLineageLink, EntityNode } from './types.js';
 
 interface InspectorDetail {
@@ -47,36 +48,12 @@ function mapEntityNode(row: Record<string, unknown>): EntityNode {
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
-  };
-}
-
-function mapIngestRun(row: Record<string, unknown>): EntityIngestRun {
-  return {
-    id: String(row.id),
-    connector: String(row.connector),
-    run_kind: row.run_kind as EntityIngestRun['run_kind'],
-    status: row.status as EntityIngestRun['status'],
-    scope_key: String(row.scope_key),
-    source_window_start:
-      typeof row.source_window_start === 'number' ? row.source_window_start : null,
-    source_window_end: typeof row.source_window_end === 'number' ? row.source_window_end : null,
-    raw_count: Number(row.raw_count ?? 0),
-    observation_count: Number(row.observation_count ?? 0),
-    candidate_count: Number(row.candidate_count ?? 0),
-    reviewable_count: Number(row.reviewable_count ?? 0),
-    audit_run_id: typeof row.audit_run_id === 'string' ? row.audit_run_id : null,
-    audit_classification:
-      typeof row.audit_classification === 'string'
-        ? (row.audit_classification as EntityIngestRun['audit_classification'])
-        : null,
-    error_reason: typeof row.error_reason === 'string' ? row.error_reason : null,
-    created_at: Number(row.created_at),
-    completed_at: typeof row.completed_at === 'number' ? row.completed_at : null,
   };
 }
 
@@ -224,7 +201,7 @@ export async function getEntityImpact(entityId: string): Promise<EntityImpactRes
       summary: row.summary ?? row.topic,
       created_at: row.created_at,
     })),
-    ingest_runs: ingestRuns.map(mapIngestRun),
+    ingest_runs: ingestRuns.map(parseEntityIngestRunRow),
     audit_runs: auditRuns,
   };
 }
@@ -235,5 +212,5 @@ export async function getEntityIngestRun(runId: string): Promise<EntityIngestRun
   const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(runId) as
     | Record<string, unknown>
     | undefined;
-  return row ? mapIngestRun(row) : null;
+  return row ? parseEntityIngestRunRow(row) : null;
 }

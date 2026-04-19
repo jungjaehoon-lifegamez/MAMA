@@ -225,7 +225,8 @@ export function getEntityNode(
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),
@@ -244,7 +245,8 @@ export function listEntityNodes(): EntityNode[] {
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),

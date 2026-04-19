@@ -11,11 +11,23 @@ import {
 
 function resetCaseTables(): void {
   const adapter = getAdapter();
+  adapter.prepare('PRAGMA foreign_keys = OFF').run();
   adapter.prepare('DELETE FROM memory_events').run();
-  adapter.prepare('DELETE FROM case_links').run();
-  adapter.prepare('DELETE FROM case_corrections').run();
-  adapter.prepare('DELETE FROM case_memberships').run();
-  adapter.prepare('DELETE FROM case_truth').run();
+  const tables = adapter
+    .prepare(
+      `
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table'
+          AND name LIKE 'case_%'
+        ORDER BY name DESC
+      `
+    )
+    .all() as Array<{ name: string }>;
+  for (const table of tables) {
+    adapter.prepare(`DELETE FROM "${table.name}"`).run();
+  }
+  adapter.prepare('PRAGMA foreign_keys = ON').run();
 }
 
 function insertCase(
@@ -330,6 +342,166 @@ describe('Task 14: Membership pin and source promotion core helpers', () => {
         kind: 'promoted',
         canonical_decision_id: 'dec-reconfirm',
       });
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+      } else {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = previousSecret;
+      }
+    }
+  });
+
+  it('falls back to a fresh reconfirm flow when replay uses a stale consumed token', () => {
+    insertCase({ case_id: 'case-promote-replay' });
+    insertMembership({ case_id: 'case-promote-replay', source_id: 'dec-replay' });
+    const previousSecret = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+    process.env.MAMA_RECONFIRM_TOKEN_SECRET = Buffer.alloc(32, 9).toString('hex');
+
+    try {
+      const first = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-replay',
+        source_type: 'decision',
+        source_id: 'dec-replay',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:00:00.000Z',
+      });
+      expect(first.kind).toBe('requires_reconfirm');
+      if (first.kind !== 'requires_reconfirm') {
+        throw new Error('Expected reconfirm result');
+      }
+
+      const confirmed = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-replay',
+        source_type: 'decision',
+        source_id: 'dec-replay',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        reconfirm_token: first.reconfirm_token,
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:05:00.000Z',
+      });
+      expect(confirmed.kind).toBe('promoted');
+
+      const replay = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-replay',
+        source_type: 'decision',
+        source_id: 'dec-replay',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        reconfirm_token: first.reconfirm_token,
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:06:00.000Z',
+      });
+
+      expect(replay.kind).toBe('requires_reconfirm');
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+      } else {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = previousSecret;
+      }
+    }
+  });
+
+  it('falls back to a new reconfirm flow when the token is expired', () => {
+    insertCase({ case_id: 'case-promote-expired' });
+    insertMembership({ case_id: 'case-promote-expired', source_id: 'dec-expired' });
+    const previousSecret = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+    process.env.MAMA_RECONFIRM_TOKEN_SECRET = Buffer.alloc(32, 9).toString('hex');
+
+    try {
+      const first = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-expired',
+        source_type: 'decision',
+        source_id: 'dec-expired',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:00:00.000Z',
+      });
+      expect(first.kind).toBe('requires_reconfirm');
+      if (first.kind !== 'requires_reconfirm') {
+        throw new Error('Expected reconfirm result');
+      }
+
+      const expired = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-expired',
+        source_type: 'decision',
+        source_id: 'dec-expired',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        reconfirm_token: first.reconfirm_token,
+        session_id: 'turn-promote',
+        now: '2026-04-18T02:00:00.000Z',
+      });
+
+      expect(expired.kind).toBe('requires_reconfirm');
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+      } else {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = previousSecret;
+      }
+    }
+  });
+
+  it('falls back to a new reconfirm flow when the token signature is tampered', () => {
+    insertCase({ case_id: 'case-promote-tampered' });
+    insertMembership({ case_id: 'case-promote-tampered', source_id: 'dec-tampered' });
+    const previousSecret = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+    process.env.MAMA_RECONFIRM_TOKEN_SECRET = Buffer.alloc(32, 9).toString('hex');
+
+    try {
+      const first = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-tampered',
+        source_type: 'decision',
+        source_id: 'dec-tampered',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:00:00.000Z',
+      });
+      expect(first.kind).toBe('requires_reconfirm');
+      if (first.kind !== 'requires_reconfirm') {
+        throw new Error('Expected reconfirm result');
+      }
+
+      const token = first.reconfirm_token.slice(0, -1) + (first.reconfirm_token.endsWith('A') ? 'B' : 'A');
+      const tampered = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-tampered',
+        source_type: 'decision',
+        source_id: 'dec-tampered',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        reconfirm_token: token,
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:05:00.000Z',
+      });
+
+      expect(tampered.kind).toBe('requires_reconfirm');
     } finally {
       if (previousSecret === undefined) {
         delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;

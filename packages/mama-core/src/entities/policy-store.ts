@@ -163,7 +163,15 @@ export async function ensureEntityPolicyBootstrap(args: {
   const timestamp = args.now?.() ?? now();
 
   adapter.transaction(() => {
-    if (countRows('entity_policy', adapter) === 0) {
+    const policyCount = countRows('entity_policy', adapter);
+    const roleBindingCount = countRows('entity_role_bindings', adapter);
+    if ((policyCount === 0) !== (roleBindingCount === 0)) {
+      throw new Error(
+        'Entity policy bootstrap tables are out of sync: entity_policy and entity_role_bindings must be seeded together.'
+      );
+    }
+
+    if (policyCount === 0 && roleBindingCount === 0) {
       for (const policy of document.policies) {
         adapter
           .prepare(
@@ -181,9 +189,6 @@ export async function ensureEntityPolicyBootstrap(args: {
             timestamp
           );
       }
-    }
-
-    if (countRows('entity_role_bindings', adapter) === 0) {
       for (const binding of document.role_bindings) {
         adapter
           .prepare(
