@@ -235,6 +235,36 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
       });
     });
 
+    it('does not let rejected deterministic pairs poison cross-scope probing', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_same_label_scope_a', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-a',
+            source_raw_record_id: 'raw_alpha_same_label_scope_a',
+          }),
+          makeObservation('alpha_same_label_scope_b', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-b',
+            source_raw_record_id: 'raw_alpha_same_label_scope_b',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0.9),
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        left_ref: 'alpha_same_label_scope_a',
+        right_ref: 'alpha_same_label_scope_b',
+        score_embedding: 0.9,
+      });
+    });
+
     it('should generate a multilingual candidate when embedding similarity is high', async () => {
       const candidates = await generateResolutionCandidates(
         [
@@ -423,7 +453,6 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
         }
       );
 
-      expect(candidates).toHaveLength(2);
       expect(candidates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({

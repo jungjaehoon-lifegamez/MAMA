@@ -510,7 +510,17 @@ function appendReason(existing: string | null, reason: string): string {
   if (!existing || existing.trim().length === 0) {
     return reason;
   }
-  return `${existing}\nmanual-pin: ${reason}`;
+  const lines = existing.split('\n');
+  const lastLine = lines.at(-1)?.trim() ?? '';
+  const nextLine = `manual-pin: ${reason}`;
+  if (lastLine === nextLine) {
+    return existing;
+  }
+  if (lastLine.startsWith('manual-pin:')) {
+    lines[lines.length - 1] = nextLine;
+    return lines.join('\n');
+  }
+  return `${existing}\n${nextLine}`;
 }
 
 function insertMemoryEvent(input: {

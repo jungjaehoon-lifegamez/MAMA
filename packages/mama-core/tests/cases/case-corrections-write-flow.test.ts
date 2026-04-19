@@ -205,6 +205,42 @@ describe('Phase 2 case correction write flows', () => {
     expect(envelope.signature_hex).toMatch(/^[0-9a-f]+$/);
   });
 
+  it('canonicalizes old_value_json before deciding requires_reconfirm for membership targets', () => {
+    insertCase({ case_id: 'case-membership-cas', status: 'active' });
+    insertMembership({
+      case_id: 'case-membership-cas',
+      source_type: 'decision',
+      source_id: 'dec-membership-cas',
+      status: 'active',
+      role: 'owner',
+      confidence: 0.6,
+      reason: 'existing',
+      user_locked: 0,
+    });
+
+    const result = applyCorrection(getAdapter(), {
+      case_id: 'case-membership-cas',
+      target_kind: 'membership',
+      target_ref: buildMembershipTargetRef('decision', 'dec-membership-cas'),
+      old_value_json:
+        '{"user_locked":0,"reason":"existing","confidence":0.6,"role":"owner","status":"active"}',
+      new_value_json: canonicalizeJSON({
+        status: 'removed',
+        role: 'owner',
+        confidence: 0.6,
+        reason: 'existing',
+        user_locked: 0,
+      }),
+      reason: 'remove membership',
+      confirmed: true,
+      confirmed_by: 'user:test',
+      confirmation_summary: 'remove membership',
+      now: '2026-04-18T01:00:00.000Z',
+    });
+
+    expect(result).toMatchObject({ kind: 'applied' });
+  });
+
   it('applies after reconfirm, rejects replay before mutation, and reverts by restoring truth', () => {
     insertCase({ case_id: 'case-reconfirm', status: 'active' });
 
@@ -310,6 +346,39 @@ describe('Phase 2 case correction write flows', () => {
     expect(second).toMatchObject({
       kind: 'rejected',
       code: 'case.correction_active_conflict',
+    });
+  });
+
+  it('rejects revert on merged cases with a terminal-status result instead of throwing', () => {
+    insertCase({ case_id: 'case-revert-merged', status: 'active' });
+    insertCase({ case_id: 'case-survivor', status: 'active' });
+
+    const applied = applyStatusCorrection({
+      case_id: 'case-revert-merged',
+      old_value_json: canonicalizeJSON('active'),
+      new_value_json: canonicalizeJSON('blocked'),
+    });
+    expect(applied.kind).toBe('applied');
+    if (applied.kind !== 'applied') {
+      throw new Error('Expected correction to apply');
+    }
+
+    getAdapter()
+      .prepare(`UPDATE case_truth SET status = 'merged', canonical_case_id = ? WHERE case_id = ?`)
+      .run('case-survivor', 'case-revert-merged');
+
+    const reverted = revertCorrection(getAdapter(), {
+      correction_id: applied.correction_id,
+      confirmed: true,
+      confirmed_by: 'user:test',
+      confirmation_summary: 'attempt revert on merged case',
+      now: '2026-04-18T01:10:00.000Z',
+    });
+
+    expect(reverted).toMatchObject({
+      kind: 'rejected',
+      code: 'case.terminal_status',
+      case_id: 'case-revert-merged',
     });
   });
 
