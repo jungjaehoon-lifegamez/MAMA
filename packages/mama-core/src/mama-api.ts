@@ -1504,7 +1504,11 @@ function mapRolledUpResult(result: SearchRollupResult) {
     decision,
     reasoning,
     confidence: confidenceValue(record, result.score),
-    similarity: null,
+    // Back-compat with pre-rollup consumers (swarm-mama-adapter tests,
+    // older callers): similarity mirrors the retrieval score when we don't
+    // have a separate similarity measure. retrieval_score remains the
+    // authoritative field for Phase 3 code paths.
+    similarity: result.score,
     retrieval_score: result.score,
     created_at: record.created_at ?? null,
     event_date: record.event_date ?? null,
