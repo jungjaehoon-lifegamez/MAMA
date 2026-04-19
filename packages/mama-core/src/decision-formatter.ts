@@ -41,6 +41,8 @@ export interface DecisionForFormat {
   risks?: string;
   /** ISO 8601 date when the event actually occurred. Null if not set. */
   event_date?: string | null;
+  /** Source event timestamp in milliseconds when known. Null if not set. */
+  event_datetime?: number | null;
 }
 
 /**
@@ -232,7 +234,7 @@ Top ${full.length} Most Relevant Decisions:
 
   for (let i = 0; i < full.length; i++) {
     const d = full[i];
-    const duration = calculateDuration(d.created_at);
+    const duration = calculateDuration(getDecisionTimestamp(d));
     const outcomeEmoji = getOutcomeEmoji(d.outcome ?? null);
     const relevancePercent = Math.round((d.relevanceScore || 0) * 100);
 
@@ -408,6 +410,12 @@ function calculateDuration(timestamp: number | string): string {
   }
 
   return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
+}
+
+function getDecisionTimestamp(
+  decision: Pick<DecisionForFormat, 'created_at' | 'event_datetime'>
+): number | string {
+  return decision.event_datetime ?? decision.created_at;
 }
 
 /**
@@ -751,7 +759,7 @@ function formatTeaserList(decisions: DecisionForFormat[], topN = 3): string | nu
 
     // Recency metadata (NEW - Gaussian Decay)
     if (d.recency_age_days !== undefined && d.created_at) {
-      const timeAgo = calculateDuration(d.created_at);
+      const timeAgo = calculateDuration(getDecisionTimestamp(d));
       const recencyScore = d.recency_score ? Math.round(d.recency_score * 100) : null;
       const finalScore = d.final_score ? Math.round(d.final_score * 100) : null;
 
@@ -779,7 +787,7 @@ export function formatTeaser(decision: DecisionForFormat | null): string | null 
     return null;
   }
 
-  const timeAgo = calculateDuration(decision.created_at);
+  const timeAgo = calculateDuration(getDecisionTimestamp(decision));
 
   // Extract preview (first 60 chars)
   const preview =
@@ -842,7 +850,7 @@ export function formatRecall(
  * Format single decision with full detail
  */
 function formatSingleDecision(decision: DecisionForFormat): string {
-  const timeAgo = calculateDuration(decision.created_at);
+  const timeAgo = calculateDuration(getDecisionTimestamp(decision));
   const confidencePercent = Math.round((decision.confidence || 0) * 100);
   const outcomeEmoji = getOutcomeEmoji(decision.outcome ?? null);
   const outcomeText = decision.outcome || 'Not yet tracked';
@@ -953,7 +961,7 @@ function formatDecisionHistory(
 📋 Decision History: ${topic}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Latest Decision (${calculateDuration(latest.created_at)}):
+Latest Decision (${calculateDuration(getDecisionTimestamp(latest))}):
 ${latest.decision}
 `.trim();
 
@@ -1013,7 +1021,7 @@ ${latest.decision}
 
     for (let i = 0; i < Math.min(older.length, 5); i++) {
       const d = older[i];
-      const timeAgo = calculateDuration(d.created_at);
+      const timeAgo = calculateDuration(getDecisionTimestamp(d));
       const emoji = getOutcomeEmoji(d.outcome ?? null);
       output += `\n${i + 2}. ${d.decision} (${timeAgo}) ${emoji}`;
 
@@ -1131,7 +1139,7 @@ export function formatList(decisions: DecisionForFormat[], options: FormatOption
 
   for (let i = 0; i < items.length; i++) {
     const d = items[i];
-    const timeAgo = calculateDuration(d.created_at);
+    const timeAgo = calculateDuration(getDecisionTimestamp(d));
     const type = d.user_involvement === 'approved' ? '👤 User' : '🤖 Assistant';
     const status = d.outcome ? getOutcomeEmoji(d.outcome) + ' ' + d.outcome : '⏳ Pending';
     const confidence = Math.round((d.confidence || 0) * 100);

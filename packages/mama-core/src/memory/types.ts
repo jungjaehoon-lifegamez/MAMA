@@ -1,3 +1,6 @@
+import type { ConnectorEventSearchHit } from '../connectors/types.js';
+import type { ReadIdentity } from '../entities/read-identity.js';
+
 export const MEMORY_SCOPE_KINDS = ['global', 'user', 'channel', 'project'] as const;
 export type MemoryScopeKind = (typeof MEMORY_SCOPE_KINDS)[number];
 
@@ -75,6 +78,9 @@ export interface MemoryRecord {
   updated_at: number | string;
   /** ISO 8601 date when the event actually occurred (e.g. "2023-01-15"). Null if not set. */
   event_date?: string | null;
+  /** Source event timestamp in milliseconds when known. Null if not set. */
+  event_datetime?: number | null;
+  read_identity?: ReadIdentity;
 }
 
 export interface MemoryEdge {
@@ -97,6 +103,8 @@ export interface ProfileSnapshot {
 export interface RecallBundle {
   profile: ProfileSnapshot;
   memories: MemoryRecord[];
+  /** Phase 3: cross-connector event hits, populated when searchWithConnectorEvents=true */
+  connector_event_hits?: ConnectorEventSearchHit[];
   graph_context: {
     primary: MemoryRecord[];
     expanded: MemoryRecord[];
@@ -109,6 +117,9 @@ export interface RecallBundle {
   };
 }
 
+/** Phase 3: unified search result type — memory-authored or connector-enriched. */
+export type MemorySearchResultHit = MemoryRecord | ConnectorEventSearchHit;
+
 export interface MemoryEventRecord {
   event_id: string;
   event_type:
@@ -120,8 +131,50 @@ export interface MemoryEventRecord {
     | 'quarantine'
     | 'no_op'
     | 'audit_failed'
-    | 'notice_sent';
-  actor: 'memory_agent' | 'main_agent' | 'user' | 'system';
+    | 'notice_sent'
+    | 'provenance.empty_batch'
+    | 'provenance.link_write_failed'
+    | 'connector_event_index.retention_swept'
+    | 'case.link_created'
+    | 'case.link_revoked'
+    | 'case.membership_pinned'
+    | 'case.membership_unpinned'
+    | 'case.source_promoted'
+    | 'case.freshness_drifted'
+    | 'automation.job.started'
+    | 'automation.job.succeeded'
+    | 'automation.job.failed'
+    | 'automation.job.skipped_concurrent'
+    | 'review.bulk.approved'
+    | 'review.bulk.rejected'
+    | 'review.bulk.deferred'
+    | 'canary.drift.false_merge_rate'
+    | 'canary.drift.projection_fragmentation_rate'
+    | 'canary.drift.replay_stale'
+    | 'auth.role_denied'
+    | 'ontology.proposal'
+    | 'ontology.approval'
+    | 'repair.approval'
+    | 'case.fast_write_applied'
+    | 'case.fast_write_lock_skipped'
+    | 'case.correction_applied'
+    | 'case.correction_reverted'
+    | 'case.correction_superseded'
+    | 'case.membership_tombstoned'
+    | 'case.merged'
+    | 'case.split'
+    | 'case.membership_matched'
+    | 'case.membership_candidate';
+  actor:
+    | 'memory_agent'
+    | 'main_agent'
+    | 'user'
+    | 'system'
+    | `user:${string}`
+    | `user_uuid:${string}`
+    | `local:${string}`
+    | `actor:${string}`
+    | 'token:bearer';
   source_turn_id?: string;
   memory_id?: string;
   topic?: string;

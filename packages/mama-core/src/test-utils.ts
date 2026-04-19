@@ -11,8 +11,60 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import type Database from 'better-sqlite3';
 import { resetDBState, initDB, closeDB } from './db-manager.js';
 import { warn } from './debug-logger.js';
+
+const MIGRATIONS_DIR = join(__dirname, '..', 'db', 'migrations');
+
+/**
+ * Returns migration SQL filenames sorted by their leading three-digit version.
+ */
+export function migrationFiles(): string[] {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((file) => /^\d{3}-.+\.sql$/.test(file))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+export function migrationVersion(file: string): number {
+  return Number.parseInt(file.slice(0, 3), 10);
+}
+
+/**
+ * Apply migrations in order up to `maxVersion` (inclusive), starting from
+ * `fromVersion`. Mirrors the production runner's two-part contract:
+ *   - skip files whose version is already recorded in `schema_version`
+ *   - tolerate `duplicate column` errors (legacy migrations that add
+ *     columns idempotently without recording into schema_version)
+ */
+export function applyMigrationsThrough(
+  db: Database.Database,
+  maxVersion: number,
+  fromVersion = 1
+): void {
+  for (const file of migrationFiles()) {
+    const version = migrationVersion(file);
+    if (version < fromVersion) continue;
+    if (version > maxVersion) break;
+    let alreadyApplied = false;
+    try {
+      alreadyApplied = !!db
+        .prepare('SELECT 1 FROM schema_version WHERE version = ?')
+        .get(version);
+    } catch {
+      alreadyApplied = false;
+    }
+    if (alreadyApplied) continue;
+    try {
+      db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column/i.test(msg)) throw err;
+    }
+  }
+}
 
 // Track test databases for cleanup
 const testDatabases: string[] = [];

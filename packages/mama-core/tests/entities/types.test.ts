@@ -87,7 +87,7 @@ describe('Story E1.1: Canonical entity domain contracts', () => {
         extractor_version: string;
         embedding_model_version: string | null;
         source_connector: string;
-        source_raw_db_ref: string | null;
+        source_locator: string | null;
         source_raw_record_id: string;
       }>();
     });

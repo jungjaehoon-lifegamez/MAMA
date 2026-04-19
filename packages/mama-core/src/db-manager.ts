@@ -73,6 +73,8 @@ export interface DecisionRecord {
   edges?: DecisionEdgeRow[];
   /** ISO 8601 date when the event actually occurred. Null if not set. */
   event_date?: string | null;
+  /** Source event timestamp in milliseconds when known. Null if not set. */
+  event_datetime?: number | null;
 }
 
 export interface OutcomeData {
@@ -416,6 +418,8 @@ export interface DecisionInput {
   risks?: string | null;
   /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
   event_date?: string | null;
+  /** Source event timestamp in milliseconds when known. */
+  event_datetime?: number | null;
 }
 
 /**
@@ -436,6 +440,17 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
     const d = decision.event_date;
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(new Date(d).getTime())) {
       throw new Error(`Invalid event_date: must be ISO 8601 YYYY-MM-DD (got: ${d})`);
+    }
+  }
+  if (decision.event_datetime !== null && decision.event_datetime !== undefined) {
+    if (
+      typeof decision.event_datetime !== 'number' ||
+      !Number.isFinite(decision.event_datetime) ||
+      decision.event_datetime <= 0
+    ) {
+      throw new Error(
+        `Invalid event_datetime: must be a positive millisecond timestamp (got: ${decision.event_datetime})`
+      );
     }
   }
 
@@ -473,8 +488,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
           confidence, created_at, updated_at,
           needs_validation, validation_attempts, last_validated_at, usage_count,
           trust_context, usage_success, usage_failure, time_saved,
-          evidence, alternatives, risks, event_date
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          evidence, alternatives, risks, event_date, event_datetime
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertResult = stmt.run(
@@ -507,7 +522,8 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
         decision.evidence || null,
         decision.alternatives || null,
         decision.risks || null,
-        decision.event_date || null
+        decision.event_date || null,
+        decision.event_datetime ?? null
       );
 
       const rowid = Number(insertResult.lastInsertRowid);
