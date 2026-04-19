@@ -162,6 +162,56 @@ describe('Story E1.17: Entity rollback preview', () => {
     expect(preview.preview_unavailable).toBe(true);
     expect(preview.changed_entities).toHaveLength(0);
   });
+
+  it('treats an observation mismatch as unavailable input, not incomplete history', async () => {
+    await seedMergedEntityPair();
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      observationId: 'obs-does-not-belong',
+    });
+
+    expect(preview.preview_unavailable).toBe(true);
+    expect(preview.history_incomplete).toBe(false);
+  });
+
+  it('preserves role on the latest timeline event projection', async () => {
+    const adapter = getAdapter();
+    await createEntityNode({
+      id: 'entity_role_projection',
+      kind: 'project',
+      preferred_label: 'Role Projection',
+      status: 'active',
+      scope_kind: 'project',
+      scope_id: 'scope-role',
+      merged_into: null,
+    });
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_timeline_events (
+            id, entity_id, event_type, role, summary, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'evt-role-projection',
+        'entity_role_projection',
+        'project_update',
+        'implementer',
+        'Role projection event',
+        1710000000000
+      );
+
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+    const preview = await previewEntityRollback({
+      entityId: 'entity_role_projection',
+      observationId: 'obs-missing',
+    });
+
+    expect(preview.history_incomplete).toBe(false);
+  });
 });
 
 async function seedMergedEntityPair(): Promise<{ mergeActionId: string; memoryId: string }> {

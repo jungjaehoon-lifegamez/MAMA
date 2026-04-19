@@ -699,6 +699,9 @@ async function save({
         if (searchResults && typeof searchResults === 'object' && 'results' in searchResults) {
           // Filter out the decision we just saved
           similar_decisions = (searchResults.results as SimilarDecision[])
+            .filter(
+              (d: SimilarDecision & { source_type?: string }) => d.source_type === 'decision'
+            )
             .filter((d: SimilarDecision) => d.id !== decisionId)
             .map((d: SimilarDecision) => ({
               id: d.id,
@@ -1942,27 +1945,6 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
     const rerankCandidateResults = results.slice(0, rerankPoolLimit);
 
-    // Markdown format (for human display)
-    if (format === 'markdown') {
-      const context = formatContext(rerankCandidateResults.slice(0, limit), { maxTokens: 500 });
-
-      // Add graph expansion summary if applicable
-      let graphSummary = '';
-      if (searchMethod.includes('graph')) {
-        const primaryCount = rerankCandidateResults
-          .slice(0, limit)
-          .filter((r) => r.graph_source === 'primary').length;
-        const expandedCount = rerankCandidateResults
-          .slice(0, limit)
-          .filter((r) => r.graph_source !== 'primary').length;
-
-        graphSummary = `\n📊 Graph expansion: ${primaryCount} primary + ${expandedCount} related (supersedes/refines/contradicts)\n`;
-      }
-
-      return `🔍 Search method: ${searchMethod}${graphSummary}\n${context}`;
-    }
-
-    // JSON format (default - LLM-first)
     const vectorRows = rerankCandidateResults.map((r) => ({
       id: r.id,
       topic: r.topic,
@@ -1971,6 +1953,8 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       confidence: r.confidence,
       similarity: r.similarity,
       created_at: r.created_at,
+      event_date: r.event_date ?? null,
+      event_datetime: r.event_datetime ?? null,
       // Recency metadata (NEW - Gaussian Decay)
       recency_score: r.recency_score,
       recency_age_days: r.recency_age_days,
@@ -1986,6 +1970,22 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     }));
     const { results: rankedVectorRows, meta: rankerMeta } = applyLearnedRanker(vectorRows);
     const finalResults = rankedVectorRows.slice(0, limit);
+
+    // Markdown format (for human display)
+    if (format === 'markdown') {
+      const context = formatContext(finalResults, { maxTokens: 500 });
+
+      // Add graph expansion summary if applicable
+      let graphSummary = '';
+      if (searchMethod.includes('graph')) {
+        const primaryCount = finalResults.filter((r) => r.graph_source === 'primary').length;
+        const expandedCount = finalResults.filter((r) => r.graph_source !== 'primary').length;
+
+        graphSummary = `\n📊 Graph expansion: ${primaryCount} primary + ${expandedCount} related (supersedes/refines/contradicts)\n`;
+      }
+
+      return `🔍 Search method: ${searchMethod}${graphSummary}\n${context}`;
+    }
 
     // Calculate graph expansion stats
     const graphStats = {

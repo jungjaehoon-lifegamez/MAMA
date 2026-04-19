@@ -135,6 +135,24 @@ describe('Story E1.15: Entity inspector impact', () => {
     adapter
       .prepare(
         `
+          INSERT INTO entity_audit_runs (
+            id, status, baseline_run_id, classification, metric_summary_json, reason, created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'audit_superseded',
+        'complete',
+        null,
+        'stable',
+        JSON.stringify({ false_merge_rate: 0 }),
+        'superseded only',
+        1710000002000,
+        1710000003000
+      );
+    adapter
+      .prepare(
+        `
           INSERT INTO entity_ingest_runs (
             id, connector, run_kind, status, scope_key, raw_count, observation_count,
             candidate_count, reviewable_count, created_at, completed_at
@@ -217,5 +235,102 @@ describe('Story E1.15: Entity inspector impact', () => {
       ])
     );
     expect(result.audit_runs.map((run) => run.id)).not.toContain('audit_unrelated');
+  });
+
+  it('ignores ingest and audit runs that are only reachable through superseded lineage', async () => {
+    await seedInspectableEntity();
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_audit_runs (
+            id, status, baseline_run_id, classification, metric_summary_json, reason, created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'audit_superseded',
+        'complete',
+        null,
+        'stable',
+        JSON.stringify({ false_merge_rate: 0 }),
+        'superseded only',
+        1710000002000,
+        1710000003000
+      );
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_ingest_runs (
+            id, connector, run_kind, status, scope_key, raw_count, observation_count,
+            candidate_count, reviewable_count, created_at, completed_at, audit_run_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'eir_superseded',
+        'slack',
+        'replay',
+        'complete',
+        'slack:C999',
+        1,
+        1,
+        0,
+        0,
+        1710000000000,
+        1710000001000,
+        'audit_superseded'
+      );
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_lineage_links (
+            id, canonical_entity_id, entity_observation_id, source_entity_id, contribution_kind,
+            run_id, candidate_id, review_action_id, status, capture_mode, confidence, created_at, superseded_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'elin_superseded_only',
+        'entity_project_alpha',
+        'obs_project_alpha',
+        null,
+        'seed',
+        'eir_superseded',
+        null,
+        null,
+        'superseded',
+        'direct',
+        1,
+        1710000000000,
+        1710000004000
+      );
+
+    const { getEntityImpact } = await import('../../src/entities/entity-impact.js');
+    const result = await getEntityImpact('entity_project_alpha');
+
+    expect(result.ingest_runs.map((run) => run.id)).not.toContain('eir_superseded');
+    expect(result.audit_runs.map((run) => run.id)).not.toContain('audit_superseded');
+  });
+
+  it('clamps inspector lineage limits to a positive bounded value', async () => {
+    await seedInspectableEntity();
+    await appendEntityLineageLink({
+      canonical_entity_id: 'entity_project_alpha',
+      entity_observation_id: 'obs_project_alpha',
+      source_entity_id: null,
+      contribution_kind: 'seed',
+      run_id: null,
+      candidate_id: null,
+      review_action_id: null,
+      capture_mode: 'direct',
+      confidence: 1,
+    });
+
+    const { listEntityLineageForInspector } = await import('../../src/entities/entity-impact.js');
+    const result = await listEntityLineageForInspector('entity_project_alpha', 0);
+
+    expect(result.rows).toHaveLength(1);
+    expect(result.history_incomplete).toBe(false);
   });
 });
