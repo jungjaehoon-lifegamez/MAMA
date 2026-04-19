@@ -5,7 +5,8 @@ import { CanonicalizeError, canonicalizeJSON, targetRefHash } from '../src/canon
 
 const cjsRequire = createRequire(import.meta.url);
 
-describe('canonicalizeJSON', () => {
+describe('Story C1.1: Canonical JSON and hashing helpers', () => {
+  describe('AC #1: canonicalizeJSON stays deterministic and rejects invalid inputs', () => {
   it('is stable across differently ordered sibling keys', () => {
     const a = canonicalizeJSON({ b: 2, a: 1 });
     const b = canonicalizeJSON({ a: 1, b: 2 });
@@ -71,9 +72,9 @@ describe('canonicalizeJSON', () => {
     });
     expect(s).toBe('{"list":[{"a":1,"b":2},{"c":3,"d":4}]}');
   });
-});
+  });
 
-describe('targetRefHash', () => {
+  describe('AC #2: targetRefHash preserves canonical hashing properties', () => {
   it('returns a 32-byte Buffer (SHA-256 digest)', () => {
     const h = targetRefHash({ a: 1 });
     expect(Buffer.isBuffer(h)).toBe(true);
@@ -104,9 +105,9 @@ describe('targetRefHash', () => {
     const h2 = targetRefHash({ x: '1' });
     expect(h1.equals(h2)).toBe(false);
   });
-});
+  });
 
-describe('CJS require interop via createRequire', () => {
+  describe('AC #3: CJS export interop stays intact', () => {
   // Resolves against dist/ — requires `pnpm --filter @jungjaehoon/mama-core build`
   // to have run before this test. Without dist, the require throws and this
   // test surfaces the export-map break that ESM-only tests would miss.
@@ -121,5 +122,6 @@ describe('CJS require interop via createRequire', () => {
     const obj = { b: 2, a: 1 };
     expect(cjs.canonicalizeJSON(obj)).toBe(canonicalizeJSON(obj));
     expect(cjs.targetRefHash(obj).equals(targetRefHash(obj))).toBe(true);
+  });
   });
 });

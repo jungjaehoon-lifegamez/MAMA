@@ -59,7 +59,7 @@ export interface EntityNode {
   kind: EntityKind;
   preferred_label: string;
   status: EntityNodeStatus;
-  scope_kind: EntityScopeKind;
+  scope_kind: EntityScopeKind | null;
   scope_id: string | null;
   merged_into: string | null;
   created_at: number;

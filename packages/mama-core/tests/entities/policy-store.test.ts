@@ -115,6 +115,35 @@ describe('Story E1.24: Phase 8 policy substrate', () => {
         max_false_merge_rate: 0.5,
       });
     });
+
+    it('fails loudly when policy and role-binding seed state is skewed', async () => {
+      const { ensureEntityPolicyBootstrap } = await import('../../src/entities/policy-store.js');
+      const adapter = getAdapter();
+
+      adapter
+        .prepare(
+          `
+            INSERT INTO entity_policy (
+              policy_key, policy_kind, value_json, version, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(
+          'merge_guardrails.default',
+          'merge_guardrails',
+          JSON.stringify({ max_false_merge_rate: 0.02 }),
+          1,
+          1_710_000_000_000,
+          1_710_000_000_000
+        );
+
+      await expect(
+        ensureEntityPolicyBootstrap({
+          bootstrapPath: getFixturePath('entity-policy-bootstrap.json'),
+          now: () => 1_710_000_000_000,
+        })
+      ).rejects.toThrow(/out of sync/i);
+    });
   });
 
   describe('AC #3: role resolution and proposal approval use durable tables', () => {

@@ -129,6 +129,35 @@ describe('Story E1.15: Entity inspector impact', () => {
     expect(result.history_incomplete).toBe(true);
   });
 
+  it('preserves nullable scope_kind values from entity_nodes', async () => {
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_nodes (
+            id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'entity_scope_null',
+        'project',
+        'Scope Null',
+        'active',
+        null,
+        null,
+        null,
+        1710000000000,
+        1710000000000
+      );
+
+    const { getEntityInspectorDetail } = await import('../../src/entities/entity-impact.js');
+    const result = await getEntityInspectorDetail('entity_scope_null');
+
+    expect(result.entity.scope_kind).toBeNull();
+    expect(result.history_incomplete).toBe(true);
+  });
+
   it('returns recent audit summaries and ingest-run context', async () => {
     await seedInspectableEntity();
     const adapter = getAdapter();
