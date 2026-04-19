@@ -54,6 +54,14 @@ function compareRows(left: ExactDuplicateRow, right: ExactDuplicateRow): number 
   return left.id.localeCompare(right.id);
 }
 
+function runAdapterTransaction<T>(
+  adapter: { transaction: <U>(fn: () => U) => U | (() => U) },
+  fn: () => T
+): T {
+  const result = adapter.transaction(fn);
+  return typeof result === 'function' ? (result as () => T)() : result;
+}
+
 export async function backfillExactDuplicateCanonicals(
   opts: ExactMergeBackfillOptions = {}
 ): Promise<ExactMergeBackfillResult> {
@@ -121,7 +129,7 @@ export async function backfillExactDuplicateCanonicals(
 
     try {
       if ('transaction' in adapter && typeof adapter.transaction === 'function') {
-        adapter.transaction(() => {
+        runAdapterTransaction(adapter, () => {
           for (const source of sources) {
             const mergeResult = mergeEntityNodes({
               adapter,

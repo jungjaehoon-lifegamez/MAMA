@@ -3,7 +3,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { canonicalizeJSON } from '../canonicalize.js';
 import type { DatabaseAdapter } from '../db-manager.js';
 import { runImmediateTransaction, type ImmediateTransactionAdapter } from './sqlite-transaction.js';
-import { resolveCanonicalCaseChain } from './store.js';
+import { expandCaseChainForAssembly, resolveCanonicalCaseChain } from './store.js';
 import type { CanonicalCaseResolution, CaseMembershipSourceType } from './types.js';
 
 export interface CaseCompositionCasInput {
@@ -396,42 +396,6 @@ function resolveChain(adapter: CompositionAdapter, caseId: string): CanonicalCas
     }
     throw error;
   }
-}
-
-function expandCaseChainForAssembly(
-  adapter: CompositionAdapter,
-  terminalCaseId: string,
-  resolvedChain: string[]
-): string[] {
-  const rows = adapter
-    .prepare(
-      `
-        WITH RECURSIVE merged_chain(case_id, depth) AS (
-          SELECT case_id, 0
-            FROM case_truth
-           WHERE case_id = ?
-
-          UNION
-
-          SELECT ct.case_id, merged_chain.depth + 1
-            FROM case_truth ct
-            JOIN merged_chain ON ct.canonical_case_id = merged_chain.case_id
-           WHERE merged_chain.depth < 64
-        )
-        SELECT case_id
-          FROM merged_chain
-         ORDER BY depth ASC, case_id ASC
-      `
-    )
-    .all(terminalCaseId) as Array<{ case_id: string }>;
-
-  const chain: string[] = [];
-  for (const caseId of [...resolvedChain, ...rows.map((row) => row.case_id)]) {
-    if (!chain.includes(caseId)) {
-      chain.push(caseId);
-    }
-  }
-  return chain;
 }
 
 function loadCaseGate(adapter: CompositionAdapter, caseId: string): CaseGateRow | null {
