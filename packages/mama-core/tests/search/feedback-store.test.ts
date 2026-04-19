@@ -1,4 +1,3 @@
-
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -84,10 +83,10 @@ describe('Phase 3 Task 10: search feedback store', () => {
     expect(result.deduped).toBe(true);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
-      feedback_id: 'shown-new',
       rank_position: 4,
       session_id: 'session-1',
     });
+    expect(rows[0]?.feedback_id).toBe(result.feedback_id);
   });
 
   it('compacts old shown rows but preserves explicit labels', () => {
@@ -121,10 +120,42 @@ describe('Phase 3 Task 10: search feedback store', () => {
       .prepare('SELECT feedback_id, feedback_kind FROM search_feedback ORDER BY feedback_id')
       .all() as Array<{ feedback_id: string; feedback_kind: string }>;
 
-    expect(allRows).toEqual([
-      { feedback_id: 'new-shown', feedback_kind: 'shown' },
-      { feedback_id: 'old-accept', feedback_kind: 'accept' },
-    ]);
+    expect(allRows).toHaveLength(2);
+    expect(allRows.map((row) => row.feedback_kind).sort()).toEqual(['accept', 'shown']);
+  });
+
+  it('allows multiple feedback events for the same result_id', () => {
+    const shown = recordSearchFeedback(
+      adapter,
+      input({
+        result_id: 'same-result-id',
+        result_source_id: 'case-shared',
+        feedback_kind: 'shown',
+      })
+    );
+    const accepted = recordSearchFeedback(
+      adapter,
+      input({
+        result_id: 'same-result-id',
+        result_source_id: 'case-shared',
+        feedback_kind: 'accept',
+      })
+    );
+
+    const rows = db
+      .prepare(
+        `
+          SELECT feedback_id, feedback_kind
+          FROM search_feedback
+          WHERE result_source_id = 'case-shared'
+          ORDER BY created_at ASC, feedback_id ASC
+        `
+      )
+      .all() as Array<{ feedback_id: string; feedback_kind: string }>;
+
+    expect(rows).toHaveLength(2);
+    expect(rows.map((row) => row.feedback_kind).sort()).toEqual(['accept', 'shown']);
+    expect(shown.feedback_id).not.toBe(accepted.feedback_id);
   });
 
   it('uses the default retention window when listing feedback', () => {
@@ -147,8 +178,8 @@ describe('Phase 3 Task 10: search feedback store', () => {
 
     const rows = listSearchFeedback(adapter);
 
-    expect(rows.map((row) => row.feedback_id)).toContain('recent');
-    expect(rows.map((row) => row.feedback_id)).not.toContain('old');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.feedback_kind).toBe('shown');
   });
 
   it('uses explicit since and until windows', () => {
@@ -174,7 +205,8 @@ describe('Phase 3 Task 10: search feedback store', () => {
       until: '2026-04-18T01:00:00.000Z',
     });
 
-    expect(rows.map((row) => row.feedback_id)).toEqual(['inside']);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.feedback_kind).toBe('shown');
   });
 
   it('reads search_feedback_retention_days from settings', () => {

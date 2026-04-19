@@ -183,6 +183,61 @@ describe('Task 16: Membership explanation core helper', () => {
     });
   });
 
+  it('prefers the effective active membership over a newer removed row in the chain', () => {
+    insertCase({ case_id: 'case-survivor' });
+    insertCase({
+      case_id: 'case-loser',
+      status: 'merged',
+      canonical_case_id: 'case-survivor',
+    });
+    insertMembership({
+      case_id: 'case-loser',
+      source_type: 'event',
+      source_id: 'evt-effective',
+      score_breakdown_json: canonicalizeJSON({
+        entity_overlap: 1,
+        embedding_similarity: 0.3,
+        temporal_proximity: 0.8,
+        explicit_from_wiki: 0,
+      }),
+      source_locator: 'event://effective-active',
+    });
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO case_memberships (
+            case_id, source_type, source_id, role, confidence, reason, status,
+            added_by, added_at, updated_at, user_locked, assignment_strategy,
+            score_breakdown_json, source_locator, explanation_updated_at
+          )
+          VALUES (
+            'case-survivor', 'event', 'evt-effective', 'evidence', 0.2, 'removed row',
+            'removed', 'memory-agent', '2026-04-18T00:00:00.000Z', '2026-04-18T01:00:00.000Z',
+            0, 'memory-agent-match', ?, 'event://removed-row', '2026-04-18T01:00:00.000Z'
+          )
+        `
+      )
+      .run(
+        canonicalizeJSON({
+          entity_overlap: 0,
+          embedding_similarity: 0,
+          temporal_proximity: 0,
+          explicit_from_wiki: 0,
+        })
+      );
+
+    const result = explainCaseMembership(getAdapter(), {
+      case_id: 'case-survivor',
+      source_type: 'event',
+      source_id: 'evt-effective',
+    });
+
+    expect(result).toMatchObject({
+      case_id: 'case-loser',
+      source_locator: 'event://effective-active',
+    });
+  });
+
   it('is deterministic and performs no query-time LLM call', () => {
     insertCase({ case_id: 'case-deterministic' });
     insertMembership({

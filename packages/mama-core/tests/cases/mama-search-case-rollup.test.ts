@@ -77,7 +77,11 @@ function insertCase(input: {
     );
 }
 
-function insertMembership(caseId: string, sourceId: string): void {
+function insertMembership(
+  caseId: string,
+  sourceId: string,
+  sourceType: 'decision' | 'checkpoint' = 'decision'
+): void {
   const adapter = getAdapter();
   const now = nowIso();
   adapter
@@ -87,10 +91,10 @@ function insertMembership(caseId: string, sourceId: string): void {
           case_id, source_type, source_id, role, confidence, reason, status,
           added_by, added_at, updated_at, user_locked
         )
-        VALUES (?, 'decision', ?, 'supporting', 0.9, 'test', 'active', 'wiki-compiler', ?, ?, 0)
+        VALUES (?, ?, ?, 'supporting', 0.9, 'test', 'active', 'wiki-compiler', ?, ?, 0)
       `
     )
-    .run(caseId, sourceId, now, now);
+    .run(caseId, sourceType, sourceId, now, now);
 }
 
 function insertDecision(input: {
@@ -298,6 +302,38 @@ describe('Task 11: mama_search case membership roll-up', () => {
       case_id: 'case-wiki-direct',
       score: 6,
       contributing_leaves: ['cases/direct.md'],
+    });
+  });
+
+  it('does not return the same case twice when a direct wiki hit arrives after grouped leaves', () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-late' });
+    insertMembership('case-wiki-late', 'D-late');
+
+    const results = rollUpSearchHits({
+      adapter,
+      fusedHits: [
+        leaf('D-late', 4),
+        {
+          source_type: 'wiki_page',
+          source_id: 'cases/late-direct.md',
+          fused_rank_score: 7,
+          page_type: 'case',
+          case_id: 'case-wiki-late',
+          record: {
+            source_locator: 'cases/late-direct.md',
+            title: 'Late direct hit',
+            content: 'body',
+          },
+        },
+      ],
+    });
+
+    expect(results.filter((result) => result.case_id === 'case-wiki-late')).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      source_type: 'case',
+      case_id: 'case-wiki-late',
+      score: 7,
     });
   });
 

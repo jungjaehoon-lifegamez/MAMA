@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { canonicalizeJSON } from '../../src/canonicalize.js';
 import { getAdapter } from '../../src/db-manager.js';
 import { CaseMergeChainCycleError } from '../../src/entities/errors.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
@@ -629,6 +630,116 @@ describe('Story CF1.7: Core case store and error surface', () => {
       expect(result.recent_evidence.map((o) => o.observation_id)).toContain('obs-surv-1');
       expect(result.active_corrections.map((c) => c.correction_id)).toContain('corr-assemble');
       expect(result.wiki_page).toBeNull();
+    });
+
+    it('assembleCase keeps membership explanations aligned with the deduped membership row', () => {
+      const adapter = getAdapter();
+      insertCase({ case_id: 'case-explain-survivor', title: 'Survivor' });
+      insertCase({
+        case_id: 'case-explain-loser',
+        canonical_case_id: 'case-explain-survivor',
+        status: 'merged',
+        title: 'Loser',
+      });
+
+      insertMembership({
+        case_id: 'case-explain-loser',
+        source_id: 'dec-shared',
+        role: 'primary',
+        user_locked: 1,
+        updated_at: '2026-04-18T00:00:00.000Z',
+      });
+      adapter
+        .prepare(
+          `
+            UPDATE case_memberships
+            SET score_breakdown_json = ?, source_locator = ?, assignment_strategy = ?, explanation_updated_at = ?
+            WHERE case_id = ? AND source_type = 'decision' AND source_id = ?
+          `
+        )
+        .run(
+          canonicalizeJSON({
+            entity_overlap: 1,
+            embedding_similarity: 0.4,
+            temporal_proximity: 0.9,
+            explicit_from_wiki: 0,
+          }),
+          'decision://locked',
+          'manual-pin',
+          '2026-04-18T00:00:00.000Z',
+          'case-explain-loser',
+          'dec-shared'
+        );
+
+      insertMembership({
+        case_id: 'case-explain-survivor',
+        source_id: 'dec-shared',
+        role: 'primary',
+        user_locked: 0,
+        updated_at: '2026-04-18T01:00:00.000Z',
+      });
+      adapter
+        .prepare(
+          `
+            UPDATE case_memberships
+            SET score_breakdown_json = ?, source_locator = ?, assignment_strategy = ?, explanation_updated_at = ?
+            WHERE case_id = ? AND source_type = 'decision' AND source_id = ?
+          `
+        )
+        .run(
+          canonicalizeJSON({
+            entity_overlap: 0,
+            embedding_similarity: 0,
+            temporal_proximity: 0,
+            explicit_from_wiki: 0,
+          }),
+          'decision://unlocked',
+          'memory-agent-match',
+          '2026-04-18T01:00:00.000Z',
+          'case-explain-survivor',
+          'dec-shared'
+        );
+
+      const result = assembleCase(adapter, 'case-explain-survivor');
+
+      expect(result.memberships).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            source_id: 'dec-shared',
+            user_locked: true,
+          }),
+        ])
+      );
+      expect(result.membership_explanations['decision:dec-shared']).toMatchObject({
+        source_locator: 'decision://locked',
+        assignment_strategy: 'manual-pin',
+      });
+    });
+
+    it('assembleCase rethrows malformed explanation JSON instead of silently dropping it', () => {
+      const adapter = getAdapter();
+      insertCase({ case_id: 'case-explain-json', title: 'Explain JSON' });
+      insertMembership({
+        case_id: 'case-explain-json',
+        source_id: 'dec-bad-json',
+      });
+      adapter
+        .prepare(
+          `
+            UPDATE case_memberships
+            SET score_breakdown_json = ?, source_locator = ?, explanation_updated_at = ?
+            WHERE case_id = ? AND source_type = 'decision' AND source_id = ?
+          `
+        )
+        .run(
+          '{not-json',
+          'decision://bad-json',
+          '2026-04-18T00:00:00.000Z',
+          'case-explain-json',
+          'dec-bad-json'
+        );
+
+      expect(() => assembleCase(adapter, 'case-explain-json')).toThrow();
     });
   });
 });

@@ -180,11 +180,12 @@ export async function searchCanonicalEntities(
 
   const offset = decodeCursor(input.cursor);
   const limit = Math.max(1, input.limit);
+  const page = sorted.slice(offset, offset + limit);
   const linkedCounts = loadLinkedDecisionCounts(
     adapter,
-    sorted.map((row) => row.id)
+    page.map((row) => row.id)
   );
-  const entities = sorted.slice(offset, offset + limit).map((row) => ({
+  const entities = page.map((row) => ({
     ...row,
     linked_decision_count: linkedCounts.get(row.id) ?? 0,
   }));
