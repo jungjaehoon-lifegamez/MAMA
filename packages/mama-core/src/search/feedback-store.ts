@@ -232,7 +232,7 @@ export function recordSearchFeedback(
   const questionType = questionTypeForInput(input);
   const rankPosition = rankPositionForInput(input);
   const createdAt = input.created_at ?? nowIso();
-  const feedbackId = input.result_id || `search_feedback_${randomUUID()}`;
+  const feedbackId = `search_feedback_${randomUUID()}`;
   const metadataJson = canonicalJson({
     clicked_result_rank: input.clicked_result_rank ?? null,
     input_result_id: input.result_id,

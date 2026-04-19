@@ -286,8 +286,13 @@ function dedupeCrossLanguageFamilies(
 
 function buildCrossScopeProbePairs(
   observations: EntityObservation[],
-  seenPairs: Set<string>
+  seenPairs: Set<string>,
+  maxPairs: number
 ): ScoredPair[] {
+  if (maxPairs <= 0) {
+    return [];
+  }
+
   const probes: ScoredPair[] = [];
 
   for (let i = 0; i < observations.length; i += 1) {
@@ -307,10 +312,13 @@ function buildCrossScopeProbePairs(
       }
 
       probes.push(scorePair(left, right, 'cross_scope'));
+      probes.sort(compareProbePairs);
+      if (probes.length > maxPairs) {
+        probes.length = maxPairs;
+      }
     }
   }
 
-  probes.sort(compareProbePairs);
   return probes;
 }
 
@@ -330,7 +338,7 @@ export function dedupeObservationsBySource(observations: EntityObservation[]): E
   for (const observation of observations) {
     const key = JSON.stringify([
       observation.source_connector,
-      observation.source_locator ?? '',
+      observation.source_locator ?? `missing-locator:${observation.id}`,
       observation.source_raw_record_id,
       observation.observation_type,
     ]);
@@ -403,7 +411,7 @@ export async function generateResolutionCandidates(
   const crossScopeBudget = options.embeddingScorer ? Math.max(0, pairBudget - topN.length) : 0;
   const crossScopePairs =
     options.embeddingScorer && crossScopeBudget > 0 && hasMultipleScopes(deduped)
-      ? buildCrossScopeProbePairs(deduped, seenPairs).slice(0, crossScopeBudget)
+      ? buildCrossScopeProbePairs(deduped, seenPairs, crossScopeBudget)
       : [];
   const candidates: EntityResolutionCandidate[] = [];
 

@@ -352,6 +352,8 @@ export function mergeCases(adapter: DatabaseAdapter, input: MergeCasesInput): Me
         message: 'loser and survivor resolve to the same canonical case.',
       };
     }
+    const canonicalLoserCaseId = loserResolution.terminal_case_id;
+    const canonicalSurvivorCaseId = survivorResolution.terminal_case_id;
 
     if (TERMINAL_CASE_STATUSES.has(loser.status) || TERMINAL_CASE_STATUSES.has(survivor.status)) {
       return {
@@ -362,7 +364,7 @@ export function mergeCases(adapter: DatabaseAdapter, input: MergeCasesInput): Me
     }
 
     insertCaseCorrectionLock(tx as unknown as DatabaseAdapter, {
-      case_id: input.loser_case_id,
+      case_id: canonicalLoserCaseId,
       target_kind: 'case_field',
       target_ref: { kind: 'case_field', field: 'canonical_case_id' },
       field_name: null,
@@ -372,7 +374,7 @@ export function mergeCases(adapter: DatabaseAdapter, input: MergeCasesInput): Me
       }),
       new_value_json: canonicalizeJSON({
         status: 'merged',
-        canonical_case_id: input.survivor_case_id,
+        canonical_case_id: canonicalSurvivorCaseId,
       }),
       reason: input.reason,
       applied_by: input.confirmed_by,
@@ -388,17 +390,17 @@ export function mergeCases(adapter: DatabaseAdapter, input: MergeCasesInput): Me
                updated_at = ?
          WHERE case_id = ?
       `
-    ).run(input.survivor_case_id, now, input.loser_case_id);
+    ).run(canonicalSurvivorCaseId, now, canonicalLoserCaseId);
 
     const auditEventId = insertMemoryEvent({
       adapter: tx,
       event_type: 'case.merged',
-      topic: `case:${input.survivor_case_id}`,
+      topic: `case:${canonicalSurvivorCaseId}`,
       scope_refs: [
-        { type: 'case', id: input.survivor_case_id },
-        { type: 'case', id: input.loser_case_id },
+        { type: 'case', id: canonicalSurvivorCaseId },
+        { type: 'case', id: canonicalLoserCaseId },
       ],
-      evidence_refs: [input.loser_case_id, input.survivor_case_id],
+      evidence_refs: [canonicalLoserCaseId, canonicalSurvivorCaseId],
       reason: {
         reason: input.reason,
         confirmed_by: input.confirmed_by,

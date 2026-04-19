@@ -137,11 +137,16 @@ describe('Story E1.24: Phase 8 policy substrate', () => {
         createEntityPolicyProposal,
         approveEntityPolicyProposal,
         getEntityPolicy,
+        upsertEntityRoleBinding,
       } = await import('../../src/entities/policy-store.js');
 
       await ensureEntityPolicyBootstrap({
         bootstrapPath: getFixturePath('entity-policy-bootstrap.json'),
         now: () => 1_710_000_000_000,
+      });
+      upsertEntityRoleBinding({
+        actor_id: 'actor:admin-b',
+        role: 'admin',
       });
 
       const proposalId = createEntityPolicyProposal({
@@ -166,6 +171,42 @@ describe('Story E1.24: Phase 8 policy substrate', () => {
         approve_score_min: 0.95,
         defer_score_min: 0.8,
       });
+    });
+
+    it('requires an admin approver to apply a proposal', async () => {
+      const {
+        ensureEntityPolicyBootstrap,
+        createEntityPolicyProposal,
+        approveEntityPolicyProposal,
+        upsertEntityRoleBinding,
+      } = await import('../../src/entities/policy-store.js');
+
+      await ensureEntityPolicyBootstrap({
+        bootstrapPath: getFixturePath('entity-policy-bootstrap.json'),
+        now: () => 1_710_000_000_000,
+      });
+      upsertEntityRoleBinding({
+        actor_id: 'actor:viewer-only',
+        role: 'viewer',
+      });
+
+      const proposalId = createEntityPolicyProposal({
+        policy_key: 'review_thresholds.default',
+        policy_kind: 'review_thresholds',
+        proposed_value: {
+          approve_score_min: 0.95,
+          defer_score_min: 0.8,
+        },
+        proposer_actor: 'actor:admin-a',
+        reason: 'Raise the approval threshold',
+      });
+
+      expect(() =>
+        approveEntityPolicyProposal({
+          proposal_id: proposalId,
+          approver_actor: 'actor:viewer-only',
+        })
+      ).toThrow(/admin approver/i);
     });
 
     it('stores proposal payloads separately from the memory_events audit trail', async () => {

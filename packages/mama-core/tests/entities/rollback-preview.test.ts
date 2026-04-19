@@ -140,6 +140,28 @@ describe('Story E1.17: Entity rollback preview', () => {
     expect(preview.truncated).toBe(true);
     expect(preview.changed_memories).toHaveLength(1);
   });
+
+  it('rejects an explicit mergeActionId that does not belong to the requested entity', async () => {
+    const { mergeActionId } = await seedMergedEntityPair();
+    await createEntityNode({
+      id: 'entity_unrelated',
+      kind: 'project',
+      preferred_label: 'Unrelated',
+      status: 'active',
+      scope_kind: 'project',
+      scope_id: 'scope-unrelated',
+      merged_into: null,
+    });
+
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+    const preview = await previewEntityRollback({
+      entityId: 'entity_unrelated',
+      mergeActionId,
+    });
+
+    expect(preview.preview_unavailable).toBe(true);
+    expect(preview.changed_entities).toHaveLength(0);
+  });
 });
 
 async function seedMergedEntityPair(): Promise<{ mergeActionId: string; memoryId: string }> {

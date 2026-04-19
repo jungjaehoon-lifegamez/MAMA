@@ -292,6 +292,41 @@ describe('Story CF2.9: HITL-only case merge and split', () => {
           .get(LOSER_ID)
       ).toMatchObject({ count: 2 });
     });
+
+    it('writes merge state against resolved canonical ids when aliases are provided', () => {
+      insertCase({ case_id: LOSER_ID, title: 'Canonical loser' });
+      insertCase({ case_id: SURVIVOR_ID, title: 'Canonical survivor' });
+      insertCase({
+        case_id: '77777777-7777-4777-8777-777777777777',
+        title: 'Loser alias',
+        canonical_case_id: LOSER_ID,
+      });
+      insertCase({
+        case_id: '88888888-8888-4888-8888-888888888888',
+        title: 'Survivor alias',
+        canonical_case_id: SURVIVOR_ID,
+      });
+
+      const result = mergeCases(
+        getAdapter(),
+        mergeInput({
+          loser_case_id: '77777777-7777-4777-8777-777777777777',
+          survivor_case_id: '88888888-8888-4888-8888-888888888888',
+        }) as never
+      );
+
+      expect(result).toMatchObject({ kind: 'merged' });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, canonical_case_id FROM case_truth WHERE case_id = ?')
+          .get(LOSER_ID)
+      ).toMatchObject({ status: 'merged', canonical_case_id: SURVIVOR_ID });
+      expect(
+        getAdapter()
+          .prepare('SELECT status FROM case_truth WHERE case_id = ?')
+          .get('77777777-7777-4777-8777-777777777777')
+      ).toMatchObject({ status: 'active' });
+    });
   });
 
   describe('splitCase', () => {
