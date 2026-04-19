@@ -38,10 +38,10 @@ describe('channel summary state reducer', () => {
 
   it('should accumulate active decisions and milestones instead of overwriting the whole summary', async () => {
     await recordChannelAudit({
-      channelKey: 'telegram:7026976631',
+      channelKey: 'telegram:tg_test_001',
       turnId: 'turn_1',
       topic: 'database_choice',
-      scopeRefs: [{ kind: 'channel', id: 'telegram:7026976631' }],
+      scopeRefs: [{ kind: 'channel', id: 'telegram:tg_test_001' }],
       ack: {
         status: 'applied',
         action: 'save',
@@ -57,10 +57,10 @@ describe('channel summary state reducer', () => {
     });
 
     await recordChannelAudit({
-      channelKey: 'telegram:7026976631',
+      channelKey: 'telegram:tg_test_001',
       turnId: 'turn_2',
       topic: 'benchmark_direction',
-      scopeRefs: [{ kind: 'channel', id: 'telegram:7026976631' }],
+      scopeRefs: [{ kind: 'channel', id: 'telegram:tg_test_001' }],
       ack: {
         status: 'applied',
         action: 'save',
@@ -75,8 +75,8 @@ describe('channel summary state reducer', () => {
       ],
     });
 
-    const state = await getChannelSummaryState('telegram:7026976631');
-    const summary = await getChannelSummary('telegram:7026976631');
+    const state = await getChannelSummaryState('telegram:tg_test_001');
+    const summary = await getChannelSummary('telegram:tg_test_001');
 
     expect(state?.active_topic).toBe('memory_benchmark_research');
     expect(state?.active_decisions).toHaveLength(2);
@@ -91,10 +91,10 @@ describe('channel summary state reducer', () => {
 
   it('should keep failed and skipped audit outcomes in state without replacing active decisions', async () => {
     await recordChannelAudit({
-      channelKey: 'telegram:7026976631',
+      channelKey: 'telegram:tg_test_001',
       turnId: 'turn_3',
       topic: 'memory_audit',
-      scopeRefs: [{ kind: 'channel', id: 'telegram:7026976631' }],
+      scopeRefs: [{ kind: 'channel', id: 'telegram:tg_test_001' }],
       ack: {
         status: 'skipped',
         action: 'no_op',
@@ -104,10 +104,10 @@ describe('channel summary state reducer', () => {
     });
 
     await recordChannelAudit({
-      channelKey: 'telegram:7026976631',
+      channelKey: 'telegram:tg_test_001',
       turnId: 'turn_4',
       topic: 'memory_audit',
-      scopeRefs: [{ kind: 'channel', id: 'telegram:7026976631' }],
+      scopeRefs: [{ kind: 'channel', id: 'telegram:tg_test_001' }],
       ack: {
         status: 'failed',
         action: 'save',
@@ -116,8 +116,8 @@ describe('channel summary state reducer', () => {
       },
     });
 
-    const state = await getChannelSummaryState('telegram:7026976631');
-    const summary = await getChannelSummary('telegram:7026976631');
+    const state = await getChannelSummaryState('telegram:tg_test_001');
+    const summary = await getChannelSummary('telegram:tg_test_001');
 
     expect(state?.active_decisions.map((entry) => entry.topic)).toContain('데이터베이스 선택');
     expect(state?.recent_audit_outcomes[0]?.status).toBe('failed');

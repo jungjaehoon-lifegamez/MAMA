@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyAuditRun,
   computeAuditMetrics,
+  computeCrossLanguageRecallAt5,
   computeCrossLanguageRecallAt10,
+  computeCrossLanguageRecallAtK,
   computeFalseMergeRate,
   computeOntologyViolationCount,
   computeProjectionFragmentationRate,
@@ -51,6 +53,21 @@ describe('entity audit metrics', () => {
       expect(result.recall).toBe(0);
     });
 
+    it('scores only gold pairs that appear in the top 1 when k=1', () => {
+      const gold: AuditGoldPair[] = [
+        { canonical_id: 'gold_a', left_obs_id: 'o1', right_obs_id: 'o2' },
+        { canonical_id: 'gold_b', left_obs_id: 'o3', right_obs_id: 'o4' },
+      ];
+      const matches = [
+        { candidate_id: 'c1', matched_pair_key: 'gold_a:o1:o2', score_total: 0.99 },
+        { candidate_id: 'c2', matched_pair_key: 'gold_b:o3:o4', score_total: 0.01 },
+      ];
+      const result = computeCrossLanguageRecallAtK(gold, matches, 1);
+      expect(result.denominator).toBe(2);
+      expect(result.numerator).toBe(1);
+      expect(result.recall).toBe(0.5);
+    });
+
     it('scores only gold pairs that appear in the top 10', () => {
       const gold: AuditGoldPair[] = [
         { canonical_id: 'gold_a', left_obs_id: 'o1', right_obs_id: 'o2' },
@@ -64,6 +81,16 @@ describe('entity audit metrics', () => {
       expect(result.denominator).toBe(2);
       expect(result.numerator).toBe(2);
       expect(result.recall).toBe(1);
+    });
+
+    it('exposes a @5 convenience wrapper without changing the @10 result', () => {
+      const gold: AuditGoldPair[] = [
+        { canonical_id: 'gold_a', left_obs_id: 'o1', right_obs_id: 'o2' },
+      ];
+      const matches = [{ candidate_id: 'c1', matched_pair_key: 'gold_a:o1:o2', score_total: 0.42 }];
+
+      expect(computeCrossLanguageRecallAt5(gold, matches).recall).toBe(1);
+      expect(computeCrossLanguageRecallAt10(gold, matches).recall).toBe(1);
     });
   });
 

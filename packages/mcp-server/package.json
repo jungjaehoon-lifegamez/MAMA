@@ -43,6 +43,7 @@
     "@modelcontextprotocol/sdk": "^1.0.1"
   },
   "devDependencies": {
+    "better-sqlite3": "^12.8.0",
     "vitest": "^1.0.0"
   },
   "files": [
