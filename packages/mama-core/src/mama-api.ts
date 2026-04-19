@@ -53,6 +53,13 @@ import {
 } from './memory/api.js';
 import { listOpenAuditFindings } from './memory/finding-store.js';
 import { listRecentMemoryEvents } from './memory/event-store.js';
+import {
+  rollUpSearchHits,
+  type SearchRollupLeafHit,
+  type SearchRollupResult,
+} from './cases/search-rollup.js';
+import { isSearchRankerEnabled, rescoreSearchResults } from './search/ranker-rescore.js';
+import { SEARCH_RANKER_FEATURE_SET_VERSION } from './search/ranker-features.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -75,6 +82,18 @@ interface SaveParams {
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
   /** ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15") */
   event_date?: string | null;
+  timelineEvent?: {
+    id?: string;
+    entity_id?: string;
+    event_type: string;
+    role?: string | null;
+    valid_from?: number | null;
+    valid_to?: number | null;
+    observed_at?: number | null;
+    source_ref?: string | null;
+    summary: string;
+    details?: string | null;
+  };
 }
 
 /**
@@ -86,8 +105,10 @@ interface SimilarDecision {
   decision: string;
   reasoning?: string;
   similarity?: number;
+  retrieval_score?: number | null;
   created_at?: number | string;
   event_date?: string | null;
+  event_datetime?: number | null;
 }
 
 /**
@@ -146,6 +167,9 @@ interface ReasoningGraphInfo {
 interface SaveResult {
   success: boolean;
   id: string;
+  saved_decision_id?: string;
+  timeline_event_id?: string | null;
+  timeline_event_ids?: string[];
   similar_decisions?: SimilarDecision[];
   warning?: string;
   collaboration_hint?: string;
@@ -502,6 +526,7 @@ async function save({
   is_static,
   scopes: inputScopes,
   event_date,
+  timelineEvent,
 }: SaveParams): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
@@ -564,7 +589,11 @@ async function save({
   const _userInvolvement = type === 'user_decision' ? 'approved' : null;
 
   logProgress(`Saving decision: ${topic.substring(0, 30)}...`);
-  const { id: decisionId } = await saveMemory({
+  const {
+    id: decisionId,
+    timeline_event_id: timelineEventId,
+    timeline_event_ids: timelineEventIds,
+  } = await saveMemory({
     topic,
     kind: is_static === 1 ? 'preference' : 'decision',
     summary: decision,
@@ -576,6 +605,7 @@ async function save({
       source_type: 'legacy_save',
     },
     eventDate: event_date ?? undefined,
+    timelineEvent,
   });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 
@@ -675,7 +705,10 @@ async function save({
               topic: d.topic,
               decision: d.decision,
               similarity: d.similarity,
+              retrieval_score: d.retrieval_score ?? null,
               created_at: d.created_at,
+              event_date: d.event_date ?? null,
+              event_datetime: d.event_datetime ?? null,
             }));
 
           if (similar_decisions.length > 0) {
@@ -727,6 +760,9 @@ async function save({
   return {
     success: true,
     id: decisionId,
+    saved_decision_id: decisionId,
+    timeline_event_id: timelineEventId ?? null,
+    timeline_event_ids: timelineEventIds ?? [],
     ...(similar_decisions.length > 0 && { similar_decisions }),
     ...(warning && { warning }),
     ...(collaboration_hint && { collaboration_hint }),
@@ -1377,12 +1413,110 @@ interface SuggestFunctionOptions {
   limit?: number;
   threshold?: number;
   useReranking?: boolean;
+  /** Phase 3 Task 33: apply learned offline ranker rescoring. */
+  rerankWithLearned?: boolean;
   recencyWeight?: number;
   recencyScale?: number;
   recencyDecay?: number;
   disableRecency?: boolean;
   topicPrefix?: string;
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
+}
+
+/** Phase 3 Task 33: learned-ranker meta attached to mama.suggest response. */
+function buildRankerMeta(
+  applied: boolean,
+  modelId: string | null,
+  skippedReason?: string
+): Record<string, unknown> {
+  const meta: Record<string, unknown> = {
+    model_id: modelId,
+    feature_set_version: SEARCH_RANKER_FEATURE_SET_VERSION,
+    applied,
+    mode: 'offline',
+  };
+  if (skippedReason) meta.skipped_reason = skippedReason;
+  return meta;
+}
+
+function resultRecord(result: SearchRollupResult): Record<string, unknown> {
+  if (
+    typeof result.record === 'object' &&
+    result.record !== null &&
+    !Array.isArray(result.record)
+  ) {
+    return result.record as Record<string, unknown>;
+  }
+  return {};
+}
+
+function stringOrNull(value: unknown): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return String(value);
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+  return value;
+}
+
+function confidenceValue(record: Record<string, unknown>, fallback: number): number {
+  const numeric = numberOrNull(record.confidence);
+  if (numeric !== null) {
+    return numeric;
+  }
+
+  switch (record.confidence) {
+    case 'high':
+      return 0.9;
+    case 'medium':
+      return 0.6;
+    case 'low':
+      return 0.3;
+    default:
+      return fallback;
+  }
+}
+
+function mapRolledUpResult(result: SearchRollupResult) {
+  const record = resultRecord(result);
+  const topic = stringOrNull(record.topic ?? record.title) ?? result.source_id;
+  // For wiki_page leaves, prefer the markdown body (`content`) in `decision` so
+  // downstream consumers see the meaningful body rather than the short title.
+  // Decision/checkpoint records use their own fields (summary/decision).
+  const isWikiPageLeaf = result.source_type === 'wiki_page';
+  const decision = isWikiPageLeaf
+    ? (stringOrNull(record.content ?? record.summary ?? record.decision ?? record.title) ??
+      result.source_id)
+    : (stringOrNull(record.summary ?? record.decision ?? record.title ?? record.content) ??
+      result.source_id);
+  const reasoning =
+    stringOrNull(record.details ?? record.reasoning ?? record.status_reason ?? record.content) ??
+    '';
+
+  return {
+    id: result.source_id,
+    topic,
+    decision,
+    reasoning,
+    confidence: confidenceValue(record, result.score),
+    similarity: null,
+    retrieval_score: result.score,
+    created_at: record.created_at ?? null,
+    event_date: record.event_date ?? null,
+    event_datetime: record.event_datetime ?? null,
+    graph_source: 'primary',
+    graph_rank: 1,
+    related_to: null,
+    edge_reason: null,
+    case_id: result.case_id,
+    source_type: result.source_type,
+    contributing_leaves: result.contributing_leaves ?? null,
+  };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1396,6 +1530,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     limit = 5,
     threshold,
     useReranking = false,
+    rerankWithLearned = false,
     // Recency boosting parameters (Gaussian Decay - Elasticsearch style)
     recencyWeight = 0.3, // 0-1: How much to weight recency (0.3 = 70% semantic, 30% recency)
     recencyScale = 7, // Days until recency score drops to 50%
@@ -1407,24 +1542,80 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     const bundle = await recallMemory(userQuestion, {
       includeProfile: false,
       topicPrefix: options.topicPrefix,
+      limit,
       ...(options.scopes && { scopes: options.scopes }),
     });
-    if (bundle.memories.length > 0) {
-      // recallMemory uses RRF fusion — confidence is overwritten with the normalized
-      // retrieval score (0-1 range, where 1.0 = best match in this result set).
-      // The original stored confidence is lost after RRF normalization.
-      // We capture the retrieval score separately so `similarity` reflects search
-      // relevance while `confidence` is passed through as-is from the bundle.
-      let filteredMemories = bundle.memories;
+    const fusedHits = (bundle as { fused_hits?: SearchRollupLeafHit[] }).fused_hits ?? [];
+    const rolledUp =
+      fusedHits.length > 0 ? rollUpSearchHits({ fusedHits, adapter: getAdapter() }) : [];
 
-      // Apply limit
-      filteredMemories = filteredMemories.slice(0, limit);
+    // Phase 3 Task 33: compute base ranker meta once so every return path
+    // (rolledUp, memories fallback, vector-search fallback) can attach it.
+    // rerankWithLearned-driven rescoring still only applies to result arrays
+    // that match the ranker's expected shape (id + source_type + case_id).
+    const baseRankerMeta = useReranking
+      ? buildRankerMeta(false, null, 'llm_reranking_requested')
+      : rerankWithLearned
+        ? null // marker: rescoring requested, actual meta set per-path after rescore
+        : buildRankerMeta(false, null, 'feature_disabled');
+
+    const applyLearnedRanker = <
+      T extends {
+        id: string;
+        source_type?: string;
+        case_id?: string | null;
+        retrieval_score?: number | null;
+        final_score?: number | null;
+      },
+    >(
+      results: T[]
+    ): { results: T[]; meta: Record<string, unknown> } => {
+      if (baseRankerMeta !== null) {
+        return { results, meta: baseRankerMeta };
+      }
+      // Phase 3 Task 33: the caller opted in via rerankWithLearned, but the
+      // runtime `search_ranker_enabled` gate still has final say. This lets
+      // operators disable the learned ranker globally during rollback without
+      // touching any caller code.
+      let runtimeEnabled = true;
+      try {
+        runtimeEnabled = isSearchRankerEnabled(getAdapter() as never);
+      } catch (err) {
+        logWarn(`[mama.suggest] isSearchRankerEnabled check failed: ${String(err)}`);
+      }
+      if (!runtimeEnabled) {
+        return { results, meta: buildRankerMeta(false, null, 'feature_disabled') };
+      }
+      try {
+        const rescored = rescoreSearchResults(getAdapter() as never, {
+          query: userQuestion,
+          results,
+        });
+        return {
+          results: rescored.results as T[],
+          meta: buildRankerMeta(
+            rescored.skipped_reason === undefined,
+            rescored.model_id,
+            rescored.skipped_reason
+          ),
+        };
+      } catch (err) {
+        logWarn(`[mama.suggest] learned-ranker rescore failed: ${String(err)}`);
+        return { results, meta: buildRankerMeta(false, null, 'rescore_error') };
+      }
+    };
+
+    if (rolledUp.length > 0) {
+      const filteredResults = rolledUp.slice(0, limit);
+      const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
+        filteredResults.map(mapRolledUpResult)
+      );
 
       if (format === 'markdown') {
-        const context = filteredMemories
+        const context = mappedResults
           .map(
-            (memory, index) =>
-              `${index + 1}. [${memory.topic}] ${memory.summary}\n   ${memory.details}`
+            (result, index) =>
+              `${index + 1}. [${result.topic}] ${result.decision}\n   ${result.reasoning}`
           )
           .join('\n');
         return `🔍 Search method: memory_v2\n${context}`;
@@ -1432,25 +1623,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: filteredMemories.map((memory, idx) => ({
-          id: memory.id,
-          topic: memory.topic,
-          decision: memory.summary,
-          reasoning: memory.details,
-          confidence: memory.confidence,
-          // memory.confidence is the normalized RRF retrieval score (0-1) after
-          // recallMemory.  Use it as similarity so the field reflects search relevance
-          // rather than the original stored trust score.
-          similarity: memory.confidence ?? 1 - idx * 0.01,
-          created_at: memory.created_at,
-          event_date: memory.event_date ?? null,
-          graph_source: 'primary',
-          graph_rank: 1,
-          related_to: null,
-          edge_reason: null,
-        })),
+        results: mappedResults,
         meta: {
-          count: filteredMemories.length,
+          count: mappedResults.length,
           search_method: 'memory_v2',
           threshold: threshold || 'adaptive',
           recency_boost: disableRecency
@@ -1461,7 +1636,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: {
-            total_results: filteredMemories.length,
+            total_results: mappedResults.length,
             primary_count: bundle.graph_context.primary.length,
             expanded_count: bundle.graph_context.expanded.length,
             sources: {
@@ -1472,6 +1647,76 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
               contradicts: 0,
             },
           },
+          ranker: rankerMeta,
+        },
+      };
+    }
+
+    if (bundle.memories.length > 0) {
+      // recallMemory uses RRF fusion — confidence is overwritten with the normalized
+      // retrieval score (0-1 range, where 1.0 = best match in this result set).
+      // The original stored confidence is lost after RRF normalization.
+      // We capture the retrieval score separately so `similarity` reflects search
+      // relevance while `confidence` is passed through as-is from the bundle.
+      const filteredMemories = bundle.memories.slice(0, limit);
+      const baseRows = filteredMemories.map((memory) => ({
+        id: memory.id,
+        topic: memory.topic,
+        decision: memory.summary,
+        reasoning: memory.details,
+        confidence: memory.confidence,
+        // recallMemory currently normalizes fused retrieval rank into `confidence`.
+        // Keep that value visible as retrieval_score, but do not pretend it is
+        // semantic similarity; save-time warning logic keys off `similarity`.
+        similarity: null,
+        retrieval_score: memory.confidence ?? null,
+        final_score: memory.confidence ?? null,
+        created_at: memory.created_at,
+        event_date: memory.event_date ?? null,
+        event_datetime: memory.event_datetime ?? null,
+        graph_source: 'primary',
+        graph_rank: 1,
+        related_to: null,
+        edge_reason: null,
+        case_id: null as string | null,
+        source_type: 'decision',
+      }));
+      const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
+
+      if (format === 'markdown') {
+        const context = rankedRows
+          .map((row, index) => `${index + 1}. [${row.topic}] ${row.decision}\n   ${row.reasoning}`)
+          .join('\n');
+        return `🔍 Search method: memory_v2\n${context}`;
+      }
+
+      return {
+        query: userQuestion,
+        results: rankedRows,
+        meta: {
+          count: rankedRows.length,
+          search_method: 'memory_v2',
+          threshold: threshold || 'adaptive',
+          recency_boost: disableRecency
+            ? null
+            : {
+                weight: recencyWeight,
+                scale: recencyScale,
+                decay: recencyDecay,
+              },
+          graph_expansion: {
+            total_results: rankedRows.length,
+            primary_count: bundle.graph_context.primary.length,
+            expanded_count: bundle.graph_context.expanded.length,
+            sources: {
+              primary: bundle.graph_context.primary.length,
+              supersedes_chain: 0,
+              refines: 0,
+              refined_by: 0,
+              contradicts: 0,
+            },
+          },
+          ranker: rankerMeta,
         },
       };
     }
@@ -1720,28 +1965,34 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     };
 
     // JSON format (default - LLM-first)
+    const vectorRows = finalResults.map((r) => ({
+      id: r.id,
+      topic: r.topic,
+      decision: r.decision,
+      reasoning: r.reasoning,
+      confidence: r.confidence,
+      similarity: r.similarity,
+      created_at: r.created_at,
+      // Recency metadata (NEW - Gaussian Decay)
+      recency_score: r.recency_score,
+      recency_age_days: r.recency_age_days,
+      final_score: r.final_score || r.similarity, // Falls back to similarity if no recency
+      retrieval_score: r.similarity ?? null,
+      // Graph metadata (NEW - Phase 1)
+      graph_source: r.graph_source || 'primary',
+      graph_rank: r.graph_rank || 1.0,
+      related_to: r.related_to || null,
+      edge_reason: r.edge_reason || null,
+      case_id: null as string | null,
+      source_type: 'decision',
+    }));
+    const { results: rankedVectorRows, meta: rankerMeta } = applyLearnedRanker(vectorRows);
+
     return {
       query: userQuestion,
-      results: finalResults.map((r) => ({
-        id: r.id,
-        topic: r.topic,
-        decision: r.decision,
-        reasoning: r.reasoning,
-        confidence: r.confidence,
-        similarity: r.similarity,
-        created_at: r.created_at,
-        // Recency metadata (NEW - Gaussian Decay)
-        recency_score: r.recency_score,
-        recency_age_days: r.recency_age_days,
-        final_score: r.final_score || r.similarity, // Falls back to similarity if no recency
-        // Graph metadata (NEW - Phase 1)
-        graph_source: r.graph_source || 'primary',
-        graph_rank: r.graph_rank || 1.0,
-        related_to: r.related_to || null,
-        edge_reason: r.edge_reason || null,
-      })),
+      results: rankedVectorRows,
       meta: {
-        count: finalResults.length,
+        count: rankedVectorRows.length,
         search_method: searchMethod,
         threshold: threshold || 'adaptive',
         // Recency boosting config (NEW - Gaussian Decay)
@@ -1754,6 +2005,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
             },
         // Graph expansion stats (NEW - Phase 1)
         graph_expansion: searchMethod.includes('graph') ? graphStats : null,
+        ranker: rankerMeta,
       },
     };
   } catch (error: unknown) {
@@ -1839,7 +2091,7 @@ async function listDecisions(
         JOIN memory_scope_bindings msb ON msb.memory_id = d.id
         WHERE msb.scope_id IN (${placeholders})
           AND d.superseded_by IS NULL
-        ORDER BY d.created_at DESC
+        ORDER BY COALESCE(d.event_datetime, d.created_at) DESC, d.created_at DESC
         LIMIT ?
       `);
       decisions = await stmt.all(...scopeIds, limit);
@@ -1847,7 +2099,7 @@ async function listDecisions(
       const stmt = adapter.prepare(`
         SELECT * FROM decisions
         WHERE superseded_by IS NULL
-        ORDER BY created_at DESC
+        ORDER BY COALESCE(event_datetime, created_at) DESC, created_at DESC
         LIMIT ?
       `);
       decisions = await stmt.all(limit);

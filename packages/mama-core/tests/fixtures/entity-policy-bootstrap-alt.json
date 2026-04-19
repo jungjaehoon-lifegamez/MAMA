@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "policies": [
+    {
+      "policy_key": "merge_guardrails.default",
+      "policy_kind": "merge_guardrails",
+      "value": {
+        "max_false_merge_rate": 0.01,
+        "require_review_for_cross_scope": false
+      }
+    }
+  ],
+  "role_bindings": [
+    {
+      "actor_id": "actor:alternate-admin",
+      "role": "admin"
+    }
+  ]
+}
