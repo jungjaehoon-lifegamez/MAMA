@@ -302,4 +302,37 @@ describe('Story E1.14: Entity search', () => {
       })
     );
   });
+
+  it('treats literal percent characters as exact search text', async () => {
+    await seedEntity('entity_percent', '100% Coverage', []);
+    await seedEntity('entity_plain_percent', '100 Percent Coverage', []);
+
+    const { searchCanonicalEntities } = await import('../../src/entities/entity-search.js');
+    const result = await searchCanonicalEntities({ query: '%', limit: 10 });
+
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.id).toBe('entity_percent');
+  });
+
+  it('treats literal underscore characters as exact search text', async () => {
+    await seedEntity('entity_underscore', 'alpha_beta', []);
+    await seedEntity('entity_plain_underscore', 'alpha beta', []);
+
+    const { searchCanonicalEntities } = await import('../../src/entities/entity-search.js');
+    const result = await searchCanonicalEntities({ query: '_', limit: 10 });
+
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.id).toBe('entity_underscore');
+  });
+
+  it('treats literal backslashes as exact search text', async () => {
+    await seedEntity('entity_backslash', 'alpha\\beta', []);
+    await seedEntity('entity_plain_backslash', 'alpha beta', []);
+
+    const { searchCanonicalEntities } = await import('../../src/entities/entity-search.js');
+    const result = await searchCanonicalEntities({ query: '\\', limit: 10 });
+
+    expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.id).toBe('entity_backslash');
+  });
 });

@@ -12,6 +12,7 @@ export type CaseCorrectionErrorCode =
   | 'case.correction_active_conflict'
   | 'case.correction_not_found'
   | 'case.correction_reverted'
+  | 'case.correction_inactive'
   | 'case.correction_already_superseded'
   | 'case.supersede_target_mismatch'
   | 'case.reconfirm_token_invalid'
@@ -57,6 +58,7 @@ export interface RevertCorrectionInput {
 
 export type CorrectionRevertResult =
   | { kind: 'reverted'; correction_id: string; case_id: string }
+  | { kind: 'precompile_gap'; code: 'case.precompile_gap'; case_id: string }
   | { kind: 'rejected'; code: CaseCorrectionErrorCode; message: string; correction_id?: string };
 
 export interface SupersedeCorrectionInput {
@@ -181,6 +183,7 @@ interface CorrectionStatusRow {
   old_value_json: string | null;
   is_lock_active: number;
   reverted_at: string | null;
+  superseded_by?: string | null;
 }
 
 interface CurrentSecret {
@@ -229,6 +232,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function parseJsonValue(value: string): unknown {
   return JSON.parse(value) as unknown;
+}
+
+function canonicalJsonOrNull(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  return canonicalizeJSON(parseJsonValue(value));
 }
 
 function nullableString(value: unknown): string | null {
@@ -974,9 +984,10 @@ export function applyCorrection(
     const canonical = canonicalTargetRef(input.target_ref);
     const targetRefHashHex = canonical.hash.toString('hex');
     const currentValueJson = readCurrentValueJson(correctionAdapter, input);
+    const expectedOldValueJson = canonicalJsonOrNull(input.old_value_json);
     let correctionId = randomCorrectionId();
 
-    if (typeof input.old_value_json === 'string' && input.old_value_json !== currentValueJson) {
+    if (expectedOldValueJson !== null && expectedOldValueJson !== currentValueJson) {
       const token = input.reconfirm_token ?? null;
       if (!token) {
         return buildRequiresReconfirm({
@@ -985,7 +996,7 @@ export function applyCorrection(
           target_ref_json: canonical.json,
           target_ref_hash_hex: targetRefHashHex,
           current_value_json: currentValueJson,
-          old_value_json: input.old_value_json,
+          old_value_json: expectedOldValueJson,
           proposed_new_value_json: input.new_value_json,
           confirmed_by: input.confirmed_by,
           session_id: input.session_id ?? null,
@@ -1011,7 +1022,7 @@ export function applyCorrection(
           target_ref_json: canonical.json,
           target_ref_hash_hex: targetRefHashHex,
           current_value_json: currentValueJson,
-          old_value_json: input.old_value_json,
+          old_value_json: expectedOldValueJson,
           proposed_new_value_json: input.new_value_json,
           confirmed_by: input.confirmed_by,
           session_id: input.session_id ?? null,
@@ -1036,7 +1047,7 @@ export function applyCorrection(
           target_ref_json: canonical.json,
           target_ref_hash_hex: targetRefHashHex,
           current_value_json: currentValueJson,
-          old_value_json: input.old_value_json,
+          old_value_json: expectedOldValueJson,
           proposed_new_value_json: input.new_value_json,
           confirmed_by: input.confirmed_by,
           session_id: input.session_id ?? null,
@@ -1117,6 +1128,7 @@ export function revertCorrection(
         `
           SELECT correction_id, case_id, target_kind, target_ref_json, field_name,
                  old_value_json, is_lock_active, reverted_at
+                 , superseded_by
           FROM case_corrections
           WHERE correction_id = ?
         `
@@ -1132,12 +1144,48 @@ export function revertCorrection(
       };
     }
 
-    if (row.reverted_at !== null || Number(row.is_lock_active) === 0) {
+    if (row.reverted_at !== null) {
       return {
         kind: 'rejected',
         code: 'case.correction_reverted',
         message: 'Correction has already been reverted.',
         correction_id: input.correction_id,
+      };
+    }
+    if (Number(row.is_lock_active) === 0 && row.superseded_by) {
+      return {
+        kind: 'rejected',
+        code: 'case.correction_already_superseded',
+        message: 'Correction has already been superseded.',
+        correction_id: input.correction_id,
+      };
+    }
+    if (Number(row.is_lock_active) === 0) {
+      return {
+        kind: 'rejected',
+        code: 'case.correction_inactive',
+        message: 'Correction is inactive.',
+        correction_id: input.correction_id,
+      };
+    }
+
+    const caseRow = correctionAdapter
+      .prepare('SELECT status, canonical_case_id FROM case_truth WHERE case_id = ?')
+      .get(row.case_id) as CaseGateRow | undefined;
+
+    if (!caseRow) {
+      return {
+        kind: 'precompile_gap',
+        code: 'case.precompile_gap',
+        case_id: row.case_id,
+      };
+    }
+    if (TERMINAL_CASE_STATUSES.has(caseRow.status)) {
+      return {
+        kind: 'rejected',
+        code: 'case.terminal_status',
+        message: 'Case is in a terminal status.',
+        case_id: row.case_id,
       };
     }
 
@@ -1258,10 +1306,18 @@ export function supersedeCorrection(
     }
 
     if (Number(old.is_lock_active) === 0) {
+      if (old.superseded_by !== null) {
+        return {
+          kind: 'rejected',
+          code: 'case.correction_already_superseded',
+          message: 'Correction has already been superseded.',
+          correction_id: input.old_correction_id,
+        };
+      }
       return {
         kind: 'rejected',
-        code: 'case.correction_reverted',
-        message: 'Cannot supersede an inactive correction.',
+        code: 'case.correction_inactive',
+        message: 'Correction is inactive.',
         correction_id: input.old_correction_id,
       };
     }

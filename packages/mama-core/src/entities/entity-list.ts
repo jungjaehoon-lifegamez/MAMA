@@ -120,19 +120,19 @@ export async function listCanonicalEntities(
     input.include_noisy === false
       ? collapsed.filter((row) => !isNoisyCanonicalEntity(row))
       : collapsed;
+  const offset = decodeCursor(input.cursor);
+  const limit = Math.max(1, input.limit);
+  const page = visibleBase.slice(offset, offset + limit);
   const linkedCounts = loadLinkedDecisionCounts(
     adapter,
-    visibleBase.map((row) => row.id)
+    page.map((row) => row.id)
   );
-  const visible = visibleBase.map((row) => ({
+  const entities = page.map((row) => ({
     ...row,
     linked_decision_count: linkedCounts.get(row.id) ?? 0,
   }));
-  const visibleCount = visible.length;
-  const offset = decodeCursor(input.cursor);
-  const limit = Math.max(1, input.limit);
-  const entities = visible.slice(offset, offset + limit);
-  const nextCursor = offset + limit < visible.length ? encodeCursor(offset + limit) : null;
+  const visibleCount = visibleBase.length;
+  const nextCursor = offset + limit < visibleBase.length ? encodeCursor(offset + limit) : null;
 
   return {
     entities,
