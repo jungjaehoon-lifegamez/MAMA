@@ -24,16 +24,6 @@ function isBusyError(error: unknown): boolean {
   return code === 'SQLITE_BUSY' || /SQLITE_BUSY|database is locked/i.test(error.message);
 }
 
-function sleepSync(ms: number): void {
-  if (ms <= 0) {
-    return;
-  }
-
-  const buffer = new SharedArrayBuffer(4);
-  const view = new Int32Array(buffer);
-  Atomics.wait(view, 0, 0, ms);
-}
-
 function requireSynchronousResult<T>(result: T): T {
   if (isThenable(result)) {
     throw new Error('runImmediateTransaction() callbacks must be synchronous');
@@ -47,7 +37,7 @@ export function runImmediateTransaction<T>(
   options?: ImmediateTransactionOptions
 ): T {
   const maxBusyRetries = options?.maxBusyRetries ?? 3;
-  const busyRetryDelayMs = options?.busyRetryDelayMs ?? 20;
+  const busyRetryDelayMs = Math.max(0, options?.busyRetryDelayMs ?? 20);
 
   if (!adapter.exec) {
     // Fake test adapters without exec can only provide deferred transaction
@@ -74,7 +64,11 @@ export function runImmediateTransaction<T>(
     } catch (error) {
       if (isBusyError(error) && attempt < maxBusyRetries) {
         attempt += 1;
-        sleepSync(busyRetryDelayMs);
+        if (busyRetryDelayMs > 0) {
+          // Preserve the retry budget contract without blocking the event loop
+          // inside shared core code. Callers that need delayed retries should
+          // wrap this synchronous helper at a higher async boundary.
+        }
         continue;
       }
       throw error;

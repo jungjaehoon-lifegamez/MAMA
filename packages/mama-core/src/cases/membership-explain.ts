@@ -1,6 +1,6 @@
 import { canonicalizeJSON } from '../canonicalize.js';
 import type { DatabaseAdapter } from '../db-manager.js';
-import { resolveCanonicalCaseChain } from './store.js';
+import { expandCaseChainForAssembly, resolveCanonicalCaseChain } from './store.js';
 import type { CaseMembershipSourceType } from './types.js';
 
 export interface CaseMembershipScoreBreakdown {
@@ -81,42 +81,6 @@ function placeholders(values: readonly unknown[]): string {
     throw new Error('Cannot build SQL IN clause for an empty value list.');
   }
   return values.map(() => '?').join(', ');
-}
-
-function expandCaseChainForAssembly(
-  adapter: MembershipExplainAdapter,
-  terminalCaseId: string,
-  resolvedChain: string[]
-): string[] {
-  const rows = adapter
-    .prepare(
-      `
-        WITH RECURSIVE merged_chain(case_id, depth) AS (
-          SELECT case_id, 0
-            FROM case_truth
-           WHERE case_id = ?
-
-          UNION
-
-          SELECT ct.case_id, merged_chain.depth + 1
-            FROM case_truth ct
-            JOIN merged_chain ON ct.canonical_case_id = merged_chain.case_id
-           WHERE merged_chain.depth < 64
-        )
-        SELECT case_id
-          FROM merged_chain
-         ORDER BY depth ASC, case_id ASC
-      `
-    )
-    .all(terminalCaseId) as Array<{ case_id: string }>;
-
-  const chain: string[] = [];
-  for (const caseId of [...resolvedChain, ...rows.map((row) => row.case_id)]) {
-    if (!chain.includes(caseId)) {
-      chain.push(caseId);
-    }
-  }
-  return chain;
 }
 
 function loadMembership(

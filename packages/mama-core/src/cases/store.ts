@@ -452,8 +452,8 @@ export function resolveCanonicalCaseChain(
   }
 }
 
-function expandCaseChainForAssembly(
-  adapter: CaseStoreAdapter,
+export function expandCaseChainForAssembly(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
   terminalCaseId: string,
   resolvedChain: string[]
 ): string[] {
