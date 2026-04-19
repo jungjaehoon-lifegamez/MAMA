@@ -1,4 +1,4 @@
-import { canonicalizeJSON, targetRefHash } from '../canonicalize.js';
+import { canonicalizeJSON, targetRefHashCanonicalJSON } from '../canonicalize.js';
 import type { CaseMembershipSourceType } from './types.js';
 
 export type CaseFieldName =
@@ -52,6 +52,6 @@ export function buildWikiSectionTargetRef(sectionHeading: string): CaseWikiSecti
 
 export function canonicalTargetRef(targetRef: CaseTargetRef): CanonicalTargetRef {
   const json = canonicalizeJSON(targetRef);
-  const hash = targetRefHash(json);
+  const hash = targetRefHashCanonicalJSON(json);
   return { json, hash };
 }

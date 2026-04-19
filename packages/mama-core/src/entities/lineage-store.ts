@@ -137,7 +137,7 @@ export async function completeEntityIngestRun(
   const adapter = getAdapter();
   const completedAt = now();
 
-  adapter
+  const completion = adapter
     .prepare(
       `
         UPDATE entity_ingest_runs
@@ -163,6 +163,9 @@ export async function completeEntityIngestRun(
       completedAt,
       id
     );
+  if (completion.changes !== 1) {
+    throw new Error(`Entity ingest run not found: ${id}`);
+  }
 
   const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(id) as Record<
     string,
@@ -179,7 +182,7 @@ export async function failEntityIngestRun(
   const adapter = getAdapter();
   const completedAt = now();
 
-  adapter
+  const completion = adapter
     .prepare(
       `
         UPDATE entity_ingest_runs
@@ -190,6 +193,9 @@ export async function failEntityIngestRun(
       `
     )
     .run(errorReason, completedAt, id);
+  if (completion.changes !== 1) {
+    throw new Error(`Entity ingest run not found: ${id}`);
+  }
 
   const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(id) as Record<
     string,

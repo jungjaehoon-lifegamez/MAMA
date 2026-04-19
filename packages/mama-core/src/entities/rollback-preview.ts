@@ -125,6 +125,7 @@ function loadMergeAction(
         SELECT id, source_entity_id, target_entity_id, created_at
         FROM entity_merge_actions
         WHERE id = ?
+          AND (source_entity_id = ? OR target_entity_id = ?)
         LIMIT 1
       `
     : `
@@ -134,7 +135,11 @@ function loadMergeAction(
         ORDER BY created_at DESC
         LIMIT 1
       `;
-  const row = adapter.prepare(sql).get(mergeActionId ?? entityId) as MergeActionRow | undefined;
+  const row = (
+    mergeActionId
+      ? adapter.prepare(sql).get(mergeActionId, entityId, entityId)
+      : adapter.prepare(sql).get(entityId)
+  ) as MergeActionRow | undefined;
   return row ?? null;
 }
 

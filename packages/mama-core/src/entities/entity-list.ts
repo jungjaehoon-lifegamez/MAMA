@@ -107,7 +107,7 @@ export async function listCanonicalEntities(
       continue;
     }
     if (
-      row.created_at < existing.created_at ||
+      row.created_at > existing.created_at ||
       (row.created_at === existing.created_at && row.id.localeCompare(existing.id) < 0)
     ) {
       collapsedByKey.set(key, row);
@@ -117,8 +117,13 @@ export async function listCanonicalEntities(
 
   const totalCount = sorted.length;
   const visibleBase =
-    input.include_noisy === false ? collapsed.filter((row) => !isNoisyCanonicalEntity(row)) : collapsed;
-  const linkedCounts = loadLinkedDecisionCounts(adapter, visibleBase.map((row) => row.id));
+    input.include_noisy === false
+      ? collapsed.filter((row) => !isNoisyCanonicalEntity(row))
+      : collapsed;
+  const linkedCounts = loadLinkedDecisionCounts(
+    adapter,
+    visibleBase.map((row) => row.id)
+  );
   const visible = visibleBase.map((row) => ({
     ...row,
     linked_decision_count: linkedCounts.get(row.id) ?? 0,

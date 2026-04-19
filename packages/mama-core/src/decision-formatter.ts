@@ -266,7 +266,7 @@ Top ${full.length} Most Relevant Decisions:
  * Format small decision history (3 or fewer)
  */
 function formatSmallHistory(current: DecisionForFormat, history: DecisionForFormat[]): string {
-  const duration = calculateDuration(current.created_at);
+  const duration = calculateDuration(getDecisionTimestamp(current));
 
   let context = `
 🧠 DECISION HISTORY: ${current.topic}

@@ -197,13 +197,16 @@ export async function getEntityImpact(entityId: string): Promise<EntityImpactRes
   const auditRuns = adapter
     .prepare(
       `
-        SELECT id, classification, status, created_at, completed_at
-        FROM entity_audit_runs
-        ORDER BY created_at DESC
+        SELECT DISTINCT ar.id, ar.classification, ar.status, ar.created_at, ar.completed_at
+        FROM entity_lineage_links l
+        JOIN entity_ingest_runs ir ON ir.id = l.run_id
+        JOIN entity_audit_runs ar ON ar.id = ir.audit_run_id
+        WHERE l.canonical_entity_id = ?
+        ORDER BY ar.created_at DESC
         LIMIT 10
       `
     )
-    .all() as Array<{
+    .all(entityId) as Array<{
     id: string;
     classification: string | null;
     status: string;

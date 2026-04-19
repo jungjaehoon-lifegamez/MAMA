@@ -332,6 +332,40 @@ export function upsertWikiPageIndexEntry(
           updatedAt,
           updatedAt
         );
+    } else if (schema.hasSourceIdsColumn && schema.hasEntityRefsColumn) {
+      adapter
+        .prepare(
+          `
+            INSERT INTO wiki_page_index (
+              page_id, source_type, source_locator, case_id, title, page_type,
+              content, confidence, source_ids, entity_refs, compiled_at, updated_at
+            )
+            VALUES (?, 'wiki_page', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(source_type, source_locator) DO UPDATE SET
+              case_id = excluded.case_id,
+              title = excluded.title,
+              page_type = excluded.page_type,
+              content = excluded.content,
+              confidence = excluded.confidence,
+              source_ids = excluded.source_ids,
+              entity_refs = excluded.entity_refs,
+              compiled_at = excluded.compiled_at,
+              updated_at = excluded.updated_at
+          `
+        )
+        .run(
+          pageIdForSourceLocator(input.source_locator),
+          input.source_locator,
+          input.case_id ?? null,
+          input.title,
+          input.page_type,
+          input.content,
+          input.confidence,
+          JSON.stringify(input.source_ids),
+          JSON.stringify(input.entity_refs),
+          input.compiled_at,
+          updatedAt
+        );
     } else {
       adapter
         .prepare(

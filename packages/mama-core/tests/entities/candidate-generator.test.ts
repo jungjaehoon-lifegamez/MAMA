@@ -80,6 +80,21 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
 
       expect(deduped).toHaveLength(3);
     });
+
+    it('should keep observations distinct when source_locator is missing', () => {
+      const deduped = dedupeObservationsBySource([
+        makeObservation('one', {
+          source_raw_record_id: 'raw_missing_locator',
+          source_locator: null,
+        }),
+        makeObservation('two', {
+          source_raw_record_id: 'raw_missing_locator',
+          source_locator: null,
+        }),
+      ]);
+
+      expect(deduped).toHaveLength(2);
+    });
   });
 
   describe('AC #2: deterministic blocking surfaces obvious candidates', () => {

@@ -183,6 +183,27 @@ describe('Story E1.15: Entity inspector impact', () => {
         1710000002000,
         1710000003000
       );
+    adapter
+      .prepare(`UPDATE entity_ingest_runs SET audit_run_id = ? WHERE id = ?`)
+      .run('audit_alpha', 'eir_alpha');
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_audit_runs (
+            id, status, baseline_run_id, classification, metric_summary_json, reason, created_at, completed_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'audit_unrelated',
+        'complete',
+        null,
+        'regressed',
+        JSON.stringify({ false_merge_rate: 1 }),
+        'unrelated',
+        1710000004000,
+        1710000005000
+      );
 
     const { getEntityImpact } = await import('../../src/entities/entity-impact.js');
     const result = await getEntityImpact('entity_project_alpha');
@@ -195,5 +216,6 @@ describe('Story E1.15: Entity inspector impact', () => {
         expect.objectContaining({ id: 'audit_alpha', classification: 'stable' }),
       ])
     );
+    expect(result.audit_runs.map((run) => run.id)).not.toContain('audit_unrelated');
   });
 });

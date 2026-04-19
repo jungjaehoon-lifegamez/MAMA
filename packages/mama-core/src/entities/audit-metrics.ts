@@ -99,7 +99,9 @@ export function computeCrossLanguageRecallAtK(
   let numerator = 0;
   for (const pair of goldPairs) {
     const key = `${pair.canonical_id}:${pair.left_obs_id}:${pair.right_obs_id}`;
-    if (matched.has(key)) numerator += 1;
+    if (matched.has(key)) {
+      numerator += 1;
+    }
   }
   return { recall: numerator / denominator, numerator, denominator };
 }

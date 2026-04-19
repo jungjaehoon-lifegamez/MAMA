@@ -1460,6 +1460,7 @@ export async function ingestMemory(
     scopes: input.scopes ?? [],
     source: input.source,
     eventDate: input.eventDate,
+    eventDateTime: input.eventDateTime,
   });
 }
 

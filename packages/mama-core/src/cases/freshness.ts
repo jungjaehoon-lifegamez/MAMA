@@ -67,6 +67,7 @@ interface CaseFreshnessRow {
   freshness_state: CaseFreshnessState | null;
   freshness_score_is_drifted: number;
   freshness_drift_threshold: number | null;
+  freshness_checked_at: string | null;
   freshness_reason_json: string | null;
 }
 
@@ -157,7 +158,7 @@ function loadCase(adapter: FreshnessAdapter, caseId: string): CaseFreshnessRow |
       `
         SELECT case_id, status, current_wiki_path, last_activity_at, state_updated_at,
                compiled_at, freshness_score, freshness_state, freshness_score_is_drifted,
-               freshness_drift_threshold, freshness_reason_json
+               freshness_drift_threshold, freshness_checked_at, freshness_reason_json
         FROM case_truth
         WHERE case_id = ?
       `

@@ -562,9 +562,9 @@ function unsuppressWikiTombstoneInTransaction(
     link_type: CaseLinkType;
     unsuppressed_by: string;
     now: string;
-  }
+  },
+  fingerprint = sha256TombstoneFingerprint(input)
 ): number {
-  const fingerprint = sha256TombstoneFingerprint(input);
   const result = adapter
     .prepare(
       `
@@ -840,6 +840,15 @@ export function createCaseLink(
       });
 
     if (sourceKind === 'manual') {
+      if (activeLinkForTriple(linkAdapter, input)) {
+        return {
+          kind: 'rejected',
+          code: 'case.correction_active_conflict',
+          message: 'An active case link already exists for this relationship.',
+          case_id: input.case_id_from,
+        };
+      }
+
       const tombstone = activeTombstoneRow(
         linkAdapter,
         {
@@ -860,13 +869,17 @@ export function createCaseLink(
       }
 
       if (tombstone) {
-        unsuppressWikiTombstoneInTransaction(linkAdapter, {
-          source_case_id: input.case_id_from,
-          target_case_id: input.case_id_to,
-          link_type: input.link_type,
-          unsuppressed_by: input.created_by,
-          now,
-        });
+        unsuppressWikiTombstoneInTransaction(
+          linkAdapter,
+          {
+            source_case_id: input.case_id_from,
+            target_case_id: input.case_id_to,
+            link_type: input.link_type,
+            unsuppressed_by: input.created_by,
+            now,
+          },
+          fingerprint
+        );
       }
     }
 

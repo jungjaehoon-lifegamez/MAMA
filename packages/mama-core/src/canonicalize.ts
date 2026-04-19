@@ -101,17 +101,26 @@ export function canonicalizeJSON(value: unknown): string {
 /**
  * Produce the 32-byte SHA-256 digest of the canonical JSON form of `value`.
  *
- * Accepts either a raw value (canonicalizes first) or a pre-canonicalized
- * JSON string. When passed a string, the helper treats it as already-canonical
- * JSON and hashes the bytes directly — callers that already called
- * `canonicalizeJSON` should prefer that path to avoid double-canonicalization.
- *
  * Invariant: `targetRefHash(obj)` === `targetRefHash(canonicalizeJSON(obj))`.
  */
-export function targetRefHash(valueOrCanonicalJson: unknown): Buffer {
-  const json =
-    typeof valueOrCanonicalJson === 'string'
-      ? valueOrCanonicalJson
-      : canonicalizeJSON(valueOrCanonicalJson);
+export function targetRefHash(value: unknown): Buffer {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      const canonicalJson = canonicalizeJSON(parsed);
+      if (canonicalJson === value) {
+        return targetRefHashCanonicalJSON(value);
+      }
+    } catch {
+      // Raw strings are canonicalized below.
+    }
+  }
+
+  const json = canonicalizeJSON(value);
+  return targetRefHashCanonicalJSON(json);
+}
+
+export function targetRefHashCanonicalJSON(canonicalJson: string): Buffer {
+  const json = canonicalJson;
   return createHash('sha256').update(json, 'utf8').digest();
 }
