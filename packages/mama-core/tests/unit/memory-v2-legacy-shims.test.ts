@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
+import { SEARCH_RANKER_FEATURE_SET_VERSION } from '../../src/search/ranker-features.js';
 
 const TEST_DB = '/tmp/test-memory-v2-legacy-shims.db';
 
@@ -52,6 +53,7 @@ describe('legacy shims', () => {
   });
 
   beforeEach(() => {
+    vi.resetModules();
     saveMemoryMock.mockClear();
     recallMemoryMock.mockClear();
   });
@@ -167,5 +169,100 @@ describe('legacy shims', () => {
       ])
     );
     expect(result.warning).toBeUndefined();
+  });
+
+  it('should rerank a larger memory candidate pool before truncating to the requested limit', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      fused_hits: [
+        {
+          source_type: 'wiki_page',
+          source_id: 'cases/base-top.md',
+          fused_rank_score: 0.55,
+          page_type: 'case',
+          case_id: 'case-base-top',
+          record: {
+            title: 'Base Top Case',
+            content: 'This is first before rerank',
+            confidence: 'high',
+            created_at: Date.now(),
+          },
+        },
+        {
+          source_type: 'decision',
+          source_id: 'promoted-second',
+          fused_rank_score: 0.5,
+          record: {
+            topic: 'promoted_second',
+            summary: 'Promoted second result',
+            details: 'This should win after rerank',
+            confidence: 0.5,
+            created_at: Date.now(),
+          },
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: {
+        query: 'rerank me',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
+    });
+
+    const { initDB, getAdapter } = await import('../../src/db-manager.js');
+    await initDB();
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO case_truth (
+            case_id, title, status, created_at, updated_at
+          ) VALUES (?, ?, 'active', ?, ?)
+        `
+      )
+      .run(
+        'case-base-top',
+        'Base Top Case',
+        '2026-04-18T00:00:00.000Z',
+        '2026-04-18T00:00:00.000Z'
+      );
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO ranker_model_versions (
+            model_id, model_version, feature_set_version, coefficients_json, metrics_json,
+            training_window_json, baseline_metrics_json, quality_gate_status, trained_at,
+            trained_by, active
+          )
+          VALUES (
+            'ranker-active', 'v1', ?, ?, '{}', '{}', '{}', 'passed',
+            '2026-04-18T00:00:00.000Z', 'test', 1
+          )
+        `
+      )
+      .run(
+        SEARCH_RANKER_FEATURE_SET_VERSION,
+        JSON.stringify({
+          coefficients: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          intercept: 0,
+          question_type_weights: {
+            correction: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            artifact: [0, 0, 0, 0, 0, -4, -4, -4, 4, -4, 0, 0, 0, 0, 0, 0, 0],
+            timeline: [0, 0, 0, 0, 0, -4, -4, -4, -4, 4, 0, 0, 0, 0, 0, 0, 0],
+            status: [0, 0, 0, 0, 0, -4, -4, 4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            decision_reason: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            how_to: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            unknown: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          },
+          training_rows_count: 10,
+        })
+      );
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('rerank me', { limit: 1, rerankWithLearned: true });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.id).toBe('promoted-second');
+    expect(result.meta?.ranker?.applied).toBe(true);
   });
 });
