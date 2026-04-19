@@ -168,7 +168,7 @@ describe('Story E1.12: Entity lineage substrate', () => {
           1710000000000
         );
 
-      await appendEntityLineageLink({
+      const first = await appendEntityLineageLink({
         canonical_entity_id: 'entity_project_seed',
         entity_observation_id: 'obs_project_seed',
         source_entity_id: null,
@@ -180,7 +180,7 @@ describe('Story E1.12: Entity lineage substrate', () => {
         confidence: 1,
       });
 
-      await appendEntityLineageLink({
+      const second = await appendEntityLineageLink({
         canonical_entity_id: 'entity_project_seed',
         entity_observation_id: 'obs_project_seed',
         source_entity_id: null,
@@ -204,6 +204,9 @@ describe('Story E1.12: Entity lineage substrate', () => {
         )
         .all('entity_project_seed', 'obs_project_seed') as Array<{ id: string }>;
 
+      expect(first.created).toBe(true);
+      expect(second.created).toBe(false);
+      expect(second.link.id).toBe(first.link.id);
       expect(rows).toHaveLength(1);
     });
 
@@ -276,13 +279,11 @@ describe('Story E1.12: Entity lineage substrate', () => {
         confidence: 1,
       });
 
-      await supersedeEntityLineageForEntity('entity_project_supersede', {
-        replacement_entity_id: 'entity_project_target',
-      });
+      await supersedeEntityLineageForEntity('entity_project_supersede');
 
       const row = adapter
         .prepare(`SELECT status, superseded_at FROM entity_lineage_links WHERE id = ?`)
-        .get(created.id) as { status: string; superseded_at: number | null } | undefined;
+        .get(created.link.id) as { status: string; superseded_at: number | null } | undefined;
 
       expect(row?.status).toBe('superseded');
       expect(row?.superseded_at).toBeTypeOf('number');
