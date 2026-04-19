@@ -77,6 +77,8 @@ export function projectEntityToRecallSummary(
   const detailParts = [formatTimelineEventForRecall(latestEvent), aliasText].filter(
     (value): value is string => Boolean(value)
   );
+  const scopeKind = node.scope_kind ?? 'global';
+  const scopeId = node.scope_kind === null ? 'global' : (node.scope_id ?? 'global');
 
   return {
     id: node.id,
@@ -86,7 +88,7 @@ export function projectEntityToRecallSummary(
     details: detailParts.join('\n'),
     confidence: 0.9,
     status: 'active',
-    scopes: [{ kind: node.scope_kind, id: node.scope_id ?? 'global' }],
+    scopes: [{ kind: scopeKind, id: scopeId }],
     source: {
       package: 'mama-core',
       source_type: 'entity_canonical',
