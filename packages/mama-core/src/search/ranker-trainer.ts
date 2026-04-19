@@ -103,6 +103,7 @@ interface QualityFixture {
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const LEARNING_RATE = 0.05;
+const MINI_BATCH_SIZE = 32;
 const MAX_EPOCHS = 500;
 const EARLY_STOP_DELTA = 1e-5;
 
@@ -667,30 +668,39 @@ function trainWeights(
   }
 
   for (let epoch = 0; epoch < MAX_EPOCHS; epoch += 1) {
-    const gradients = new Array(featureCount).fill(0);
-    let interceptGradient = 0;
+    let epochDelta = 0;
+    let batchCount = 0;
 
-    for (const example of examples) {
-      const prediction = sigmoid(dot(coefficients, example.features) + intercept);
-      const error = prediction - example.label;
-      for (let index = 0; index < featureCount; index += 1) {
-        gradients[index] += error * example.features[index];
+    for (let batchStart = 0; batchStart < examples.length; batchStart += MINI_BATCH_SIZE) {
+      const batch = examples.slice(batchStart, batchStart + MINI_BATCH_SIZE);
+      const gradients = new Array(featureCount).fill(0);
+      let interceptGradient = 0;
+
+      for (const example of batch) {
+        const prediction = sigmoid(dot(coefficients, example.features) + intercept);
+        const error = prediction - example.label;
+        for (let index = 0; index < featureCount; index += 1) {
+          gradients[index] += error * example.features[index];
+        }
+        interceptGradient += error;
       }
-      interceptGradient += error;
+
+      let delta = 0;
+      for (let index = 0; index < featureCount; index += 1) {
+        const update = (LEARNING_RATE * gradients[index]) / batch.length;
+        coefficients[index] -= update;
+        delta += Math.abs(update);
+      }
+
+      const interceptUpdate = (LEARNING_RATE * interceptGradient) / batch.length;
+      intercept -= interceptUpdate;
+      delta += Math.abs(interceptUpdate);
+
+      epochDelta += delta;
+      batchCount += 1;
     }
 
-    let delta = 0;
-    for (let index = 0; index < featureCount; index += 1) {
-      const update = (LEARNING_RATE * gradients[index]) / examples.length;
-      coefficients[index] -= update;
-      delta += Math.abs(update);
-    }
-
-    const interceptUpdate = (LEARNING_RATE * interceptGradient) / examples.length;
-    intercept -= interceptUpdate;
-    delta += Math.abs(interceptUpdate);
-
-    if (delta < EARLY_STOP_DELTA) {
+    if (batchCount > 0 && epochDelta / batchCount < EARLY_STOP_DELTA) {
       break;
     }
   }
