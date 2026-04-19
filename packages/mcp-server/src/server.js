@@ -372,6 +372,12 @@ After failure → save a NEW decision with same topic to create evolution histor
         description: memoryTools.search_decisions_and_contracts.description,
         inputSchema: memoryTools.search_decisions_and_contracts.inputSchema,
       },
+      // 5. CASE_TIMELINE_RANGE — Phase 3 case timeline RPC (defined in src/tools/)
+      {
+        name: memoryTools.case_timeline_range.name,
+        description: memoryTools.case_timeline_range.description,
+        inputSchema: memoryTools.case_timeline_range.inputSchema,
+      },
     ];
 
     this.server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));

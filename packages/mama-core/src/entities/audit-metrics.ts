@@ -82,9 +82,10 @@ export function computeFalseMergeRate(candidates: AuditCandidateSnapshot[]): {
   return { rate, numerator, denominator };
 }
 
-export function computeCrossLanguageRecallAt10(
+export function computeCrossLanguageRecallAtK(
   goldPairs: AuditGoldPair[],
-  matches: AuditCandidateGoldLink[]
+  matches: AuditCandidateGoldLink[],
+  k: number
 ): { recall: number; numerator: number; denominator: number } {
   const denominator = goldPairs.length;
   if (denominator === 0) {
@@ -92,7 +93,7 @@ export function computeCrossLanguageRecallAt10(
   }
   const topRanked = [...matches]
     .sort((a, b) => b.score_total - a.score_total)
-    .slice(0, 10)
+    .slice(0, Math.max(0, k))
     .map((m) => m.matched_pair_key);
   const matched = new Set(topRanked);
   let numerator = 0;
@@ -101,6 +102,20 @@ export function computeCrossLanguageRecallAt10(
     if (matched.has(key)) numerator += 1;
   }
   return { recall: numerator / denominator, numerator, denominator };
+}
+
+export function computeCrossLanguageRecallAt5(
+  goldPairs: AuditGoldPair[],
+  matches: AuditCandidateGoldLink[]
+): { recall: number; numerator: number; denominator: number } {
+  return computeCrossLanguageRecallAtK(goldPairs, matches, 5);
+}
+
+export function computeCrossLanguageRecallAt10(
+  goldPairs: AuditGoldPair[],
+  matches: AuditCandidateGoldLink[]
+): { recall: number; numerator: number; denominator: number } {
+  return computeCrossLanguageRecallAtK(goldPairs, matches, 10);
 }
 
 export function computeOntologyViolationCount(candidates: AuditCandidateSnapshot[]): number {

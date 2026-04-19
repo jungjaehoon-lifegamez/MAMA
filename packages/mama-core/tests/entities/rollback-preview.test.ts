@@ -1,0 +1,323 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
+import { getAdapter } from '../../src/db-manager.js';
+import {
+  adoptLineageAfterMerge,
+  appendEntityLineageLink,
+} from '../../src/entities/lineage-store.js';
+import {
+  createEntityNode,
+  mergeEntityNodes,
+  upsertEntityObservation,
+} from '../../src/entities/store.js';
+import { saveMemory } from '../../src/memory/api.js';
+
+describe('Story E1.17: Entity rollback preview', () => {
+  let testDbPath = '';
+
+  beforeAll(async () => {
+    testDbPath = await initTestDB('rollback-preview');
+  });
+
+  afterAll(async () => {
+    await cleanupTestDB(testDbPath);
+  });
+
+  beforeEach(() => {
+    const adapter = getAdapter();
+    adapter.prepare('DELETE FROM decision_entity_sources').run();
+    adapter.prepare('DELETE FROM memory_scope_bindings').run();
+    adapter.prepare('DELETE FROM memory_scopes').run();
+    adapter.prepare('DELETE FROM decision_edges').run();
+    adapter.prepare('DELETE FROM decisions').run();
+    adapter.prepare('DELETE FROM entity_lineage_links').run();
+    adapter.prepare('DELETE FROM entity_ingest_runs').run();
+    adapter.prepare('DELETE FROM entity_audit_runs').run();
+    adapter.prepare('DELETE FROM entity_observations').run();
+    adapter.prepare('DELETE FROM entity_aliases').run();
+    adapter.prepare('DELETE FROM entity_timeline_events').run();
+    adapter.prepare('DELETE FROM entity_merge_actions').run();
+    adapter.prepare('DELETE FROM entity_nodes').run();
+  });
+
+  it('simulates reversing one merge without mutating persistent state', async () => {
+    const { mergeActionId } = await seedMergedEntityPair();
+    const adapter = getAdapter();
+
+    const beforeSource = adapter
+      .prepare('SELECT status, merged_into FROM entity_nodes WHERE id = ?')
+      .get('entity_project_source') as { status: string; merged_into: string | null };
+    const beforeTargetActive = adapter
+      .prepare(
+        `SELECT COUNT(*) AS total FROM entity_lineage_links WHERE canonical_entity_id = ? AND status = 'active'`
+      )
+      .get('entity_project_target') as { total: number };
+
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      mergeActionId,
+    });
+
+    expect(preview.preview_unavailable).toBe(false);
+    expect(preview.changed_entities.map((entity) => entity.entity_id)).toEqual(
+      expect.arrayContaining(['entity_project_source', 'entity_project_target'])
+    );
+
+    const afterSource = adapter
+      .prepare('SELECT status, merged_into FROM entity_nodes WHERE id = ?')
+      .get('entity_project_source') as { status: string; merged_into: string | null };
+    const afterTargetActive = adapter
+      .prepare(
+        `SELECT COUNT(*) AS total FROM entity_lineage_links WHERE canonical_entity_id = ? AND status = 'active'`
+      )
+      .get('entity_project_target') as { total: number };
+
+    expect(afterSource).toEqual(beforeSource);
+    expect(afterTargetActive.total).toBe(beforeTargetActive.total);
+  });
+
+  it('returns affected entities, memories, and likely metric movement', async () => {
+    const { mergeActionId, memoryId } = await seedMergedEntityPair();
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      mergeActionId,
+    });
+
+    expect(preview.changed_entities).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ entity_id: 'entity_project_source' }),
+        expect.objectContaining({ entity_id: 'entity_project_target' }),
+      ])
+    );
+    expect(preview.changed_memories).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: memoryId })])
+    );
+    expect(preview.metric_movement).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ metric: 'false_merge_rate' }),
+        expect.objectContaining({ metric: 'projection_fragmentation_rate' }),
+      ])
+    );
+  });
+
+  it('reports preview_unavailable when history is incomplete', async () => {
+    const mergeActionId = await seedIncompleteMerge();
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      mergeActionId,
+    });
+
+    expect(preview.preview_unavailable).toBe(true);
+    expect(preview.history_incomplete).toBe(true);
+    expect(preview.changed_entities).toHaveLength(0);
+  });
+
+  it('returns truncation metadata when impact exceeds bounded cost', async () => {
+    const { mergeActionId } = await seedMergedEntityPair();
+    await saveMemory({
+      topic: 'project_source/followup',
+      kind: 'decision',
+      summary: 'Follow-up approved',
+      details: 'Follow-up also tied to source evidence',
+      confidence: 0.8,
+      scopes: [{ kind: 'project', id: 'scope-alpha' }],
+      source: { package: 'mama-core', source_type: 'test' },
+      entityObservationIds: ['obs_project_source'],
+    } as never);
+
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      mergeActionId,
+      maxAffectedRows: 1,
+    });
+
+    expect(preview.truncated).toBe(true);
+    expect(preview.changed_memories).toHaveLength(1);
+  });
+});
+
+async function seedMergedEntityPair(): Promise<{ mergeActionId: string; memoryId: string }> {
+  const adapter = getAdapter();
+
+  await createEntityNode({
+    id: 'entity_project_source',
+    kind: 'project',
+    preferred_label: 'Project Source',
+    status: 'active',
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    merged_into: null,
+  });
+  await createEntityNode({
+    id: 'entity_project_target',
+    kind: 'project',
+    preferred_label: 'Project Target',
+    status: 'active',
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    merged_into: null,
+  });
+
+  await upsertEntityObservation({
+    id: 'obs_project_source',
+    observation_type: 'generic',
+    entity_kind_hint: 'project',
+    surface_form: 'Project Source',
+    normalized_form: 'project source',
+    lang: 'en',
+    script: 'Latn',
+    context_summary: 'Source observation',
+    related_surface_forms: ['Source'],
+    timestamp_observed: 1710000000000,
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    extractor_version: 'history-extractor@v1',
+    embedding_model_version: 'multilingual-e5-large',
+    source_connector: 'slack',
+    source_locator: '/tmp/slack/raw.db',
+    source_raw_record_id: 'raw_source',
+  });
+  await upsertEntityObservation({
+    id: 'obs_project_target',
+    observation_type: 'generic',
+    entity_kind_hint: 'project',
+    surface_form: 'Project Target',
+    normalized_form: 'project target',
+    lang: 'en',
+    script: 'Latn',
+    context_summary: 'Target observation',
+    related_surface_forms: ['Target'],
+    timestamp_observed: 1710000001000,
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    extractor_version: 'history-extractor@v1',
+    embedding_model_version: 'multilingual-e5-large',
+    source_connector: 'slack',
+    source_locator: '/tmp/slack/raw.db',
+    source_raw_record_id: 'raw_target',
+  });
+
+  await appendEntityLineageLink({
+    canonical_entity_id: 'entity_project_source',
+    entity_observation_id: 'obs_project_source',
+    source_entity_id: null,
+    contribution_kind: 'seed',
+    run_id: null,
+    candidate_id: null,
+    review_action_id: null,
+    capture_mode: 'direct',
+    confidence: 1,
+  });
+  await appendEntityLineageLink({
+    canonical_entity_id: 'entity_project_target',
+    entity_observation_id: 'obs_project_target',
+    source_entity_id: null,
+    contribution_kind: 'seed',
+    run_id: null,
+    candidate_id: null,
+    review_action_id: null,
+    capture_mode: 'direct',
+    confidence: 1,
+  });
+
+  let mergeActionId = '';
+  const runMerge =
+    'transaction' in adapter && typeof adapter.transaction === 'function'
+      ? adapter.transaction(() => {
+          const result = mergeEntityNodes({
+            adapter,
+            source_id: 'entity_project_source',
+            target_id: 'entity_project_target',
+            actor_type: 'user',
+            actor_id: 'local:tester',
+            reason: 'duplicate project',
+            candidate_id: null,
+            evidence_json: JSON.stringify({ reason: 'preview test' }),
+          });
+          mergeActionId = result.merge_action_id;
+          adoptLineageAfterMerge({
+            adapter,
+            source_entity_id: 'entity_project_source',
+            target_entity_id: 'entity_project_target',
+            candidate_id: null,
+            review_action_id: mergeActionId,
+          });
+        })
+      : null;
+
+  if (runMerge) {
+    const tx = runMerge as unknown;
+    if (typeof tx === 'function') {
+      tx();
+    }
+  }
+
+  const memory = await saveMemory({
+    topic: 'project_source/kickoff',
+    kind: 'decision',
+    summary: 'Kickoff approved',
+    details: 'Kickoff tied to source evidence',
+    confidence: 0.9,
+    scopes: [{ kind: 'project', id: 'scope-alpha' }],
+    source: { package: 'mama-core', source_type: 'test' },
+    entityObservationIds: ['obs_project_source'],
+  } as never);
+
+  return { mergeActionId, memoryId: memory.id };
+}
+
+async function seedIncompleteMerge(): Promise<string> {
+  const adapter = getAdapter();
+
+  await createEntityNode({
+    id: 'entity_project_source',
+    kind: 'project',
+    preferred_label: 'Project Source',
+    status: 'active',
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    merged_into: null,
+  });
+  await createEntityNode({
+    id: 'entity_project_target',
+    kind: 'project',
+    preferred_label: 'Project Target',
+    status: 'active',
+    scope_kind: 'project',
+    scope_id: 'scope-alpha',
+    merged_into: null,
+  });
+
+  let mergeActionId = '';
+  const runMerge =
+    'transaction' in adapter && typeof adapter.transaction === 'function'
+      ? adapter.transaction(() => {
+          const result = mergeEntityNodes({
+            adapter,
+            source_id: 'entity_project_source',
+            target_id: 'entity_project_target',
+            actor_type: 'user',
+            actor_id: 'local:tester',
+            reason: 'history missing',
+            candidate_id: null,
+            evidence_json: JSON.stringify({ reason: 'preview incomplete test' }),
+          });
+          mergeActionId = result.merge_action_id;
+        })
+      : null;
+
+  if (runMerge) {
+    const tx = runMerge as unknown;
+    if (typeof tx === 'function') {
+      tx();
+    }
+  }
+
+  return mergeActionId;
+}
