@@ -3,13 +3,13 @@ import { loadLinkedDecisionCounts } from './entity-linked-decision-counts.js';
 import { EntityMergeError, resolveCanonicalEntityId } from './store.js';
 import type { EntityNode } from './types.js';
 
-interface SearchCanonicalEntitiesInput {
+export interface SearchCanonicalEntitiesInput {
   query: string;
   limit: number;
   cursor?: string | null;
 }
 
-interface EntitySearchRow {
+export interface EntitySearchRow {
   id: string;
   kind: EntityNode['kind'];
   preferred_label: string;
@@ -19,7 +19,7 @@ interface EntitySearchRow {
   linked_decision_count: number;
 }
 
-interface SearchCanonicalEntitiesResult {
+export interface SearchCanonicalEntitiesResult {
   entities: EntitySearchRow[];
   next_cursor: string | null;
 }
@@ -68,6 +68,7 @@ export async function searchCanonicalEntities(
   }
 
   const escaped = escapeLikeQuery(query);
+  const normalizedQuery = normalizeSearchLabel(query);
   const rows = adapter
     .prepare(
       `
@@ -100,46 +101,65 @@ export async function searchCanonicalEntities(
     observation_surface_form: string | null;
   }>;
 
-  const canonicalRows = new Map<string, EntitySearchRow>();
-  for (const row of rows) {
-    let canonicalId: string;
+  const canonicalIdByMatchedId = new Map<string, string>();
+  for (const matchedId of new Set(rows.map((row) => row.matched_id))) {
     try {
-      canonicalId = resolveCanonicalEntityId(adapter, row.matched_id);
+      canonicalIdByMatchedId.set(matchedId, resolveCanonicalEntityId(adapter, matchedId));
     } catch (error) {
       if (error instanceof EntityMergeError) {
         continue;
       }
       throw error;
     }
+  }
 
-    const canonical = adapter
+  const canonicalIds = Array.from(new Set(canonicalIdByMatchedId.values()));
+  const canonicalLookup = new Map<
+    string,
+    {
+      id: string;
+      kind: EntityNode['kind'];
+      preferred_label: string;
+      scope_kind: EntityNode['scope_kind'];
+      scope_id: string | null;
+    }
+  >();
+  if (canonicalIds.length > 0) {
+    const fetched = adapter
       .prepare(
         `
           SELECT id, kind, preferred_label, scope_kind, scope_id
           FROM entity_nodes
-          WHERE id = ?
+          WHERE id IN (${canonicalIds.map(() => '?').join(', ')})
             AND status = 'active'
             AND merged_into IS NULL
         `
       )
-      .get(canonicalId) as
-      | {
-          id: string;
-          kind: EntityNode['kind'];
-          preferred_label: string;
-          scope_kind: EntityNode['scope_kind'];
-          scope_id: string | null;
-        }
-      | undefined;
+      .all(...canonicalIds) as Array<{
+      id: string;
+      kind: EntityNode['kind'];
+      preferred_label: string;
+      scope_kind: EntityNode['scope_kind'];
+      scope_id: string | null;
+    }>;
+    for (const row of fetched) {
+      canonicalLookup.set(row.id, row);
+    }
+  }
+
+  const canonicalRows = new Map<string, EntitySearchRow>();
+  for (const row of rows) {
+    const canonicalId = canonicalIdByMatchedId.get(row.matched_id);
+    const canonical = canonicalId ? canonicalLookup.get(canonicalId) : undefined;
     if (!canonical) {
       continue;
     }
 
-    const score = row.preferred_label.toLowerCase().includes(query.toLowerCase())
+    const score = normalizeSearchLabel(row.preferred_label).includes(normalizedQuery)
       ? 3
-      : row.alias_label?.toLowerCase().includes(query.toLowerCase())
+      : row.alias_label && normalizeSearchLabel(row.alias_label).includes(normalizedQuery)
         ? 2
-        : 1;
+      : 1;
     const existing = canonicalRows.get(canonical.id);
     if (!existing || score > existing.score) {
       canonicalRows.set(canonical.id, {

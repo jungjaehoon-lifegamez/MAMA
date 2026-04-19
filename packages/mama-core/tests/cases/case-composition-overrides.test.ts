@@ -144,6 +144,31 @@ describe('Task 14: Membership pin and source promotion core helpers', () => {
     expect(membershipRow('case-pin', 'dec-pin').reason).toContain('keep this source');
   });
 
+  it('replaces an existing trailing manual-pin line instead of appending duplicates', () => {
+    insertCase({ case_id: 'case-pin-reason' });
+    insertMembership({
+      case_id: 'case-pin-reason',
+      source_id: 'dec-pin-reason',
+      reason: 'initial reason\nmanual-pin: old choice',
+      user_locked: 1,
+      assignment_strategy: 'manual-pin',
+    });
+
+    const result = pinCaseMembership(getAdapter(), {
+      case_id: 'case-pin-reason',
+      source_type: 'decision',
+      source_id: 'dec-pin-reason',
+      pinned_by: 'user:test',
+      reason: 'new choice',
+      now: '2026-04-18T01:00:00.000Z',
+    });
+
+    expect(result.kind).toBe('pinned');
+    expect(membershipRow('case-pin-reason', 'dec-pin-reason').reason).toBe(
+      'initial reason\nmanual-pin: new choice'
+    );
+  });
+
   it('unpin clears user_locked', () => {
     insertCase({ case_id: 'case-unpin' });
     insertMembership({

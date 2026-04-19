@@ -305,12 +305,12 @@ function buildCrossScopeProbePairs(
       if (seenPairs.has(pairKey)) {
         continue;
       }
-      seenPairs.add(pairKey);
 
       if (!shouldConsiderCrossScopeProbe(left, right)) {
         continue;
       }
 
+      seenPairs.add(pairKey);
       probes.push(scorePair(left, right, 'cross_scope'));
       probes.sort(compareProbePairs);
       if (probes.length > maxPairs) {
@@ -385,12 +385,12 @@ export async function generateResolutionCandidates(
         if (seenPairs.has(pairKey)) {
           continue;
         }
-        seenPairs.add(pairKey);
 
         if (!shouldConsiderPair(left, right)) {
           continue;
         }
 
+        seenPairs.add(pairKey);
         const scored = scorePair(left, right, 'deterministic');
 
         if (scored.score_total <= 0 && !options.embeddingScorer) {

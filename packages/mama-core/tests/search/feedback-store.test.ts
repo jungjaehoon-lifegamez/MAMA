@@ -214,4 +214,41 @@ describe('Phase 3 Task 10: search feedback store', () => {
 
     expect(getFeedbackRetentionDays(adapter)).toBe(14);
   });
+
+  it('classifies question_type when the caller omits it', () => {
+    const result = recordSearchFeedback(
+      adapter,
+      {
+        result_id: 'classified-on-write',
+        session_id: 'session-1',
+        query: 'how to configure the ranker',
+        result_source_type: 'case',
+        result_source_id: 'case-1',
+        feedback_kind: 'shown',
+        shown_index: 0,
+      } as SearchFeedbackInput
+    );
+
+    const row = db
+      .prepare(`SELECT question_type FROM search_feedback WHERE feedback_id = ?`)
+      .get(result.feedback_id) as { question_type: string };
+
+    expect(row.question_type).toBe('how_to');
+  });
+
+  it('fails fast when adapter.transaction is missing', () => {
+    const noTxAdapter = {
+      prepare: adapter.prepare.bind(adapter),
+    } as unknown as FeedbackStoreAdapter;
+
+    expect(() =>
+      recordSearchFeedback(
+        noTxAdapter,
+        input({
+          result_id: 'no-transaction',
+          result_source_id: 'case-no-transaction',
+        })
+      )
+    ).toThrow(/adapter\.transaction/i);
+  });
 });

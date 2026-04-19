@@ -117,7 +117,8 @@ function readBootstrapDocument(bootstrapPath: string): EntityPolicyBootstrapDocu
     }
     if (
       typeof policy.policy_key !== 'string' ||
-      !isEntityPolicyKind(String(policy.policy_kind)) ||
+      typeof policy.policy_kind !== 'string' ||
+      !isEntityPolicyKind(policy.policy_kind) ||
       !policy.value ||
       typeof policy.value !== 'object' ||
       Array.isArray(policy.value)
@@ -130,7 +131,11 @@ function readBootstrapDocument(bootstrapPath: string): EntityPolicyBootstrapDocu
     if (!binding || typeof binding !== 'object' || Array.isArray(binding)) {
       throw new Error('Entity policy bootstrap role_bindings must be objects');
     }
-    if (typeof binding.actor_id !== 'string' || !isEntityRole(String(binding.role))) {
+    if (
+      typeof binding.actor_id !== 'string' ||
+      typeof binding.role !== 'string' ||
+      !isEntityRole(binding.role)
+    ) {
       throw new Error('Entity policy bootstrap role binding rows are invalid');
     }
   }

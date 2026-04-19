@@ -95,6 +95,7 @@ function getLatestTimeline(
     id: String(row.id),
     entity_id: String(row.entity_id),
     event_type: row.event_type as EntityTimelineEvent['event_type'],
+    role: typeof row.role === 'string' ? row.role : null,
     valid_from: typeof row.valid_from === 'number' ? row.valid_from : null,
     valid_to: typeof row.valid_to === 'number' ? row.valid_to : null,
     observed_at: typeof row.observed_at === 'number' ? row.observed_at : null,
@@ -103,6 +104,12 @@ function getLatestTimeline(
     details: typeof row.details === 'string' ? row.details : null,
     created_at: Number(row.created_at),
   };
+}
+
+const DEFAULT_MAX_AFFECTED_ROWS = 50;
+
+function normalizeMaxAffectedRows(input: RollbackPreviewInput): number {
+  return Math.max(1, input.maxAffectedRows ?? DEFAULT_MAX_AFFECTED_ROWS);
 }
 
 function projectLabel(adapter: EntityStoreAdapter, node: EntityNode): string {
@@ -240,7 +247,7 @@ async function previewMergeRollback(
     ...removedRows.map((row) => row.entity_observation_id),
   ]);
   const allChangedMemories = loadChangedMemories(adapter, affectedObservationIds);
-  const maxAffectedRows = Math.max(1, input.maxAffectedRows ?? 50);
+  const maxAffectedRows = normalizeMaxAffectedRows(input);
   const truncated = allChangedMemories.length > maxAffectedRows;
 
   return {
@@ -284,11 +291,11 @@ async function previewObservationDetach(
     (candidate) => candidate.entity_observation_id === input.observationId
   );
   if (!row) {
-    return unavailableResult(input.entityId, null, true);
+    return unavailableResult(input.entityId, null, false);
   }
 
   const changedMemories = loadChangedMemories(adapter, [row.entity_observation_id]);
-  const maxAffectedRows = Math.max(1, input.maxAffectedRows ?? 50);
+  const maxAffectedRows = normalizeMaxAffectedRows(input);
 
   return {
     entity_id: input.entityId,
