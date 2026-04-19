@@ -82,14 +82,14 @@ describe('memory agent bootstrap builder', () => {
 
   it('should include channel summary when channel scope is provided', async () => {
     await upsertChannelSummary({
-      channelKey: 'telegram:5551000001',
+      channelKey: 'telegram:tg_test_001',
       summaryMarkdown: '## Channel Summary\n- Current DB direction: PostgreSQL',
       deltaHash: 'db:postgres',
     });
 
     const packet = await buildMemoryAgentBootstrap({
-      scopes: [{ kind: 'channel', id: 'telegram:5551000001' }],
-      channelKey: 'telegram:5551000001',
+      scopes: [{ kind: 'channel', id: 'telegram:tg_test_001' }],
+      channelKey: 'telegram:tg_test_001',
     });
 
     expect(packet.channel_summary_markdown).toContain('PostgreSQL');

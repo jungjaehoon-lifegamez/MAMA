@@ -6,6 +6,39 @@ interface ProjectionOptions {
   nodeLookup?: Record<string, EntityNode>;
 }
 
+function formatTimelineEventForRecall(latestEvent: EntityTimelineEvent | null): string | null {
+  if (!latestEvent) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  const eventType = latestEvent.event_type.trim();
+  const summary = latestEvent.summary.trim();
+  const details = latestEvent.details?.trim() ?? '';
+
+  if (eventType.length > 0) {
+    parts.push(eventType);
+  }
+  if (summary.length > 0) {
+    parts.push(summary);
+  }
+
+  if (details.length > 0 && details !== summary) {
+    try {
+      const parsed = JSON.parse(details) as unknown;
+      if (parsed && typeof parsed === 'object') {
+        parts.push(JSON.stringify(parsed));
+      } else {
+        parts.push(details);
+      }
+    } catch {
+      parts.push(details);
+    }
+  }
+
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
 function assertNoCircularMerge(node: EntityNode, options?: ProjectionOptions): void {
   if (!options?.nodeLookup) {
     return;
@@ -41,7 +74,7 @@ export function projectEntityToRecallSummary(
   assertNoCircularMerge(node, options);
 
   const aliasText = aliases.map((alias) => alias.label).join(', ');
-  const detailParts = [latestEvent?.summary, latestEvent?.details, aliasText].filter(
+  const detailParts = [formatTimelineEventForRecall(latestEvent), aliasText].filter(
     (value): value is string => Boolean(value)
   );
 

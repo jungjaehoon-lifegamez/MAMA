@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "policies": [
+    {
+      "policy_key": "merge_guardrails.default",
+      "policy_kind": "merge_guardrails",
+      "value": {
+        "max_false_merge_rate": 0.02,
+        "require_review_for_cross_scope": true
+      }
+    },
+    {
+      "policy_key": "review_thresholds.default",
+      "policy_kind": "review_thresholds",
+      "value": {
+        "approve_score_min": 0.92,
+        "defer_score_min": 0.78
+      }
+    }
+  ],
+  "role_bindings": [
+    {
+      "actor_id": "local:viewer",
+      "role": "admin"
+    }
+  ]
+}
