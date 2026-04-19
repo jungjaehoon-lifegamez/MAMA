@@ -205,7 +205,7 @@ describe('Phase 2 case correction write flows', () => {
     expect(envelope.signature_hex).toMatch(/^[0-9a-f]+$/);
   });
 
-  it('applies after reconfirm, rejects replay before mutation, and reverts without restoring truth', () => {
+  it('applies after reconfirm, rejects replay before mutation, and reverts by restoring truth', () => {
     insertCase({ case_id: 'case-reconfirm', status: 'active' });
 
     const reconfirm = applyStatusCorrection({
@@ -281,7 +281,7 @@ describe('Phase 2 case correction write flows', () => {
     const afterRevert = getAdapter()
       .prepare('SELECT status FROM case_truth WHERE case_id = ?')
       .get('case-reconfirm') as { status: string };
-    expect(afterRevert.status).toBe('blocked');
+    expect(afterRevert.status).toBe('active');
 
     const events = getAdapter()
       .prepare('SELECT event_type FROM memory_events ORDER BY created_at ASC')
@@ -311,6 +311,35 @@ describe('Phase 2 case correction write flows', () => {
       kind: 'rejected',
       code: 'case.correction_active_conflict',
     });
+  });
+
+  it('accepts numeric confidence case-field corrections', () => {
+    insertCase({
+      case_id: 'case-confidence',
+      status: 'active',
+      confidence: '0.4',
+    });
+
+    const applied = applyCorrection(getAdapter(), {
+      case_id: 'case-confidence',
+      target_kind: 'case_field',
+      field_name: 'confidence',
+      target_ref: { kind: 'case_field', field: 'confidence' },
+      old_value_json: canonicalizeJSON(0.4),
+      new_value_json: canonicalizeJSON(0.8),
+      reason: 'raise confidence',
+      confirmed: true,
+      confirmed_by: 'user:test',
+      confirmation_summary: 'raise confidence to numeric value',
+      now: '2026-04-18T01:20:00.000Z',
+    });
+
+    expect(applied).toMatchObject({ kind: 'applied' });
+
+    const row = getAdapter()
+      .prepare('SELECT confidence FROM case_truth WHERE case_id = ?')
+      .get('case-confidence') as { confidence: string | null };
+    expect(row.confidence).toBe('0.8');
   });
 
   it('rejects active corrections against archived and merged cases', () => {

@@ -175,6 +175,10 @@ interface MembershipValueRow {
 interface CorrectionStatusRow {
   correction_id: string;
   case_id: string;
+  target_kind: ApplyCorrectionInput['target_kind'];
+  target_ref_json: string;
+  field_name: ApplyCorrectionInput['field_name'] | null;
+  old_value_json: string | null;
   is_lock_active: number;
   reverted_at: string | null;
 }
@@ -510,6 +514,17 @@ function readCaseFieldCurrentValueJson(
     return canonicalStoredJson(row[field]);
   }
 
+  if (field === 'confidence') {
+    if (row.confidence === null || row.confidence === undefined) {
+      return canonicalizeJSON(null);
+    }
+    const confidence = Number(row.confidence);
+    if (!Number.isFinite(confidence)) {
+      throw new Error(`case_truth confidence is not a finite number for case_id=${caseId}`);
+    }
+    return canonicalizeJSON(confidence);
+  }
+
   return canonicalizeJSON(row[field]);
 }
 
@@ -570,6 +585,14 @@ function storageValueForCaseField(field: CorrectionFieldName, newValueJson: stri
 
   if (field === 'primary_actors' || field === 'blockers') {
     return canonicalizeJSON(value);
+  }
+
+  if (field === 'confidence') {
+    const confidence = Number(value);
+    if (!Number.isFinite(confidence)) {
+      throw new Error('Case field confidence correction value must be a finite number or null.');
+    }
+    return String(confidence);
   }
 
   if (typeof value !== 'string') {
@@ -1092,7 +1115,8 @@ export function revertCorrection(
     const row = correctionAdapter
       .prepare(
         `
-          SELECT correction_id, case_id, is_lock_active, reverted_at
+          SELECT correction_id, case_id, target_kind, target_ref_json, field_name,
+                 old_value_json, is_lock_active, reverted_at
           FROM case_corrections
           WHERE correction_id = ?
         `
@@ -1116,6 +1140,23 @@ export function revertCorrection(
         correction_id: input.correction_id,
       };
     }
+
+    applyTargetMutation({
+      adapter: correctionAdapter,
+      correction: {
+        case_id: row.case_id,
+        target_kind: row.target_kind,
+        target_ref: parseJsonValue(row.target_ref_json) as CaseTargetRef,
+        field_name: row.field_name ?? undefined,
+        old_value_json: null,
+        new_value_json: row.old_value_json ?? canonicalizeJSON(null),
+        reason: 'Revert correction',
+        confirmed: true,
+        confirmed_by: input.confirmed_by,
+        confirmation_summary: input.confirmation_summary,
+      },
+      now,
+    });
 
     correctionAdapter
       .prepare(

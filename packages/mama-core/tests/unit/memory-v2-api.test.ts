@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
-import { saveMemory, recallMemory, buildProfile } from '../../src/memory/api.js';
+import { saveMemory, recallMemory, buildProfile, ingestMemory } from '../../src/memory/api.js';
 import { projectMemoryTruth } from '../../src/memory/truth-store.js';
 import {
   appendEntityTimelineEvent,
@@ -106,6 +106,25 @@ describe('memory v2 api', () => {
     expect(
       recall.memories.findIndex((item) => item.topic === 'test_time_contract_newer')
     ).toBeLessThan(recall.memories.findIndex((item) => item.topic === 'test_time_contract_older'));
+  });
+
+  it('should forward eventDateTime through ingestMemory', async () => {
+    const saved = await ingestMemory({
+      content: 'Ingested memory with event datetime',
+      scopes: [{ kind: 'project', id: 'repo:test' }],
+      source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
+      eventDate: '2026-04-16',
+      eventDateTime: Date.parse('2026-04-16T08:45:00.000Z'),
+    });
+
+    const row = getAdapter()
+      .prepare('SELECT event_date, event_datetime FROM decisions WHERE id = ?')
+      .get(saved.id) as { event_date: string | null; event_datetime: number | null } | undefined;
+
+    expect(row).toEqual({
+      event_date: '2026-04-16',
+      event_datetime: Date.parse('2026-04-16T08:45:00.000Z'),
+    });
   });
 
   it('should persist connector timeline events inside saveMemory', async () => {

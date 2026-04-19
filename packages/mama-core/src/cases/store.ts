@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { canonicalizeJSON, targetRefHash } from '../canonicalize.js';
+import { canonicalizeJSON, targetRefHashCanonicalJSON } from '../canonicalize.js';
 import { getAdapter, type DatabaseAdapter } from '../db-manager.js';
 import { CaseMergeChainCycleError } from '../entities/errors.js';
 import type {
@@ -244,6 +244,17 @@ function compareByUpdatedAtDesc(left: string, right: string): number {
 
 function compareBySortTimeDesc<T extends { sort_time: number | null }>(left: T, right: T): number {
   return (right.sort_time ?? 0) - (left.sort_time ?? 0);
+}
+
+function isMissingSchemaError(error: unknown): boolean {
+  return error instanceof Error && /no such (table|column)/i.test(error.message);
+}
+
+function rethrowUnlessMissingSchema(error: unknown): void {
+  if (isMissingSchemaError(error)) {
+    return;
+  }
+  throw error instanceof Error ? error : new Error(String(error));
 }
 
 function withinSince(sortTime: number | null, sinceMs: number | null): boolean {
@@ -703,7 +714,7 @@ export function enqueueCaseProposal(
   input: EnqueueCaseProposalInput
 ): { proposal_id: string; inserted: boolean } {
   const canonicalFingerprintInput = canonicalizeJSON(input.stable_fingerprint_input);
-  const payloadFingerprint = targetRefHash(canonicalFingerprintInput);
+  const payloadFingerprint = targetRefHashCanonicalJSON(canonicalFingerprintInput);
   const proposalId = randomUUID();
   const detectedAt = nowIso();
 
@@ -967,7 +978,8 @@ export function assembleCase(
     resolution.chain
   );
   const caseTruth = loadCaseTruth(adapter, resolution.terminal_case_id);
-  const memberships = listActiveMembershipsForCaseChain(adapter, assemblyChain);
+  const membershipRecords = listActiveMembershipRecordsForCaseChain(adapter, assemblyChain);
+  const memberships = membershipRecords.map(toAssemblyMembership);
   const activeCorrections = listActiveCorrectionsForCaseChain(adapter, assemblyChain);
 
   // Phase 3 additive fields: case_links + promoted_sources + freshness +
@@ -1002,7 +1014,8 @@ export function assembleCase(
         source_ref: nullableString(row.source_ref),
       }));
     }
-  } catch {
+  } catch (error) {
+    rethrowUnlessMissingSchema(error);
     phase3CaseLinks = [];
   }
 
@@ -1038,7 +1051,8 @@ export function assembleCase(
         freshness_reason_json: nullableString(row.freshness_reason_json),
       };
     }
-  } catch {
+  } catch (error) {
+    rethrowUnlessMissingSchema(error);
     phase3PromotedSources = null;
     phase3Freshness = null;
   }
@@ -1049,16 +1063,38 @@ export function assembleCase(
       const explanationRows = adapter
         .prepare(
           `
-            SELECT source_type, source_id, score_breakdown_json, source_locator,
-                   assignment_strategy, explanation_updated_at
+            SELECT source_type, source_id, user_locked, updated_at, score_breakdown_json,
+                   source_locator, assignment_strategy, explanation_updated_at
             FROM case_memberships
             WHERE case_id IN (${placeholders(assemblyChain)})
               AND status = 'active'
           `
         )
         .all(...assemblyChain) as Array<Record<string, unknown>>;
-      for (const row of explanationRows) {
+      const selectedMemberships = new Map(
+        membershipRecords.map((membership) => [
+          sourceKey(membership.source_type, membership.source_id),
+          membership,
+        ])
+      );
+      const sortedExplanationRows = [...explanationRows].sort((left, right) => {
+        const lockDelta = flag01(right.user_locked) - flag01(left.user_locked);
+        return lockDelta !== 0
+          ? lockDelta
+          : compareByUpdatedAtDesc(String(left.updated_at), String(right.updated_at));
+      });
+      for (const row of sortedExplanationRows) {
         const key = `${String(row.source_type)}:${String(row.source_id)}`;
+        const selected = selectedMemberships.get(key);
+        if (!selected) {
+          continue;
+        }
+        if (
+          flag01(row.user_locked) !== selected.user_locked ||
+          String(row.updated_at) !== selected.updated_at
+        ) {
+          continue;
+        }
         phase3MembershipExplanations[key] = {
           source_type: String(row.source_type),
           source_id: String(row.source_id),
@@ -1071,7 +1107,8 @@ export function assembleCase(
         };
       }
     }
-  } catch {
+  } catch (error) {
+    rethrowUnlessMissingSchema(error);
     // Old DB without case_memberships explanation columns — leave empty.
   }
 

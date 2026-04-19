@@ -204,7 +204,7 @@ function upsertCaseGroup(
   leaf: SearchRollupLeafHit,
   survivorCaseId: string
 ): void {
-  const dedupeKey = `${survivorCaseId}\0${leaf.source_id}`;
+  const dedupeKey = `${survivorCaseId}\0${leaf.source_type}\0${leaf.source_id}`;
   let group = groups.get(survivorCaseId);
   if (!group) {
     group = {
@@ -285,6 +285,7 @@ export function rollUpSearchHits(input: {
       if (leaf.case_id) {
         const survivorCaseId = upsertDirectCase(directCases, input.adapter, leaf, leaf.case_id);
         directCaseIds.add(survivorCaseId);
+        groupedCases.delete(survivorCaseId);
       } else {
         upsertOrphan(orphans, leaf);
       }
@@ -309,7 +310,9 @@ export function rollUpSearchHits(input: {
 
   return [
     ...Array.from(directCases.values()).map(groupToResult),
-    ...Array.from(groupedCases.values()).map(groupToResult),
+    ...Array.from(groupedCases.values())
+      .filter((group) => !directCaseIds.has(group.case_id))
+      .map(groupToResult),
     ...Array.from(orphans.values()),
   ].sort(compareResults);
 }

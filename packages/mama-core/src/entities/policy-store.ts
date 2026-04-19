@@ -307,6 +307,10 @@ export function approveEntityPolicyProposal(
     if (proposal.proposer_actor === input.approver_actor) {
       throw new Error('Entity policy proposal requires a different approver');
     }
+    const approverRole = resolveEntityRoleForActor(input.approver_actor, adapter);
+    if (approverRole !== 'admin') {
+      throw new Error('Entity policy proposal approval requires an admin approver');
+    }
 
     const existingPolicy = getEntityPolicy(proposal.policy_key, adapter);
     const version = existingPolicy ? existingPolicy.version + 1 : 1;

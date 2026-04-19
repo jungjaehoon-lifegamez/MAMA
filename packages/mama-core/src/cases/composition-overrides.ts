@@ -975,7 +975,6 @@ export function promoteCaseSource(
       promotion: {
         canonical_decision_id: proposedCanonicalDecisionId,
         canonical_event_id: proposedCanonicalEventId,
-        promoted_at: now,
         promoted_by: input.promoted_by,
         promotion_reason: input.reason,
       },
