@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { canonicalizeJSON } from '../../src/canonicalize.js';
 import { getAdapter } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import {
@@ -259,6 +260,58 @@ describe('Task 14: Membership pin and source promotion core helpers', () => {
       canonical_event_id: 'evt-promoted',
     });
     expect(membershipRow('case-promote-event', 'evt-promoted').user_locked).toBe(1);
+  });
+
+  it('reconfirm tokens remain valid even when the confirmation call uses a later timestamp', () => {
+    insertCase({ case_id: 'case-promote-reconfirm' });
+    insertMembership({ case_id: 'case-promote-reconfirm', source_id: 'dec-reconfirm' });
+    const previousSecret = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+    process.env.MAMA_RECONFIRM_TOKEN_SECRET = Buffer.alloc(32, 9).toString('hex');
+
+    try {
+      const first = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-reconfirm',
+        source_type: 'decision',
+        source_id: 'dec-reconfirm',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:00:00.000Z',
+      });
+
+      expect(first.kind).toBe('requires_reconfirm');
+      if (first.kind !== 'requires_reconfirm') {
+        throw new Error('Expected reconfirm result');
+      }
+
+      const confirmed = promoteCaseSource(getAdapter(), {
+        case_id: 'case-promote-reconfirm',
+        source_type: 'decision',
+        source_id: 'dec-reconfirm',
+        promoted_by: 'user:test',
+        reason: 'needs reconfirm',
+        expected_current_value_json: canonicalizeJSON({
+          promotion: { canonical_decision_id: 'dec-old', canonical_event_id: null },
+        }),
+        reconfirm_token: first.reconfirm_token,
+        session_id: 'turn-promote',
+        now: '2026-04-18T01:05:00.000Z',
+      });
+
+      expect(confirmed).toMatchObject({
+        kind: 'promoted',
+        canonical_decision_id: 'dec-reconfirm',
+      });
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+      } else {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = previousSecret;
+      }
+    }
   });
 
   it('promote rejects observation with case.promote_invalid_source_type', () => {

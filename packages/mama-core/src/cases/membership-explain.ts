@@ -136,6 +136,13 @@ function loadMembership(
           AND source_type = ?
           AND source_id = ?
         ORDER BY
+          CASE status
+            WHEN 'active' THEN 0
+            WHEN 'candidate' THEN 1
+            WHEN 'excluded' THEN 2
+            WHEN 'removed' THEN 3
+            ELSE 4
+          END ASC,
           user_locked DESC,
           updated_at DESC,
           case_id ASC

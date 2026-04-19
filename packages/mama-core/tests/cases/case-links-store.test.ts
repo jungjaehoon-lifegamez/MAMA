@@ -263,6 +263,46 @@ describe('Task 13: Case links core store', () => {
     });
   });
 
+  it('does not unsuppress a tombstone when creation is rejected by an active-link conflict', () => {
+    insertCase({ case_id: 'case-a' });
+    insertCase({ case_id: 'case-b' });
+
+    const existing = createCaseLink(getAdapter(), {
+      link_id: 'link-existing',
+      case_id_from: 'case-a',
+      case_id_to: 'case-b',
+      link_type: 'related',
+      created_by: 'user:test',
+      source_kind: 'manual',
+    });
+    expect(existing.kind).toBe('created');
+
+    seedTombstone({ case_id_from: 'case-a', case_id_to: 'case-b', link_type: 'related' });
+
+    const result = createCaseLink(getAdapter(), {
+      link_id: 'link-conflict-unsuppress',
+      case_id_from: 'case-a',
+      case_id_to: 'case-b',
+      link_type: 'related',
+      created_by: 'user:test',
+      source_kind: 'manual',
+      unsuppress_wiki_tombstone: true,
+      now: '2026-04-18T01:30:00.000Z',
+    });
+
+    expect(result).toMatchObject({
+      kind: 'rejected',
+      code: 'case.correction_active_conflict',
+    });
+    expect(
+      isWikiTombstoneActive(getAdapter(), {
+        source_case_id: 'case-a',
+        target_case_id: 'case-b',
+        link_type: 'related',
+      })
+    ).toBe(true);
+  });
+
   it('revoking a wiki_compiler link writes a durable tombstone', () => {
     insertCase({ case_id: 'case-a' });
     insertCase({ case_id: 'case-b' });

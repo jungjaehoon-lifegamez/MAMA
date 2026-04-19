@@ -252,6 +252,7 @@ describe('Task 15: Wiki freshness core helper', () => {
 
     expect(secondSweep.results[0].changed).toBe(false);
     expect(second.freshness_checked_at).toBe(first.freshness_checked_at);
+    expect(secondSweep.results[0]?.freshness_checked_at).toBe(first.freshness_checked_at);
   });
 
   it('sweeper emits drift memory event on transition into drifted', () => {

@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { getAdapter } from '../../src/db-manager.js';
+import { upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
 
 function insertPage(
   overrides: Partial<{
@@ -256,4 +257,30 @@ describe('case-first substrate — wiki_page_search_index schema', () => {
     expect(after.length).toBe(0);
   });
 
+  it('persists source_ids and entity_refs through the page_id schema path', () => {
+    const record = upsertWikiPageIndexEntry(getAdapter(), {
+      source_locator: 'cases/provenance.md',
+      page_type: 'case',
+      title: 'Provenance Case',
+      content: 'case provenance content',
+      case_id: null,
+      source_ids: ['decision:1', 'checkpoint:2'],
+      entity_refs: ['entity:alpha'],
+      confidence: 'high',
+      compiled_at: '2026-04-18T00:00:00.000Z',
+    });
+
+    const row = getAdapter()
+      .prepare(
+        `
+          SELECT source_ids, entity_refs
+          FROM wiki_page_index
+          WHERE rowid = ?
+        `
+      )
+      .get(record.id) as { source_ids: string | null; entity_refs: string | null };
+
+    expect(JSON.parse(row.source_ids ?? '[]')).toEqual(['decision:1', 'checkpoint:2']);
+    expect(JSON.parse(row.entity_refs ?? '[]')).toEqual(['entity:alpha']);
+  });
 });

@@ -140,29 +140,51 @@ describe('Story E1.17: Canonical entity browse list', () => {
   });
 
   it('collapses exact same-scope duplicates into one browse row', async () => {
-    await createEntityNode({
-      id: 'entity_calendar_a',
-      kind: 'project',
-      preferred_label: 'calendar',
-      status: 'active',
-      scope_kind: 'channel',
-      scope_id: 'calendar',
-      merged_into: null,
-    });
-    await createEntityNode({
-      id: 'entity_calendar_b',
-      kind: 'project',
-      preferred_label: 'calendar',
-      status: 'active',
-      scope_kind: 'channel',
-      scope_id: 'calendar',
-      merged_into: null,
-    });
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_nodes (
+            id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'entity_calendar_a',
+        'project',
+        'calendar',
+        'active',
+        'channel',
+        'calendar',
+        null,
+        1710000000000,
+        1710000000000
+      );
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_nodes (
+            id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'entity_calendar_b',
+        'project',
+        'calendar',
+        'active',
+        'channel',
+        'calendar',
+        null,
+        1710000001000,
+        1710000001000
+      );
 
     const { listCanonicalEntities } = await import('../../src/entities/entity-list.js');
     const result = await listCanonicalEntities({ limit: 10, include_noisy: true });
 
     expect(result.entities).toHaveLength(1);
+    expect(result.entities[0]?.id).toBe('entity_calendar_b');
     expect(result.total_count).toBe(2);
     expect(result.visible_count).toBe(1);
   });

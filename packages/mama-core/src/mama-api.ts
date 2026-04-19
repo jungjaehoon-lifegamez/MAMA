@@ -1435,7 +1435,9 @@ function buildRankerMeta(
     applied,
     mode: 'offline',
   };
-  if (skippedReason) meta.skipped_reason = skippedReason;
+  if (skippedReason) {
+    meta.skipped_reason = skippedReason;
+  }
   return meta;
 }
 

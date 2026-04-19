@@ -94,6 +94,24 @@ describe('Story E1.12: Entity lineage substrate', () => {
       expect(row?.completed_at).toBeTypeOf('number');
     });
 
+    it('throws a clear error when completing or failing an unknown ingest run id', async () => {
+      const { completeEntityIngestRun, failEntityIngestRun } =
+        await import('../../src/entities/lineage-store.js');
+
+      await expect(
+        completeEntityIngestRun('eir_missing_complete', {
+          raw_count: 1,
+          observation_count: 1,
+          candidate_count: 0,
+          reviewable_count: 0,
+        })
+      ).rejects.toThrow(/Entity ingest run not found: eir_missing_complete/);
+
+      await expect(failEntityIngestRun('eir_missing_fail', 'boom')).rejects.toThrow(
+        /Entity ingest run not found: eir_missing_fail/
+      );
+    });
+
     it('appends active seed lineage rows idempotently', async () => {
       const { appendEntityLineageLink } = await import('../../src/entities/lineage-store.js');
       const adapter = getAdapter();

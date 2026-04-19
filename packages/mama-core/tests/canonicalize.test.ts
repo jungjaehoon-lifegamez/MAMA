@@ -93,6 +93,12 @@ describe('targetRefHash', () => {
     expect(direct.equals(composed)).toBe(true);
   });
 
+  it('canonicalizes raw string values before hashing', () => {
+    const direct = targetRefHash('x');
+    const composed = targetRefHash(canonicalizeJSON('x'));
+    expect(direct.equals(composed)).toBe(true);
+  });
+
   it('hashes semantically distinct input to distinct digests', () => {
     const h1 = targetRefHash({ x: 1 });
     const h2 = targetRefHash({ x: '1' });

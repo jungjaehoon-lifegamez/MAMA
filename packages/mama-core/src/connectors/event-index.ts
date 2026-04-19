@@ -358,7 +358,7 @@ export function searchConnectorEventsByFTS(
     return {
       ...mapConnectorEventIndexRow(row),
       rank,
-      score: 1 / (1 + Math.max(0, rank)),
+      score: Number.isFinite(rank) ? 1 / (1 + Math.exp(rank)) : 0,
     };
   });
 }
@@ -445,6 +445,15 @@ export function deleteExpiredConnectorEvents(
   adapter: ConnectorEventIndexAdapter,
   input: DeleteExpiredConnectorEventsInput
 ): { rows_deleted: number } {
+  if (!Number.isFinite(input.nowMs)) {
+    throw new Error('deleteExpiredConnectorEvents.nowMs must be a finite number.');
+  }
+  if (!Number.isFinite(input.retentionMs) || input.retentionMs < 0) {
+    throw new Error(
+      'deleteExpiredConnectorEvents.retentionMs must be a non-negative finite number.'
+    );
+  }
+
   const cutoffMs = input.nowMs - input.retentionMs;
   const result = input.connectorName
     ? adapter
