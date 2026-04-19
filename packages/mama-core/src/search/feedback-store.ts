@@ -19,7 +19,7 @@ export interface SearchFeedbackInput {
   result_source_type: SearchFeedbackSourceType;
   result_source_id: string;
   feedback_kind: SearchFeedbackKind;
-  question_type: QuestionType;
+  question_type?: QuestionType | null;
   shown_index: number;
   result_case_id?: string | null;
   clicked_result_rank?: number | null;
@@ -131,7 +131,7 @@ function canonicalJson(value: Record<string, unknown>): string {
 
 function runTransaction<T>(adapter: FeedbackStoreAdapter, fn: () => T): T {
   if (!adapter.transaction) {
-    return fn();
+    throw new Error('recordSearchFeedback requires adapter.transaction for atomic writes.');
   }
 
   const result = adapter.transaction(fn);

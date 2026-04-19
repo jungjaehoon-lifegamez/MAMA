@@ -1099,6 +1099,14 @@ export function listActiveCaseLinks(
     resolution.terminal_case_id,
     resolution.chain
   );
+  if (chain.length === 0) {
+    return {
+      terminal_case_id: resolution.terminal_case_id,
+      resolved_via_case_id: resolution.resolved_via_case_id,
+      chain,
+      links: [],
+    };
+  }
 
   const rows = linkAdapter
     .prepare(

@@ -113,6 +113,7 @@ export async function listEntityLineageForInspector(
 ): Promise<InspectorLineageResult> {
   await initDB();
   const adapter = getAdapter();
+  const safeLimit = Math.max(1, Math.min(limit, 500));
   const rows = adapter
     .prepare(
       `
@@ -130,7 +131,7 @@ export async function listEntityLineageForInspector(
         LIMIT ?
       `
     )
-    .all(entityId, limit) as Array<Record<string, unknown>>;
+    .all(entityId, safeLimit) as Array<Record<string, unknown>>;
 
   return {
     rows: rows.map((row) => ({
@@ -189,6 +190,7 @@ export async function getEntityImpact(entityId: string): Promise<EntityImpactRes
         FROM entity_lineage_links l
         JOIN entity_ingest_runs ir ON ir.id = l.run_id
         WHERE l.canonical_entity_id = ?
+          AND l.status = 'active'
         ORDER BY ir.created_at DESC
       `
     )
@@ -202,6 +204,7 @@ export async function getEntityImpact(entityId: string): Promise<EntityImpactRes
         JOIN entity_ingest_runs ir ON ir.id = l.run_id
         JOIN entity_audit_runs ar ON ar.id = ir.audit_run_id
         WHERE l.canonical_entity_id = ?
+          AND l.status = 'active'
         ORDER BY ar.created_at DESC
         LIMIT 10
       `
