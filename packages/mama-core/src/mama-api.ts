@@ -1543,12 +1543,13 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     recencyDecay = 0.5, // Score at scale point (0.5 = 50%)
     disableRecency = false, // Set true to disable recency boosting entirely
   } = options;
+  const rerankPoolLimit = rerankWithLearned ? Math.max(limit * 4, limit + 5) : limit;
 
   try {
     const bundle = await recallMemory(userQuestion, {
       includeProfile: false,
       topicPrefix: options.topicPrefix,
-      limit,
+      limit: rerankPoolLimit,
       ...(options.scopes && { scopes: options.scopes }),
     });
     const fusedHits = (bundle as { fused_hits?: SearchRollupLeafHit[] }).fused_hits ?? [];
@@ -1612,13 +1613,14 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     };
 
     if (rolledUp.length > 0) {
-      const filteredResults = rolledUp.slice(0, limit);
+      const filteredResults = rolledUp.slice(0, rerankPoolLimit);
       const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
         filteredResults.map(mapRolledUpResult)
       );
+      const limitedResults = mappedResults.slice(0, limit);
 
       if (format === 'markdown') {
-        const context = mappedResults
+        const context = limitedResults
           .map(
             (result, index) =>
               `${index + 1}. [${result.topic}] ${result.decision}\n   ${result.reasoning}`
@@ -1629,9 +1631,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: mappedResults,
+        results: limitedResults,
         meta: {
-          count: mappedResults.length,
+          count: limitedResults.length,
           search_method: 'memory_v2',
           threshold: threshold || 'adaptive',
           recency_boost: disableRecency
@@ -1642,7 +1644,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: {
-            total_results: mappedResults.length,
+            total_results: limitedResults.length,
             primary_count: bundle.graph_context.primary.length,
             expanded_count: bundle.graph_context.expanded.length,
             sources: {
@@ -1664,7 +1666,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       // The original stored confidence is lost after RRF normalization.
       // We capture the retrieval score separately so `similarity` reflects search
       // relevance while `confidence` is passed through as-is from the bundle.
-      const filteredMemories = bundle.memories.slice(0, limit);
+      const filteredMemories = bundle.memories.slice(0, rerankPoolLimit);
       const baseRows = filteredMemories.map((memory) => ({
         id: memory.id,
         topic: memory.topic,
@@ -1688,9 +1690,10 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         source_type: 'decision',
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
+      const limitedRows = rankedRows.slice(0, limit);
 
       if (format === 'markdown') {
-        const context = rankedRows
+        const context = limitedRows
           .map((row, index) => `${index + 1}. [${row.topic}] ${row.decision}\n   ${row.reasoning}`)
           .join('\n');
         return `🔍 Search method: memory_v2\n${context}`;
@@ -1698,9 +1701,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: rankedRows,
+        results: limitedRows,
         meta: {
-          count: rankedRows.length,
+          count: limitedRows.length,
           search_method: 'memory_v2',
           threshold: threshold || 'adaptive',
           recency_boost: disableRecency
@@ -1711,7 +1714,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: {
-            total_results: rankedRows.length,
+            total_results: limitedRows.length,
             primary_count: bundle.graph_context.primary.length,
             expanded_count: bundle.graph_context.expanded.length,
             sources: {
@@ -1746,7 +1749,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       const adaptiveThreshold = threshold !== undefined ? threshold : wordCount < 3 ? 0.7 : 0.6;
 
       // Vector search
-      results = await vectorSearch(queryEmbedding, limit * 2, 0.5); // Get more candidates
+      results = await vectorSearch(queryEmbedding, rerankPoolLimit * 2, 0.5); // Get more candidates
 
       // Filter by adaptive threshold
       results = results.filter((r) => r.similarity >= adaptiveThreshold);
@@ -1803,7 +1806,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       // Stage 1.7: FTS5 hybrid merge (Haiku Memory Layer)
       {
         try {
-          const ftsResults = await fts5Search(userQuestion, limit * 2);
+          const ftsResults = await fts5Search(userQuestion, rerankPoolLimit * 2);
           if (ftsResults.length > 0) {
             // Normalize FTS5 ranks (BM25 returns negative values, closer to 0 = better)
             const maxRank = Math.max(...ftsResults.map((r) => Math.abs(r.rank)));
@@ -1908,7 +1911,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         LIMIT ?
       `);
 
-      const rows = (await stmt.all(...likeParams, limit)) as DecisionRecord[];
+      const rows = (await stmt.all(...likeParams, rerankPoolLimit)) as DecisionRecord[];
       results = rows.map((row: DecisionRecord) => ({
         ...row,
         similarity: 0.75, // Assign moderate similarity for keyword matches
@@ -1937,18 +1940,21 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       results = await rerankWithLLM(userQuestion, results);
     }
 
-    // Slice to limit
-    const finalResults = results.slice(0, limit);
+    const rerankCandidateResults = results.slice(0, rerankPoolLimit);
 
     // Markdown format (for human display)
     if (format === 'markdown') {
-      const context = formatContext(finalResults, { maxTokens: 500 });
+      const context = formatContext(rerankCandidateResults.slice(0, limit), { maxTokens: 500 });
 
       // Add graph expansion summary if applicable
       let graphSummary = '';
       if (searchMethod.includes('graph')) {
-        const primaryCount = finalResults.filter((r) => r.graph_source === 'primary').length;
-        const expandedCount = finalResults.filter((r) => r.graph_source !== 'primary').length;
+        const primaryCount = rerankCandidateResults
+          .slice(0, limit)
+          .filter((r) => r.graph_source === 'primary').length;
+        const expandedCount = rerankCandidateResults
+          .slice(0, limit)
+          .filter((r) => r.graph_source !== 'primary').length;
 
         graphSummary = `\n📊 Graph expansion: ${primaryCount} primary + ${expandedCount} related (supersedes/refines/contradicts)\n`;
       }
@@ -1956,22 +1962,8 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       return `🔍 Search method: ${searchMethod}${graphSummary}\n${context}`;
     }
 
-    // Calculate graph expansion stats
-    const graphStats = {
-      total_results: finalResults.length,
-      primary_count: finalResults.filter((r) => r.graph_source === 'primary').length,
-      expanded_count: finalResults.filter((r) => r.graph_source !== 'primary').length,
-      sources: {
-        primary: finalResults.filter((r) => r.graph_source === 'primary').length,
-        supersedes_chain: finalResults.filter((r) => r.graph_source === 'supersedes_chain').length,
-        refines: finalResults.filter((r) => r.graph_source === 'refines').length,
-        refined_by: finalResults.filter((r) => r.graph_source === 'refined_by').length,
-        contradicts: finalResults.filter((r) => r.graph_source === 'contradicts').length,
-      },
-    };
-
     // JSON format (default - LLM-first)
-    const vectorRows = finalResults.map((r) => ({
+    const vectorRows = rerankCandidateResults.map((r) => ({
       id: r.id,
       topic: r.topic,
       decision: r.decision,
@@ -1993,12 +1985,27 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       source_type: 'decision',
     }));
     const { results: rankedVectorRows, meta: rankerMeta } = applyLearnedRanker(vectorRows);
+    const finalResults = rankedVectorRows.slice(0, limit);
+
+    // Calculate graph expansion stats
+    const graphStats = {
+      total_results: finalResults.length,
+      primary_count: finalResults.filter((r) => r.graph_source === 'primary').length,
+      expanded_count: finalResults.filter((r) => r.graph_source !== 'primary').length,
+      sources: {
+        primary: finalResults.filter((r) => r.graph_source === 'primary').length,
+        supersedes_chain: finalResults.filter((r) => r.graph_source === 'supersedes_chain').length,
+        refines: finalResults.filter((r) => r.graph_source === 'refines').length,
+        refined_by: finalResults.filter((r) => r.graph_source === 'refined_by').length,
+        contradicts: finalResults.filter((r) => r.graph_source === 'contradicts').length,
+      },
+    };
 
     return {
       query: userQuestion,
-      results: rankedVectorRows,
+      results: finalResults,
       meta: {
-        count: rankedVectorRows.length,
+        count: finalResults.length,
         search_method: searchMethod,
         threshold: threshold || 'adaptive',
         // Recency boosting config (NEW - Gaussian Decay)
