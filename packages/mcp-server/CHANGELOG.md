@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.13.0] - 2026-04-20
+
+### Added
+
+- **Case timeline MCP tool** — added `case_timeline_range` for bounded case-first timeline reads through the MCP server surface
+- **Contracts lookup MCP tool** — added `search_decisions_and_contracts` for decision + contract search used by hook and tooling flows
+
+### Changed
+
+- **Tool surface docs alignment** — package README now reflects the shipped 13-tool MCP surface and the current public package version
+
 ## [1.6.5] - 2026-02-01
 
 ### Changed
