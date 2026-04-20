@@ -228,7 +228,7 @@ describe('Task 15: Wiki freshness core helper', () => {
     expect(result.reasons.map((reason) => reason.code)).toContain('timestamps_absent');
   });
 
-  it('sweeper updates only changed rows', () => {
+  it('sweeper refreshes freshness_checked_at even when the calculated state is unchanged', () => {
     insertCase({
       case_id: 'case-idempotent',
       current_wiki_path: 'Cases/case-idempotent.md',
@@ -251,8 +251,9 @@ describe('Task 15: Wiki freshness core helper', () => {
     const second = freshnessRow('case-idempotent');
 
     expect(secondSweep.results[0].changed).toBe(false);
-    expect(second.freshness_checked_at).toBe(first.freshness_checked_at);
-    expect(secondSweep.results[0]?.freshness_checked_at).toBe(first.freshness_checked_at);
+    expect(second.freshness_checked_at).toBe('2026-04-18T03:00:00.000Z');
+    expect(second.freshness_checked_at).not.toBe(first.freshness_checked_at);
+    expect(secondSweep.results[0]?.freshness_checked_at).toBe('2026-04-18T03:00:00.000Z');
   });
 
   it('sweeper emits drift memory event on transition into drifted', () => {
