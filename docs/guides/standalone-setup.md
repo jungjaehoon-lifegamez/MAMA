@@ -54,7 +54,7 @@ ls ~/.mama/.codex/auth.json ~/.codex/auth.json
 
 # Check Claude CLI (alternative backend)
 claude --version
-ls ~/.claude/.credentials.json
+claude auth status
 ```
 
 **If Codex CLI is not installed:**
@@ -128,7 +128,8 @@ mama init
 `mama init` auto-selects the default backend:
 
 - Uses `codex-mcp` if `~/.mama/.codex/auth.json` or `~/.codex/auth.json` exists
-- Falls back to `claude` if `~/.claude/.credentials.json` exists
+- Falls back to `claude` if `claude auth status` reports a logged-in session
+- Legacy fallback: older Claude Code installs may still be detected via `~/.claude/.credentials.json`
 - Fails with guidance if neither backend is authenticated
 
 You can override this per user/environment:
@@ -171,7 +172,7 @@ mama setup
 
 **What the setup wizard does:**
 
-1. **Verifies Claude Code authentication** - Checks OAuth token validity
+1. **Checks Claude Code login** - Uses `claude auth status` (with legacy credentials fallback)
 2. **Starts setup server** - Launches web interface on port 3848
 3. **Opens browser** - Guides you through 10-phase onboarding
 4. **Configures integrations** - Helps set up Discord/Slack/Telegram bots
@@ -660,27 +661,27 @@ source ~/.bashrc  # or source ~/.zshrc
 
 ### Claude Code authentication failed
 
-**Cause:** Not logged in to Claude Code CLI
+**Cause:** Claude Code CLI is not installed or not logged in
 
 **Fix:**
 
 ```bash
-# Login to Claude Code
-claude login
+# Verify Claude Code login state
+claude auth status
 
-# Verify credentials exist
-ls ~/.claude/.credentials.json
+# Login to Claude Code
+claude auth login
 ```
 
 ### OAuth token expired
 
-**Cause:** Claude Code session expired
+**Cause:** Legacy OAuth credentials expired or Claude Code session needs refresh
 
 **Fix:**
 
 ```bash
 # Re-login to Claude Code
-claude login
+claude auth login
 
 # Restart MAMA
 mama restart

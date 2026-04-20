@@ -5,10 +5,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
 
 import { expandPath } from '../config/config-manager.js';
-import { OAuthManager } from '../../auth/index.js';
+import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { startSetupServer } from '../../setup/setup-server.js';
 
 /**
@@ -29,40 +28,33 @@ export async function setupCommand(options: SetupOptions = {}): Promise<void> {
 
   // 1. Check Claude Code authentication
   console.log('Step 1: Checking Claude Code authentication');
-  process.stdout.write('  Verifying OAuth token... ');
+  process.stdout.write('  Checking Claude Code login... ');
 
-  const credentialsPath = expandPath('~/.claude/.credentials.json');
-  if (!existsSync(credentialsPath)) {
+  const authStatus = getClaudeCodeAuthStatus();
+  if (!authStatus.loggedIn) {
     console.log('❌\n');
-    console.error('⚠️  Claude Code credentials file not found.');
-    console.error(`   Expected path: ${credentialsPath}`);
-    console.error('\n   Please install and log in to Claude Code first:');
-    console.error('   https://claude.ai/code\n');
+    if (!authStatus.cliInstalled) {
+      console.error('⚠️  Claude Code CLI not found.');
+      console.error('\n   Please install and log in to Claude Code first:');
+      console.error('   https://claude.ai/code\n');
+    } else {
+      console.error('⚠️  Claude Code is installed but not logged in.');
+      console.error('   Please run:\n');
+      console.error('   claude auth login\n');
+    }
     process.exit(1);
   }
 
-  try {
-    const oauthManager = new OAuthManager();
-    const status = await oauthManager.getStatus();
-
-    if (!status.valid) {
-      console.log('❌\n');
-      console.error('⚠️  OAuth token has expired.');
-      console.error('   Please log in to Claude Code again.\n');
-      process.exit(1);
-    }
-
-    console.log('✓');
-    console.log(`  Subscription type: ${status.subscriptionType || 'unknown'}`);
-
-    if (status.subscriptionType && status.subscriptionType !== 'max') {
-      console.log('\n⚠️  Warning: Claude Pro (Max) subscription is recommended.');
-      console.log(`   Current subscription: ${status.subscriptionType}\n`);
-    }
-  } catch (error) {
-    console.log('❌\n');
-    console.error(`   OAuth error: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
+  console.log('✓');
+  if (authStatus.subscriptionType) {
+    console.log(`  Subscription type: ${authStatus.subscriptionType}`);
+  }
+  if (authStatus.source === 'legacy_credentials') {
+    console.log(`  Legacy credentials file detected: ${expandPath('~/.claude/.credentials.json')}`);
+  }
+  if (authStatus.subscriptionType && authStatus.subscriptionType !== 'max') {
+    console.log('\n⚠️  Warning: Claude Pro (Max) subscription is recommended.');
+    console.log(`   Current subscription: ${authStatus.subscriptionType}\n`);
   }
 
   // 2. Start setup server
