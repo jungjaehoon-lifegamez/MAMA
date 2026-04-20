@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
 import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
@@ -78,7 +78,12 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
   }
 
   it('merges exact duplicate canonical roots into the oldest target and adopts lineage', async () => {
-    await seedObservationBackedEntity('entity_calendar_a', 'Calendar Alpha', 'calendar', 'calendar');
+    await seedObservationBackedEntity(
+      'entity_calendar_a',
+      'Calendar Alpha',
+      'calendar',
+      'calendar'
+    );
     await seedObservationBackedEntity('entity_calendar_b', 'Calendar Beta', 'calendar', 'calendar');
 
     const { backfillExactDuplicateCanonicals } =
@@ -124,7 +129,12 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
   });
 
   it('is idempotent after the first exact duplicate merge pass', async () => {
-    await seedObservationBackedEntity('entity_calendar_a', 'Calendar Alpha', 'calendar', 'calendar');
+    await seedObservationBackedEntity(
+      'entity_calendar_a',
+      'Calendar Alpha',
+      'calendar',
+      'calendar'
+    );
     await seedObservationBackedEntity('entity_calendar_b', 'Calendar Beta', 'calendar', 'calendar');
 
     const { backfillExactDuplicateCanonicals } =
@@ -185,5 +195,77 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
     expect(result.incomplete).toBe(0);
     expect(getEntityNode('entity_prov_demo_a')?.merged_into).toBeNull();
     expect(getEntityNode('entity_prov_demo_b')?.merged_into).toBe('entity_prov_demo_a');
+  });
+
+  it('requires adapter.transaction instead of using a non-transactional fallback', async () => {
+    vi.resetModules();
+    const mergeEntityNodes = vi.fn();
+    const adoptLineageAfterMergeSync = vi.fn();
+    const fakeAdapter = {
+      prepare(sql: string) {
+        if (sql.includes('FROM entity_nodes n')) {
+          return {
+            all: () =>
+              [
+                {
+                  id: 'entity_a',
+                  kind: 'project',
+                  preferred_label: 'Calendar',
+                  scope_kind: 'channel',
+                  scope_id: 'calendar',
+                  created_at: 1,
+                  normalized_form: 'calendar',
+                },
+                {
+                  id: 'entity_b',
+                  kind: 'project',
+                  preferred_label: 'Calendar',
+                  scope_kind: 'channel',
+                  scope_id: 'calendar',
+                  created_at: 2,
+                  normalized_form: 'calendar',
+                },
+              ] satisfies Array<{
+                id: string;
+                kind: 'project';
+                preferred_label: string;
+                scope_kind: 'channel';
+                scope_id: string;
+                created_at: number;
+                normalized_form: string;
+              }>,
+          };
+        }
+        throw new Error(`Unexpected SQL in test adapter: ${sql}`);
+      },
+    };
+
+    try {
+      vi.doMock('../../src/db-manager.js', () => ({
+        initDB: async () => {},
+        getAdapter: () => fakeAdapter,
+      }));
+      vi.doMock('../../src/entities/store.js', () => ({
+        EntityMergeError: class EntityMergeError extends Error {},
+        mergeEntityNodes,
+      }));
+      vi.doMock('../../src/entities/lineage-store.js', () => ({
+        adoptLineageAfterMergeSync,
+      }));
+
+      const { backfillExactDuplicateCanonicals } =
+        await import('../../src/entities/exact-merge-backfill.js');
+
+      await expect(backfillExactDuplicateCanonicals()).rejects.toThrow(
+        'exact-merge-backfill requires adapter.transaction'
+      );
+      expect(mergeEntityNodes).not.toHaveBeenCalled();
+      expect(adoptLineageAfterMergeSync).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock('../../src/db-manager.js');
+      vi.doUnmock('../../src/entities/store.js');
+      vi.doUnmock('../../src/entities/lineage-store.js');
+      vi.resetModules();
+    }
   });
 });
