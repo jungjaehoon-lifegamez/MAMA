@@ -305,7 +305,7 @@ export function sweepCaseFreshness(
       }
 
       if (TERMINAL_CASE_STATUSES.has(row.status)) {
-        if (input.case_ids && input.case_ids.length === 1) {
+        if (input.case_ids) {
           rejected.push({
             case_id: requestedCaseId,
             code: 'case.terminal_status',
@@ -413,6 +413,7 @@ export function listDriftedCases(
         FROM case_truth
         WHERE freshness_state = 'drifted'
           AND freshness_score_is_drifted = 1
+          AND status NOT IN ('merged','archived','split')
         ORDER BY freshness_score ASC, case_id ASC
       `
     )
