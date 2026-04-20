@@ -132,6 +132,7 @@ interface SearchResult {
       expanded_count: number;
       sources: Record<string, number>;
     } | null;
+    ranker: Record<string, unknown> | null;
   };
 }
 
@@ -142,6 +143,7 @@ export interface SuggestOptions {
   limit?: number;
   threshold?: number;
   format?: 'full' | 'teaser' | 'brief' | 'markdown';
+  rerankWithLearned?: boolean;
   recency_boost?:
     | boolean
     | {
@@ -1718,6 +1720,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         edge_reason: null,
         case_id: null as string | null,
         source_type:
+          memory.kind ??
           memory.source?.source_type ??
           (memory as { source_type?: string; type?: string }).source_type ??
           (memory as { type?: string }).type ??

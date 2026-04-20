@@ -149,7 +149,7 @@ describe('legacy shims', () => {
     const mama = (await import('../../src/mama-api.js')).default;
     const result = await mama.suggest('legacy fact', { limit: 5 });
 
-    expect(result.results[0]?.source_type).toBe('entity_canonical');
+    expect(result.results[0]?.source_type).toBe('fact');
   });
 
   it('should not raise a save warning from retrieval-rank normalization alone', async () => {

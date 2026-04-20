@@ -1317,14 +1317,6 @@ export function supersedeCorrection(
     }
 
     if (Number(old.is_lock_active) === 0) {
-      if (old.superseded_by !== null) {
-        return {
-          kind: 'rejected',
-          code: 'case.correction_already_superseded',
-          message: 'Correction has already been superseded.',
-          correction_id: input.old_correction_id,
-        };
-      }
       return {
         kind: 'rejected',
         code: 'case.correction_inactive',
