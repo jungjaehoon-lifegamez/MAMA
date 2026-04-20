@@ -3,6 +3,7 @@
  */
 
 export { OAuthManager } from './oauth-manager.js';
+export { getClaudeCodeAuthStatus } from './claude-code-auth.js';
 
 export type {
   ClaudeCredentialsFile,
@@ -14,5 +15,6 @@ export type {
   CachedToken,
   OAuthErrorCode,
 } from './types.js';
+export type { ClaudeCodeAuthStatus } from './claude-code-auth.js';
 
 export { OAuthError } from './types.js';
