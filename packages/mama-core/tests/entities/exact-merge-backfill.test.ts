@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
+import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import {
   createEntityNode,
@@ -32,14 +33,15 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
   async function seedObservationBackedEntity(
     id: string,
     label: string,
-    scopeId = 'calendar'
+    scopeId = 'calendar',
+    observationLabel = label
   ): Promise<void> {
     await upsertEntityObservation({
-      id,
+      id: `obs_${id}`,
       observation_type: 'channel',
       entity_kind_hint: 'project',
-      surface_form: label,
-      normalized_form: label.toLowerCase(),
+      surface_form: observationLabel,
+      normalized_form: observationLabel.toLowerCase(),
       lang: 'en',
       script: 'Latn',
       context_summary: `${label} context`,
@@ -62,13 +64,22 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
       scope_id: scopeId,
       merged_into: null,
     });
+    await appendEntityLineageLink({
+      canonical_entity_id: id,
+      entity_observation_id: `obs_${id}`,
+      source_entity_id: null,
+      contribution_kind: 'seed',
+      run_id: null,
+      candidate_id: null,
+      review_action_id: null,
+      capture_mode: 'direct',
+      confidence: 1,
+    });
   }
 
   it('merges exact duplicate canonical roots into the oldest target and adopts lineage', async () => {
-    await seedObservationBackedEntity('obs_calendar_a', 'calendar');
-    await seedObservationBackedEntity('obs_calendar_b', 'calendar');
-    const { backfillEntityLineage } = await import('../../src/entities/lineage-backfill.js');
-    await backfillEntityLineage();
+    await seedObservationBackedEntity('entity_calendar_a', 'Calendar Alpha', 'calendar', 'calendar');
+    await seedObservationBackedEntity('entity_calendar_b', 'Calendar Beta', 'calendar', 'calendar');
 
     const { backfillExactDuplicateCanonicals } =
       await import('../../src/entities/exact-merge-backfill.js');
@@ -77,8 +88,8 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
     expect(result.groups).toBe(1);
     expect(result.merged).toBe(1);
     expect(result.skipped).toBe(0);
-    expect(getEntityNode('obs_calendar_a')?.merged_into).toBeNull();
-    expect(getEntityNode('obs_calendar_b')?.merged_into).toBe('obs_calendar_a');
+    expect(getEntityNode('entity_calendar_a')?.merged_into).toBeNull();
+    expect(getEntityNode('entity_calendar_b')?.merged_into).toBe('entity_calendar_a');
 
     const lineageRows = getAdapter()
       .prepare(
@@ -89,7 +100,7 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
           ORDER BY entity_observation_id ASC
         `
       )
-      .all('obs_calendar_a') as Array<{
+      .all('entity_calendar_a') as Array<{
       canonical_entity_id: string;
       entity_observation_id: string;
       contribution_kind: string;
@@ -99,12 +110,12 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
     expect(lineageRows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          entity_observation_id: 'obs_calendar_a',
+          entity_observation_id: 'obs_entity_calendar_a',
           contribution_kind: 'seed',
           status: 'active',
         }),
         expect.objectContaining({
-          entity_observation_id: 'obs_calendar_b',
+          entity_observation_id: 'obs_entity_calendar_b',
           contribution_kind: 'merge_adopt',
           status: 'active',
         }),
@@ -113,10 +124,8 @@ describe('Story E1.18: Exact duplicate canonical merge backfill', () => {
   });
 
   it('is idempotent after the first exact duplicate merge pass', async () => {
-    await seedObservationBackedEntity('obs_calendar_a', 'calendar');
-    await seedObservationBackedEntity('obs_calendar_b', 'calendar');
-    const { backfillEntityLineage } = await import('../../src/entities/lineage-backfill.js');
-    await backfillEntityLineage();
+    await seedObservationBackedEntity('entity_calendar_a', 'Calendar Alpha', 'calendar', 'calendar');
+    await seedObservationBackedEntity('entity_calendar_b', 'Calendar Beta', 'calendar', 'calendar');
 
     const { backfillExactDuplicateCanonicals } =
       await import('../../src/entities/exact-merge-backfill.js');

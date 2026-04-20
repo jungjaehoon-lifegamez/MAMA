@@ -827,6 +827,14 @@ function applyTargetMutation(input: {
   }
 }
 
+function revertMembershipValueJson(value: string | null): string {
+  const canonicalValue = canonicalJsonOrNull(value);
+  if (canonicalValue === null || canonicalValue === canonicalizeJSON(null)) {
+    return canonicalizeJSON({ status: 'removed' });
+  }
+  return canonicalValue;
+}
+
 function insertCorrectionMemoryEvent(input: {
   adapter: CorrectionAdapter;
   event_type: 'case.correction_applied' | 'case.correction_reverted' | 'case.correction_superseded';
@@ -1197,7 +1205,10 @@ export function revertCorrection(
         target_ref: parseJsonValue(row.target_ref_json) as CaseTargetRef,
         field_name: row.field_name ?? undefined,
         old_value_json: null,
-        new_value_json: row.old_value_json ?? canonicalizeJSON(null),
+        new_value_json:
+          row.target_kind === 'membership'
+            ? revertMembershipValueJson(row.old_value_json)
+            : row.old_value_json ?? canonicalizeJSON(null),
         reason: 'Revert correction',
         confirmed: true,
         confirmed_by: input.confirmed_by,

@@ -393,104 +393,7 @@ export async function upsertEntityObservations(
   await initDB();
   const adapter = getAdapter();
   const observations: UpsertEntityObservationResult[] = [];
-  const runBatch =
-    'transaction' in adapter && typeof adapter.transaction === 'function'
-      ? adapter.transaction(() => {
-          for (const input of inputs) {
-            const createdAt = now();
-            const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
-            const existing = adapter
-              .prepare(
-                `
-                  SELECT id FROM entity_observations
-                  WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
-                `
-              )
-              .get(
-                input.source_connector,
-                normalizedSourceLocator,
-                input.source_raw_record_id,
-                input.observation_type
-              ) as Record<string, unknown> | undefined;
-            adapter
-              .prepare(
-                `
-                  INSERT INTO entity_observations (
-                    id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
-                    context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
-                    extractor_version, embedding_model_version, source_connector, source_locator,
-                    source_raw_record_id, created_at
-                  )
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
-                  DO UPDATE SET
-                    entity_kind_hint = excluded.entity_kind_hint,
-                    surface_form = excluded.surface_form,
-                    normalized_form = excluded.normalized_form,
-                    lang = excluded.lang,
-                    script = excluded.script,
-                    context_summary = excluded.context_summary,
-                    related_surface_forms = excluded.related_surface_forms,
-                    timestamp_observed = excluded.timestamp_observed,
-                    scope_kind = excluded.scope_kind,
-                    scope_id = excluded.scope_id,
-                    extractor_version = excluded.extractor_version,
-                    embedding_model_version = excluded.embedding_model_version,
-                    source_locator = excluded.source_locator,
-                    created_at = entity_observations.created_at
-                `
-              )
-              .run(
-                input.id,
-                input.observation_type,
-                input.entity_kind_hint,
-                input.surface_form,
-                input.normalized_form,
-                input.lang,
-                input.script,
-                input.context_summary,
-                JSON.stringify(input.related_surface_forms),
-                input.timestamp_observed,
-                input.scope_kind,
-                input.scope_id,
-                input.extractor_version,
-                input.embedding_model_version,
-                input.source_connector,
-                normalizedSourceLocator,
-                input.source_raw_record_id,
-                createdAt
-              );
-
-            const saved = adapter
-              .prepare(
-                `
-                  SELECT * FROM entity_observations
-                  WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
-                `
-              )
-              .get(
-                input.source_connector,
-                normalizedSourceLocator,
-                input.source_raw_record_id,
-                input.observation_type
-              ) as Record<string, unknown>;
-            observations.push({
-              id: requireStringField(saved, 'id'),
-              created: !existing,
-            });
-          }
-        })
-      : null;
-
-  if (runBatch) {
-    const txResult = runBatch as unknown;
-    if (typeof txResult === 'function') {
-      txResult();
-    }
-    return observations;
-  }
-
-  for (const input of inputs) {
+  const upsertOne = (input: UpsertEntityObservationInput): void => {
     const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
     const existing = adapter
       .prepare(
@@ -505,11 +408,89 @@ export async function upsertEntityObservations(
         input.source_raw_record_id,
         input.observation_type
       ) as Record<string, unknown> | undefined;
-    const saved = await upsertEntityObservation(input);
+    const createdAt = now();
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_observations (
+            id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
+            context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
+            extractor_version, embedding_model_version, source_connector, source_locator,
+            source_raw_record_id, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
+          DO UPDATE SET
+            entity_kind_hint = excluded.entity_kind_hint,
+            surface_form = excluded.surface_form,
+            normalized_form = excluded.normalized_form,
+            lang = excluded.lang,
+            script = excluded.script,
+            context_summary = excluded.context_summary,
+            related_surface_forms = excluded.related_surface_forms,
+            timestamp_observed = excluded.timestamp_observed,
+            scope_kind = excluded.scope_kind,
+            scope_id = excluded.scope_id,
+            extractor_version = excluded.extractor_version,
+            embedding_model_version = excluded.embedding_model_version,
+            source_locator = excluded.source_locator,
+            created_at = entity_observations.created_at
+        `
+      )
+      .run(
+        input.id,
+        input.observation_type,
+        input.entity_kind_hint,
+        input.surface_form,
+        input.normalized_form,
+        input.lang,
+        input.script,
+        input.context_summary,
+        JSON.stringify(input.related_surface_forms),
+        input.timestamp_observed,
+        input.scope_kind,
+        input.scope_id,
+        input.extractor_version,
+        input.embedding_model_version,
+        input.source_connector,
+        normalizedSourceLocator,
+        input.source_raw_record_id,
+        createdAt
+      );
+
+    const saved = adapter
+      .prepare(
+        `
+          SELECT * FROM entity_observations
+          WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
+        `
+      )
+      .get(
+        input.source_connector,
+        normalizedSourceLocator,
+        input.source_raw_record_id,
+        input.observation_type
+      ) as Record<string, unknown>;
     observations.push({
-      id: saved.id,
+      id: requireStringField(saved, 'id'),
       created: !existing,
     });
+  };
+
+  if ('transaction' in adapter && typeof adapter.transaction === 'function') {
+    const txResult = adapter.transaction(() => {
+      for (const input of inputs) {
+        upsertOne(input);
+      }
+    }) as unknown;
+    if (typeof txResult === 'function') {
+      txResult();
+    }
+    return observations;
+  }
+
+  for (const input of inputs) {
+    upsertOne(input);
   }
   return observations;
 }

@@ -366,6 +366,16 @@ export function sweepCaseFreshness(
             now,
           });
         }
+      } else {
+        freshnessAdapter
+          .prepare(
+            `
+              UPDATE case_truth
+              SET freshness_checked_at = ?
+              WHERE case_id = ?
+            `
+          )
+          .run(now, resolution.terminal_case_id);
       }
 
       results.push({
@@ -373,9 +383,7 @@ export function sweepCaseFreshness(
         terminal_case_id: resolution.terminal_case_id,
         resolved_via_case_id: resolution.resolved_via_case_id,
         chain,
-        freshness_checked_at: changed
-          ? now
-          : ((row as { freshness_checked_at?: string | null }).freshness_checked_at ?? now),
+        freshness_checked_at: now,
         changed,
         ...calculation,
       });

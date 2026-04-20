@@ -818,6 +818,7 @@ export function unpinCaseMembership(
     const proposedNewValueJson = canonicalizeJSON({
       ...membershipSnapshot(membership),
       user_locked: 0,
+      assignment_strategy: null,
     });
     const cas = casCheck({
       adapter: compositionAdapter,
@@ -840,6 +841,7 @@ export function unpinCaseMembership(
         `
           UPDATE case_memberships
           SET user_locked = 0,
+              assignment_strategy = NULL,
               updated_at = ?
           WHERE case_id = ?
             AND source_type = ?
