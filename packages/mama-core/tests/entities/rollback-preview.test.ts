@@ -141,6 +141,118 @@ describe('Story E1.17: Entity rollback preview', () => {
     expect(preview.changed_memories).toHaveLength(1);
   });
 
+  it('scopes restored and removed lineage rows to the selected mergeActionId', async () => {
+    const { mergeActionId, memoryId } = await seedMergedEntityPair();
+    const adapter = getAdapter();
+
+    await upsertEntityObservation({
+      id: 'obs_project_source_other',
+      observation_type: 'generic',
+      entity_kind_hint: 'project',
+      surface_form: 'Project Source Other',
+      normalized_form: 'project source other',
+      lang: 'en',
+      script: 'Latn',
+      context_summary: 'Other merge action observation',
+      related_surface_forms: ['Source Other'],
+      timestamp_observed: 1710000002000,
+      scope_kind: 'project',
+      scope_id: 'scope-alpha',
+      extractor_version: 'history-extractor@v1',
+      embedding_model_version: 'multilingual-e5-large',
+      source_connector: 'slack',
+      source_locator: '/tmp/slack/raw.db',
+      source_raw_record_id: 'raw_source_other',
+    });
+
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_merge_actions (
+            id, action_type, source_entity_id, target_entity_id, candidate_id,
+            actor_type, actor_id, reason, evidence_json, created_at
+          ) VALUES (?, 'merge', ?, ?, NULL, 'system', 'test', ?, ?, ?)
+        `
+      )
+      .run(
+        'mact_other',
+        'entity_project_source',
+        'entity_project_target',
+        'synthetic alternate merge action',
+        JSON.stringify({ reason: 'test setup' }),
+        1710000002050
+      );
+
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_lineage_links (
+            id, canonical_entity_id, entity_observation_id, source_entity_id,
+            contribution_kind, run_id, candidate_id, review_action_id,
+            status, capture_mode, confidence, created_at, superseded_at
+          ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'elin_source_other_superseded',
+        'entity_project_source',
+        'obs_project_source_other',
+        'entity_project_source',
+        'merge_adopt',
+        'mact_other',
+        'superseded',
+        'direct',
+        1,
+        1710000002000,
+        1710000002100
+      );
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_lineage_links (
+            id, canonical_entity_id, entity_observation_id, source_entity_id,
+            contribution_kind, run_id, candidate_id, review_action_id,
+            status, capture_mode, confidence, created_at, superseded_at
+          ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL)
+        `
+      )
+      .run(
+        'elin_target_other_active',
+        'entity_project_target',
+        'obs_project_source_other',
+        'entity_project_source',
+        'merge_adopt',
+        'mact_other',
+        'active',
+        'direct',
+        1,
+        1710000002200
+      );
+
+    const extraMemory = await saveMemory({
+      topic: 'project_source/other-merge',
+      kind: 'decision',
+      summary: 'Other merge memory',
+      details: 'Should not appear for the selected merge action',
+      confidence: 0.7,
+      scopes: [{ kind: 'project', id: 'scope-alpha' }],
+      source: { package: 'mama-core', source_type: 'test' },
+      entityObservationIds: ['obs_project_source_other'],
+    } as never);
+
+    const { previewEntityRollback } = await import('../../src/entities/rollback-preview.js');
+    const preview = await previewEntityRollback({
+      entityId: 'entity_project_target',
+      mergeActionId,
+    });
+
+    expect(preview.preview_unavailable).toBe(false);
+    expect(preview.changed_memories).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: memoryId })])
+    );
+    expect(preview.changed_memories.map((memory) => memory.id)).not.toContain(extraMemory.id);
+  });
+
   it('rejects an explicit mergeActionId that does not belong to the requested entity', async () => {
     const { mergeActionId } = await seedMergedEntityPair();
     await createEntityNode({

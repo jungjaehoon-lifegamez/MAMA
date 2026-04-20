@@ -235,10 +235,6 @@ export function upsertEntityRoleBinding(
   adapter: PolicyStoreAdapter = getAdapter()
 ): void {
   const timestamp = now();
-  const existing = adapter
-    .prepare('SELECT created_at FROM entity_role_bindings WHERE actor_id = ? LIMIT 1')
-    .get(input.actor_id) as { created_at: number } | undefined;
-
   adapter
     .prepare(
       `
@@ -250,7 +246,7 @@ export function upsertEntityRoleBinding(
           updated_at = excluded.updated_at
       `
     )
-    .run(input.actor_id, input.role, existing?.created_at ?? timestamp, timestamp);
+    .run(input.actor_id, input.role, timestamp, timestamp);
 }
 
 export function resolveEntityRoleForActor(
@@ -324,7 +320,6 @@ export function approveEntityPolicyProposal(
 
     const existingPolicy = getEntityPolicy(proposal.policy_key, adapter);
     const version = existingPolicy ? existingPolicy.version + 1 : 1;
-    const createdAt = existingPolicy?.created_at ?? approvedAt;
 
     adapter
       .prepare(
@@ -344,7 +339,7 @@ export function approveEntityPolicyProposal(
         proposal.policy_kind,
         proposal.proposed_value_json,
         version,
-        createdAt,
+        approvedAt,
         approvedAt
       );
 

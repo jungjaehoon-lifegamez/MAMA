@@ -124,6 +124,34 @@ describe('legacy shims', () => {
     expect(result.results[0]?.event_date).toBe('2026-04-15');
   });
 
+  it('should preserve memory source_type when mapping recallMemory fallback rows', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [
+        {
+          id: 'shim_memory_fact',
+          topic: 'legacy_fact_contract',
+          summary: 'Keep source type intact',
+          details: 'Fact memory',
+          confidence: 0.7,
+          status: 'active',
+          kind: 'fact',
+          scopes: [],
+          source: { package: 'mama-core', source_type: 'entity_canonical' },
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: { query: 'legacy fact', scope_order: ['project'], retrieval_sources: ['sql_like'] },
+    });
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('legacy fact', { limit: 5 });
+
+    expect(result.results[0]?.source_type).toBe('entity_canonical');
+  });
+
   it('should not raise a save warning from retrieval-rank normalization alone', async () => {
     recallMemoryMock.mockResolvedValueOnce({
       profile: { static: [], dynamic: [], evidence: [] },
@@ -137,7 +165,7 @@ describe('legacy shims', () => {
           status: 'active',
           kind: 'decision',
           scopes: [],
-          source: { package: 'mama-core', source_type: 'test' },
+          source: { package: 'mama-core', source_type: 'decision' },
           created_at: Date.now(),
           updated_at: Date.now(),
           event_date: '2026-04-14',
@@ -212,6 +240,8 @@ describe('legacy shims', () => {
 
     const { initDB, getAdapter } = await import('../../src/db-manager.js');
     await initDB();
+    getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
+    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
     getAdapter()
       .prepare(
         `
@@ -264,5 +294,107 @@ describe('legacy shims', () => {
     expect(result.results).toHaveLength(1);
     expect(result.results[0]?.id).toBe('promoted-second');
     expect(result.meta?.ranker?.applied).toBe(true);
+  });
+
+  it('should bound graph_expansion metadata to the returned results after reranking', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      fused_hits: [
+        {
+          source_type: 'wiki_page',
+          source_id: 'cases/base-top.md',
+          fused_rank_score: 0.55,
+          page_type: 'case',
+          case_id: 'case-base-top',
+          record: {
+            title: 'Base Top Case',
+            content: 'This is first before rerank',
+            confidence: 'high',
+            created_at: Date.now(),
+          },
+        },
+        {
+          source_type: 'decision',
+          source_id: 'promoted-second',
+          fused_rank_score: 0.5,
+          record: {
+            topic: 'promoted_second',
+            summary: 'Promoted second result',
+            details: 'This should win after rerank',
+            confidence: 0.5,
+            created_at: Date.now(),
+          },
+        },
+      ],
+      graph_context: {
+        primary: new Array(8).fill({ id: 'p' }),
+        expanded: new Array(5).fill({ id: 'e' }),
+        edges: [],
+      },
+      search_meta: {
+        query: 'rerank me',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
+    });
+
+    const { initDB, getAdapter } = await import('../../src/db-manager.js');
+    await initDB();
+    getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
+    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO case_truth (
+            case_id, title, status, created_at, updated_at
+          ) VALUES (?, ?, 'active', ?, ?)
+        `
+      )
+      .run(
+        'case-base-top',
+        'Base Top Case',
+        '2026-04-18T00:00:00.000Z',
+        '2026-04-18T00:00:00.000Z'
+      );
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO ranker_model_versions (
+            model_id, model_version, feature_set_version, coefficients_json, metrics_json,
+            training_window_json, baseline_metrics_json, quality_gate_status, trained_at,
+            trained_by, active
+          )
+          VALUES (
+            'ranker-active', 'v1', ?, ?, '{}', '{}', '{}', 'passed',
+            '2026-04-18T00:00:00.000Z', 'test', 1
+          )
+        `
+      )
+      .run(
+        SEARCH_RANKER_FEATURE_SET_VERSION,
+        JSON.stringify({
+          coefficients: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          intercept: 0,
+          question_type_weights: {
+            correction: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            artifact: [0, 0, 0, 0, 0, -4, -4, -4, 4, -4, 0, 0, 0, 0, 0, 0, 0],
+            timeline: [0, 0, 0, 0, 0, -4, -4, -4, -4, 4, 0, 0, 0, 0, 0, 0, 0],
+            status: [0, 0, 0, 0, 0, -4, -4, 4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            decision_reason: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            how_to: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            unknown: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          },
+          training_rows_count: 10,
+        })
+      );
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('rerank me', { limit: 1, rerankWithLearned: true });
+
+    expect(result.meta?.graph_expansion?.total_results).toBe(1);
+    expect(result.meta?.graph_expansion?.primary_count).toBe(1);
+    expect(result.meta?.graph_expansion?.expanded_count).toBe(0);
+    expect(result.meta?.graph_expansion?.sources?.primary).toBe(1);
   });
 });

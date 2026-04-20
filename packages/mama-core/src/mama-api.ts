@@ -1615,6 +1615,44 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       }
     };
 
+    const summarizeGraphExpansion = <
+      T extends {
+        graph_source?: string | null;
+      },
+    >(
+      rows: T[]
+    ) => {
+      const sources = {
+        primary: 0,
+        supersedes_chain: 0,
+        refines: 0,
+        refined_by: 0,
+        contradicts: 0,
+      };
+
+      let expandedCount = 0;
+      for (const row of rows) {
+        const graphSource = row.graph_source ?? 'primary';
+        if (graphSource === 'primary') {
+          sources.primary += 1;
+          continue;
+        }
+
+        expandedCount += 1;
+        if (graphSource in sources) {
+          const key = graphSource as keyof typeof sources;
+          sources[key] += 1;
+        }
+      }
+
+      return {
+        total_results: rows.length,
+        primary_count: sources.primary,
+        expanded_count: expandedCount,
+        sources,
+      };
+    };
+
     if (rolledUp.length > 0) {
       const filteredResults = rolledUp.slice(0, rerankPoolLimit);
       const { results: mappedResults, meta: rankerMeta } = applyLearnedRanker(
@@ -1646,18 +1684,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 scale: recencyScale,
                 decay: recencyDecay,
               },
-          graph_expansion: {
-            total_results: limitedResults.length,
-            primary_count: bundle.graph_context.primary.length,
-            expanded_count: bundle.graph_context.expanded.length,
-            sources: {
-              primary: bundle.graph_context.primary.length,
-              supersedes_chain: 0,
-              refines: 0,
-              refined_by: 0,
-              contradicts: 0,
-            },
-          },
+          graph_expansion: summarizeGraphExpansion(limitedResults),
           ranker: rankerMeta,
         },
       };
@@ -1690,7 +1717,11 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         related_to: null,
         edge_reason: null,
         case_id: null as string | null,
-        source_type: 'decision',
+        source_type:
+          memory.source?.source_type ??
+          (memory as { source_type?: string; type?: string }).source_type ??
+          (memory as { type?: string }).type ??
+          'decision',
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
       const limitedRows = rankedRows.slice(0, limit);
@@ -1716,18 +1747,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 scale: recencyScale,
                 decay: recencyDecay,
               },
-          graph_expansion: {
-            total_results: limitedRows.length,
-            primary_count: bundle.graph_context.primary.length,
-            expanded_count: bundle.graph_context.expanded.length,
-            sources: {
-              primary: bundle.graph_context.primary.length,
-              supersedes_chain: 0,
-              refines: 0,
-              refined_by: 0,
-              contradicts: 0,
-            },
-          },
+          graph_expansion: summarizeGraphExpansion(limitedRows),
           ranker: rankerMeta,
         },
       };

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import type { RunResult } from '../db-adapter/statement.js';
 import {
   getFeedbackRetentionDays,
@@ -107,7 +108,20 @@ const MINI_BATCH_SIZE = 32;
 const MAX_EPOCHS = 500;
 const EARLY_STOP_DELTA = 1e-5;
 
-export const RANKER_QUALITY_FIXTURES: readonly QualityFixture[] = [
+function reorderFixtureCandidates(
+  query: string,
+  candidates: readonly QualityCandidate[]
+): QualityCandidate[] {
+  if (candidates.length <= 1) {
+    return [...candidates];
+  }
+
+  const offset =
+    Array.from(query).reduce((total, char) => total + char.charCodeAt(0), 0) % candidates.length;
+  return candidates.map((_, index) => candidates[(index + offset) % candidates.length]!);
+}
+
+const RAW_RANKER_QUALITY_FIXTURES: readonly QualityFixture[] = [
   {
     query: 'fix the stale case status correction',
     question_type: 'correction',
@@ -518,6 +532,13 @@ export const RANKER_QUALITY_FIXTURES: readonly QualityFixture[] = [
   },
 ];
 
+export const RANKER_QUALITY_FIXTURES: readonly QualityFixture[] = RAW_RANKER_QUALITY_FIXTURES.map(
+  (fixture) => ({
+    ...fixture,
+    candidates: reorderFixtureCandidates(fixture.query, fixture.candidates),
+  })
+);
+
 function asSourceForFeedback(
   sourceType: string
 ): 'decision' | 'checkpoint' | 'wiki_page' | 'case' | 'connector_event' {
@@ -579,14 +600,20 @@ function effectiveWindow(input: RankerTrainerInput): EffectiveTrainingWindow {
 }
 
 function labelForKind(kind: SearchFeedbackRow['feedback_kind']): number | null {
-  if (kind === 'accept' || kind === 'click') return 1;
-  if (kind === 'reject' || kind === 'hide' || kind === 'shown') return 0;
+  if (kind === 'accept' || kind === 'click') {
+    return 1;
+  }
+  if (kind === 'reject' || kind === 'hide' || kind === 'shown') {
+    return 0;
+  }
   return null;
 }
 
 function rowToExample(row: SearchFeedbackRow): TrainingExample | null {
   const label = labelForKind(row.feedback_kind);
-  if (label === null) return null;
+  if (label === null) {
+    return null;
+  }
 
   const features = serializeFeatures(
     extractFeatures(
@@ -637,8 +664,12 @@ function capNeutralRows(rows: SearchFeedbackRow[]): SearchFeedbackRow[] {
 }
 
 function sigmoid(value: number): number {
-  if (value >= 35) return 1;
-  if (value <= -35) return 0;
+  if (value >= 35) {
+    return 1;
+  }
+  if (value <= -35) {
+    return 0;
+  }
   return 1 / (1 + Math.exp(-value));
 }
 
@@ -727,7 +758,8 @@ function questionWeights(
 
 function modelIdFor(input: { trainedAt: string; rows: number; distinctQueries: number }): string {
   const compactTime = input.trainedAt.replace(/[^0-9]/g, '').slice(0, 17);
-  return `ranker_${compactTime}_${input.rows}_${input.distinctQueries}`;
+  const uniqueSuffix = randomBytes(4).toString('hex');
+  return `ranker_${compactTime}_${input.rows}_${input.distinctQueries}_${uniqueSuffix}`;
 }
 
 export async function trainOfflineRanker(
@@ -750,8 +782,13 @@ export async function trainOfflineRanker(
     feedbackRows: examples.length,
     distinctQueries,
   };
+  const examplesHaveBothLabels = hasBothLabels(examples);
 
-  if (counts.feedbackRows < minFeedbackRows || counts.distinctQueries < minDistinctQueries) {
+  if (
+    counts.feedbackRows < minFeedbackRows ||
+    counts.distinctQueries < minDistinctQueries ||
+    !examplesHaveBothLabels
+  ) {
     return {
       status: 'insufficient_data',
       effectiveWindow: window,
@@ -791,7 +828,9 @@ function rankByScore<T extends { id: string }>(items: T[], score: (item: T) => n
     .map((item, index) => ({ item, index, score: score(item) }))
     .sort((left, right) => {
       const diff = right.score - left.score;
-      if (Math.abs(diff) > 1e-12) return diff;
+      if (Math.abs(diff) > 1e-12) {
+        return diff;
+      }
       return left.index - right.index;
     })
     .map((entry) => entry.item);
@@ -992,9 +1031,15 @@ export async function activateRankerModel(
       }
     | undefined;
 
-  if (!row) return 'not_found';
-  if (row.feature_set_version !== SEARCH_RANKER_FEATURE_SET_VERSION) return 'feature_set_mismatch';
-  if (row.quality_gate_status !== 'passed') return 'quality_gate_failed';
+  if (!row) {
+    return 'not_found';
+  }
+  if (row.feature_set_version !== SEARCH_RANKER_FEATURE_SET_VERSION) {
+    return 'feature_set_mismatch';
+  }
+  if (row.quality_gate_status !== 'passed') {
+    return 'quality_gate_failed';
+  }
 
   runTransaction(adapter, () => {
     adapter.prepare('UPDATE ranker_model_versions SET active = 0 WHERE active = 1').run();

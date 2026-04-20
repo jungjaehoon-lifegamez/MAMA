@@ -76,11 +76,23 @@ export async function backfillExactDuplicateCanonicals(
   const rows = adapter
     .prepare(
       `
-        SELECT n.id, n.kind, n.preferred_label, n.scope_kind, n.scope_id, n.created_at, o.normalized_form
+        SELECT
+          n.id,
+          n.kind,
+          n.preferred_label,
+          n.scope_kind,
+          n.scope_id,
+          n.created_at,
+          MIN(o.normalized_form) AS normalized_form
         FROM entity_nodes n
-        LEFT JOIN entity_observations o ON o.id = n.id
+        LEFT JOIN entity_lineage_links l
+          ON l.canonical_entity_id = n.id
+         AND l.status = 'active'
+        LEFT JOIN entity_observations o
+          ON o.id = l.entity_observation_id
         WHERE n.status = 'active'
           AND n.merged_into IS NULL
+        GROUP BY n.id, n.kind, n.preferred_label, n.scope_kind, n.scope_id, n.created_at
       `
     )
     .all() as ExactDuplicateRow[];

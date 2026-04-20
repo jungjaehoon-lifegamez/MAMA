@@ -4,6 +4,8 @@ import type { EntityObservation, EntityResolutionCandidate } from './types.js';
 
 export const ENTITY_EMBEDDING_TOPN = 50;
 const CROSS_SCOPE_PROBE_MIN_EMBEDDING_SCORE = 0.84;
+const MAX_DETERMINISTIC_SCOPE_BUCKET = 32;
+const MAX_CROSS_SCOPE_SCOPE_BUCKET = 8;
 
 export interface CandidateGeneratorOptions {
   embeddingScorer?: (left: EntityObservation, right: EntityObservation) => Promise<number>;
@@ -207,6 +209,47 @@ function buildPairKey(left: EntityObservation, right: EntityObservation): string
   return `${left.id}::${right.id}`;
 }
 
+function compareObservationForSampling(left: EntityObservation, right: EntityObservation): number {
+  const leftRelated = left.related_surface_forms.length;
+  const rightRelated = right.related_surface_forms.length;
+  if (rightRelated !== leftRelated) {
+    return rightRelated - leftRelated;
+  }
+
+  const leftContext = left.context_summary?.length ?? 0;
+  const rightContext = right.context_summary?.length ?? 0;
+  if (rightContext !== leftContext) {
+    return rightContext - leftContext;
+  }
+
+  const leftObserved = left.timestamp_observed ?? Number.NEGATIVE_INFINITY;
+  const rightObserved = right.timestamp_observed ?? Number.NEGATIVE_INFINITY;
+  if (rightObserved !== leftObserved) {
+    return rightObserved - leftObserved;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+function capObservationGroup(
+  observations: EntityObservation[],
+  limit: number
+): EntityObservation[] {
+  if (observations.length <= limit) {
+    return observations;
+  }
+
+  return [...observations].sort(compareObservationForSampling).slice(0, limit);
+}
+
+function pushTopProbe(probes: ScoredPair[], candidate: ScoredPair, maxPairs: number): void {
+  probes.push(candidate);
+  probes.sort(compareProbePairs);
+  if (probes.length > maxPairs) {
+    probes.length = maxPairs;
+  }
+}
+
 function buildCrossLanguageFamilyKey(
   left: EntityObservation,
   right: EntityObservation
@@ -294,27 +337,55 @@ function buildCrossScopeProbePairs(
   }
 
   const probes: ScoredPair[] = [];
+  const bucketMap = new Map<string, EntityObservation[]>();
+  for (const observation of observations) {
+    if (!observation.entity_kind_hint) {
+      continue;
+    }
+    const bucketKey = JSON.stringify([
+      observation.entity_kind_hint,
+      observation.observation_type,
+      observation.scope_kind,
+    ]);
+    const bucket = bucketMap.get(bucketKey) ?? [];
+    bucket.push(observation);
+    bucketMap.set(bucketKey, bucket);
+  }
 
-  for (let i = 0; i < observations.length; i += 1) {
-    for (let j = i + 1; j < observations.length; j += 1) {
-      const first = observations[i]!;
-      const second = observations[j]!;
-      const [left, right] =
-        first.id.localeCompare(second.id) <= 0 ? [first, second] : [second, first];
-      const pairKey = buildPairKey(left, right);
-      if (seenPairs.has(pairKey)) {
-        continue;
-      }
+  for (const bucket of bucketMap.values()) {
+    const scopeBuckets = new Map<string, EntityObservation[]>();
+    for (const observation of bucket) {
+      const scopeKey = observation.scope_id ?? 'global';
+      const scopeBucket = scopeBuckets.get(scopeKey) ?? [];
+      scopeBucket.push(observation);
+      scopeBuckets.set(scopeKey, scopeBucket);
+    }
 
-      if (!shouldConsiderCrossScopeProbe(left, right)) {
-        continue;
-      }
+    const limitedScopeBuckets = Array.from(scopeBuckets.values())
+      .filter((scopeBucket) => scopeBucket.length > 0)
+      .map((scopeBucket) => capObservationGroup(scopeBucket, MAX_CROSS_SCOPE_SCOPE_BUCKET));
 
-      seenPairs.add(pairKey);
-      probes.push(scorePair(left, right, 'cross_scope'));
-      probes.sort(compareProbePairs);
-      if (probes.length > maxPairs) {
-        probes.length = maxPairs;
+    for (let i = 0; i < limitedScopeBuckets.length; i += 1) {
+      for (let j = i + 1; j < limitedScopeBuckets.length; j += 1) {
+        const leftBucket = limitedScopeBuckets[i]!;
+        const rightBucket = limitedScopeBuckets[j]!;
+        for (const first of leftBucket) {
+          for (const second of rightBucket) {
+            const [left, right] =
+              first.id.localeCompare(second.id) <= 0 ? [first, second] : [second, first];
+            const pairKey = buildPairKey(left, right);
+            if (seenPairs.has(pairKey)) {
+              continue;
+            }
+
+            if (!shouldConsiderCrossScopeProbe(left, right)) {
+              continue;
+            }
+
+            seenPairs.add(pairKey);
+            pushTopProbe(probes, scorePair(left, right, 'cross_scope'), maxPairs);
+          }
+        }
       }
     }
   }
@@ -375,29 +446,43 @@ export async function generateResolutionCandidates(
     if (bucket.length < 2) {
       continue;
     }
-    for (let i = 0; i < bucket.length; i += 1) {
-      for (let j = i + 1; j < bucket.length; j += 1) {
-        const first = bucket[i]!;
-        const second = bucket[j]!;
-        const [left, right] =
-          first.id.localeCompare(second.id) <= 0 ? [first, second] : [second, first];
-        const pairKey = `${left.id}::${right.id}`;
-        if (seenPairs.has(pairKey)) {
-          continue;
+    const scopeBuckets = new Map<string, EntityObservation[]>();
+    for (const observation of bucket) {
+      const scopeKey = `${observation.scope_kind}:${observation.scope_id ?? 'global'}`;
+      const scopeBucket = scopeBuckets.get(scopeKey) ?? [];
+      scopeBucket.push(observation);
+      scopeBuckets.set(scopeKey, scopeBucket);
+    }
+
+    for (const scopeBucket of scopeBuckets.values()) {
+      const limitedBucket = capObservationGroup(scopeBucket, MAX_DETERMINISTIC_SCOPE_BUCKET);
+      if (limitedBucket.length < 2) {
+        continue;
+      }
+      for (let i = 0; i < limitedBucket.length; i += 1) {
+        for (let j = i + 1; j < limitedBucket.length; j += 1) {
+          const first = limitedBucket[i]!;
+          const second = limitedBucket[j]!;
+          const [left, right] =
+            first.id.localeCompare(second.id) <= 0 ? [first, second] : [second, first];
+          const pairKey = `${left.id}::${right.id}`;
+          if (seenPairs.has(pairKey)) {
+            continue;
+          }
+
+          if (!shouldConsiderPair(left, right)) {
+            continue;
+          }
+
+          seenPairs.add(pairKey);
+          const scored = scorePair(left, right, 'deterministic');
+
+          if (scored.score_total <= 0 && !options.embeddingScorer) {
+            continue;
+          }
+
+          preliminary.push(scored);
         }
-
-        if (!shouldConsiderPair(left, right)) {
-          continue;
-        }
-
-        seenPairs.add(pairKey);
-        const scored = scorePair(left, right, 'deterministic');
-
-        if (scored.score_total <= 0 && !options.embeddingScorer) {
-          continue;
-        }
-
-        preliminary.push(scored);
       }
     }
   }
