@@ -324,6 +324,35 @@ describe('Task 15: Wiki freshness core helper', () => {
     expect(freshnessRow('case-survivor').freshness_state).toBe('fresh');
   });
 
+  it('batch explicit case_ids reports terminal cases in rejected output', () => {
+    insertCase({
+      case_id: 'case-active',
+      current_wiki_path: 'Cases/case-active.md',
+      compiled_at: '2026-04-18T01:00:00.000Z',
+      last_activity_at: '2026-04-18T00:00:00.000Z',
+    });
+    insertCase({
+      case_id: 'case-archived',
+      status: 'archived',
+    });
+    insertWikiIndex('case-active');
+
+    const result = sweepCaseFreshness(getAdapter(), {
+      case_ids: ['case-active', 'case-archived'],
+      now: '2026-04-18T02:00:00.000Z',
+    });
+
+    expect(result.rejected).toEqual(
+      expect.arrayContaining([
+        {
+          case_id: 'case-archived',
+          code: 'case.terminal_status',
+          message: 'Freshness cannot be written to terminal case status archived.',
+        },
+      ])
+    );
+  });
+
   it('response includes terminal_case_id, resolved_via_case_id, and chain', () => {
     insertCase({
       case_id: 'case-response',
@@ -375,6 +404,40 @@ describe('Task 15: Wiki freshness core helper', () => {
       'case-a',
       'case-b',
       'case-c',
+    ]);
+  });
+
+  it('listDriftedCases excludes terminal cases that still carry stale drift metadata', () => {
+    insertCase({
+      case_id: 'case-terminal-drifted',
+      status: 'merged',
+      current_wiki_path: 'Cases/case-terminal-drifted.md',
+      compiled_at: '2026-04-18T01:00:00.000Z',
+      last_activity_at: '2026-04-18T02:00:00.000Z',
+      state_updated_at: '2026-04-18T02:30:00.000Z',
+    });
+    insertCase({
+      case_id: 'case-live-drifted',
+      current_wiki_path: 'Cases/case-live-drifted.md',
+      compiled_at: '2026-04-18T01:00:00.000Z',
+      last_activity_at: '2026-04-18T02:00:00.000Z',
+      state_updated_at: '2026-04-18T02:30:00.000Z',
+    });
+
+    getAdapter()
+      .prepare(
+        `
+          UPDATE case_truth
+          SET freshness_state = 'drifted',
+              freshness_score = 0.1,
+              freshness_score_is_drifted = 1
+          WHERE case_id IN (?, ?)
+        `
+      )
+      .run('case-terminal-drifted', 'case-live-drifted');
+
+    expect(listDriftedCases(getAdapter()).map((row) => row.case_id)).toEqual([
+      'case-live-drifted',
     ]);
   });
 

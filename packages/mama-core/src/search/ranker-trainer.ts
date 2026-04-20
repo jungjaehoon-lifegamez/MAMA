@@ -107,6 +107,23 @@ const LEARNING_RATE = 0.05;
 const MINI_BATCH_SIZE = 32;
 const MAX_EPOCHS = 500;
 const EARLY_STOP_DELTA = 1e-5;
+const MIN_NEUTRAL_PER_QUERY = 3;
+// 0.01 is a small but meaningful margin across 8 fixture queries: it blocks
+// tie/noise wins without demanding a large jump on a tiny evaluation set.
+const RANKER_QUALITY_MARGIN = 0.01;
+
+function seededShuffle<T>(items: readonly T[], seed: number): T[] {
+  const shuffled = [...items];
+  let state = seed >>> 0;
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    const swapIndex = state % (index + 1);
+    const current = shuffled[index]!;
+    shuffled[index] = shuffled[swapIndex]!;
+    shuffled[swapIndex] = current;
+  }
+  return shuffled;
+}
 
 function reorderFixtureCandidates(
   query: string,
@@ -116,9 +133,8 @@ function reorderFixtureCandidates(
     return [...candidates];
   }
 
-  const offset =
-    Array.from(query).reduce((total, char) => total + char.charCodeAt(0), 0) % candidates.length;
-  return candidates.map((_, index) => candidates[(index + offset) % candidates.length]!);
+  const seed = Array.from(query).reduce((total, char) => total + char.charCodeAt(0), 0);
+  return seededShuffle(candidates, seed);
 }
 
 const RAW_RANKER_QUALITY_FIXTURES: readonly QualityFixture[] = [
@@ -651,7 +667,7 @@ function capNeutralRows(rows: SearchFeedbackRow[]): SearchFeedbackRow[] {
   for (const groupRows of byQuery.values()) {
     const explicit = groupRows.filter((row) => row.feedback_kind !== 'shown');
     const shown = groupRows.filter((row) => row.feedback_kind === 'shown');
-    const neutralLimit = explicit.length * 3;
+    const neutralLimit = Math.max(explicit.length * 3, MIN_NEUTRAL_PER_QUERY);
     capped.push(...explicit, ...shown.slice(0, neutralLimit));
   }
 
@@ -699,11 +715,12 @@ function trainWeights(
   }
 
   for (let epoch = 0; epoch < MAX_EPOCHS; epoch += 1) {
+    const shuffledExamples = seededShuffle(examples, epoch + 1);
     let epochDelta = 0;
     let batchCount = 0;
 
-    for (let batchStart = 0; batchStart < examples.length; batchStart += MINI_BATCH_SIZE) {
-      const batch = examples.slice(batchStart, batchStart + MINI_BATCH_SIZE);
+    for (let batchStart = 0; batchStart < shuffledExamples.length; batchStart += MINI_BATCH_SIZE) {
+      const batch = shuffledExamples.slice(batchStart, batchStart + MINI_BATCH_SIZE);
       const gradients = new Array(featureCount).fill(0);
       let interceptGradient = 0;
 
@@ -796,8 +813,7 @@ export async function trainOfflineRanker(
     };
   }
 
-  const featureCount =
-    examples[0]?.features.length ?? serializeFeatures(extractFeatures({}, '')).length;
+  const featureCount = examples[0]!.features.length;
   const trained = trainWeights(examples, featureCount);
   const trainedAt = input.now ? input.now.toISOString() : new Date().toISOString();
   const model: SearchRankerModel = {
@@ -825,13 +841,13 @@ export async function trainOfflineRanker(
 
 function rankByScore<T extends { id: string }>(items: T[], score: (item: T) => number): T[] {
   return items
-    .map((item, index) => ({ item, index, score: score(item) }))
+    .map((item) => ({ item, score: score(item) }))
     .sort((left, right) => {
       const diff = right.score - left.score;
       if (Math.abs(diff) > 1e-12) {
         return diff;
       }
-      return left.index - right.index;
+      return left.item.id.localeCompare(right.item.id);
     })
     .map((entry) => entry.item);
 }
@@ -939,7 +955,9 @@ export async function evaluateAgainstBaselines(
     rrf,
     logistic,
     learned,
-    passes: learned.ndcg >= bestBaselineNdcg + 0.01 && learned.mrr >= bestBaselineMrr + 0.01,
+    passes:
+      learned.ndcg >= bestBaselineNdcg + RANKER_QUALITY_MARGIN &&
+      learned.mrr >= bestBaselineMrr + RANKER_QUALITY_MARGIN,
   };
 }
 

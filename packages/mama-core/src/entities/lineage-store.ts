@@ -51,6 +51,10 @@ export interface AppendEntityLineageLinkResult {
   created: boolean;
 }
 
+interface AdoptLineageAfterMergeSyncInput extends Omit<AdoptLineageAfterMergeInput, 'adapter'> {
+  adapter: LineageMutationAdapter;
+}
+
 function now(): number {
   return Date.now();
 }
@@ -346,14 +350,17 @@ export async function adoptLineageAfterMerge(
   if (!input.adapter) {
     await initDB();
     const adapter = getAdapter();
-    return await runLineageTransaction(adapter, () =>
-      adoptLineageAfterMergeWithAdapter(adapter, input)
-    );
+    return adoptLineageAfterMergeSync({ ...input, adapter });
   }
 
-  const adapter = input.adapter;
-  return await runLineageTransaction(adapter, () =>
-    adoptLineageAfterMergeWithAdapter(adapter, input)
+  return adoptLineageAfterMergeSync(input as AdoptLineageAfterMergeSyncInput);
+}
+
+export function adoptLineageAfterMergeSync(
+  input: AdoptLineageAfterMergeSyncInput
+): EntityLineageLink[] {
+  return runLineageTransaction(input.adapter, () =>
+    adoptLineageAfterMergeWithAdapter(input.adapter, input)
   );
 }
 

@@ -12,22 +12,25 @@ import {
 function resetCaseTables(): void {
   const adapter = getAdapter();
   adapter.prepare('PRAGMA foreign_keys = OFF').run();
-  adapter.prepare('DELETE FROM memory_events').run();
-  const tables = adapter
-    .prepare(
-      `
-        SELECT name
-        FROM sqlite_master
-        WHERE type = 'table'
-          AND name LIKE 'case_%'
-        ORDER BY name DESC
-      `
-    )
-    .all() as Array<{ name: string }>;
-  for (const table of tables) {
-    adapter.prepare(`DELETE FROM "${table.name}"`).run();
+  try {
+    adapter.prepare('DELETE FROM memory_events').run();
+    const tables = adapter
+      .prepare(
+        `
+          SELECT name
+          FROM sqlite_master
+          WHERE type = 'table'
+            AND name LIKE 'case_%'
+          ORDER BY name DESC
+        `
+      )
+      .all() as Array<{ name: string }>;
+    for (const table of tables) {
+      adapter.prepare(`DELETE FROM "${table.name}"`).run();
+    }
+  } finally {
+    adapter.prepare('PRAGMA foreign_keys = ON').run();
   }
-  adapter.prepare('PRAGMA foreign_keys = ON').run();
 }
 
 function insertCase(
@@ -124,6 +127,7 @@ describe('Story CF2.7: Membership pin and source promotion core helpers', () => 
   // - unpinCaseMembership clears the manual-pin lock metadata that explain/assembly surfaces.
   // - promoteCaseSource enforces CAS/reconfirm rules and only promotes valid decision sources.
   let testDbPath = '';
+  const previousForceTier = process.env.MAMA_FORCE_TIER_3;
 
   beforeAll(async () => {
     process.env.MAMA_FORCE_TIER_3 = 'true';
@@ -136,6 +140,11 @@ describe('Story CF2.7: Membership pin and source promotion core helpers', () => 
 
   afterAll(async () => {
     await cleanupTestDB(testDbPath);
+    if (previousForceTier === undefined) {
+      delete process.env.MAMA_FORCE_TIER_3;
+    } else {
+      process.env.MAMA_FORCE_TIER_3 = previousForceTier;
+    }
   });
 
   it('pin sets user_locked=1 and assignment_strategy=manual-pin', () => {
