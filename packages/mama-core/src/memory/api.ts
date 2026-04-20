@@ -8,6 +8,11 @@ import {
   fts5Search,
 } from '../db-manager.js';
 import { generateEmbedding } from '../embeddings.js';
+import {
+  ftsSearchWikiPages,
+  vectorSearchWikiPages,
+  type WikiPageIndexRecord,
+} from '../cases/wiki-page-index.js';
 import { classifyProfileEntries } from './profile-builder.js';
 import { buildMemoryAgentBootstrap } from './bootstrap-builder.js';
 import { resolveMemoryEvolution } from './evolution-engine.js';
@@ -18,6 +23,7 @@ import { buildExtractionPrompt, parseExtractionResponse } from './extraction-pro
 import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import { queryCanonicalEntities } from '../entities/recall-bridge.js';
+import { loadDecisionReadIdentityIndex, resolveReadIdentity } from '../entities/read-identity.js';
 import type {
   MemoryKind,
   MemoryAgentBootstrap,
@@ -57,6 +63,21 @@ interface SaveMemoryInput {
    * Stored in the event_date column. Defaults to created_at if omitted.
    */
   eventDate?: string;
+  /** Source event timestamp in milliseconds when known. */
+  eventDateTime?: number;
+  entityObservationIds?: string[];
+  timelineEvent?: {
+    id?: string;
+    entity_id?: string;
+    event_type: string;
+    role?: string | null;
+    valid_from?: number | null;
+    valid_to?: number | null;
+    observed_at?: number | null;
+    source_ref?: string | null;
+    summary: string;
+    details?: string | null;
+  };
 }
 
 interface RecallMemoryOptions {
@@ -65,6 +86,7 @@ interface RecallMemoryOptions {
   includeHistory?: boolean;
   skipGraphExpansion?: boolean;
   topicPrefix?: string;
+  limit?: number;
 }
 
 interface IngestMemoryInput {
@@ -72,6 +94,18 @@ interface IngestMemoryInput {
   scopes?: MemoryScopeRef[];
   source: SaveMemoryInput['source'];
   eventDate?: string;
+  eventDateTime?: number;
+}
+
+export interface FusedHit {
+  source_type: 'decision' | 'wiki_page';
+  source_id: string;
+  record: MemoryRecord | WikiPageIndexRecord;
+  fused_rank_score: number;
+}
+
+interface SaveMemoryRollbackError extends Error {
+  memoryId?: string;
 }
 
 function buildDecisionId(topic: string): string {
@@ -107,7 +141,221 @@ function toMemoryRecord(
     created_at: row.created_at as number | string,
     updated_at: (row.updated_at as number | string) ?? (row.created_at as number | string),
     event_date: (row.event_date as string) ?? null,
+    event_datetime:
+      typeof row.event_datetime === 'number' && Number.isFinite(row.event_datetime)
+        ? row.event_datetime
+        : null,
   };
+}
+
+function loadEventDateTimeForObservations(
+  adapter: ReturnType<typeof getAdapter>,
+  observationIds: string[]
+): number | null {
+  const uniqueIds = Array.from(new Set(observationIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return null;
+  }
+
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  const row = adapter
+    .prepare(
+      `
+        SELECT MAX(COALESCE(timestamp_observed, created_at)) AS event_datetime
+        FROM entity_observations
+        WHERE id IN (${placeholders})
+      `
+    )
+    .get(...uniqueIds) as { event_datetime?: number | null } | undefined;
+
+  return typeof row?.event_datetime === 'number' && Number.isFinite(row.event_datetime)
+    ? row.event_datetime
+    : null;
+}
+
+function getTimelineEntityKindPriority(kind: string): number {
+  switch (kind) {
+    case 'work_item':
+      return 0;
+    case 'project':
+      return 1;
+    case 'organization':
+      return 2;
+    case 'person':
+      return 3;
+    default:
+      return 99;
+  }
+}
+
+function resolveTimelineTargetEntityIdFromObservations(
+  adapter: ReturnType<typeof getAdapter>,
+  observationIds: string[]
+): string | null {
+  const uniqueIds = Array.from(new Set(observationIds.filter(Boolean)));
+  if (uniqueIds.length === 0) {
+    return null;
+  }
+
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  const rows = adapter
+    .prepare(
+      `
+        SELECT
+          n.id AS entity_id,
+          n.kind AS entity_kind,
+          COUNT(*) AS matched_observations
+        FROM entity_lineage_links l
+        JOIN entity_nodes n
+          ON n.id = l.canonical_entity_id
+        WHERE l.entity_observation_id IN (${placeholders})
+          AND l.status = 'active'
+          AND n.status = 'active'
+          AND n.merged_into IS NULL
+        GROUP BY n.id, n.kind
+      `
+    )
+    .all(...uniqueIds) as Array<{
+    entity_id: string;
+    entity_kind: string;
+    matched_observations: number;
+  }>;
+
+  rows.sort((left, right) => {
+    const kindDelta =
+      getTimelineEntityKindPriority(left.entity_kind) -
+      getTimelineEntityKindPriority(right.entity_kind);
+    if (kindDelta !== 0) {
+      return kindDelta;
+    }
+    if (right.matched_observations !== left.matched_observations) {
+      return right.matched_observations - left.matched_observations;
+    }
+    return left.entity_id.localeCompare(right.entity_id);
+  });
+
+  return rows[0]?.entity_id ?? null;
+}
+
+function buildTimelineEventForSave(
+  adapter: ReturnType<typeof getAdapter>,
+  memoryId: string,
+  topic: string,
+  entityObservationIds: string[],
+  timelineEvent:
+    | {
+        id?: string;
+        entity_id?: string;
+        event_type: string;
+        role?: string | null;
+        valid_from?: number | null;
+        valid_to?: number | null;
+        observed_at?: number | null;
+        source_ref?: string | null;
+        summary: string;
+        details?: string | null;
+      }
+    | undefined
+): {
+  id: string;
+  entity_id: string;
+  event_type: string;
+  role: string | null;
+  valid_from: number | null;
+  valid_to: number | null;
+  observed_at: number | null;
+  source_ref: string | null;
+  summary: string;
+  details: string | null;
+} | null {
+  if (!timelineEvent) {
+    return null;
+  }
+
+  const resolvedEntityId =
+    timelineEvent.entity_id ??
+    resolveTimelineTargetEntityIdFromObservations(adapter, entityObservationIds);
+  if (!resolvedEntityId) {
+    return null;
+  }
+
+  return {
+    id: timelineEvent.id ?? `et_${crypto.randomUUID()}`,
+    entity_id: resolvedEntityId,
+    event_type: timelineEvent.event_type,
+    role: timelineEvent.role ?? null,
+    valid_from: timelineEvent.valid_from ?? null,
+    valid_to: timelineEvent.valid_to ?? null,
+    observed_at: timelineEvent.observed_at ?? null,
+    source_ref: timelineEvent.source_ref ?? `decision:${memoryId}`,
+    summary: timelineEvent.summary,
+    details:
+      timelineEvent.details ??
+      JSON.stringify({
+        memory_id: memoryId,
+        topic,
+      }),
+  };
+}
+
+function insertTimelineEventForSave(
+  adapter: ReturnType<typeof getAdapter>,
+  event: {
+    id: string;
+    entity_id: string;
+    event_type: string;
+    role: string | null;
+    valid_from: number | null;
+    valid_to: number | null;
+    observed_at: number | null;
+    source_ref: string | null;
+    summary: string;
+    details: string | null;
+  },
+  createdAt: number
+): void {
+  adapter
+    .prepare(
+      `
+        INSERT INTO entity_timeline_events (
+          id, entity_id, event_type, role, valid_from, valid_to, observed_at,
+          source_ref, summary, details, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      event.id,
+      event.entity_id,
+      event.event_type,
+      event.role,
+      event.valid_from,
+      event.valid_to,
+      event.observed_at,
+      event.source_ref,
+      event.summary,
+      event.details,
+      createdAt
+    );
+}
+
+function cleanupFailedMemorySave(adapter: ReturnType<typeof getAdapter>, memoryId: string): void {
+  const row = adapter.prepare(`SELECT rowid FROM decisions WHERE id = ?`).get(memoryId) as
+    | { rowid: number }
+    | undefined;
+  if (!row) {
+    return;
+  }
+
+  const cleanup = () => {
+    adapter.prepare(`DELETE FROM embeddings WHERE rowid = ?`).run(row.rowid);
+    adapter.prepare(`DELETE FROM decisions WHERE id = ?`).run(memoryId);
+  };
+
+  const txResult = adapter.transaction(cleanup) as unknown;
+  if (typeof txResult === 'function') {
+    txResult();
+  }
 }
 
 function batchLoadScopes(
@@ -150,9 +398,9 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT id, topic, decision, reasoning, confidence, created_at, updated_at, trust_context,
-                 kind, status, summary, event_date
+                 kind, status, summary, event_date, event_datetime
           FROM decisions
-          ORDER BY created_at DESC
+          ORDER BY COALESCE(event_datetime, created_at) DESC, created_at DESC
         `
       )
       .all() as Record<string, unknown>[];
@@ -165,11 +413,11 @@ async function loadScopedMemories(scopes: MemoryScopeRef[]): Promise<MemoryRecor
       .prepare(
         `
           SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
-                 d.updated_at, d.trust_context, d.kind, d.status, d.summary, d.event_date
+                 d.updated_at, d.trust_context, d.kind, d.status, d.summary, d.event_date, d.event_datetime
           FROM decisions d
           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
           WHERE msb.scope_id IN (${placeholders})
-          ORDER BY d.created_at DESC
+          ORDER BY COALESCE(d.event_datetime, d.created_at) DESC, d.created_at DESC
         `
       )
       .all(...scopeIds) as Record<string, unknown>[];
@@ -375,9 +623,13 @@ export async function loadEdgesForIds(ids: string[]): Promise<MemoryEdge[]> {
   }));
 }
 
-export async function saveMemory(
-  input: SaveMemoryInput
-): Promise<{ success: boolean; id: string }> {
+export async function saveMemory(input: SaveMemoryInput): Promise<{
+  success: boolean;
+  id: string;
+  saved_decision_id?: string;
+  timeline_event_id?: string | null;
+  timeline_event_ids?: string[];
+}> {
   await initDB();
   const adapter = getAdapter();
 
@@ -475,6 +727,19 @@ export async function saveMemory(
   const supersedesTarget =
     evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ?? null;
 
+  const entityObservationIds = Array.from(new Set(input.entityObservationIds ?? []));
+  const eventDateTime =
+    typeof input.eventDateTime === 'number'
+      ? input.eventDateTime
+      : loadEventDateTimeForObservations(adapter, entityObservationIds);
+  const timelineEvent = buildTimelineEventForSave(
+    adapter,
+    id,
+    input.topic,
+    entityObservationIds,
+    input.timelineEvent
+  );
+
   await insertDecisionWithEmbedding({
     id,
     topic: input.topic,
@@ -486,6 +751,7 @@ export async function saveMemory(
     updated_at: now,
     trust_context: JSON.stringify({ source: input.source }),
     event_date: input.eventDate ?? null,
+    event_datetime: eventDateTime,
   });
 
   // Pre-resolve scope IDs before the synchronous transaction
@@ -494,57 +760,81 @@ export async function saveMemory(
     const scopeId = await ensureMemoryScope(scope.kind, scope.id);
     resolvedScopeIds.push({ scopeId, isPrimary: index === 0 });
   }
-
   // Wrap all post-insert mutations in a transaction for atomicity
-  adapter.transaction(() => {
-    adapter
-      .prepare(
-        `
-          UPDATE decisions
-          SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
-          WHERE id = ?
-        `
-      )
-      .run(
-        input.kind,
-        input.status ?? 'active',
-        input.summary,
-        input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
-        JSON.stringify({ source: input.source }),
-        now,
-        id
-      );
-
-    for (const { scopeId, isPrimary } of resolvedScopeIds) {
+  try {
+    adapter.transaction(() => {
       adapter
         .prepare(
           `
-            INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
-            VALUES (?, ?, ?)
+            UPDATE decisions
+            SET kind = ?, status = ?, summary = ?, is_static = ?, trust_context = ?, updated_at = ?
+            WHERE id = ?
           `
         )
-        .run(id, scopeId, isPrimary ? 1 : 0);
-    }
+        .run(
+          input.kind,
+          input.status ?? 'active',
+          input.summary,
+          input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
+          JSON.stringify({ source: input.source }),
+          now,
+          id
+        );
 
-    for (const edge of evolution.edges) {
-      if (edge.type === 'supersedes') {
+      for (const { scopeId, isPrimary } of resolvedScopeIds) {
         adapter
           .prepare(
-            `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
+            `
+              INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
+              VALUES (?, ?, ?)
+            `
           )
-          .run(id, now, edge.to_id);
+          .run(id, scopeId, isPrimary ? 1 : 0);
       }
 
-      adapter
-        .prepare(
-          `
-            INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-          `
-        )
-        .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
-    }
-  });
+      for (const entityObservationId of entityObservationIds) {
+        adapter
+          .prepare(
+            `
+              INSERT OR IGNORE INTO decision_entity_sources (
+                decision_id, entity_observation_id, relation_type, created_at
+              ) VALUES (?, ?, ?, ?)
+            `
+          )
+          .run(id, entityObservationId, 'support', now);
+      }
+
+      if (timelineEvent) {
+        insertTimelineEventForSave(adapter, timelineEvent, now);
+      }
+
+      for (const edge of evolution.edges) {
+        if (edge.type === 'supersedes') {
+          adapter
+            .prepare(
+              `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
+            )
+            .run(id, now, edge.to_id);
+        }
+
+        adapter
+          .prepare(
+            `
+              INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `
+          )
+          .run(id, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
+      }
+    });
+  } catch (error) {
+    cleanupFailedMemorySave(adapter, id);
+    const rollbackError = (
+      error instanceof Error ? error : new Error(String(error))
+    ) as SaveMemoryRollbackError;
+    rollbackError.memoryId = id;
+    throw rollbackError;
+  }
 
   // Project to memory_truth table (best-effort; failure should not break save)
   try {
@@ -563,7 +853,13 @@ export async function saveMemory(
     // Truth projection is best-effort; do not fail the save
   }
 
-  return { success: true, id };
+  return {
+    success: true,
+    id,
+    saved_decision_id: id,
+    timeline_event_id: timelineEvent?.id ?? null,
+    timeline_event_ids: timelineEvent ? [timelineEvent.id] : [],
+  };
 }
 
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {
@@ -585,6 +881,7 @@ export async function recallMemory(
   const bundle = createEmptyRecallBundle(query);
 
   let matched: MemoryRecord[] = [];
+  let fusedHits: FusedHit[] = [];
   let retrievalSource = 'none';
   const projectionMode = process.env.MAMA_ENTITY_PROJECTION_MODE ?? 'shadow';
   let _lexicalRecords: MemoryRecord[] | null = null;
@@ -602,6 +899,7 @@ export async function recallMemory(
   );
   const hasMultipleEntities = /\b(and|or|vs|versus|compared|between)\b/.test(lowerQuery);
   const vectorLimit = isAggregation ? 50 : 20;
+  const requestedLimit = Math.max(1, Math.floor(options.limit ?? 10));
 
   // Multi-query decomposition: extract sub-queries for complex questions
   const subQueries: string[] = [query];
@@ -621,9 +919,13 @@ export async function recallMemory(
 
   // Channel 1: Vector search (semantic similarity) — run all sub-queries
   const vectorMatched: MemoryRecord[] = [];
+  let primaryQueryEmbedding: Float32Array | null = null;
   try {
     for (const sq of subQueries) {
       const queryEmbedding = await generateEmbedding(sq);
+      if (sq === query && primaryQueryEmbedding === null) {
+        primaryQueryEmbedding = queryEmbedding;
+      }
       const vectorResults = await vectorSearch(
         queryEmbedding,
         vectorLimit,
@@ -663,6 +965,8 @@ export async function recallMemory(
           source: { package: 'mama-core', source_type: 'vector_search' },
           created_at: result.created_at ?? Date.now(),
           updated_at: result.created_at ?? Date.now(),
+          event_date: result.event_date ?? null,
+          event_datetime: result.event_datetime ?? null,
         });
       }
     } // end sub-query loop
@@ -749,7 +1053,7 @@ export async function recallMemory(
           const row = adapter
             .prepare(
               `SELECT id, topic, decision, reasoning, confidence, created_at, updated_at,
-                    trust_context, kind, status, summary, event_date
+                    trust_context, kind, status, summary, event_date, event_datetime
              FROM decisions WHERE id = ?`
             )
             .get(ftsRow.id) as Record<string, unknown> | undefined;
@@ -859,6 +1163,79 @@ export async function recallMemory(
   }
 
   const sortedRrf = Array.from(rrfScores.values()).sort((a, b) => b.score - a.score);
+  const decisionFusedHits: FusedHit[] = sortedRrf.map((entry) => ({
+    source_type: 'decision',
+    source_id: entry.record.id,
+    record: entry.record,
+    fused_rank_score: entry.score,
+  }));
+
+  let hasWikiHits = false;
+  const wikiScores = new Map<number, { record: WikiPageIndexRecord; score: number }>();
+  const wikiVectorRankMap = new Map<number, number>();
+
+  try {
+    const adapter = getAdapter();
+    const wikiFtsHits = ftsSearchWikiPages(adapter, query, requestedLimit * 2);
+    let wikiVectorHits: ReturnType<typeof vectorSearchWikiPages> = [];
+
+    if (primaryQueryEmbedding) {
+      try {
+        wikiVectorHits = vectorSearchWikiPages(adapter, primaryQueryEmbedding, requestedLimit * 2);
+      } catch (wikiVectorErr) {
+        warn(
+          `[recallMemory] Wiki vector search failed: ${wikiVectorErr instanceof Error ? wikiVectorErr.message : String(wikiVectorErr)}`
+        );
+      }
+    }
+
+    for (let i = 0; i < wikiVectorHits.length; i++) {
+      wikiVectorRankMap.set(wikiVectorHits[i].record.id, i);
+    }
+
+    for (let i = 0; i < wikiFtsHits.length; i++) {
+      const hit = wikiFtsHits[i];
+      const lexScore = 1 / (RRF_K + i + 1);
+      const vecRank = wikiVectorRankMap.get(hit.record.id);
+      const vecBoost = vecRank !== undefined ? 0.2 * (1 / (RRF_K + vecRank + 1)) : 0;
+      wikiScores.set(hit.record.id, {
+        record: hit.record,
+        score: lexScore + vecBoost,
+      });
+    }
+
+    for (let i = 0; i < wikiVectorHits.length; i++) {
+      const hit = wikiVectorHits[i];
+      if (wikiScores.has(hit.record.id)) {
+        continue;
+      }
+      wikiScores.set(hit.record.id, {
+        record: hit.record,
+        score: 0.15 * (1 / (RRF_K + i + 1)),
+      });
+    }
+
+    hasWikiHits = wikiScores.size > 0;
+  } catch (wikiFtsErr) {
+    warn(
+      `[recallMemory] Wiki FTS search failed: ${wikiFtsErr instanceof Error ? wikiFtsErr.message : String(wikiFtsErr)}`
+    );
+  }
+
+  const wikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => ({
+      source_type: 'wiki_page',
+      source_id: entry.record.source_locator,
+      record: entry.record,
+      fused_rank_score: entry.score,
+      ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
+      ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
+    }));
+
+  fusedHits = [...decisionFusedHits, ...wikiFusedHits].sort(
+    (left, right) => right.fused_rank_score - left.fused_rank_score
+  );
 
   // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
   // similarity displays) get meaningful values.  The raw RRF score for K=60 tops out
@@ -875,6 +1252,10 @@ export async function recallMemory(
     retrievalSource = 'vector_search';
   } else if (lexicalCandidates.length > 0) {
     retrievalSource = 'lexical_search';
+  }
+
+  if (hasWikiHits) {
+    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
   }
 
   let canonicalMatched: MemoryRecord[] = [];
@@ -899,6 +1280,18 @@ export async function recallMemory(
       warn(
         `[recallMemory] Canonical entity recall failed: ${canonicalErr instanceof Error ? canonicalErr.message : String(canonicalErr)}`
       );
+    }
+  }
+
+  if (matched.length > 0) {
+    const readIdentityIndex = await loadDecisionReadIdentityIndex(
+      matched.filter((record) => !record.read_identity).map((record) => record.id)
+    );
+    for (const record of matched) {
+      if (record.read_identity) {
+        continue;
+      }
+      record.read_identity = resolveReadIdentity(record, readIdentityIndex.get(record.id) ?? []);
     }
   }
 
@@ -1039,6 +1432,7 @@ export async function recallMemory(
     }
   }
 
+  (bundle as RecallBundle & { fused_hits?: FusedHit[] }).fused_hits = fusedHits;
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
   bundle.search_meta.retrieval_sources = [retrievalSource];
 
@@ -1066,6 +1460,7 @@ export async function ingestMemory(
     scopes: input.scopes ?? [],
     source: input.source,
     eventDate: input.eventDate,
+    eventDateTime: input.eventDateTime,
   });
 }
 

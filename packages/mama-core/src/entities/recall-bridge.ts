@@ -1,6 +1,7 @@
 import { getAdapter, initDB } from '../db-manager.js';
 import type { MemoryRecord, MemoryScopeRef } from '../memory/types.js';
 import { projectEntityToRecallSummary } from './projection.js';
+import { resolveReadIdentity } from './read-identity.js';
 import { EntityMergeError, resolveCanonicalEntityId } from './store.js';
 import type { EntityAlias, EntityNode, EntityTimelineEvent } from './types.js';
 
@@ -10,7 +11,8 @@ function mapNode(row: Record<string, unknown>): EntityNode {
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),
@@ -67,21 +69,24 @@ export async function queryCanonicalEntities(
   // then chain-walk each match to its canonical terminal. Without this,
   // searching by the old name of a merged entity returns nothing because the
   // filter `n.status='active' AND n.merged_into IS NULL` would drop the
-  // source row. Matches Policy A2 in
-  // docs/superpowers/specs/2026-04-13-canonical-entity-merge-design.md.
+  // source row. Matches the read-time chain-walking approach in the canonical
+  // entity ontology implementation plan.
   const matchedRows = adapter
     .prepare(
       `
         SELECT DISTINCT n.id AS matched_id
         FROM entity_nodes n
         LEFT JOIN entity_aliases a ON a.entity_id = n.id
+        LEFT JOIN entity_lineage_links l ON l.canonical_entity_id = n.id AND l.status = 'active'
+        LEFT JOIN entity_observations o ON o.id = l.entity_observation_id
         WHERE (
           lower(n.preferred_label) LIKE '%' || lower(?) || '%' ESCAPE '\\'
           OR lower(COALESCE(a.label, '')) LIKE '%' || lower(?) || '%' ESCAPE '\\'
+          OR lower(COALESCE(o.surface_form, '')) LIKE '%' || lower(?) || '%' ESCAPE '\\'
         )
       `
     )
-    .all(escapedQuery, escapedQuery) as Array<{ matched_id: string }>;
+    .all(escapedQuery, escapedQuery, escapedQuery) as Array<{ matched_id: string }>;
 
   const canonicalIdSet = new Set<string>();
   for (const match of matchedRows) {
@@ -119,8 +124,18 @@ export async function queryCanonicalEntities(
   const scopedRows =
     scopes.length === 0
       ? rows
-      : rows.filter((row) =>
-          scopes.some((scope) => scope.kind === row.scope_kind && row.scope_id === scope.id)
+      : rows.filter(
+          (row) =>
+            // Fix 2 part B (P0): globally-scoped entities are not bound to
+            // any narrower scope and must surface in every scoped query.
+            // Without this passthrough, switching person observations from
+            // channel-scope to global-scope (Fix 2 part A in
+            // history-extractor.ts) would make persons invisible to scoped
+            // recall callers, breaking the time-travel use case the fix is
+            // meant to enable. scope_id is intentionally not compared for
+            // globals — the global predicate is `scope_kind='global'` alone.
+            row.scope_kind === 'global' ||
+            scopes.some((scope) => scope.kind === row.scope_kind && row.scope_id === scope.id)
         );
 
   const limitedRows = scopedRows.slice(0, options.limit ?? 10);
@@ -174,14 +189,16 @@ export async function queryCanonicalEntities(
   const result: MemoryRecord[] = [];
   for (const row of limitedRows) {
     const node = mapNode(row);
-    result.push(
-      projectEntityToRecallSummary(
-        node,
-        aliasesByEntity.get(node.id) ?? [],
-        latestTimelineByEntity.get(node.id) ?? null,
-        { nodeLookup }
-      )
+    const projected = projectEntityToRecallSummary(
+      node,
+      aliasesByEntity.get(node.id) ?? [],
+      latestTimelineByEntity.get(node.id) ?? null,
+      { nodeLookup }
     );
+    projected.read_identity = resolveReadIdentity(projected, [
+      { id: node.id, label: node.preferred_label, kind: node.kind },
+    ]);
+    result.push(projected);
   }
 
   return result;

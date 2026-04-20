@@ -17,6 +17,7 @@ import {
   saveConfig,
 } from '../config/config-manager.js';
 import { BOOTSTRAP_TEMPLATE } from '../../onboarding/bootstrap-template.js';
+import { getClaudeCodeAuthStatus } from '../../auth/index.js';
 
 /**
  * CLAUDE.md template for workspace documentation
@@ -107,7 +108,7 @@ function resolvePreferredBackend(
   const codexAuthPaths = [expandPath('~/.mama/.codex/auth.json'), expandPath('~/.codex/auth.json')];
   const codexAuthPath = codexAuthPaths.find((p) => existsSync(p));
   const hasCodexAuth = Boolean(codexAuthPath);
-  const hasClaudeAuth = existsSync(expandPath('~/.claude/.credentials.json'));
+  const hasClaudeAuth = getClaudeCodeAuthStatus().loggedIn;
 
   if (requestedBackend) {
     if (requestedBackend === 'codex-mcp') {
@@ -166,19 +167,23 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       }
       if (requestedBackend === 'claude') {
         console.error('\n⚠️  Requested backend "claude" is not authenticated.');
-        console.error(`   Expected auth: ${expandPath('~/.claude/.credentials.json')}`);
-        console.error('\n   Please authenticate Claude Code first:');
-        console.error('   https://claude.ai/code\n');
+        const authStatus = getClaudeCodeAuthStatus();
+        if (!authStatus.cliInstalled) {
+          console.error('   Claude Code CLI is not installed.');
+          console.error('   https://claude.ai/code\n');
+        } else {
+          console.error('   Run: claude auth login\n');
+        }
         process.exit(1);
       }
       console.error('\n⚠️  No authenticated backend found.');
       console.error(
         `   Codex (codex-mcp) auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
       );
-      console.error(`   Claude auth: ${expandPath('~/.claude/.credentials.json')}`);
+      console.error(`   Claude auth (legacy fallback): ${expandPath('~/.claude/.credentials.json')}`);
       console.error('\n   Please authenticate one backend first:');
       console.error('   - Codex (codex-mcp): codex login');
-      console.error('   - Claude: https://claude.ai/code\n');
+      console.error('   - Claude: claude auth login (or install from https://claude.ai/code)\n');
       process.exit(1);
     }
     selectedBackend = resolved;

@@ -4,7 +4,9 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) provides **11 tools** for decision tracking, scoped memory, semantic search, conversation ingestion, and session continuity.
+MAMA (Memory-Augmented MCP Assistant) provides **13 tools** for decision tracking, scoped memory, semantic search, conversation ingestion, contracts lookup, bounded case timelines, and session continuity.
+
+The current MCP server ships both the consolidated memory tools (`save`, `search`, `update`, `load_checkpoint`) and compatibility / operational helpers such as `search_decisions_and_contracts` and `case_timeline_range`.
 
 **Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
@@ -67,6 +69,26 @@ All tools return a standard MCP response structure.
 ---
 
 ## Tool Catalog
+
+### Current MCP Tool Surface
+
+The current `@jungjaehoon/mama-server` package exposes these 13 tools:
+
+| Tool                             | Purpose                                               |
+| -------------------------------- | ----------------------------------------------------- |
+| `save_decision`                  | Save a decision with optional scopes and `event_date` |
+| `recall_decision`                | Recall history for a topic or scoped memory           |
+| `suggest_decision`               | Semantic search for related decisions                 |
+| `list_decisions`                 | List recent decisions/checkpoints                     |
+| `update_outcome`                 | Update a decision outcome                             |
+| `search_narrative`               | Narrative search with link expansion                  |
+| `ingest_conversation`            | Ingest message history into memory                    |
+| `save_checkpoint`                | Save a session checkpoint                             |
+| `load_checkpoint`                | Resume the latest checkpoint                          |
+| `generate_quality_report`        | Emit quality/coverage metrics                         |
+| `get_restart_metrics`            | Read restart health metrics                           |
+| `search_decisions_and_contracts` | Joint decision + contract lookup                      |
+| `case_timeline_range`            | Read bounded case-first timeline windows              |
 
 ### 1. `save`
 
@@ -262,6 +284,49 @@ No parameters required.
   }
 }
 ```
+
+---
+
+### 5. `search_decisions_and_contracts`
+
+Search prior decisions together with related contract metadata used by hook/tooling flows.
+
+#### Input Schema
+
+| Field           | Type   | Required | Description                              |
+| --------------- | ------ | -------- | ---------------------------------------- |
+| `query`         | string | No       | Semantic search query                    |
+| `decisionLimit` | number | No       | Max decision hits to return              |
+| `contractLimit` | number | No       | Max contract hits to return              |
+| `filePath`      | string | No       | Narrow contract search to a file path    |
+| `toolName`      | string | No       | Narrow contract search to a tool context |
+
+#### Response Notes
+
+- Returns matched decisions plus related contract/tool metadata
+- Used by pre-tool and post-tool safety / routing flows
+- Best treated as an operator / integration surface rather than a human-facing memory tool
+
+---
+
+### 6. `case_timeline_range`
+
+Read a bounded timeline window for a case-first workflow.
+
+#### Input Schema
+
+| Field     | Type   | Required | Description                                             |
+| --------- | ------ | -------- | ------------------------------------------------------- |
+| `case_id` | string | Yes      | Requested case id (may resolve through canonical chain) |
+| `from`    | string | No       | Inclusive lower timestamp/date bound                    |
+| `to`      | string | No       | Inclusive upper timestamp/date bound                    |
+| `limit`   | number | No       | Maximum timeline items to return                        |
+
+#### Response Notes
+
+- Resolves canonical case chain before reading timeline rows
+- Returns bounded timeline items from case-first state, linked decisions, and connector events
+- Intended for reviewable case-first navigation rather than generic semantic search
 
 ---
 
@@ -968,5 +1033,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2026-02-22
-**Version:** 0.10.0
+**Last Updated:** 2026-04-20
+**Version:** 1.13.0
