@@ -188,7 +188,7 @@ mama init --skip-auth-check  # Skip API validation
 - Creates `mama-workspace/` directory
 - Generates default `config.yaml`
 - Initializes SQLite database
-- Validates Claude API key (unless skipped)
+- Validates available backend login state (`claude auth status` / Codex auth) unless skipped
 
 ---
 
@@ -217,6 +217,7 @@ mama setup --no-browser   # Don't open browser
 
 **What it does:**
 
+- Checks Claude Code login state with `claude auth status` (or legacy fallback)
 - Launches 9-phase onboarding wizard
 - Configures gateway integrations (Discord, Slack, Telegram)
 - Sets up personality and preferences

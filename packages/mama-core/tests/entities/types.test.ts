@@ -65,12 +65,12 @@ describe('Story E1.1: Canonical entity domain contracts', () => {
   });
 
   describe('AC #3: Type contracts preserve required provenance and scope fields', () => {
-    it('should require scope binding on entity nodes', () => {
+    it('should preserve nullable scope binding on entity nodes', () => {
       expectTypeOf<EntityNode>().toMatchTypeOf<{
         id: string;
         kind: EntityKind;
         preferred_label: string;
-        scope_kind: EntityScopeKind;
+        scope_kind: EntityScopeKind | null;
         scope_id: string | null;
       }>();
     });
@@ -87,7 +87,7 @@ describe('Story E1.1: Canonical entity domain contracts', () => {
         extractor_version: string;
         embedding_model_version: string | null;
         source_connector: string;
-        source_raw_db_ref: string | null;
+        source_locator: string | null;
         source_raw_record_id: string;
       }>();
     });

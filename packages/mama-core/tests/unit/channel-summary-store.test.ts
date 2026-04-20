@@ -34,12 +34,12 @@ describe('channel summary store', () => {
 
   it('should upsert and read a channel summary', async () => {
     await upsertChannelSummary({
-      channelKey: 'telegram:5551000001',
+      channelKey: 'telegram:tg_test_001',
       summaryMarkdown: '## Channel Summary\n- Current DB direction: PostgreSQL',
       deltaHash: 'db:postgres',
     });
 
-    const summary = await getChannelSummary('telegram:5551000001');
+    const summary = await getChannelSummary('telegram:tg_test_001');
     expect(summary?.summary_markdown).toContain('PostgreSQL');
     expect(summary?.delta_hash).toBe('db:postgres');
   });

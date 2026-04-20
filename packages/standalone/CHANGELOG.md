@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-04-20
+
+### Fixed
+
+- **Claude Code auth detection** — install, init, setup, run, and status flows now prefer `claude auth status` when detecting whether Claude Code is logged in, avoiding false "auth missing" warnings on newer CLI installs that do not persist `~/.claude/.credentials.json`
+- **Legacy auth fallback preserved** — older environments that still rely on `~/.claude/.credentials.json` continue to work as a fallback instead of breaking setup or status checks
+
+### Changed
+
+- **Postinstall guidance** — postinstall now distinguishes between "Claude CLI missing" and "Claude CLI installed but logged out", and shows `claude auth login` when re-authentication is the real fix
+- **Operator docs alignment** — standalone setup/troubleshooting/commands docs now describe the shipped Claude Code login flow and generated artifact expectations
+
 ## [0.10.2] - 2026-02-22
 
 ### Added
