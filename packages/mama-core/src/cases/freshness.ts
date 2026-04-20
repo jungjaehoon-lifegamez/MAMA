@@ -74,13 +74,23 @@ interface CaseFreshnessRow {
 const DEFAULT_DRIFT_THRESHOLD = 0.5;
 const TERMINAL_CASE_STATUSES = new Set(['merged', 'archived', 'split']);
 
+function parseRequiredTimestamp(value: string, errorMessage: string): number {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(errorMessage);
+  }
+  return parsed;
+}
+
 function normalizeNow(value?: string): string {
-  return value ?? new Date().toISOString();
+  if (value === undefined) {
+    return new Date().toISOString();
+  }
+  return new Date(parseRequiredTimestamp(value, 'invalid now timestamp')).toISOString();
 }
 
 function createdAtMs(value: string): number {
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : Date.now();
+  return parseRequiredTimestamp(value, 'invalid now timestamp');
 }
 
 function timestampMs(value: string | null | undefined): number | null {

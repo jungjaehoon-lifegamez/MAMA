@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { canonicalizeJSON } from '../../src/canonicalize.js';
@@ -203,6 +205,48 @@ describe('Phase 2 case correction write flows', () => {
     expect(typeof envelope.kid).toBe('string');
     expect(envelope.kid).toBe(envelope.payload.kid);
     expect(envelope.signature_hex).toMatch(/^[0-9a-f]+$/);
+  });
+
+  it('derives reconfirm token kid from explicitly prefixed secrets', () => {
+    insertCase({ case_id: 'case-prefixed-secret', status: 'active' });
+
+    const rawSecret = '0123456789abcdef0123456789abcdef';
+    const expectedKid = createHash('sha256')
+      .update(Buffer.from(rawSecret, 'utf8'))
+      .digest('hex')
+      .slice(0, 16);
+    const previous = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+    const prefixedSecrets = [
+      `utf8:${rawSecret}`,
+      `hex:${Buffer.from(rawSecret, 'utf8').toString('hex')}`,
+      `base64:${Buffer.from(rawSecret, 'utf8').toString('base64')}`,
+    ];
+
+    try {
+      for (const secret of prefixedSecrets) {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = secret;
+        const result = applyStatusCorrection({
+          case_id: 'case-prefixed-secret',
+          old_value_json: canonicalizeJSON('stale'),
+          new_value_json: canonicalizeJSON('blocked'),
+        });
+
+        expect(result.kind).toBe('requires_reconfirm');
+        if (result.kind !== 'requires_reconfirm') {
+          throw new Error('Expected reconfirm result');
+        }
+
+        const envelope = decodeToken(result.reconfirm_token);
+        expect(envelope.kid).toBe(expectedKid);
+        expect(envelope.payload.kid).toBe(expectedKid);
+      }
+    } finally {
+      if (previous === undefined) {
+        delete process.env.MAMA_RECONFIRM_TOKEN_SECRET;
+      } else {
+        process.env.MAMA_RECONFIRM_TOKEN_SECRET = previous;
+      }
+    }
   });
 
   it('canonicalizes old_value_json before deciding requires_reconfirm for membership targets', () => {

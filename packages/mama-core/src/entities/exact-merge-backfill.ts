@@ -62,6 +62,45 @@ function runAdapterTransaction<T>(
   return typeof result === 'function' ? (result as () => T)() : result;
 }
 
+function requireTransactionAdapter(adapter: Pick<ReturnType<typeof getAdapter>, 'transaction'>): {
+  transaction: <U>(fn: () => U) => U | (() => U);
+} {
+  if (!('transaction' in adapter) || typeof adapter.transaction !== 'function') {
+    throw new Error('exact-merge-backfill requires adapter.transaction');
+  }
+  return adapter as { transaction: <U>(fn: () => U) => U | (() => U) };
+}
+
+function mergeAndAdoptLineage(input: {
+  adapter: ReturnType<typeof getAdapter>;
+  source: ExactDuplicateRow;
+  target: ExactDuplicateRow;
+  groupKey: string;
+}): void {
+  const mergeResult = mergeEntityNodes({
+    adapter: input.adapter,
+    source_id: input.source.id,
+    target_id: input.target.id,
+    actor_type: 'system',
+    actor_id: 'exact-duplicate-backfill',
+    reason: 'Exact duplicate canonical backfill',
+    candidate_id: null,
+    evidence_json: JSON.stringify({
+      strategy: 'exact_duplicate_backfill',
+      group_key: input.groupKey,
+      normalized_form: input.source.normalized_form,
+      target_id: input.target.id,
+    }),
+  });
+  adoptLineageAfterMergeSync({
+    adapter: input.adapter,
+    source_entity_id: input.source.id,
+    target_entity_id: input.target.id,
+    candidate_id: null,
+    review_action_id: mergeResult.merge_action_id,
+  });
+}
+
 export async function backfillExactDuplicateCanonicals(
   opts: ExactMergeBackfillOptions = {}
 ): Promise<ExactMergeBackfillResult> {
@@ -140,59 +179,17 @@ export async function backfillExactDuplicateCanonicals(
     }
 
     try {
-      if ('transaction' in adapter && typeof adapter.transaction === 'function') {
-        runAdapterTransaction(adapter, () => {
-          for (const source of sources) {
-            const mergeResult = mergeEntityNodes({
-              adapter,
-              source_id: source.id,
-              target_id: target.id,
-              actor_type: 'system',
-              actor_id: 'exact-duplicate-backfill',
-              reason: 'Exact duplicate canonical backfill',
-              candidate_id: null,
-              evidence_json: JSON.stringify({
-                strategy: 'exact_duplicate_backfill',
-                group_key: groupKey,
-                normalized_form: source.normalized_form,
-                target_id: target.id,
-              }),
-            });
-            adoptLineageAfterMergeSync({
-              adapter,
-              source_entity_id: source.id,
-              target_entity_id: target.id,
-              candidate_id: null,
-              review_action_id: mergeResult.merge_action_id,
-            });
-          }
-        });
-      } else {
+      const transactionalAdapter = requireTransactionAdapter(adapter);
+      runAdapterTransaction(transactionalAdapter, () => {
         for (const source of sources) {
-          const mergeResult = mergeEntityNodes({
+          mergeAndAdoptLineage({
             adapter,
-            source_id: source.id,
-            target_id: target.id,
-            actor_type: 'system',
-            actor_id: 'exact-duplicate-backfill',
-            reason: 'Exact duplicate canonical backfill',
-            candidate_id: null,
-            evidence_json: JSON.stringify({
-              strategy: 'exact_duplicate_backfill',
-              group_key: groupKey,
-              normalized_form: source.normalized_form,
-              target_id: target.id,
-            }),
-          });
-          adoptLineageAfterMergeSync({
-            adapter,
-            source_entity_id: source.id,
-            target_entity_id: target.id,
-            candidate_id: null,
-            review_action_id: mergeResult.merge_action_id,
+            source,
+            target,
+            groupKey,
           });
         }
-      }
+      });
       merged += sources.length;
     } catch (error) {
       if (error instanceof EntityMergeError) {
