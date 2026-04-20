@@ -6,7 +6,7 @@
 
 Your knowledge is everywhere — Slack threads, email chains, code reviews, meeting notes, spreadsheets, Telegram messages. No human can track all of it. Important decisions get buried. Context gets lost between tools. When you need to make a decision, the information that would help is scattered across ten different apps and three months of history.
 
-This isn't a memory problem. It's an intelligence problem. You don't just need to *store* information — you need something that reads everything, connects the dots, identifies what matters, and tells you what you're missing.
+This isn't a memory problem. It's an intelligence problem. You don't just need to _store_ information — you need something that reads everything, connects the dots, identifies what matters, and tells you what you're missing.
 
 ## What MAMA OS Does
 
@@ -62,7 +62,7 @@ See the full [Security Guide](../../docs/guides/security.md) for Cloudflare Zero
 
 ```bash
 # 1. Authenticate a backend CLI (one-time)
-claude    # or: codex login
+claude auth login   # or: codex login
 
 # 2. Install and start
 npx @jungjaehoon/mama-os init
@@ -72,7 +72,7 @@ mama start
 open http://localhost:3847
 ```
 
-**Prerequisites:** Node.js >= 18, one authenticated backend CLI (Claude or Codex), 500MB disk space.
+**Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude or Codex), 500MB disk space.
 
 ## Connectors (15)
 
@@ -83,22 +83,22 @@ mama connector add slack      # Activate + auth guide
 mama connector list           # Status of all connectors
 ```
 
-| Connector | Prerequisites | Config |
-|-----------|--------------|--------|
-| **Slack** | Bot Token (api.slack.com → OAuth scopes) | `bot_token`, `app_token` |
-| **Discord** | Bot Token (discord.com/developers → MESSAGE CONTENT INTENT) | `token`, `default_channel_id` |
-| **Telegram** | Bot Token (@BotFather) | `token`, `allowed_chat_ids` |
-| **Chatwork** | API Token (account settings) | `api_token`, `room_ids` |
-| **iMessage** | macOS only (reads local chat.db) | No config needed |
-| **Gmail** | [gws CLI](https://github.com/nicholasgasior/gws) installed + Google OAuth | `gws` in PATH |
-| **Calendar** | gws CLI installed + Google OAuth | `gws` in PATH |
-| **Drive** | gws CLI installed + Google OAuth | `gws` in PATH |
-| **Sheets** | gws CLI installed + Google OAuth | `gws` in PATH, `spreadsheet_ids` |
-| **Notion** | Integration Token (notion.so/my-integrations) | `api_token`, `database_ids` |
-| **Obsidian** | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled | `vault_path` in config.yaml |
-| **Trello** | API Key + Token (trello.com/app-key) | `api_key`, `token`, `board_ids` |
-| **Kagemusha** | Kagemusha running locally | Reads `kagemusha.db` directly |
-| **Claude Code** | Claude Code plugin installed | Automatic via hooks |
+| Connector       | Prerequisites                                                                                                                    | Config                           |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| **Slack**       | Bot Token (api.slack.com → OAuth scopes)                                                                                         | `bot_token`, `app_token`         |
+| **Discord**     | Bot Token (discord.com/developers → MESSAGE CONTENT INTENT)                                                                      | `token`, `default_channel_id`    |
+| **Telegram**    | Bot Token (@BotFather)                                                                                                           | `token`, `allowed_chat_ids`      |
+| **Chatwork**    | API Token (account settings)                                                                                                     | `api_token`, `room_ids`          |
+| **iMessage**    | macOS only (reads local chat.db)                                                                                                 | No config needed                 |
+| **Gmail**       | [gws CLI](https://github.com/nicholasgasior/gws) installed + Google OAuth                                                        | `gws` in PATH                    |
+| **Calendar**    | gws CLI installed + Google OAuth                                                                                                 | `gws` in PATH                    |
+| **Drive**       | gws CLI installed + Google OAuth                                                                                                 | `gws` in PATH                    |
+| **Sheets**      | gws CLI installed + Google OAuth                                                                                                 | `gws` in PATH, `spreadsheet_ids` |
+| **Notion**      | Integration Token (notion.so/my-integrations)                                                                                    | `api_token`, `database_ids`      |
+| **Obsidian**    | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled | `vault_path` in config.yaml      |
+| **Trello**      | API Key + Token (trello.com/app-key)                                                                                             | `api_key`, `token`, `board_ids`  |
+| **Kagemusha**   | Kagemusha running locally                                                                                                        | Reads `kagemusha.db` directly    |
+| **Claude Code** | Claude Code plugin installed                                                                                                     | Automatic via hooks              |
 
 **Google Workspace connectors** (Gmail, Calendar, Drive, Sheets) require the [gws CLI](https://github.com/nicholasgasior/gws) — a Google Workspace command-line tool. Install it, run `gws auth` once for OAuth, then MAMA polls via CLI.
 
@@ -108,12 +108,12 @@ Each connector classifies its source (truth / hub / spoke / reference) for the 3
 
 MAMA OS runs specialized agents for knowledge management — not coding (that's what Claude Code does natively).
 
-| Agent | Role | Requires |
-|-------|------|----------|
-| **Conductor** | Orchestrates other agents, handles user chat | — |
-| **Dashboard Agent** | Generates project briefings from connected sources | — |
-| **Wiki Agent** | Compiles knowledge into Obsidian vault | [Obsidian](https://obsidian.md) + [Terminal plugin](https://github.com/polyipseity/obsidian-terminal) |
-| **Memory Agent** | Extracts decisions from conversations automatically | — |
+| Agent               | Role                                                | Requires                                                                                              |
+| ------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| **Conductor**       | Orchestrates other agents, handles user chat        | —                                                                                                     |
+| **Dashboard Agent** | Generates project briefings from connected sources  | —                                                                                                     |
+| **Wiki Agent**      | Compiles knowledge into Obsidian vault              | [Obsidian](https://obsidian.md) + [Terminal plugin](https://github.com/polyipseity/obsidian-terminal) |
+| **Memory Agent**    | Extracts decisions from conversations automatically | —                                                                                                     |
 
 Agents delegate via `delegate()` with skill injection and automatic retry. Configure in `~/.mama/config.yaml`.
 
@@ -121,14 +121,14 @@ Agents delegate via `delegate()` with skill injection and automatic retry. Confi
 
 Web UI at `http://localhost:3847`. PWA-enabled for mobile (add to home screen).
 
-| Tab | What it shows |
-|-----|--------------|
-| **Dashboard** | Agent activity, memory stats, system health |
-| **Feed** | Real-time stream from all connected sources |
-| **Wiki** | Knowledge base (syncs with Obsidian vault) |
-| **Memory** | Interactive reasoning graph (1000+ nodes), search, export |
-| **Logs** | Daemon logs with filtering, pinning, stats, WebSocket mode |
-| **Settings** | Connectors, gateways, agents, cron, token budget |
+| Tab           | What it shows                                              |
+| ------------- | ---------------------------------------------------------- |
+| **Dashboard** | Agent activity, memory stats, system health                |
+| **Feed**      | Real-time stream from all connected sources                |
+| **Wiki**      | Knowledge base (syncs with Obsidian vault)                 |
+| **Memory**    | Interactive reasoning graph (1000+ nodes), search, export  |
+| **Logs**      | Daemon logs with filtering, pinning, stats, WebSocket mode |
+| **Settings**  | Connectors, gateways, agents, cron, token budget           |
 
 Floating chat panel on every tab — voice input, TTS, slash commands.
 
@@ -157,32 +157,32 @@ Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
 
 ## CLI
 
-| Command | Description |
-|---------|-------------|
-| `mama init` | Initialize workspace |
-| `mama setup` | Interactive setup wizard |
-| `mama start` | Start daemon |
-| `mama stop` | Stop daemon |
-| `mama status` | Check status |
-| `mama connector <add\|remove\|list\|status>` | Manage connectors |
+| Command                                      | Description              |
+| -------------------------------------------- | ------------------------ |
+| `mama init`                                  | Initialize workspace     |
+| `mama setup`                                 | Interactive setup wizard |
+| `mama start`                                 | Start daemon             |
+| `mama stop`                                  | Stop daemon              |
+| `mama status`                                | Check status             |
+| `mama connector <add\|remove\|list\|status>` | Manage connectors        |
 
 ## Configuration
 
 Main config: `~/.mama/config.yaml`
 
-| Variable | Default |
-|----------|---------|
-| `MAMA_DB_PATH` | `~/.mama/mama-memory.db` |
-| `MAMA_HTTP_PORT` | `3847` |
-| `MAMA_WORKSPACE` | `~/.mama/workspace` |
+| Variable         | Default                  |
+| ---------------- | ------------------------ |
+| `MAMA_DB_PATH`   | `~/.mama/mama-memory.db` |
+| `MAMA_HTTP_PORT` | `3847`                   |
+| `MAMA_WORKSPACE` | `~/.mama/workspace`      |
 
 ## Related Packages
 
-| Package | Purpose |
-|---------|---------|
-| **@jungjaehoon/mama-os** | Always-on AI runtime (this package) |
-| **@jungjaehoon/mama-server** | MCP server for Claude Desktop |
-| **@jungjaehoon/mama-core** | Shared memory engine |
+| Package                      | Purpose                             |
+| ---------------------------- | ----------------------------------- |
+| **@jungjaehoon/mama-os**     | Always-on AI runtime (this package) |
+| **@jungjaehoon/mama-server** | MCP server for Claude Desktop       |
+| **@jungjaehoon/mama-core**   | Shared memory engine                |
 
 ## Development
 
@@ -202,4 +202,4 @@ MIT
 
 ---
 
-**Last Updated:** 2026-04-10
+**Last Updated:** 2026-04-20

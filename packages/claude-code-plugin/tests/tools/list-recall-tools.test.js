@@ -17,6 +17,7 @@ import { initDB, getAdapter, closeDB } from '@jungjaehoon/mama-core/db-manager';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import crypto from 'crypto';
 
 // Test database path (isolated from production)
 const TEST_DB_PATH = path.join(
@@ -32,6 +33,18 @@ const mockContext = {
     error: () => {},
   },
 };
+
+function insertSeedDecision(adapter, { id, topic, decision, reasoning, createdAt }) {
+  adapter
+    .prepare(
+      `
+        INSERT INTO decisions (
+          id, topic, decision, reasoning, confidence, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(id, topic, decision, reasoning, 0.5, createdAt, createdAt);
+}
 
 describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-server)', () => {
   beforeAll(async () => {
@@ -320,17 +333,19 @@ describe('Story M4.1: list_decisions and recall_decision Tools (ported from mcp-
 
   describe('AC #6: Query performance < 100ms (p95)', () => {
     it('should complete list_decisions in < 100ms (p95)', async () => {
-      // Create 100 decisions for realistic test
+      // Seed directly so the measurement reflects list_decisions latency,
+      // not save-time auto-search/embedding work.
+      const adapter = getAdapter();
+      const now = Date.now();
+
       for (let i = 0; i < 100; i++) {
-        await saveDecisionTool.handler(
-          {
-            topic: `perf_topic_${i}`,
-            decision: `Performance test decision ${i}`,
-            reasoning: `Testing latency with decision ${i}`,
-            confidence: 0.5,
-          },
-          mockContext
-        );
+        insertSeedDecision(adapter, {
+          id: `decision_perf_topic_${i}_${crypto.randomUUID().slice(0, 8)}`,
+          topic: `perf_topic_${i}`,
+          decision: `Performance test decision ${i}`,
+          reasoning: `Testing latency with decision ${i}`,
+          createdAt: now + i,
+        });
       }
 
       // Measure latency across 20 calls (p95 = 19th result)

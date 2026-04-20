@@ -75,23 +75,25 @@ Any MCP-compatible client can use MAMA with:
 npx -y @jungjaehoon/mama-server
 ```
 
-## Available Tools (v1.9)
+## Available Tools (v1.13)
 
-The MCP server exposes 11 tools:
+The MCP server exposes 13 tools:
 
-| Tool                      | Description                                                             |
-| ------------------------- | ----------------------------------------------------------------------- |
-| `save_decision`           | Save decision with optional scopes and event_date for temporal tracking |
-| `recall_decision`         | Recall decision history by topic, scope-filtered via recallMemory v2    |
-| `suggest_decision`        | Semantic search for relevant past decisions, scope-aware                |
-| `list_decisions`          | List recent decisions, scope-filterable                                 |
-| `update_outcome`          | Update decision outcome (case-insensitive: success/failed/partial)      |
-| `search_narrative`        | Narrative search with link expansion (depth 0-2)                        |
-| `ingest_conversation`     | Ingest conversation messages into memory with optional LLM extraction   |
-| `save_checkpoint`         | Save session checkpoint for later resumption                            |
-| `load_checkpoint`         | Resume previous session                                                 |
-| `generate_quality_report` | Quality metrics and observability report                                |
-| `get_restart_metrics`     | Restart success rate and latency monitoring                             |
+| Tool                             | Description                                                             |
+| -------------------------------- | ----------------------------------------------------------------------- |
+| `save_decision`                  | Save decision with optional scopes and event_date for temporal tracking |
+| `recall_decision`                | Recall decision history by topic, scope-filtered via recallMemory v2    |
+| `suggest_decision`               | Semantic search for relevant past decisions, scope-aware                |
+| `list_decisions`                 | List recent decisions, scope-filterable                                 |
+| `update_outcome`                 | Update decision outcome (case-insensitive: success/failed/partial)      |
+| `search_narrative`               | Narrative search with link expansion (depth 0-2)                        |
+| `ingest_conversation`            | Ingest conversation messages into memory with optional LLM extraction   |
+| `save_checkpoint`                | Save session checkpoint for later resumption                            |
+| `load_checkpoint`                | Resume previous session                                                 |
+| `generate_quality_report`        | Quality metrics and observability report                                |
+| `get_restart_metrics`            | Restart success rate and latency monitoring                             |
+| `search_decisions_and_contracts` | Decision + contract lookup for tooling and hook pipelines               |
+| `case_timeline_range`            | Read bounded case timeline windows for case-first workflows             |
 
 ### Edge Types
 
@@ -261,4 +263,4 @@ MAMA was inspired by [mem0](https://github.com/mem0ai/mem0) (Apache 2.0). While 
 ---
 
 **Author:** SpineLift Team
-**Version:** 1.9.0
+**Version:** 1.13.0

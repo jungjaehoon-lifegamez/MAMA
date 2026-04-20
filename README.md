@@ -57,7 +57,7 @@ This is the provider-sanctioned execution method. No API keys to manage, no toke
 
 ```bash
 # Already have Claude Code?
-claude --version   # If this works, you're ready
+claude auth status # If this shows loggedIn=true, you're ready
 mama start         # MAMA uses your existing authentication
 ```
 
@@ -133,9 +133,9 @@ MAMA outperforms SuperMemory while running **entirely locally** with open-source
 
 | Package                                          | Version | Description                                              |
 | ------------------------------------------------ | ------- | -------------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.19.0  | Always-on runtime — connectors, knowledge agents, viewer |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.12.1  | MCP server for Claude Desktop/Code                       |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.4.2   | Core library (memory engine, embeddings, DB)             |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.19.1  | Always-on runtime — connectors, knowledge agents, viewer |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.13.0  | MCP server for Claude Desktop/Code                       |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.5.0   | Core library (memory engine, embeddings, DB)             |
 | [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)                         |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework                  |
 
@@ -154,6 +154,7 @@ MAMA outperforms SuperMemory while running **entirely locally** with open-source
 ### MAMA OS (full runtime)
 
 ```bash
+claude auth login   # or: codex login
 npx @jungjaehoon/mama-os init
 mama start   # starts daemon at localhost:3847
 ```
@@ -162,7 +163,7 @@ Web viewer at `http://localhost:3847/viewer`. The current Viewer ships `Dashboar
 `Feed`, `Wiki`, `Agents`, `Logs`, and `Settings`; chat opens from the floating shell instead of a
 dedicated tab. Connects to Discord, Slack, Telegram.
 
-> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.
+> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.13.0.
 
 ### MCP Server (Claude Desktop)
 
@@ -218,6 +219,8 @@ pnpm test     # 2800+ tests across all packages
 ```
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
+
+_Last updated: 2026-04-20_
 
 ## License
 
