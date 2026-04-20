@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
 import { queryCanonicalEntities } from '../../src/entities/recall-bridge.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
+import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
+import { upsertEntityObservation } from '../../src/entities/store.js';
 
 describe('Story E1.8: Canonical entity recall bridge', () => {
   let testDbPath = '';
@@ -178,5 +180,64 @@ describe('Story E1.8: Canonical entity recall bridge', () => {
 
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe('entity_project_alpha');
+  });
+
+  it('returns canonical entities through active lineage observation surface forms', async () => {
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `INSERT INTO entity_nodes (id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        'entity_project_alpha_observation',
+        'project',
+        'Project Alpha',
+        'active',
+        'project',
+        'scope-alpha',
+        null,
+        1710000000000,
+        1710000001000
+      );
+    await upsertEntityObservation({
+      id: 'obs_project_alpha_ko_bridge',
+      observation_type: 'channel',
+      entity_kind_hint: 'project',
+      surface_form: '\uD504\uB85C\uC81D\uD2B8 \uC54C\uD30C',
+      normalized_form: '\uD504\uB85C\uC81D\uD2B8 \uC54C\uD30C',
+      lang: 'ko',
+      script: 'Hang',
+      context_summary: 'alpha kickoff',
+      related_surface_forms: ['Project Alpha'],
+      timestamp_observed: 1710000000000,
+      scope_kind: 'project',
+      scope_id: 'scope-alpha',
+      extractor_version: 'history-extractor@v1',
+      embedding_model_version: 'multilingual-e5-large',
+      source_connector: 'slack',
+      source_locator: '/tmp/slack/raw.db',
+      source_raw_record_id: 'raw_bridge_alpha',
+    });
+    await appendEntityLineageLink({
+      canonical_entity_id: 'entity_project_alpha_observation',
+      entity_observation_id: 'obs_project_alpha_ko_bridge',
+      source_entity_id: null,
+      contribution_kind: 'seed',
+      run_id: null,
+      candidate_id: null,
+      review_action_id: null,
+      capture_mode: 'direct',
+      confidence: 1,
+    });
+
+    const rows = await queryCanonicalEntities(
+      '\uC54C\uD30C',
+      [{ kind: 'project', id: 'scope-alpha' }],
+      { limit: 10 }
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe('entity_project_alpha_observation');
   });
 });

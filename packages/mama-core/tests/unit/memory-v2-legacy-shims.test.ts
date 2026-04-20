@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, vi, beforeEach } from 'vitest';
 import fs from 'node:fs';
+import { SEARCH_RANKER_FEATURE_SET_VERSION } from '../../src/search/ranker-features.js';
 
 const TEST_DB = '/tmp/test-memory-v2-legacy-shims.db';
 
@@ -52,6 +53,7 @@ describe('legacy shims', () => {
   });
 
   beforeEach(() => {
+    vi.resetModules();
     saveMemoryMock.mockClear();
     recallMemoryMock.mockClear();
   });
@@ -88,5 +90,311 @@ describe('legacy shims', () => {
 
     expect(recallMemoryMock).toHaveBeenCalled();
     expect(result).toBeTruthy();
+  });
+
+  it('should expose suggest results without inflating similarity from rank order fallback', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [
+        {
+          id: 'shim_memory_ranked',
+          topic: 'legacy_save_contract',
+          summary: 'Keep legacy save alive',
+          details: 'Migration shim',
+          confidence: 1,
+          status: 'active',
+          kind: 'decision',
+          scopes: [],
+          source: { package: 'mama-core', source_type: 'test' },
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          event_date: '2026-04-15',
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: { query: 'legacy save', scope_order: ['project'], retrieval_sources: ['sql_like'] },
+    });
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('legacy save', { limit: 5 });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.similarity).toBeNull();
+    expect(result.results[0]?.retrieval_score).toBe(1);
+    expect(result.results[0]?.event_date).toBe('2026-04-15');
+  });
+
+  it('should preserve memory source_type when mapping recallMemory fallback rows', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [
+        {
+          id: 'shim_memory_fact',
+          topic: 'legacy_fact_contract',
+          summary: 'Keep source type intact',
+          details: 'Fact memory',
+          confidence: 0.7,
+          status: 'active',
+          kind: 'fact',
+          scopes: [],
+          source: { package: 'mama-core', source_type: 'entity_canonical' },
+          created_at: Date.now(),
+          updated_at: Date.now(),
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: { query: 'legacy fact', scope_order: ['project'], retrieval_sources: ['sql_like'] },
+    });
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('legacy fact', { limit: 5 });
+
+    expect(result.results[0]?.source_type).toBe('fact');
+  });
+
+  it('should not raise a save warning from retrieval-rank normalization alone', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [
+        {
+          id: 'shim_memory_warning',
+          topic: 'legacy_save_warning_contract',
+          summary: 'Potential duplicate by rank',
+          details: 'Ranked first by recallMemory',
+          confidence: 1,
+          status: 'active',
+          kind: 'decision',
+          scopes: [],
+          source: { package: 'mama-core', source_type: 'decision' },
+          created_at: Date.now(),
+          updated_at: Date.now(),
+          event_date: '2026-04-14',
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: {
+        query: 'legacy_save_warning_contract',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
+    });
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.save({
+      topic: 'legacy_save_warning_contract',
+      decision: 'Keep rank and similarity separate',
+      reasoning: 'Regression guard for save warning',
+    });
+
+    expect(result.similar_decisions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'shim_memory_warning',
+          similarity: null,
+          retrieval_score: 1,
+          event_date: '2026-04-14',
+        }),
+      ])
+    );
+    expect(result.warning).toBeUndefined();
+  });
+
+  it('should rerank a larger memory candidate pool before truncating to the requested limit', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      fused_hits: [
+        {
+          source_type: 'wiki_page',
+          source_id: 'cases/base-top.md',
+          fused_rank_score: 0.55,
+          page_type: 'case',
+          case_id: 'case-base-top',
+          record: {
+            title: 'Base Top Case',
+            content: 'This is first before rerank',
+            confidence: 'high',
+            created_at: Date.now(),
+          },
+        },
+        {
+          source_type: 'decision',
+          source_id: 'promoted-second',
+          fused_rank_score: 0.5,
+          record: {
+            topic: 'promoted_second',
+            summary: 'Promoted second result',
+            details: 'This should win after rerank',
+            confidence: 0.5,
+            created_at: Date.now(),
+          },
+        },
+      ],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: {
+        query: 'rerank me',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
+    });
+
+    const { initDB, getAdapter } = await import('../../src/db-manager.js');
+    await initDB();
+    getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
+    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO case_truth (
+            case_id, title, status, created_at, updated_at
+          ) VALUES (?, ?, 'active', ?, ?)
+        `
+      )
+      .run(
+        'case-base-top',
+        'Base Top Case',
+        '2026-04-18T00:00:00.000Z',
+        '2026-04-18T00:00:00.000Z'
+      );
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO ranker_model_versions (
+            model_id, model_version, feature_set_version, coefficients_json, metrics_json,
+            training_window_json, baseline_metrics_json, quality_gate_status, trained_at,
+            trained_by, active
+          )
+          VALUES (
+            'ranker-active', 'v1', ?, ?, '{}', '{}', '{}', 'passed',
+            '2026-04-18T00:00:00.000Z', 'test', 1
+          )
+        `
+      )
+      .run(
+        SEARCH_RANKER_FEATURE_SET_VERSION,
+        JSON.stringify({
+          coefficients: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          intercept: 0,
+          question_type_weights: {
+            correction: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            artifact: [0, 0, 0, 0, 0, -4, -4, -4, 4, -4, 0, 0, 0, 0, 0, 0, 0],
+            timeline: [0, 0, 0, 0, 0, -4, -4, -4, -4, 4, 0, 0, 0, 0, 0, 0, 0],
+            status: [0, 0, 0, 0, 0, -4, -4, 4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            decision_reason: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            how_to: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            unknown: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          },
+          training_rows_count: 10,
+        })
+      );
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('rerank me', { limit: 1, rerankWithLearned: true });
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.id).toBe('promoted-second');
+    expect(result.meta?.ranker?.applied).toBe(true);
+  });
+
+  it('should bound graph_expansion metadata to the returned results after reranking', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      fused_hits: [
+        {
+          source_type: 'wiki_page',
+          source_id: 'cases/base-top.md',
+          fused_rank_score: 0.55,
+          page_type: 'case',
+          case_id: 'case-base-top',
+          record: {
+            title: 'Base Top Case',
+            content: 'This is first before rerank',
+            confidence: 'high',
+            created_at: Date.now(),
+          },
+        },
+        {
+          source_type: 'decision',
+          source_id: 'promoted-second',
+          fused_rank_score: 0.5,
+          record: {
+            topic: 'promoted_second',
+            summary: 'Promoted second result',
+            details: 'This should win after rerank',
+            confidence: 0.5,
+            created_at: Date.now(),
+          },
+        },
+      ],
+      graph_context: {
+        primary: new Array(8).fill({ id: 'p' }),
+        expanded: new Array(5).fill({ id: 'e' }),
+        edges: [],
+      },
+      search_meta: {
+        query: 'rerank me',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
+    });
+
+    const { initDB, getAdapter } = await import('../../src/db-manager.js');
+    await initDB();
+    getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
+    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO case_truth (
+            case_id, title, status, created_at, updated_at
+          ) VALUES (?, ?, 'active', ?, ?)
+        `
+      )
+      .run(
+        'case-base-top',
+        'Base Top Case',
+        '2026-04-18T00:00:00.000Z',
+        '2026-04-18T00:00:00.000Z'
+      );
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO ranker_model_versions (
+            model_id, model_version, feature_set_version, coefficients_json, metrics_json,
+            training_window_json, baseline_metrics_json, quality_gate_status, trained_at,
+            trained_by, active
+          )
+          VALUES (
+            'ranker-active', 'v1', ?, ?, '{}', '{}', '{}', 'passed',
+            '2026-04-18T00:00:00.000Z', 'test', 1
+          )
+        `
+      )
+      .run(
+        SEARCH_RANKER_FEATURE_SET_VERSION,
+        JSON.stringify({
+          coefficients: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          intercept: 0,
+          question_type_weights: {
+            correction: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            artifact: [0, 0, 0, 0, 0, -4, -4, -4, 4, -4, 0, 0, 0, 0, 0, 0, 0],
+            timeline: [0, 0, 0, 0, 0, -4, -4, -4, -4, 4, 0, 0, 0, 0, 0, 0, 0],
+            status: [0, 0, 0, 0, 0, -4, -4, 4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            decision_reason: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            how_to: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+            unknown: [0, 0, 0, 0, 0, 4, -4, -4, -4, -4, 0, 0, 0, 0, 0, 0, 0],
+          },
+          training_rows_count: 10,
+        })
+      );
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('rerank me', { limit: 1, rerankWithLearned: true });
+
+    expect(result.meta?.graph_expansion?.total_results).toBe(1);
+    expect(result.meta?.graph_expansion?.primary_count).toBe(1);
+    expect(result.meta?.graph_expansion?.expanded_count).toBe(0);
+    expect(result.meta?.graph_expansion?.sources?.primary).toBe(1);
   });
 });

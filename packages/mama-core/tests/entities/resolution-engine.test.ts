@@ -31,7 +31,7 @@ function makeObservation(
     extractor_version: 'history-extractor@v1',
     embedding_model_version: 'multilingual-e5-large',
     source_connector: 'slack',
-    source_raw_db_ref: '~/.mama/connectors/slack/raw.db',
+    source_locator: '~/.mama/connectors/slack/raw.db',
     source_raw_record_id: `raw_${id}`,
     created_at: 1710000000000,
     ...overrides,

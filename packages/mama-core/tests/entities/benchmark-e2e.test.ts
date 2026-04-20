@@ -88,7 +88,7 @@ function observationFor(group: GoldGroup, alias: GoldAlias, index: number): Enti
     extractor_version: 'history-extractor@v1',
     embedding_model_version: 'multilingual-e5-large',
     source_connector: 'synthetic',
-    source_raw_db_ref: '~/.mama/tests/entities/fixtures',
+    source_locator: '~/.mama/tests/entities/fixtures',
     source_raw_record_id: `${group.canonical_id}_${index}`,
     created_at: 1_710_000_000_000 + index,
   };

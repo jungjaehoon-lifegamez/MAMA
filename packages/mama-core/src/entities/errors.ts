@@ -126,3 +126,16 @@ export class AuditRunInProgressError extends EntityError {
     });
   }
 }
+
+export class CaseMergeChainCycleError extends EntityError {
+  readonly code = 'case.merge_chain_cycle';
+  readonly doc_section = '#case-merge-chain-cycle';
+
+  constructor(context: { case_id: string; chain: string[]; detected_at_depth: number }) {
+    super({
+      message: `Case merge chain cycle detected at depth ${context.detected_at_depth} starting from case_id=${context.case_id}. Chain=${context.chain.join(' -> ')}.`,
+      context,
+      hint: 'Inspect case_truth.canonical_case_id links and remove the cycle before retrying.',
+    });
+  }
+}

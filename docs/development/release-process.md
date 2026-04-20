@@ -17,8 +17,10 @@ Run this checklist in order for every release candidate.
 2. Align release-facing docs
    - Update [README](../../README.md)
    - Update [CHANGELOG](../../CHANGELOG.md)
+   - Update operator/install docs when auth detection, setup flow, or CLI UX changed
    - Update roadmap/design docs for the affected release train
    - Remove or archive stale docs for deleted surfaces
+   - Keep local-only planning artifacts out of release commits (`docs/superpowers/`, `.sisyphus/`)
 
 3. Verify versions
    - Check package versions in workspace `package.json` files
@@ -32,6 +34,7 @@ Run this checklist in order for every release candidate.
 5. Prepare release commit
    - Commit doc alignment, generated files, and code together when they describe the same release slice
    - Keep generated artifacts in sync with the committed source
+   - Verify generated standalone artifacts such as `packages/standalone/src/agent/gateway-tools.md`
 
 6. Publish
    - Bump versions intentionally
@@ -61,6 +64,7 @@ A release is not ready until these are true:
 - CHANGELOG contains an unreleased/release entry for the exact changes being shipped
 - Roadmap docs distinguish shipped foundation work from next-branch architecture
 - Deleted surfaces are no longer described as active features
+- Local-only superpower planning/review docs are ignored unless intentionally promoted into public docs
 
 ---
 
@@ -94,4 +98,4 @@ pnpm -r exec npm version <patch|minor|major>
 
 ---
 
-**Last Updated:** 2026-04-12
+**Last Updated:** 2026-04-20
