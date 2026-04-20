@@ -16,6 +16,7 @@
  * - generate_quality_report: Generate coverage and quality metrics report ✅
  * - get_restart_metrics: Get restart success rate and latency metrics ✅
  * - ingest_conversation: Ingest conversation messages into memory ✅
+ * - case_timeline_range: Read bounded case timeline ranges ✅
  *
  * @module tools
  */
@@ -30,6 +31,7 @@ const { searchNarrativeTool } = require('./search-narrative.js');
 const { generateQualityReportTool, getRestartMetricsTool } = require('./quality-metrics-tools.js');
 const { ingestConversationTool } = require('./ingest-conversation.js');
 const { searchDecisionsAndContractsTool } = require('./search-decisions-and-contracts.js');
+const { caseTimelineRangeTool } = require('./case-timeline-range.js');
 
 /**
  * Create all MAMA memory tools
@@ -52,6 +54,7 @@ function createMemoryTools() {
     get_restart_metrics: getRestartMetricsTool,
     ingest_conversation: ingestConversationTool,
     search_decisions_and_contracts: searchDecisionsAndContractsTool,
+    case_timeline_range: caseTimelineRangeTool,
   };
 }
 
@@ -70,4 +73,5 @@ module.exports = {
   getRestartMetricsTool,
   ingestConversationTool,
   searchDecisionsAndContractsTool,
+  caseTimelineRangeTool,
 };

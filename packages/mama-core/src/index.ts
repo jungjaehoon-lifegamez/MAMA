@@ -8,7 +8,6 @@
  * @version 1.0.0
  */
 
-// Embeddings
 export {
   generateEmbedding,
   generateEnhancedEmbedding,
@@ -19,10 +18,8 @@ export {
   MODEL_NAME,
 } from './embeddings.js';
 
-// Embedding cache
 export { EmbeddingCache } from './embedding-cache.js';
 
-// Embedding client
 export {
   getEmbeddingFromServer,
   getServerStatus,
@@ -34,7 +31,6 @@ export {
   type ServerStatus,
 } from './embedding-client.js';
 
-// Database manager
 export {
   initDB,
   getDB,
@@ -61,7 +57,6 @@ export {
   type DecisionInput,
 } from './db-manager.js';
 
-// Database adapter
 export {
   createAdapter,
   DatabaseAdapter,
@@ -72,7 +67,6 @@ export {
   type RunResult,
 } from './db-adapter/index.js';
 
-// Memory store
 export {
   getSessionDecisions,
   incrementUsageSuccess,
@@ -85,11 +79,9 @@ export {
   DEFAULT_DB_PATH,
 } from './memory-store.js';
 
-// MAMA API
 import mama from './mama-api.js';
 export { mama };
 
-// Memory V2
 export {
   MEMORY_SCOPE_KINDS,
   MEMORY_KINDS,
@@ -102,6 +94,7 @@ export {
   type MemoryEdgeType,
   type MemoryScopeRef,
   type MemoryRecord,
+  type MemorySearchResultHit,
   type MemoryEdge,
   type ProfileSnapshot,
   type RecallBundle,
@@ -125,16 +118,34 @@ export {
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
-export { listRecentMemoryEvents } from './memory/event-store.js';
+export { appendMemoryEvent, listRecentMemoryEvents } from './memory/event-store.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';
 export * from './entities/normalization.js';
 export * from './entities/projection.js';
 export * from './entities/recall-bridge.js';
+export * from './entities/read-identity.js';
 export * from './entities/audit-metrics.js';
+export * from './entities/provenance-query.js';
+export * from './entities/lineage-store.js';
+export * from './entities/lineage-backfill.js';
+export * from './entities/exact-merge-backfill.js';
+export * from './entities/entity-search.js';
+export * from './entities/entity-list.js';
+export * from './entities/entity-orphan-list.js';
+export * from './entities/entity-impact.js';
+export * from './entities/rollback-preview.js';
+export * from './entities/source-locator.js';
+export * from './entities/policy-types.js';
+export * from './entities/policy-store.js';
+export {
+  canonicalizeJSON,
+  targetRefHash,
+  CanonicalizeError,
+  type CanonicalizeErrorCode,
+} from './canonicalize.js';
 
-// Config loader
 export {
   loadConfig,
   getModelName,
@@ -147,7 +158,6 @@ export {
   type ConfigUpdates,
 } from './config-loader.js';
 
-// Relevance scorer
 export {
   calculateRelevance,
   selectTopDecisions,
@@ -159,7 +169,6 @@ export {
   type TestResult,
 } from './relevance-scorer.js';
 
-// Decision tracker
 export {
   learnDecision,
   generateDecisionId,
@@ -183,7 +192,6 @@ export {
   type EvidenceItem,
 } from './decision-tracker.js';
 
-// Tier validator
 export {
   validateTier,
   checkNodeVersion,
@@ -197,7 +205,6 @@ export {
   type NamedCheckResult,
 } from './tier-validator.js';
 
-// Progress indicator
 export {
   logProgress,
   logComplete,
@@ -208,13 +215,10 @@ export {
   logSearching,
 } from './progress-indicator.js';
 
-// Debug logger
 export { debug, info, warn, error, DebugLogger } from './debug-logger.js';
 
-// Time formatter
 export { formatTimeAgo } from './time-formatter.js';
 
-// Errors
 export {
   MAMAError,
   NotFoundError,
@@ -234,7 +238,6 @@ export {
   type ErrorCode,
 } from './errors.js';
 
-// Decision formatter
 export {
   formatContext,
   formatLegacyContext,
@@ -253,7 +256,6 @@ export {
   type FormatOptions,
 } from './decision-formatter.js';
 
-// Outcome tracker
 export {
   analyzeOutcome,
   matchesFailureIndicators,
@@ -273,10 +275,8 @@ export {
   type OutcomeType,
 } from './outcome-tracker.js';
 
-// Memory inject
 export { injectDecisionContext } from './memory-inject.js';
 
-// Query intent
 export {
   analyzeIntent,
   extractTopicKeywords,
@@ -284,7 +284,6 @@ export {
   type AnalyzeOptions,
 } from './query-intent.js';
 
-// Ollama client
 export {
   generate,
   analyzeDecision,
@@ -298,5 +297,29 @@ export {
   type QueryIntentResult,
 } from './ollama-client.js';
 
-// Notification manager
 export { notifyInsight } from './notification-manager.js';
+
+export * from './cases/types.js';
+export * from './cases/store.js';
+export * from './cases/role-inference.js';
+export * from './cases/target-ref.js';
+export * from './cases/corrections.js';
+export * from './cases/sqlite-transaction.js';
+export * from './cases/live-state.js';
+export * from './cases/tombstone-sweeper.js';
+export * from './cases/merge-split.js';
+export * from './cases/membership-matcher.js';
+export * from './cases/search-rollup.js';
+export * from './cases/timeline-range.js';
+export * from './cases/wiki-page-index.js';
+export * from './cases/case-links.js';
+export * from './cases/composition-overrides.js';
+export * from './cases/freshness.js';
+export * from './cases/membership-explain.js';
+export * from './connectors/event-index.js';
+export * from './connectors/types.js';
+export * from './search/question-type.js';
+export * from './search/feedback-store.js';
+export * from './search/ranker-features.js';
+export * from './search/ranker-trainer.js';
+export * from './search/ranker-rescore.js';

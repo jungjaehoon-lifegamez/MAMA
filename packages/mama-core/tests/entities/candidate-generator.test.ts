@@ -9,6 +9,7 @@ import { EmbeddingUnavailableError } from '../../src/entities/errors.js';
 
 const KOREAN_PROJECT_ALPHA = '\uD504\uB85C\uC81D\uD2B8 \uC54C\uD30C';
 const JAPANESE_PROJECT_ALPHA = '\u30D7\u30ED\u30B8\u30A7\u30AF\u30C8\u30A2\u30EB\u30D5\u30A1';
+const KOREAN_PERSON_JAEHUN = '\uC815\uC7AC\uD6C8';
 
 function makeObservation(
   id: string,
@@ -30,7 +31,7 @@ function makeObservation(
     extractor_version: 'history-extractor@v1',
     embedding_model_version: 'multilingual-e5-large',
     source_connector: 'slack',
-    source_raw_db_ref: '~/.mama/connectors/slack/raw.db',
+    source_locator: '~/.mama/connectors/slack/raw.db',
     source_raw_record_id: `raw_${id}`,
     created_at: 1710000000000,
     ...overrides,
@@ -63,21 +64,36 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
         makeObservation('one', {
           observation_type: 'author',
           source_raw_record_id: 'raw_dup',
-          source_raw_db_ref: '~/.mama/connectors/slack/raw-a.db',
+          source_locator: '~/.mama/connectors/slack/raw-a.db',
         }),
         makeObservation('two', {
           observation_type: 'channel',
           source_raw_record_id: 'raw_dup',
-          source_raw_db_ref: '~/.mama/connectors/slack/raw-a.db',
+          source_locator: '~/.mama/connectors/slack/raw-a.db',
         }),
         makeObservation('three', {
           observation_type: 'author',
           source_raw_record_id: 'raw_dup',
-          source_raw_db_ref: '~/.mama/connectors/slack/raw-b.db',
+          source_locator: '~/.mama/connectors/slack/raw-b.db',
         }),
       ]);
 
       expect(deduped).toHaveLength(3);
+    });
+
+    it('should keep observations distinct when source_locator is missing', () => {
+      const deduped = dedupeObservationsBySource([
+        makeObservation('one', {
+          source_raw_record_id: 'raw_missing_locator',
+          source_locator: null,
+        }),
+        makeObservation('two', {
+          source_raw_record_id: 'raw_missing_locator',
+          source_locator: null,
+        }),
+      ]);
+
+      expect(deduped).toHaveLength(2);
     });
   });
 
@@ -145,6 +161,110 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
   });
 
   describe('AC #3: cross-language cases can enter the queue through embedding/context evidence', () => {
+    it('probes same-language pairs across scopes when embedding scoring is enabled', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_same_lang_scope_a', {
+            observation_type: 'channel',
+            entity_kind_hint: 'project',
+            surface_form: 'Alpha North',
+            normalized_form: 'alpha north',
+            lang: 'en',
+            script: 'Latn',
+            context_summary: 'roadmap planning summit',
+            scope_kind: 'channel',
+            scope_id: 'scope-a',
+            source_raw_record_id: 'raw_alpha_same_lang_scope_a',
+          }),
+          makeObservation('alpha_same_lang_scope_b', {
+            observation_type: 'channel',
+            entity_kind_hint: 'project',
+            surface_form: 'Alpha Core',
+            normalized_form: 'alpha core',
+            lang: 'en',
+            script: 'Latn',
+            context_summary: 'billing audit retrospective',
+            scope_kind: 'channel',
+            scope_id: 'scope-b',
+            source_raw_record_id: 'raw_alpha_same_lang_scope_b',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0.86),
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        left_ref: 'alpha_same_lang_scope_a',
+        right_ref: 'alpha_same_lang_scope_b',
+        score_embedding: 0.86,
+      });
+    });
+
+    it('probes high-similarity multilingual pairs across scopes when embedding scoring is enabled', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_en_scope_a', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-a',
+            source_raw_record_id: 'raw_alpha_en_scope_a',
+          }),
+          makeObservation('alpha_ko_scope_b', {
+            surface_form: KOREAN_PROJECT_ALPHA,
+            normalized_form: KOREAN_PROJECT_ALPHA,
+            lang: 'ko',
+            script: 'Hang',
+            scope_id: 'scope-b',
+            source_raw_record_id: 'raw_alpha_ko_scope_b',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0.86),
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        left_ref: 'alpha_en_scope_a',
+        right_ref: 'alpha_ko_scope_b',
+        score_embedding: 0.86,
+      });
+    });
+
+    it('does not let rejected deterministic pairs poison cross-scope probing', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_same_label_scope_a', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-a',
+            source_raw_record_id: 'raw_alpha_same_label_scope_a',
+          }),
+          makeObservation('alpha_same_label_scope_b', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-b',
+            source_raw_record_id: 'raw_alpha_same_label_scope_b',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0.9),
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]).toMatchObject({
+        left_ref: 'alpha_same_label_scope_a',
+        right_ref: 'alpha_same_label_scope_b',
+        score_embedding: 0.9,
+      });
+    });
+
     it('should generate a multilingual candidate when embedding similarity is high', async () => {
       const candidates = await generateResolutionCandidates(
         [
@@ -231,6 +351,122 @@ describe('Story E1.5: Canonical entity candidate generation', () => {
       expect(candidates[0]?.score_structural).toBe(0);
       expect(candidates[0]?.score_string).toBe(0);
       expect(candidates[0]?.score_embedding).toBe(0.88);
+    });
+
+    it('drops deterministic zero-score pairs when embedding scoring also returns zero', async () => {
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_zero_a', {
+            observation_type: 'author',
+            entity_kind_hint: 'person',
+            surface_form: 'Kim',
+            normalized_form: 'kim',
+            lang: 'en',
+            script: 'Latn',
+            context_summary: 'totally different context',
+            related_surface_forms: ['shared-room'],
+            scope_kind: 'global',
+            scope_id: null,
+            source_raw_record_id: 'raw_alpha_zero_a',
+          }),
+          makeObservation('alpha_zero_b', {
+            observation_type: 'author',
+            entity_kind_hint: 'person',
+            surface_form: 'Lee',
+            normalized_form: 'lee',
+            lang: 'en',
+            script: 'Latn',
+            context_summary: 'another unrelated note',
+            related_surface_forms: ['shared-room'],
+            scope_kind: 'global',
+            scope_id: null,
+            source_raw_record_id: 'raw_alpha_zero_b',
+          }),
+        ],
+        {
+          embeddingScorer: vi.fn(async () => 0),
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toHaveLength(0);
+    });
+
+    it('keeps only the highest-scoring candidate for a repeated multilingual pair family', async () => {
+      const embeddingScorer = vi.fn(async (left: EntityObservation, right: EntityObservation) => {
+        const scopedPair = [left.id, right.id].sort().join('::');
+        if (scopedPair === 'alpha_en_scope_b::alpha_es_scope_c') {
+          return 0.92;
+        }
+        if (scopedPair === 'jaehun_en_scope_a::jaehun_ko_scope_d') {
+          return 0.88;
+        }
+        return 0.84;
+      });
+
+      const candidates = await generateResolutionCandidates(
+        [
+          makeObservation('alpha_en_scope_a', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-a',
+            source_raw_record_id: 'raw_alpha_en_scope_a_dupe',
+          }),
+          makeObservation('alpha_en_scope_b', {
+            surface_form: 'Project Alpha',
+            normalized_form: 'project alpha',
+            scope_id: 'scope-b',
+            source_raw_record_id: 'raw_alpha_en_scope_b',
+          }),
+          makeObservation('alpha_es_scope_c', {
+            surface_form: 'Proyecto Alpha',
+            normalized_form: 'proyecto alpha',
+            lang: 'es',
+            script: 'Latn',
+            scope_id: 'scope-c',
+            source_raw_record_id: 'raw_alpha_es_scope_c',
+          }),
+          makeObservation('jaehun_en_scope_a', {
+            observation_type: 'author',
+            entity_kind_hint: 'person',
+            surface_form: 'Jae Hun',
+            normalized_form: 'jae hun',
+            scope_id: 'scope-a',
+            related_surface_forms: ['Project Alpha'],
+            source_raw_record_id: 'raw_jaehun_en_scope_a',
+          }),
+          makeObservation('jaehun_ko_scope_d', {
+            observation_type: 'author',
+            entity_kind_hint: 'person',
+            surface_form: KOREAN_PERSON_JAEHUN,
+            normalized_form: KOREAN_PERSON_JAEHUN,
+            lang: 'ko',
+            script: 'Hang',
+            scope_id: 'scope-d',
+            related_surface_forms: [KOREAN_PROJECT_ALPHA],
+            source_raw_record_id: 'raw_jaehun_ko_scope_d',
+          }),
+        ],
+        {
+          embeddingScorer,
+          topN: 5,
+        }
+      );
+
+      expect(candidates).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            left_ref: 'alpha_en_scope_b',
+            right_ref: 'alpha_es_scope_c',
+            score_embedding: 0.92,
+          }),
+          expect.objectContaining({
+            left_ref: 'jaehun_en_scope_a',
+            right_ref: 'jaehun_ko_scope_d',
+            score_embedding: 0.88,
+          }),
+        ])
+      );
     });
   });
 

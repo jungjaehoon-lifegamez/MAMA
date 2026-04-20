@@ -58,6 +58,33 @@ describe('Story E1.7: Canonical entity projection', () => {
     );
   });
 
+  it('formats timeline changes into a stable recall-facing details contract', () => {
+    const record = projectEntityToRecallSummary(baseNode, aliases, {
+      ...latestEvent,
+      event_type: 'status_update',
+      summary: 'Task moved to blocked',
+      details: JSON.stringify({ from_status: 'active', to_status: 'blocked' }),
+    });
+
+    expect(record.details).toContain('status_update');
+    expect(record.details).toContain('Task moved to blocked');
+    expect(record.details).toContain('"to_status":"blocked"');
+    expect(record.details).not.toContain(`${latestEvent.summary}\n${latestEvent.summary}`);
+  });
+
+  it('preserves non-JSON timeline details as a readable third line', () => {
+    const record = projectEntityToRecallSummary(baseNode, aliases, {
+      ...latestEvent,
+      event_type: 'project_update',
+      summary: 'Launch status updated',
+      details: 'Moved from planning to active execution.',
+    });
+
+    expect(record.details).toContain('project_update');
+    expect(record.details).toContain('Launch status updated');
+    expect(record.details).toContain('Moved from planning to active execution.');
+  });
+
   it('fails loudly when the preferred label is missing', () => {
     expect(() =>
       projectEntityToRecallSummary(

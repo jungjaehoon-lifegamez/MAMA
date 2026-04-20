@@ -547,7 +547,7 @@ mama status
 # Output includes:
 # - Running state (실행 중 / 정지됨)
 # - PID and uptime
-# - OAuth token validity
+# - Claude Code login state
 # - Database path
 # - Model configuration
 # - Log level
@@ -644,8 +644,8 @@ rm ~/.mama/logs/*.log
 # 4. Remove PID file
 rm ~/.mama/mama.pid
 
-# 5. Verify API key is set
-echo $ANTHROPIC_API_KEY
+# 5. Verify Claude Code login
+claude auth status
 
 # 6. Start fresh
 mama start --foreground
