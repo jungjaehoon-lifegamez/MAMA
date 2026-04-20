@@ -1,6 +1,6 @@
 import { getAdapter, initDB } from '../db-manager.js';
 import { EntityMergeError, mergeEntityNodes } from './store.js';
-import { adoptLineageAfterMerge } from './lineage-store.js';
+import { adoptLineageAfterMergeSync } from './lineage-store.js';
 import type { EntityNode } from './types.js';
 
 export interface ExactMergeBackfillOptions {
@@ -158,7 +158,7 @@ export async function backfillExactDuplicateCanonicals(
                 target_id: target.id,
               }),
             });
-            adoptLineageAfterMerge({
+            adoptLineageAfterMergeSync({
               adapter,
               source_entity_id: source.id,
               target_entity_id: target.id,
@@ -184,7 +184,7 @@ export async function backfillExactDuplicateCanonicals(
               target_id: target.id,
             }),
           });
-          adoptLineageAfterMerge({
+          adoptLineageAfterMergeSync({
             adapter,
             source_entity_id: source.id,
             target_entity_id: target.id,
