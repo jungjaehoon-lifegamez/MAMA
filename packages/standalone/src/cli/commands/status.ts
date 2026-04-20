@@ -9,7 +9,7 @@ import { homedir } from 'node:os';
 import http from 'node:http';
 import { isDaemonRunning, getUptime, isProcessRunning } from '../utils/pid-manager.js';
 import { loadConfig, configExists, expandPath } from '../config/config-manager.js';
-import { OAuthManager } from '../../auth/index.js';
+import { OAuthManager, getClaudeCodeAuthStatus } from '../../auth/index.js';
 
 /**
  * Execute status command
@@ -67,8 +67,24 @@ export async function statusCommand(): Promise<void> {
       if (backend === 'codex-mcp') {
         console.log('Codex MCP backend: Uses MCP protocol for Codex communication');
       } else {
-        process.stdout.write('OAuth token: ');
-        try {
+        const authStatus = getClaudeCodeAuthStatus();
+        process.stdout.write('Claude Code auth: ');
+
+        if (!authStatus.loggedIn) {
+          if (!authStatus.cliInstalled) {
+            console.log('Missing ❌');
+            console.log('  Install Claude Code first: https://claude.ai/code');
+          } else {
+            console.log('Logged out ❌');
+            console.log('  Run: claude auth login');
+          }
+        } else if (authStatus.source === 'cli_status') {
+          const summary = authStatus.subscriptionType
+            ? `Valid (${authStatus.authMethod ?? 'unknown'}, ${authStatus.subscriptionType})`
+            : `Valid (${authStatus.authMethod ?? 'unknown'})`;
+          console.log(summary);
+        } else {
+          try {
           const oauthManager = new OAuthManager();
           const tokenStatus = await oauthManager.getStatus();
 
@@ -103,6 +119,7 @@ export async function statusCommand(): Promise<void> {
         } catch (error) {
           console.log('Check failed ❌');
           console.log(`  ${error instanceof Error ? error.message : String(error)}`);
+        }
         }
       }
 

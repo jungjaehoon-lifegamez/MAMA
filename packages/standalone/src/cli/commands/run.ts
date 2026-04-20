@@ -5,7 +5,7 @@
  */
 
 import { loadConfig, configExists } from '../config/config-manager.js';
-import { OAuthManager } from '../../auth/index.js';
+import { OAuthManager, getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 
 /**
@@ -50,20 +50,21 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.log('✓ Codex MCP backend (OAuth handled by Codex login)');
     oauthManager = new OAuthManager();
   } else {
-    // Check OAuth token
-    process.stdout.write('Verifying OAuth token... ');
-    try {
-      oauthManager = new OAuthManager();
-      await oauthManager.getToken();
-      console.log('✓');
-    } catch (error) {
+    process.stdout.write('Checking Claude Code login... ');
+    const authStatus = getClaudeCodeAuthStatus();
+    if (!authStatus.loggedIn) {
       console.log('❌');
-      console.error(
-        `\nOAuth token error: ${error instanceof Error ? error.message : String(error)}`
-      );
-      console.error('Please log in to Claude Code again.\n');
+      if (!authStatus.cliInstalled) {
+        console.error('\nClaude Code CLI is not installed.');
+        console.error('Install and log in first: https://claude.ai/code\n');
+      } else {
+        console.error('\nClaude Code is installed but not logged in.');
+        console.error('Please run: claude auth login\n');
+      }
       process.exit(1);
     }
+    oauthManager = new OAuthManager();
+    console.log('✓');
   }
 
   // Create agent loop
