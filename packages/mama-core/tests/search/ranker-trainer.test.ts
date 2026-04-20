@@ -7,6 +7,7 @@ import {
   type FeedbackStoreAdapter,
 } from '../../src/search/feedback-store.js';
 import {
+  RANKER_QUALITY_FIXTURES,
   activateRankerModel,
   evaluateAgainstBaselines,
   insertRankerModelVersion,
@@ -96,6 +97,20 @@ describe('Phase 3 Task 11: offline ranker trainer', () => {
     expect(result.model?.feature_set_version).toBe(SEARCH_RANKER_FEATURE_SET_VERSION);
   });
 
+  it('returns insufficient_data when examples only contain one label', async () => {
+    insertFeedback(adapter, 'query-positive-a', 'case-1', 'accept');
+    insertFeedback(adapter, 'query-positive-b', 'case-2', 'accept');
+
+    const result = await trainOfflineRanker({
+      adapter,
+      minFeedbackRows: 2,
+      minDistinctQueries: 2,
+    });
+
+    expect(result.status).toBe('insufficient_data');
+    expect(result.model).toBeUndefined();
+  });
+
   it('caps neutral shown rows to 3x explicit labels per query', async () => {
     for (let index = 0; index < 100; index += 1) {
       insertFeedback(adapter, 'query-neutral', `shown-${index}`, 'shown');
@@ -162,6 +177,40 @@ describe('Phase 3 Task 11: offline ranker trainer', () => {
       retention_warning: true,
       retention_days_at_train_time: 1,
     });
+  });
+
+  it('builds collision-resistant model ids even when metadata is identical', async () => {
+    insertFeedback(adapter, 'query-a', 'case-1', 'accept');
+    insertFeedback(adapter, 'query-a', 'case-2', 'reject');
+    insertFeedback(adapter, 'query-b', 'case-3', 'accept');
+    insertFeedback(adapter, 'query-b', 'case-4', 'reject');
+
+    const now = new Date('2026-04-18T12:00:00.000Z');
+    const first = await trainOfflineRanker({
+      adapter,
+      minFeedbackRows: 4,
+      minDistinctQueries: 2,
+      now,
+    });
+    const second = await trainOfflineRanker({
+      adapter,
+      minFeedbackRows: 4,
+      minDistinctQueries: 2,
+      now,
+    });
+
+    expect(first.status).toBe('trained');
+    expect(second.status).toBe('trained');
+    expect(first.model?.model_id).not.toBe(second.model?.model_id);
+  });
+
+  it('uses varied fixture ordering so ties cannot rely on the same first item', () => {
+    const leadingRelevances = RANKER_QUALITY_FIXTURES.map(
+      (fixture) => fixture.candidates[0]?.relevance
+    );
+
+    expect(leadingRelevances).toContain(0);
+    expect(new Set(leadingRelevances).size).toBeGreaterThan(1);
   });
 
   it('rejects activation for mismatched feature sets', async () => {

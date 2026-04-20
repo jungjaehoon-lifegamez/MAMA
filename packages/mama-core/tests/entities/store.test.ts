@@ -8,6 +8,7 @@ import {
   listEntityNodes,
   parseObservationRow,
   upsertEntityObservation,
+  upsertEntityObservations,
 } from '../../src/entities/store.js';
 import { getAdapter } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
@@ -256,6 +257,32 @@ describe('Story E1.3: Canonical entity persistence', () => {
         )
         .get('slack', 'raw_slack_002') as { total: number };
       expect(count.total).toBe(2);
+    });
+
+    it('should return one batch result per input under immediate transaction adapters', async () => {
+      const saved = await upsertEntityObservations([
+        {
+          id: 'obs_batch_single',
+          observation_type: 'generic',
+          entity_kind_hint: 'project',
+          surface_form: 'Project Batch',
+          normalized_form: 'project batch',
+          lang: 'en',
+          script: 'Latn',
+          context_summary: 'Batch insert',
+          related_surface_forms: [],
+          timestamp_observed: 1710000000000,
+          scope_kind: 'project',
+          scope_id: 'scope-batch',
+          extractor_version: 'history-extractor@v1',
+          embedding_model_version: 'multilingual-e5-large',
+          source_connector: 'slack',
+          source_locator: '~/.mama/connectors/slack/raw.db',
+          source_raw_record_id: 'raw_batch_single',
+        },
+      ]);
+
+      expect(saved).toEqual([{ id: 'obs_batch_single', created: true }]);
     });
 
     it('should append timeline events with observed provenance details', async () => {

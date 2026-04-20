@@ -340,17 +340,20 @@ function runLineageTransaction<T>(adapter: LineageMutationAdapter, fn: () => T):
   }
 }
 
-export function adoptLineageAfterMerge(
+export async function adoptLineageAfterMerge(
   input: AdoptLineageAfterMergeInput
 ): Promise<EntityLineageLink[]> {
   if (!input.adapter) {
-    return initDB().then(() =>
-      runLineageTransaction(getAdapter(), () => adoptLineageAfterMergeWithAdapter(getAdapter(), input))
+    await initDB();
+    const adapter = getAdapter();
+    return await runLineageTransaction(adapter, () =>
+      adoptLineageAfterMergeWithAdapter(adapter, input)
     );
   }
 
-  return Promise.resolve(
-    runLineageTransaction(input.adapter, () => adoptLineageAfterMergeWithAdapter(input.adapter!, input))
+  const adapter = input.adapter;
+  return await runLineageTransaction(adapter, () =>
+    adoptLineageAfterMergeWithAdapter(adapter, input)
   );
 }
 

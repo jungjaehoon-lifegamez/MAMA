@@ -612,6 +612,60 @@ describe('Phase 2 case correction write flows', () => {
     });
   });
 
+  it('reverting a membership insertion with no prior row restores the target to removed state', () => {
+    insertCase({ case_id: 'case-membership-revert-missing' });
+
+    const applied = applyCorrection(getAdapter(), {
+      case_id: 'case-membership-revert-missing',
+      target_kind: 'membership',
+      target_ref: buildMembershipTargetRef('decision', 'dec-revert-missing'),
+      new_value_json: canonicalizeJSON({
+        status: 'active',
+        role: 'primary',
+        confidence: 0.91,
+        reason: 'user said this is the key source',
+      }),
+      reason: 'add source',
+      confirmed: true,
+      confirmed_by: 'user:test',
+      confirmation_summary: 'add source',
+      now: '2026-04-18T02:20:00.000Z',
+    });
+
+    expect(applied.kind).toBe('applied');
+    if (applied.kind !== 'applied') {
+      throw new Error('expected applied correction');
+    }
+
+    const reverted = revertCorrection(getAdapter(), {
+      correction_id: applied.correction_id,
+      confirmed_by: 'user:test',
+      confirmation_summary: 'undo source add',
+      now: '2026-04-18T02:25:00.000Z',
+    });
+
+    expect(reverted).toEqual({
+      kind: 'reverted',
+      correction_id: applied.correction_id,
+      case_id: 'case-membership-revert-missing',
+    });
+
+    const row = getAdapter()
+      .prepare(
+        `
+          SELECT status, user_locked, added_by
+          FROM case_memberships
+          WHERE case_id = ? AND source_type = 'decision' AND source_id = ?
+        `
+      )
+      .get('case-membership-revert-missing', 'dec-revert-missing') as {
+      status: string;
+      user_locked: number;
+      added_by: string;
+    };
+    expect(row).toEqual({ status: 'removed', user_locked: 1, added_by: 'user-correction' });
+  });
+
   it('wiki_section correction inserts a canonical lock row without mutating case_truth fields', () => {
     insertCase({ case_id: 'case-wiki-section', status_reason: 'before' });
     const target = canonicalTargetRef(buildWikiSectionTargetRef('## Status'));
