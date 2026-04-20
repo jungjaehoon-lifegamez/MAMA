@@ -7,6 +7,7 @@ import {
   type EntityAlias,
   type EntityNode,
   type EntityObservation,
+  type EntityTimelineEvent,
 } from './types.js';
 
 export interface EntityStoreAdapter {
@@ -32,12 +33,25 @@ const MAX_MERGE_CHAIN_DEPTH = 8;
 type CreateEntityNodeInput = Omit<EntityNode, 'created_at' | 'updated_at'>;
 type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
 type UpsertEntityObservationInput = Omit<EntityObservation, 'created_at'>;
+type AppendEntityTimelineEventInput = {
+  event: Omit<EntityTimelineEvent, 'id' | 'created_at'> & {
+    id?: string;
+    created_at?: number;
+  };
+  adapter?: EntityStoreAdapter;
+};
+
+export interface UpsertEntityObservationResult {
+  id: string;
+  created: boolean;
+}
 
 function now(): number {
   return Date.now();
 }
 
-function normalizeSourceRawDbRef(value: string | null): string {
+function normalizeSourceLocator(value: string | null | undefined): string {
+  // Write empty-string as the null sentinel so SQLite UNIQUE can collapse null-like locators; parseObservationRow maps it back to null on read.
   return value ?? '';
 }
 
@@ -51,6 +65,22 @@ function requireStringField(row: Record<string, unknown>, field: string): string
 function optionalStringField(row: Record<string, unknown>, field: string): string | null {
   if (!Object.prototype.hasOwnProperty.call(row, field)) {
     throw new Error(`Invalid entity observation row: ${field} must be present`);
+  }
+  if (row[field] === null) {
+    return null;
+  }
+  if (typeof row[field] !== 'string') {
+    throw new Error(`Invalid entity observation row: ${field} must be a string or null`);
+  }
+  return row[field] as string;
+}
+
+function optionalStringFieldIfPresent(
+  row: Record<string, unknown>,
+  field: string
+): string | null | undefined {
+  if (!Object.prototype.hasOwnProperty.call(row, field)) {
+    return undefined;
   }
   if (row[field] === null) {
     return null;
@@ -120,7 +150,10 @@ export function parseObservationRow(row: Record<string, unknown>): EntityObserva
     );
   }
 
-  const sourceRawDbRef = optionalStringField(row, 'source_raw_db_ref');
+  const sourceLocator = optionalStringFieldIfPresent(row, 'source_locator');
+  if (sourceLocator === undefined) {
+    throw new Error('Invalid entity observation row: source_locator must be present');
+  }
 
   return {
     id,
@@ -138,7 +171,7 @@ export function parseObservationRow(row: Record<string, unknown>): EntityObserva
     extractor_version: requireStringField(row, 'extractor_version'),
     embedding_model_version: optionalStringField(row, 'embedding_model_version'),
     source_connector: requireStringField(row, 'source_connector'),
-    source_raw_db_ref: sourceRawDbRef && sourceRawDbRef.length > 0 ? sourceRawDbRef : null,
+    source_locator: sourceLocator && sourceLocator.length > 0 ? sourceLocator : null,
     source_raw_record_id: requireStringField(row, 'source_raw_record_id'),
     created_at: createdAt,
   };
@@ -177,8 +210,10 @@ export async function createEntityNode(input: CreateEntityNodeInput): Promise<En
   };
 }
 
-export function getEntityNode(id: string): EntityNode | null {
-  const adapter = getAdapter();
+export function getEntityNode(
+  id: string,
+  adapter: EntityStoreAdapter = getAdapter()
+): EntityNode | null {
   const row = adapter.prepare('SELECT * FROM entity_nodes WHERE id = ?').get(id) as
     | Record<string, unknown>
     | undefined;
@@ -191,7 +226,8 @@ export function getEntityNode(id: string): EntityNode | null {
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),
@@ -210,7 +246,8 @@ export function listEntityNodes(): EntityNode[] {
     kind: row.kind as EntityNode['kind'],
     preferred_label: String(row.preferred_label),
     status: row.status as EntityNode['status'],
-    scope_kind: row.scope_kind as EntityNode['scope_kind'],
+    scope_kind:
+      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
     scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
     merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
     created_at: Number(row.created_at),
@@ -254,8 +291,10 @@ export async function attachEntityAlias(input: AttachEntityAliasInput): Promise<
   };
 }
 
-export function listEntityAliases(entityId: string): EntityAlias[] {
-  const adapter = getAdapter();
+export function listEntityAliases(
+  entityId: string,
+  adapter: EntityStoreAdapter = getAdapter()
+): EntityAlias[] {
   const rows = adapter
     .prepare('SELECT * FROM entity_aliases WHERE entity_id = ? ORDER BY created_at ASC')
     .all(entityId) as Array<Record<string, unknown>>;
@@ -282,18 +321,18 @@ export async function upsertEntityObservation(
   await initDB();
   const adapter = getAdapter();
   const createdAt = now();
-  const normalizedRawDbRef = normalizeSourceRawDbRef(input.source_raw_db_ref);
+  const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
   adapter
     .prepare(
       `
         INSERT INTO entity_observations (
           id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
           context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
-          extractor_version, embedding_model_version, source_connector, source_raw_db_ref,
+          extractor_version, embedding_model_version, source_connector, source_locator,
           source_raw_record_id, created_at
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(source_connector, source_raw_db_ref, source_raw_record_id, observation_type)
+        ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
         DO UPDATE SET
           entity_kind_hint = excluded.entity_kind_hint,
           surface_form = excluded.surface_form,
@@ -307,6 +346,7 @@ export async function upsertEntityObservation(
           scope_id = excluded.scope_id,
           extractor_version = excluded.extractor_version,
           embedding_model_version = excluded.embedding_model_version,
+          source_locator = excluded.source_locator,
           created_at = entity_observations.created_at
       `
     )
@@ -326,7 +366,7 @@ export async function upsertEntityObservation(
       input.extractor_version,
       input.embedding_model_version,
       input.source_connector,
-      normalizedRawDbRef,
+      normalizedSourceLocator,
       input.source_raw_record_id,
       createdAt
     );
@@ -335,12 +375,12 @@ export async function upsertEntityObservation(
     .prepare(
       `
         SELECT * FROM entity_observations
-        WHERE source_connector = ? AND source_raw_db_ref = ? AND source_raw_record_id = ? AND observation_type = ?
+        WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
       `
     )
     .get(
       input.source_connector,
-      normalizedRawDbRef,
+      normalizedSourceLocator,
       input.source_raw_record_id,
       input.observation_type
     ) as Record<string, unknown>;
@@ -350,84 +390,100 @@ export async function upsertEntityObservation(
 
 export async function upsertEntityObservations(
   inputs: UpsertEntityObservationInput[]
-): Promise<EntityObservation[]> {
+): Promise<UpsertEntityObservationResult[]> {
   await initDB();
   const adapter = getAdapter();
-  const observations: EntityObservation[] = [];
-  const runBatch =
-    'transaction' in adapter && typeof adapter.transaction === 'function'
-      ? adapter.transaction(() => {
-          for (const input of inputs) {
-            const createdAt = now();
-            const normalizedRawDbRef = normalizeSourceRawDbRef(input.source_raw_db_ref);
-            adapter
-              .prepare(
-                `
-                  INSERT INTO entity_observations (
-                    id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
-                    context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
-                    extractor_version, embedding_model_version, source_connector, source_raw_db_ref,
-                    source_raw_record_id, created_at
-                  )
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                  ON CONFLICT(source_connector, source_raw_db_ref, source_raw_record_id, observation_type)
-                  DO UPDATE SET
-                    entity_kind_hint = excluded.entity_kind_hint,
-                    surface_form = excluded.surface_form,
-                    normalized_form = excluded.normalized_form,
-                    lang = excluded.lang,
-                    script = excluded.script,
-                    context_summary = excluded.context_summary,
-                    related_surface_forms = excluded.related_surface_forms,
-                    timestamp_observed = excluded.timestamp_observed,
-                    scope_kind = excluded.scope_kind,
-                    scope_id = excluded.scope_id,
-                    extractor_version = excluded.extractor_version,
-                    embedding_model_version = excluded.embedding_model_version,
-                    created_at = entity_observations.created_at
-                `
-              )
-              .run(
-                input.id,
-                input.observation_type,
-                input.entity_kind_hint,
-                input.surface_form,
-                input.normalized_form,
-                input.lang,
-                input.script,
-                input.context_summary,
-                JSON.stringify(input.related_surface_forms),
-                input.timestamp_observed,
-                input.scope_kind,
-                input.scope_id,
-                input.extractor_version,
-                input.embedding_model_version,
-                input.source_connector,
-                normalizedRawDbRef,
-                input.source_raw_record_id,
-                createdAt
-              );
+  const observations: UpsertEntityObservationResult[] = [];
+  const upsertOne = (input: UpsertEntityObservationInput): void => {
+    const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
+    const existing = adapter
+      .prepare(
+        `
+          SELECT id FROM entity_observations
+          WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
+        `
+      )
+      .get(
+        input.source_connector,
+        normalizedSourceLocator,
+        input.source_raw_record_id,
+        input.observation_type
+      ) as Record<string, unknown> | undefined;
+    const createdAt = now();
+    adapter
+      .prepare(
+        `
+          INSERT INTO entity_observations (
+            id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
+            context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
+            extractor_version, embedding_model_version, source_connector, source_locator,
+            source_raw_record_id, created_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
+          DO UPDATE SET
+            entity_kind_hint = excluded.entity_kind_hint,
+            surface_form = excluded.surface_form,
+            normalized_form = excluded.normalized_form,
+            lang = excluded.lang,
+            script = excluded.script,
+            context_summary = excluded.context_summary,
+            related_surface_forms = excluded.related_surface_forms,
+            timestamp_observed = excluded.timestamp_observed,
+            scope_kind = excluded.scope_kind,
+            scope_id = excluded.scope_id,
+            extractor_version = excluded.extractor_version,
+            embedding_model_version = excluded.embedding_model_version,
+            source_locator = excluded.source_locator,
+            created_at = entity_observations.created_at
+        `
+      )
+      .run(
+        input.id,
+        input.observation_type,
+        input.entity_kind_hint,
+        input.surface_form,
+        input.normalized_form,
+        input.lang,
+        input.script,
+        input.context_summary,
+        JSON.stringify(input.related_surface_forms),
+        input.timestamp_observed,
+        input.scope_kind,
+        input.scope_id,
+        input.extractor_version,
+        input.embedding_model_version,
+        input.source_connector,
+        normalizedSourceLocator,
+        input.source_raw_record_id,
+        createdAt
+      );
 
-            const saved = adapter
-              .prepare(
-                `
-                  SELECT * FROM entity_observations
-                  WHERE source_connector = ? AND source_raw_db_ref = ? AND source_raw_record_id = ? AND observation_type = ?
-                `
-              )
-              .get(
-                input.source_connector,
-                normalizedRawDbRef,
-                input.source_raw_record_id,
-                input.observation_type
-              ) as Record<string, unknown>;
-            observations.push(parseObservationRow(saved));
-          }
-        })
-      : null;
+    const saved = adapter
+      .prepare(
+        `
+          SELECT * FROM entity_observations
+          WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
+        `
+      )
+      .get(
+        input.source_connector,
+        normalizedSourceLocator,
+        input.source_raw_record_id,
+        input.observation_type
+      ) as Record<string, unknown>;
+    observations.push({
+      id: requireStringField(saved, 'id'),
+      created: !existing,
+    });
+  };
 
-  if (runBatch) {
-    const txResult = runBatch as unknown;
+  if ('transaction' in adapter && typeof adapter.transaction === 'function') {
+    const txResult = adapter.transaction(() => {
+      for (const input of inputs) {
+        upsertOne(input);
+      }
+    }) as unknown;
     if (typeof txResult === 'function') {
       txResult();
     }
@@ -435,17 +491,66 @@ export async function upsertEntityObservations(
   }
 
   for (const input of inputs) {
-    observations.push(await upsertEntityObservation(input));
+    upsertOne(input);
   }
   return observations;
+}
+
+export async function appendEntityTimelineEvent(
+  input: AppendEntityTimelineEventInput
+): Promise<EntityTimelineEvent> {
+  if (!input.adapter) {
+    await initDB();
+  }
+  const adapter = input.adapter ?? getAdapter();
+  const eventId = input.event.id ?? `et_${randomUUID()}`;
+  const createdAt = input.event.created_at ?? now();
+
+  adapter
+    .prepare(
+      `
+        INSERT INTO entity_timeline_events (
+          id, entity_id, event_type, role, valid_from, valid_to, observed_at,
+          source_ref, summary, details, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      eventId,
+      input.event.entity_id,
+      input.event.event_type,
+      input.event.role ?? null,
+      input.event.valid_from ?? null,
+      input.event.valid_to ?? null,
+      input.event.observed_at ?? null,
+      input.event.source_ref ?? null,
+      input.event.summary,
+      input.event.details ?? null,
+      createdAt
+    );
+
+  return {
+    id: eventId,
+    entity_id: input.event.entity_id,
+    event_type: input.event.event_type,
+    role: input.event.role ?? null,
+    valid_from: input.event.valid_from ?? null,
+    valid_to: input.event.valid_to ?? null,
+    observed_at: input.event.observed_at ?? null,
+    source_ref: input.event.source_ref ?? null,
+    summary: input.event.summary,
+    details: input.event.details ?? null,
+    created_at: createdAt,
+  };
 }
 
 /**
  * Walks the `entity_nodes.merged_into` chain from the given id and returns the
  * terminal (unmerged) entity id. Detects cycles and caps depth. Read-only.
  *
- * Matches the chain-walking design decided in
- * `docs/superpowers/specs/2026-04-13-canonical-entity-merge-design.md` (Policy A2).
+ * Matches the read-time chain-walking approach described in the canonical
+ * entity ontology implementation plan.
  */
 export function resolveCanonicalEntityId(adapter: EntityStoreAdapter, id: string): string {
   const seen = new Set<string>();
@@ -587,9 +692,9 @@ export function mergeEntityNodes(input: MergeEntityNodesInput): MergeEntityNodes
     .prepare(
       `
         INSERT INTO entity_timeline_events (
-          id, entity_id, event_type, observed_at, source_ref, summary, details, created_at
+          id, entity_id, event_type, role, observed_at, source_ref, summary, details, created_at
         )
-        VALUES (?, ?, 'merged', ?, ?, ?, ?, ?)
+        VALUES (?, ?, 'merged', NULL, ?, ?, ?, ?, ?)
       `
     )
     .run(

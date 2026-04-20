@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-core",
-  "version": "1.4.2",
+  "version": "1.5.0",
   "description": "MAMA Core - Shared modules for Memory-Augmented MCP Assistant",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,7 +27,25 @@
     "./outcome-tracker": "./dist/outcome-tracker.js",
     "./query-intent": "./dist/query-intent.js",
     "./test-utils": "./dist/test-utils.js",
-    "./entities/store": "./dist/entities/store.js"
+    "./entities/store": "./dist/entities/store.js",
+    "./entities/candidate-generator": "./dist/entities/candidate-generator.js",
+    "./canonicalize": "./dist/canonicalize.js",
+    "./cases/types": "./dist/cases/types.js",
+    "./cases/store": "./dist/cases/store.js",
+    "./cases/role-inference": "./dist/cases/role-inference.js",
+    "./cases/target-ref": "./dist/cases/target-ref.js",
+    "./cases/corrections": "./dist/cases/corrections.js",
+    "./cases/sqlite-transaction": "./dist/cases/sqlite-transaction.js",
+    "./cases/live-state": "./dist/cases/live-state.js",
+    "./cases/tombstone-sweeper": "./dist/cases/tombstone-sweeper.js",
+    "./cases/merge-split": "./dist/cases/merge-split.js",
+    "./cases/membership-matcher": "./dist/cases/membership-matcher.js",
+    "./cases/search-rollup": "./dist/cases/search-rollup.js",
+    "./cases/timeline-range": "./dist/cases/timeline-range.js",
+    "./cases/wiki-page-index": "./dist/cases/wiki-page-index.js",
+    "./connectors": "./dist/connectors/event-index.js",
+    "./connectors/event-index": "./dist/connectors/event-index.js",
+    "./connectors/types": "./dist/connectors/types.js"
   },
   "scripts": {
     "build": "tsc",
@@ -72,7 +90,6 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
-    "typescript": "^5.4.0",
     "vitest": "^1.0.0"
   },
   "files": [
