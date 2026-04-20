@@ -228,6 +228,24 @@ describe('Task 15: Wiki freshness core helper', () => {
     expect(result.reasons.map((reason) => reason.code)).toContain('timestamps_absent');
   });
 
+  it('rejects invalid now timestamps instead of silently falling back', () => {
+    insertCase({
+      case_id: 'case-invalid-now',
+      current_wiki_path: 'Cases/case-invalid-now.md',
+      compiled_at: '2026-04-18T01:00:00.000Z',
+      last_activity_at: '2026-04-18T00:00:00.000Z',
+      state_updated_at: '2026-04-18T00:30:00.000Z',
+    });
+    insertWikiIndex('case-invalid-now');
+
+    expect(() =>
+      sweepCaseFreshness(getAdapter(), {
+        case_ids: ['case-invalid-now'],
+        now: 'not-a-real-timestamp',
+      })
+    ).toThrow('invalid now timestamp');
+  });
+
   it('sweeper refreshes freshness_checked_at even when the calculated state is unchanged', () => {
     insertCase({
       case_id: 'case-idempotent',
@@ -436,9 +454,7 @@ describe('Task 15: Wiki freshness core helper', () => {
       )
       .run('case-terminal-drifted', 'case-live-drifted');
 
-    expect(listDriftedCases(getAdapter()).map((row) => row.case_id)).toEqual([
-      'case-live-drifted',
-    ]);
+    expect(listDriftedCases(getAdapter()).map((row) => row.case_id)).toEqual(['case-live-drifted']);
   });
 
   it('coexists with active correction locks without touching protected live fields', () => {

@@ -267,30 +267,51 @@ function canonicalStoredJson(value: string | null): string {
   return canonicalizeJSON(parseJsonValue(value));
 }
 
+function decodeSecretWithEncoding(
+  value: string,
+  encoding: 'hex' | 'base64' | 'utf8'
+): Buffer | null {
+  if (value.length === 0) {
+    return null;
+  }
+
+  if (encoding === 'hex') {
+    if (!/^[0-9a-f]+$/i.test(value) || value.length % 2 !== 0) {
+      return null;
+    }
+    const hex = Buffer.from(value, 'hex');
+    return hex.length >= 32 ? hex : null;
+  }
+
+  const decoded = Buffer.from(value, encoding);
+  return decoded.length >= 32 ? decoded : null;
+}
+
 function decodeSecret(raw: string): Buffer | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) {
     return null;
   }
 
-  if (/^[0-9a-f]+$/i.test(trimmed) && trimmed.length % 2 === 0) {
-    const hex = Buffer.from(trimmed, 'hex');
-    if (hex.length >= 32) {
-      return hex;
-    }
+  const explicitEncoding = trimmed.match(/^(hex|base64|utf8):(.*)$/is);
+  if (explicitEncoding) {
+    return decodeSecretWithEncoding(
+      explicitEncoding[2]?.trim() ?? '',
+      explicitEncoding[1].toLowerCase() as 'hex' | 'base64' | 'utf8'
+    );
   }
 
-  const base64 = Buffer.from(trimmed, 'base64');
-  if (base64.length >= 32) {
+  const hex = decodeSecretWithEncoding(trimmed, 'hex');
+  if (hex) {
+    return hex;
+  }
+
+  const base64 = decodeSecretWithEncoding(trimmed, 'base64');
+  if (base64) {
     return base64;
   }
 
-  const utf8 = Buffer.from(trimmed, 'utf8');
-  if (utf8.length >= 32) {
-    return utf8;
-  }
-
-  return null;
+  return decodeSecretWithEncoding(trimmed, 'utf8');
 }
 
 function secretKid(secret: Buffer): string {
@@ -301,7 +322,9 @@ function currentSecret(): CurrentSecret {
   const raw = process.env.MAMA_RECONFIRM_TOKEN_SECRET;
   const secret = raw ? decodeSecret(raw) : null;
   if (!secret) {
-    throw new Error('MAMA_RECONFIRM_TOKEN_SECRET must be a 32+ byte base64 or hex secret.');
+    throw new Error(
+      'MAMA_RECONFIRM_TOKEN_SECRET must be a 32+ byte secret (optionally prefixed with hex:, base64:, or utf8:).'
+    );
   }
 
   return {
@@ -1208,7 +1231,7 @@ export function revertCorrection(
         new_value_json:
           row.target_kind === 'membership'
             ? revertMembershipValueJson(row.old_value_json)
-            : row.old_value_json ?? canonicalizeJSON(null),
+            : (row.old_value_json ?? canonicalizeJSON(null)),
         reason: 'Revert correction',
         confirmed: true,
         confirmed_by: input.confirmed_by,
@@ -1474,30 +1497,19 @@ export function supersedeCorrection(
       )
       .run(input.old_correction_id);
 
-    correctionAdapter
-      .prepare(
-        `
-          INSERT INTO case_corrections (
-            correction_id, case_id, target_kind, target_ref_json, target_ref_hash,
-            field_name, old_value_json, new_value_json, reason,
-            applied_by, applied_at, is_lock_active, reverted_at, superseded_by
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL)
-        `
-      )
-      .run(
-        newCorrectionId,
-        old.case_id,
-        old.target_kind,
-        old.target_ref_json,
-        old.target_ref_hash,
-        old.field_name,
-        currentValueJson,
-        input.new_value_json,
-        input.reason,
-        input.confirmed_by,
-        now
-      );
+    insertCaseCorrectionLock(adapter, {
+      correction_id: newCorrectionId,
+      case_id: old.case_id,
+      target_kind: old.target_kind,
+      target_ref: syntheticTargetRef,
+      field_name: (old.field_name as ApplyCorrectionInput['field_name']) ?? undefined,
+      old_value_json: currentValueJson,
+      new_value_json: input.new_value_json,
+      reason: input.reason,
+      applied_by: input.confirmed_by,
+      applied_at: now,
+      is_lock_active: 1,
+    });
 
     // Populate linkage last — sole mutation of superseded_by, permitted by
     // spec §5.4 amendment-8 (2026-04-18).
