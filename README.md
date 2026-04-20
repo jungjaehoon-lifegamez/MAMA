@@ -225,7 +225,3 @@ _Last updated: 2026-04-20_
 ## License
 
 MIT
-
----
-
-_Last updated: 2026-04-12_
