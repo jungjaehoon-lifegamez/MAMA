@@ -154,16 +154,28 @@ function resolveMergePreviewRows(input: {
   sourceHistory: EntityLineageLink[];
   targetActive: EntityLineageLink[];
   sourceEntityId: string;
+  mergeActionId?: string;
 }): { restoredRows: EntityLineageLink[]; removedRows: EntityLineageLink[] } {
-  const restoredRows = input.sourceHistory.filter((row) => row.status === 'superseded');
   let removedRows = input.targetActive.filter(
-    (row) => row.source_entity_id === input.sourceEntityId
+    (row) =>
+      row.source_entity_id === input.sourceEntityId &&
+      (!input.mergeActionId || row.review_action_id === input.mergeActionId)
+  );
+  const removedObservationIds = new Set(removedRows.map((row) => row.entity_observation_id));
+  const restoredRows = input.sourceHistory.filter(
+    (row) =>
+      row.status === 'superseded' &&
+      (!input.mergeActionId ||
+        row.review_action_id === input.mergeActionId ||
+        removedObservationIds.has(row.entity_observation_id))
   );
 
   if (removedRows.length === 0 && restoredRows.length > 0) {
     const restorableObservationIds = new Set(restoredRows.map((row) => row.entity_observation_id));
-    removedRows = input.targetActive.filter((row) =>
-      restorableObservationIds.has(row.entity_observation_id)
+    removedRows = input.targetActive.filter(
+      (row) =>
+        restorableObservationIds.has(row.entity_observation_id) &&
+        (!input.mergeActionId || row.review_action_id === input.mergeActionId)
     );
   }
 
@@ -236,6 +248,7 @@ async function previewMergeRollback(
     sourceHistory,
     targetActive,
     sourceEntityId: sourceNode.id,
+    mergeActionId: input.mergeActionId,
   });
 
   if (restoredRows.length === 0 || removedRows.length === 0) {

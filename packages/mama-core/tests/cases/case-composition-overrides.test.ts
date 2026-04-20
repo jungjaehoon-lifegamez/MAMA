@@ -118,7 +118,11 @@ function membershipRow(
   };
 }
 
-describe('Task 14: Membership pin and source promotion core helpers', () => {
+describe('Story CF2.7: Membership pin and source promotion core helpers', () => {
+  // Acceptance Criteria:
+  // - pinCaseMembership marks the row as manually pinned and keeps the reason trail stable.
+  // - unpinCaseMembership clears the manual-pin lock metadata that explain/assembly surfaces.
+  // - promoteCaseSource enforces CAS/reconfirm rules and only promotes valid decision sources.
   let testDbPath = '';
 
   beforeAll(async () => {
@@ -181,7 +185,7 @@ describe('Task 14: Membership pin and source promotion core helpers', () => {
     );
   });
 
-  it('unpin clears user_locked', () => {
+  it('unpin clears user_locked and manual-pin metadata', () => {
     insertCase({ case_id: 'case-unpin' });
     insertMembership({
       case_id: 'case-unpin',
@@ -199,7 +203,10 @@ describe('Task 14: Membership pin and source promotion core helpers', () => {
     });
 
     expect(result.kind).toBe('unpinned');
-    expect(membershipRow('case-unpin', 'dec-unpin').user_locked).toBe(0);
+    expect(membershipRow('case-unpin', 'dec-unpin')).toMatchObject({
+      user_locked: 0,
+      assignment_strategy: null,
+    });
   });
 
   it('pin rejects stale membership', () => {
