@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { getAdapter } from '../../src/db-manager.js';
 import {
-  adoptLineageAfterMerge,
+  adoptLineageAfterMergeSync,
   appendEntityLineageLink,
 } from '../../src/entities/lineage-store.js';
 import {
@@ -425,7 +425,7 @@ async function seedMergedEntityPair(): Promise<{ mergeActionId: string; memoryId
             evidence_json: JSON.stringify({ reason: 'preview test' }),
           });
           mergeActionId = result.merge_action_id;
-          adoptLineageAfterMerge({
+          adoptLineageAfterMergeSync({
             adapter,
             source_entity_id: 'entity_project_source',
             target_entity_id: 'entity_project_target',

@@ -51,6 +51,7 @@ function now(): number {
 }
 
 function normalizeSourceLocator(value: string | null | undefined): string {
+  // Write empty-string as the null sentinel so SQLite UNIQUE can collapse null-like locators; parseObservationRow maps it back to null on read.
   return value ?? '';
 }
 
