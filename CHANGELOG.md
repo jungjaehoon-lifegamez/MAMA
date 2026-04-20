@@ -4,8 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.19.1] / mama-core [1.5.0] / mcp-server [1.13.0] - 2026-04-20
+
 ### Added
 
+- **Case-first memory substrate** — Added the case-first schema, write paths, timeline range reader, freshness sweeper, merge/split flows, corrections, composition overrides, and MCP case timeline tool for bounded case narrative access
 - **Canonical entity substrate foundation** — Added first-class entity types, errors, normalization,
   persistence, candidate generation, resolution rules, recall bridge wiring, and audit metrics for
   multilingual canonical identity handling across MAMA core
@@ -20,6 +23,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **Learned ranker + suggest integration** — `mama.suggest()` now exposes learned-ranker metadata, respects `rerankWithLearned`, preserves memory source types for fallback rows, and keeps graph expansion counts aligned with the returned result set
+- **Standalone Claude auth detection** — standalone install/init/setup/run/status flows now prefer `claude auth status` for Claude Code login detection, while preserving the legacy `~/.claude/.credentials.json` fallback for older environments
 - **Slack-to-entity ingest path** — Connector ingestion now preserves raw provenance into
   `entity_observations` so connector evidence can be traced from raw rows through observations and
   downstream entity workflows
@@ -31,6 +36,8 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Review follow-up hardening** — Membership unpin now clears manual-pin metadata, freshness writes refresh `freshness_checked_at` without mutating stable scores, drifted-case listings exclude terminal rows, and exact-merge lineage adoption no longer floats async work inside sync transactions
+- **Standalone auth UX** — postinstall and setup no longer falsely warn about missing Claude Code auth when `claude auth status` is valid, and release/setup docs now describe the actual login path (`claude auth login`)
 - **Entity review follow-up hardening** — Review handlers now prefer stable actor UUID identity,
   validate byte-sized request bodies, resolve alias-backed evidence correctly, and fail loudly on
   malformed persisted audit metrics
