@@ -2,6 +2,7 @@
  * Tests for Swarm MAMA Adapter
  */
 
+import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMamaApiAdapter } from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
 
@@ -88,11 +89,28 @@ describe('SwarmMamaAdapter', () => {
         query: 'test query',
         results: [],
       });
-      const adapter = createMamaApiAdapter(undefined, () => ({ suggest }));
+      const requireFromTest = createRequire(import.meta.url);
+      const nodeModule = requireFromTest('node:module') as {
+        _load: (request: string, parent: unknown, isMain: boolean) => unknown;
+      };
+      const originalLoad = nodeModule._load;
+      const loadSpy = vi
+        .spyOn(nodeModule, '_load')
+        .mockImplementation((request: string, parent: unknown, isMain: boolean): unknown => {
+          if (request === '@jungjaehoon/mama-core/mama-api') {
+            return { suggest };
+          }
+
+          return originalLoad(request, parent, isMain);
+        });
+      const adapter = createMamaApiAdapter();
 
       const results = await adapter.search('test query');
 
       expect(results).toEqual([]);
+      expect(
+        loadSpy.mock.calls.some(([request]) => request === '@jungjaehoon/mama-core/mama-api')
+      ).toBe(true);
       expect(suggest).toHaveBeenCalledWith('test query', {
         format: 'json',
         limit: 5,
