@@ -33,7 +33,7 @@ import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import type { AgentContext } from '../agent/types.js';
+import type { AgentContext, AgentLoopOptions, StreamCallbacks } from '../agent/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -45,6 +45,10 @@ import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
+import { EnvelopeAuthority } from '../envelope/index.js';
+import type { DestinationRef, Envelope, MemoryScope, ProjectRef } from '../envelope/types.js';
+
+export type { AgentLoopOptions } from '../agent/types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -88,32 +92,6 @@ export interface GatewayRegistry {
 }
 
 /**
- * Options for agent loop execution
- */
-export interface AgentLoopOptions {
-  /** System prompt to prepend */
-  systemPrompt?: string;
-  /** User identifier */
-  userId?: string;
-  /** Maximum turns */
-  maxTurns?: number;
-  /** Claude model to use (overrides default) */
-  model?: string;
-  /** Message source (for lane-based concurrency) */
-  source?: string;
-  /** Channel ID (for lane-based concurrency) */
-  channelId?: string;
-  /** Agent context for role-aware execution */
-  agentContext?: AgentContext;
-  /** Resume existing CLI session (skips system prompt injection) */
-  resumeSession?: boolean;
-  /** CLI session ID from session pool (prevents double-locking) */
-  cliSessionId?: string;
-  /** Streaming callbacks for real-time progress events */
-  streamCallbacks?: import('../agent/types.js').StreamCallbacks;
-}
-
-/**
  * Message processing result
  */
 export interface ProcessingResult {
@@ -148,6 +126,72 @@ const SENSITIVE_PATTERNS = [
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
+
+export interface ReactiveEnvelopeConfig {
+  projectRefsFor(message: NormalizedMessage): ProjectRef[];
+  rawConnectorsFor(message: NormalizedMessage): string[];
+  memoryScopesFor(message: NormalizedMessage): MemoryScope[];
+  reactiveBudgetSeconds: number;
+}
+
+function envelopeSourceForMessage(message: NormalizedMessage): Envelope['source'] {
+  switch (message.source) {
+    case 'telegram':
+    case 'slack':
+    case 'chatwork':
+    case 'discord':
+    case 'viewer':
+      return message.source;
+    case 'mobile':
+      return 'viewer';
+    case 'system':
+      return 'watch';
+    default:
+      throw new Error(`[envelope] unsupported message source: ${String(message.source)}`);
+  }
+}
+
+function allowedDestinationsForMessage(message: NormalizedMessage): DestinationRef[] {
+  switch (message.source) {
+    case 'telegram':
+      return [{ kind: 'telegram', id: message.channelId }];
+    case 'slack':
+      return [{ kind: 'slack', id: message.channelId }];
+    case 'chatwork':
+      return [{ kind: 'chatwork', id: message.channelId }];
+    case 'discord':
+      return [{ kind: 'discord', id: message.channelId }];
+    case 'viewer':
+      return [{ kind: 'webchat', id: message.channelId }];
+    case 'mobile':
+    case 'system':
+      return [];
+    default:
+      throw new Error(`[envelope] unsupported destination source: ${String(message.source)}`);
+  }
+}
+
+function buildReactiveEnvelopeInput(
+  message: NormalizedMessage,
+  config: ReactiveEnvelopeConfig
+): Omit<Envelope, 'envelope_hash' | 'signature'> {
+  return {
+    agent_id: 'worker',
+    instance_id: `inst_${randomUUID()}`,
+    source: envelopeSourceForMessage(message),
+    channel_id: message.channelId,
+    trigger_context: { user_text: message.text },
+    scope: {
+      project_refs: config.projectRefsFor(message),
+      raw_connectors: config.rawConnectorsFor(message),
+      memory_scopes: config.memoryScopesFor(message),
+      allowed_destinations: allowedDestinationsForMessage(message),
+    },
+    tier: 1,
+    budget: { wall_seconds: config.reactiveBudgetSeconds },
+    expires_at: new Date(Date.now() + config.reactiveBudgetSeconds * 1000 * 4).toISOString(),
+  };
+}
 
 /**
  * Sanitize user-supplied text before injecting into prompts.
@@ -203,6 +247,8 @@ export class MessageRouter {
   private mamaApi: MamaApiClient;
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
+  private envelopeConfig?: ReactiveEnvelopeConfig;
+  private envelopeAuthority?: EnvelopeAuthority;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
@@ -412,11 +458,15 @@ export class MessageRouter {
     sessionStore: SessionStore,
     agentLoop: AgentLoopClient,
     mamaApi: MamaApiClient,
-    config: MessageRouterConfig = {}
+    config: MessageRouterConfig = {},
+    envelopeConfig?: ReactiveEnvelopeConfig,
+    envelopeAuthority?: EnvelopeAuthority
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
     this.mamaApi = mamaApi;
+    this.envelopeConfig = envelopeConfig;
+    this.envelopeAuthority = envelopeAuthority;
     this.config = {
       similarityThreshold: config.similarityThreshold ?? 0.7,
       maxDecisions: config.maxDecisions ?? 3,
@@ -435,6 +485,23 @@ export class MessageRouter {
       similarityThreshold: this.config.similarityThreshold,
       maxDecisions: this.config.maxDecisions,
     });
+  }
+
+  private buildReactiveEnvelope(message: NormalizedMessage): Envelope | undefined {
+    const config = this.envelopeConfig;
+    const authority = this.envelopeAuthority;
+
+    if (config && !authority) {
+      throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
+    }
+    if (!config && authority) {
+      throw new Error('[envelope] EnvelopeAuthority provided without ReactiveEnvelopeConfig');
+    }
+    if (!config || !authority) {
+      return undefined;
+    }
+
+    return authority.buildAndPersist(buildReactiveEnvelopeInput(message, config));
   }
 
   /**
@@ -492,7 +559,7 @@ export class MessageRouter {
     message: NormalizedMessage,
     processOptions?: {
       onQueued?: () => void;
-      onStream?: import('../agent/types.js').StreamCallbacks;
+      onStream?: StreamCallbacks;
     }
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
@@ -520,6 +587,8 @@ This protects your credentials from being exposed in chat logs.`;
         duration: Date.now() - startTime,
       };
     }
+
+    const envelope = this.buildReactiveEnvelope(message);
 
     // 1. Get or create session (by source + channelId)
     const session = this.sessionStore.getOrCreate(
@@ -694,6 +763,7 @@ This protects your credentials from being exposed in chat logs.`;
       resumeSession: shouldResume, // Use --resume flag for continuing sessions
       cliSessionId, // Pass CLI session ID to avoid double-locking
       streamCallbacks: wrappedOnStream || processOptions?.onStream,
+      envelope,
     };
 
     if (shouldResume) {

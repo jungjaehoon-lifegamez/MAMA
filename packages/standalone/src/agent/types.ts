@@ -10,6 +10,7 @@
  */
 
 import type { RoleConfig } from '../cli/config/types.js';
+import type { Envelope } from '../envelope/types.js';
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -826,6 +827,8 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex-mcp';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** User identifier for the frontdoor message source */
+  userId?: string;
   /** Maximum number of conversation turns (default: 10) */
   maxTurns?: number;
   /** Maximum tokens per response (default: 4096) */
@@ -934,6 +937,9 @@ export interface AgentLoopOptions {
 
   /** Streaming callbacks for real-time progress events to external consumers */
   streamCallbacks?: StreamCallbacks;
+
+  /** Runtime authority envelope bound to this agent loop invocation */
+  envelope?: Envelope;
 
   /**
    * Stop the agent loop after the current tool batch completes when any
