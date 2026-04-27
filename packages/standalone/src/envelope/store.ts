@@ -61,13 +61,11 @@ export class EnvelopeStore {
 
   private rowToEnvelope(row: EnvelopeRow): Envelope {
     const envelopeHash = String(row.envelope_hash);
-    return {
+    const envelope: Envelope = {
       envelope_hash: envelopeHash,
       instance_id: String(row.instance_id),
-      parent_instance_id: row.parent_instance_id ? String(row.parent_instance_id) : undefined,
       agent_id: String(row.agent_id),
       source: row.source as Envelope['source'],
-      channel_id: row.channel_id ? String(row.channel_id) : undefined,
       trigger_context: this.parseEnvelopeJsonField<Envelope['trigger_context']>(
         row,
         'trigger_context',
@@ -81,6 +79,15 @@ export class EnvelopeStore {
         ? this.parseEnvelopeJsonField<Envelope['signature']>(row, 'signature', envelopeHash)
         : undefined,
     };
+
+    if (row.parent_instance_id) {
+      envelope.parent_instance_id = String(row.parent_instance_id);
+    }
+    if (row.channel_id) {
+      envelope.channel_id = String(row.channel_id);
+    }
+
+    return envelope;
   }
 
   private envelopeToParams(env: Envelope): Record<string, unknown> {
