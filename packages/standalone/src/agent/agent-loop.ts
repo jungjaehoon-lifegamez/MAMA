@@ -56,6 +56,7 @@ import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
+import type { Envelope } from '../envelope/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -267,6 +268,7 @@ type AgentToolExecutionContext = {
   agentId?: string;
   source?: string;
   channelId?: string;
+  envelope?: Envelope;
 };
 
 export class AgentLoop {
@@ -602,6 +604,7 @@ export class AgentLoop {
         options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
       source: options.source,
       channelId: options.channelId,
+      envelope: options.envelope,
     };
   }
 

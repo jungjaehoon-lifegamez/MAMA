@@ -19,6 +19,7 @@
  */
 
 import path from 'path';
+import os from 'os';
 import { info, warn, error as logError } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
@@ -139,6 +140,7 @@ let initializingPromise: Promise<unknown> | null = null; // Single-flight guard 
 
 // Migration directory (moved to src/db/migrations for M1.2)
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
+const REAL_USER_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 /**
  * Initialize SQLite database adapter and connect
@@ -152,6 +154,8 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
  * @returns SQLite database connection
  */
 export async function initDB(): Promise<unknown> {
+  assertTestProcessIsNotUsingRealDb();
+
   // Already initialized - return immediately
   if (isInitialized) {
     return dbConnection;
@@ -199,6 +203,49 @@ export async function initDB(): Promise<unknown> {
   })();
 
   return initializingPromise;
+}
+
+function assertTestProcessIsNotUsingRealDb(): void {
+  if (!isDatabaseBoundaryTestMode()) {
+    return;
+  }
+
+  const configuredPaths = [
+    { name: 'MAMA_DB_PATH', value: process.env.MAMA_DB_PATH },
+    { name: 'MAMA_DATABASE_PATH', value: process.env.MAMA_DATABASE_PATH },
+  ];
+
+  for (const configuredPath of configuredPaths) {
+    if (!configuredPath.value) {
+      continue;
+    }
+
+    const resolvedPath = path.resolve(expandHomePath(configuredPath.value));
+    if (resolvedPath === path.resolve(REAL_USER_DB_PATH)) {
+      throw new Error(
+        `[db-boundary] Refusing to initDB against real DB ${REAL_USER_DB_PATH} ` +
+          `from a test process (${configuredPath.name}=${configuredPath.value}). ` +
+          'Set MAMA_DB_PATH to a temporary path before initDB.'
+      );
+    }
+  }
+}
+
+function isDatabaseBoundaryTestMode(): boolean {
+  return Boolean(
+    process.env.VITEST || process.env.MAMA_TEST_MODE || process.env.NODE_ENV === 'test'
+  );
+}
+
+function expandHomePath(value: string): string {
+  const home = os.homedir();
+  if (value === '~') {
+    return home;
+  }
+  if (value.startsWith('~/')) {
+    return path.join(home, value.slice(2));
+  }
+  return value.replaceAll('${HOME}', home).replaceAll('$HOME', home);
 }
 
 /**

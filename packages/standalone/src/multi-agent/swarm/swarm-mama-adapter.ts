@@ -32,18 +32,32 @@ interface MamaSuggestResult {
   graph?: unknown;
 }
 
+interface MamaCoreModule {
+  suggest?: (
+    query: string,
+    options: {
+      format: 'json';
+      limit: number;
+      threshold: number;
+      useReranking: boolean;
+    }
+  ) => Promise<MamaSuggestResult | null | undefined>;
+}
+
 /**
  * Create a MamaApiClient that uses mama-core directly
  *
  * @returns MamaApiClient implementation
  */
-export function createMamaApiAdapter(): MamaApiClient {
+export function createMamaApiAdapter(mamaCore?: MamaCoreModule): MamaApiClient {
   return {
     async search(query: string, limit?: number): Promise<SearchResult[]> {
       try {
-        // Dynamically require mama-core (CommonJS module)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const mama = require('@jungjaehoon/mama-core/mama-api');
+        const mama =
+          mamaCore ??
+          // Dynamically require mama-core (CommonJS module)
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          require('@jungjaehoon/mama-core/mama-api');
 
         if (!mama || !mama.suggest) {
           console.warn('[SwarmMamaAdapter] mama-core suggest() not available');

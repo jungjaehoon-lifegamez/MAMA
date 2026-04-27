@@ -4,17 +4,14 @@
 [extend]
 useDefault = true
 
-# Allow placeholder tokens in documentation
-[[rules]]
-id = "placeholder-tokens"
-description = "Ignore placeholder tokens"
-regex = '''YOUR_.*_TOKEN_HERE'''
-allowlist = true
-
 # Paths to ignore
 [allowlist]
+description = "Project allowlist for non-secret placeholders and generated lockfiles"
 paths = [
   '''pnpm-lock\.yaml''',
   '''package-lock\.json''',
   '''\.env\.example''',
+]
+regexes = [
+  '''YOUR_.*_TOKEN_HERE''',
 ]

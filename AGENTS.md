@@ -200,6 +200,13 @@ DebugLogger.log('debug info');  // ✅ REQUIRED
 # Always set MAMA_AUTH_TOKEN before exposing
 ```
 
+### **Local-Only Runtime Artifacts**
+
+```bash
+# ❌ FORBIDDEN: Commit Superpowers runtime/planning artifacts
+# .superpowers/ and docs/superpowers/ are local-only and must stay ignored
+```
+
 ### **Module Boundaries**
 
 ```bash

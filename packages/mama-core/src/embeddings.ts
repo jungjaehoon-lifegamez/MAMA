@@ -19,6 +19,7 @@ import { loadConfig, getModelName, getEmbeddingDim, getQuantized } from './confi
 
 // Shared cache directory (not in node_modules)
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'transformers');
+const TIER3_ENV_VALUES = new Set(['1', 'true', 'yes']);
 
 // Type for pipeline function from @huggingface/transformers
 type PipelineFunction = (
@@ -30,6 +31,19 @@ type PipelineFunction = (
 let embeddingPipeline: PipelineFunction | null = null;
 let currentModelName: string | null = null;
 let modelLoadFailed = false; // Cache load failures to avoid repeated slow retries
+
+function isForceTier3Enabled(): boolean {
+  return TIER3_ENV_VALUES.has(String(process.env.MAMA_FORCE_TIER_3 || '').toLowerCase());
+}
+
+function assertEmbeddingsEnabled(): void {
+  if (isForceTier3Enabled()) {
+    throw new Error(
+      'Embedding generation disabled because MAMA_FORCE_TIER_3=true. ' +
+        'Tier 3 test mode must use lexical/no-vector fallback instead of loading the embedding model.'
+    );
+  }
+}
 
 /**
  * Decision object for enhanced embedding generation
@@ -55,6 +69,8 @@ export interface DecisionForEmbedding {
  * @returns Embedding pipeline
  */
 async function loadModel(): Promise<PipelineFunction> {
+  assertEmbeddingsEnabled();
+
   const modelName = getModelName();
 
   // Check if model has changed (Story M1.4 AC #3)
@@ -126,6 +142,8 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
   if (!text || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
+
+  assertEmbeddingsEnabled();
 
   // Task 2: Check cache first (AC #3)
   const cached = embeddingCache.get(text);
