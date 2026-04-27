@@ -212,4 +212,13 @@ describe('isEnvelopeSubset', () => {
       reason: 'token_budget_exceeds_parent',
     });
   });
+
+  it('rejects child cost_cap above bounded parent', () => {
+    const parent = envOf({ cost: 1.0 });
+    const child = envOf({ cost: 2.5 });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'cost_cap_exceeds_parent',
+    });
+  });
 });

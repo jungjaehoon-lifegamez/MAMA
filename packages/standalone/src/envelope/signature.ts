@@ -2,6 +2,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { computeEnvelopeHash } from './canonical.js';
 import type { Envelope } from './types.js';
 
+/**
+ * Raw key material. String keys are interpreted as UTF-8 bytes; callers with
+ * base64 input must decode it before constructing EnvelopeSigningKey.
+ */
 export type EnvelopeKeyMaterial = Buffer | Uint8Array | string;
 
 export interface EnvelopeSigningKey {
@@ -52,7 +56,7 @@ export function verifyEnvelope(envelope: Envelope, lookupKey: EnvelopeKeyLookup)
     return false;
   }
 
-  const expected = decodeBase64Signature(computeSignatureHmac(envelope.envelope_hash, key));
+  const expected = computeSignatureHmacBuffer(envelope.envelope_hash, key);
   const actual = decodeBase64Signature(envelope.signature.hmac);
 
   if (actual.length !== expected.length) {
@@ -84,7 +88,11 @@ function validateSigningKey(signingKey: EnvelopeSigningKey): void {
 }
 
 function computeSignatureHmac(envelopeHash: string, key: EnvelopeKeyMaterial): string {
-  return createHmac('sha256', normalizeKey(key)).update(envelopeHash, 'utf8').digest('base64');
+  return computeSignatureHmacBuffer(envelopeHash, key).toString('base64');
+}
+
+function computeSignatureHmacBuffer(envelopeHash: string, key: EnvelopeKeyMaterial): Buffer {
+  return createHmac('sha256', normalizeKey(key)).update(envelopeHash, 'utf8').digest();
 }
 
 function normalizeKey(key: EnvelopeKeyMaterial): Buffer {

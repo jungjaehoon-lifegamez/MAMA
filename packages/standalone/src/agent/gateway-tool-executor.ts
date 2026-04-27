@@ -59,6 +59,7 @@ import type {
   StopBotInput,
   BotStatus,
   BotPlatform,
+  EnvelopeDenialResult,
 } from './types.js';
 import { AgentError } from './types.js';
 import {
@@ -103,6 +104,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const AGENT_DETAIL_TABS = new Set([
   'config',
   'persona',
@@ -683,8 +685,7 @@ export class GatewayToolExecutor {
     input: GatewayToolInput
   ): GatewayToolResult | undefined {
     const ctx = this.executionContextStorage.getStore();
-    const envelopeHash = ctx?.envelope?.envelope_hash;
-    const failLoudOnMissing = process.env.MAMA_ENVELOPE_FAIL_LOUD === 'true';
+    const failLoudOnMissing = isTruthyEnv('MAMA_ENVELOPE_FAIL_LOUD');
 
     if (ctx?.envelope) {
       try {
@@ -693,12 +694,13 @@ export class GatewayToolExecutor {
       } catch (err) {
         if (err instanceof EnvelopeViolation) {
           this.logEnvelopeActivity(ctx, 'envelope_violation', toolName, err.message);
-          return {
+          const denial: EnvelopeDenialResult = {
             success: false,
             error: err.message,
             code: err.code,
-            envelope_hash: envelopeHash,
-          } as GatewayToolResult;
+            envelope_hash: ctx.envelope.envelope_hash,
+          };
+          return denial;
         }
         throw err;
       }
@@ -3534,4 +3536,12 @@ export class GatewayToolExecutor {
   static isValidTool(toolName: string): toolName is GatewayToolName {
     return VALID_TOOLS.includes(toolName as GatewayToolName);
   }
+}
+
+function isTruthyEnv(name: string): boolean {
+  const value = process.env[name];
+  if (value === undefined) {
+    return false;
+  }
+  return TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
 }

@@ -77,6 +77,15 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
   });
 
+  it('treats common truthy fail-loud env values as enabled', async () => {
+    process.env.MAMA_ENVELOPE_FAIL_LOUD = '1';
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    await expect(executor.execute('mama_load_checkpoint', {})).rejects.toThrow(/without envelope/);
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
   it('rejects telegram_send to a destination outside envelope.allowed_destinations before gateway send', async () => {
     const gateway = makeTelegramGateway();
     const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });

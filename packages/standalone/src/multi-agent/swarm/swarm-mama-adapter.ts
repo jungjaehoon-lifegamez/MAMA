@@ -42,6 +42,12 @@ interface MamaCoreModule {
       useReranking: boolean;
     }
   ) => Promise<MamaSuggestResult | null | undefined>;
+  saveCheckpoint?: (
+    summary: string,
+    openFiles: string[],
+    nextSteps: string,
+    recentConversation: unknown[]
+  ) => Promise<unknown>;
 }
 
 /**
@@ -119,12 +125,11 @@ export async function saveSwarmCheckpoint(
   sessionId: string,
   summary: string,
   openFiles?: string[],
-  nextSteps?: string
+  nextSteps?: string,
+  mamaCore?: MamaCoreModule
 ): Promise<void> {
   try {
-    // Dynamically require mama-core (CommonJS module)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mama = require('@jungjaehoon/mama-core/mama-api');
+    const mama = mamaCore ?? loadDefaultMamaCoreModule();
 
     if (!mama || !mama.saveCheckpoint) {
       console.warn('[SwarmMamaAdapter] mama.saveCheckpoint() not available');

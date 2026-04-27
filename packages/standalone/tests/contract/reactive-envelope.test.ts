@@ -45,6 +45,33 @@ describe('reactive envelope issuance', () => {
     sessionStore = undefined;
   });
 
+  it('fails at construction when envelope config and authority are not paired', () => {
+    const db: SQLiteDatabase = new Database(':memory:');
+    sessionStore = new SessionStore(db);
+    const agentLoop: AgentLoopClient = {
+      async run() {
+        return { response: 'ok' };
+      },
+    };
+    const { authority } = makeAuthorityHarness(db);
+
+    expect(
+      () =>
+        new MessageRouter(
+          sessionStore!,
+          agentLoop,
+          createMockMamaApi([]),
+          {},
+          makeReactiveEnvelopeConfig()
+        )
+    ).toThrow(/ReactiveEnvelopeConfig provided without EnvelopeAuthority/);
+
+    expect(
+      () =>
+        new MessageRouter(sessionStore!, agentLoop, createMockMamaApi([]), {}, undefined, authority)
+    ).toThrow(/EnvelopeAuthority provided without ReactiveEnvelopeConfig/);
+  });
+
   it.each([
     {
       source: 'telegram' as const,

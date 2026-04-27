@@ -32,12 +32,22 @@ describe('db boundary contract', () => {
   });
 
   it('test env is not configured to use the real user DB', () => {
-    const envPath = process.env.MAMA_DB_PATH;
-    if (envPath) {
-      expect(envPath).not.toBe(REAL_DB_PATH);
+    for (const name of ['MAMA_DB_PATH', 'MAMA_DATABASE_PATH']) {
+      const envPath = process.env[name];
+      if (envPath) {
+        expect(envPath).not.toBe(REAL_DB_PATH);
+      }
     }
 
     expect(process.env.VITEST || process.env.NODE_ENV).toBeDefined();
+  });
+
+  it('initDB refuses the default real DB path when test env omits explicit DB paths', async () => {
+    process.env.VITEST = 'true';
+    delete process.env.MAMA_DB_PATH;
+    delete process.env.MAMA_DATABASE_PATH;
+
+    await expect(initDB()).rejects.toThrow(/db-boundary|real DB|Refusing/i);
   });
 
   it('initDB throws if VITEST=true and MAMA_DB_PATH points at the real DB', async () => {

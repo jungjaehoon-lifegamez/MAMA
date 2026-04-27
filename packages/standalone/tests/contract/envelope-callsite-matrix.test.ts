@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SRC_ROOT = join(process.cwd(), 'src');
+const TEST_DIR = dirname(fileURLToPath(import.meta.url));
+const SRC_ROOT = join(TEST_DIR, '..', '..', 'src');
 
 function walkTsFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -19,9 +21,9 @@ function walkTsFiles(dir: string, out: string[] = []): string[] {
 
 function discoverExecuteCallsites(): string[] {
   const patterns = [
-    /\bmcpExecutor\.execute\s*\(/g,
-    /\bgatewayToolExecutor\.execute\s*\(/g,
-    /\bexecutor\.execute\s*\(/g,
+    /\bmcpExecutor\.execute\s*\(/,
+    /\bgatewayToolExecutor\.execute\s*\(/,
+    /\bexecutor\.execute\s*\(/,
   ];
 
   return walkTsFiles(SRC_ROOT).flatMap((file) => {
@@ -33,7 +35,6 @@ function discoverExecuteCallsites(): string[] {
       if (pattern.test(text)) {
         hits.push(rel);
       }
-      pattern.lastIndex = 0;
     }
 
     return hits;

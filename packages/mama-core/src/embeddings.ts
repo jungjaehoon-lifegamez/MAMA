@@ -246,6 +246,8 @@ export async function generateEnhancedEmbedding(
  * @returns Array of embeddings
  */
 export async function generateBatchEmbeddings(texts: string[]): Promise<Float32Array[]> {
+  assertEmbeddingsEnabled();
+
   if (!Array.isArray(texts) || texts.length === 0) {
     throw new Error('Texts must be a non-empty array');
   }

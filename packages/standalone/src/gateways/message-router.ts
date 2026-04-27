@@ -126,6 +126,7 @@ const SENSITIVE_PATTERNS = [
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
+const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
 
 export interface ReactiveEnvelopeConfig {
   projectRefsFor(message: NormalizedMessage): ProjectRef[];
@@ -189,7 +190,10 @@ function buildReactiveEnvelopeInput(
     },
     tier: 1,
     budget: { wall_seconds: config.reactiveBudgetSeconds },
-    expires_at: new Date(Date.now() + config.reactiveBudgetSeconds * 1000 * 4).toISOString(),
+    // Wall budget limits agent work; envelope validity gets slack for tool finalization.
+    expires_at: new Date(
+      Date.now() + config.reactiveBudgetSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
+    ).toISOString(),
   };
 }
 
@@ -467,6 +471,12 @@ export class MessageRouter {
     this.mamaApi = mamaApi;
     this.envelopeConfig = envelopeConfig;
     this.envelopeAuthority = envelopeAuthority;
+    if (this.envelopeConfig && !this.envelopeAuthority) {
+      throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
+    }
+    if (!this.envelopeConfig && this.envelopeAuthority) {
+      throw new Error('[envelope] EnvelopeAuthority provided without ReactiveEnvelopeConfig');
+    }
     this.config = {
       similarityThreshold: config.similarityThreshold ?? 0.7,
       maxDecisions: config.maxDecisions ?? 3,
@@ -491,12 +501,6 @@ export class MessageRouter {
     const config = this.envelopeConfig;
     const authority = this.envelopeAuthority;
 
-    if (config && !authority) {
-      throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
-    }
-    if (!config && authority) {
-      throw new Error('[envelope] EnvelopeAuthority provided without ReactiveEnvelopeConfig');
-    }
     if (!config || !authority) {
       return undefined;
     }

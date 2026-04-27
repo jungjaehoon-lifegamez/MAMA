@@ -7,23 +7,10 @@ import {
 } from '../../src/gateways/message-router.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { createMockMamaApi } from '../../src/gateways/context-injector.js';
-import { AgentLoop } from '../../src/agent/agent-loop.js';
+import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentLoopOptions, GatewayToolInput } from '../../src/agent/types.js';
-import type { Envelope } from '../../src/envelope/types.js';
 import { makeAuthorityHarness } from '../envelope/fixtures.js';
-
-type AgentToolExecutionContext = {
-  agentContext: AgentLoopOptions['agentContext'] | null;
-  agentId?: string;
-  source?: string;
-  channelId?: string;
-  envelope?: Envelope;
-};
-
-type AgentLoopPrivate = {
-  buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null;
-};
 
 function makeReactiveEnvelopeConfig(): ReactiveEnvelopeConfig {
   return {
@@ -118,8 +105,7 @@ describe('Reactive Main envelope tool path', () => {
       text: 'hello',
     });
 
-    const agentLoopPrivate = Object.create(AgentLoop.prototype) as AgentLoopPrivate;
-    const executionContext = agentLoopPrivate.buildToolExecutionContext(capturedOptions);
+    const executionContext = buildAgentToolExecutionContext(capturedOptions);
     const executor = new GatewayToolExecutor({ mamaApi: createMockMamaApi([]) });
     executor.setTelegramGateway({
       sendMessage: vi.fn().mockResolvedValue(undefined),

@@ -24,12 +24,12 @@ describe('EnvelopeKeyProvider', () => {
 
   it('loads explicit UTF-8 key from environment', () => {
     const signer = loadEnvelopeSigningKeyFromEnv({
-      MAMA_ENVELOPE_HMAC_KEY: 'this-is-a-long-enough-key',
+      MAMA_ENVELOPE_HMAC_KEY: 'this-is-a-32-byte-envelope-key!!',
       MAMA_ENVELOPE_HMAC_KEY_ID: 'utf8',
     });
 
     expect(signer.key_id).toBe('utf8');
-    expect(Buffer.from(signer.key).toString('utf8')).toBe('this-is-a-long-enough-key');
+    expect(Buffer.from(signer.key).toString('utf8')).toBe('this-is-a-32-byte-envelope-key!!');
   });
 
   it('rejects malformed base64 instead of silently decoding garbage', () => {
@@ -51,9 +51,9 @@ describe('EnvelopeKeyProvider', () => {
   it('rejects short HMAC keys', () => {
     expect(() =>
       loadEnvelopeSigningKeyFromEnv({
-        MAMA_ENVELOPE_HMAC_KEY_BASE64: Buffer.alloc(8, 1).toString('base64'),
+        MAMA_ENVELOPE_HMAC_KEY_BASE64: Buffer.alloc(31, 1).toString('base64'),
       })
-    ).toThrow(/at least 16 bytes/i);
+    ).toThrow(/at least 32 bytes/i);
   });
 
   it('rejects invalid key versions', () => {

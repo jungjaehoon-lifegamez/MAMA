@@ -14,8 +14,8 @@ export function loadEnvelopeSigningKeyFromEnv(env: EnvLike = process.env): Envel
   }
 
   const key = rawBase64 ? decodeStrictBase64(rawBase64) : Buffer.from(rawUtf8!, 'utf8');
-  if (key.length < 16) {
-    throw new Error('[envelope] HMAC key must be at least 16 bytes');
+  if (key.length < 32) {
+    throw new Error('[envelope] HMAC key must be at least 32 bytes');
   }
 
   const keyVersion = Number(env.MAMA_ENVELOPE_HMAC_KEY_VERSION ?? '1');

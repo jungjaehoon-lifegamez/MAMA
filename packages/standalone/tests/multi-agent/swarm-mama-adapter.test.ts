@@ -4,9 +4,12 @@
 
 import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createMamaApiAdapter } from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
+import {
+  createMamaApiAdapter,
+  saveSwarmCheckpoint,
+} from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
 
-describe('SwarmMamaAdapter', () => {
+describe('Story M1.5: Swarm MAMA adapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -17,7 +20,7 @@ describe('SwarmMamaAdapter', () => {
     vi.restoreAllMocks();
   });
 
-  describe('createMamaApiAdapter', () => {
+  describe('AC #1: createMamaApiAdapter search bridge', () => {
     it('creates a valid MamaApiClient', () => {
       const adapter = createMamaApiAdapter({ suggest: vi.fn() });
 
@@ -129,6 +132,18 @@ describe('SwarmMamaAdapter', () => {
 
       expect(results).toEqual([]);
       expect(console.warn).toHaveBeenCalledWith('[SwarmMamaAdapter] Failed to search MAMA:', error);
+    });
+  });
+
+  describe('AC #2: saveSwarmCheckpoint injection bridge', () => {
+    it('saves swarm checkpoint through an injected mama-core module', async () => {
+      const saveCheckpoint = vi.fn().mockResolvedValue(123);
+
+      await saveSwarmCheckpoint('session-1', 'summary', ['open.ts'], 'next step', {
+        saveCheckpoint,
+      });
+
+      expect(saveCheckpoint).toHaveBeenCalledWith('summary', ['open.ts'], 'next step', []);
     });
   });
 });

@@ -786,6 +786,13 @@ export interface LoadCheckpointResult {
   message?: string;
 }
 
+export interface EnvelopeDenialResult {
+  success: false;
+  error: string;
+  code: string;
+  envelope_hash: string;
+}
+
 /**
  * Union type for all MCP tool results
  */
@@ -794,6 +801,7 @@ export type GatewayToolResult =
   | SearchResult
   | UpdateResult
   | LoadCheckpointResult
+  | EnvelopeDenialResult
   | TranslateImageResult
   | { success: boolean; [key: string]: unknown };
 

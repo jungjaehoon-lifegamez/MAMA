@@ -12,34 +12,38 @@ afterEach(() => {
   vi.resetModules();
 });
 
-describe('embeddings Tier 3 mode', () => {
-  it('fails loudly before loading the embedding model when MAMA_FORCE_TIER_3 is enabled', async () => {
-    process.env.MAMA_FORCE_TIER_3 = 'true';
-    vi.doMock('@huggingface/transformers', () => ({
-      env: {},
-      pipeline: async () => {
-        throw new Error('transformers should not load in Tier 3 mode');
-      },
-    }));
+describe('Story M1.4: Embeddings Tier 3 enforcement', () => {
+  describe('AC #1: Tier 3 blocks model loading before inference', () => {
+    it('fails loudly before loading the embedding model when MAMA_FORCE_TIER_3 is enabled', async () => {
+      process.env.MAMA_FORCE_TIER_3 = 'true';
+      vi.doMock('@huggingface/transformers', () => ({
+        env: {},
+        pipeline: async () => {
+          throw new Error('transformers should not load in Tier 3 mode');
+        },
+      }));
 
-    const { generateEmbedding } = await import('../../src/embeddings.js');
+      const { generateEmbedding } = await import('../../src/embeddings.js');
 
-    await expect(generateEmbedding('use lexical fallback')).rejects.toThrow(
-      /MAMA_FORCE_TIER_3=true/
-    );
-  });
+      await expect(generateEmbedding('use lexical fallback')).rejects.toThrow(
+        /MAMA_FORCE_TIER_3=true/
+      );
+    });
 
-  it('blocks batch embeddings in Tier 3 mode with the same explicit error', async () => {
-    process.env.MAMA_FORCE_TIER_3 = '1';
-    vi.doMock('@huggingface/transformers', () => ({
-      env: {},
-      pipeline: async () => {
-        throw new Error('transformers should not load in Tier 3 mode');
-      },
-    }));
+    it('blocks batch embeddings with the same direct explicit error', async () => {
+      process.env.MAMA_FORCE_TIER_3 = '1';
+      vi.doMock('@huggingface/transformers', () => ({
+        env: {},
+        pipeline: async () => {
+          throw new Error('transformers should not load in Tier 3 mode');
+        },
+      }));
 
-    const { generateBatchEmbeddings } = await import('../../src/embeddings.js');
+      const { generateBatchEmbeddings } = await import('../../src/embeddings.js');
 
-    await expect(generateBatchEmbeddings(['one', 'two'])).rejects.toThrow(/MAMA_FORCE_TIER_3/);
+      await expect(generateBatchEmbeddings(['one', 'two'])).rejects.toThrow(
+        /^Embedding generation disabled/
+      );
+    });
   });
 });

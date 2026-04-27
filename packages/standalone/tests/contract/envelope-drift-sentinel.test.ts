@@ -18,7 +18,7 @@ function makeTelegramGateway() {
   };
 }
 
-describe('hourly-loop sentinel: T1 accidental envelope drift', () => {
+describe('envelope drift sentinel: T1 accidental destination widening', () => {
   it('autonomous worker with no allowed_destinations cannot send anywhere', async () => {
     const env = hashEnvelope({
       agent_id: 'worker',

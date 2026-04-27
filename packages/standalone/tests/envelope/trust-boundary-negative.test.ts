@@ -12,6 +12,7 @@ describe('envelope trust boundary: no silent fallback', () => {
   it.each([
     Number.NaN,
     Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
     undefined,
     () => undefined,
     Symbol('x'),

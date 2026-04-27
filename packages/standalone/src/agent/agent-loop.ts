@@ -263,13 +263,28 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
   return filtered;
 }
 
-type AgentToolExecutionContext = {
+export type AgentToolExecutionContext = {
   agentContext: AgentContext | null;
   agentId?: string;
   source?: string;
   channelId?: string;
   envelope?: Envelope;
 };
+
+export function buildAgentToolExecutionContext(
+  options?: AgentLoopOptions
+): AgentToolExecutionContext | null {
+  if (!options?.agentContext) {
+    return null;
+  }
+  return {
+    agentContext: options.agentContext,
+    agentId: options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
+    source: options.source,
+    channelId: options.channelId,
+    envelope: options.envelope,
+  };
+}
 
 export class AgentLoop {
   private readonly agent: IModelRunner;
@@ -595,17 +610,7 @@ export class AgentLoop {
   }
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
-    if (!options?.agentContext) {
-      return null;
-    }
-    return {
-      agentContext: options.agentContext,
-      agentId:
-        options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
-      source: options.source,
-      channelId: options.channelId,
-      envelope: options.envelope,
-    };
+    return buildAgentToolExecutionContext(options);
   }
 
   /**

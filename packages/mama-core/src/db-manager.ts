@@ -246,9 +246,7 @@ function resolveAdapterDbPath(adapter: DatabaseAdapter): string | undefined {
 }
 
 function isDatabaseBoundaryTestMode(): boolean {
-  return Boolean(
-    process.env.VITEST || process.env.MAMA_TEST_MODE || process.env.NODE_ENV === 'test'
-  );
+  return isTestMode();
 }
 
 function expandHomePath(value: string): string {
@@ -259,7 +257,7 @@ function expandHomePath(value: string): string {
   if (value.startsWith('~/')) {
     return path.join(home, value.slice(2));
   }
-  return value.replaceAll('${HOME}', home).replaceAll('$HOME', home);
+  return value.replaceAll('${HOME}', home);
 }
 
 /**
@@ -997,10 +995,12 @@ export function resetDBState(options: { disconnect?: boolean } = {}): void {
 /**
  * Check if running in test mode
  *
- * Returns true if MAMA_TEST_MODE or VITEST env vars are set
+ * Returns true if MAMA_TEST_MODE, VITEST, or NODE_ENV=test env vars are set
  */
 export function isTestMode(): boolean {
-  return !!(process.env.MAMA_TEST_MODE || process.env.VITEST);
+  return Boolean(
+    process.env.MAMA_TEST_MODE || process.env.VITEST || process.env.NODE_ENV === 'test'
+  );
 }
 
 /**

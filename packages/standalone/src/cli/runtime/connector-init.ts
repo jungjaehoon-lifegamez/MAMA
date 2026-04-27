@@ -10,9 +10,12 @@
  *   3. Builds per-source channel config map
  *      (kagemusha channels are distributed by source prefix)
  *   4. Instantiates each enabled connector (loadConnector + init + register)
- *   5. Defines extractAndSave() pipeline and 3-pass extraction orchestration
+ *   5. Runs the M0 connector-to-memory kill switch in extractAndSave()
  *   6. Starts connectorScheduler.startBatch() with unified 60-min polling
  *   7. Returns rawStore + enabledConnectorNames + connectorSchedulerStop for the caller
+ *
+ * Direct connector-to-memory extraction is disabled in M0. The only surviving
+ * write path here is entityObservationStore.upsertEntityObservations().
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -45,7 +48,7 @@ export interface ConnectorInitResult {
  * Initialize the connector framework.
  *
  * Reads ~/.mama/connectors.json, registers enabled connectors,
- * wires the 3-pass extraction pipeline, and starts polling.
+ * wires connector polling with the M0 memory-write kill switch, and starts polling.
  */
 export async function initConnectors(
   _connectorExtractionFn: ((prompt: string) => Promise<string>) | null
@@ -56,13 +59,8 @@ export async function initConnectors(
   const { ConnectorRegistry, PollingScheduler, RawStore } =
     await import('../../connectors/framework/index.js');
   const { loadConnector } = await import('../../connectors/index.js');
-  const {
-    buildProjectTruth,
-    buildActivityExtractionPrompt,
-    buildSpokeExtractionPrompt,
-    groupByChannel,
-    buildEntityObservations,
-  } = await import('../../memory/history-extractor.js');
+  const { buildProjectTruth, groupByChannel, buildEntityObservations } =
+    await import('../../memory/history-extractor.js');
   const { MODEL_NAME } = await import('@jungjaehoon/mama-core');
   const entityObservationStore = (await import('@jungjaehoon/mama-core')) as unknown as {
     upsertEntityObservations?: (inputs: EntityObservationDraft[]) => Promise<unknown>;
@@ -145,8 +143,7 @@ export async function initConnectors(
 
     const extractAndSave = async (
       label: string,
-      groups: Map<string, NormalizedItem[]>,
-      _buildPrompt: (items: NormalizedItem[]) => string
+      groups: Map<string, NormalizedItem[]>
     ): Promise<void> => {
       for (const [channelKey, channelItems] of groups) {
         try {
@@ -193,26 +190,14 @@ export async function initConnectors(
           console.log(
             `[connector] activity: ${activity.length} items in ${activityGroups.size} channels`
           );
-          await extractAndSave('activity', activityGroups, (items) =>
-            buildActivityExtractionPrompt(items, projectTruth)
-          );
+          await extractAndSave('activity', activityGroups);
         }
 
         // Pass 2: Spoke extraction with project context
         if (spoke.length > 0) {
-          const hubContext = Object.entries(projectTruth.projects).flatMap(([proj, p]) =>
-            Object.entries(p.workUnits).map(([wu, state]) => ({
-              project: proj,
-              workUnit: wu,
-              assignedTo: state.assigned,
-              status: state.status,
-            }))
-          );
           const spokeGroups = groupByChannel(spoke);
           console.log(`[connector] spoke: ${spoke.length} items in ${spokeGroups.size} channels`);
-          await extractAndSave('spoke', spokeGroups, (items) =>
-            buildSpokeExtractionPrompt(items, hubContext, projectTruth)
-          );
+          await extractAndSave('spoke', spokeGroups);
         }
       }
     );
