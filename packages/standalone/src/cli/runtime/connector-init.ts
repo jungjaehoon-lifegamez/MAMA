@@ -19,7 +19,17 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
 import type { RawStore } from '../../connectors/framework/raw-store.js';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    warn: (...args: unknown[]) => void;
+  };
+};
+
+const logger = new DebugLogger('connector-init');
 
 /**
  * Result returned by initConnectors.
@@ -38,7 +48,7 @@ export interface ConnectorInitResult {
  * wires the 3-pass extraction pipeline, and starts polling.
  */
 export async function initConnectors(
-  connectorExtractionFn: ((prompt: string) => Promise<string>) | null
+  _connectorExtractionFn: ((prompt: string) => Promise<string>) | null
 ): Promise<ConnectorInitResult> {
   const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
   let enabledConnectorNames: string[] = [];
@@ -53,11 +63,10 @@ export async function initConnectors(
     groupByChannel,
     buildEntityObservations,
   } = await import('../../memory/history-extractor.js');
-  const { saveMemory, MEMORY_KINDS, MODEL_NAME } = await import('@jungjaehoon/mama-core');
+  const { MODEL_NAME } = await import('@jungjaehoon/mama-core');
   const entityObservationStore = (await import('@jungjaehoon/mama-core')) as unknown as {
     upsertEntityObservations?: (inputs: EntityObservationDraft[]) => Promise<unknown>;
   };
-  type MemoryKind = import('@jungjaehoon/mama-core').MemoryKind;
   type ConnectorsJson = import('../../connectors/framework/types.js').ConnectorsConfig;
   type ChannelConfigMap = import('../../connectors/framework/types.js').ChannelConfig;
   type NormalizedItem = import('../../connectors/framework/types.js').NormalizedItem;
@@ -129,7 +138,6 @@ export async function initConnectors(
       join(homedir(), '.mama', 'connectors')
     );
 
-    const validKinds = new Set<string>(MEMORY_KINDS);
     const observationExtractorVersion = 'history-extractor@v1';
     const rawDbRefForSource = (source: string): string => {
       return join(homedir(), '.mama', 'connectors', source, 'raw.db');
@@ -138,7 +146,7 @@ export async function initConnectors(
     const extractAndSave = async (
       label: string,
       groups: Map<string, NormalizedItem[]>,
-      buildPrompt: (items: NormalizedItem[]) => string
+      _buildPrompt: (items: NormalizedItem[]) => string
     ): Promise<void> => {
       for (const [channelKey, channelItems] of groups) {
         try {
@@ -154,48 +162,12 @@ export async function initConnectors(
               );
             }
           }
-          const prompt = buildPrompt(channelItems);
-          if (prompt.length > 20000) {
-            console.log(
-              `[connector] ${label}:${channelKey} skipped (prompt too large: ${prompt.length})`
-            );
-            continue;
-          }
-          if (!connectorExtractionFn) throw new Error('Extraction not available');
-          const responseText = await connectorExtractionFn(prompt);
-          const jsonMatch = responseText.match(/\[[\s\S]*\]/);
-          if (jsonMatch) {
-            const extracted = JSON.parse(jsonMatch[0]) as Array<{
-              project?: string;
-              work_unit?: string;
-              kind?: string;
-              topic?: string;
-              summary?: string;
-              reasoning?: string;
-              event_date?: string;
-              confidence?: number;
-            }>;
-            for (const item of extracted) {
-              if (!item.topic || !item.summary) continue;
-              const projectName = item.project ?? 'unknown';
-              const topicStr = item.work_unit
-                ? `${projectName}/${item.work_unit}`
-                    .toLowerCase()
-                    .replace(/[^a-z0-9가-힣_/]+/g, '_')
-                : `${projectName}/${item.topic}`.toLowerCase().replace(/[^a-z0-9가-힣_/]+/g, '_');
-              await saveMemory({
-                topic: topicStr,
-                kind: (validKinds.has(item.kind ?? '') ? item.kind : 'fact') as MemoryKind,
-                summary: item.summary,
-                details: item.reasoning ?? item.summary,
-                confidence: Math.max(0, Math.min(1, item.confidence ?? 0.7)),
-                scopes: [{ kind: 'project', id: projectName }],
-                source: { package: 'standalone', source_type: 'connector' },
-                eventDate: item.event_date ?? new Date().toISOString().split('T')[0],
-              });
-            }
-            console.log(`[connector] ${label}:${channelKey}: ${extracted.length} memories saved`);
-          }
+          logger.warn('[m0-kill-switch] connector memory extraction skipped', {
+            label,
+            channelKey,
+            itemCount: channelItems.length,
+            reason: 'direct_connector_to_memory_write_disabled',
+          });
         } catch (err) {
           console.error(`[connector] ${label}:${channelKey} extraction failed:`, err);
         }
