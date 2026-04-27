@@ -704,7 +704,7 @@ export class GatewayToolExecutor {
       }
     }
 
-    if (failLoudOnMissing && ctx) {
+    if (failLoudOnMissing) {
       throw new Error(`[envelope] tool ${toolName} called without envelope (fail-loud mode)`);
     }
 

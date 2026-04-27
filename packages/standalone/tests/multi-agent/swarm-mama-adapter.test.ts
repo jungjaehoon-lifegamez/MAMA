@@ -83,6 +83,24 @@ describe('SwarmMamaAdapter', () => {
       );
     });
 
+    it('exercises the production dynamic require fallback path', async () => {
+      const suggest = vi.fn().mockResolvedValue({
+        query: 'test query',
+        results: [],
+      });
+      const adapter = createMamaApiAdapter(undefined, () => ({ suggest }));
+
+      const results = await adapter.search('test query');
+
+      expect(results).toEqual([]);
+      expect(suggest).toHaveBeenCalledWith('test query', {
+        format: 'json',
+        limit: 5,
+        threshold: 0.6,
+        useReranking: false,
+      });
+    });
+
     it('returns an empty array with an explicit warning when search fails', async () => {
       const error = new Error('embedding disabled for tests');
       const adapter = createMamaApiAdapter({

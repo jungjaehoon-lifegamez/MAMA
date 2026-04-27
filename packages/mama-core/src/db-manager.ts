@@ -173,6 +173,7 @@ export async function initDB(): Promise<unknown> {
 
       // Create SQLite adapter
       dbAdapter = createAdapter() as unknown as DatabaseAdapter;
+      assertTestProcessIsNotUsingRealDb(resolveAdapterDbPath(dbAdapter), 'adapter.getDbPath()');
 
       // Connect to database
       dbConnection = await dbAdapter.connect();
@@ -205,7 +206,10 @@ export async function initDB(): Promise<unknown> {
   return initializingPromise;
 }
 
-function assertTestProcessIsNotUsingRealDb(): void {
+export function assertTestProcessIsNotUsingRealDb(
+  effectivePath?: string,
+  effectivePathSource = 'adapter'
+): void {
   if (!isDatabaseBoundaryTestMode()) {
     return;
   }
@@ -214,6 +218,9 @@ function assertTestProcessIsNotUsingRealDb(): void {
     { name: 'MAMA_DB_PATH', value: process.env.MAMA_DB_PATH },
     { name: 'MAMA_DATABASE_PATH', value: process.env.MAMA_DATABASE_PATH },
   ];
+  if (effectivePath) {
+    configuredPaths.push({ name: effectivePathSource, value: effectivePath });
+  }
 
   for (const configuredPath of configuredPaths) {
     if (!configuredPath.value) {
@@ -229,6 +236,13 @@ function assertTestProcessIsNotUsingRealDb(): void {
       );
     }
   }
+}
+
+function resolveAdapterDbPath(adapter: DatabaseAdapter): string | undefined {
+  if (typeof adapter.getDbPath === 'function') {
+    return adapter.getDbPath();
+  }
+  return adapter.dbPath;
 }
 
 function isDatabaseBoundaryTestMode(): boolean {

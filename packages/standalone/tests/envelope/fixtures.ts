@@ -5,7 +5,7 @@ import { EnvelopeStore } from '../../src/envelope/store.js';
 import type { SQLiteDatabase } from '../../src/sqlite.js';
 import type { Envelope } from '../../src/envelope/types.js';
 
-export const TEST_KEY = Buffer.from('test-envelope-key-32-bytes-long!!');
+export const TEST_KEY = Buffer.from('test-envelope-key-32-bytes-long!');
 export const TEST_SIGNING_KEY = {
   key_id: 'default',
   key_version: 1,

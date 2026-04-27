@@ -8,7 +8,7 @@ import { EnvelopeAuthority } from '../../src/envelope/authority.js';
 import { EnvelopeStore } from '../../src/envelope/store.js';
 import type { EnvelopeBuildInput } from '../../src/envelope/authority.js';
 
-const KEY = Buffer.from('key-v1-32-bytes-secret-padded--');
+const KEY = Buffer.from('key-v1-32-bytes-secret-padded---');
 const keyLookup = (keyId: string, keyVersion: number): Buffer | undefined =>
   keyId === 'default' && keyVersion === 1 ? KEY : undefined;
 
@@ -33,6 +33,10 @@ function buildInput(overrides: Partial<EnvelopeBuildInput> = {}): EnvelopeBuildI
 }
 
 describe('EnvelopeAuthority', () => {
+  it('uses an accurately named 32-byte fixture key', () => {
+    expect(KEY.length).toBe(32);
+  });
+
   it('build always signs and assigns hash atomically', () => {
     const { auth, db, dir } = makeHarness();
 

@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import Database from '../../src/sqlite.js';
 import { applyEnvelopeTablesMigration } from '../../src/db/migrations/envelope-tables.js';
 import { EnvelopeStore } from '../../src/envelope/store.js';
-import { makeEnvelope, makeSignedEnvelope } from './fixtures.js';
+import { TEST_KEY, makeEnvelope, makeSignedEnvelope } from './fixtures.js';
 
 describe('envelope migration', () => {
   it('creates envelopes and system_config_versions tables', () => {
@@ -162,6 +162,28 @@ describe('EnvelopeStore', () => {
     } finally {
       closeDb(db, dir);
     }
+  });
+
+  it('reports duplicate conflict instead of throwing on nullable stored signature', () => {
+    const { db, dir } = makeDb('mama-envstore-');
+    const store = new EnvelopeStore(db);
+    const env = makeSignedEnvelope();
+
+    try {
+      store.insert(env);
+      db.prepare('UPDATE envelopes SET signature = NULL WHERE envelope_hash = ?').run(
+        env.envelope_hash
+      );
+
+      expect(() => store.insert(env)).toThrow(/EnvelopeStore\.insert conflict/);
+      expect(() => store.insert(env)).not.toThrow(/unsupported value type: undefined/);
+    } finally {
+      closeDb(db, dir);
+    }
+  });
+
+  it('uses an accurately named 32-byte shared test key', () => {
+    expect(TEST_KEY.length).toBe(32);
   });
 
   it('rejects corrupted tier values with envelope_hash', () => {

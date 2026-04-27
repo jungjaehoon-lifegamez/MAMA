@@ -101,7 +101,7 @@ export class EnvelopeStore {
       tier: env.tier,
       budget: canonicalJson(env.budget),
       expires_at: env.expires_at,
-      signature: canonicalJson(env.signature),
+      signature: env.signature ? canonicalJson(env.signature) : null,
     };
   }
 

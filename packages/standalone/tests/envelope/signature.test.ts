@@ -7,7 +7,7 @@ import {
 } from '../../src/envelope/signature.js';
 import type { Envelope } from '../../src/envelope/types.js';
 
-const KEY_V1 = Buffer.from('key-v1-32-bytes-secret-padded--');
+const KEY_V1 = Buffer.from('key-v1-32-bytes-secret-padded---');
 const KEY_V2 = Buffer.from('key-v2-32-bytes-different-secret');
 
 const keystore = new Map<string, Buffer>([
@@ -38,6 +38,11 @@ function baseEnvelope(): Envelope {
 }
 
 describe('envelope signature', () => {
+  it('uses accurately named 32-byte fixture keys', () => {
+    expect(KEY_V1.length).toBe(32);
+    expect(KEY_V2.length).toBe(32);
+  });
+
   it('sign + verify roundtrip with same key', () => {
     const signed = signEnvelope(baseEnvelope(), {
       key_id: 'default',

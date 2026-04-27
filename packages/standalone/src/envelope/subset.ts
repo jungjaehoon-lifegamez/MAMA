@@ -9,6 +9,11 @@ export type EnvelopeSubsetResult =
         | 'project_refs_not_subset'
         | 'memory_scopes_not_subset'
         | 'destinations_not_subset'
+        | 'destination_id_empty'
+        | 'tier_widened'
+        | 'expiry_extended'
+        | 'eval_privileged_escalation'
+        | 'as_of_exceeds_parent'
         | 'budget_exceeds_parent'
         | 'token_budget_undefined_but_parent_bounded'
         | 'token_budget_exceeds_parent'
@@ -20,6 +25,9 @@ export function isEnvelopeSubset(child: Envelope, parent: Envelope): EnvelopeSub
   const childScope = child.scope;
   const parentScope = parent.scope;
 
+  if (childScope.allowed_destinations.some((destination) => destination.id.trim() === '')) {
+    return { ok: false, reason: 'destination_id_empty' };
+  }
   if (!allIn(childScope.raw_connectors, new Set(parentScope.raw_connectors))) {
     return { ok: false, reason: 'raw_connectors_not_subset' };
   }
@@ -41,15 +49,26 @@ export function isEnvelopeSubset(child: Envelope, parent: Envelope): EnvelopeSub
   }
   if (
     !allIn(
-      childScope.allowed_destinations.map((destination) => `${destination.kind}:${destination.id}`),
-      new Set(
-        parentScope.allowed_destinations.map(
-          (destination) => `${destination.kind}:${destination.id}`
-        )
-      )
+      childScope.allowed_destinations.map(destinationKey),
+      new Set(parentScope.allowed_destinations.map(destinationKey))
     )
   ) {
     return { ok: false, reason: 'destinations_not_subset' };
+  }
+  if (child.tier < parent.tier) {
+    return { ok: false, reason: 'tier_widened' };
+  }
+  if (!isNoLaterThan(child.expires_at, parent.expires_at)) {
+    return { ok: false, reason: 'expiry_extended' };
+  }
+  if (childScope.eval_privileged === true && parentScope.eval_privileged !== true) {
+    return { ok: false, reason: 'eval_privileged_escalation' };
+  }
+  if (
+    parentScope.as_of !== undefined &&
+    (childScope.as_of === undefined || !isNoLaterThan(childScope.as_of, parentScope.as_of))
+  ) {
+    return { ok: false, reason: 'as_of_exceeds_parent' };
   }
   if (child.budget.wall_seconds > parent.budget.wall_seconds) {
     return { ok: false, reason: 'budget_exceeds_parent' };
@@ -78,4 +97,14 @@ export function isEnvelopeSubset(child: Envelope, parent: Envelope): EnvelopeSub
 
 function allIn(childValues: string[], parentValues: Set<string>): boolean {
   return childValues.every((value) => parentValues.has(value));
+}
+
+function destinationKey(destination: Envelope['scope']['allowed_destinations'][number]): string {
+  return `${destination.kind}:${destination.id}`;
+}
+
+function isNoLaterThan(childIso: string, parentIso: string): boolean {
+  const childTime = Date.parse(childIso);
+  const parentTime = Date.parse(parentIso);
+  return Number.isFinite(childTime) && Number.isFinite(parentTime) && childTime <= parentTime;
 }

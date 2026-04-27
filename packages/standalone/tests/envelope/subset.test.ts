@@ -8,10 +8,11 @@ type EnvOverrides = Partial<Envelope['scope']> & {
   wall?: number;
   tokens?: number;
   cost?: number;
+  expiresAt?: string;
 };
 
 function envOf(overrides: EnvOverrides = {}): Envelope {
-  const { tier, wall, tokens, cost, ...scopeOverrides } = overrides;
+  const { tier, wall, tokens, cost, expiresAt, ...scopeOverrides } = overrides;
   const env: Envelope = {
     agent_id: 'worker',
     instance_id: `i_${Math.random().toString(36).slice(2)}`,
@@ -30,7 +31,7 @@ function envOf(overrides: EnvOverrides = {}): Envelope {
       ...(tokens !== undefined ? { token_limit: tokens } : {}),
       ...(cost !== undefined ? { cost_cap: cost } : {}),
     },
-    expires_at: new Date(Date.now() + 60_000).toISOString(),
+    expires_at: expiresAt ?? '2026-04-27T10:00:00.000Z',
     envelope_hash: '',
   };
   env.envelope_hash = computeEnvelopeHash(env);
@@ -90,6 +91,60 @@ describe('isEnvelopeSubset', () => {
     expect(isEnvelopeSubset(child, parent)).toEqual({
       ok: false,
       reason: 'destinations_not_subset',
+    });
+  });
+
+  it('rejects child with empty destination id', () => {
+    const parent = envOf({ allowed_destinations: [{ kind: 'telegram', id: '' }] });
+    const child = envOf({ allowed_destinations: [{ kind: 'telegram', id: '' }] });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'destination_id_empty',
+    });
+  });
+
+  it('rejects child with more privileged tier than parent', () => {
+    const parent = envOf({ tier: 3 });
+    const child = envOf({ tier: 1 });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'tier_widened',
+    });
+  });
+
+  it('rejects child expiry after parent expiry', () => {
+    const parent = envOf({ expiresAt: '2026-04-27T10:00:00.000Z' });
+    const child = envOf({ expiresAt: '2026-04-27T10:00:01.000Z' });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'expiry_extended',
+    });
+  });
+
+  it('rejects child eval_privileged escalation', () => {
+    const parent = envOf({ eval_privileged: false });
+    const child = envOf({ eval_privileged: true });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'eval_privileged_escalation',
+    });
+  });
+
+  it('rejects child as_of view that extends beyond bounded parent', () => {
+    const parent = envOf({ as_of: '2026-04-27T10:00:00.000Z' });
+    const child = envOf({ as_of: '2026-04-27T10:00:01.000Z' });
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'as_of_exceeds_parent',
+    });
+  });
+
+  it('rejects unbounded child as_of when parent is bounded', () => {
+    const parent = envOf({ as_of: '2026-04-27T10:00:00.000Z' });
+    const child = envOf({});
+    expect(isEnvelopeSubset(child, parent)).toEqual({
+      ok: false,
+      reason: 'as_of_exceeds_parent',
     });
   });
 

@@ -49,15 +49,14 @@ interface MamaCoreModule {
  *
  * @returns MamaApiClient implementation
  */
-export function createMamaApiAdapter(mamaCore?: MamaCoreModule): MamaApiClient {
+export function createMamaApiAdapter(
+  mamaCore?: MamaCoreModule,
+  loadMamaCore: () => MamaCoreModule = loadDefaultMamaCoreModule
+): MamaApiClient {
   return {
     async search(query: string, limit?: number): Promise<SearchResult[]> {
       try {
-        const mama =
-          mamaCore ??
-          // Dynamically require mama-core (CommonJS module)
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          require('@jungjaehoon/mama-core/mama-api');
+        const mama = mamaCore ?? loadMamaCore();
 
         if (!mama || !mama.suggest) {
           console.warn('[SwarmMamaAdapter] mama-core suggest() not available');
@@ -65,7 +64,7 @@ export function createMamaApiAdapter(mamaCore?: MamaCoreModule): MamaApiClient {
         }
 
         // Call mama-core suggest()
-        const result: MamaSuggestResult = await mama.suggest(query, {
+        const result = await mama.suggest(query, {
           format: 'json',
           limit: limit || 5,
           threshold: 0.6,
@@ -100,6 +99,12 @@ export function createMamaApiAdapter(mamaCore?: MamaCoreModule): MamaApiClient {
       }
     },
   };
+}
+
+function loadDefaultMamaCoreModule(): MamaCoreModule {
+  // Dynamically require mama-core (CommonJS module)
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  return require('@jungjaehoon/mama-core/mama-api') as MamaCoreModule;
 }
 
 /**

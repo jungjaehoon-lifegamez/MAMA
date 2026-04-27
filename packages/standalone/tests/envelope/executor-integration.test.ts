@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { GatewayToolInput, MAMAApiInterface } from '../../src/agent/types.js';
 import { makeEnvelope } from './fixtures.js';
@@ -35,52 +35,46 @@ function makeMAMAApi(): MAMAApiInterface {
 }
 
 describe('gateway-tool-executor envelope integration', () => {
-  it('allows internal tool calls without context in fail-loud mode', async () => {
-    const previous = process.env.MAMA_ENVELOPE_FAIL_LOUD;
-    process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
-    const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+  let previousFailLoud: string | undefined;
 
-    try {
-      await expect(executor.execute('mama_load_checkpoint', {})).resolves.toMatchObject({
-        success: true,
-      });
-      expect(mamaApi.loadCheckpoint).toHaveBeenCalled();
-    } finally {
-      if (previous === undefined) {
-        delete process.env.MAMA_ENVELOPE_FAIL_LOUD;
-      } else {
-        process.env.MAMA_ENVELOPE_FAIL_LOUD = previous;
-      }
+  beforeEach(() => {
+    previousFailLoud = process.env.MAMA_ENVELOPE_FAIL_LOUD;
+  });
+
+  afterEach(() => {
+    if (previousFailLoud === undefined) {
+      delete process.env.MAMA_ENVELOPE_FAIL_LOUD;
+    } else {
+      process.env.MAMA_ENVELOPE_FAIL_LOUD = previousFailLoud;
     }
   });
 
-  it('fails loud when an explicit gateway context has no envelope', async () => {
-    const previous = process.env.MAMA_ENVELOPE_FAIL_LOUD;
+  it('fails loud when any gateway tool call has no envelope', async () => {
     process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });
 
-    try {
-      await expect(
-        executor.execute(
-          'mama_load_checkpoint',
-          {},
-          {
-            agentId: 'worker',
-            source: 'telegram',
-            channelId: 'tg:1',
-          }
-        )
-      ).rejects.toThrow(/without envelope/);
-      expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
-    } finally {
-      if (previous === undefined) {
-        delete process.env.MAMA_ENVELOPE_FAIL_LOUD;
-      } else {
-        process.env.MAMA_ENVELOPE_FAIL_LOUD = previous;
-      }
-    }
+    await expect(executor.execute('mama_load_checkpoint', {})).rejects.toThrow(/without envelope/);
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('fails loud when an explicit gateway context has no envelope', async () => {
+    process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    await expect(
+      executor.execute(
+        'mama_load_checkpoint',
+        {},
+        {
+          agentId: 'worker',
+          source: 'telegram',
+          channelId: 'tg:1',
+        }
+      )
+    ).rejects.toThrow(/without envelope/);
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
   });
 
   it('rejects telegram_send to a destination outside envelope.allowed_destinations before gateway send', async () => {

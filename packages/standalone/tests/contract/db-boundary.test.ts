@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { initDB, resetDBState } from '../../../mama-core/src/db-manager.js';
+import {
+  assertTestProcessIsNotUsingRealDb,
+  initDB,
+  resetDBState,
+} from '../../../mama-core/src/db-manager.js';
 
 const REAL_DB_PATH = join(homedir(), '.claude', 'mama-memory.db');
 
@@ -50,6 +54,16 @@ describe('db boundary contract', () => {
     process.env.MAMA_DATABASE_PATH = '~/.claude/mama-memory.db';
 
     await expect(initDB()).rejects.toThrow(/db-boundary|real DB|Refusing/i);
+  });
+
+  it('guard throws if adapter effective path resolves to the real DB', () => {
+    process.env.VITEST = 'true';
+    delete process.env.MAMA_DB_PATH;
+    delete process.env.MAMA_DATABASE_PATH;
+
+    expect(() => assertTestProcessIsNotUsingRealDb(REAL_DB_PATH, 'adapter.getDbPath()')).toThrow(
+      /db-boundary|real DB|Refusing/i
+    );
   });
 });
 
