@@ -98,8 +98,10 @@ describe('EnvelopeStore', () => {
   it('allows idempotent duplicate when JSON object key order differs', () => {
     const { db, dir } = makeDb('mama-envstore-');
     const store = new EnvelopeStore(db);
+    const expiresAt = '2026-04-27T00:01:00.000Z';
     const env = makeSignedEnvelope({
       instance_id: 'inst_stable_duplicate',
+      expires_at: expiresAt,
       trigger_context: {
         user_text: 'sync this',
         watch_event: { type: 'file', raw_id: 'evt-1', path: '/workspace/a.ts' },
@@ -116,6 +118,7 @@ describe('EnvelopeStore', () => {
     });
     const reordered = makeSignedEnvelope({
       instance_id: 'inst_stable_duplicate',
+      expires_at: expiresAt,
       trigger_context: {
         watch_event: { path: '/workspace/a.ts', raw_id: 'evt-1', type: 'file' },
         user_text: 'sync this',
