@@ -24,10 +24,11 @@ export function loadEnvelopeSigningKeyFromEnv(env: EnvLike = process.env): Envel
   }
 
   const rawKeyId = env.MAMA_ENVELOPE_HMAC_KEY_ID;
-  if (rawKeyId === '') {
+  const trimmedKeyId = rawKeyId?.trim();
+  if (trimmedKeyId === '') {
     throw new Error('[envelope] MAMA_ENVELOPE_HMAC_KEY_ID must not be empty');
   }
-  const keyId = rawKeyId ?? 'default';
+  const keyId = trimmedKeyId ?? 'default';
 
   return {
     key_id: keyId,

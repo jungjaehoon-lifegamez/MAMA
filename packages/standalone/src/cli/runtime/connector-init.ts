@@ -22,15 +22,9 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 
 import type { RawStore } from '../../connectors/framework/raw-store.js';
-
-const { DebugLogger } = debugLogger as unknown as {
-  DebugLogger: new (context?: string) => {
-    warn: (...args: unknown[]) => void;
-  };
-};
 
 const logger = new DebugLogger('connector-init');
 
@@ -49,8 +43,12 @@ export interface ConnectorInitResult {
  *
  * Reads ~/.mama/connectors.json, registers enabled connectors,
  * wires connector polling with the M0 memory-write kill switch, and starts polling.
+ *
+ * @deprecated The legacy direct connector-to-memory extraction argument is ignored in M0.
+ * Callers should pass null and rely on the raw/entity-observation connector pipeline.
  */
 export async function initConnectors(
+  /** @deprecated Direct connector-to-memory extraction is disabled in M0. */
   _connectorExtractionFn: ((prompt: string) => Promise<string>) | null
 ): Promise<ConnectorInitResult> {
   const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
@@ -159,7 +157,7 @@ export async function initConnectors(
               );
             }
           }
-          logger.warn('[m0-kill-switch] connector memory extraction skipped', {
+          logger.debug('[m0-kill-switch] direct connector->memory write disabled', {
             label,
             channelKey,
             itemCount: channelItems.length,

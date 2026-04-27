@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import {
   MessageRouter,
@@ -10,6 +10,7 @@ import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import type { AgentLoopOptions } from '../../src/agent/types.js';
 import { makeAuthorityHarness } from '../envelope/fixtures.js';
+import { buildChannelKey, SessionPool, setSessionPool } from '../../src/agent/session-pool.js';
 
 type CapturedRun = {
   prompt: string;
@@ -39,10 +40,14 @@ function makeMessage(source: NormalizedMessage['source']): NormalizedMessage {
 
 describe('reactive envelope issuance', () => {
   let sessionStore: SessionStore | undefined;
+  let sessionPool: SessionPool | undefined;
 
   afterEach(() => {
     sessionStore?.close();
     sessionStore = undefined;
+    sessionPool?.dispose();
+    sessionPool = undefined;
+    setSessionPool(new SessionPool());
   });
 
   it('fails at construction when envelope config and authority are not paired', () => {
@@ -96,7 +101,7 @@ describe('reactive envelope issuance', () => {
     {
       source: 'mobile' as const,
       envelopeSource: 'viewer',
-      allowedDestinations: [],
+      allowedDestinations: [{ kind: 'webchat', id: expect.stringMatching(/^mobile:channel:/) }],
       expectedPlatform: 'cli',
       expectedRoleName: 'chat_bot',
     },
@@ -150,4 +155,46 @@ describe('reactive envelope issuance', () => {
       }
     }
   );
+
+  it('defers envelope persistence until a busy session can proceed', async () => {
+    const db: SQLiteDatabase = new Database(':memory:');
+    sessionStore = new SessionStore(db);
+    sessionPool = new SessionPool();
+    setSessionPool(sessionPool);
+    const { authority } = makeAuthorityHarness(db);
+    const buildAndPersist = vi.spyOn(authority, 'buildAndPersist');
+    const agentLoop: AgentLoopClient = {
+      async run() {
+        return { response: 'ok' };
+      },
+    };
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      makeReactiveEnvelopeConfig(),
+      authority
+    );
+    const message: NormalizedMessage = {
+      source: 'telegram',
+      channelId: 'tg:busy',
+      userId: 'u:busy',
+      text: 'queued hello',
+    };
+    const channelKey = buildChannelKey(message.source, message.channelId);
+    sessionPool.getSession(channelKey);
+    let queued = false;
+
+    await router.process(message, {
+      onQueued() {
+        queued = true;
+        expect(buildAndPersist).not.toHaveBeenCalled();
+        sessionPool!.releaseSession(channelKey);
+      },
+    });
+
+    expect(queued).toBe(true);
+    expect(buildAndPersist).toHaveBeenCalledTimes(1);
+  });
 });

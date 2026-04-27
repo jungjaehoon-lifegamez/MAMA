@@ -185,6 +185,25 @@ describe('EnvelopeStore', () => {
     }
   });
 
+  it('preserves non-null empty string optional fields on read', () => {
+    const { db, dir } = makeDb('mama-envstore-');
+    const store = new EnvelopeStore(db);
+    const env = makeSignedEnvelope({
+      parent_instance_id: '',
+      channel_id: '',
+    });
+
+    try {
+      store.insert(env);
+
+      const fetched = store.getByHash(env.envelope_hash);
+      expect(fetched?.parent_instance_id).toBe('');
+      expect(fetched?.channel_id).toBe('');
+    } finally {
+      closeDb(db, dir);
+    }
+  });
+
   it('uses an accurately named 32-byte shared test key', () => {
     expect(TEST_KEY.length).toBe(32);
   });

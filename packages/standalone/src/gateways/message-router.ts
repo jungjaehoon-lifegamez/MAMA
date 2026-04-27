@@ -127,6 +127,54 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+const MESSAGE_ENVELOPE_ROUTES = {
+  telegram: {
+    source: 'telegram',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'telegram', id: message.channelId },
+    ],
+  },
+  slack: {
+    source: 'slack',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'slack', id: message.channelId },
+    ],
+  },
+  chatwork: {
+    source: 'chatwork',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'chatwork', id: message.channelId },
+    ],
+  },
+  discord: {
+    source: 'discord',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'discord', id: message.channelId },
+    ],
+  },
+  viewer: {
+    source: 'viewer',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'webchat', id: message.channelId },
+    ],
+  },
+  mobile: {
+    source: 'viewer',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'webchat', id: message.channelId },
+    ],
+  },
+  system: {
+    source: 'watch',
+    destinations: (): DestinationRef[] => [],
+  },
+} satisfies Record<
+  NormalizedMessage['source'],
+  {
+    source: Envelope['source'];
+    destinations: (message: NormalizedMessage) => DestinationRef[];
+  }
+>;
 
 export interface ReactiveEnvelopeConfig {
   projectRefsFor(message: NormalizedMessage): ProjectRef[];
@@ -136,40 +184,21 @@ export interface ReactiveEnvelopeConfig {
 }
 
 function envelopeSourceForMessage(message: NormalizedMessage): Envelope['source'] {
-  switch (message.source) {
-    case 'telegram':
-    case 'slack':
-    case 'chatwork':
-    case 'discord':
-    case 'viewer':
-      return message.source;
-    case 'mobile':
-      return 'viewer';
-    case 'system':
-      return 'watch';
-    default:
-      throw new Error(`[envelope] unsupported message source: ${String(message.source)}`);
+  // Mobile is treated as viewer so its webchat-scoped replies use the same envelope source.
+  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
+  if (!route) {
+    throw new Error(`[envelope] unsupported message source: ${String(message.source)}`);
   }
+  return route.source;
 }
 
 function allowedDestinationsForMessage(message: NormalizedMessage): DestinationRef[] {
-  switch (message.source) {
-    case 'telegram':
-      return [{ kind: 'telegram', id: message.channelId }];
-    case 'slack':
-      return [{ kind: 'slack', id: message.channelId }];
-    case 'chatwork':
-      return [{ kind: 'chatwork', id: message.channelId }];
-    case 'discord':
-      return [{ kind: 'discord', id: message.channelId }];
-    case 'viewer':
-      return [{ kind: 'webchat', id: message.channelId }];
-    case 'mobile':
-    case 'system':
-      return [];
-    default:
-      throw new Error(`[envelope] unsupported destination source: ${String(message.source)}`);
+  // Mobile is treated as viewer, so routing back to the webchat channel is allowed.
+  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
+  if (!route) {
+    throw new Error(`[envelope] unsupported destination source: ${String(message.source)}`);
   }
+  return route.destinations(message);
 }
 
 function buildReactiveEnvelopeInput(
@@ -592,8 +621,6 @@ This protects your credentials from being exposed in chat logs.`;
       };
     }
 
-    const envelope = this.buildReactiveEnvelope(message);
-
     // 1. Get or create session (by source + channelId)
     const session = this.sessionStore.getOrCreate(
       message.source,
@@ -756,6 +783,7 @@ This protects your credentials from being exposed in chat logs.`;
       }, streamFlushIntervalMs);
     }
 
+    const envelope = this.buildReactiveEnvelope(message);
     const options: AgentLoopOptions = {
       systemPrompt: effectivePrompt,
       userId: message.userId,

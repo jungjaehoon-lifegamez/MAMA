@@ -57,12 +57,12 @@ interface MamaCoreModule {
  */
 export function createMamaApiAdapter(
   mamaCore?: MamaCoreModule,
-  loadMamaCore: () => MamaCoreModule = loadDefaultMamaCoreModule
+  loadMamaCore: () => MamaCoreModule | Promise<MamaCoreModule> = loadDefaultMamaCoreModule
 ): MamaApiClient {
   return {
     async search(query: string, limit?: number): Promise<SearchResult[]> {
       try {
-        const mama = mamaCore ?? loadMamaCore();
+        const mama = mamaCore ?? (await loadMamaCore());
 
         if (!mama || !mama.suggest) {
           console.warn('[SwarmMamaAdapter] mama-core suggest() not available');
@@ -107,10 +107,8 @@ export function createMamaApiAdapter(
   };
 }
 
-function loadDefaultMamaCoreModule(): MamaCoreModule {
-  // Dynamically require mama-core (CommonJS module)
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  return require('@jungjaehoon/mama-core/mama-api') as MamaCoreModule;
+async function loadDefaultMamaCoreModule(): Promise<MamaCoreModule> {
+  return (await import('@jungjaehoon/mama-core/mama-api')) as MamaCoreModule;
 }
 
 /**
@@ -129,7 +127,7 @@ export async function saveSwarmCheckpoint(
   mamaCore?: MamaCoreModule
 ): Promise<void> {
   try {
-    const mama = mamaCore ?? loadDefaultMamaCoreModule();
+    const mama = mamaCore ?? (await loadDefaultMamaCoreModule());
 
     if (!mama || !mama.saveCheckpoint) {
       console.warn('[SwarmMamaAdapter] mama.saveCheckpoint() not available');

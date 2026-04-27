@@ -78,10 +78,10 @@ export class EnvelopeStore {
         : undefined,
     };
 
-    if (row.parent_instance_id) {
+    if (row.parent_instance_id !== null && row.parent_instance_id !== undefined) {
       envelope.parent_instance_id = String(row.parent_instance_id);
     }
-    if (row.channel_id) {
+    if (row.channel_id !== null && row.channel_id !== undefined) {
       envelope.channel_id = String(row.channel_id);
     }
 

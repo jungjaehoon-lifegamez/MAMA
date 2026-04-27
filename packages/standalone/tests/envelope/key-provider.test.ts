@@ -74,6 +74,15 @@ describe('EnvelopeKeyProvider', () => {
     ).toThrow(/must not be empty/i);
   });
 
+  it('rejects a whitespace-only key id', () => {
+    expect(() =>
+      loadEnvelopeSigningKeyFromEnv({
+        MAMA_ENVELOPE_HMAC_KEY_BASE64: Buffer.alloc(32, 1).toString('base64'),
+        MAMA_ENVELOPE_HMAC_KEY_ID: '   ',
+      })
+    ).toThrow(/must not be empty/i);
+  });
+
   it('key lookup only resolves the active configured key in P1', () => {
     const activeKey = Buffer.alloc(32, 2);
     const signer = loadEnvelopeSigningKeyFromEnv({

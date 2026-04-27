@@ -39,7 +39,9 @@ describe('db boundary contract', () => {
       }
     }
 
-    expect(process.env.VITEST || process.env.NODE_ENV).toBeDefined();
+    expect(
+      Boolean(process.env.MAMA_TEST_MODE || process.env.VITEST || process.env.NODE_ENV === 'test')
+    ).toBe(true);
   });
 
   it('initDB refuses the default real DB path when test env omits explicit DB paths', async () => {

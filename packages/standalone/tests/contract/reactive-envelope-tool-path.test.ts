@@ -10,7 +10,7 @@ import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentLoopOptions, GatewayToolInput } from '../../src/agent/types.js';
-import { makeAuthorityHarness } from '../envelope/fixtures.js';
+import { makeAuthorityHarness, makeSignedEnvelope } from '../envelope/fixtures.js';
 
 function makeReactiveEnvelopeConfig(): ReactiveEnvelopeConfig {
   return {
@@ -126,5 +126,26 @@ describe('Reactive Main envelope tool path', () => {
       envelope_hash: capturedOptions?.envelope?.envelope_hash,
     });
     expect(result.error).toContain('destination_out_of_scope');
+  });
+
+  it('preserves envelope execution context even when agentContext is absent', () => {
+    const envelope = makeSignedEnvelope({
+      source: 'telegram',
+      channel_id: 'tg:1',
+    });
+
+    const executionContext = buildAgentToolExecutionContext({
+      source: 'telegram',
+      channelId: 'tg:1',
+      envelope,
+    });
+
+    expect(executionContext).toEqual({
+      agentContext: undefined,
+      agentId: undefined,
+      source: 'telegram',
+      channelId: 'tg:1',
+      envelope,
+    });
   });
 });

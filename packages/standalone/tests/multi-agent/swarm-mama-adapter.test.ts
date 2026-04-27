@@ -2,7 +2,6 @@
  * Tests for Swarm MAMA Adapter
  */
 
-import { createRequire } from 'node:module';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createMamaApiAdapter,
@@ -17,6 +16,8 @@ describe('Story M1.5: Swarm MAMA adapter', () => {
   });
 
   afterEach(() => {
+    vi.doUnmock('@jungjaehoon/mama-core/mama-api');
+    vi.resetModules();
     vi.restoreAllMocks();
   });
 
@@ -87,33 +88,20 @@ describe('Story M1.5: Swarm MAMA adapter', () => {
       );
     });
 
-    it('exercises the production dynamic require fallback path', async () => {
+    it('exercises the production default module fallback path', async () => {
       const suggest = vi.fn().mockResolvedValue({
         query: 'test query',
         results: [],
       });
-      const requireFromTest = createRequire(import.meta.url);
-      const nodeModule = requireFromTest('node:module') as {
-        _load: (request: string, parent: unknown, isMain: boolean) => unknown;
-      };
-      const originalLoad = nodeModule._load;
-      const loadSpy = vi
-        .spyOn(nodeModule, '_load')
-        .mockImplementation((request: string, parent: unknown, isMain: boolean): unknown => {
-          if (request === '@jungjaehoon/mama-core/mama-api') {
-            return { suggest };
-          }
-
-          return originalLoad(request, parent, isMain);
-        });
-      const adapter = createMamaApiAdapter();
+      vi.resetModules();
+      vi.doMock('@jungjaehoon/mama-core/mama-api', () => ({ suggest }));
+      const { createMamaApiAdapter: createMockedMamaApiAdapter } =
+        await import('../../src/multi-agent/swarm/swarm-mama-adapter.js');
+      const adapter = createMockedMamaApiAdapter();
 
       const results = await adapter.search('test query');
 
       expect(results).toEqual([]);
-      expect(
-        loadSpy.mock.calls.some(([request]) => request === '@jungjaehoon/mama-core/mama-api')
-      ).toBe(true);
       expect(suggest).toHaveBeenCalledWith('test query', {
         format: 'json',
         limit: 5,

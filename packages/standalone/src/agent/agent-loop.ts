@@ -264,7 +264,7 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
 }
 
 export type AgentToolExecutionContext = {
-  agentContext: AgentContext | null;
+  agentContext: AgentContext | undefined;
   agentId?: string;
   source?: string;
   channelId?: string;
@@ -274,12 +274,23 @@ export type AgentToolExecutionContext = {
 export function buildAgentToolExecutionContext(
   options?: AgentLoopOptions
 ): AgentToolExecutionContext | null {
-  if (!options?.agentContext) {
+  if (
+    !options ||
+    (options.agentContext === undefined &&
+      options.source === undefined &&
+      options.channelId === undefined &&
+      options.envelope === undefined)
+  ) {
     return null;
   }
+  const agentContext = options.agentContext;
   return {
-    agentContext: options.agentContext,
-    agentId: options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
+    agentContext,
+    agentId: agentContext
+      ? agentContext.source === 'viewer'
+        ? 'os-agent'
+        : agentContext.roleName
+      : undefined,
     source: options.source,
     channelId: options.channelId,
     envelope: options.envelope,
