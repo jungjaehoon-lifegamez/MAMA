@@ -3,7 +3,8 @@ import type { Envelope } from './types.js';
 export class EnvelopeViolation extends Error {
   constructor(
     message: string,
-    public readonly code: string
+    public readonly code: string,
+    public readonly metadata: Record<string, unknown> = {}
   ) {
     super(`[${code}] ${message}`);
     this.name = 'EnvelopeViolation';
@@ -32,6 +33,8 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'discord_send',
   'webchat_send',
   'report.publish',
+  'report_publish',
+  'wiki_publish',
   'human.correction',
 ]);
 
@@ -83,7 +86,8 @@ export class EnvelopeEnforcer {
     if (!allowed) {
       throw new EnvelopeViolation(
         `Destination ${destinationKind}:${destinationId} not in envelope.scope.allowed_destinations`,
-        'destination_out_of_scope'
+        'destination_out_of_scope',
+        { allowed: envelope.scope.allowed_destinations }
       );
     }
   }
@@ -100,7 +104,8 @@ export class EnvelopeEnforcer {
     if (outOfScope.length > 0) {
       throw new EnvelopeViolation(
         `Raw connectors ${outOfScope.join(',')} not in envelope.scope.raw_connectors`,
-        'connector_out_of_scope'
+        'connector_out_of_scope',
+        { allowed: envelope.scope.raw_connectors }
       );
     }
   }
@@ -109,7 +114,8 @@ export class EnvelopeEnforcer {
     if (envelope.tier === 3 && WRITE_OR_SEND_TOOLS.has(toolName)) {
       throw new EnvelopeViolation(
         `Tool ${toolName} not allowed at tier 3 (read-only)`,
-        'tier_violation'
+        'tier_violation',
+        { tier_required: 2, allowed: false }
       );
     }
   }
