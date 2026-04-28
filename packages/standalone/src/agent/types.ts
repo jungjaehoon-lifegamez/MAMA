@@ -790,7 +790,7 @@ export interface EnvelopeDenialResult {
   success: false;
   error: string;
   code: string;
-  envelope_hash: string;
+  envelope_hash?: string;
 }
 
 /**

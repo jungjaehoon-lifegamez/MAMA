@@ -686,6 +686,7 @@ export class GatewayToolExecutor {
   ): GatewayToolResult | undefined {
     const ctx = this.executionContextStorage.getStore();
     const failLoudOnMissing = isTruthyEnv('MAMA_ENVELOPE_FAIL_LOUD');
+    const allowLegacyBypass = isTruthyEnv('MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS');
 
     if (ctx?.envelope) {
       try {
@@ -710,22 +711,41 @@ export class GatewayToolExecutor {
       throw new Error(`[envelope] tool ${toolName} called without envelope (fail-loud mode)`);
     }
 
+    if (allowLegacyBypass) {
+      if (ctx) {
+        securityLogger.warn('[envelope] tool called without envelope (legacy bypass enabled)', {
+          toolName,
+          agentId: ctx.agentId,
+          source: ctx.source,
+          channelId: ctx.channelId,
+        });
+        this.logEnvelopeActivity(ctx, 'envelope_missing_legacy', toolName);
+      }
+
+      return undefined;
+    }
+
+    const error = `[envelope] tool ${toolName} called without envelope`;
     if (ctx) {
-      securityLogger.warn('[envelope] tool called without envelope (legacy path, transitional)', {
+      securityLogger.warn('[envelope] tool denied without envelope', {
         toolName,
         agentId: ctx.agentId,
         source: ctx.source,
         channelId: ctx.channelId,
       });
-      this.logEnvelopeActivity(ctx, 'envelope_missing_legacy', toolName);
+      this.logEnvelopeActivity(ctx, 'envelope_missing_denied', toolName, error);
     }
 
-    return undefined;
+    return {
+      success: false,
+      error,
+      code: 'envelope_missing',
+    };
   }
 
   private logEnvelopeActivity(
     ctx: ActiveGatewayExecutionContext,
-    type: 'envelope_violation' | 'envelope_missing_legacy',
+    type: 'envelope_violation' | 'envelope_missing_legacy' | 'envelope_missing_denied',
     toolName: string,
     errorMessage?: string
   ): void {

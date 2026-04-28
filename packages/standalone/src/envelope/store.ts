@@ -29,16 +29,21 @@ export class EnvelopeStore {
     try {
       stmt.run(params);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+
       if (this.isUniqueConstraintError(error)) {
         const existing = this.getByHash(env.envelope_hash);
         if (existing && this.sameEnvelopeParams(this.envelopeToParams(existing), params)) {
           return;
         }
+
+        throw new Error(
+          `[envelope] EnvelopeStore.insert conflict for envelope_hash=${env.envelope_hash}: ${message}`
+        );
       }
 
-      const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `[envelope] EnvelopeStore.insert conflict for envelope_hash=${env.envelope_hash}: ${message}`
+        `[envelope] EnvelopeStore.insert failed for envelope_hash=${env.envelope_hash}: ${message}`
       );
     }
   }
@@ -138,6 +143,11 @@ export class EnvelopeStore {
   }
 
   private isUniqueConstraintError(error: unknown): boolean {
-    return error instanceof Error && /UNIQUE constraint failed/i.test(error.message);
+    if (!(error instanceof Error)) {
+      return false;
+    }
+
+    const code = (error as Error & { code?: unknown }).code;
+    return code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT_PRIMARYKEY';
   }
 }

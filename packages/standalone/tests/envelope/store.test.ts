@@ -95,6 +95,44 @@ describe('EnvelopeStore', () => {
     }
   });
 
+  it('recognizes SQLite unique constraint errors by stable error code', () => {
+    const { db, dir } = makeDb('mama-envstore-');
+    const store = new EnvelopeStore(db);
+    type EnvelopeStoreDiagnostics = {
+      isUniqueConstraintError(error: unknown): boolean;
+    };
+    const diagnostics = store as unknown as EnvelopeStoreDiagnostics;
+
+    try {
+      const uniqueError = Object.assign(new Error('localized duplicate'), {
+        code: 'SQLITE_CONSTRAINT_UNIQUE',
+      });
+      const primaryKeyError = Object.assign(new Error('localized primary key duplicate'), {
+        code: 'SQLITE_CONSTRAINT_PRIMARYKEY',
+      });
+
+      expect(diagnostics.isUniqueConstraintError(uniqueError)).toBe(true);
+      expect(diagnostics.isUniqueConstraintError(primaryKeyError)).toBe(true);
+    } finally {
+      closeDb(db, dir);
+    }
+  });
+
+  it('labels non-unique insert failures as insert failures instead of conflicts', () => {
+    const { db, dir } = makeDb('mama-envstore-');
+    const store = new EnvelopeStore(db);
+    const env = makeSignedEnvelope({
+      tier: 4 as 1,
+    });
+
+    try {
+      expect(() => store.insert(env)).toThrow(/EnvelopeStore\.insert failed/);
+      expect(() => store.insert(env)).not.toThrow(/EnvelopeStore\.insert conflict/);
+    } finally {
+      closeDb(db, dir);
+    }
+  });
+
   it('allows idempotent duplicate when JSON object key order differs', () => {
     const { db, dir } = makeDb('mama-envstore-');
     const store = new EnvelopeStore(db);

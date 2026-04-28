@@ -36,9 +36,13 @@ function makeMAMAApi(): MAMAApiInterface {
 
 describe('gateway-tool-executor envelope integration', () => {
   let previousFailLoud: string | undefined;
+  let previousAllowLegacyBypass: string | undefined;
 
   beforeEach(() => {
     previousFailLoud = process.env.MAMA_ENVELOPE_FAIL_LOUD;
+    previousAllowLegacyBypass = process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
+    delete process.env.MAMA_ENVELOPE_FAIL_LOUD;
+    delete process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
   });
 
   afterEach(() => {
@@ -47,6 +51,52 @@ describe('gateway-tool-executor envelope integration', () => {
     } else {
       process.env.MAMA_ENVELOPE_FAIL_LOUD = previousFailLoud;
     }
+    if (previousAllowLegacyBypass === undefined) {
+      delete process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
+    } else {
+      process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = previousAllowLegacyBypass;
+    }
+  });
+
+  it('denies gateway tool calls without an envelope by default', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    const result = await executor.execute(
+      'mama_load_checkpoint',
+      {},
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:1',
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'envelope_missing',
+    });
+    expect(result.error).toContain('without envelope');
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('allows missing-envelope execution only when the legacy bypass is explicit', async () => {
+    process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = 'true';
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    const result = await executor.execute(
+      'mama_load_checkpoint',
+      {},
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:1',
+      }
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
   });
 
   it('fails loud when any gateway tool call has no envelope', async () => {
