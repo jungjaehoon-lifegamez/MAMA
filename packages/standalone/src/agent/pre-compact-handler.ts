@@ -5,6 +5,7 @@
  * Uses executeTool callback to interact with MAMA memory (mama_search)
  * without importing mama-core directly.
  */
+import type { GatewayToolExecutionContext } from './types.js';
 
 // ============================================================================
 // Types
@@ -21,7 +22,11 @@ export interface PreCompactHandlerConfig {
   maxDecisionsToDetect?: number;
 }
 
-type ExecuteToolFn = (name: string, input: Record<string, unknown>) => Promise<unknown>;
+type ExecuteToolFn = (
+  name: string,
+  input: Record<string, unknown>,
+  executionContext?: GatewayToolExecutionContext | null
+) => Promise<unknown>;
 
 interface SearchResultItem {
   topic?: string;
@@ -62,7 +67,10 @@ export class PreCompactHandler {
     };
   }
 
-  async process(conversationHistory: string[]): Promise<CompactionResult> {
+  async process(
+    conversationHistory: string[],
+    executionContext?: GatewayToolExecutionContext | null
+  ): Promise<CompactionResult> {
     const emptyResult: CompactionResult = {
       unsavedDecisions: [],
       compactionPrompt: '',
@@ -84,7 +92,7 @@ export class PreCompactHandler {
         };
       }
 
-      const savedTopics = await this.getSavedTopics();
+      const savedTopics = await this.getSavedTopics(executionContext);
       const unsavedDecisions = this.filterUnsaved(candidates, savedTopics);
       const warningMessage = this.buildWarningMessage(unsavedDecisions);
       const compactionPrompt = this.buildCompactionPrompt(fullText, unsavedDecisions);
@@ -116,14 +124,19 @@ export class PreCompactHandler {
     return unique.slice(-this.config.maxDecisionsToDetect);
   }
 
-  private async getSavedTopics(): Promise<Set<string>> {
+  private async getSavedTopics(
+    executionContext?: GatewayToolExecutionContext | null
+  ): Promise<Set<string>> {
     const topics = new Set<string>();
 
     try {
-      const response = (await this.executeTool('mama_search', {
+      const input = {
         type: 'decision',
         limit: 20,
-      })) as SearchResponse | undefined;
+      };
+      const response = (await (executionContext
+        ? this.executeTool('mama_search', input, executionContext)
+        : this.executeTool('mama_search', input))) as SearchResponse | undefined;
 
       if (response?.results && Array.isArray(response.results)) {
         for (const item of response.results) {

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PreCompactHandler } from '../../src/agent/pre-compact-handler.js';
+import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
 
 describe('PreCompactHandler', () => {
   let mockExecuteTool: ReturnType<typeof vi.fn>;
@@ -153,6 +154,28 @@ describe('PreCompactHandler', () => {
         type: 'decision',
         limit: 20,
       });
+    });
+
+    it('should forward execution context to mama_search', async () => {
+      const handler = new PreCompactHandler(mockExecuteTool, { enabled: true });
+      mockExecuteTool.mockResolvedValue({ results: [] });
+      const executionContext = {
+        agentId: 'chat_bot',
+        source: 'telegram',
+        channelId: 'tg:1',
+        envelope: { envelope_hash: 'envhash_precompact' },
+      } as unknown as GatewayToolExecutionContext;
+
+      await handler.process(['decided: use JWT tokens'], executionContext);
+
+      expect(mockExecuteTool).toHaveBeenCalledWith(
+        'mama_search',
+        {
+          type: 'decision',
+          limit: 20,
+        },
+        executionContext
+      );
     });
 
     it('should extract topics from search results', async () => {
