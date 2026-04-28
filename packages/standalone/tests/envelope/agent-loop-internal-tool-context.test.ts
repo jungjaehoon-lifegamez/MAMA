@@ -1,65 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
-import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
+import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+import type { AgentContext, GatewayToolInput, MAMAApiInterface } from '../../src/agent/types.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import { makeSignedEnvelope } from './fixtures.js';
-
-const {
-  persistentPromptMock,
-  gatewayExecuteMock,
-  postProcessInBackgroundMock,
-  preCompactProcessMock,
-  updateTokensMock,
-} = vi.hoisted(() => ({
-  persistentPromptMock: vi.fn(),
-  gatewayExecuteMock: vi.fn(),
-  postProcessInBackgroundMock: vi.fn(),
-  preCompactProcessMock: vi.fn(),
-  updateTokensMock: vi.fn(),
-}));
-
-vi.mock('../../src/agent/persistent-cli-adapter.js', () => ({
-  PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
-    prompt: persistentPromptMock,
-    setSessionId: vi.fn(),
-    close: vi.fn(),
-  })),
-}));
-
-vi.mock('../../src/agent/session-pool.js', () => ({
-  SessionPool: vi.fn().mockImplementation(() => ({
-    getSession: vi.fn().mockReturnValue({ sessionId: 'test-session', isNew: true }),
-    getSessionId: vi.fn().mockReturnValue('test-session'),
-    updateTokens: updateTokensMock,
-    releaseSession: vi.fn(),
-  })),
-  getSessionPool: vi.fn().mockReturnValue({
-    getSession: vi.fn().mockReturnValue({ sessionId: 'test-session', isNew: true }),
-    getSessionId: vi.fn().mockReturnValue('test-session'),
-    updateTokens: updateTokensMock,
-    releaseSession: vi.fn(),
-  }),
-  buildChannelKey: vi.fn((source: string, channelId: string) => `${source}:${channelId}`),
-}));
-
-vi.mock('../../src/agent/gateway-tool-executor.js', () => ({
-  GatewayToolExecutor: vi.fn().mockImplementation(() => ({
-    setAgentContext: vi.fn(),
-    execute: gatewayExecuteMock,
-  })),
-}));
-
-vi.mock('../../src/agent/post-tool-handler.js', () => ({
-  PostToolHandler: vi.fn().mockImplementation(() => ({
-    processInBackground: postProcessInBackgroundMock,
-  })),
-}));
-
-vi.mock('../../src/agent/pre-compact-handler.js', () => ({
-  PreCompactHandler: vi.fn().mockImplementation(() => ({
-    process: preCompactProcessMock,
-  })),
-}));
 
 function createMockOAuthManager(): OAuthManager {
   return { getToken: vi.fn().mockResolvedValue('token') } as unknown as OAuthManager;
@@ -67,16 +15,21 @@ function createMockOAuthManager(): OAuthManager {
 
 function createMockApi(): MAMAApiInterface {
   return {
-    save: vi.fn(),
-    saveCheckpoint: vi.fn(),
-    listDecisions: vi.fn(),
-    suggest: vi.fn(),
-    updateOutcome: vi.fn(),
-    loadCheckpoint: vi.fn(),
+    save: vi.fn().mockResolvedValue({ success: true, id: 'decision_1', type: 'decision' }),
+    saveCheckpoint: vi.fn().mockResolvedValue({
+      success: true,
+      id: 'checkpoint_1',
+      type: 'checkpoint',
+    }),
+    listDecisions: vi.fn().mockResolvedValue([]),
+    suggest: vi.fn().mockResolvedValue({ success: true, results: [], count: 0 }),
+    updateOutcome: vi.fn().mockResolvedValue({ success: true, message: 'updated' }),
+    loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
+    ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'ingested_1' }),
   };
 }
 
-function createAgentContext(): AgentContext {
+function createAgentContext(allowedPaths: string[]): AgentContext {
   return {
     source: 'telegram',
     platform: 'telegram',
@@ -85,6 +38,7 @@ function createAgentContext(): AgentContext {
       allowedTools: ['*'],
       systemControl: false,
       sensitiveAccess: false,
+      allowedPaths,
     },
     session: {
       sessionId: 'telegram:session',
@@ -99,7 +53,7 @@ function createAgentContext(): AgentContext {
   };
 }
 
-function createExecutionOptions() {
+function createExecutionOptions(tempDir: string) {
   const envelope = makeSignedEnvelope({
     agent_id: 'chat_bot',
     source: 'telegram',
@@ -108,142 +62,163 @@ function createExecutionOptions() {
   return {
     source: 'telegram',
     channelId: 'tg:1',
-    agentContext: createAgentContext(),
+    agentContext: createAgentContext([join(tempDir, '**')]),
     envelope,
     cliSessionId: 'cli-session-1',
     resumeSession: true,
   };
 }
 
-describe('AgentLoop internal tool context propagation', () => {
+function flushBackgroundWork(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 120));
+}
+
+describe('Story M1R: AgentLoop internal tool context propagation', () => {
+  let tempDir: string;
+  let previousHome: string | undefined;
+  let promptSpy: ReturnType<typeof vi.spyOn>;
+  let executeSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.clearAllMocks();
-    updateTokensMock.mockReturnValue({ totalTokens: 10, nearThreshold: false });
-    preCompactProcessMock.mockResolvedValue({
-      unsavedDecisions: [],
-      compactionPrompt: '',
-      warningMessage: '',
+    previousHome = process.env.HOME;
+    tempDir = mkdtempSync(join(tmpdir(), 'mama-agent-loop-context-'));
+    process.env.HOME = tempDir;
+    promptSpy = vi.spyOn(PersistentCLIAdapter.prototype, 'prompt');
+    executeSpy = vi.spyOn(GatewayToolExecutor.prototype, 'execute');
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+    rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe('AC: model and post-tool paths carry the correct surface', () => {
+    it('passes active execution context through real GatewayToolExecutor and PostToolHandler', async () => {
+      const writePath = join(tempDir, 'api.ts');
+      promptSpy
+        .mockResolvedValueOnce({
+          response:
+            '```tool_call\n' +
+            JSON.stringify({
+              name: 'Write',
+              input: {
+                path: writePath,
+                content: 'export function test(id: string): string { return id; }',
+              },
+            }) +
+            '\n```',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        })
+        .mockResolvedValueOnce({
+          response: 'Done',
+          usage: { input_tokens: 3, output_tokens: 2 },
+        });
+      const options = createExecutionOptions(tempDir);
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { postToolUse: { enabled: true } },
+        {},
+        { mamaApi: createMockApi(), envelopeIssuanceMode: 'enabled' }
+      );
+
+      await agentLoop.run('write a file', options);
+      await flushBackgroundWork();
+
+      const calls = executeSpy.mock.calls as Array<
+        [string, GatewayToolInput, { executionSurface?: string; envelope?: unknown } | undefined]
+      >;
+      const writeCall = calls.find((call) => call[0] === 'Write');
+      expect(writeCall?.[2]).toEqual(
+        expect.objectContaining({
+          agentContext: options.agentContext,
+          source: 'telegram',
+          channelId: 'tg:1',
+          envelope: options.envelope,
+          executionSurface: 'model_tool',
+        })
+      );
+
+      const reactiveCalls = calls.filter((call) => call[0] === 'mama_search');
+      expect(reactiveCalls.length).toBeGreaterThan(0);
+      expect(reactiveCalls[0][2]).toEqual(
+        expect.objectContaining({
+          agentContext: options.agentContext,
+          source: 'telegram',
+          channelId: 'tg:1',
+          envelope: options.envelope,
+          executionSurface: 'reactive_internal',
+        })
+      );
     });
-    gatewayExecuteMock.mockResolvedValue({ success: true, results: [], count: 0 });
   });
 
-  it('passes active execution context to PostToolHandler background work', async () => {
-    persistentPromptMock
-      .mockResolvedValueOnce({
-        response:
-          '```tool_call\n{"name":"Write","input":{"path":"src/api.ts","content":"export function test() {}"}}\n```',
-        usage: { input_tokens: 10, output_tokens: 5 },
-      })
-      .mockResolvedValueOnce({
+  describe('AC: pre-compact path carries the reactive internal surface', () => {
+    it('passes active execution context to PreCompactHandler when compaction check runs', async () => {
+      promptSpy.mockResolvedValueOnce({
         response: 'Done',
-        usage: { input_tokens: 3, output_tokens: 2 },
+        usage: { input_tokens: 200_000, output_tokens: 5 },
       });
-    const options = createExecutionOptions();
-    const agentLoop = new AgentLoop(
-      createMockOAuthManager(),
-      { postToolUse: { enabled: true } },
-      {},
-      { mamaApi: createMockApi() }
-    );
+      const options = createExecutionOptions(tempDir);
+      delete options.cliSessionId;
+      delete options.resumeSession;
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { preCompact: { enabled: true } },
+        {},
+        { mamaApi: createMockApi(), envelopeIssuanceMode: 'enabled' }
+      );
 
-    await agentLoop.run('write a file', options);
+      await agentLoop.run('decided: use JWT tokens', options);
 
-    const contractSearchCall = gatewayExecuteMock.mock.calls.find(
-      (call) => call[0] === 'mama_search'
-    );
-    expect(contractSearchCall?.[2]).toEqual(
-      expect.objectContaining({
-        agentContext: options.agentContext,
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: options.envelope,
-        executionSurface: 'reactive_internal',
-      })
-    );
-
-    const writeCall = gatewayExecuteMock.mock.calls.find((call) => call[0] === 'Write');
-    expect(writeCall?.[2]).toEqual(
-      expect.objectContaining({
-        agentContext: options.agentContext,
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: options.envelope,
-        executionSurface: 'model_tool',
-      })
-    );
-
-    expect(postProcessInBackgroundMock).toHaveBeenCalledWith(
-      'Write',
-      { path: 'src/api.ts', content: 'export function test() {}' },
-      expect.anything(),
-      expect.objectContaining({
-        agentContext: options.agentContext,
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: options.envelope,
-        executionSurface: 'reactive_internal',
-      })
-    );
-  });
-
-  it('passes active execution context to PreCompactHandler when compaction check runs', async () => {
-    updateTokensMock.mockReturnValue({ totalTokens: 9000, nearThreshold: true });
-    persistentPromptMock.mockResolvedValueOnce({
-      response: 'Done',
-      usage: { input_tokens: 10, output_tokens: 5 },
+      const searchCall = executeSpy.mock.calls.find((call) => call[0] === 'mama_search');
+      expect(searchCall?.[2]).toEqual(
+        expect.objectContaining({
+          agentContext: options.agentContext,
+          source: 'telegram',
+          channelId: 'tg:1',
+          envelope: options.envelope,
+          executionSurface: 'reactive_internal',
+        })
+      );
     });
-    const options = createExecutionOptions();
-    const agentLoop = new AgentLoop(
-      createMockOAuthManager(),
-      { preCompact: { enabled: true } },
-      {},
-      { mamaApi: createMockApi() }
-    );
-
-    await agentLoop.run('near threshold', options);
-
-    expect(preCompactProcessMock).toHaveBeenCalledWith(
-      ['near threshold'],
-      expect.objectContaining({
-        agentContext: options.agentContext,
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: options.envelope,
-        executionSurface: 'reactive_internal',
-      })
-    );
   });
 
-  it('passes active execution context through Code-Act HostBridge tool calls', async () => {
-    persistentPromptMock
-      .mockResolvedValueOnce({
-        response: '```js\nmama_search({ query: "contracts" })\n```',
-        usage: { input_tokens: 10, output_tokens: 5 },
-      })
-      .mockResolvedValueOnce({
-        response: 'Done',
-        usage: { input_tokens: 3, output_tokens: 2 },
-      });
-    const options = createExecutionOptions();
-    const agentLoop = new AgentLoop(
-      createMockOAuthManager(),
-      { useCodeAct: true },
-      {},
-      { mamaApi: createMockApi() }
-    );
+  describe('AC: Code-Act host bridge carries the code_act surface', () => {
+    it('passes active execution context through Code-Act HostBridge tool calls', async () => {
+      promptSpy
+        .mockResolvedValueOnce({
+          response: '```js\nmama_search({ query: "contracts" })\n```',
+          usage: { input_tokens: 10, output_tokens: 5 },
+        })
+        .mockResolvedValueOnce({
+          response: 'Done',
+          usage: { input_tokens: 3, output_tokens: 2 },
+        });
+      const options = createExecutionOptions(tempDir);
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { useCodeAct: true },
+        {},
+        { mamaApi: createMockApi(), envelopeIssuanceMode: 'enabled' }
+      );
 
-    await agentLoop.run('use code act', options);
+      await agentLoop.run('use code act', options);
 
-    expect(gatewayExecuteMock).toHaveBeenCalledWith(
-      'mama_search',
-      { query: 'contracts' },
-      expect.objectContaining({
-        agentContext: options.agentContext,
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: options.envelope,
-        executionSurface: 'code_act',
-      })
-    );
+      const codeActCall = executeSpy.mock.calls.find((call) => call[0] === 'mama_search');
+      expect(codeActCall?.[2]).toEqual(
+        expect.objectContaining({
+          agentContext: options.agentContext,
+          source: 'telegram',
+          channelId: 'tg:1',
+          envelope: options.envelope,
+          executionSurface: 'code_act',
+        })
+      );
+    });
   });
 });

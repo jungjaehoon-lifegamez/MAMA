@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PostToolHandler } from '../../src/agent/post-tool-handler.js';
 import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 describe('PostToolHandler', () => {
   let executeTool: ReturnType<typeof vi.fn>;
@@ -527,31 +528,37 @@ describe('PostToolHandler', () => {
     });
   });
 
-  describe('processInBackground() - execution context propagation', () => {
-    it('should forward execution context to duplicate search and contract save calls', async () => {
-      executeTool.mockResolvedValue({ results: [] });
-      handler = new PostToolHandler(executeTool, { enabled: true });
-      const executionContext = {
-        agentId: 'chat_bot',
-        source: 'telegram',
-        channelId: 'tg:1',
-        envelope: { envelope_hash: 'envhash_post_tool' },
-      } as unknown as GatewayToolExecutionContext;
+  describe('Story M1R: PostToolHandler execution context propagation', () => {
+    describe('AC: forwards context to duplicate search and contract save calls', () => {
+      it('should forward execution context to duplicate search and contract save calls', async () => {
+        executeTool.mockResolvedValue({ results: [] });
+        handler = new PostToolHandler(executeTool, { enabled: true });
+        const executionContext: GatewayToolExecutionContext = {
+          agentId: 'chat_bot',
+          source: 'telegram',
+          channelId: 'tg:1',
+          envelope: makeSignedEnvelope({
+            source: 'telegram',
+            channel_id: 'tg:1',
+          }),
+          executionSurface: 'reactive_internal',
+        };
 
-      handler.processInBackground(
-        'Write',
-        { path: 'src/api.ts' },
-        'export function test(id: string): string { return id; }',
-        executionContext
-      );
-      await new Promise((r) => setTimeout(r, 100));
+        handler.processInBackground(
+          'Write',
+          { path: 'src/api.ts' },
+          'export function test(id: string): string { return id; }',
+          executionContext
+        );
+        await new Promise((r) => setTimeout(r, 100));
 
-      const searchCalls = executeTool.mock.calls.filter((call) => call[0] === 'mama_search');
-      const saveCalls = executeTool.mock.calls.filter((call) => call[0] === 'mama_save');
-      expect(searchCalls.length).toBeGreaterThan(0);
-      expect(saveCalls.length).toBeGreaterThan(0);
-      expect(searchCalls[0][2]).toBe(executionContext);
-      expect(saveCalls[0][2]).toBe(executionContext);
+        const searchCalls = executeTool.mock.calls.filter((call) => call[0] === 'mama_search');
+        const saveCalls = executeTool.mock.calls.filter((call) => call[0] === 'mama_save');
+        expect(searchCalls.length).toBeGreaterThan(0);
+        expect(saveCalls.length).toBeGreaterThan(0);
+        expect(searchCalls[0][2]).toBe(executionContext);
+        expect(saveCalls[0][2]).toBe(executionContext);
+      });
     });
   });
 

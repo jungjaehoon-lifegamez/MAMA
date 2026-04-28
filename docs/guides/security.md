@@ -1061,9 +1061,9 @@ MAMA OS includes a **Code-Act sandbox** — a JavaScript execution environment p
 ### Security Model
 
 ```
-User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 3 only)
+User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
              ↑                      ↑
-             No Node.js APIs        Read-only tools only
+             No Node.js APIs        Read + memory-write tools
              No file system         No Bash, no Write
              No network access      No communication tools
 ```
@@ -1074,13 +1074,19 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 3 onl
 - **No network access** — No `fetch()`, no `XMLHttpRequest`, no sockets
 - **Execution timeout** — Default 30s, max 60s, enforced at engine level
 - **Memory limit** — QuickJS WASM heap is bounded (default ~256 MB, set by `quickjs-emscripten` WASM allocation)
-- **Tier 3 tools only** — Only read-only gateway tools are exposed via the host bridge
+- **Tier 2 tools for `/api/code-act`** — The HTTP endpoint injects the host
+  bridge with tier 2 in `start.ts`, exposing read tools plus bounded memory-write
+  tools. `Bash`, `Write`, and communication tools remain unavailable.
 
 ### Available Tools in Sandbox
 
-Only Tier 3 (read-only) tools are injected:
+`POST /api/code-act` injects Tier 2 tools:
 
 - `mama_search`, `mama_load_checkpoint` — Memory read
+- `mama_save`, `mama_update`, `mama_add`, `mama_ingest` — Memory write, audited
+  through gateway envelope context when envelope issuance is enabled
+- `report_publish`, `wiki_publish` — Dashboard/wiki publish helpers with
+  autosave audit behavior
 - `Read` — File read
 - `browser_get_text`, `browser_screenshot` — Browser read
 - `os_list_bots`, `os_get_config` — Status read
@@ -1091,8 +1097,11 @@ Only Tier 3 (read-only) tools are injected:
 The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 
 - Requires `MAMA_AUTH_TOKEN` if set
-- Uses Tier 3 (read-only) tools exclusively
+- Uses Tier 2 tools via `HostBridge.injectInto(sandbox, 2)` in `start.ts`
 - Has no access to agent persona or conversation context
+- Must be treated as write-capable for memory surfaces; expose it only behind
+  localhost, token auth, and the same network controls used for other `/api`
+  routes.
 
 ### Risk Assessment
 
@@ -1100,7 +1109,8 @@ The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 | ------------------- | -------------------------------------------- |
 | Code injection      | QuickJS WASM isolation, no eval of host code |
 | File system access  | Only via `Read` tool (read-only)             |
-| Command execution   | `Bash` tool not available in Tier 3          |
+| Command execution   | `Bash` tool not available in Tier 2          |
+| Memory mutation     | Tier 2 memory writes are envelope-audited    |
 | Data exfiltration   | No network access, no communication tools    |
 | Resource exhaustion | Timeout + WASM memory bounds                 |
 

@@ -397,19 +397,24 @@ export async function runAgentLoop(
           toolCalls.push({ name: toolName, input });
         }
       };
-      // Set default agent context for /api/code-act calls (Conductor, tier 2 sandbox)
-      // In normal agent loop execution, this is set per-request by the handler
-      toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-      bridge.injectInto(sandbox, 2);
-      const result = await sandbox.execute(code);
-      return {
-        success: result.success,
-        value: result.value,
-        logs: result.logs,
-        error: result.error?.message,
-        metrics: result.metrics,
-        toolCalls,
-      };
+      const previousRoutingContext = toolExecutor.getCurrentAgentRoutingContext();
+      try {
+        // Set default agent context for /api/code-act calls (Conductor, tier 2 sandbox).
+        // Per-request executionContext carries envelope data; this routing context is legacy fallback.
+        toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
+        bridge.injectInto(sandbox, 2);
+        const result = await sandbox.execute(code);
+        return {
+          success: result.success,
+          value: result.value,
+          logs: result.logs,
+          error: result.error?.message,
+          metrics: result.metrics,
+          toolCalls,
+        };
+      } finally {
+        toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
+      }
     };
 
     // Pre-warm Code-Act WASM module for fast first execution

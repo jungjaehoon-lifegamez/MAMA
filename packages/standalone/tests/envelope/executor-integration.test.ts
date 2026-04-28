@@ -69,6 +69,7 @@ describe('gateway-tool-executor envelope integration', () => {
         agentId: 'worker',
         source: 'telegram',
         channelId: 'tg:1',
+        executionSurface: 'model_tool',
       }
     );
 
@@ -78,6 +79,16 @@ describe('gateway-tool-executor envelope integration', () => {
     });
     expect(result.error).toContain('without envelope');
     expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('allows non-reactive direct calls without an envelope context', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    const result = await executor.execute('mama_load_checkpoint', {});
+
+    expect(result).toEqual({ success: true });
+    expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
   });
 
   it('allows missing-envelope execution only when the legacy bypass is explicit', async () => {
@@ -92,6 +103,7 @@ describe('gateway-tool-executor envelope integration', () => {
         agentId: 'worker',
         source: 'telegram',
         channelId: 'tg:1',
+        executionSurface: 'model_tool',
       }
     );
 
@@ -99,13 +111,15 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
   });
 
-  it('fails loud when any gateway tool call has no envelope', async () => {
+  it('keeps fail-loud scoped to reactive execution surfaces', async () => {
     process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });
 
-    await expect(executor.execute('mama_load_checkpoint', {})).rejects.toThrow(/without envelope/);
-    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+    const result = await executor.execute('mama_load_checkpoint', {});
+
+    expect(result).toEqual({ success: true });
+    expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
   });
 
   it('fails loud when an explicit gateway context has no envelope', async () => {
@@ -121,6 +135,7 @@ describe('gateway-tool-executor envelope integration', () => {
           agentId: 'worker',
           source: 'telegram',
           channelId: 'tg:1',
+          executionSurface: 'model_tool',
         }
       )
     ).rejects.toThrow(/without envelope/);
@@ -132,7 +147,18 @@ describe('gateway-tool-executor envelope integration', () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });
 
-    await expect(executor.execute('mama_load_checkpoint', {})).rejects.toThrow(/without envelope/);
+    await expect(
+      executor.execute(
+        'mama_load_checkpoint',
+        {},
+        {
+          agentId: 'worker',
+          source: 'telegram',
+          channelId: 'tg:1',
+          executionSurface: 'model_tool',
+        }
+      )
+    ).rejects.toThrow(/without envelope/);
     expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
   });
 
@@ -155,7 +181,13 @@ describe('gateway-tool-executor envelope integration', () => {
     const result = await executor.execute(
       'telegram_send',
       { chat_id: 'tg:OTHER_PROJECT', message: 'leak' } as GatewayToolInput,
-      { agentId: 'worker', source: 'telegram', channelId: 'tg:OWN', envelope }
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
     );
 
     expect(result).toMatchObject({
@@ -185,7 +217,13 @@ describe('gateway-tool-executor envelope integration', () => {
     const result = await executor.execute(
       'telegram_send',
       { chat_id: 'tg:OWN', message: 'safe' } as GatewayToolInput,
-      { agentId: 'worker', source: 'telegram', channelId: 'tg:OWN', envelope }
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
     );
 
     expect(result).toMatchObject({ success: true });
@@ -208,7 +246,13 @@ describe('gateway-tool-executor envelope integration', () => {
         decision: 'Use explicit envelope enforcement',
         reasoning: 'Tier 3 must stay read-only',
       } as GatewayToolInput,
-      { agentId: 'worker', source: 'telegram', channelId: 'tg:1', envelope }
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:1',
+        envelope,
+        executionSurface: 'model_tool',
+      }
     );
 
     expect(result).toMatchObject({

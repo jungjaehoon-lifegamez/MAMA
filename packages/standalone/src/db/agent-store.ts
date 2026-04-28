@@ -410,7 +410,7 @@ export function listScopeMismatches(db: DB, input: ScopeMismatchQuery = {}): Act
     params.push(input.agentId);
   }
   if (input.since) {
-    conditions.push('created_at >= ?');
+    conditions.push('created_at >= datetime(?)');
     params.push(input.since);
   }
 
@@ -430,7 +430,7 @@ export function countScopeMismatches(db: DB, input: ScopeMismatchCountQuery = {}
   const params: string[] = [];
 
   if (input.since) {
-    conditions.push('created_at >= ?');
+    conditions.push('created_at >= datetime(?)');
     params.push(input.since);
   }
 
