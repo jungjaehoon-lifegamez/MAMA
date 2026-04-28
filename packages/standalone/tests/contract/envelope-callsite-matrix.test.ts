@@ -49,10 +49,10 @@ const CLASSIFIED = new Map<string, string>([
   ['gateways/message-router.ts', 'P1 thread: creates signed envelope and passes AgentLoopOptions'],
   [
     'agent/code-act/host-bridge.ts',
-    'P5 deferred: explicit legacy warning until Code-Act envelope plan',
+    'M1R Reactive Main: HostBridge gateway calls carry the active envelope context',
   ],
-  ['multi-agent/', 'P5 deferred: subordinate envelope work'],
-  ['scheduler/', 'P5 deferred: Autonomous Standing envelope issuance in M8'],
+  ['multi-agent/', 'M7-owned: spawn_subordinate delegated memory worker envelopes are outside M1R'],
+  ['scheduler/', 'M8-owned: schedule_worker/Autonomous Standing envelope issuance is outside M1R'],
 ]);
 
 function classificationFor(rel: string): string | undefined {
