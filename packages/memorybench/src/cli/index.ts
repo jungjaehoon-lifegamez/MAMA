@@ -6,8 +6,6 @@ import { testQuestionCommand } from "./commands/test-question"
 import { statusCommand } from "./commands/status"
 import { listQuestionsCommand } from "./commands/list-questions"
 import { showFailuresCommand } from "./commands/show-failures"
-import { getAvailableProviders } from "../providers"
-import { getAvailableBenchmarks } from "../benchmarks"
 import { listModelsByProvider, MODEL_ALIASES, DEFAULT_ANSWERING_MODEL } from "../utils/models"
 
 function printHelp(): void {
@@ -193,7 +191,7 @@ export async function cli(args: string[]): Promise<void> {
     }
     case "help":
     case "--help":
-    case "-h":
+    case "-h": {
       const topic = commandArgs[0]
       if (topic === "providers") {
         printProvidersHelp()
@@ -205,6 +203,7 @@ export async function cli(args: string[]): Promise<void> {
         printHelp()
       }
       break
+    }
     default:
       printHelp()
       break

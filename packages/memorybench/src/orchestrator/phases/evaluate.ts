@@ -7,7 +7,6 @@ import { logger } from "../../utils/logger"
 import { ConcurrentExecutor } from "../concurrent"
 import { resolveConcurrency } from "../../types/concurrency"
 import { calculateRetrievalMetrics } from "./retrieval-eval"
-import { getModelConfig } from "../../utils/models"
 import { ClaudeSession } from "../../utils/claude-session"
 import { CodexSession } from "../../utils/codex-session"
 import type { AnthropicJudge } from "../../judges/anthropic"
@@ -49,13 +48,21 @@ export async function runEvaluatePhase(
     await claudeSession.start()
     ;(judge as AnthropicJudge).setClaudeSession(claudeSession)
     concurrency = 1
-    logger.info(`[evaluate] Using persistent Claude session (model: ${judgeModelConfig.id}, concurrency forced to 1)`)
+    logger.info(
+      `[evaluate] Using persistent Claude session (model: ${judgeModelConfig.id}, concurrency forced to 1)`
+    )
   } else if (judgeModelConfig.execution === "codex-cli" && "setCodexSession" in judge) {
-    codexSession = new CodexSession({ model: judgeModelConfig.id, timeoutMs: 120_000, sandbox: "read-only" })
+    codexSession = new CodexSession({
+      model: judgeModelConfig.id,
+      timeoutMs: 120_000,
+      sandbox: "read-only",
+    })
     await codexSession.start()
     ;(judge as OpenAIJudge).setCodexSession(codexSession)
     concurrency = 1
-    logger.info(`[evaluate] Using persistent Codex session (model: ${judgeModelConfig.id}, concurrency forced to 1)`)
+    logger.info(
+      `[evaluate] Using persistent Codex session (model: ${judgeModelConfig.id}, concurrency forced to 1)`
+    )
   }
 
   logger.info(
@@ -137,7 +144,9 @@ export async function runEvaluatePhase(
   }
   if (codexSession) {
     const stats = codexSession.tokenStats
-    logger.info(`[evaluate] Codex session closed after ${codexSession.messageCount} messages (${stats.input} in, ${stats.output} out, ${stats.cached} cached)`)
+    logger.info(
+      `[evaluate] Codex session closed after ${codexSession.messageCount} messages (${stats.input} in, ${stats.output} out, ${stats.cached} cached)`
+    )
     codexSession.close()
   }
 

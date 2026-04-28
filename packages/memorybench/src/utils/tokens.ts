@@ -45,7 +45,7 @@ function countOpenAITokens(text: string, modelId: string): number {
     const encoding = getEncoder(modelId)
     const tokens = encoding.encode(text)
     return tokens.length
-  } catch (error) {
+  } catch {
     return Math.ceil(text.length / 4)
   }
 }

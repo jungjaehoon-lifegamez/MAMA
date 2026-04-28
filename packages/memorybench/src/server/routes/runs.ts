@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from "fs"
+import { existsSync, readFileSync } from "fs"
 import { join } from "path"
 import { CheckpointManager } from "../../orchestrator/checkpoint"
 import { orchestrator } from "../../orchestrator"
@@ -7,15 +7,27 @@ import { activeRuns, startRun, endRun, requestStop, isRunActive, getRunState } f
 import { createBenchmark } from "../../benchmarks"
 import type { ProviderName } from "../../types/provider"
 import type { BenchmarkName } from "../../types/benchmark"
-import type { PhaseId, SamplingConfig } from "../../types/checkpoint"
+import type {
+  PhaseId,
+  QuestionCheckpoint,
+  RunCheckpoint,
+  SamplingConfig,
+} from "../../types/checkpoint"
 import type { ConcurrencyConfig } from "../../types/concurrency"
 import { getPhasesFromPhase, PHASE_ORDER } from "../../types/checkpoint"
+import type { QuestionTypeRegistry } from "../../types/unified"
 
 const checkpointManager = new CheckpointManager()
 
-const benchmarkRegistryCache: Record<string, any> = {}
+const benchmarkRegistryCache: Record<string, QuestionTypeRegistry> = {}
 
-function getQuestionTypeRegistry(benchmarkName: string) {
+type RunSummary = ReturnType<CheckpointManager["getSummary"]>
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined
+}
+
+function getQuestionTypeRegistry(benchmarkName: string): QuestionTypeRegistry {
   if (!benchmarkRegistryCache[benchmarkName]) {
     const benchmark = createBenchmark(benchmarkName as BenchmarkName)
     benchmarkRegistryCache[benchmarkName] = benchmark.getQuestionTypes()
@@ -45,12 +57,8 @@ export async function handleRunsRoutes(req: Request, url: URL): Promise<Response
 
         // Calculate accuracy from checkpoint questions
         const questions = Object.values(checkpoint.questions)
-        const evaluatedQuestions = questions.filter(
-          (q: any) => q.phases?.evaluate?.status === "completed"
-        )
-        const correctCount = evaluatedQuestions.filter(
-          (q: any) => q.phases?.evaluate?.score === 1
-        ).length
+        const evaluatedQuestions = questions.filter((q) => q.phases.evaluate.status === "completed")
+        const correctCount = evaluatedQuestions.filter((q) => q.phases.evaluate.score === 1).length
         const accuracy =
           evaluatedQuestions.length > 0 ? correctCount / evaluatedQuestions.length : null
 
@@ -67,8 +75,8 @@ export async function handleRunsRoutes(req: Request, url: URL): Promise<Response
           accuracy,
         }
       })
-      .filter(Boolean)
-      .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+      .filter(isPresent)
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
 
     return json(runDetails)
   }
@@ -317,7 +325,7 @@ export async function handleRunsRoutes(req: Request, url: URL): Promise<Response
   return null
 }
 
-function getRunStatus(checkpoint: any, summary: any): string {
+function getRunStatus(checkpoint: RunCheckpoint, summary: RunSummary): string {
   const runState = getRunState(checkpoint.runId)
   if (runState) {
     return runState.status
@@ -331,9 +339,9 @@ function getRunStatus(checkpoint: any, summary: any): string {
   }
 
   // Check if any question has a failed phase
-  const questions = Object.values(checkpoint.questions || {}) as any[]
-  const hasFailed = questions.some((q: any) => {
-    const phases = q.phases || {}
+  const questions: QuestionCheckpoint[] = Object.values(checkpoint.questions || {})
+  const hasFailed = questions.some((q) => {
+    const phases = q.phases
     return (
       phases.ingest?.status === "failed" ||
       phases.indexing?.status === "failed" ||

@@ -1,13 +1,11 @@
 import { existsSync, readdirSync } from "fs"
-import { join } from "path"
 import { CheckpointManager } from "../../orchestrator/checkpoint"
 import { batchManager } from "../../orchestrator/batch"
-import type { CompareManifest } from "../../orchestrator/batch"
 import { wsManager } from "../index"
 import { getRunState } from "../runState"
 import type { ProviderName } from "../../types/provider"
 import type { BenchmarkName } from "../../types/benchmark"
-import type { SamplingConfig } from "../../types/checkpoint"
+import type { QuestionCheckpoint, RunCheckpoint, SamplingConfig } from "../../types/checkpoint"
 
 const checkpointManager = new CheckpointManager()
 
@@ -23,16 +21,17 @@ export type CompareState = {
 
 const activeCompares = new Map<string, CompareState>()
 
+type RunSummary = ReturnType<CheckpointManager["getSummary"]>
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined
+}
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "Content-Type": "application/json" },
   })
-}
-
-function shouldStop(compareId: string): boolean {
-  const state = activeCompares.get(compareId)
-  return state?.status === "stopping"
 }
 
 function requestStop(compareId: string): boolean {
@@ -136,8 +135,8 @@ export async function handleCompareRoutes(req: Request, url: URL): Promise<Respo
           runProgress,
         }
       })
-      .filter(Boolean)
-      .sort((a: any, b: any) => (b.createdAt || "").localeCompare(a.createdAt || ""))
+      .filter(isPresent)
+      .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
 
     return json(compareDetails)
   }
@@ -200,12 +199,8 @@ export async function handleCompareRoutes(req: Request, url: URL): Promise<Respo
 
       // Calculate accuracy from checkpoint questions
       const questions = Object.values(checkpoint.questions)
-      const evaluatedQuestions = questions.filter(
-        (q: any) => q.phases?.evaluate?.status === "completed"
-      )
-      const correctCount = evaluatedQuestions.filter(
-        (q: any) => q.phases?.evaluate?.score === 1
-      ).length
+      const evaluatedQuestions = questions.filter((q) => q.phases.evaluate.status === "completed")
+      const correctCount = evaluatedQuestions.filter((q) => q.phases.evaluate.score === 1).length
       const accuracy =
         evaluatedQuestions.length > 0 ? correctCount / evaluatedQuestions.length : null
 
@@ -330,7 +325,7 @@ export async function handleCompareRoutes(req: Request, url: URL): Promise<Respo
   return null
 }
 
-function getRunStatus(checkpoint: any, summary: any): string {
+function getRunStatus(checkpoint: RunCheckpoint, summary: RunSummary): string {
   // Active process takes priority
   const runState = getRunState(checkpoint.runId)
   if (runState) {
@@ -346,9 +341,9 @@ function getRunStatus(checkpoint: any, summary: any): string {
   }
 
   // Check if any question has a failed phase
-  const questions = Object.values(checkpoint.questions || {}) as any[]
-  const hasFailed = questions.some((q: any) => {
-    const phases = q.phases || {}
+  const questions: QuestionCheckpoint[] = Object.values(checkpoint.questions || {})
+  const hasFailed = questions.some((q) => {
+    const phases = q.phases
     return (
       phases.ingest?.status === "failed" ||
       phases.indexing?.status === "failed" ||

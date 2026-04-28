@@ -249,13 +249,15 @@ export class CodexSession {
         }
       }
       // Ignore notifications (codex/event) for simplicity
-    } catch {}
+    } catch {
+      // Ignore malformed JSON-RPC lines from the subprocess.
+    }
   }
 
   private handleClose(code: number | null): void {
     logger.info(`[CodexSession] Process closed (code: ${code})`)
     this.state = "dead"
-    for (const [id, pending] of this.pendingRequests) {
+    for (const pending of this.pendingRequests.values()) {
       if (pending.timeout) clearTimeout(pending.timeout)
       pending.reject(new Error(`Process exited with code ${code}`))
     }
@@ -263,7 +265,7 @@ export class CodexSession {
   }
 
   private handleError(err: Error): void {
-    for (const [id, pending] of this.pendingRequests) {
+    for (const pending of this.pendingRequests.values()) {
       if (pending.timeout) clearTimeout(pending.timeout)
       pending.reject(err)
     }
