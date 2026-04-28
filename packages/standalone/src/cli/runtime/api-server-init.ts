@@ -58,6 +58,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     enabledConnectors,
     agentLoop,
     getAdapter,
+    envelopeMetadata,
   } = params;
 
   // ── SkillRegistry + MCP config migration ──────────────────────────────
@@ -109,6 +110,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     rawStore,
     enabledConnectors,
     eventBus,
+    envelope: envelopeMetadata,
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);
