@@ -210,6 +210,50 @@ mama start
 
 Use `MAMA_AUTH_TOKEN` instead for temporary tunnels that do not provide Cloudflare Access identity headers.
 
+### Reactive Envelope Runtime (M1R)
+
+M1R adds signed Reactive envelopes for gateway turns. The envelope records runtime
+provenance and gives irreversible side-effect tools a verifiable boundary.
+
+For local operator testing, enable issuance with env-managed HMAC key material:
+
+```bash
+export MAMA_ENVELOPE_ISSUANCE=enabled
+export MAMA_ENVELOPE_HMAC_KEY_BASE64="$(openssl rand -base64 32)"
+export MAMA_ENVELOPE_HMAC_KEY_ID="local-2026-04"
+export MAMA_ENVELOPE_HMAC_KEY_VERSION=1
+```
+
+Then start MAMA:
+
+```bash
+mama start
+```
+
+Check public health and authenticated envelope status separately:
+
+```bash
+curl http://localhost:3847/health
+curl -H "Authorization: Bearer $MAMA_AUTH_TOKEN" \
+  http://localhost:3847/api/envelope/status
+```
+
+`/health` intentionally returns only `{ "status": "ok", "timestamp": ... }`.
+Envelope metadata lives behind `/api/envelope/status`, which reports `issuance`,
+`key_id`, `key_version`, and `recent_mismatch_count_24h`.
+
+Production notes:
+
+- Store envelope keys in environment variables or a secret manager. Never commit
+  them to git.
+- Use `MAMA_ENVELOPE_ISSUANCE=required` only after an authenticated status check
+  confirms the expected key metadata.
+- Current verification uses a single active key unless multi-key rotation support
+  is added. Old envelopes may not verify after key material rotation.
+- The M1R HMAC model is symmetric. Future delegated memory workers would need
+  shared verifier access to the issuer secret unless M7/M8 move to an asymmetric
+  capability format such as Biscuit-style tokens.
+
 ---
 
 ## Configuration
