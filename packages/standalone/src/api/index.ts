@@ -15,7 +15,7 @@ import {
   type HeartbeatTracker,
 } from './heartbeat-handler.js';
 import { createTokenRouter, initTokenUsageTable } from './token-handler.js';
-import { initAgentTables } from '../db/agent-store.js';
+import { countScopeMismatches, initAgentTables } from '../db/agent-store.js';
 import { applyTokenUsageAgentVersionMigration } from '../db/migrations/token-usage-agent-version.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
@@ -83,7 +83,15 @@ export interface ApiServerOptions {
       limit: number
     ): Array<{ agent: string; action: string; target: string; timestamp: number }>;
   };
+  /** Runtime envelope bootstrap metadata for authenticated status reporting */
+  envelope?: ApiEnvelopeMetadata;
 }
+
+export type ApiEnvelopeMetadata = {
+  issuance: 'off' | 'enabled' | 'required';
+  key_id?: string;
+  key_version?: number;
+};
 
 /**
  * API server instance
@@ -124,6 +132,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     rawStore,
     enabledConnectors,
     eventBus,
+    envelope = { issuance: 'off' },
   } = options;
 
   const app = express();
@@ -265,6 +274,30 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // Health check endpoint (watchdog)
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', timestamp: Date.now() });
+  });
+
+  app.get('/api/envelope/status', requireAuth, (_req, res) => {
+    if (!db) {
+      res.status(503).json({
+        error: true,
+        code: 'audit_db_unavailable',
+        message: 'Envelope audit database is unavailable.',
+      });
+      return;
+    }
+
+    const since = new Date(Date.now() - 24 * 60 * 60_000)
+      .toISOString()
+      .slice(0, 19)
+      .replace('T', ' ');
+    const recentMismatchCount = countScopeMismatches(db, { since });
+
+    res.json({
+      issuance: envelope.issuance,
+      key_id: envelope.key_id,
+      key_version: envelope.key_version,
+      recent_mismatch_count_24h: recentMismatchCount,
+    });
   });
 
   // Metrics health endpoint (observability)

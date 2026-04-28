@@ -301,6 +301,10 @@ export interface ScopeMismatchQuery extends GatewayToolCallQuery {
   since?: string;
 }
 
+export interface ScopeMismatchCountQuery {
+  since?: string;
+}
+
 // ── Activity CRUD ──────────────────────────────────────────────────────────
 
 export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
@@ -419,6 +423,21 @@ export function listScopeMismatches(db: DB, input: ScopeMismatchQuery = {}): Act
        LIMIT ?`
     )
     .all(...params) as ActivityRow[];
+}
+
+export function countScopeMismatches(db: DB, input: ScopeMismatchCountQuery = {}): number {
+  const conditions = ['scope_mismatch = 1'];
+  const params: string[] = [];
+
+  if (input.since) {
+    conditions.push('created_at >= ?');
+    params.push(input.since);
+  }
+
+  const row = db
+    .prepare(`SELECT COUNT(*) as count FROM agent_activity WHERE ${conditions.join(' AND ')}`)
+    .get(...params) as { count: number } | undefined;
+  return row?.count ?? 0;
 }
 
 function normalizeActivityLimit(limit: number | undefined): number {
