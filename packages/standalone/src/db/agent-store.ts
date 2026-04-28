@@ -9,6 +9,7 @@ import type { SQLiteDatabase } from '../sqlite.js';
 import { applyAgentStoreTablesMigration } from './migrations/agent-store-tables.js';
 import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-metrics-response-avg.js';
 import { applyAgentActivityValidationColumnsMigration } from './migrations/agent-activity-validation-columns.js';
+import { applyAgentActivityEnvelopeColumnsMigration } from './migrations/agent-activity-envelope-hash.js';
 import { applyEnvelopeTablesMigration } from './migrations/envelope-tables.js';
 
 type DB = SQLiteDatabase;
@@ -35,6 +36,7 @@ export function initAgentTables(db: SQLiteDatabase): void {
   applyAgentStoreTablesMigration(db);
   applyAgentMetricsResponseAverageMigration(db);
   applyAgentActivityValidationColumnsMigration(db);
+  applyAgentActivityEnvelopeColumnsMigration(db);
   applyEnvelopeTablesMigration(db);
 }
 
@@ -256,6 +258,10 @@ export interface LogActivityInput {
   run_id?: string;
   execution_status?: string;
   trigger_reason?: string;
+  envelopeHash?: string | null;
+  requestedScopes?: unknown[] | null;
+  envelopeScopesSnapshot?: unknown[] | null;
+  scopeMismatch?: boolean | number;
 }
 
 export interface ActivityRow {
@@ -274,7 +280,25 @@ export interface ActivityRow {
   run_id: string | null;
   execution_status: string | null;
   trigger_reason: string | null;
+  envelope_hash: string | null;
+  requested_scopes: string | null;
+  envelope_scopes_snapshot: string | null;
+  scope_mismatch: number;
   created_at: string;
+}
+
+export interface GetActivityOptions {
+  includeTrace?: boolean;
+}
+
+export interface GatewayToolCallQuery {
+  envelopeHash?: string;
+  agentId?: string;
+  limit?: number;
+}
+
+export interface ScopeMismatchQuery extends GatewayToolCallQuery {
+  since?: string;
 }
 
 // ── Activity CRUD ──────────────────────────────────────────────────────────
@@ -283,9 +307,10 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
   const stmt = db.prepare(`
     INSERT INTO agent_activity (
       agent_id, agent_version, type, input_summary, output_summary, tokens_used,
-      tools_called, duration_ms, score, details, error_message, run_id, execution_status, trigger_reason
+      tools_called, duration_ms, score, details, error_message, run_id, execution_status, trigger_reason,
+      envelope_hash, requested_scopes, envelope_scopes_snapshot, scope_mismatch
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.agent_id,
@@ -301,7 +326,11 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.error_message ?? null,
     input.run_id ?? null,
     input.execution_status ?? null,
-    input.trigger_reason ?? null
+    input.trigger_reason ?? null,
+    input.envelopeHash ?? null,
+    input.requestedScopes ? JSON.stringify(input.requestedScopes) : null,
+    input.envelopeScopesSnapshot ? JSON.stringify(input.envelopeScopesSnapshot) : null,
+    input.scopeMismatch === true ? 1 : Number(input.scopeMismatch ?? 0)
   );
   return db
     .prepare('SELECT * FROM agent_activity WHERE id = ?')
@@ -323,12 +352,80 @@ export function updateActivityScore(
   return db.prepare('SELECT * FROM agent_activity WHERE id = ?').get(activityId) as ActivityRow;
 }
 
-export function getActivity(db: DB, agentId: string, limit: number): ActivityRow[] {
+export function getActivity(
+  db: DB,
+  agentId: string,
+  limit: number,
+  options: GetActivityOptions = {}
+): ActivityRow[] {
+  const traceClause = options.includeTrace ? '' : "AND type != 'gateway_tool_call'";
   return db
     .prepare(
-      'SELECT * FROM agent_activity WHERE agent_id = ? ORDER BY created_at DESC, id DESC LIMIT ?'
+      `SELECT * FROM agent_activity
+       WHERE agent_id = ? ${traceClause}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
     )
     .all(agentId, limit) as ActivityRow[];
+}
+
+export function listGatewayToolCalls(db: DB, input: GatewayToolCallQuery = {}): ActivityRow[] {
+  const conditions = ["type = 'gateway_tool_call'"];
+  const params: Array<string | number> = [];
+
+  if (input.envelopeHash) {
+    conditions.push('envelope_hash = ?');
+    params.push(input.envelopeHash);
+  }
+  if (input.agentId) {
+    conditions.push('agent_id = ?');
+    params.push(input.agentId);
+  }
+
+  params.push(normalizeActivityLimit(input.limit));
+  return db
+    .prepare(
+      `SELECT * FROM agent_activity
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(...params) as ActivityRow[];
+}
+
+export function listScopeMismatches(db: DB, input: ScopeMismatchQuery = {}): ActivityRow[] {
+  const conditions = ['scope_mismatch = 1'];
+  const params: Array<string | number> = [];
+
+  if (input.envelopeHash) {
+    conditions.push('envelope_hash = ?');
+    params.push(input.envelopeHash);
+  }
+  if (input.agentId) {
+    conditions.push('agent_id = ?');
+    params.push(input.agentId);
+  }
+  if (input.since) {
+    conditions.push('created_at >= ?');
+    params.push(input.since);
+  }
+
+  params.push(normalizeActivityLimit(input.limit));
+  return db
+    .prepare(
+      `SELECT * FROM agent_activity
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(...params) as ActivityRow[];
+}
+
+function normalizeActivityLimit(limit: number | undefined): number {
+  if (!Number.isFinite(limit) || limit === undefined) {
+    return 100;
+  }
+  return Math.min(Math.max(Math.floor(limit), 1), 1000);
 }
 
 // ── Activity Summary ───────────────────────────────────────────────────────
