@@ -94,7 +94,7 @@ export interface AgentContext {
   backend?: 'claude' | 'codex-mcp';
 }
 
-export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act';
+export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
 
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;

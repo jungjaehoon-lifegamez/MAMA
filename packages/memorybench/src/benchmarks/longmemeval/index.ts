@@ -13,6 +13,46 @@ import { logger } from "../../utils/logger"
 const DEFAULT_DATA_PATH = "./data/benchmarks/longmemeval/datasets"
 const HF_DATASET_URL =
   "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json"
+const BENCHMARK_DATA_LOAD_ERROR = "Failed to load benchmark data"
+
+function sanitizeBenchmarkDataError(error: unknown): Error {
+  logger.warn(
+    `LongMemEval data load failed: ${error instanceof Error ? error.message : String(error)}`
+  )
+  return new Error(BENCHMARK_DATA_LOAD_ERROR)
+}
+
+function safeReadFileSync(path: string): string {
+  try {
+    return readFileSync(path, "utf8")
+  } catch (error) {
+    throw sanitizeBenchmarkDataError(error)
+  }
+}
+
+function safeReadDirSync(path: string): string[] {
+  try {
+    return readdirSync(path)
+  } catch (error) {
+    throw sanitizeBenchmarkDataError(error)
+  }
+}
+
+function safeMkdirSync(path: string): void {
+  try {
+    mkdirSync(path, { recursive: true })
+  } catch (error) {
+    throw sanitizeBenchmarkDataError(error)
+  }
+}
+
+function safeWriteFileSync(path: string, data: string): void {
+  try {
+    writeFileSync(path, data)
+  } catch (error) {
+    throw sanitizeBenchmarkDataError(error)
+  }
+}
 
 function parseLongMemEvalDate(dateStr: string): { iso: string; formatted: string } | null {
   const match = dateStr.match(/(\d{4})\/(\d{2})\/(\d{2})\s*\([^)]*\)\s*(\d{2}):(\d{2})/)
@@ -102,7 +142,7 @@ export class LongMemEvalBenchmark implements Benchmark {
       await this.downloadDataset(rawDataPath)
     }
 
-    if (!existsSync(questionsDir) || readdirSync(questionsDir).length === 0) {
+    if (!existsSync(questionsDir) || safeReadDirSync(questionsDir).length === 0) {
       logger.info("Splitting questions into individual files...")
       await this.splitQuestions(rawDataPath, questionsDir)
     }
@@ -113,7 +153,7 @@ export class LongMemEvalBenchmark implements Benchmark {
   private async downloadDataset(destPath: string): Promise<void> {
     const dir = join(destPath, "..")
     if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true })
+      safeMkdirSync(dir)
     }
 
     logger.info(`Fetching from ${HF_DATASET_URL}...`)
@@ -159,16 +199,16 @@ export class LongMemEvalBenchmark implements Benchmark {
     }
 
     const data = new TextDecoder().decode(allChunks)
-    writeFileSync(destPath, data)
+    safeWriteFileSync(destPath, data)
     logger.success(`Downloaded LongMemEval dataset to ${destPath}`)
   }
 
   private async splitQuestions(rawPath: string, questionsDir: string): Promise<void> {
     if (!existsSync(questionsDir)) {
-      mkdirSync(questionsDir, { recursive: true })
+      safeMkdirSync(questionsDir)
     }
 
-    const dataset: LongMemEvalItem[] = JSON.parse(readFileSync(rawPath, "utf8"))
+    const dataset: LongMemEvalItem[] = JSON.parse(safeReadFileSync(rawPath))
 
     for (const item of dataset) {
       if (!item.question_id) continue
@@ -183,19 +223,22 @@ export class LongMemEvalBenchmark implements Benchmark {
         })
       }
 
-      writeFileSync(join(questionsDir, `${item.question_id}.json`), JSON.stringify(item, null, 2))
+      safeWriteFileSync(
+        join(questionsDir, `${item.question_id}.json`),
+        JSON.stringify(item, null, 2)
+      )
     }
 
     logger.success(`Split ${dataset.length} questions`)
   }
 
   private loadQuestions(questionsDir: string): void {
-    const files = readdirSync(questionsDir)
+    const files = safeReadDirSync(questionsDir)
       .filter((f) => f.endsWith(".json"))
       .sort()
 
     for (const file of files) {
-      const item: LongMemEvalItem = JSON.parse(readFileSync(join(questionsDir, file), "utf8"))
+      const item: LongMemEvalItem = JSON.parse(safeReadFileSync(join(questionsDir, file)))
       this.data.push(item)
 
       const sessions = this.extractSessions(item)

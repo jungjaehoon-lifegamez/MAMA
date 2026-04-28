@@ -20,7 +20,7 @@ import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
-import type { GatewayToolExecutionContext } from '../../agent/types.js';
+import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -57,6 +57,7 @@ import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes } from '../../memory/scope-context.js';
+import { DEFAULT_ROLES } from '../config/types.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -374,36 +375,58 @@ export async function runAgentLoop(
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
       const codeActAgentId = config.multi_agent?.default_agent || 'conductor';
+      const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
+      const codeActTier = codeActReadOnly ? 3 : 2;
       let executionContext: GatewayToolExecutionContext | null = null;
       if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
         const projectId = resolveReactiveProjectRoot(config, process.env);
         const projectRef = { kind: 'project' as const, id: projectId };
+        const memoryScopes = deriveMemoryScopes({
+          source: 'watch',
+          channelId: 'api:code-act',
+          userId: 'api',
+          projectId,
+        });
+        const instanceId = randomUUID();
         const wallSeconds = Math.min(
           Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
           300
         );
         const envelope = envelopeBootstrap.envelopeAuthority.buildAndPersist({
           agent_id: codeActAgentId,
-          instance_id: randomUUID(),
+          instance_id: instanceId,
           source: 'watch',
           channel_id: 'api:code-act',
           trigger_context: { user_text: '<api-code-act invocation>' },
           scope: {
             project_refs: [projectRef],
             raw_connectors: [],
-            memory_scopes: deriveMemoryScopes({
-              source: 'viewer',
-              channelId: 'api:code-act',
-              userId: 'api',
-              projectId,
-            }),
+            memory_scopes: memoryScopes,
             allowed_destinations: [],
           },
-          tier: 2,
+          tier: codeActTier,
           budget: { wall_seconds: wallSeconds },
           expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
         });
+        const roleName = config.roles?.sourceMapping?.watch ?? 'os_agent';
+        const role = config.roles?.definitions?.[roleName] ?? DEFAULT_ROLES.definitions.os_agent;
+        const agentContext: AgentContext = {
+          source: 'watch',
+          platform: 'cli',
+          roleName,
+          role,
+          session: {
+            sessionId: `api:code-act:${instanceId}`,
+            channelId: 'api:code-act',
+            startedAt: new Date(),
+          },
+          capabilities: ['code_act'],
+          limitations: codeActReadOnly ? ['Code-Act read-only mode: memory writes disabled'] : [],
+          tier: codeActTier,
+          backend: 'claude',
+        };
         executionContext = {
+          agentContext,
           agentId: codeActAgentId,
           source: 'watch',
           channelId: 'api:code-act',
@@ -412,7 +435,6 @@ export async function runAgentLoop(
         };
       }
       const bridge = new HostBridge(toolExecutor, undefined, executionContext);
-      const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
         if (result !== undefined) {
@@ -429,10 +451,10 @@ export async function runAgentLoop(
       };
       const previousRoutingContext = toolExecutor.getCurrentAgentRoutingContext();
       try {
-        // Set default agent context for /api/code-act calls (Conductor, tier 2 sandbox).
+        // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
         // Per-request executionContext carries envelope data; this routing context is legacy fallback.
         toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-        bridge.injectInto(sandbox, codeActReadOnly ? 3 : 2);
+        bridge.injectInto(sandbox, codeActTier);
         const result = await sandbox.execute(code);
         return {
           success: result.success,
