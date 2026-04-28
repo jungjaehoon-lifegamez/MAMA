@@ -94,6 +94,17 @@ export interface AgentContext {
   backend?: 'claude' | 'codex-mcp';
 }
 
+export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act';
+
+export type GatewayToolExecutionContext = {
+  agentContext?: AgentContext;
+  agentId?: string;
+  source?: string;
+  channelId?: string;
+  envelope?: Envelope;
+  executionSurface?: GatewayExecutionSurface;
+};
+
 // ============================================================================
 // Claude API Types
 // ============================================================================

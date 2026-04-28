@@ -5,8 +5,13 @@ import {
   CONTRACT_SAVE_LIMIT,
   type ExtractedContract,
 } from './contract-extractor.js';
+import type { GatewayToolExecutionContext } from './types.js';
 
-type ExecuteToolFn = (name: string, input: Record<string, unknown>) => Promise<unknown>;
+type ExecuteToolFn = (
+  name: string,
+  input: Record<string, unknown>,
+  executionContext?: GatewayToolExecutionContext | null
+) => Promise<unknown>;
 
 interface PostToolHandlerConfig {
   enabled: boolean;
@@ -38,15 +43,25 @@ export class PostToolHandler {
    * Synchronous entry point — fires background processing without blocking.
    * MUST NOT be async. MUST NOT return a Promise. MUST NOT throw.
    */
-  processInBackground(toolName: string, input: unknown, result: unknown): void {
+  processInBackground(
+    toolName: string,
+    input: unknown,
+    result: unknown,
+    executionContext?: GatewayToolExecutionContext | null
+  ): void {
     if (!this.enabled) {
       return;
     }
 
-    this.processAsync(toolName, input, result).catch(() => {});
+    this.processAsync(toolName, input, result, executionContext).catch(() => {});
   }
 
-  private async processAsync(toolName: string, input: unknown, result: unknown): Promise<void> {
+  private async processAsync(
+    toolName: string,
+    input: unknown,
+    result: unknown,
+    executionContext?: GatewayToolExecutionContext | null
+  ): Promise<void> {
     if (!this.isEditTool(toolName)) {
       return;
     }
@@ -79,12 +94,12 @@ export class PostToolHandler {
         continue;
       }
 
-      const isDupe = await this.isDuplicate(formatted.topic, formatted.decision);
+      const isDupe = await this.isDuplicate(formatted.topic, formatted.decision, executionContext);
       if (isDupe) {
         continue;
       }
 
-      await this.saveContract(formatted);
+      await this.saveContract(formatted, executionContext);
     }
   }
 
@@ -215,13 +230,20 @@ export class PostToolHandler {
     return undefined;
   }
 
-  private async isDuplicate(topic: string, decision: string): Promise<boolean> {
+  private async isDuplicate(
+    topic: string,
+    decision: string,
+    executionContext?: GatewayToolExecutionContext | null
+  ): Promise<boolean> {
     try {
-      const response = (await this.executeTool('mama_search', {
+      const input = {
         query: topic,
         type: 'decision',
         limit: 3,
-      })) as SearchResponse | undefined;
+      };
+      const response = (await (executionContext
+        ? this.executeTool('mama_search', input, executionContext)
+        : this.executeTool('mama_search', input))) as SearchResponse | undefined;
 
       if (!response?.results || response.results.length === 0) {
         return false;
@@ -233,20 +255,28 @@ export class PostToolHandler {
     }
   }
 
-  private async saveContract(formatted: {
-    topic: string;
-    decision: string;
-    reasoning: string;
-    confidence: number;
-  }): Promise<void> {
+  private async saveContract(
+    formatted: {
+      topic: string;
+      decision: string;
+      reasoning: string;
+      confidence: number;
+    },
+    executionContext?: GatewayToolExecutionContext | null
+  ): Promise<void> {
     try {
-      await this.executeTool('mama_save', {
+      const input = {
         type: 'decision',
         topic: formatted.topic,
         decision: formatted.decision,
         reasoning: formatted.reasoning,
         confidence: formatted.confidence,
-      });
+      };
+      if (executionContext) {
+        await this.executeTool('mama_save', input, executionContext);
+      } else {
+        await this.executeTool('mama_save', input);
+      }
     } catch {
       // intentionally empty
     }

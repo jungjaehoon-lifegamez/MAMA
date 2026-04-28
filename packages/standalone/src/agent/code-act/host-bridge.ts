@@ -1,5 +1,5 @@
 import type { GatewayToolExecutor } from '../gateway-tool-executor.js';
-import type { GatewayToolInput, GatewayToolResult } from '../types.js';
+import type { GatewayToolExecutionContext, GatewayToolInput, GatewayToolResult } from '../types.js';
 import type { CodeActSandbox } from './sandbox.js';
 import type { FunctionDescriptor } from './types.js';
 import type { RoleConfig } from '../../cli/config/types.js';
@@ -607,7 +607,8 @@ export class HostBridge {
 
   constructor(
     private executor: GatewayToolExecutor,
-    private roleManager?: RoleManager
+    private roleManager?: RoleManager,
+    private executionContext?: GatewayToolExecutionContext | null
   ) {}
 
   /** Inject all allowed functions into sandbox based on tier */
@@ -638,7 +639,9 @@ export class HostBridge {
         }
 
         this.onToolUse?.(desc.name, input, undefined);
-        const result = await this.executor.execute(desc.name, input as GatewayToolInput);
+        const result = this.executionContext
+          ? await this.executor.execute(desc.name, input as GatewayToolInput, this.executionContext)
+          : await this.executor.execute(desc.name, input as GatewayToolInput);
         this.onToolUse?.(desc.name, input, result);
 
         if (!result.success) {

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll } from 'vitest';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
 import { RoleManager } from '../../src/agent/role-manager.js';
 import type { RoleConfig } from '../../src/cli/config/types.js';
 
@@ -135,6 +136,33 @@ describe('HostBridge', () => {
       const result = await sandbox.execute('mama_search({ query: "test" })');
       expect(result.success).toBe(true);
       expect(executeFn).toHaveBeenCalledWith('mama_search', { query: 'test' });
+    });
+
+    it('forwards execution context to executor calls when provided', async () => {
+      const executeFn = vi.fn().mockResolvedValue({
+        success: true,
+        results: [],
+        count: 0,
+      });
+      const executionContext = {
+        agentId: 'chat_bot',
+        source: 'telegram',
+        channelId: 'tg:1',
+        envelope: { envelope_hash: 'envhash_code_act' },
+        executionSurface: 'code_act',
+      } as unknown as GatewayToolExecutionContext;
+      const bridge = new HostBridge(
+        makeExecutor({ execute: executeFn }),
+        undefined,
+        executionContext
+      );
+      const sandbox = new CodeActSandbox();
+      bridge.injectInto(sandbox, 1);
+
+      const result = await sandbox.execute('mama_search({ query: "test" })');
+
+      expect(result.success).toBe(true);
+      expect(executeFn).toHaveBeenCalledWith('mama_search', { query: 'test' }, executionContext);
     });
 
     it('passes positional args mapped to param names', async () => {

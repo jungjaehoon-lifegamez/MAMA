@@ -21,6 +21,8 @@ import { join } from 'node:path';
 import type { MAMAConfig } from '../config/types.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
+import type { AgentLoopOptions, ContentBlock as AgentContentBlock } from '../../agent/types.js';
+import type { ContentBlock as GatewayContentBlock } from '../../gateways/types.js';
 import type { AgentLoopClient } from './types.js';
 import type { MetricsStore } from '../../observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
@@ -205,16 +207,7 @@ export function initMainAgentLoop(
   // Create AgentLoopClient wrapper (adapts AgentLoopResult -> { response })
   // Also sets session key for lane-based concurrency and includes reasoning
   const agentLoopClient: AgentLoopClient = {
-    run: async (
-      prompt: string,
-      options?: {
-        userId?: string;
-        source?: string;
-        channelId?: string;
-        systemPrompt?: string;
-        model?: string;
-      }
-    ) => {
+    run: async (prompt: string, options?: AgentLoopOptions) => {
       // Reset reasoning log for new request
       reasoningLog = [];
       turnCount = 0;
@@ -255,18 +248,7 @@ export function initMainAgentLoop(
       const response = `${header}\n${result.response}`;
       return { response };
     },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    runWithContent: async (
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      content: any[],
-      options?: {
-        userId?: string;
-        source?: string;
-        channelId?: string;
-        systemPrompt?: string;
-        model?: string;
-      }
-    ) => {
+    runWithContent: async (content: GatewayContentBlock[], options?: AgentLoopOptions) => {
       // Reset reasoning log for new request
       reasoningLog = [];
       turnCount = 0;
@@ -283,7 +265,10 @@ export function initMainAgentLoop(
         // Override role-based model selection for Codex-MCP backend
         options.model = config.agent.model;
       }
-      const result = await agentLoop.runWithContent(content, options);
+      const result = await agentLoop.runWithContent(
+        content as unknown as AgentContentBlock[],
+        options
+      );
 
       // Check if auto-recall was used
       if (result.history && result.history.length > 0) {
