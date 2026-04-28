@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PreCompactHandler } from '../../src/agent/pre-compact-handler.js';
 import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 describe('PreCompactHandler', () => {
   let mockExecuteTool: ReturnType<typeof vi.fn>;
@@ -159,12 +160,16 @@ describe('PreCompactHandler', () => {
     it('should forward execution context to mama_search', async () => {
       const handler = new PreCompactHandler(mockExecuteTool, { enabled: true });
       mockExecuteTool.mockResolvedValue({ results: [] });
-      const executionContext = {
+      const executionContext: GatewayToolExecutionContext = {
         agentId: 'chat_bot',
         source: 'telegram',
         channelId: 'tg:1',
-        envelope: { envelope_hash: 'envhash_precompact' },
-      } as unknown as GatewayToolExecutionContext;
+        envelope: makeSignedEnvelope({
+          source: 'telegram',
+          channel_id: 'tg:1',
+        }),
+        executionSurface: 'reactive_internal',
+      };
 
       await handler.process(['decided: use JWT tokens'], executionContext);
 

@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../../src/sqlite.js';
@@ -135,7 +135,10 @@ describe('runtime envelope bootstrap', () => {
 
   it('keeps off-mode reactive tool calls open without legacy bypass', async () => {
     const previousBypass = process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
+    const previousHome = process.env.HOME;
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-bootstrap-home-'));
     delete process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS;
+    process.env.HOME = tempHome;
     try {
       const db: SQLiteDatabase = new Database(':memory:');
       const sessionStore = new SessionStore(db);
@@ -190,6 +193,12 @@ describe('runtime envelope bootstrap', () => {
       } else {
         process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = previousBypass;
       }
+      if (previousHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = previousHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
     }
   });
 
@@ -197,14 +206,14 @@ describe('runtime envelope bootstrap', () => {
     const db: SQLiteDatabase = new Database(':memory:');
     const sessionStore = new SessionStore(db);
     const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeConfig(), makeKeyEnv('enabled'));
-    vi.spyOn(bootstrap.envelopeAuthority!, 'buildAndPersist').mockImplementation(() => {
+    vi.spyOn(bootstrap.envelopeAuthority!, 'buildAndPersist').mockImplementationOnce(() => {
       throw new Error('synthetic envelope failure');
     });
     const router = new MessageRouter(
       sessionStore,
       {
         async run() {
-          return { response: 'unreachable' };
+          return { response: 'ok' };
         },
       },
       createMockMamaApi([]),
@@ -221,5 +230,14 @@ describe('runtime envelope bootstrap', () => {
         text: 'hello',
       })
     ).rejects.toThrow('synthetic envelope failure');
+
+    await expect(
+      router.process({
+        source: 'telegram',
+        channelId: 'tg:lock-release',
+        userId: 'u:1',
+        text: 'hello again',
+      })
+    ).resolves.toMatchObject({ response: 'ok' });
   });
 });

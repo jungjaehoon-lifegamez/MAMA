@@ -76,13 +76,16 @@ Use this focused suite when changing Reactive envelope issuance, gateway tool
 execution, `agent_activity` audit rows, or envelope health/status APIs:
 
 ```bash
-pnpm -C packages/standalone exec vitest run tests/contract/m1r-envelope-completion-matrix.test.ts tests/contract/envelope-callsite-matrix.test.ts tests/agent/delegation-executor.test.ts tests/envelope/executor-pipeline.test.ts tests/envelope/agent-loop-internal-tool-context.test.ts tests/envelope/code-act-context.test.ts tests/cli/runtime/agent-loop-init-envelope-options.test.ts tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/memory-scope-mismatch-logging.test.ts tests/envelope/executor-audit.test.ts tests/db/agent-activity.test.ts tests/api/health-envelope.test.ts tests/api/envelope-status-auth.test.ts tests/envelope/executor-integration.test.ts tests/contract/reactive-envelope.test.ts tests/contract/reactive-envelope-tool-path.test.ts tests/contract/envelope-drift-sentinel.test.ts tests/contract/code-task-delegation-empty-scopes.test.ts
+MAMA_FORCE_TIER_3=true pnpm -C packages/standalone exec vitest run tests/contract/m1r-envelope-completion-matrix.test.ts tests/contract/envelope-callsite-matrix.test.ts tests/agent/delegation-executor.test.ts tests/envelope/executor-pipeline.test.ts tests/envelope/agent-loop-internal-tool-context.test.ts tests/envelope/code-act-context.test.ts tests/cli/runtime/agent-loop-init-envelope-options.test.ts tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/memory-scope-mismatch-logging.test.ts tests/envelope/executor-audit.test.ts tests/db/agent-activity.test.ts tests/api/health-envelope.test.ts tests/api/envelope-status-auth.test.ts tests/envelope/executor-integration.test.ts tests/contract/reactive-envelope.test.ts tests/contract/reactive-envelope-tool-path.test.ts tests/contract/envelope-drift-sentinel.test.ts tests/contract/code-task-delegation-empty-scopes.test.ts
 pnpm -C packages/standalone typecheck
 pnpm -C packages/standalone test
 pnpm test
 pnpm build
 git diff --check
 ```
+
+`MAMA_FORCE_TIER_3=true` skips embedding work during focused verification, which
+keeps local and CI runs faster and less sensitive to embedding runtime latency.
 
 `/health` must stay public and envelope-free. Envelope runtime metadata and the
 24-hour scope-mismatch count are verified through authenticated

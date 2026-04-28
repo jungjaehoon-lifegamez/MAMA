@@ -5,6 +5,7 @@ import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.
 import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
 import { RoleManager } from '../../src/agent/role-manager.js';
 import type { RoleConfig } from '../../src/cli/config/types.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 function makeExecutor(overrides?: Partial<GatewayToolExecutor>): GatewayToolExecutor {
   return {
@@ -144,13 +145,16 @@ describe('HostBridge', () => {
         results: [],
         count: 0,
       });
-      const executionContext = {
+      const executionContext: GatewayToolExecutionContext = {
         agentId: 'chat_bot',
         source: 'telegram',
         channelId: 'tg:1',
-        envelope: { envelope_hash: 'envhash_code_act' },
+        envelope: makeSignedEnvelope({
+          source: 'telegram',
+          channel_id: 'tg:1',
+        }),
         executionSurface: 'code_act',
-      } as unknown as GatewayToolExecutionContext;
+      };
       const bridge = new HostBridge(
         makeExecutor({ execute: executeFn }),
         undefined,

@@ -121,6 +121,11 @@ const AGENT_DETAIL_TABS = new Set([
 ]);
 
 type GatewayExecutionContext = GatewayToolExecutionContext;
+type GatewayContextSnapshot = {
+  agentId: string;
+  source: string;
+  channelId: string;
+};
 
 type ActiveGatewayExecutionContext = {
   agentContext: AgentContext | null;
@@ -144,6 +149,11 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_update',
   'mama_add',
   'mama_ingest',
+]);
+const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
+  'model_tool',
+  'reactive_internal',
+  'code_act',
 ]);
 
 async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
@@ -340,7 +350,7 @@ export class GatewayToolExecutor {
   }
 
   private normalizeExecutionContext(
-    executionContext?: GatewayExecutionContext
+    executionContext?: Partial<GatewayExecutionContext>
   ): ActiveGatewayExecutionContext {
     const agentContext = executionContext?.agentContext ?? null;
     const source = executionContext?.source ?? agentContext?.source ?? '';
@@ -399,6 +409,18 @@ export class GatewayToolExecutor {
     this.currentAgentId = agentId;
     this.currentSource = source;
     this.currentChannelId = channelId;
+  }
+  getCurrentAgentRoutingContext(): GatewayContextSnapshot {
+    return {
+      agentId: this.currentAgentId,
+      source: this.currentSource,
+      channelId: this.currentChannelId,
+    };
+  }
+  restoreCurrentAgentRoutingContext(context: GatewayContextSnapshot): void {
+    this.currentAgentId = context.agentId;
+    this.currentSource = context.source;
+    this.currentChannelId = context.channelId;
   }
   clearCurrentAgentContext(): void {
     this.currentAgentId = '';
@@ -724,8 +746,17 @@ export class GatewayToolExecutor {
       return undefined;
     }
 
+    const executionSurface = ctx?.executionSurface;
+    const requiresEnvelope =
+      executionSurface !== undefined && ENVELOPE_REQUIRED_SURFACES.has(executionSurface);
+    if (!requiresEnvelope) {
+      return undefined;
+    }
+
     if (failLoudOnMissing) {
-      throw new Error(`[envelope] tool ${toolName} called without envelope (fail-loud mode)`);
+      throw new Error(
+        `[envelope] tool ${toolName} called without envelope on ${executionSurface} (fail-loud mode)`
+      );
     }
 
     if (allowLegacyBypass) {
@@ -735,6 +766,7 @@ export class GatewayToolExecutor {
           agentId: ctx.agentId,
           source: ctx.source,
           channelId: ctx.channelId,
+          executionSurface,
         });
         this.logEnvelopeActivity(ctx, 'envelope_missing_legacy', toolName);
       }
@@ -749,6 +781,7 @@ export class GatewayToolExecutor {
         agentId: ctx.agentId,
         source: ctx.source,
         channelId: ctx.channelId,
+        executionSurface,
       });
       this.logEnvelopeActivity(ctx, 'envelope_missing_denied', toolName, error);
     }
@@ -834,7 +867,7 @@ export class GatewayToolExecutor {
     }
 
     const envelopeScopesSnapshot = ctx?.envelope?.scope.memory_scopes ?? null;
-    const requestedScopes = this.resolveEffectiveMemoryScopes(toolName, input, ctx);
+    const requestedScopes = this.resolveAuditMemoryScopes(toolName, input, ctx);
 
     if (!ctx?.envelope || !envelopeScopesSnapshot) {
       return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
@@ -860,7 +893,7 @@ export class GatewayToolExecutor {
     };
   }
 
-  private resolveEffectiveMemoryScopes(
+  private resolveAuditMemoryScopes(
     toolName: string,
     input: GatewayToolInput,
     ctx: ActiveGatewayExecutionContext | undefined
@@ -881,11 +914,7 @@ export class GatewayToolExecutor {
       const fallbackScopes = this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
       const inputScopes = normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
       if (inputScopes && inputScopes.length > 0) {
-        const fallbackScopeKeys = new Set(fallbackScopes.map(memoryScopeKey));
-        const allInFallback = inputScopes.every((scope) =>
-          fallbackScopeKeys.has(memoryScopeKey(scope))
-        );
-        return allInFallback ? inputScopes : fallbackScopes;
+        return inputScopes;
       }
       return fallbackScopes.length > 0 ? fallbackScopes : null;
     }
