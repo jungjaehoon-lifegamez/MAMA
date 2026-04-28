@@ -787,6 +787,13 @@ export class GatewayToolExecutor {
       return this.withExecutionContext(executionContext, () => this.execute(toolName, input));
     }
 
+    return this.executeWithEnvelopeAndPermissions(toolName, input);
+  }
+
+  private async executeWithEnvelopeAndPermissions(
+    toolName: string,
+    input: GatewayToolInput
+  ): Promise<GatewayToolResult> {
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
