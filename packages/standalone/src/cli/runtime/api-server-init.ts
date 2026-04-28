@@ -18,6 +18,7 @@ import type { HealthCheckService } from '../../observability/health-check.js';
 import type { RawStore } from '../../connectors/framework/raw-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
+import type { RuntimeEnvelopeBootstrap } from './envelope-bootstrap.js';
 import { API_PORT } from './utilities.js';
 
 // Re-export SkillRegistry for consumers that need the same instance
@@ -32,6 +33,7 @@ export interface InitApiServerParams {
   rawStore: RawStore | undefined;
   enabledConnectors: string[];
   agentLoop: AgentLoop;
+  envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   /** mama-core getAdapter() — used to create the memoryDb shim */
   getAdapter: () => {
     prepare: (sql: string) => unknown;

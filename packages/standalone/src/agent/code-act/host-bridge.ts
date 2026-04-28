@@ -600,7 +600,14 @@ export const READ_ONLY_TOOLS = new Set([
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
-const MEMORY_WRITE_TOOLS = new Set(['mama_save', 'mama_update']);
+const MEMORY_WRITE_TOOLS = new Set([
+  'mama_save',
+  'mama_update',
+  'mama_add',
+  'mama_ingest',
+  'report_publish',
+  'wiki_publish',
+]);
 
 export class HostBridge {
   onToolUse?: (toolName: string, input: Record<string, unknown>, result: unknown) => void;

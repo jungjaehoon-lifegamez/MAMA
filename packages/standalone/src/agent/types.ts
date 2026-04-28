@@ -1101,6 +1101,10 @@ export interface GatewayToolExecutorOptions {
   mamaApi?: MAMAApiInterface;
   /** Roles configuration from config.yaml */
   rolesConfig?: import('../cli/config/types.js').RolesConfig;
+  /** Runtime envelope issuance mode (off disables missing-envelope enforcement). */
+  envelopeIssuanceMode?: 'off' | 'enabled' | 'required';
+  /** Optional metrics store for envelope/audit counters. */
+  metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
 }
 
 /**
