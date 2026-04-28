@@ -276,7 +276,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     res.json({ status: 'ok', timestamp: Date.now() });
   });
 
-  app.get('/api/envelope/status', requireAuth, (_req, res) => {
+  app.get('/api/envelope/status', (_req, res) => {
     if (!db) {
       res.status(503).json({
         error: true,

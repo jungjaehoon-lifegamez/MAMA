@@ -131,7 +131,13 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       const result = await executor.execute(
         'telegram_send',
         { chat_id: 'tg:OWN', message: 'safe' } as GatewayToolInput,
-        { agentId: 'worker', source: 'telegram', channelId: 'tg:OWN', envelope }
+        {
+          agentId: 'worker',
+          source: 'telegram',
+          channelId: 'tg:OWN',
+          envelope,
+          executionSurface: 'model_tool',
+        }
       );
 
       expect(result).toMatchObject({ success: true });
@@ -152,6 +158,7 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
           agentId: 'worker',
           source: 'telegram',
           channelId: 'tg:1',
+          executionSurface: 'model_tool',
         }
       );
 
@@ -193,6 +200,7 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
           agentId: 'worker',
           source: 'telegram',
           channelId: 'tg:1',
+          executionSurface: 'model_tool',
         }
       );
 
@@ -223,7 +231,15 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
 
       await expect(
-        executor.execute('unknown_tool', {}, { agentId: 'worker', source: 'telegram' })
+        executor.execute(
+          'unknown_tool',
+          {},
+          {
+            agentId: 'worker',
+            source: 'telegram',
+            executionSurface: 'model_tool',
+          }
+        )
       ).rejects.toMatchObject({
         code: 'UNKNOWN_TOOL',
       } satisfies Partial<AgentError>);
@@ -251,7 +267,13 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       const result = await executor.execute(
         'telegram_send',
         { chat_id: 'tg:OTHER', message: 'leak' } as GatewayToolInput,
-        { agentId: 'worker', source: 'telegram', channelId: 'tg:OWN', envelope }
+        {
+          agentId: 'worker',
+          source: 'telegram',
+          channelId: 'tg:OWN',
+          envelope,
+          executionSurface: 'model_tool',
+        }
       );
 
       expect(result).toMatchObject({

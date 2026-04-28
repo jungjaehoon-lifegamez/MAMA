@@ -17,6 +17,8 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const AGENT_TEST_WORKER_LIMIT = 3;
+const DELEGATE_MAX_RETRIES = 3;
 
 export type DelegationRoutingContext = {
   agentId: string;
@@ -293,7 +295,7 @@ export class DelegationExecutor {
     }
 
     const results: Array<{ input: string; output?: string; error?: string }> = [];
-    const workerCount = Math.min(3, items.length);
+    const workerCount = Math.min(AGENT_TEST_WORKER_LIMIT, items.length);
     let nextIndex = 0;
     const workers = Array.from({ length: workerCount }, async () => {
       for (;;) {
@@ -414,7 +416,8 @@ export class DelegationExecutor {
     input: DelegateInput,
     routing: DelegationRoutingContext
   ): Promise<GatewayToolResult> {
-    const { agentId, task, background } = input;
+    const { task, background } = input;
+    const agentId = this.deps.resolveManagedAgentId(input.agentId);
     const processManager = this.deps.agentProcessManager;
     const delegationManager = this.deps.delegationManagerRef;
     if (!processManager || !delegationManager) {
@@ -614,10 +617,9 @@ export class DelegationExecutor {
       );
     }
 
-    const MAX_RETRIES = 3;
     let lastError: Error | null = null;
 
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    for (let attempt = 0; attempt < DELEGATE_MAX_RETRIES; attempt++) {
       try {
         const process = await processManager.getProcess(source, channelId, agentId);
         let delegationPrompt = delegationManager.buildDelegationPrompt(sourceAgentId, task);
@@ -697,7 +699,7 @@ export class DelegationExecutor {
           processManager.stopProcess(source, channelId, agentId);
         }
 
-        if (attempt < MAX_RETRIES - 1 && (isBusy || isCrash)) {
+        if (attempt < DELEGATE_MAX_RETRIES - 1 && (isBusy || isCrash)) {
           await new Promise((r) => setTimeout(r, this.deps.retryDelayMs * (attempt + 1)));
           continue;
         }
@@ -744,7 +746,7 @@ export class DelegationExecutor {
 
     return {
       success: false,
-      error: `Delegation to ${agentId} failed after ${MAX_RETRIES} attempts: ${lastError?.message}`,
+      error: `Delegation to ${agentId} failed after ${DELEGATE_MAX_RETRIES} attempts: ${lastError?.message}`,
     } as GatewayToolResult;
   }
 }

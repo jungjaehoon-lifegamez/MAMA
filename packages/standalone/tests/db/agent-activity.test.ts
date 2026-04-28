@@ -18,8 +18,9 @@ type AgentStoreWithTraceHelpers = typeof agentStore & {
   ) => agentStore.ActivityRow[];
   listScopeMismatches?: (
     db: Database,
-    input: { envelopeHash?: string; limit?: number }
+    input: { envelopeHash?: string; limit?: number; since?: string }
   ) => agentStore.ActivityRow[];
+  countScopeMismatches?: (db: Database, input: { since?: string }) => number;
 };
 
 function createMAMAApi(): MAMAApiInterface {
@@ -106,6 +107,11 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       expect(indexes.some((index) => index.name === 'idx_agent_activity_scope_mismatch')).toBe(
         true
       );
+
+      const table = db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='agent_activity'")
+        .get() as { sql: string };
+      expect(table.sql).toContain('CHECK (scope_mismatch IN (0, 1))');
     });
 
     it('AC #3c: migrates old agent_activity rows without data loss', () => {
@@ -417,6 +423,35 @@ describe('Story V19.6 - Agent Activity Logging', () => {
           scope_mismatch: 1,
         }),
       ]);
+    });
+
+    it('AC #13: normalizes ISO since filters for scope mismatch queries', () => {
+      const helpers = agentStore as AgentStoreWithTraceHelpers;
+      expect(typeof helpers.listScopeMismatches).toBe('function');
+      expect(typeof helpers.countScopeMismatches).toBe('function');
+
+      logActivity(db, {
+        agent_id: 'trace-agent',
+        agent_version: 1,
+        type: 'gateway_tool_call',
+        input_summary: 'mama_save',
+        execution_status: 'completed',
+        envelopeHash: 'env_hash_recent',
+        scopeMismatch: 1,
+      } as Parameters<typeof logActivity>[1] & {
+        envelopeHash: string;
+        scopeMismatch: number;
+      });
+
+      const sinceIso = new Date(Date.now() - 60_000).toISOString();
+
+      expect(helpers.listScopeMismatches!(db, { since: sinceIso })).toEqual([
+        expect.objectContaining({
+          input_summary: 'mama_save',
+          scope_mismatch: 1,
+        }),
+      ]);
+      expect(helpers.countScopeMismatches!(db, { since: sinceIso })).toBe(1);
     });
   });
 });

@@ -102,7 +102,7 @@ export type GatewayToolExecutionContext = {
   source?: string;
   channelId?: string;
   envelope?: Envelope;
-  executionSurface?: GatewayExecutionSurface;
+  executionSurface: GatewayExecutionSurface;
 };
 
 // ============================================================================

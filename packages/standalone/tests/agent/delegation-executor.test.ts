@@ -28,6 +28,7 @@ function createHarness(
     sessionsDb?: SQLiteDatabase;
     allowed?: boolean;
     denialReason?: string;
+    resolveManagedAgentId?: (id: string) => string;
   } = {}
 ) {
   const sendMessage = options.sendMessage ?? vi.fn().mockResolvedValue({ response: 'done' });
@@ -57,7 +58,7 @@ function createHarness(
     } as unknown as DelegationManager,
     sessionsDb: options.sessionsDb,
     retryDelayMs: 1,
-    resolveManagedAgentId: (id) => id,
+    resolveManagedAgentId: options.resolveManagedAgentId ?? ((id) => id),
     checkViewerOnly: () => null,
   });
 
@@ -87,6 +88,24 @@ describe('DelegationExecutor', () => {
     expect(isDelegationAllowed).toHaveBeenCalledWith('conductor', 'developer');
     expect(getProcess).toHaveBeenCalledWith('viewer', 'default', 'developer');
     expect(buildDelegationPrompt).toHaveBeenCalledWith('conductor', 'Implement the patch');
+  });
+
+  it('normalizes managed-agent aliases before delegate permission and process routing', async () => {
+    const { executor, getProcess, isDelegationAllowed } = createHarness({
+      resolveManagedAgentId: (id) => (id === 'dev' ? 'developer' : id),
+    });
+
+    const result = await executor.runDelegate(
+      { agentId: 'dev', task: 'Implement the patch' },
+      { agentId: 'conductor', source: 'viewer', channelId: 'main' }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      data: expect.objectContaining({ agentId: 'developer' }),
+    });
+    expect(isDelegationAllowed).toHaveBeenCalledWith('conductor', 'developer');
+    expect(getProcess).toHaveBeenCalledWith('viewer', 'main', 'developer');
   });
 
   it('persists delegate start and completion activity rows when sessions DB is available', async () => {

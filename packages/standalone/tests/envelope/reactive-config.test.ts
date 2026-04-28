@@ -1,12 +1,17 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { MAMAConfig } from '../../src/cli/config/types.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
+import type { AgentLoopOptions } from '../../src/agent/types.js';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { MessageRouter, type AgentLoopClient } from '../../src/gateways/message-router.js';
+import { SessionStore } from '../../src/gateways/session-store.js';
+import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import {
   createDefaultReactiveEnvelopeConfig,
   getReactiveRoutePolicy,
 } from '../../src/envelope/reactive-config.js';
+import { makeAuthorityHarness } from './fixtures.js';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
   return {
@@ -124,16 +129,41 @@ describe('reactive envelope route policy', () => {
     }
   );
 
-  it('keeps MessageRouter on the shared route helper instead of duplicate switches', () => {
-    const routerSource = readFileSync(
-      new URL('../../src/gateways/message-router.ts', import.meta.url),
-      'utf8'
+  it('keeps MessageRouter envelope scope behavior aligned with shared route policy', async () => {
+    const db: SQLiteDatabase = new Database(':memory:');
+    const sessionStore = new SessionStore(db);
+    const config = makeConfig();
+    const env = { HOME: '/tmp/mama-home' };
+    const message = makeMessage('telegram', 'tg:policy');
+    const expectedPolicy = getReactiveRoutePolicy(message, config, env);
+    const { authority } = makeAuthorityHarness(db);
+    let seenOptions: AgentLoopOptions | undefined;
+    const agentLoop: AgentLoopClient = {
+      async run(_prompt, options) {
+        seenOptions = options;
+        return { response: 'ok' };
+      },
+    };
+
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      createDefaultReactiveEnvelopeConfig(config, env),
+      authority
     );
 
-    expect(routerSource).toContain('getReactiveRoutePolicy');
-    expect(routerSource).not.toContain('MESSAGE_ENVELOPE_ROUTES');
-    expect(routerSource).not.toContain('function envelopeSourceForMessage');
-    expect(routerSource).not.toContain('function allowedDestinationsForMessage');
+    await router.process(message);
+
+    expect(seenOptions?.envelope?.source).toBe(expectedPolicy.source);
+    expect(seenOptions?.envelope?.scope.project_refs).toEqual(expectedPolicy.projectRefs);
+    expect(seenOptions?.envelope?.scope.raw_connectors).toEqual(expectedPolicy.rawConnectors);
+    expect(seenOptions?.envelope?.scope.memory_scopes).toEqual(expectedPolicy.memoryScopes);
+    expect(seenOptions?.envelope?.scope.allowed_destinations).toEqual(
+      expectedPolicy.allowedDestinations
+    );
+    sessionStore.close();
   });
 
   it('resolves project scope from config workspace without daemon cwd fallback', () => {

@@ -82,7 +82,12 @@ const REACTIVE_ROUTE_TABLE = {
 function isReactiveEnvelopeConfig(
   config: MAMAConfig | ReactiveEnvelopeConfig
 ): config is ReactiveEnvelopeConfig {
-  return typeof (config as ReactiveEnvelopeConfig).projectRefsFor === 'function';
+  const candidate = config as Partial<ReactiveEnvelopeConfig>;
+  return (
+    typeof candidate.projectRefsFor === 'function' &&
+    typeof candidate.rawConnectorsFor === 'function' &&
+    typeof candidate.memoryScopesFor === 'function'
+  );
 }
 
 function getStaticRoute(message: NormalizedMessage): StaticRoute {
@@ -177,14 +182,23 @@ export function createDefaultReactiveEnvelopeConfig(
 ): ReactiveEnvelopeConfig {
   const budgetSeconds = reactiveBudgetSeconds(config);
   resolveReactiveProjectRoot(config, env);
+  const policyCache = new WeakMap<NormalizedMessage, ReactiveRoutePolicy>();
+  const policyFor = (message: NormalizedMessage): ReactiveRoutePolicy => {
+    const cached = policyCache.get(message);
+    if (cached) {
+      return cached;
+    }
+    const policy = getReactiveRoutePolicy(message, config, env);
+    policyCache.set(message, policy);
+    return policy;
+  };
 
   return {
-    projectRefsFor: (message) => getReactiveRoutePolicy(message, config, env).projectRefs,
-    rawConnectorsFor: (message) => getReactiveRoutePolicy(message, config, env).rawConnectors,
-    memoryScopesFor: (message) => getReactiveRoutePolicy(message, config, env).memoryScopes,
-    sourceFor: (message) => getReactiveRoutePolicy(message, config, env).source,
-    allowedDestinationsFor: (message) =>
-      getReactiveRoutePolicy(message, config, env).allowedDestinations,
+    projectRefsFor: (message) => policyFor(message).projectRefs,
+    rawConnectorsFor: (message) => policyFor(message).rawConnectors,
+    memoryScopesFor: (message) => policyFor(message).memoryScopes,
+    sourceFor: (message) => policyFor(message).source,
+    allowedDestinationsFor: (message) => policyFor(message).allowedDestinations,
     reactiveBudgetSeconds: budgetSeconds,
   };
 }

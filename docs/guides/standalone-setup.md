@@ -233,6 +233,7 @@ mama start
 Check public health and authenticated envelope status separately:
 
 ```bash
+export MAMA_AUTH_TOKEN="replace-with-strong-token"
 curl http://localhost:3847/health
 curl -H "Authorization: Bearer $MAMA_AUTH_TOKEN" \
   http://localhost:3847/api/envelope/status
