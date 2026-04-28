@@ -56,6 +56,7 @@ import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
+import type { Envelope } from '../envelope/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -262,12 +263,39 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
   return filtered;
 }
 
-type AgentToolExecutionContext = {
-  agentContext: AgentContext | null;
+export type AgentToolExecutionContext = {
+  agentContext: AgentContext | undefined;
   agentId?: string;
   source?: string;
   channelId?: string;
+  envelope?: Envelope;
 };
+
+export function buildAgentToolExecutionContext(
+  options?: AgentLoopOptions
+): AgentToolExecutionContext | null {
+  if (
+    !options ||
+    (options.agentContext === undefined &&
+      options.source === undefined &&
+      options.channelId === undefined &&
+      options.envelope === undefined)
+  ) {
+    return null;
+  }
+  const agentContext = options.agentContext;
+  return {
+    agentContext,
+    agentId: agentContext
+      ? agentContext.source === 'viewer'
+        ? 'os-agent'
+        : agentContext.roleName
+      : undefined,
+    source: options.source,
+    channelId: options.channelId,
+    envelope: options.envelope,
+  };
+}
 
 export class AgentLoop {
   private readonly agent: IModelRunner;
@@ -593,16 +621,7 @@ export class AgentLoop {
   }
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
-    if (!options?.agentContext) {
-      return null;
-    }
-    return {
-      agentContext: options.agentContext,
-      agentId:
-        options.agentContext.source === 'viewer' ? 'os-agent' : options.agentContext.roleName,
-      source: options.source,
-      channelId: options.channelId,
-    };
+    return buildAgentToolExecutionContext(options);
   }
 
   /**
