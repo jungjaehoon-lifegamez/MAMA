@@ -19,6 +19,7 @@
  */
 
 import path from 'path';
+import os from 'os';
 import { info, warn, error as logError } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
@@ -139,6 +140,7 @@ let initializingPromise: Promise<unknown> | null = null; // Single-flight guard 
 
 // Migration directory (moved to src/db/migrations for M1.2)
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
+const REAL_USER_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
 
 /**
  * Initialize SQLite database adapter and connect
@@ -152,6 +154,8 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'db', 'migrations');
  * @returns SQLite database connection
  */
 export async function initDB(): Promise<unknown> {
+  assertTestProcessIsNotUsingRealDb();
+
   // Already initialized - return immediately
   if (isInitialized) {
     return dbConnection;
@@ -169,6 +173,7 @@ export async function initDB(): Promise<unknown> {
 
       // Create SQLite adapter
       dbAdapter = createAdapter() as unknown as DatabaseAdapter;
+      assertTestProcessIsNotUsingRealDb(resolveAdapterDbPath(dbAdapter), 'adapter.getDbPath()');
 
       // Connect to database
       dbConnection = await dbAdapter.connect();
@@ -199,6 +204,60 @@ export async function initDB(): Promise<unknown> {
   })();
 
   return initializingPromise;
+}
+
+export function assertTestProcessIsNotUsingRealDb(
+  effectivePath?: string,
+  effectivePathSource = 'adapter'
+): void {
+  if (!isDatabaseBoundaryTestMode()) {
+    return;
+  }
+
+  const configuredPaths = [
+    { name: 'MAMA_DB_PATH', value: process.env.MAMA_DB_PATH },
+    { name: 'MAMA_DATABASE_PATH', value: process.env.MAMA_DATABASE_PATH },
+  ];
+  if (effectivePath) {
+    configuredPaths.push({ name: effectivePathSource, value: effectivePath });
+  }
+
+  for (const configuredPath of configuredPaths) {
+    if (!configuredPath.value) {
+      continue;
+    }
+
+    const resolvedPath = path.resolve(expandHomePath(configuredPath.value));
+    if (resolvedPath === path.resolve(REAL_USER_DB_PATH)) {
+      throw new Error(
+        `[db-boundary] Refusing to initDB against real DB ${REAL_USER_DB_PATH} ` +
+          `from a test process (${configuredPath.name}=${configuredPath.value}). ` +
+          'Set MAMA_DB_PATH to a temporary path before initDB.'
+      );
+    }
+  }
+}
+
+function resolveAdapterDbPath(adapter: DatabaseAdapter): string | undefined {
+  if (typeof adapter.getDbPath === 'function') {
+    return adapter.getDbPath();
+  }
+  return adapter.dbPath;
+}
+
+function isDatabaseBoundaryTestMode(): boolean {
+  return isTestMode();
+}
+
+function expandHomePath(value: string): string {
+  const home = os.homedir();
+  if (value === '~') {
+    return home;
+  }
+  if (value.startsWith('~/')) {
+    return path.join(home, value.slice(2));
+  }
+  return value.replaceAll('${HOME}', home);
 }
 
 /**
@@ -936,10 +995,12 @@ export function resetDBState(options: { disconnect?: boolean } = {}): void {
 /**
  * Check if running in test mode
  *
- * Returns true if MAMA_TEST_MODE or VITEST env vars are set
+ * Returns true if MAMA_TEST_MODE, VITEST, or NODE_ENV=test env vars are set
  */
 export function isTestMode(): boolean {
-  return !!(process.env.MAMA_TEST_MODE || process.env.VITEST);
+  return Boolean(
+    process.env.MAMA_TEST_MODE || process.env.VITEST || process.env.NODE_ENV === 'test'
+  );
 }
 
 /**

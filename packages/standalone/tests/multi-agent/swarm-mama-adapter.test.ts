@@ -2,113 +2,136 @@
  * Tests for Swarm MAMA Adapter
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createMamaApiAdapter } from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createMamaApiAdapter,
+  saveSwarmCheckpoint,
+} from '../../src/multi-agent/swarm/swarm-mama-adapter.js';
 
-// mama-core is available via workspace dependency and initializes DB + embedding model
-// on first call (~3-5s), so async tests need extended timeout
-describe('SwarmMamaAdapter', { timeout: 15000 }, () => {
+describe('Story M1.5: Swarm MAMA adapter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Suppress console output from mama-core to avoid stderr noise
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    vi.spyOn(console, 'error').mockImplementation(() => {});
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
   afterEach(() => {
+    vi.doUnmock('@jungjaehoon/mama-core/mama-api');
+    vi.resetModules();
     vi.restoreAllMocks();
   });
 
-  describe('createMamaApiAdapter', () => {
-    it('should create a valid MamaApiClient', () => {
-      const adapter = createMamaApiAdapter();
+  describe('AC #1: createMamaApiAdapter search bridge', () => {
+    it('creates a valid MamaApiClient', () => {
+      const adapter = createMamaApiAdapter({ suggest: vi.fn() });
 
       expect(adapter).toBeDefined();
       expect(typeof adapter.search).toBe('function');
     });
 
-    it('should return array from search (mama-core available via workspace)', async () => {
-      const adapter = createMamaApiAdapter();
-
-      // mama-core is available - should not throw, returns array
-      const results = await adapter.search('test query');
-
-      expect(Array.isArray(results)).toBe(true);
-    });
-
-    it('should handle empty query gracefully', async () => {
-      const adapter = createMamaApiAdapter();
-      const results = await adapter.search('');
-
-      expect(Array.isArray(results)).toBe(true);
-    });
-
-    it('should use default limit of 5 if not specified', async () => {
-      const adapter = createMamaApiAdapter();
-
-      // Should not throw
-      await expect(adapter.search('test')).resolves.toBeDefined();
-    });
-
-    it('should accept custom limit parameter', async () => {
-      const adapter = createMamaApiAdapter();
-
-      // Should not throw with custom limit
-      await expect(adapter.search('test', 10)).resolves.toBeDefined();
-    });
-  });
-
-  describe('Integration with real mama-core (if available)', () => {
-    it('should call mama-core suggest() when available', async () => {
-      // This test will pass even if mama-core is not available
-      // It just verifies the adapter interface works correctly
-      const adapter = createMamaApiAdapter();
+    it('calls mama-core suggest with JSON search options', async () => {
+      const suggest = vi.fn().mockResolvedValue({
+        query: 'authentication strategy',
+        results: [
+          {
+            id: 'decision_1',
+            topic: 'auth',
+            decision: 'Use session tokens',
+            reasoning: 'Keeps browser auth simple',
+            outcome: 'ONGOING',
+            similarity: 0.91,
+          },
+        ],
+      });
+      const adapter = createMamaApiAdapter({ suggest });
 
       const results = await adapter.search('authentication strategy', 3);
 
-      // Should return an array
-      expect(Array.isArray(results)).toBe(true);
-
-      // If results exist, they should have the correct structure
-      if (results.length > 0) {
-        const result = results[0];
-        expect(result).toHaveProperty('id');
-        expect(result).toHaveProperty('similarity');
-        expect(typeof result.similarity).toBe('number');
-      }
-    });
-
-    it('should handle long queries', async () => {
-      const adapter = createMamaApiAdapter();
-      const longQuery =
-        'How should we implement authentication in a microservices architecture with JWT tokens and refresh token rotation?';
-
-      const results = await adapter.search(longQuery);
-
-      expect(Array.isArray(results)).toBe(true);
-    });
-
-    it('should return results with correct SearchResult structure', async () => {
-      const adapter = createMamaApiAdapter();
-
-      const results = await adapter.search('database choice');
-
-      expect(Array.isArray(results)).toBe(true);
-
-      // Each result should match SearchResult interface
-      results.forEach((result) => {
-        expect(result).toHaveProperty('id');
-        expect(result).toHaveProperty('similarity');
-        expect(typeof result.id).toBe('string');
-        expect(typeof result.similarity).toBe('number');
-
-        // Optional fields
-        if (result.topic) expect(typeof result.topic).toBe('string');
-        if (result.decision) expect(typeof result.decision).toBe('string');
-        if (result.reasoning) expect(typeof result.reasoning).toBe('string');
-        if (result.outcome) expect(typeof result.outcome).toBe('string');
+      expect(suggest).toHaveBeenCalledWith('authentication strategy', {
+        format: 'json',
+        limit: 3,
+        threshold: 0.6,
+        useReranking: false,
       });
+      expect(results).toEqual([
+        {
+          id: 'decision_1',
+          topic: 'auth',
+          decision: 'Use session tokens',
+          reasoning: 'Keeps browser auth simple',
+          outcome: 'ONGOING',
+          similarity: 0.91,
+        },
+      ]);
+    });
+
+    it('uses default limit of 5 when no limit is specified', async () => {
+      const suggest = vi.fn().mockResolvedValue({ query: 'database choice', results: [] });
+      const adapter = createMamaApiAdapter({ suggest });
+
+      await adapter.search('database choice');
+
+      expect(suggest).toHaveBeenCalledWith(
+        'database choice',
+        expect.objectContaining({ limit: 5 })
+      );
+    });
+
+    it('returns an empty array with an explicit warning when suggest is unavailable', async () => {
+      const adapter = createMamaApiAdapter({});
+
+      const results = await adapter.search('test query');
+
+      expect(results).toEqual([]);
+      expect(console.warn).toHaveBeenCalledWith(
+        '[SwarmMamaAdapter] mama-core suggest() not available'
+      );
+    });
+
+    it('exercises the production default module fallback path', async () => {
+      const suggest = vi.fn().mockResolvedValue({
+        query: 'test query',
+        results: [],
+      });
+      vi.resetModules();
+      vi.doMock('@jungjaehoon/mama-core/mama-api', () => ({ suggest }));
+      const { createMamaApiAdapter: createMockedMamaApiAdapter } =
+        await import('../../src/multi-agent/swarm/swarm-mama-adapter.js');
+      const adapter = createMockedMamaApiAdapter();
+
+      const results = await adapter.search('test query');
+
+      expect(results).toEqual([]);
+      expect(suggest).toHaveBeenCalledWith('test query', {
+        format: 'json',
+        limit: 5,
+        threshold: 0.6,
+        useReranking: false,
+      });
+    });
+
+    it('returns an empty array with an explicit warning when search fails', async () => {
+      const error = new Error('embedding disabled for tests');
+      const adapter = createMamaApiAdapter({
+        suggest: vi.fn().mockRejectedValue(error),
+      });
+
+      const results = await adapter.search('test query');
+
+      expect(results).toEqual([]);
+      expect(console.warn).toHaveBeenCalledWith('[SwarmMamaAdapter] Failed to search MAMA:', error);
+    });
+  });
+
+  describe('AC #2: saveSwarmCheckpoint injection bridge', () => {
+    it('saves swarm checkpoint through an injected mama-core module', async () => {
+      const saveCheckpoint = vi.fn().mockResolvedValue(123);
+
+      await saveSwarmCheckpoint('session-1', 'summary', ['open.ts'], 'next step', {
+        saveCheckpoint,
+      });
+
+      expect(saveCheckpoint).toHaveBeenCalledWith('summary', ['open.ts'], 'next step', []);
     });
   });
 });

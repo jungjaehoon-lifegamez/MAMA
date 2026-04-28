@@ -9,6 +9,7 @@ import type { SQLiteDatabase } from '../sqlite.js';
 import { applyAgentStoreTablesMigration } from './migrations/agent-store-tables.js';
 import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-metrics-response-avg.js';
 import { applyAgentActivityValidationColumnsMigration } from './migrations/agent-activity-validation-columns.js';
+import { applyEnvelopeTablesMigration } from './migrations/envelope-tables.js';
 
 type DB = SQLiteDatabase;
 
@@ -34,6 +35,7 @@ export function initAgentTables(db: SQLiteDatabase): void {
   applyAgentStoreTablesMigration(db);
   applyAgentMetricsResponseAverageMigration(db);
   applyAgentActivityValidationColumnsMigration(db);
+  applyEnvelopeTablesMigration(db);
 }
 
 // ── Types ───────────────────────────────────────────────────────────────────
