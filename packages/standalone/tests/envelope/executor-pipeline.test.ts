@@ -157,14 +157,24 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
 
       expect(result).toMatchObject({ success: false, code: 'envelope_missing' });
       expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
-      expect(readActivityRows(db)).toEqual([
-        expect.objectContaining({
-          type: 'envelope_missing_denied',
-          input_summary: 'mama_load_checkpoint',
-          execution_status: 'failed',
-          trigger_reason: 'envelope_enforcer',
-        }),
-      ]);
+      const rows = readActivityRows(db);
+      expect(rows).toHaveLength(2);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'envelope_missing_denied',
+            input_summary: 'mama_load_checkpoint',
+            execution_status: 'failed',
+            trigger_reason: 'envelope_enforcer',
+          }),
+          expect.objectContaining({
+            type: 'gateway_tool_call',
+            input_summary: 'mama_load_checkpoint',
+            execution_status: 'failed',
+            trigger_reason: 'gateway_tool_executor',
+          }),
+        ])
+      );
       db.close();
     });
 
@@ -188,14 +198,24 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
 
       expect(result).toEqual({ success: true });
       expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
-      expect(readActivityRows(db)).toEqual([
-        expect.objectContaining({
-          type: 'envelope_missing_legacy',
-          input_summary: 'mama_load_checkpoint',
-          execution_status: 'completed',
-          trigger_reason: 'envelope_enforcer',
-        }),
-      ]);
+      const rows = readActivityRows(db);
+      expect(rows).toHaveLength(2);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'envelope_missing_legacy',
+            input_summary: 'mama_load_checkpoint',
+            execution_status: 'completed',
+            trigger_reason: 'envelope_enforcer',
+          }),
+          expect.objectContaining({
+            type: 'gateway_tool_call',
+            input_summary: 'mama_load_checkpoint',
+            execution_status: 'completed',
+            trigger_reason: 'gateway_tool_executor',
+          }),
+        ])
+      );
       db.close();
     });
 
@@ -240,15 +260,25 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
         envelope_hash: 'envhash_pipeline',
       });
       expect(telegramGateway.sendMessage).not.toHaveBeenCalled();
-      expect(readActivityRows(db)).toEqual([
-        expect.objectContaining({
-          type: 'envelope_violation',
-          input_summary: 'telegram_send',
-          output_summary: 'envelope_hash=envhash_pipeline',
-          execution_status: 'failed',
-          trigger_reason: 'envelope_enforcer',
-        }),
-      ]);
+      const rows = readActivityRows(db);
+      expect(rows).toHaveLength(2);
+      expect(rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: 'envelope_violation',
+            input_summary: 'telegram_send',
+            output_summary: 'envelope_hash=envhash_pipeline',
+            execution_status: 'failed',
+            trigger_reason: 'envelope_enforcer',
+          }),
+          expect.objectContaining({
+            type: 'gateway_tool_call',
+            input_summary: 'telegram_send',
+            execution_status: 'failed',
+            trigger_reason: 'gateway_tool_executor',
+          }),
+        ])
+      );
       db.close();
     });
   });

@@ -802,6 +802,8 @@ export interface EnvelopeDenialResult {
   error: string;
   code: string;
   envelope_hash?: string;
+  allowed?: unknown;
+  tier_required?: number;
 }
 
 /**

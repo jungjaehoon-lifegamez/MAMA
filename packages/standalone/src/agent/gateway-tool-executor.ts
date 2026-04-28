@@ -102,7 +102,7 @@ import {
   type DelegationRoutingContext,
 } from './delegation-executor.js';
 import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
-import type { Envelope } from '../envelope/index.js';
+import type { Envelope, MemoryScope } from '../envelope/index.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -129,9 +129,22 @@ type ActiveGatewayExecutionContext = {
   channelId: string;
   envelope?: Envelope;
   executionSurface?: GatewayExecutionSurface;
+  parentToolName?: string;
+};
+
+type ScopeAuditFields = {
+  requestedScopes: MemoryScope[] | null;
+  envelopeScopesSnapshot: MemoryScope[] | null;
+  mismatch: 0 | 1;
 };
 
 const managedAgentMutationTails = new Map<string, Promise<void>>();
+const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
+  'mama_save',
+  'mama_update',
+  'mama_add',
+  'mama_ingest',
+]);
 
 async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
   const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
@@ -244,6 +257,7 @@ export class GatewayToolExecutor {
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
+  private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -534,6 +548,7 @@ export class GatewayToolExecutor {
     this.mamaDbPath = options.mamaDbPath;
     this.sessionStore = options.sessionStore;
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
+    this.metricsStore = options.metricsStore ?? null;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -697,6 +712,7 @@ export class GatewayToolExecutor {
             error: err.message,
             code: err.code,
             envelope_hash: ctx.envelope.envelope_hash,
+            ...err.metadata,
           };
           return denial;
         }
@@ -788,7 +804,204 @@ export class GatewayToolExecutor {
       return this.withExecutionContext(executionContext, () => this.execute(toolName, input));
     }
 
-    return this.executeWithEnvelopeAndPermissions(toolName, input);
+    const startedAt = Date.now();
+    const ctx = this.executionContextStorage.getStore();
+    const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
+
+    try {
+      const result = await this.executeWithEnvelopeAndPermissions(toolName, input);
+      this.logGatewayToolCall(ctx, toolName, result, Date.now() - startedAt, scopeAudit);
+      if (scopeAudit.mismatch) {
+        this.alarmScopeMismatch(ctx, toolName);
+      }
+      return result;
+    } catch (error) {
+      this.logGatewayToolCall(ctx, toolName, undefined, Date.now() - startedAt, scopeAudit, error);
+      if (scopeAudit.mismatch) {
+        this.alarmScopeMismatch(ctx, toolName);
+      }
+      throw error;
+    }
+  }
+
+  private computeScopeAuditFields(
+    toolName: string,
+    input: GatewayToolInput,
+    ctx: ActiveGatewayExecutionContext | undefined
+  ): ScopeAuditFields {
+    if (!MEMORY_SCOPE_AUDIT_TOOLS.has(toolName)) {
+      return { requestedScopes: null, envelopeScopesSnapshot: null, mismatch: 0 };
+    }
+
+    const envelopeScopesSnapshot = ctx?.envelope?.scope.memory_scopes ?? null;
+    const requestedScopes = this.resolveEffectiveMemoryScopes(toolName, input, ctx);
+
+    if (!ctx?.envelope || !envelopeScopesSnapshot) {
+      return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
+    }
+
+    if (!requestedScopes || requestedScopes.length === 0) {
+      return {
+        requestedScopes,
+        envelopeScopesSnapshot,
+        mismatch: envelopeScopesSnapshot.length > 0 ? 1 : 0,
+      };
+    }
+
+    const envelopeScopeKeys = new Set(envelopeScopesSnapshot.map(memoryScopeKey));
+    const hasOutOfEnvelopeScope = requestedScopes.some(
+      (scope) => !envelopeScopeKeys.has(memoryScopeKey(scope))
+    );
+
+    return {
+      requestedScopes,
+      envelopeScopesSnapshot,
+      mismatch: hasOutOfEnvelopeScope ? 1 : 0,
+    };
+  }
+
+  private resolveEffectiveMemoryScopes(
+    toolName: string,
+    input: GatewayToolInput,
+    ctx: ActiveGatewayExecutionContext | undefined
+  ): MemoryScope[] | null {
+    if (toolName === 'mama_save') {
+      return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+    }
+
+    if (toolName === 'mama_update') {
+      return null;
+    }
+
+    if (toolName === 'mama_add') {
+      return this.deriveMemoryScopesFromActiveContext(ctx);
+    }
+
+    if (toolName === 'mama_ingest') {
+      const fallbackScopes = this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
+      const inputScopes = normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+      if (inputScopes && inputScopes.length > 0) {
+        const fallbackScopeKeys = new Set(fallbackScopes.map(memoryScopeKey));
+        const allInFallback = inputScopes.every((scope) =>
+          fallbackScopeKeys.has(memoryScopeKey(scope))
+        );
+        return allInFallback ? inputScopes : fallbackScopes;
+      }
+      return fallbackScopes.length > 0 ? fallbackScopes : null;
+    }
+
+    return null;
+  }
+
+  private deriveMemoryScopesFromActiveContext(
+    ctx: ActiveGatewayExecutionContext | undefined
+  ): MemoryScope[] | null {
+    const context = ctx?.agentContext;
+    if (!context) {
+      return null;
+    }
+    return deriveMemoryScopes({
+      source: context.source,
+      channelId: context.session.channelId,
+      userId: context.session.userId,
+      projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+    });
+  }
+
+  private logGatewayToolCall(
+    ctx: ActiveGatewayExecutionContext | undefined,
+    toolName: string,
+    result: GatewayToolResult | undefined,
+    durationMs: number,
+    scopeAudit: ScopeAuditFields,
+    error?: unknown
+  ): void {
+    try {
+      if (!this.sessionsDb) {
+        return;
+      }
+
+      const errorMessage =
+        error instanceof Error ? error.message : error ? String(error) : getFailureMessage(result);
+      const resultCode = result && 'code' in result ? String(result.code) : undefined;
+      const executionStatus = error || result?.success === false ? 'failed' : 'completed';
+
+      logActivity(this.sessionsDb, {
+        agent_id: ctx?.agentId || 'unknown',
+        agent_version: 0,
+        type: 'gateway_tool_call',
+        input_summary: toolName,
+        duration_ms: durationMs,
+        execution_status: executionStatus,
+        trigger_reason: 'gateway_tool_executor',
+        error_message: errorMessage,
+        envelopeHash: ctx?.envelope?.envelope_hash ?? null,
+        requestedScopes: scopeAudit.requestedScopes,
+        envelopeScopesSnapshot: scopeAudit.envelopeScopesSnapshot,
+        scopeMismatch: scopeAudit.mismatch,
+        details: {
+          source: ctx?.source ?? 'unknown',
+          channel_id: ctx?.channelId ?? 'unknown',
+          tool: toolName,
+          ...(resultCode ? { code: resultCode } : {}),
+          ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
+        },
+      });
+    } catch (logErr) {
+      securityLogger.warn('[envelope] gateway audit log failed (non-fatal)', logErr);
+    }
+  }
+
+  private alarmScopeMismatch(
+    ctx: ActiveGatewayExecutionContext | undefined,
+    toolName: string
+  ): void {
+    try {
+      this.metricsStore?.record({
+        name: 'envelope_scope_mismatch',
+        value: 1,
+        labels: {
+          source: ctx?.source ?? 'unknown',
+          channel_id: ctx?.channelId ?? 'unknown',
+          tool: toolName,
+        },
+      });
+    } catch {
+      // Metrics are best-effort; the agent_activity row is the durable ledger.
+    }
+
+    try {
+      securityLogger.warn('[envelope] scope mismatch', {
+        envelope_hash: ctx?.envelope?.envelope_hash ?? null,
+        source: ctx?.source ?? 'unknown',
+        channel_id: ctx?.channelId ?? 'unknown',
+        tool: toolName,
+        ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
+      });
+    } catch {
+      // Audit warnings must never affect tool execution.
+    }
+  }
+
+  private auditedAutoSave(parentToolName: string, input: SaveInput): void {
+    const parentContext = this.executionContextStorage.getStore();
+    void (async () => {
+      try {
+        if (parentContext) {
+          const autosaveContext: ActiveGatewayExecutionContext = {
+            ...parentContext,
+            parentToolName,
+          };
+          await this.executionContextStorage.run(autosaveContext, () =>
+            this.execute('mama_save', input)
+          );
+          return;
+        }
+        await this.execute('mama_save', input);
+      } catch {
+        // Autosave is intentionally non-fatal for report/wiki publish tools.
+      }
+    })();
   }
 
   private async executeWithEnvelopeAndPermissions(
@@ -941,7 +1154,7 @@ export class GatewayToolExecutor {
           if (permError) {
             return { success: false, error: permError };
           }
-          const args = input as { agent_id: string; limit?: number };
+          const args = input as { agent_id: string; limit?: number; include_trace?: boolean };
           const agentId = this.resolveManagedAgentId(args.agent_id);
           const rawLimit = Number.parseInt(String(args.limit ?? 20), 10);
           const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
@@ -953,7 +1166,9 @@ export class GatewayToolExecutor {
           return {
             success: true,
             agent_id: agentId,
-            activity: getActivity(this.sessionsDb, agentId, limit),
+            activity: getActivity(this.sessionsDb, agentId, limit, {
+              includeTrace: args.include_trace === true,
+            }),
           };
         }
         case 'agent_update': {
@@ -1194,20 +1409,13 @@ export class GatewayToolExecutor {
               .trim();
             const truncated =
               textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
-            void (async () => {
-              try {
-                const a = await getApi();
-                await handleSave(a, {
-                  type: 'decision' as const,
-                  topic: 'dashboard_briefing',
-                  decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
-                  reasoning: 'Auto-saved by dashboard agent after report_publish',
-                  scopes: [{ kind: 'global', id: 'system' }],
-                });
-              } catch {
-                /* non-fatal */
-              }
-            })();
+            this.auditedAutoSave('report_publish', {
+              type: 'decision' as const,
+              topic: 'dashboard_briefing',
+              decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
+              reasoning: 'Auto-saved by dashboard agent after report_publish',
+              scopes: [{ kind: 'global', id: 'system' }],
+            });
 
             return {
               success: true,
@@ -1258,20 +1466,13 @@ export class GatewayToolExecutor {
               )
               .join('\n');
             const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
-            void (async () => {
-              try {
-                const a = await getApi();
-                await handleSave(a, {
-                  type: 'decision' as const,
-                  topic: 'wiki_compilation',
-                  decision: wikiSummary,
-                  reasoning: 'Auto-saved by wiki agent after wiki_publish',
-                  scopes: [{ kind: 'global', id: 'system' }],
-                });
-              } catch {
-                /* non-fatal */
-              }
-            })();
+            this.auditedAutoSave('wiki_publish', {
+              type: 'decision' as const,
+              topic: 'wiki_compilation',
+              decision: wikiSummary,
+              reasoning: 'Auto-saved by wiki agent after wiki_publish',
+              scopes: [{ kind: 'global', id: 'system' }],
+            });
 
             return {
               success: true,
@@ -2904,4 +3105,45 @@ function isTruthyEnv(name: string): boolean {
     return false;
   }
   return TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+function normalizeMemoryScopes(value: unknown): MemoryScope[] | null {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+
+  const scopes: MemoryScope[] = [];
+  for (const item of value) {
+    if (!isMemoryScope(item)) {
+      return null;
+    }
+    scopes.push({ kind: item.kind, id: item.id });
+  }
+  return scopes;
+}
+
+function isMemoryScope(value: unknown): value is MemoryScope {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.kind === 'string' &&
+    ['global', 'user', 'channel', 'project'].includes(candidate.kind) &&
+    typeof candidate.id === 'string' &&
+    candidate.id.length > 0
+  );
+}
+
+function memoryScopeKey(scope: MemoryScope): string {
+  return `${scope.kind}:${scope.id}`;
+}
+
+function getFailureMessage(result: GatewayToolResult | undefined): string | undefined {
+  if (!result || result.success !== false) {
+    return undefined;
+  }
+  const record = result as Record<string, unknown>;
+  const message = record.error ?? record.message ?? 'Tool returned success:false';
+  return String(message);
 }
