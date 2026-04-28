@@ -60,6 +60,8 @@ import type {
   BotStatus,
   BotPlatform,
   EnvelopeDenialResult,
+  GatewayExecutionSurface,
+  GatewayToolExecutionContext,
 } from './types.js';
 import { AgentError } from './types.js';
 import {
@@ -118,13 +120,7 @@ const AGENT_DETAIL_TABS = new Set([
   'history',
 ]);
 
-type GatewayExecutionContext = {
-  agentContext?: AgentContext | null;
-  agentId?: string;
-  source?: string;
-  channelId?: string;
-  envelope?: Envelope;
-};
+type GatewayExecutionContext = GatewayToolExecutionContext;
 
 type ActiveGatewayExecutionContext = {
   agentContext: AgentContext | null;
@@ -132,6 +128,7 @@ type ActiveGatewayExecutionContext = {
   source: string;
   channelId: string;
   envelope?: Envelope;
+  executionSurface?: GatewayExecutionSurface;
 };
 
 const managedAgentMutationTails = new Map<string, Promise<void>>();
@@ -342,6 +339,7 @@ export class GatewayToolExecutor {
       source,
       channelId,
       envelope: executionContext?.envelope,
+      executionSurface: executionContext?.executionSurface,
     };
   }
 
@@ -351,7 +349,7 @@ export class GatewayToolExecutor {
       return active;
     }
     return this.normalizeExecutionContext({
-      agentContext: this.currentContext,
+      agentContext: this.currentContext ?? undefined,
       agentId: this.currentAgentId,
       source: this.currentSource,
       channelId: this.currentChannelId,

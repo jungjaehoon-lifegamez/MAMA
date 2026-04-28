@@ -50,13 +50,14 @@ import type {
   StreamCallbacks,
   AgentContext,
   PromptFinalResponse,
+  GatewayExecutionSurface,
+  GatewayToolExecutionContext,
 } from './types.js';
 import { AgentError } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
 import { PostToolHandler } from './post-tool-handler.js';
 import { StopContinuationHandler } from './stop-continuation-handler.js';
 import { PreCompactHandler } from './pre-compact-handler.js';
-import type { Envelope } from '../envelope/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
 const { DebugLogger } = debugLogger as {
@@ -263,13 +264,7 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
   return filtered;
 }
 
-export type AgentToolExecutionContext = {
-  agentContext: AgentContext | undefined;
-  agentId?: string;
-  source?: string;
-  channelId?: string;
-  envelope?: Envelope;
-};
+export type AgentToolExecutionContext = GatewayToolExecutionContext;
 
 export function buildAgentToolExecutionContext(
   options?: AgentLoopOptions
@@ -294,6 +289,23 @@ export function buildAgentToolExecutionContext(
     source: options.source,
     channelId: options.channelId,
     envelope: options.envelope,
+    executionSurface: 'model_tool',
+  };
+}
+
+function withExecutionSurface(
+  executionContext: AgentToolExecutionContext | null,
+  executionSurface: GatewayExecutionSurface
+): AgentToolExecutionContext | null {
+  if (!executionContext) {
+    return null;
+  }
+  if (executionContext.executionSurface === executionSurface) {
+    return executionContext;
+  }
+  return {
+    ...executionContext,
+    executionSurface,
   };
 }
 
@@ -556,7 +568,8 @@ export class AgentLoop {
     // Initialize PostToolHandler (fire-and-forget after tool execution)
     if (options.postToolUse?.enabled) {
       this.postToolHandler = new PostToolHandler(
-        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        (name, input, executionContext) =>
+          this.mcpExecutor.execute(name, input as GatewayToolInput, executionContext ?? undefined),
         { enabled: true, contractSaveLimit: options.postToolUse.contractSaveLimit }
       );
       console.log('[AgentLoop] PostToolHandler enabled');
@@ -567,7 +580,8 @@ export class AgentLoop {
     // Initialize PreCompactHandler (unsaved decision detection)
     if (options.preCompact?.enabled) {
       this.preCompactHandler = new PreCompactHandler(
-        (name, input) => this.mcpExecutor.execute(name, input as GatewayToolInput),
+        (name, input, executionContext) =>
+          this.mcpExecutor.execute(name, input as GatewayToolInput, executionContext ?? undefined),
         { enabled: true, maxDecisionsToDetect: options.preCompact.maxDecisionsToDetect }
       );
       console.log('[AgentLoop] PreCompactHandler enabled');
@@ -1177,7 +1191,10 @@ export class AgentLoop {
                 .map((b) => b.text)
                 .join('\n');
             });
-            const compactResult = await this.preCompactHandler.process(historyText);
+            const compactResult = await this.preCompactHandler.process(
+              historyText,
+              withExecutionSurface(toolExecutionContext, 'reactive_internal')
+            );
             if (compactResult.compactionPrompt) {
               history.push({
                 role: 'user',
@@ -1338,6 +1355,8 @@ export class AgentLoop {
     stopAfterSuccessfulTools: string[] = [],
     executionContext: AgentToolExecutionContext | null = null
   ): Promise<ToolResultBlock[]> {
+    const modelToolContext = withExecutionSurface(executionContext, 'model_tool');
+    const reactiveInternalContext = withExecutionSurface(executionContext, 'reactive_internal');
     const toolUseBlocks = content.filter(
       (block): block is ToolUseBlock => block.type === 'tool_use'
     );
@@ -1362,7 +1381,7 @@ export class AgentLoop {
           const codeInput = toolUse.input as Record<string, unknown> | undefined;
           const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
           const codeActResult = code
-            ? await this.executeCodeAct(code, this.currentTier)
+            ? await this.executeCodeAct(code, this.currentTier, modelToolContext)
             : {
                 success: false,
                 error: {
@@ -1385,14 +1404,14 @@ export class AgentLoop {
             contractContext = await this.searchContractsForTool(
               toolUse.name,
               toolUse.input as GatewayToolInput,
-              executionContext
+              reactiveInternalContext
             );
           }
 
           const toolResult = await this.mcpExecutor.execute(
             toolUse.name,
             toolUse.input as GatewayToolInput,
-            executionContext ?? undefined
+            modelToolContext ?? undefined
           );
           result = JSON.stringify(toolResult, null, 2);
 
@@ -1411,7 +1430,12 @@ export class AgentLoop {
           this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
 
           // PostToolUse: auto-extract contracts (fire-and-forget)
-          this.postToolHandler?.processInBackground(toolUse.name, toolUse.input, toolResult);
+          this.postToolHandler?.processInBackground(
+            toolUse.name,
+            toolUse.input,
+            toolResult,
+            reactiveInternalContext
+          );
 
           // Notify stream: tool completed (check actual status)
           this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
@@ -1563,10 +1587,15 @@ export class AgentLoop {
   /**
    * Execute Code-Act JS code in a sandboxed QuickJS environment
    */
-  private async executeCodeAct(code: string, tier: 1 | 2 | 3 = 1): Promise<ExecutionResult> {
+  private async executeCodeAct(
+    code: string,
+    tier: 1 | 2 | 3 = 1,
+    executionContext: AgentToolExecutionContext | null = null
+  ): Promise<ExecutionResult> {
     try {
       const sandbox = new CodeActSandbox();
-      const bridge = new HostBridge(this.mcpExecutor);
+      const bridgeContext = withExecutionSurface(executionContext, 'code_act');
+      const bridge = new HostBridge(this.mcpExecutor, undefined, bridgeContext);
       bridge.onToolUse = (toolName, input, result) => {
         if (result === undefined) {
           // Tool starting — surface to stream

@@ -146,6 +146,7 @@ describe('Reactive Main envelope tool path', () => {
       source: 'telegram',
       channelId: 'tg:1',
       envelope,
+      executionSurface: 'model_tool',
     });
   });
 });
