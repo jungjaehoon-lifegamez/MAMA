@@ -93,6 +93,19 @@ describe('Story M0: Connector extraction kill switch', () => {
     expect(findCallExpressions(source, 'buildActivityExtractionPrompt')).toEqual([]);
     expect(findCallExpressions(source, 'buildSpokeExtractionPrompt')).toEqual([]);
   });
+
+  it('connector observation extraction failures are surfaced instead of swallowed', () => {
+    const source = readFileSync(
+      new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
+      'utf8'
+    );
+    const extractAndSaveBody = findVariableFunctionBody(source, 'extractAndSave');
+
+    expect(extractAndSaveBody).toContain('buildEntityObservations');
+    expect(extractAndSaveBody).toContain('entityObservationStore.upsertEntityObservations');
+    expect(extractAndSaveBody).not.toContain('console.error');
+    expect(extractAndSaveBody).toContain('throw new Error');
+  });
 });
 
 function findCallExpressions(source: string, calleeName: string): number[] {
@@ -117,4 +130,33 @@ function findCallExpressions(source: string, calleeName: string): number[] {
 
   visit(sourceFile);
   return lines;
+}
+
+function findVariableFunctionBody(source: string, variableName: string): string {
+  const sourceFile = ts.createSourceFile(
+    'connector-init.ts',
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  let body = '';
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === variableName &&
+      node.initializer &&
+      ts.isArrowFunction(node.initializer) &&
+      node.initializer.body
+    ) {
+      body = node.initializer.body.getText(sourceFile);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return body;
 }

@@ -783,27 +783,6 @@ This protects your credentials from being exposed in chat logs.`;
       }, streamFlushIntervalMs);
     }
 
-    const envelope = this.buildReactiveEnvelope(message);
-    const options: AgentLoopOptions = {
-      systemPrompt: effectivePrompt,
-      userId: message.userId,
-      model: roleModel, // Role-specific model override
-      maxTurns: roleMaxTurns, // Role-specific max turns
-      source: message.source,
-      channelId: message.channelId,
-      agentContext,
-      resumeSession: shouldResume, // Use --resume flag for continuing sessions
-      cliSessionId, // Pass CLI session ID to avoid double-locking
-      streamCallbacks: wrappedOnStream || processOptions?.onStream,
-      envelope,
-    };
-
-    if (shouldResume) {
-      logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
-    } else {
-      logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
-    }
-
     let response: string;
 
     // Skill on-demand injection: prepend matched skill content to user message
@@ -822,32 +801,53 @@ This protects your credentials from being exposed in chat logs.`;
     let pendingNotices = false;
     let pendingNoticeCount = 0;
     try {
-      if (shouldResume) {
-        const notices = this.memoryNoticeQueue.peek(channelKey);
-        pendingNotices = notices.length > 0;
-        pendingNoticeCount = notices.length;
-        memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
-        if (memoryPrefix) {
-          memoryPrefix = `${memoryPrefix}\n\n`;
-        }
-      } else {
-        memoryPrefix = await this.getPerTurnMemoryPrefix(message);
-      }
-    } catch (err) {
-      logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
-      if (shouldResume) {
-        try {
-          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
-        } catch (fallbackErr) {
-          logger.warn(
-            `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
-          );
-          /* non-fatal */
-        }
-      }
-    }
+      const envelope = this.buildReactiveEnvelope(message);
+      const options: AgentLoopOptions = {
+        systemPrompt: effectivePrompt,
+        userId: message.userId,
+        model: roleModel, // Role-specific model override
+        maxTurns: roleMaxTurns, // Role-specific max turns
+        source: message.source,
+        channelId: message.channelId,
+        agentContext,
+        resumeSession: shouldResume, // Use --resume flag for continuing sessions
+        cliSessionId, // Pass CLI session ID to avoid double-locking
+        streamCallbacks: wrappedOnStream || processOptions?.onStream,
+        envelope,
+      };
 
-    try {
+      if (shouldResume) {
+        logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
+      } else {
+        logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
+      }
+
+      try {
+        if (shouldResume) {
+          const notices = this.memoryNoticeQueue.peek(channelKey);
+          pendingNotices = notices.length > 0;
+          pendingNoticeCount = notices.length;
+          memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
+          if (memoryPrefix) {
+            memoryPrefix = `${memoryPrefix}\n\n`;
+          }
+        } else {
+          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+        }
+      } catch (err) {
+        logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (shouldResume) {
+          try {
+            memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+          } catch (fallbackErr) {
+            logger.warn(
+              `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
+            );
+            /* non-fatal */
+          }
+        }
+      }
+
       // Use multimodal content if available (OpenClaw-style)
       if (
         message.contentBlocks &&

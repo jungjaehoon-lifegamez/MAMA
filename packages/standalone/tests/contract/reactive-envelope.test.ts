@@ -197,4 +197,39 @@ describe('reactive envelope issuance', () => {
     expect(queued).toBe(true);
     expect(buildAndPersist).toHaveBeenCalledTimes(1);
   });
+
+  it('releases the session lock when reactive envelope construction fails', async () => {
+    const db: SQLiteDatabase = new Database(':memory:');
+    sessionStore = new SessionStore(db);
+    sessionPool = new SessionPool();
+    setSessionPool(sessionPool);
+    const { authority } = makeAuthorityHarness(db);
+    vi.spyOn(authority, 'buildAndPersist').mockImplementation(() => {
+      throw new Error('synthetic envelope failure');
+    });
+    const agentLoop: AgentLoopClient = {
+      async run() {
+        return { response: 'ok' };
+      },
+    };
+    const router = new MessageRouter(
+      sessionStore,
+      agentLoop,
+      createMockMamaApi([]),
+      {},
+      makeReactiveEnvelopeConfig(),
+      authority
+    );
+    const message: NormalizedMessage = {
+      source: 'telegram',
+      channelId: 'tg:envelope-fail',
+      userId: 'u:envelope-fail',
+      text: 'hello',
+    };
+    const channelKey = buildChannelKey(message.source, message.channelId);
+
+    await expect(router.process(message)).rejects.toThrow('synthetic envelope failure');
+
+    expect(sessionPool.peekSession(channelKey).busy).toBe(false);
+  });
 });

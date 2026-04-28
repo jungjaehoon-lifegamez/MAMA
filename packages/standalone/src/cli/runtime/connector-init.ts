@@ -164,7 +164,13 @@ export async function initConnectors(
             reason: 'direct_connector_to_memory_write_disabled',
           });
         } catch (err) {
-          console.error(`[connector] ${label}:${channelKey} extraction failed:`, err);
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `[connector] ${label}:${channelKey} extraction failed while running ` +
+              'buildEntityObservations/entityObservationStore.upsertEntityObservations: ' +
+              message,
+            { cause: err }
+          );
         }
       }
     };

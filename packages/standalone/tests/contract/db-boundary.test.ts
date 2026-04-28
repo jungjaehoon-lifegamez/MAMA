@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import {
   assertTestProcessIsNotUsingRealDb,
   initDB,
@@ -8,7 +8,17 @@ import {
 } from '../../../mama-core/src/db-manager.js';
 
 const REAL_DB_PATH = join(homedir(), '.claude', 'mama-memory.db');
+const NORMALIZED_REAL_DB_PATH = resolve(REAL_DB_PATH);
 
+/**
+ * Story M1.2: SQLite Database Initialization
+ *
+ * Acceptance Criteria:
+ * - AC: test env not configured to use real DB
+ * - AC: initDB refuses real DB when no explicit paths
+ * - AC: initDB refuses explicit real DB env paths
+ * - AC: guard throws when adapter resolves to real DB
+ */
 describe('db boundary contract', () => {
   let previousMamaDbPath: string | undefined;
   let previousMamaDatabasePath: string | undefined;
@@ -35,7 +45,8 @@ describe('db boundary contract', () => {
     for (const name of ['MAMA_DB_PATH', 'MAMA_DATABASE_PATH']) {
       const envPath = process.env[name];
       if (envPath) {
-        expect(envPath).not.toBe(REAL_DB_PATH);
+        const normalizedEnvPath = normalizeDbBoundaryPath(envPath);
+        expect(normalizedEnvPath).not.toBe(NORMALIZED_REAL_DB_PATH);
       }
     }
 
@@ -85,4 +96,19 @@ function restoreEnv(name: string, value: string | undefined): void {
     return;
   }
   process.env[name] = value;
+}
+
+function normalizeDbBoundaryPath(rawPath: string): string {
+  let expanded = rawPath;
+  if (expanded === '~' || expanded.startsWith('~/')) {
+    expanded = join(homedir(), expanded.slice(2));
+  }
+  expanded = expanded.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+    (match, bracedName: string | undefined, bareName: string | undefined) => {
+      const envName = bracedName ?? bareName;
+      return envName ? (process.env[envName] ?? match) : match;
+    }
+  );
+  return resolve(expanded);
 }
