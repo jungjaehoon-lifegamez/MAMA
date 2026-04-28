@@ -7,6 +7,7 @@ import { createBenchmark } from "../../benchmarks"
 import type { BenchmarkName } from "../../types/benchmark"
 import type { QuestionCheckpoint } from "../../types/checkpoint"
 import type { BenchmarkResult, QuestionTypeRegistry } from "../../types/unified"
+import { logger } from "../../utils/logger"
 
 const checkpointManager = new CheckpointManager()
 
@@ -126,13 +127,26 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
       const reportPath = join(checkpointManager.getRunPath(runId), "report.json")
       let report: BenchmarkResult | null = null
       if (existsSync(reportPath)) {
-        report = JSON.parse(readFileSync(reportPath, "utf8")) as BenchmarkResult
+        try {
+          report = JSON.parse(readFileSync(reportPath, "utf8")) as BenchmarkResult
+        } catch (error) {
+          logger.warn(
+            `Failed to read leaderboard report cache: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          )
+          report = null
+        }
       }
 
       // Calculate accuracy from checkpoint if no report
-      const questions: QuestionCheckpoint[] = Object.values(checkpoint.questions)
-      const correctCount = questions.filter((q) => q.phases.evaluate.score === 1).length
-      const accuracy = report?.summary?.accuracy ?? correctCount / summary.total
+      const questions: QuestionCheckpoint[] =
+        checkpoint.questions && typeof checkpoint.questions === "object"
+          ? Object.values(checkpoint.questions)
+          : []
+      const correctCount = questions.filter((q) => q.phases?.evaluate?.score === 1).length
+      const accuracy =
+        report?.summary?.accuracy ?? (summary.total > 0 ? correctCount / summary.total : null)
 
       // Get provider code
       const providerCode = getProviderCode(checkpoint.provider)
@@ -149,7 +163,7 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
           byQuestionType[type] = { total: 0, correct: 0, accuracy: 0 }
         }
         byQuestionType[type].total++
-        if (q.phases.evaluate.score === 1) {
+        if (q.phases?.evaluate?.score === 1) {
           byQuestionType[type].correct++
         }
       }
@@ -162,14 +176,14 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
       if (!report?.evaluations) {
         evaluations = questions.map((q) => ({
           questionId: q.questionId,
-          questionType: q.questionType,
-          question: q.question,
-          groundTruth: q.groundTruth,
-          hypothesis: q.phases.answer.hypothesis || "",
-          score: q.phases.evaluate.score || 0,
-          label: q.phases.evaluate.label || "incorrect",
-          explanation: q.phases.evaluate.explanation || "",
-          searchResults: q.phases.search.results || [],
+          questionType: q.questionType || "unknown",
+          question: q.question || "",
+          groundTruth: q.groundTruth || "",
+          hypothesis: q.phases?.answer?.hypothesis || "",
+          score: q.phases?.evaluate?.score || 0,
+          label: q.phases?.evaluate?.label || "incorrect",
+          explanation: q.phases?.evaluate?.explanation || "",
+          searchResults: q.phases?.search?.results || [],
         }))
       }
 

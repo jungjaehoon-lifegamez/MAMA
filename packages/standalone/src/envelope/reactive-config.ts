@@ -195,11 +195,11 @@ export function createDefaultReactiveEnvelopeConfig(
   };
 
   return {
-    projectRefsFor: (message) => policyFor(message).projectRefs,
-    rawConnectorsFor: (message) => policyFor(message).rawConnectors,
-    memoryScopesFor: (message) => policyFor(message).memoryScopes,
+    projectRefsFor: (message) => [...policyFor(message).projectRefs],
+    rawConnectorsFor: (message) => [...policyFor(message).rawConnectors],
+    memoryScopesFor: (message) => [...policyFor(message).memoryScopes],
     sourceFor: (message) => policyFor(message).source,
-    allowedDestinationsFor: (message) => policyFor(message).allowedDestinations,
+    allowedDestinationsFor: (message) => [...policyFor(message).allowedDestinations],
     reactiveBudgetSeconds: budgetSeconds,
   };
 }

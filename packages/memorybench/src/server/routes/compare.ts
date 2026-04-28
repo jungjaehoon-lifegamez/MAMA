@@ -198,9 +198,12 @@ export async function handleCompareRoutes(req: Request, url: URL): Promise<Respo
       const status = getRunStatus(checkpoint, summary)
 
       // Calculate accuracy from checkpoint questions
-      const questions = Object.values(checkpoint.questions)
-      const evaluatedQuestions = questions.filter((q) => q.phases.evaluate.status === "completed")
-      const correctCount = evaluatedQuestions.filter((q) => q.phases.evaluate.score === 1).length
+      const questions =
+        checkpoint.questions && typeof checkpoint.questions === "object"
+          ? Object.values(checkpoint.questions)
+          : []
+      const evaluatedQuestions = questions.filter((q) => q.phases?.evaluate?.status === "completed")
+      const correctCount = evaluatedQuestions.filter((q) => q.phases?.evaluate?.score === 1).length
       const accuracy =
         evaluatedQuestions.length > 0 ? correctCount / evaluatedQuestions.length : null
 

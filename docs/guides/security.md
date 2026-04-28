@@ -1102,13 +1102,16 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 
 - Is write-capable for memory surfaces by default via
-  `HostBridge.injectInto(sandbox, 2)`
+  `HostBridge.injectInto(sandbox, 2)` only after the request passes token auth
+  (`MAMA_AUTH_TOKEN`) or trusted Cloudflare Access
+  (`MAMA_TRUST_CLOUDFLARE_ACCESS`)
 - Requires strong perimeter controls before any non-local exposure. Production
   deployments must use Zero Trust access or mTLS/IP allowlisting plus bearer
   token auth; token auth alone is not sufficient for internet exposure.
-- Remains localhost-only when no `MAMA_AUTH_TOKEN` is configured
+- Remains localhost-only when neither token auth (`MAMA_AUTH_TOKEN`) nor trusted
+  Cloudflare Access (`MAMA_TRUST_CLOUDFLARE_ACCESS`) is configured
 - Can be forced read-only with `MAMA_CODE_ACT_READ_ONLY=1`, which injects
-  tier 3 tools instead
+  tier 3 tools instead after the same token-or-Cloudflare perimeter check
 - Has no access to agent persona or conversation context
 - Applies a per-client rate limit (`MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE`,
   default 30) and structured logs for memory mutation attempts
