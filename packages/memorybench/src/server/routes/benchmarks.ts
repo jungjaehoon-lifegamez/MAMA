@@ -2,6 +2,7 @@ import { existsSync } from "fs"
 import { join } from "path"
 import { getAvailableProviders, getProviderInfo } from "../../providers"
 import { getAvailableBenchmarks, createBenchmark } from "../../benchmarks"
+import type { BenchmarkName } from "../../types/benchmark"
 import { MODEL_ALIASES, listModelsByProvider } from "../../utils/models"
 import { getActiveRunsWithBenchmarks } from "../runState"
 
@@ -86,7 +87,11 @@ export async function handleBenchmarksRoutes(req: Request, url: URL): Promise<Re
     const benchmarkName = questionsMatch[1]
 
     try {
-      const benchmark = createBenchmark(benchmarkName as any)
+      if (!getAvailableBenchmarks().includes(benchmarkName as BenchmarkName)) {
+        return json({ error: `Benchmark not found: ${benchmarkName}` }, 404)
+      }
+
+      const benchmark = createBenchmark(benchmarkName as BenchmarkName)
       await benchmark.load()
       const questions = benchmark.getQuestions()
 
@@ -123,7 +128,7 @@ export async function handleBenchmarksRoutes(req: Request, url: URL): Promise<Re
           totalPages: Math.ceil(total / limit),
         },
       })
-    } catch (e) {
+    } catch {
       return json({ error: `Benchmark not found: ${benchmarkName}` }, 404)
     }
   }

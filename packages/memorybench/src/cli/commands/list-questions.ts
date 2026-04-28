@@ -70,8 +70,9 @@ export async function listQuestionsCommand(args: string[]): Promise<void> {
 
   try {
     await benchmark.load()
-  } catch (e: any) {
-    console.error(`Failed to load benchmark: ${e.message}`)
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : String(e)
+    console.error(`Failed to load benchmark: ${message}`)
     return
   }
 

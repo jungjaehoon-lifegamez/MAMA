@@ -9,7 +9,7 @@
  */
 
 import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
 import { loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { ToolRegistry } from '../agent/tool-registry.js';
@@ -267,10 +267,12 @@ export class AgentProcessManager extends EventEmitter {
         // Code-Act agents: only provide code-act MCP server
         const codeActOnlyConfig = resolve(homedir(), '.mama', 'code-act-only-mcp-config.json');
         try {
-          const fullConfig = JSON.parse(require('fs').readFileSync(mcpConfigPath, 'utf-8'));
+          const fullConfig = JSON.parse(readFileSync(mcpConfigPath, 'utf-8')) as {
+            mcpServers?: Record<string, unknown>;
+          };
           const codeActEntry = fullConfig.mcpServers?.['code-act'];
           if (codeActEntry) {
-            require('fs').writeFileSync(
+            writeFileSync(
               codeActOnlyConfig,
               JSON.stringify({ mcpServers: { 'code-act': codeActEntry } }, null, 2),
               'utf-8'

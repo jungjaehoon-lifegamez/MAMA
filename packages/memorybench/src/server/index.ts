@@ -25,7 +25,7 @@ export const wsManager = new WebSocketManager()
 export async function startServer(options: ServerOptions): Promise<void> {
   const { port, open = true } = options
 
-  const server = Bun.serve({
+  const _server = Bun.serve({
     port,
 
     async fetch(req, server) {
@@ -138,7 +138,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
     let foundPort = false
 
     const readOutput = async () => {
-      while (true) {
+      for (;;) {
         const { done, value } = await reader.read()
         if (done) break
 
