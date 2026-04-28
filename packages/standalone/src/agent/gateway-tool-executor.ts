@@ -394,6 +394,15 @@ export class GatewayToolExecutor {
     };
   }
 
+  private getActiveDelegationRouting(): DelegationRoutingContext {
+    const routing = this.getActiveRouting();
+    return {
+      agentId: routing.agentId || 'conductor',
+      source: routing.source || 'viewer',
+      channelId: routing.channelId || 'default',
+    };
+  }
+
   async withExecutionContext<T>(
     executionContext: GatewayExecutionContext | undefined,
     fn: () => Promise<T>
@@ -748,14 +757,16 @@ export class GatewayToolExecutor {
 
     const executionSurface = ctx?.executionSurface;
     const requiresEnvelope =
-      executionSurface !== undefined && ENVELOPE_REQUIRED_SURFACES.has(executionSurface);
+      ctx !== undefined &&
+      (executionSurface === undefined || ENVELOPE_REQUIRED_SURFACES.has(executionSurface));
     if (!requiresEnvelope) {
       return undefined;
     }
 
+    const surfaceLabel = executionSurface ?? 'unknown';
     if (failLoudOnMissing) {
       throw new Error(
-        `[envelope] tool ${toolName} called without envelope on ${executionSurface} (fail-loud mode)`
+        `[envelope] tool ${toolName} called without envelope on ${surfaceLabel} (fail-loud mode)`
       );
     }
 
@@ -1148,7 +1159,7 @@ export class GatewayToolExecutor {
         case 'agent_test':
           return await this.getDelegationExecutor().runAgentTest(
             input as AgentTestInput,
-            this.getActiveRouting()
+            this.getActiveDelegationRouting()
           );
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
@@ -1388,7 +1399,7 @@ export class GatewayToolExecutor {
         case 'delegate':
           return await this.getDelegationExecutor().runDelegate(
             input as DelegateInput,
-            this.getActiveRouting()
+            this.getActiveDelegationRouting()
           );
       }
 

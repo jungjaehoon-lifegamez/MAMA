@@ -198,12 +198,15 @@ export function generateReport(benchmark: Benchmark, checkpoint: RunCheckpoint):
     // Only consider questions that were evaluated (same filter as the quality/latency loop above)
     if (qCheckpoint.phases.evaluate.status !== "completed") continue
     const answerPhase = qCheckpoint.phases.answer
-    if (answerPhase.promptTokens !== null && answerPhase.promptTokens !== undefined)
+    if (answerPhase.promptTokens !== null && answerPhase.promptTokens !== undefined) {
       allPromptTokens.push(answerPhase.promptTokens)
-    if (answerPhase.basePromptTokens !== null && answerPhase.basePromptTokens !== undefined)
+    }
+    if (answerPhase.basePromptTokens !== null && answerPhase.basePromptTokens !== undefined) {
       allBasePromptTokens.push(answerPhase.basePromptTokens)
-    if (answerPhase.contextTokens !== null && answerPhase.contextTokens !== undefined)
+    }
+    if (answerPhase.contextTokens !== null && answerPhase.contextTokens !== undefined) {
       allContextTokens.push(answerPhase.contextTokens)
+    }
   }
 
   if (allPromptTokens.length > 0) {

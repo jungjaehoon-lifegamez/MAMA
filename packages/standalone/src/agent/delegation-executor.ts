@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { DelegationManager } from '../multi-agent/delegation-manager.js';
+import type { AgentRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { RawStore } from '../connectors/framework/raw-store.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { ValidationSessionService } from '../validation/session-service.js';
@@ -76,11 +77,23 @@ function resolveSkillPath(skillName: string): string | null {
   return resolved;
 }
 
-function normalizeRouting(routing: DelegationRoutingContext): DelegationRoutingContext {
+function requireRoutingField(
+  routing: Partial<DelegationRoutingContext> | undefined,
+  field: keyof DelegationRoutingContext
+): string {
+  const value = routing?.[field];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`[delegation] missing routing.${field}`);
+  }
+  return value;
+}
+
+function requireRouting(routing: DelegationRoutingContext): DelegationRoutingContext {
+  const input = routing as Partial<DelegationRoutingContext> | undefined;
   return {
-    agentId: routing.agentId || 'conductor',
-    source: routing.source || 'viewer',
-    channelId: routing.channelId || 'default',
+    agentId: requireRoutingField(input, 'agentId'),
+    source: requireRoutingField(input, 'source'),
+    channelId: requireRoutingField(input, 'channelId'),
   };
 }
 
@@ -424,12 +437,7 @@ export class DelegationExecutor {
       return { success: false, error: 'Multi-agent not configured' } as GatewayToolResult;
     }
 
-    const {
-      agentId: activeAgentId,
-      source: activeSource,
-      channelId: activeChannelId,
-    } = normalizeRouting(routing);
-    const sourceAgentId = activeAgentId || 'conductor';
+    const { agentId: sourceAgentId, source, channelId } = requireRouting(routing);
     const check = delegationManager.isDelegationAllowed(sourceAgentId, agentId);
     if (!check.allowed) {
       return {
@@ -439,9 +447,6 @@ export class DelegationExecutor {
     }
 
     if (background) {
-      const source = activeSource || 'viewer';
-      const channelId = activeChannelId || 'default';
-
       let bgAgentVersion = 0;
       let bgValSession: ValidationSessionRow | null = null;
       try {
@@ -478,16 +483,16 @@ export class DelegationExecutor {
       const bgStartTime = Date.now();
       void (async () => {
         try {
-          const process = await processManager.getProcess(source, channelId, agentId);
-          let delegationPrompt = delegationManager.buildDelegationPrompt(sourceAgentId, task);
-          if (input.skill) {
-            const skillPath = resolveSkillPath(input.skill);
-            if (skillPath && existsSync(skillPath)) {
-              const skillContent = readFileSync(skillPath, 'utf-8');
-              delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
-            }
-          }
-          const result = await process.sendMessage(delegationPrompt);
+          const result = await this.sendDelegationMessageWithRetry({
+            processManager,
+            delegationManager,
+            source,
+            channelId,
+            agentId,
+            sourceAgentId,
+            task,
+            skill: input.skill,
+          });
           const durationMs = Date.now() - bgStartTime;
 
           try {
@@ -581,8 +586,6 @@ export class DelegationExecutor {
       } as GatewayToolResult;
     }
 
-    const source = activeSource || 'viewer';
-    const channelId = activeChannelId || 'default';
     const startTime = Date.now();
 
     let agentVersion = 0;
@@ -617,136 +620,194 @@ export class DelegationExecutor {
       );
     }
 
+    try {
+      const result = await this.sendDelegationMessageWithRetry({
+        processManager,
+        delegationManager,
+        source,
+        channelId,
+        agentId,
+        sourceAgentId,
+        task,
+        skill: input.skill,
+      });
+      const durationMs = Date.now() - startTime;
+
+      try {
+        if (this.deps.sessionsDb) {
+          const row = logActivity(this.deps.sessionsDb, {
+            agent_id: agentId,
+            agent_version: agentVersion,
+            type: 'task_complete',
+            input_summary: task?.slice(0, 200),
+            output_summary: summarizeActivityOutput(result.response),
+            duration_ms: durationMs,
+            run_id: valSession?.id,
+            execution_status: 'completed',
+            trigger_reason: 'delegate_run',
+          });
+          if (valSession && this.deps.validationService) {
+            this.deps.validationService.recordRun(valSession.id, {
+              activityId: row.id,
+              duration_ms: durationMs,
+            });
+          }
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Completion activity failed', telemetryErr);
+      }
+
+      try {
+        if (valSession && this.deps.validationService) {
+          this.deps.validationService.finalizeSession(valSession.id, {
+            execution_status: 'completed',
+            metrics: { duration_ms: durationMs },
+          });
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Completion finalize failed', telemetryErr);
+      }
+
+      return {
+        success: true,
+        data: { agentId, response: result.response, duration_ms: durationMs },
+      } as GatewayToolResult;
+    } catch (err) {
+      const lastError = err instanceof Error ? err : new Error(String(err));
+      const failedDurationMs = Date.now() - startTime;
+      try {
+        if (this.deps.sessionsDb) {
+          const row = logActivity(this.deps.sessionsDb, {
+            agent_id: agentId,
+            agent_version: agentVersion,
+            type: 'task_error',
+            input_summary: task?.slice(0, 200),
+            error_message: lastError.message,
+            duration_ms: failedDurationMs,
+            run_id: valSession?.id,
+            execution_status: 'failed',
+            trigger_reason: 'delegate_run',
+          });
+          if (valSession && this.deps.validationService) {
+            this.deps.validationService.recordRun(valSession.id, {
+              activityId: row.id,
+              duration_ms: failedDurationMs,
+            });
+          }
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Failure activity failed', telemetryErr);
+      }
+
+      try {
+        if (valSession && this.deps.validationService) {
+          this.deps.validationService.finalizeSession(valSession.id, {
+            execution_status: 'failed',
+            error_message: lastError.message,
+            metrics: { duration_ms: failedDurationMs },
+          });
+        }
+      } catch (telemetryErr) {
+        securityLogger.warn('[Delegation telemetry] Failure finalize failed', telemetryErr);
+      }
+
+      return {
+        success: false,
+        error: `Delegation to ${agentId} failed after ${DELEGATE_MAX_RETRIES} attempts: ${lastError.message}`,
+      } as GatewayToolResult;
+    }
+  }
+
+  private async sendDelegationMessageWithRetry(args: {
+    processManager: AgentProcessManager;
+    delegationManager: DelegationManager;
+    source: string;
+    channelId: string;
+    agentId: string;
+    sourceAgentId: string;
+    task: string;
+    skill?: string;
+  }): Promise<Awaited<ReturnType<AgentRuntimeProcess['sendMessage']>>> {
     let lastError: Error | null = null;
 
     for (let attempt = 0; attempt < DELEGATE_MAX_RETRIES; attempt++) {
       try {
-        const process = await processManager.getProcess(source, channelId, agentId);
-        let delegationPrompt = delegationManager.buildDelegationPrompt(sourceAgentId, task);
-
-        if (input.skill) {
-          const skillPath = resolveSkillPath(input.skill);
-          if (skillPath && existsSync(skillPath)) {
-            const skillContent = readFileSync(skillPath, 'utf-8');
-            delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
-          }
-        }
+        const process = await args.processManager.getProcess(
+          args.source,
+          args.channelId,
+          args.agentId
+        );
+        let delegationPrompt = this.buildDelegationPrompt(args);
 
         const sessionId = process.getSessionId?.();
         if (!sessionId || attempt > 0) {
-          try {
-            const { getChannelHistory } = await import('../gateways/channel-history.js');
-            const channelHistory = getChannelHistory();
-            if (channelHistory) {
-              const historyContext = channelHistory.formatForContext(channelId, '', agentId);
-              if (historyContext) {
-                delegationPrompt = `${historyContext}\n\n${delegationPrompt}`;
-              }
-            }
-          } catch {
-            // Channel history injection is best-effort.
-          }
+          delegationPrompt = await this.withChannelHistory(
+            delegationPrompt,
+            args.channelId,
+            args.agentId
+          );
         }
 
-        const result = await process.sendMessage(delegationPrompt);
-        const durationMs = Date.now() - startTime;
-
-        try {
-          if (this.deps.sessionsDb) {
-            const row = logActivity(this.deps.sessionsDb, {
-              agent_id: agentId,
-              agent_version: agentVersion,
-              type: 'task_complete',
-              input_summary: task?.slice(0, 200),
-              output_summary: summarizeActivityOutput(result.response),
-              duration_ms: durationMs,
-              run_id: valSession?.id,
-              execution_status: 'completed',
-              trigger_reason: 'delegate_run',
-            });
-            if (valSession && this.deps.validationService) {
-              this.deps.validationService.recordRun(valSession.id, {
-                activityId: row.id,
-                duration_ms: durationMs,
-              });
-            }
-          }
-        } catch (telemetryErr) {
-          securityLogger.warn('[Delegation telemetry] Completion activity failed', telemetryErr);
-        }
-
-        try {
-          if (valSession && this.deps.validationService) {
-            this.deps.validationService.finalizeSession(valSession.id, {
-              execution_status: 'completed',
-              metrics: { duration_ms: durationMs },
-            });
-          }
-        } catch (telemetryErr) {
-          securityLogger.warn('[Delegation telemetry] Completion finalize failed', telemetryErr);
-        }
-
-        return {
-          success: true,
-          data: { agentId, response: result.response, duration_ms: durationMs },
-        } as GatewayToolResult;
+        return await process.sendMessage(delegationPrompt);
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
         const isBusy = lastError.message.includes('busy');
         const isCrash = lastError.message.includes('exited with code');
 
         if (isCrash) {
-          processManager.stopProcess(source, channelId, agentId);
+          args.processManager.stopProcess(args.source, args.channelId, args.agentId);
         }
 
         if (attempt < DELEGATE_MAX_RETRIES - 1 && (isBusy || isCrash)) {
-          await new Promise((r) => setTimeout(r, this.deps.retryDelayMs * (attempt + 1)));
+          await new Promise((resolveDelay) =>
+            setTimeout(resolveDelay, this.deps.retryDelayMs * (attempt + 1))
+          );
           continue;
         }
         break;
       }
     }
 
-    const failedDurationMs = Date.now() - startTime;
+    throw lastError ?? new Error('unknown delegation failure');
+  }
+
+  private buildDelegationPrompt(args: {
+    delegationManager: DelegationManager;
+    sourceAgentId: string;
+    task: string;
+    skill?: string;
+  }): string {
+    let delegationPrompt = args.delegationManager.buildDelegationPrompt(
+      args.sourceAgentId,
+      args.task
+    );
+    if (args.skill) {
+      const skillPath = resolveSkillPath(args.skill);
+      if (skillPath && existsSync(skillPath)) {
+        const skillContent = readFileSync(skillPath, 'utf-8');
+        delegationPrompt = skillContent + '\n\n---\n\n' + delegationPrompt;
+      }
+    }
+    return delegationPrompt;
+  }
+
+  private async withChannelHistory(
+    prompt: string,
+    channelId: string,
+    agentId: string
+  ): Promise<string> {
     try {
-      if (this.deps.sessionsDb) {
-        const row = logActivity(this.deps.sessionsDb, {
-          agent_id: agentId,
-          agent_version: agentVersion,
-          type: 'task_error',
-          input_summary: task?.slice(0, 200),
-          error_message: lastError?.message,
-          duration_ms: failedDurationMs,
-          run_id: valSession?.id,
-          execution_status: 'failed',
-          trigger_reason: 'delegate_run',
-        });
-        if (valSession && this.deps.validationService) {
-          this.deps.validationService.recordRun(valSession.id, {
-            activityId: row.id,
-            duration_ms: failedDurationMs,
-          });
+      const { getChannelHistory } = await import('../gateways/channel-history.js');
+      const channelHistory = getChannelHistory();
+      if (channelHistory) {
+        const historyContext = channelHistory.formatForContext(channelId, '', agentId);
+        if (historyContext) {
+          return `${historyContext}\n\n${prompt}`;
         }
       }
-    } catch (telemetryErr) {
-      securityLogger.warn('[Delegation telemetry] Failure activity failed', telemetryErr);
+    } catch {
+      // Channel history injection is best-effort.
     }
-
-    try {
-      if (valSession && this.deps.validationService) {
-        this.deps.validationService.finalizeSession(valSession.id, {
-          execution_status: 'failed',
-          error_message: lastError?.message,
-          metrics: { duration_ms: failedDurationMs },
-        });
-      }
-    } catch (telemetryErr) {
-      securityLogger.warn('[Delegation telemetry] Failure finalize failed', telemetryErr);
-    }
-
-    return {
-      success: false,
-      error: `Delegation to ${agentId} failed after ${DELEGATE_MAX_RETRIES} attempts: ${lastError?.message}`,
-    } as GatewayToolResult;
+    return prompt;
   }
 }

@@ -91,6 +91,23 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
   });
 
+  it('denies explicit execution contexts that omit executionSurface', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+
+    const result = await executor.execute('mama_load_checkpoint', {}, {
+      agentId: 'worker',
+      source: 'telegram',
+      channelId: 'tg:1',
+    } as Parameters<GatewayToolExecutor['execute']>[2]);
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'envelope_missing',
+    });
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
   it('allows missing-envelope execution only when the legacy bypass is explicit', async () => {
     process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = 'true';
     const mamaApi = makeMAMAApi();
