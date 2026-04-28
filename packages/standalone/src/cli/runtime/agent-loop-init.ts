@@ -24,6 +24,7 @@ import { AgentLoop } from '../../agent/index.js';
 import type { AgentLoopOptions, ContentBlock as AgentContentBlock } from '../../agent/types.js';
 import type { ContentBlock as GatewayContentBlock } from '../../gateways/types.js';
 import type { AgentLoopClient } from './types.js';
+import type { EnvelopeIssuanceMode } from './envelope-bootstrap.js';
 import type { MetricsStore } from '../../observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
@@ -56,7 +57,7 @@ export function initMainAgentLoop(
   db: SQLiteDatabase,
   metricsStore: MetricsStore | null,
   runtimeBackend: 'claude' | 'codex-mcp',
-  options?: { osAgentMode?: boolean }
+  options?: { osAgentMode?: boolean; envelopeIssuanceMode?: EnvelopeIssuanceMode }
 ): AgentLoopInitResult {
   // Reasoning collector for Discord display
   let reasoningLog: string[] = [];
@@ -191,6 +192,8 @@ export function initMainAgentLoop(
     undefined,
     {
       mamaDbPath: config.database.path.replace(/^~/, homedir()),
+      envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'off',
+      metricsStore,
     }
   );
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');

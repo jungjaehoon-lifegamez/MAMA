@@ -243,6 +243,7 @@ export class GatewayToolExecutor {
   private roleManager: RoleManager;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
+  private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -532,6 +533,7 @@ export class GatewayToolExecutor {
   constructor(options: GatewayToolExecutorOptions = {}) {
     this.mamaDbPath = options.mamaDbPath;
     this.sessionStore = options.sessionStore;
+    this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -700,6 +702,10 @@ export class GatewayToolExecutor {
         }
         throw err;
       }
+    }
+
+    if (this.envelopeIssuanceMode === 'off') {
+      return undefined;
     }
 
     if (failLoudOnMissing) {

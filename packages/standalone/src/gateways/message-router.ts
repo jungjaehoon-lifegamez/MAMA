@@ -46,9 +46,14 @@ import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-f
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
-import type { DestinationRef, Envelope, MemoryScope, ProjectRef } from '../envelope/types.js';
+import {
+  getReactiveRoutePolicy,
+  type ReactiveEnvelopeConfig,
+} from '../envelope/reactive-config.js';
+import type { Envelope } from '../envelope/types.js';
 
 export type { AgentLoopOptions } from '../agent/types.js';
+export type { ReactiveEnvelopeConfig } from '../envelope/reactive-config.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -127,101 +132,28 @@ const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
 const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
-const MESSAGE_ENVELOPE_ROUTES = {
-  telegram: {
-    source: 'telegram',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'telegram', id: message.channelId },
-    ],
-  },
-  slack: {
-    source: 'slack',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'slack', id: message.channelId },
-    ],
-  },
-  chatwork: {
-    source: 'chatwork',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'chatwork', id: message.channelId },
-    ],
-  },
-  discord: {
-    source: 'discord',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'discord', id: message.channelId },
-    ],
-  },
-  viewer: {
-    source: 'viewer',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'webchat', id: message.channelId },
-    ],
-  },
-  mobile: {
-    source: 'viewer',
-    destinations: (message: NormalizedMessage): DestinationRef[] => [
-      { kind: 'webchat', id: message.channelId },
-    ],
-  },
-  system: {
-    source: 'watch',
-    destinations: (): DestinationRef[] => [],
-  },
-} satisfies Record<
-  NormalizedMessage['source'],
-  {
-    source: Envelope['source'];
-    destinations: (message: NormalizedMessage) => DestinationRef[];
-  }
->;
-
-export interface ReactiveEnvelopeConfig {
-  projectRefsFor(message: NormalizedMessage): ProjectRef[];
-  rawConnectorsFor(message: NormalizedMessage): string[];
-  memoryScopesFor(message: NormalizedMessage): MemoryScope[];
-  reactiveBudgetSeconds: number;
-}
-
-function envelopeSourceForMessage(message: NormalizedMessage): Envelope['source'] {
-  // Mobile is treated as viewer so its webchat-scoped replies use the same envelope source.
-  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
-  if (!route) {
-    throw new Error(`[envelope] unsupported message source: ${String(message.source)}`);
-  }
-  return route.source;
-}
-
-function allowedDestinationsForMessage(message: NormalizedMessage): DestinationRef[] {
-  // Mobile is treated as viewer, so routing back to the webchat channel is allowed.
-  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
-  if (!route) {
-    throw new Error(`[envelope] unsupported destination source: ${String(message.source)}`);
-  }
-  return route.destinations(message);
-}
-
 function buildReactiveEnvelopeInput(
   message: NormalizedMessage,
   config: ReactiveEnvelopeConfig
 ): Omit<Envelope, 'envelope_hash' | 'signature'> {
+  const policy = getReactiveRoutePolicy(message, config);
   return {
     agent_id: 'worker',
     instance_id: `inst_${randomUUID()}`,
-    source: envelopeSourceForMessage(message),
+    source: policy.source,
     channel_id: message.channelId,
     trigger_context: { user_text: message.text },
     scope: {
-      project_refs: config.projectRefsFor(message),
-      raw_connectors: config.rawConnectorsFor(message),
-      memory_scopes: config.memoryScopesFor(message),
-      allowed_destinations: allowedDestinationsForMessage(message),
+      project_refs: policy.projectRefs,
+      raw_connectors: policy.rawConnectors,
+      memory_scopes: policy.memoryScopes,
+      allowed_destinations: policy.allowedDestinations,
     },
     tier: 1,
-    budget: { wall_seconds: config.reactiveBudgetSeconds },
+    budget: { wall_seconds: policy.reactiveBudgetSeconds },
     // Wall budget limits agent work; envelope validity gets slack for tool finalization.
     expires_at: new Date(
-      Date.now() + config.reactiveBudgetSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
+      Date.now() + policy.reactiveBudgetSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
     ).toISOString(),
   };
 }

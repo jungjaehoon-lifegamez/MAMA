@@ -20,6 +20,7 @@ import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import type { GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -53,6 +54,10 @@ import { initApiServer } from '../runtime/api-server-init.js';
 import { registerApiRoutes } from '../runtime/api-routes-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
+import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
+import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
+import { deriveMemoryScopes } from '../../memory/scope-context.js';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Options for start command
@@ -254,11 +259,14 @@ export async function runAgentLoop(
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
 
+  const envelopeBootstrap = buildRuntimeEnvelopeBootstrap(db, config, process.env);
   const mamaDbPath = expandPath(config.database.path);
   const toolExecutor = new GatewayToolExecutor({
     mamaDbPath: mamaDbPath,
     sessionStore: sessionStore,
     rolesConfig: config.roles, // Pass roles from config.yaml
+    envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
+    metricsStore,
   });
 
   const validBackends = ['claude', 'codex-mcp'] as const;
@@ -279,7 +287,7 @@ export async function runAgentLoop(
     db,
     metricsStore,
     runtimeBackend,
-    options
+    { ...options, envelopeIssuanceMode: envelopeBootstrap.metadata.issuance }
   );
 
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
@@ -292,9 +300,16 @@ export async function runAgentLoop(
 
   // ── Phase 4: Memory Agent + MessageRouter ─────────────────────────────────
 
-  const messageRouter = new MessageRouter(sessionStore, agentLoopClient, mamaApiClient, {
-    backend: runtimeBackend,
-  });
+  const messageRouter = new MessageRouter(
+    sessionStore,
+    agentLoopClient,
+    mamaApiClient,
+    {
+      backend: runtimeBackend,
+    },
+    envelopeBootstrap.envelopeConfig,
+    envelopeBootstrap.envelopeAuthority
+  );
   messageRouter.setSessionsDb(db);
 
   // validationService wired after creation (Phase 5 below)
@@ -337,21 +352,55 @@ export async function runAgentLoop(
     graphHandlerOptions.executeCodeAct = async (code: string) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
-      const bridge = new HostBridge(toolExecutor);
+      const codeActAgentId = config.multi_agent?.default_agent || 'conductor';
+      let executionContext: GatewayToolExecutionContext | null = null;
+      if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
+        const projectId = resolveReactiveProjectRoot(config, process.env);
+        const projectRef = { kind: 'project' as const, id: projectId };
+        const wallSeconds = Math.min(
+          Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
+          300
+        );
+        const envelope = envelopeBootstrap.envelopeAuthority.buildAndPersist({
+          agent_id: codeActAgentId,
+          instance_id: randomUUID(),
+          source: 'watch',
+          channel_id: 'api:code-act',
+          trigger_context: { user_text: '<api-code-act invocation>' },
+          scope: {
+            project_refs: [projectRef],
+            raw_connectors: [],
+            memory_scopes: deriveMemoryScopes({
+              source: 'viewer',
+              channelId: 'api:code-act',
+              userId: 'api',
+              projectId,
+            }),
+            allowed_destinations: [],
+          },
+          tier: 2,
+          budget: { wall_seconds: wallSeconds },
+          expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+        });
+        executionContext = {
+          agentId: codeActAgentId,
+          source: 'watch',
+          channelId: 'api:code-act',
+          envelope,
+          executionSurface: 'code_act',
+        };
+      }
+      const bridge = new HostBridge(toolExecutor, undefined, executionContext);
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
         if (result !== undefined) {
           toolCalls.push({ name: toolName, input });
         }
       };
-      // Set default agent context for /api/code-act calls (Conductor, tier 1)
+      // Set default agent context for /api/code-act calls (Conductor, tier 2 sandbox)
       // In normal agent loop execution, this is set per-request by the handler
-      toolExecutor.setCurrentAgentContext(
-        config.multi_agent?.default_agent || 'conductor',
-        'api',
-        'code-act'
-      );
-      bridge.injectInto(sandbox, 1);
+      toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
+      bridge.injectInto(sandbox, 2);
       const result = await sandbox.execute(code);
       return {
         success: result.success,
@@ -592,6 +641,7 @@ export async function runAgentLoop(
     enabledConnectors: enabledConnectorNames,
     agentLoop,
     getAdapter,
+    envelopeMetadata: envelopeBootstrap.metadata,
   });
 
   await registerApiRoutes({
