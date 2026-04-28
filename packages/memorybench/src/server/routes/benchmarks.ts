@@ -86,11 +86,11 @@ export async function handleBenchmarksRoutes(req: Request, url: URL): Promise<Re
   if (method === "GET" && questionsMatch) {
     const benchmarkName = questionsMatch[1]
 
-    try {
-      if (!getAvailableBenchmarks().includes(benchmarkName as BenchmarkName)) {
-        return json({ error: `Benchmark not found: ${benchmarkName}` }, 404)
-      }
+    if (!getAvailableBenchmarks().includes(benchmarkName as BenchmarkName)) {
+      return json({ error: `Benchmark not found: ${benchmarkName}` }, 404)
+    }
 
+    try {
       const benchmark = createBenchmark(benchmarkName as BenchmarkName)
       await benchmark.load()
       const questions = benchmark.getQuestions()
@@ -128,8 +128,14 @@ export async function handleBenchmarksRoutes(req: Request, url: URL): Promise<Re
           totalPages: Math.ceil(total / limit),
         },
       })
-    } catch {
-      return json({ error: `Benchmark not found: ${benchmarkName}` }, 404)
+    } catch (error) {
+      return json(
+        {
+          error: `Failed to load benchmark: ${benchmarkName}`,
+          message: error instanceof Error ? error.message : String(error),
+        },
+        500
+      )
     }
   }
 

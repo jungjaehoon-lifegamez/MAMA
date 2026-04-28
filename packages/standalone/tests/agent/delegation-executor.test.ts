@@ -73,12 +73,26 @@ function createHarness(
 }
 
 describe('DelegationExecutor', () => {
-  it('runs delegate with conductor/viewer/default routing fallback', async () => {
+  it('fails closed when delegation routing is missing', async () => {
+    const { executor, getProcess, isDelegationAllowed } = createHarness();
+
+    await expect(
+      executor.runDelegate(
+        { agentId: 'developer', task: 'Implement the patch' },
+        { agentId: '', source: '', channelId: '' }
+      )
+    ).rejects.toThrow('[delegation] missing routing.agentId');
+
+    expect(isDelegationAllowed).not.toHaveBeenCalled();
+    expect(getProcess).not.toHaveBeenCalled();
+  });
+
+  it('runs delegate with explicit routing', async () => {
     const { executor, getProcess, isDelegationAllowed, buildDelegationPrompt } = createHarness();
 
     const result = await executor.runDelegate(
       { agentId: 'developer', task: 'Implement the patch' },
-      { agentId: '', source: '', channelId: '' }
+      { agentId: 'conductor', source: 'viewer', channelId: 'main' }
     );
 
     expect(result).toMatchObject({
@@ -86,7 +100,7 @@ describe('DelegationExecutor', () => {
       data: expect.objectContaining({ agentId: 'developer', response: 'done' }),
     });
     expect(isDelegationAllowed).toHaveBeenCalledWith('conductor', 'developer');
-    expect(getProcess).toHaveBeenCalledWith('viewer', 'default', 'developer');
+    expect(getProcess).toHaveBeenCalledWith('viewer', 'main', 'developer');
     expect(buildDelegationPrompt).toHaveBeenCalledWith('conductor', 'Implement the patch');
   });
 
@@ -191,6 +205,35 @@ describe('DelegationExecutor', () => {
       error: expect.stringContaining("Invalid sample_count for 'qa-monitor'"),
     });
     expect(getProcess).not.toHaveBeenCalled();
+  });
+
+  it('retries background delegation after transient busy failures', async () => {
+    const firstSend = vi.fn().mockRejectedValue(new Error('Process is busy'));
+    const secondSend = vi.fn().mockResolvedValue({ response: 'Recovered in background' });
+    const { executor, getProcess } = createHarness();
+    getProcess
+      .mockResolvedValueOnce({
+        sendMessage: firstSend,
+        getSessionId: vi.fn().mockReturnValue('delegation-session'),
+      })
+      .mockResolvedValueOnce({
+        sendMessage: secondSend,
+        getSessionId: vi.fn().mockReturnValue('delegation-session'),
+      });
+
+    const result = await executor.runDelegate(
+      { agentId: 'developer', task: 'Background patch', background: true },
+      { agentId: 'conductor', source: 'viewer', channelId: 'main' }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      data: expect.objectContaining({ background: true }),
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(getProcess).toHaveBeenCalledTimes(2);
+    expect(secondSend).toHaveBeenCalled();
   });
 
   it('returns the delegation denial reason without starting a process', async () => {

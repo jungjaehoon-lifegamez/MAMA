@@ -12,6 +12,7 @@ import os from 'os';
 import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
+import { getForwardedClientAddress } from '../security/trusted-proxy.js';
 import {
   handleGetAgents,
   handleGetAgent,
@@ -104,6 +105,13 @@ const DEFAULT_GRAPH_LIMIT = 300;
 const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
 const SIMILAR_QUERY_DECISION_CHARS = 400;
+const CODE_ACT_RATE_LIMIT_WINDOW_MS = 60_000;
+const CODE_ACT_RATE_LIMIT_TTL_MS = CODE_ACT_RATE_LIMIT_WINDOW_MS * 5;
+const CODE_ACT_RATE_LIMIT_DEFAULT_MAX = 30;
+const codeActRateBuckets = new Map<
+  string,
+  { windowStartMs: number; count: number; lastSeenMs: number }
+>();
 
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
@@ -120,6 +128,60 @@ const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
 const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
+
+function getCodeActRateLimitMax(): number {
+  const raw = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+  if (!raw) {
+    return CODE_ACT_RATE_LIMIT_DEFAULT_MAX;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : CODE_ACT_RATE_LIMIT_DEFAULT_MAX;
+}
+
+function getCodeActClientKey(req: IncomingMessage): string {
+  return getForwardedClientAddress(req);
+}
+
+function pruneCodeActRateBuckets(now: number): void {
+  for (const [clientKey, bucket] of codeActRateBuckets.entries()) {
+    if (now - bucket.lastSeenMs > CODE_ACT_RATE_LIMIT_TTL_MS) {
+      codeActRateBuckets.delete(clientKey);
+    }
+  }
+}
+
+function checkCodeActRateLimit(req: IncomingMessage): {
+  allowed: boolean;
+  clientKey: string;
+  retryAfterSeconds?: number;
+} {
+  const now = Date.now();
+  pruneCodeActRateBuckets(now);
+  const clientKey = getCodeActClientKey(req);
+  const limit = getCodeActRateLimitMax();
+  const existing = codeActRateBuckets.get(clientKey);
+
+  if (!existing || now - existing.windowStartMs >= CODE_ACT_RATE_LIMIT_WINDOW_MS) {
+    codeActRateBuckets.set(clientKey, { windowStartMs: now, count: 1, lastSeenMs: now });
+    return { allowed: true, clientKey };
+  }
+
+  existing.lastSeenMs = now;
+
+  if (existing.count >= limit) {
+    return {
+      allowed: false,
+      clientKey,
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((CODE_ACT_RATE_LIMIT_WINDOW_MS - (now - existing.windowStartMs)) / 1000)
+      ),
+    };
+  }
+
+  existing.count++;
+  return { allowed: true, clientKey };
+}
 
 // Allowed directories for persona files (security: prevent arbitrary file read)
 const ALLOWED_PERSONA_DIRS = [
@@ -3900,11 +3962,32 @@ async function handleCodeActRequest(
   try {
     // Security: require authentication for code execution endpoint
     if (!isAuthenticated(req)) {
+      logUnauthorizedAttempt(req);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
           error: true,
           message: 'Authentication required. Set Authorization header with valid token.',
+        })
+      );
+      return;
+    }
+
+    const rateLimit = checkCodeActRateLimit(req);
+    if (!rateLimit.allowed) {
+      logger.warn('Code-Act rate limit exceeded', {
+        client: rateLimit.clientKey,
+        retryAfterSeconds: rateLimit.retryAfterSeconds,
+      });
+      res.writeHead(429, {
+        'Content-Type': 'application/json',
+        'Retry-After': String(rateLimit.retryAfterSeconds ?? 60),
+      });
+      res.end(
+        JSON.stringify({
+          error: true,
+          message: 'Code-Act rate limit exceeded. Retry later.',
+          retry_after_seconds: rateLimit.retryAfterSeconds ?? 60,
         })
       );
       return;

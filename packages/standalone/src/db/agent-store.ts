@@ -334,7 +334,7 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.envelopeHash ?? null,
     input.requestedScopes ? JSON.stringify(input.requestedScopes) : null,
     input.envelopeScopesSnapshot ? JSON.stringify(input.envelopeScopesSnapshot) : null,
-    input.scopeMismatch === true ? 1 : Number(input.scopeMismatch ?? 0)
+    Number(Boolean(input.scopeMismatch))
   );
   return db
     .prepare('SELECT * FROM agent_activity WHERE id = ?')

@@ -262,6 +262,105 @@ describe('graph api helpers', () => {
     expect(res._body).toContain('Invalid JSON');
   });
 
+  it('rate-limits Code-Act execution requests per client', async () => {
+    const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+    const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+    process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '2';
+    process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+    try {
+      const executeCodeAct = vi.fn().mockResolvedValue({
+        success: true,
+        value: 1,
+        logs: [],
+        metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+      });
+      const handler = createGraphHandler({ executeCodeAct });
+
+      for (let i = 0; i < 2; i++) {
+        const req = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+          remoteAddress: '127.0.0.77',
+          headers: { authorization: 'Bearer test-code-act-token' },
+        });
+        const res = createMockRes();
+        const handled = await handler(req, res as unknown as ServerResponse);
+        expect(handled).toBe(true);
+        expect(res._status).toBe(200);
+      }
+
+      const limitedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+        remoteAddress: '127.0.0.77',
+        headers: { authorization: 'Bearer test-code-act-token' },
+      });
+      const limitedRes = createMockRes();
+      const handled = await handler(limitedReq, limitedRes as unknown as ServerResponse);
+
+      expect(handled).toBe(true);
+      expect(limitedRes._status).toBe(429);
+      expect(limitedRes._body).toContain('rate limit exceeded');
+      expect(executeCodeAct).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+      } else {
+        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
+      }
+      if (previousAuthToken === undefined) {
+        delete process.env.MAMA_AUTH_TOKEN;
+      } else {
+        process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+      }
+    }
+  });
+
+  it('ignores spoofed x-forwarded-for for Code-Act rate limits from untrusted peers', async () => {
+    const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+    const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+    process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '1';
+    process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+    try {
+      const executeCodeAct = vi.fn().mockResolvedValue({
+        success: true,
+        value: 1,
+        logs: [],
+        metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+      });
+      const handler = createGraphHandler({ executeCodeAct });
+      const firstReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+        remoteAddress: '198.51.100.77',
+        headers: {
+          authorization: 'Bearer test-code-act-token',
+          'x-forwarded-for': '203.0.113.1',
+        },
+      });
+      const firstRes = createMockRes();
+      expect(await handler(firstReq, firstRes as unknown as ServerResponse)).toBe(true);
+      expect(firstRes._status).toBe(200);
+
+      const spoofedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+        remoteAddress: '198.51.100.77',
+        headers: {
+          authorization: 'Bearer test-code-act-token',
+          'x-forwarded-for': '203.0.113.2',
+        },
+      });
+      const spoofedRes = createMockRes();
+      expect(await handler(spoofedReq, spoofedRes as unknown as ServerResponse)).toBe(true);
+      expect(spoofedRes._status).toBe(429);
+      expect(executeCodeAct).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousLimit === undefined) {
+        delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+      } else {
+        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
+      }
+      if (previousAuthToken === undefined) {
+        delete process.env.MAMA_AUTH_TOKEN;
+      } else {
+        process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+      }
+    }
+  });
+
   it('returns 400 for malformed JSON on managed-agent update POST', async () => {
     const handler = createGraphHandler({ sessionsDb: db });
     const req = createBodyReq('/api/agents/dashboard-agent', '{bad-json');
@@ -397,13 +496,17 @@ function createMockRes() {
   };
 }
 
-function createBodyReq(url: string, body: string): IncomingMessage {
+function createBodyReq(
+  url: string,
+  body: string,
+  options: { remoteAddress?: string; headers?: Record<string, string> } = {}
+): IncomingMessage {
   const listeners = new Map<string, Array<(value?: unknown) => void>>();
   const req = {
     method: 'POST',
     url,
-    headers: { host: 'localhost', 'content-type': 'application/json' },
-    socket: { remoteAddress: '127.0.0.1' },
+    headers: { host: 'localhost', 'content-type': 'application/json', ...options.headers },
+    socket: { remoteAddress: options.remoteAddress ?? '127.0.0.1' },
     on(event: string, handler: (value?: unknown) => void) {
       const bucket = listeners.get(event) ?? [];
       bucket.push(handler);

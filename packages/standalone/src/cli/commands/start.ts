@@ -58,6 +58,27 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes } from '../../memory/scope-context.js';
 import { randomUUID } from 'node:crypto';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as unknown as {
+  DebugLogger: new (context?: string) => {
+    warn: (...args: unknown[]) => void;
+  };
+};
+const codeActLogger = new DebugLogger('CodeAct');
+const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+const CODE_ACT_MUTATION_TOOLS = new Set([
+  'mama_save',
+  'mama_update',
+  'mama_add',
+  'mama_ingest',
+  'report_publish',
+  'wiki_publish',
+]);
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
 
 /**
  * Options for start command
@@ -391,10 +412,19 @@ export async function runAgentLoop(
         };
       }
       const bridge = new HostBridge(toolExecutor, undefined, executionContext);
+      const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
         if (result !== undefined) {
           toolCalls.push({ name: toolName, input });
+          if (CODE_ACT_MUTATION_TOOLS.has(toolName)) {
+            codeActLogger.warn('[CodeAct] mutation tool call', {
+              toolName,
+              success: Boolean((result as { success?: unknown }).success),
+              readOnly: codeActReadOnly,
+              envelopeHash: executionContext?.envelope?.envelope_hash ?? null,
+            });
+          }
         }
       };
       const previousRoutingContext = toolExecutor.getCurrentAgentRoutingContext();
@@ -402,7 +432,7 @@ export async function runAgentLoop(
         // Set default agent context for /api/code-act calls (Conductor, tier 2 sandbox).
         // Per-request executionContext carries envelope data; this routing context is legacy fallback.
         toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-        bridge.injectInto(sandbox, 2);
+        bridge.injectInto(sandbox, codeActReadOnly ? 3 : 2);
         const result = await sandbox.execute(code);
         return {
           success: result.success,

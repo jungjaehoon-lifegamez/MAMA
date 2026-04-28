@@ -282,6 +282,14 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       });
       expect(JSON.parse(row.requested_scopes!)).toEqual([{ kind: 'global', id: 'system' }]);
 
+      const rowWithNumericAudit = logActivity(db, {
+        agent_id: 'trace-agent',
+        agent_version: 1,
+        type: 'gateway_tool_call',
+        scopeMismatch: 2,
+      });
+      expect(rowWithNumericAudit.scope_mismatch).toBe(1);
+
       const rowWithoutAudit = logActivity(db, {
         agent_id: 'trace-agent',
         agent_version: 1,
