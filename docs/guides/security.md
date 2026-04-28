@@ -7,6 +7,7 @@
 ## Table of Contents
 
 - [Security Model](#security-model)
+- [Envelope Threat Model and Posture](#envelope-threat-model-and-posture)
 - [Built-in Detection and Response](#built-in-detection-and-response)
 - [Localhost-Only Mode (Default)](#localhost-only-mode-default)
 - [External Access via Tunnels](#external-access-via-tunnels)
@@ -60,6 +61,63 @@ To route alerts to chat, set:
 ```bash
 export MAMA_SECURITY_ALERT_CHANNELS="discord:CHANNEL_ID,slack:C123456"
 ```
+
+## Envelope Threat Model and Posture
+
+M1R covers Reactive runtime issuance, gateway audit logging, and memory-scope
+mismatch visibility. It does not cover delegated memory workers or Autonomous
+Standing agents; those belong to M7 and M8. Code-task delegation is outside the
+memory-twin worker scope and must not gain memory mutation scope.
+
+### Covered Threats
+
+- Agent fabrication: gateway tools receive a signed envelope from the runtime,
+  not from model-authored text.
+- Durable audit tamper evidence: gateway tool calls record `envelope_hash`,
+  requested scopes, envelope scope snapshots, and `scope_mismatch` in
+  `agent_activity`.
+- Irreversible exfiltration: destination sends, raw connector reads, and tiered
+  write paths fail closed when the signed envelope does not authorize them.
+
+### Not Covered
+
+- Key extraction through process dumps, host compromise, or shell access.
+- Supply-chain compromise of runtime dependencies or local plugins.
+- Multi-tenant isolation. MAMA OS remains a localhost-first personal runtime.
+- Delegated memory-worker envelopes and Autonomous Standing envelopes.
+
+### Hybrid Enforcement
+
+M1R deliberately uses a hybrid posture:
+
+- Fail closed for destination, `raw_connector`, and tier violations because a
+  wrong send or cross-boundary raw read cannot be unsent.
+- Log and alarm for memory-scope mismatch because memory writes are recoverable,
+  and hard denial can amplify hallucinated scope retries. The evidence is kept
+  for operator review instead.
+
+Industry pattern mapping:
+
+- Macaroons: caveat-style narrowing maps to M1R's scoped envelope fields.
+- Biscuit: decentralized capability tokens map to a possible future asymmetric
+  worker-envelope design.
+- Microsoft "Auditable Security Layer for Agentic AI": audit-first enforcement
+  maps to M1R's durable ledger plus fail-closed irreversible boundaries.
+
+### Mismatch Investigation
+
+Find memory-scope mismatches in these places:
+
+- `agent_activity` rows where `scope_mismatch=1`
+- `agent_activity.requested_scopes` and `envelope_scopes_snapshot`
+- `MetricsStore` counter `envelope_scope_mismatch`
+- `securityLogger.warn` lines containing envelope scope mismatch context
+- Authenticated `/api/envelope/status` field `recent_mismatch_count_24h`
+
+When mismatches spike, compare `requested_scopes` with
+`envelope_scopes_snapshot` for the same `envelope_hash`. Classify the cause as
+prompt injection, agent hallucination, or a legitimate caller-side scope
+derivation bug before changing policy.
 
 ---
 
