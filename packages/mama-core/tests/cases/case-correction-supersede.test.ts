@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { getAdapter } from '../../src/db-manager.js';
@@ -459,7 +460,7 @@ describe('Phase 2b Task — supersedeCorrection (spec amendment-8 unblocked)', (
         correctionId,
         CASE_ID,
         targetRefJson,
-        require('node:crypto').createHash('sha256').update(targetRefJson).digest(),
+        createHash('sha256').update(targetRefJson).digest(),
         JSON.stringify('old narrative'),
         JSON.stringify('new narrative'),
         NOW

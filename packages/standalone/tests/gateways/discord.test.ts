@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Message } from 'discord.js';
 import { DiscordGateway } from '../../src/gateways/discord.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
 
@@ -54,6 +55,26 @@ const mockMessageRouter = {
 
 describe('DiscordGateway', () => {
   let gateway: DiscordGateway;
+  type TestMessage = {
+    content: string;
+    guild: { id: string } | null;
+    channel: { id: string };
+  };
+  type GatewayShouldRespond = {
+    shouldRespond(message: Message, isDM: boolean, isMentioned: boolean): boolean;
+  };
+  const asDiscordMessage = (message: TestMessage): Message => message as unknown as Message;
+  const shouldRespondFor = (
+    target: DiscordGateway,
+    message: TestMessage,
+    isDM: boolean,
+    isMentioned: boolean
+  ): boolean =>
+    (target as unknown as GatewayShouldRespond).shouldRespond(
+      asDiscordMessage(message),
+      isDM,
+      isMentioned
+    );
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -232,10 +253,9 @@ describe('DiscordGateway', () => {
         content: 'DELEGATE::developer::Do the thing',
         guild: { id: 'g1' },
         channel: { id: 'c1' },
-      } as any;
+      };
 
-      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
-      expect(shouldRespond(message, false, false)).toBe(true);
+      expect(shouldRespondFor(gateway, message, false, false)).toBe(true);
     });
 
     it('should respond to DELEGATE commands even with no guild config (mentions normally required)', () => {
@@ -244,10 +264,9 @@ describe('DiscordGateway', () => {
         content: 'DELEGATE_BG::reviewer::Review this',
         guild: { id: 'g1' },
         channel: { id: 'c1' },
-      } as any;
+      };
 
-      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
-      expect(shouldRespond(message, false, false)).toBe(true);
+      expect(shouldRespondFor(gateway, message, false, false)).toBe(true);
     });
 
     it('should not respond to normal messages when mention is required', () => {
@@ -261,10 +280,9 @@ describe('DiscordGateway', () => {
         content: 'hello',
         guild: { id: 'g1' },
         channel: { id: 'c1' },
-      } as any;
+      };
 
-      const shouldRespond = (gateway as any).shouldRespond.bind(gateway);
-      expect(shouldRespond(message, false, false)).toBe(false);
+      expect(shouldRespondFor(gateway, message, false, false)).toBe(false);
     });
   });
 });

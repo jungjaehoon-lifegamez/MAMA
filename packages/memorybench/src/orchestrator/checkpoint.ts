@@ -24,6 +24,14 @@ import { logger } from "../utils/logger"
 
 const RUNS_DIR = "./data/runs"
 
+function getErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("code" in error)) {
+    return undefined
+  }
+  const code = (error as { code?: unknown }).code
+  return typeof code === "string" ? code : undefined
+}
+
 export class CheckpointManager {
   private basePath: string
   private saveLock = new Map<string, Promise<void>>()
@@ -84,7 +92,7 @@ export class CheckpointManager {
 
     checkpoint.updatedAt = new Date().toISOString()
 
-    let lastError: any
+    let lastError: Error = new Error("Failed to save checkpoint")
 
     // Windows often locks files briefly (EPERM/EBUSY), so we retry a few times
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -92,9 +100,10 @@ export class CheckpointManager {
         writeFileSync(tempPath, JSON.stringify(checkpoint, null, 2))
         renameSync(tempPath, path)
         return // Success
-      } catch (e: any) {
-        lastError = e
-        if (e.code !== "EPERM" && e.code !== "EBUSY") {
+      } catch (e: unknown) {
+        lastError = e instanceof Error ? e : new Error(String(e))
+        const code = getErrorCode(e)
+        if (code !== "EPERM" && code !== "EBUSY") {
           break // Don't retry other errors
         }
         // Wait with exponential backoff: 50, 100, 200, 400, 800ms
@@ -105,7 +114,9 @@ export class CheckpointManager {
     // If we get here, all retries failed or it was a non-retriable error
     try {
       unlinkSync(tempPath)
-    } catch { }
+    } catch {
+      // Ignore cleanup errors; the original save error is more useful.
+    }
     throw lastError
   }
 
@@ -284,12 +295,12 @@ export class CheckpointManager {
       evaluated: questions.filter((q) => q.phases.evaluate.status === "completed").length,
       ...(episodesTotal > 0
         ? {
-          indexingEpisodes: {
-            total: episodesTotal,
-            completed: episodesCompleted,
-            failed: episodesFailed,
-          },
-        }
+            indexingEpisodes: {
+              total: episodesTotal,
+              completed: episodesCompleted,
+              failed: episodesFailed,
+            },
+          }
         : {}),
     }
   }

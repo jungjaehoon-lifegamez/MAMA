@@ -5,12 +5,14 @@ import { db, schema } from "../db"
 import { CheckpointManager } from "../../orchestrator/checkpoint"
 import { createBenchmark } from "../../benchmarks"
 import type { BenchmarkName } from "../../types/benchmark"
+import type { QuestionCheckpoint } from "../../types/checkpoint"
+import type { BenchmarkResult, QuestionTypeRegistry } from "../../types/unified"
 
 const checkpointManager = new CheckpointManager()
 
-const benchmarkRegistryCache: Record<string, any> = {}
+const benchmarkRegistryCache: Record<string, QuestionTypeRegistry> = {}
 
-function getQuestionTypeRegistry(benchmarkName: string) {
+function getQuestionTypeRegistry(benchmarkName: string): QuestionTypeRegistry {
   if (!benchmarkRegistryCache[benchmarkName]) {
     const benchmark = createBenchmark(benchmarkName as BenchmarkName)
     benchmarkRegistryCache[benchmarkName] = benchmark.getQuestionTypes()
@@ -122,14 +124,14 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
 
       // Load report for accuracy stats
       const reportPath = join(checkpointManager.getRunPath(runId), "report.json")
-      let report: any = null
+      let report: BenchmarkResult | null = null
       if (existsSync(reportPath)) {
-        report = JSON.parse(readFileSync(reportPath, "utf8"))
+        report = JSON.parse(readFileSync(reportPath, "utf8")) as BenchmarkResult
       }
 
       // Calculate accuracy from checkpoint if no report
-      const questions = Object.values(checkpoint.questions)
-      const correctCount = questions.filter((q: any) => q.phases?.evaluate?.score === 1).length
+      const questions: QuestionCheckpoint[] = Object.values(checkpoint.questions)
+      const correctCount = questions.filter((q) => q.phases.evaluate.score === 1).length
       const accuracy = report?.summary?.accuracy ?? correctCount / summary.total
 
       // Get provider code
@@ -142,13 +144,12 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
       const byQuestionType: Record<string, { total: number; correct: number; accuracy: number }> =
         {}
       for (const q of questions) {
-        const qData = q as any
-        const type = qData.questionType || "unknown"
+        const type = q.questionType || "unknown"
         if (!byQuestionType[type]) {
           byQuestionType[type] = { total: 0, correct: 0, accuracy: 0 }
         }
         byQuestionType[type].total++
-        if (qData.phases?.evaluate?.score === 1) {
+        if (q.phases.evaluate.score === 1) {
           byQuestionType[type].correct++
         }
       }
@@ -157,18 +158,18 @@ export async function handleLeaderboardRoutes(req: Request, url: URL): Promise<R
       }
 
       // Build evaluations from checkpoint if no report
-      let evaluations = report?.evaluations || []
+      let evaluations: unknown[] = report?.evaluations || []
       if (!report?.evaluations) {
-        evaluations = questions.map((q: any) => ({
+        evaluations = questions.map((q) => ({
           questionId: q.questionId,
           questionType: q.questionType,
           question: q.question,
           groundTruth: q.groundTruth,
-          hypothesis: q.phases?.answer?.hypothesis || "",
-          score: q.phases?.evaluate?.score || 0,
-          label: q.phases?.evaluate?.label || "incorrect",
-          explanation: q.phases?.evaluate?.explanation || "",
-          searchResults: q.phases?.search?.results || [],
+          hypothesis: q.phases.answer.hypothesis || "",
+          score: q.phases.evaluate.score || 0,
+          label: q.phases.evaluate.label || "incorrect",
+          explanation: q.phases.evaluate.explanation || "",
+          searchResults: q.phases.search.results || [],
         }))
       }
 
