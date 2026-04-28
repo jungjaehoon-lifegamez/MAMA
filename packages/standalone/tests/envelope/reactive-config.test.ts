@@ -155,6 +155,30 @@ describe('reactive envelope route policy', () => {
     expect(policy.reactiveBudgetSeconds).toBe(300);
   });
 
+  it('returns defensive copies from cached reactive route policy arrays', () => {
+    const config = makeConfig();
+    const message = makeMessage('telegram', 'tg:defensive');
+    const reactiveConfig = createDefaultReactiveEnvelopeConfig(config, { HOME: '/tmp/mama-home' });
+
+    reactiveConfig.projectRefsFor(message).push({ kind: 'project', id: '/tmp/mutated-project' });
+    reactiveConfig.rawConnectorsFor(message).push('discord');
+    reactiveConfig.memoryScopesFor(message).push({ kind: 'project', id: '/tmp/mutated-memory' });
+    reactiveConfig.allowedDestinationsFor(message).push({ kind: 'discord', id: 'mutated-channel' });
+
+    expect(reactiveConfig.projectRefsFor(message)).not.toContainEqual({
+      kind: 'project',
+      id: '/tmp/mutated-project',
+    });
+    expect(reactiveConfig.rawConnectorsFor(message)).toEqual(['telegram']);
+    expect(reactiveConfig.memoryScopesFor(message)).not.toContainEqual({
+      kind: 'project',
+      id: '/tmp/mutated-memory',
+    });
+    expect(reactiveConfig.allowedDestinationsFor(message)).toEqual([
+      { kind: 'telegram', id: 'tg:defensive' },
+    ]);
+  });
+
   it('keeps MessageRouter envelope scope behavior aligned with shared route policy', async () => {
     const db: SQLiteDatabase = new Database(':memory:');
     const sessionStore = new SessionStore(db);

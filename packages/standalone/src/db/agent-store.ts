@@ -363,6 +363,7 @@ export function getActivity(
   options: GetActivityOptions = {}
 ): ActivityRow[] {
   const traceClause = options.includeTrace ? '' : "AND type != 'gateway_tool_call'";
+  const normalizedLimit = normalizeActivityLimit(limit);
   return db
     .prepare(
       `SELECT * FROM agent_activity
@@ -370,7 +371,7 @@ export function getActivity(
        ORDER BY created_at DESC, id DESC
        LIMIT ?`
     )
-    .all(agentId, limit) as ActivityRow[];
+    .all(agentId, normalizedLimit) as ActivityRow[];
 }
 
 export function listGatewayToolCalls(db: DB, input: GatewayToolCallQuery = {}): ActivityRow[] {

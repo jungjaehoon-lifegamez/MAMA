@@ -232,6 +232,14 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       expect(rows).toHaveLength(3);
     });
 
+    it('AC #7b: normalizes invalid activity limits before querying', () => {
+      logActivity(db, { agent_id: 'dev', agent_version: 1, type: 'task_complete' });
+
+      const rows = getActivity(db, 'dev', 0);
+
+      expect(rows).toHaveLength(1);
+    });
+
     it('AC #8: defaults tokens_used and duration_ms to 0', () => {
       const row = logActivity(db, {
         agent_id: 'dev',

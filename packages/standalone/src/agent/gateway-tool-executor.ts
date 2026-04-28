@@ -757,8 +757,10 @@ export class GatewayToolExecutor {
 
     const executionSurface = ctx?.executionSurface;
     const requiresEnvelope =
-      ctx !== undefined &&
-      (executionSurface === undefined || ENVELOPE_REQUIRED_SURFACES.has(executionSurface));
+      executionSurface !== 'direct' &&
+      (ctx === undefined ||
+        executionSurface === undefined ||
+        ENVELOPE_REQUIRED_SURFACES.has(executionSurface));
     if (!requiresEnvelope) {
       return undefined;
     }

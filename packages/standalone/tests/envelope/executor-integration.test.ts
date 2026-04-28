@@ -60,7 +60,7 @@ describe('gateway-tool-executor envelope integration', () => {
 
   it('denies gateway tool calls without an envelope by default', async () => {
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     const result = await executor.execute(
       'mama_load_checkpoint',
@@ -81,11 +81,33 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
   });
 
-  it('allows non-reactive direct calls without an envelope context', async () => {
+  it('denies missing execution context when issuance is enabled', async () => {
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     const result = await executor.execute('mama_load_checkpoint', {});
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'envelope_missing',
+    });
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('allows explicit non-reactive direct calls without an envelope', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
+
+    const result = await executor.execute(
+      'mama_load_checkpoint',
+      {},
+      {
+        agentId: 'direct-test',
+        source: 'viewer',
+        channelId: 'direct',
+        executionSurface: 'direct',
+      }
+    );
 
     expect(result).toEqual({ success: true });
     expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
@@ -93,7 +115,7 @@ describe('gateway-tool-executor envelope integration', () => {
 
   it('denies explicit execution contexts that omit executionSurface', async () => {
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     const result = await executor.execute('mama_load_checkpoint', {}, {
       agentId: 'worker',
@@ -111,7 +133,7 @@ describe('gateway-tool-executor envelope integration', () => {
   it('allows missing-envelope execution only when the legacy bypass is explicit', async () => {
     process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS = 'true';
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     const result = await executor.execute(
       'mama_load_checkpoint',
@@ -131,9 +153,18 @@ describe('gateway-tool-executor envelope integration', () => {
   it('keeps fail-loud scoped to reactive execution surfaces', async () => {
     process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
-    const result = await executor.execute('mama_load_checkpoint', {});
+    const result = await executor.execute(
+      'mama_load_checkpoint',
+      {},
+      {
+        agentId: 'direct-test',
+        source: 'viewer',
+        channelId: 'direct',
+        executionSurface: 'direct',
+      }
+    );
 
     expect(result).toEqual({ success: true });
     expect(mamaApi.loadCheckpoint).toHaveBeenCalledOnce();
@@ -142,7 +173,7 @@ describe('gateway-tool-executor envelope integration', () => {
   it('fails loud when an explicit gateway context has no envelope', async () => {
     process.env.MAMA_ENVELOPE_FAIL_LOUD = 'true';
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     await expect(
       executor.execute(
@@ -162,7 +193,7 @@ describe('gateway-tool-executor envelope integration', () => {
   it('treats common truthy fail-loud env values as enabled', async () => {
     process.env.MAMA_ENVELOPE_FAIL_LOUD = '1';
     const mamaApi = makeMAMAApi();
-    const executor = new GatewayToolExecutor({ mamaApi });
+    const executor = new GatewayToolExecutor({ mamaApi, envelopeIssuanceMode: 'enabled' });
 
     await expect(
       executor.execute(

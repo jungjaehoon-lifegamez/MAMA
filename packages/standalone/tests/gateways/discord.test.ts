@@ -6,27 +6,29 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Message } from 'discord.js';
+import { ChannelType, Events, type Message } from 'discord.js';
 import { DiscordGateway } from '../../src/gateways/discord.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
 
 // Mock discord.js
-vi.mock('discord.js', () => {
-  const mockClient = {
-    user: { id: '123456789', tag: 'TestBot#1234' },
-    login: vi.fn().mockResolvedValue('token'),
-    destroy: vi.fn().mockResolvedValue(undefined),
-    once: vi.fn(),
-    on: vi.fn(),
-  };
+const discordClientMock = vi.hoisted(() => ({
+  user: { id: '123456789', tag: 'TestBot#1234', username: 'TestBot' },
+  login: vi.fn().mockResolvedValue('token'),
+  destroy: vi.fn().mockResolvedValue(undefined),
+  once: vi.fn(),
+  on: vi.fn(),
+}));
 
+vi.mock('discord.js', () => {
   return {
-    Client: vi.fn(() => mockClient),
+    Client: vi.fn(() => discordClientMock),
     GatewayIntentBits: {
       Guilds: 1,
       GuildMessages: 2,
       DirectMessages: 4,
       MessageContent: 8,
+      GuildMembers: 16,
+      GuildMessageReactions: 32,
     },
     Partials: {
       Channel: 1,
@@ -41,6 +43,7 @@ vi.mock('discord.js', () => {
       DM: 1,
       GuildText: 0,
     },
+    AttachmentBuilder: vi.fn(),
   };
 });
 
@@ -55,26 +58,45 @@ const mockMessageRouter = {
 
 describe('DiscordGateway', () => {
   let gateway: DiscordGateway;
-  type TestMessage = {
-    content: string;
-    guild: { id: string } | null;
-    channel: { id: string };
-  };
-  type GatewayShouldRespond = {
-    shouldRespond(message: Message, isDM: boolean, isMentioned: boolean): boolean;
-  };
-  const asDiscordMessage = (message: TestMessage): Message => message as unknown as Message;
-  const shouldRespondFor = (
-    target: DiscordGateway,
-    message: TestMessage,
-    isDM: boolean,
-    isMentioned: boolean
-  ): boolean =>
-    (target as unknown as GatewayShouldRespond).shouldRespond(
-      asDiscordMessage(message),
-      isDM,
-      isMentioned
-    );
+
+  function getMessageCreateHandler(): (message: Message) => Promise<void> {
+    const call = discordClientMock.on.mock.calls.find(([event]) => event === Events.MessageCreate);
+    expect(call).toBeDefined();
+    return call![1] as (message: Message) => Promise<void>;
+  }
+
+  function makeGuildMessage(
+    content: string,
+    isMentioned = false
+  ): Message & {
+    reply: ReturnType<typeof vi.fn>;
+  } {
+    const channel = {
+      id: 'c1',
+      type: ChannelType.GuildText,
+      name: 'general',
+      sendTyping: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn().mockResolvedValue({ id: 'sent-1', content: 'sent' }),
+      messages: { fetch: vi.fn() },
+      isDMBased: () => false,
+    };
+    return {
+      id: 'm1',
+      content,
+      guild: { id: 'g1', name: 'Guild One' },
+      channel,
+      author: {
+        id: 'u1',
+        username: 'tester',
+        tag: 'tester#0001',
+        bot: false,
+      },
+      mentions: { has: vi.fn().mockReturnValue(isMentioned) },
+      attachments: new Map(),
+      react: vi.fn().mockResolvedValue(undefined),
+      reply: vi.fn().mockResolvedValue({ id: 'reply-1', content: 'Test response' }),
+    } as unknown as Message & { reply: ReturnType<typeof vi.fn> };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -241,48 +263,45 @@ describe('DiscordGateway', () => {
     });
   });
 
-  describe('shouldRespond() - delegation trigger bypass', () => {
-    it('should respond to DELEGATE commands even when mention is required', () => {
+  describe('STORY-DISCORD-1: delegation trigger routing', () => {
+    it('AC: responds to DELEGATE commands through the public message event when mention is required', async () => {
       gateway.setConfig({
         guilds: {
           '*': { requireMention: true },
         },
       });
 
-      const message = {
-        content: 'DELEGATE::developer::Do the thing',
-        guild: { id: 'g1' },
-        channel: { id: 'c1' },
-      };
+      const message = makeGuildMessage('DELEGATE::developer::Do the thing');
 
-      expect(shouldRespondFor(gateway, message, false, false)).toBe(true);
+      await getMessageCreateHandler()(message);
+
+      expect(mockMessageRouter.process).toHaveBeenCalledOnce();
+      expect(message.reply).toHaveBeenCalled();
     });
 
-    it('should respond to DELEGATE commands even with no guild config (mentions normally required)', () => {
+    it('AC: responds to DELEGATE_BG commands with no guild config through the public message event', async () => {
       // Default: no guild config set -> shouldRespond returns isMentioned for normal messages.
-      const message = {
-        content: 'DELEGATE_BG::reviewer::Review this',
-        guild: { id: 'g1' },
-        channel: { id: 'c1' },
-      };
+      const message = makeGuildMessage('DELEGATE_BG::reviewer::Review this');
 
-      expect(shouldRespondFor(gateway, message, false, false)).toBe(true);
+      await getMessageCreateHandler()(message);
+
+      expect(mockMessageRouter.process).toHaveBeenCalledOnce();
+      expect(message.reply).toHaveBeenCalled();
     });
 
-    it('should not respond to normal messages when mention is required', () => {
+    it('AC: does not dispatch normal guild messages when mention is required', async () => {
       gateway.setConfig({
         guilds: {
           '*': { requireMention: true },
         },
       });
 
-      const message = {
-        content: 'hello',
-        guild: { id: 'g1' },
-        channel: { id: 'c1' },
-      };
+      const message = makeGuildMessage('hello');
 
-      expect(shouldRespondFor(gateway, message, false, false)).toBe(false);
+      await getMessageCreateHandler()(message);
+
+      expect(mockMessageRouter.process).not.toHaveBeenCalled();
+      expect(message.reply).not.toHaveBeenCalled();
     });
   });
 });
