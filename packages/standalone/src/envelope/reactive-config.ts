@@ -86,7 +86,8 @@ function isReactiveEnvelopeConfig(
   return (
     typeof candidate.projectRefsFor === 'function' &&
     typeof candidate.rawConnectorsFor === 'function' &&
-    typeof candidate.memoryScopesFor === 'function'
+    typeof candidate.memoryScopesFor === 'function' &&
+    typeof candidate.reactiveBudgetSeconds === 'number'
   );
 }
 

@@ -10,6 +10,7 @@ import { createMockMamaApi } from '../../src/gateways/context-injector.js';
 import {
   createDefaultReactiveEnvelopeConfig,
   getReactiveRoutePolicy,
+  type ReactiveEnvelopeConfig,
 } from '../../src/envelope/reactive-config.js';
 import { makeAuthorityHarness } from './fixtures.js';
 
@@ -128,6 +129,31 @@ describe('reactive envelope route policy', () => {
       expect(reactiveConfig.reactiveBudgetSeconds).toBe(policy.reactiveBudgetSeconds);
     }
   );
+
+  it('does not treat partial reactive config objects without a budget as reactive config', () => {
+    const partialReactiveConfig = {
+      projectRefsFor: () => {
+        throw new Error('partial reactive config should not be used');
+      },
+      rawConnectorsFor: () => {
+        throw new Error('partial reactive config should not be used');
+      },
+      memoryScopesFor: () => {
+        throw new Error('partial reactive config should not be used');
+      },
+    } as unknown as MAMAConfig | ReactiveEnvelopeConfig;
+
+    const policy = getReactiveRoutePolicy(
+      makeMessage('telegram', 'tg:partial'),
+      partialReactiveConfig,
+      { HOME: '/tmp/mama-home' }
+    );
+
+    expect(policy.projectRefs).toEqual([
+      { kind: 'project', id: resolve('/tmp/mama-home/.mama/workspace') },
+    ]);
+    expect(policy.reactiveBudgetSeconds).toBe(300);
+  });
 
   it('keeps MessageRouter envelope scope behavior aligned with shared route policy', async () => {
     const db: SQLiteDatabase = new Database(':memory:');

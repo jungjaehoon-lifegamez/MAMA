@@ -180,6 +180,7 @@ describe('runtime envelope bootstrap', () => {
       mkdirSync(join(homedir(), '.mama', 'workspace', 'test-fixtures'), { recursive: true });
       writeFileSync(readablePath, 'off mode read fixture', 'utf-8');
 
+      expect(capturedOptions).toBeDefined();
       const result = await executor.execute(
         'Read',
         { path: readablePath },

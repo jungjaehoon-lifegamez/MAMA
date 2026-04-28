@@ -1076,7 +1076,9 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 - **Memory limit** — QuickJS WASM heap is bounded (default ~256 MB, set by `quickjs-emscripten` WASM allocation)
 - **Tier 2 tools for `/api/code-act`** — The HTTP endpoint injects the host
   bridge with tier 2 in `start.ts`, exposing read tools plus bounded memory-write
-  tools. `Bash`, `Write`, and communication tools remain unavailable.
+  tools. `Bash`, `Write`, and communication tools remain unavailable. Set
+  `MAMA_CODE_ACT_READ_ONLY=1` to force the endpoint to inject tier 3 read-only
+  tools only.
 
 ### Available Tools in Sandbox
 
@@ -1084,7 +1086,10 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 
 - `mama_search`, `mama_load_checkpoint` — Memory read
 - `mama_save`, `mama_update`, `mama_add`, `mama_ingest` — Memory write, audited
-  through gateway envelope context when envelope issuance is enabled
+  through gateway envelope context when envelope issuance is enabled. Automated
+  coverage verifies Code-Act context propagation and memory-scope mismatch rows
+  in `tests/envelope/code-act-context.test.ts` and
+  `tests/envelope/memory-scope-mismatch-logging.test.ts`.
 - `report_publish`, `wiki_publish` — Dashboard/wiki publish helpers with
   autosave audit behavior
 - `Read` — File read
@@ -1096,12 +1101,24 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 
 The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 
-- Requires `MAMA_AUTH_TOKEN` if set
-- Uses Tier 2 tools via `HostBridge.injectInto(sandbox, 2)` in `start.ts`
+- Is write-capable for memory surfaces by default via
+  `HostBridge.injectInto(sandbox, 2)`
+- Requires strong perimeter controls before any non-local exposure. Production
+  deployments must use Zero Trust access or mTLS/IP allowlisting plus bearer
+  token auth; token auth alone is not sufficient for internet exposure.
+- Remains localhost-only when no `MAMA_AUTH_TOKEN` is configured
+- Can be forced read-only with `MAMA_CODE_ACT_READ_ONLY=1`, which injects
+  tier 3 tools instead
 - Has no access to agent persona or conversation context
-- Must be treated as write-capable for memory surfaces; expose it only behind
-  localhost, token auth, and the same network controls used for other `/api`
-  routes.
+- Applies a per-client rate limit (`MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE`,
+  default 30) and structured logs for memory mutation attempts
+- Trusts forwarded client IP headers only when the socket peer is a configured
+  trusted proxy (`MAMA_TRUSTED_PROXY_IPS`, plus loopback defaults); otherwise
+  the socket peer is the rate-limit identity
+- Records gateway audit rows with envelope hash, requested scopes, envelope
+  scope snapshots, and `scope_mismatch`. The signed envelope/audit row gives
+  durable request provenance; independent tamper-evidence for the memory row
+  itself remains future work.
 
 ### Risk Assessment
 
