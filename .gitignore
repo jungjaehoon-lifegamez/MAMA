@@ -99,6 +99,7 @@ docs/test/
 docs/.codex_write_test.txt
 docs/*.docx
 .sisyphus/
+.superpowers/
 docs/superpowers/
 
 .gemini/

@@ -32,18 +32,37 @@ interface MamaSuggestResult {
   graph?: unknown;
 }
 
+interface MamaCoreModule {
+  suggest?: (
+    query: string,
+    options: {
+      format: 'json';
+      limit: number;
+      threshold: number;
+      useReranking: boolean;
+    }
+  ) => Promise<MamaSuggestResult | null | undefined>;
+  saveCheckpoint?: (
+    summary: string,
+    openFiles: string[],
+    nextSteps: string,
+    recentConversation: unknown[]
+  ) => Promise<unknown>;
+}
+
 /**
  * Create a MamaApiClient that uses mama-core directly
  *
  * @returns MamaApiClient implementation
  */
-export function createMamaApiAdapter(): MamaApiClient {
+export function createMamaApiAdapter(
+  mamaCore?: MamaCoreModule,
+  loadMamaCore: () => MamaCoreModule | Promise<MamaCoreModule> = loadDefaultMamaCoreModule
+): MamaApiClient {
   return {
     async search(query: string, limit?: number): Promise<SearchResult[]> {
       try {
-        // Dynamically require mama-core (CommonJS module)
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        const mama = require('@jungjaehoon/mama-core/mama-api');
+        const mama = mamaCore ?? (await loadMamaCore());
 
         if (!mama || !mama.suggest) {
           console.warn('[SwarmMamaAdapter] mama-core suggest() not available');
@@ -51,7 +70,7 @@ export function createMamaApiAdapter(): MamaApiClient {
         }
 
         // Call mama-core suggest()
-        const result: MamaSuggestResult = await mama.suggest(query, {
+        const result = await mama.suggest(query, {
           format: 'json',
           limit: limit || 5,
           threshold: 0.6,
@@ -88,6 +107,10 @@ export function createMamaApiAdapter(): MamaApiClient {
   };
 }
 
+async function loadDefaultMamaCoreModule(): Promise<MamaCoreModule> {
+  return (await import('@jungjaehoon/mama-core/mama-api')) as MamaCoreModule;
+}
+
 /**
  * Save swarm checkpoint to MAMA (F6)
  *
@@ -100,12 +123,11 @@ export async function saveSwarmCheckpoint(
   sessionId: string,
   summary: string,
   openFiles?: string[],
-  nextSteps?: string
+  nextSteps?: string,
+  mamaCore?: MamaCoreModule
 ): Promise<void> {
   try {
-    // Dynamically require mama-core (CommonJS module)
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mama = require('@jungjaehoon/mama-core/mama-api');
+    const mama = mamaCore ?? (await loadDefaultMamaCoreModule());
 
     if (!mama || !mama.saveCheckpoint) {
       console.warn('[SwarmMamaAdapter] mama.saveCheckpoint() not available');

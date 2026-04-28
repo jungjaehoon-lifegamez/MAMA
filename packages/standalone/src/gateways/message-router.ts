@@ -33,7 +33,7 @@ import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import type { AgentContext } from '../agent/types.js';
+import type { AgentContext, AgentLoopOptions, StreamCallbacks } from '../agent/types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -45,6 +45,10 @@ import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
+import { EnvelopeAuthority } from '../envelope/index.js';
+import type { DestinationRef, Envelope, MemoryScope, ProjectRef } from '../envelope/types.js';
+
+export type { AgentLoopOptions } from '../agent/types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -88,32 +92,6 @@ export interface GatewayRegistry {
 }
 
 /**
- * Options for agent loop execution
- */
-export interface AgentLoopOptions {
-  /** System prompt to prepend */
-  systemPrompt?: string;
-  /** User identifier */
-  userId?: string;
-  /** Maximum turns */
-  maxTurns?: number;
-  /** Claude model to use (overrides default) */
-  model?: string;
-  /** Message source (for lane-based concurrency) */
-  source?: string;
-  /** Channel ID (for lane-based concurrency) */
-  channelId?: string;
-  /** Agent context for role-aware execution */
-  agentContext?: AgentContext;
-  /** Resume existing CLI session (skips system prompt injection) */
-  resumeSession?: boolean;
-  /** CLI session ID from session pool (prevents double-locking) */
-  cliSessionId?: string;
-  /** Streaming callbacks for real-time progress events */
-  streamCallbacks?: import('../agent/types.js').StreamCallbacks;
-}
-
-/**
  * Message processing result
  */
 export interface ProcessingResult {
@@ -148,6 +126,105 @@ const SENSITIVE_PATTERNS = [
 const KOREAN_TARGETS = new Set(['korean', '한국어']);
 const VIEWER_CONTEXT_AGENT_LIST_LIMIT = 5;
 const VIEWER_CONTEXT_ALERT_LIMIT = 3;
+const REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER = 4;
+const MESSAGE_ENVELOPE_ROUTES = {
+  telegram: {
+    source: 'telegram',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'telegram', id: message.channelId },
+    ],
+  },
+  slack: {
+    source: 'slack',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'slack', id: message.channelId },
+    ],
+  },
+  chatwork: {
+    source: 'chatwork',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'chatwork', id: message.channelId },
+    ],
+  },
+  discord: {
+    source: 'discord',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'discord', id: message.channelId },
+    ],
+  },
+  viewer: {
+    source: 'viewer',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'webchat', id: message.channelId },
+    ],
+  },
+  mobile: {
+    source: 'viewer',
+    destinations: (message: NormalizedMessage): DestinationRef[] => [
+      { kind: 'webchat', id: message.channelId },
+    ],
+  },
+  system: {
+    source: 'watch',
+    destinations: (): DestinationRef[] => [],
+  },
+} satisfies Record<
+  NormalizedMessage['source'],
+  {
+    source: Envelope['source'];
+    destinations: (message: NormalizedMessage) => DestinationRef[];
+  }
+>;
+
+export interface ReactiveEnvelopeConfig {
+  projectRefsFor(message: NormalizedMessage): ProjectRef[];
+  rawConnectorsFor(message: NormalizedMessage): string[];
+  memoryScopesFor(message: NormalizedMessage): MemoryScope[];
+  reactiveBudgetSeconds: number;
+}
+
+function envelopeSourceForMessage(message: NormalizedMessage): Envelope['source'] {
+  // Mobile is treated as viewer so its webchat-scoped replies use the same envelope source.
+  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
+  if (!route) {
+    throw new Error(`[envelope] unsupported message source: ${String(message.source)}`);
+  }
+  return route.source;
+}
+
+function allowedDestinationsForMessage(message: NormalizedMessage): DestinationRef[] {
+  // Mobile is treated as viewer, so routing back to the webchat channel is allowed.
+  const route = MESSAGE_ENVELOPE_ROUTES[message.source];
+  if (!route) {
+    throw new Error(`[envelope] unsupported destination source: ${String(message.source)}`);
+  }
+  return route.destinations(message);
+}
+
+function buildReactiveEnvelopeInput(
+  message: NormalizedMessage,
+  config: ReactiveEnvelopeConfig
+): Omit<Envelope, 'envelope_hash' | 'signature'> {
+  return {
+    agent_id: 'worker',
+    instance_id: `inst_${randomUUID()}`,
+    source: envelopeSourceForMessage(message),
+    channel_id: message.channelId,
+    trigger_context: { user_text: message.text },
+    scope: {
+      project_refs: config.projectRefsFor(message),
+      raw_connectors: config.rawConnectorsFor(message),
+      memory_scopes: config.memoryScopesFor(message),
+      allowed_destinations: allowedDestinationsForMessage(message),
+    },
+    tier: 1,
+    budget: { wall_seconds: config.reactiveBudgetSeconds },
+    // Wall budget limits agent work; envelope validity gets slack for tool finalization.
+    expires_at: new Date(
+      Date.now() + config.reactiveBudgetSeconds * 1000 * REACTIVE_ENVELOPE_EXPIRY_MULTIPLIER
+    ).toISOString(),
+  };
+}
 
 /**
  * Sanitize user-supplied text before injecting into prompts.
@@ -203,6 +280,8 @@ export class MessageRouter {
   private mamaApi: MamaApiClient;
   private agentLoop: AgentLoopClient;
   private config: Required<MessageRouterConfig>;
+  private envelopeConfig?: ReactiveEnvelopeConfig;
+  private envelopeAuthority?: EnvelopeAuthority;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
   private cachedGatewayToolsPrompt: string | null = null;
@@ -412,11 +491,21 @@ export class MessageRouter {
     sessionStore: SessionStore,
     agentLoop: AgentLoopClient,
     mamaApi: MamaApiClient,
-    config: MessageRouterConfig = {}
+    config: MessageRouterConfig = {},
+    envelopeConfig?: ReactiveEnvelopeConfig,
+    envelopeAuthority?: EnvelopeAuthority
   ) {
     this.sessionStore = sessionStore;
     this.agentLoop = agentLoop;
     this.mamaApi = mamaApi;
+    this.envelopeConfig = envelopeConfig;
+    this.envelopeAuthority = envelopeAuthority;
+    if (this.envelopeConfig && !this.envelopeAuthority) {
+      throw new Error('[envelope] ReactiveEnvelopeConfig provided without EnvelopeAuthority');
+    }
+    if (!this.envelopeConfig && this.envelopeAuthority) {
+      throw new Error('[envelope] EnvelopeAuthority provided without ReactiveEnvelopeConfig');
+    }
     this.config = {
       similarityThreshold: config.similarityThreshold ?? 0.7,
       maxDecisions: config.maxDecisions ?? 3,
@@ -435,6 +524,17 @@ export class MessageRouter {
       similarityThreshold: this.config.similarityThreshold,
       maxDecisions: this.config.maxDecisions,
     });
+  }
+
+  private buildReactiveEnvelope(message: NormalizedMessage): Envelope | undefined {
+    const config = this.envelopeConfig;
+    const authority = this.envelopeAuthority;
+
+    if (!config || !authority) {
+      return undefined;
+    }
+
+    return authority.buildAndPersist(buildReactiveEnvelopeInput(message, config));
   }
 
   /**
@@ -492,7 +592,7 @@ export class MessageRouter {
     message: NormalizedMessage,
     processOptions?: {
       onQueued?: () => void;
-      onStream?: import('../agent/types.js').StreamCallbacks;
+      onStream?: StreamCallbacks;
     }
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
@@ -683,25 +783,6 @@ This protects your credentials from being exposed in chat logs.`;
       }, streamFlushIntervalMs);
     }
 
-    const options: AgentLoopOptions = {
-      systemPrompt: effectivePrompt,
-      userId: message.userId,
-      model: roleModel, // Role-specific model override
-      maxTurns: roleMaxTurns, // Role-specific max turns
-      source: message.source,
-      channelId: message.channelId,
-      agentContext,
-      resumeSession: shouldResume, // Use --resume flag for continuing sessions
-      cliSessionId, // Pass CLI session ID to avoid double-locking
-      streamCallbacks: wrappedOnStream || processOptions?.onStream,
-    };
-
-    if (shouldResume) {
-      logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
-    } else {
-      logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
-    }
-
     let response: string;
 
     // Skill on-demand injection: prepend matched skill content to user message
@@ -720,32 +801,53 @@ This protects your credentials from being exposed in chat logs.`;
     let pendingNotices = false;
     let pendingNoticeCount = 0;
     try {
-      if (shouldResume) {
-        const notices = this.memoryNoticeQueue.peek(channelKey);
-        pendingNotices = notices.length > 0;
-        pendingNoticeCount = notices.length;
-        memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
-        if (memoryPrefix) {
-          memoryPrefix = `${memoryPrefix}\n\n`;
-        }
-      } else {
-        memoryPrefix = await this.getPerTurnMemoryPrefix(message);
-      }
-    } catch (err) {
-      logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
-      if (shouldResume) {
-        try {
-          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
-        } catch (fallbackErr) {
-          logger.warn(
-            `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
-          );
-          /* non-fatal */
-        }
-      }
-    }
+      const envelope = this.buildReactiveEnvelope(message);
+      const options: AgentLoopOptions = {
+        systemPrompt: effectivePrompt,
+        userId: message.userId,
+        model: roleModel, // Role-specific model override
+        maxTurns: roleMaxTurns, // Role-specific max turns
+        source: message.source,
+        channelId: message.channelId,
+        agentContext,
+        resumeSession: shouldResume, // Use --resume flag for continuing sessions
+        cliSessionId, // Pass CLI session ID to avoid double-locking
+        streamCallbacks: wrappedOnStream || processOptions?.onStream,
+        envelope,
+      };
 
-    try {
+      if (shouldResume) {
+        logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
+      } else {
+        logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
+      }
+
+      try {
+        if (shouldResume) {
+          const notices = this.memoryNoticeQueue.peek(channelKey);
+          pendingNotices = notices.length > 0;
+          pendingNoticeCount = notices.length;
+          memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
+          if (memoryPrefix) {
+            memoryPrefix = `${memoryPrefix}\n\n`;
+          }
+        } else {
+          memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+        }
+      } catch (err) {
+        logger.warn(`[memory-prefix] Failed: ${err instanceof Error ? err.message : String(err)}`);
+        if (shouldResume) {
+          try {
+            memoryPrefix = await this.getPerTurnMemoryPrefix(message);
+          } catch (fallbackErr) {
+            logger.warn(
+              `[memory-prefix] Fallback failed: ${fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr)}`
+            );
+            /* non-fatal */
+          }
+        }
+      }
+
       // Use multimodal content if available (OpenClaw-style)
       if (
         message.contentBlocks &&

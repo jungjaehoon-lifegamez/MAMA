@@ -59,6 +59,7 @@ import type {
   StopBotInput,
   BotStatus,
   BotPlatform,
+  EnvelopeDenialResult,
 } from './types.js';
 import { AgentError } from './types.js';
 import {
@@ -94,6 +95,8 @@ import {
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
 import type { ValidationSessionRow } from '../validation/types.js';
+import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
+import type { Envelope } from '../envelope/index.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -101,6 +104,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const securityLogger = new DebugLogger('SecurityAudit');
+const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const AGENT_DETAIL_TABS = new Set([
   'config',
   'persona',
@@ -115,6 +119,7 @@ type GatewayExecutionContext = {
   agentId?: string;
   source?: string;
   channelId?: string;
+  envelope?: Envelope;
 };
 
 type ActiveGatewayExecutionContext = {
@@ -122,6 +127,7 @@ type ActiveGatewayExecutionContext = {
   agentId: string;
   source: string;
   channelId: string;
+  envelope?: Envelope;
 };
 
 const managedAgentMutationTails = new Map<string, Promise<void>>();
@@ -249,6 +255,7 @@ export class GatewayToolExecutor {
   private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
+  private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -339,6 +346,7 @@ export class GatewayToolExecutor {
       agentId,
       source,
       channelId,
+      envelope: executionContext?.envelope,
     };
   }
 
@@ -672,6 +680,96 @@ export class GatewayToolExecutor {
     return { allowed: true };
   }
 
+  private enforceEnvelopeForToolCall(
+    toolName: string,
+    input: GatewayToolInput
+  ): GatewayToolResult | undefined {
+    const ctx = this.executionContextStorage.getStore();
+    const failLoudOnMissing = isTruthyEnv('MAMA_ENVELOPE_FAIL_LOUD');
+    const allowLegacyBypass = isTruthyEnv('MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS');
+
+    if (ctx?.envelope) {
+      try {
+        this.envelopeEnforcer.check(ctx.envelope, toolName, input);
+        return undefined;
+      } catch (err) {
+        if (err instanceof EnvelopeViolation) {
+          this.logEnvelopeActivity(ctx, 'envelope_violation', toolName, err.message);
+          const denial: EnvelopeDenialResult = {
+            success: false,
+            error: err.message,
+            code: err.code,
+            envelope_hash: ctx.envelope.envelope_hash,
+          };
+          return denial;
+        }
+        throw err;
+      }
+    }
+
+    if (failLoudOnMissing) {
+      throw new Error(`[envelope] tool ${toolName} called without envelope (fail-loud mode)`);
+    }
+
+    if (allowLegacyBypass) {
+      if (ctx) {
+        securityLogger.warn('[envelope] tool called without envelope (legacy bypass enabled)', {
+          toolName,
+          agentId: ctx.agentId,
+          source: ctx.source,
+          channelId: ctx.channelId,
+        });
+        this.logEnvelopeActivity(ctx, 'envelope_missing_legacy', toolName);
+      }
+
+      return undefined;
+    }
+
+    const error = `[envelope] tool ${toolName} called without envelope`;
+    if (ctx) {
+      securityLogger.warn('[envelope] tool denied without envelope', {
+        toolName,
+        agentId: ctx.agentId,
+        source: ctx.source,
+        channelId: ctx.channelId,
+      });
+      this.logEnvelopeActivity(ctx, 'envelope_missing_denied', toolName, error);
+    }
+
+    return {
+      success: false,
+      error,
+      code: 'envelope_missing',
+    };
+  }
+
+  private logEnvelopeActivity(
+    ctx: ActiveGatewayExecutionContext,
+    type: 'envelope_violation' | 'envelope_missing_legacy' | 'envelope_missing_denied',
+    toolName: string,
+    errorMessage?: string
+  ): void {
+    try {
+      if (!this.sessionsDb) {
+        return;
+      }
+      logActivity(this.sessionsDb, {
+        agent_id: ctx.agentId,
+        agent_version: 0,
+        type,
+        input_summary: toolName,
+        output_summary: ctx.envelope?.envelope_hash
+          ? `envelope_hash=${ctx.envelope.envelope_hash}`
+          : undefined,
+        error_message: errorMessage,
+        execution_status: errorMessage ? 'failed' : 'completed',
+        trigger_reason: 'envelope_enforcer',
+      });
+    } catch (logErr) {
+      securityLogger.warn('[envelope] audit log failed (non-fatal)', logErr);
+    }
+  }
+
   /**
    * Execute a gateway tool with permission checks
    *
@@ -696,6 +794,11 @@ export class GatewayToolExecutor {
         undefined,
         false
       );
+    }
+
+    const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
+    if (envelopeDenied) {
+      return envelopeDenied;
     }
 
     // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
@@ -3453,4 +3556,12 @@ export class GatewayToolExecutor {
   static isValidTool(toolName: string): toolName is GatewayToolName {
     return VALID_TOOLS.includes(toolName as GatewayToolName);
   }
+}
+
+function isTruthyEnv(name: string): boolean {
+  const value = process.env[name];
+  if (value === undefined) {
+    return false;
+  }
+  return TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
 }
