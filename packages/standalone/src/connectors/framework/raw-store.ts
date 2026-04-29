@@ -11,6 +11,25 @@ import { join } from 'path';
 import Database from '../../sqlite.js';
 import type { NormalizedItem } from './types.js';
 
+interface ConnectorEventIndexInput {
+  source_connector: string;
+  source_type: string;
+  source_id: string;
+  source_locator: string;
+  channel: string;
+  author: string;
+  content: string;
+  event_datetime: number;
+  source_timestamp_ms: number;
+  source_cursor: string | null;
+  tenant_id: string | null;
+  project_id: string | null;
+  memory_scope_kind: string | null;
+  memory_scope_id: string | null;
+  metadata: Record<string, unknown> | null;
+  content_hash: Buffer;
+}
+
 interface RawRow {
   id: number;
   source_id: string;
@@ -62,6 +81,8 @@ export interface RawStoreBackfillOptions {
   memoryScopeId?: string;
 }
 
+export type RawIndexSink = (connectorName: string, items: NormalizedItem[]) => void | Promise<void>;
+
 function ensureRawItemsProvenanceColumns(db: Database): void {
   const columns = new Set(
     (db.prepare('PRAGMA table_info(raw_items)').all() as Array<{ name: string }>).map(
@@ -104,6 +125,30 @@ function normalizeContentHash(item: NormalizedItem): string {
     return item.contentHash;
   }
   return createHash('sha256').update(canonicalizeRawContent(item), 'utf8').digest('hex');
+}
+
+export function mapNormalizedItemsToConnectorEventIndexInputs(
+  connectorName: string,
+  items: NormalizedItem[]
+): ConnectorEventIndexInput[] {
+  return items.map((item) => ({
+    source_connector: connectorName,
+    source_type: item.type,
+    source_id: item.sourceId,
+    source_locator: `${connectorName}:${item.channel}:${item.sourceId}`,
+    channel: item.channel,
+    author: item.author,
+    content: item.content,
+    event_datetime: item.timestamp.getTime(),
+    source_timestamp_ms: item.timestamp.getTime(),
+    source_cursor: item.sourceCursor ?? null,
+    tenant_id: item.tenantId ?? null,
+    project_id: item.projectId ?? null,
+    memory_scope_kind: item.memoryScopeKind ?? null,
+    memory_scope_id: item.memoryScopeId ?? null,
+    metadata: item.metadata ?? null,
+    content_hash: Buffer.from(normalizeContentHash(item), 'hex'),
+  }));
 }
 
 export class RawStore {
