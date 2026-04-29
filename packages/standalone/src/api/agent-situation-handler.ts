@@ -67,6 +67,11 @@ const RANGE_DAYS: Record<string, number> = {
   '30d': 30,
   '180d': 180,
 };
+const RANGE_TTL_MS: Record<string, number> = {
+  '7d': 120 * 1000,
+  '30d': 300 * 1000,
+  '180d': 900 * 1000,
+};
 const DEFAULT_FOCUS: SituationFocus[] = ['decisions', 'risks', 'open_questions'];
 const FOCUS_VALUES = new Set<SituationFocus>([
   'decisions',
@@ -94,6 +99,7 @@ async function handleSituationRequest(
   try {
     const nowMs = Math.floor(options.now?.() ?? Date.now());
     const envelope = loadWorkerEnvelope(req, options.envelopeAuthority);
+    validateEnvelopeAsOf(envelope.scope.as_of);
     const visibility = deriveWorkerEnvelopeVisibility(envelope, {
       connectors: parseRequestedConnectors(req),
       scopes: parseRequestedScopes(req),
@@ -123,6 +129,13 @@ async function handleSituationRequest(
       limit: query.limit,
       ranking_policy_version: rankingPolicyVersion,
     });
+    const canonicalEffectiveFilters: AgentSituationInput['effective_filters'] = {
+      scopes: key.canonicalInput.scopes,
+      connectors: key.canonicalInput.connectors,
+      project_refs: key.canonicalInput.project_refs,
+      tenant_id: key.canonicalInput.tenant_id,
+      as_of: key.canonicalInput.as_of,
+    };
     const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const suppliedModelRun = suppliedModelRunId
       ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope, key.cacheKey)
@@ -169,12 +182,12 @@ async function handleSituationRequest(
                 range: query.rangeLabel,
                 range_start: new Date(query.rangeStartMs).toISOString(),
                 range_end: new Date(query.rangeEndMs).toISOString(),
-                focus: query.focus,
-                limit: query.limit,
-                scopes: visibility.scopes,
-                connectors: visibility.connectors,
-                project_refs: visibility.projectRefs,
-                tenant_id: visibility.tenantId,
+                focus: key.canonicalInput.focus,
+                limit: key.canonicalInput.limit,
+                scopes: canonicalEffectiveFilters.scopes,
+                connectors: canonicalEffectiveFilters.connectors,
+                project_refs: canonicalEffectiveFilters.project_refs,
+                tenant_id: canonicalEffectiveFilters.tenant_id,
               },
             });
           if (!suppliedModelRun) {
@@ -182,12 +195,12 @@ async function handleSituationRequest(
           }
 
           return builder(options.memoryAdapter, {
-            scope: visibility.scopes,
-            range_start_ms: query.rangeStartMs,
-            range_end_ms: query.rangeEndMs,
-            focus: query.focus,
-            limit: query.limit,
-            effective_filters: effectiveFilters,
+            scope: canonicalEffectiveFilters.scopes,
+            range_start_ms: key.canonicalInput.range_start_ms,
+            range_end_ms: key.canonicalInput.range_end_ms,
+            focus: key.canonicalInput.focus,
+            limit: key.canonicalInput.limit,
+            effective_filters: canonicalEffectiveFilters,
             envelope_hash: envelope.envelope_hash,
             agent_id: envelope.agent_id,
             model_run_id: modelRun.model_run_id,
@@ -198,11 +211,16 @@ async function handleSituationRequest(
         }
       );
       if (ownedModelRunId) {
-        commitModelRunInAdapter(
-          options.memoryAdapter,
-          ownedModelRunId,
-          `agent.situation packet ${packet.packet_id}`
-        );
+        try {
+          commitModelRunInAdapter(
+            options.memoryAdapter,
+            ownedModelRunId,
+            `agent.situation packet ${packet.packet_id}`
+          );
+        } catch (error) {
+          removeOwnedPacket(options.memoryAdapter, packet.packet_id, ownedModelRunId);
+          throw error;
+        }
       }
 
       res.json(toPacket(packet, !builtPacket));
@@ -302,14 +320,23 @@ function parseSituationQuery(req: Request, nowMs: number): SituationQuery {
   if (!days) {
     throw invalidQuery('range must be one of 7d, 30d, or 180d.');
   }
+  const rangeEndMs = bucketRangeEndMs(nowMs, range);
   return {
-    rangeStartMs: nowMs - days * DAY_MS,
-    rangeEndMs: nowMs,
+    rangeStartMs: rangeEndMs - days * DAY_MS,
+    rangeEndMs,
     rangeLabel: range,
     focus,
     limit,
     refresh,
   };
+}
+
+function bucketRangeEndMs(nowMs: number, range: string): number {
+  const bucketMs = RANGE_TTL_MS[range];
+  if (!bucketMs) {
+    return nowMs;
+  }
+  return Math.floor(nowMs / bucketMs) * bucketMs;
 }
 
 function parseFocus(value: string | undefined): SituationFocus[] {
@@ -386,6 +413,32 @@ function toPacket(record: AgentSituationPacketRecord, cacheHit: boolean): AgentS
 
 function invalidQuery(message: string): WorkerEnvelopeError {
   return new WorkerEnvelopeError(400, 'agent_situation_query_invalid', message);
+}
+
+function validateEnvelopeAsOf(value: string | undefined): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!ISO_UTC_PATTERN.test(value) || !Number.isFinite(Date.parse(value))) {
+    throw new WorkerEnvelopeError(
+      400,
+      'worker_envelope_as_of_invalid',
+      'Worker envelope as_of must be an ISO-8601 UTC timestamp.'
+    );
+  }
+}
+
+function removeOwnedPacket(
+  adapter: AgentSituationAdapter,
+  packetId: string,
+  modelRunId: string
+): void {
+  const result = adapter
+    .prepare('DELETE FROM agent_situation_packets WHERE packet_id = ? AND model_run_id = ?')
+    .run(packetId, modelRunId);
+  if (result.changes !== 1) {
+    throw new Error(`Failed to remove uncommitted agent.situation packet ${packetId}`);
+  }
 }
 
 function sendSituationError(res: Response, error: unknown): void {
