@@ -35,26 +35,34 @@ export function createMemoryProvenanceRouter(): Router {
   });
 
   router.get('/:memoryId', async (req, res) => {
-    const rejected = firstRejectedScopeQueryParam(req.query);
-    if (rejected) {
-      res.status(400).json({
-        error: true,
-        code: 'scope_query_not_supported',
-        message: `Admin provenance reads do not accept caller-supplied scope filters: ${rejected}`,
-      });
-      return;
-    }
+    try {
+      const rejected = firstRejectedScopeQueryParam(req.query);
+      if (rejected) {
+        res.status(400).json({
+          error: true,
+          code: 'scope_query_not_supported',
+          message: `Admin provenance reads do not accept caller-supplied scope filters: ${rejected}`,
+        });
+        return;
+      }
 
-    const record = await getMemoryProvenanceAudit(req.params.memoryId);
-    if (!record) {
-      res.status(404).json({
+      const record = await getMemoryProvenanceAudit(req.params.memoryId);
+      if (!record) {
+        res.status(404).json({
+          error: true,
+          code: 'memory_not_found',
+          message: 'Memory provenance was not found.',
+        });
+        return;
+      }
+      res.json({ data: record });
+    } catch {
+      res.status(500).json({
         error: true,
-        code: 'memory_not_found',
-        message: 'Memory provenance was not found.',
+        code: 'memory_provenance_error',
+        message: 'Failed to load memory provenance.',
       });
-      return;
     }
-    res.json({ data: record });
   });
 
   return router;

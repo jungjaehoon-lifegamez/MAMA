@@ -4,8 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import request from 'supertest';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import * as mamaCore from '@jungjaehoon/mama-core';
 import { closeDB } from '@jungjaehoon/mama-core/db-manager';
 import {
   createTrustedProvenanceCapability,
@@ -180,6 +181,27 @@ describe('Story M2.3: Admin memory provenance API', () => {
 
         expect(response.status).toBe(400);
         expect(response.body.code).toBe('scope_query_not_supported');
+      });
+
+      it('returns structured JSON when single-memory provenance lookup fails', async () => {
+        const provenanceSpy = vi
+          .spyOn(mamaCore, 'getMemoryProvenanceAudit')
+          .mockRejectedValueOnce(new Error('database unavailable'));
+        const apiServer = createApiServer({ scheduler, port: 0 });
+
+        try {
+          const response = await request(apiServer.app)
+            .get('/api/memory/provenance/mem-broken-db')
+            .set('Authorization', 'Bearer admin-token');
+
+          expect(response.status).toBe(500);
+          expect(response.body).toMatchObject({
+            error: true,
+            code: 'memory_provenance_error',
+          });
+        } finally {
+          provenanceSpy.mockRestore();
+        }
       });
     });
   });
