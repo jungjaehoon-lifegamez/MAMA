@@ -34,6 +34,7 @@ export interface InitApiServerParams {
   enabledConnectors: string[];
   agentLoop: AgentLoop;
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
+  envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
   /** mama-core getAdapter() — used to create the memoryDb shim */
   getAdapter: () => {
     prepare: (sql: string) => unknown;
@@ -59,6 +60,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     agentLoop,
     getAdapter,
     envelopeMetadata,
+    envelopeAuthority,
   } = params;
 
   // ── SkillRegistry + MCP config migration ──────────────────────────────
@@ -111,6 +113,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     enabledConnectors,
     eventBus,
     envelope: envelopeMetadata,
+    envelopeAuthority,
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);

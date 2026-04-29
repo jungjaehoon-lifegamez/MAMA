@@ -41,6 +41,12 @@ describe('EnvelopeEnforcer', () => {
     expect(() => enforcer.check(env, 'mama_search', { query: 'x' })).toThrow(/invalid_expiry/);
   });
 
+  it('rejects parseable non-ISO expires_at values', () => {
+    const env = makeEnvelope({ expires_at: '2099-01-01 00:00:00' });
+
+    expect(() => enforcer.check(env, 'mama_search', { query: 'x' })).toThrow(/invalid_expiry/);
+  });
+
   it('rejects raw access outside envelope.scope.raw_connectors', () => {
     const env = makeEnvelope();
 

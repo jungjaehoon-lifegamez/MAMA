@@ -1,4 +1,5 @@
 import type { Envelope } from './types.js';
+import { parseEnvelopeExpiresAt } from './expiry.js';
 
 export class EnvelopeViolation extends Error {
   constructor(
@@ -51,8 +52,10 @@ export class EnvelopeEnforcer {
   }
 
   private checkExpiry(envelope: Envelope): void {
-    const expiresAt = new Date(envelope.expires_at).getTime();
-    if (Number.isNaN(expiresAt)) {
+    let expiresAt: number;
+    try {
+      expiresAt = parseEnvelopeExpiresAt(envelope.expires_at);
+    } catch {
       throw new EnvelopeViolation(
         `Envelope ${envelope.instance_id} has invalid expires_at ${envelope.expires_at}`,
         'invalid_expiry'

@@ -388,6 +388,7 @@ export * from './cases/composition-overrides.js';
 export * from './cases/freshness.js';
 export * from './cases/membership-explain.js';
 export * from './connectors/event-index.js';
+export * from './connectors/raw-query.js';
 export * from './connectors/types.js';
 export * from './search/question-type.js';
 export * from './search/feedback-store.js';
