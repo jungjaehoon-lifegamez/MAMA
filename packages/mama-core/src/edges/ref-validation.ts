@@ -40,6 +40,26 @@ function visibilityFromScopes(scopes: readonly TwinScopeRef[] | undefined): Twin
   return { scopes: scopes ? [...scopes] : undefined };
 }
 
+function asOfMs(visibility: TwinVisibility): number | null {
+  return typeof visibility.asOfMs === 'number' ? visibility.asOfMs : null;
+}
+
+function isAtOrBeforeAsOf(value: number | null | undefined, visibility: TwinVisibility): boolean {
+  const asOf = asOfMs(visibility);
+  return asOf === null || (typeof value === 'number' && value <= asOf);
+}
+
+function parseTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<string> {
   const pragma = TABLE_COLUMN_PRAGMAS[table];
   if (!pragma) {
@@ -63,21 +83,28 @@ function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<str
   return columns;
 }
 
-function memoryExists(adapter: TwinRefVisibilityAdapter, id: string): boolean {
-  const row = adapter.prepare('SELECT 1 AS ok FROM decisions WHERE id = ? LIMIT 1').get(id) as
-    | { ok: number }
-    | undefined;
-  return Boolean(row?.ok);
-}
-
 function isMemoryVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
-  if (!memoryExists(adapter, id)) {
+  const row = adapter
+    .prepare(
+      `
+        SELECT created_at, event_datetime
+        FROM decisions
+        WHERE id = ?
+        LIMIT 1
+      `
+    )
+    .get(id) as { created_at: number; event_datetime: number | null } | undefined;
+  if (!row) {
     return false;
   }
+  if (!isAtOrBeforeAsOf(row.event_datetime ?? row.created_at, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
@@ -143,7 +170,7 @@ function parseCaseScopeRefs(scopeRefs: unknown): TwinScopeRef[] {
 function isCaseVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
   const row = adapter.prepare('SELECT * FROM case_truth WHERE case_id = ? LIMIT 1').get(id) as
     | Record<string, unknown>
@@ -151,6 +178,11 @@ function isCaseVisible(
   if (!row) {
     return false;
   }
+  const timestamp = parseTimestamp(row.last_activity_at) ?? parseTimestamp(row.updated_at);
+  if (!isAtOrBeforeAsOf(timestamp, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
@@ -192,8 +224,6 @@ function isRawVisible(
 
   if (
     hasProjectRefs(visibility.projectRefs) &&
-    row.project_id !== null &&
-    row.project_id !== undefined &&
     !visibility.projectRefs.some((project) => project.id === row.project_id)
   ) {
     return false;
@@ -202,10 +232,12 @@ function isRawVisible(
   if (
     typeof visibility.tenantId === 'string' &&
     visibility.tenantId.length > 0 &&
-    row.tenant_id !== null &&
-    row.tenant_id !== undefined &&
     row.tenant_id !== visibility.tenantId
   ) {
+    return false;
+  }
+
+  if (!isAtOrBeforeAsOf(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
     return false;
   }
 
@@ -220,19 +252,26 @@ function isRawVisible(
 function isEntityVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
   const row = adapter
-    .prepare('SELECT scope_kind, scope_id FROM entity_nodes WHERE id = ? AND status = ? LIMIT 1')
+    .prepare(
+      'SELECT scope_kind, scope_id, created_at FROM entity_nodes WHERE id = ? AND status = ? LIMIT 1'
+    )
     .get(id, 'active') as
     | {
         scope_kind: string | null;
         scope_id: string | null;
+        created_at: number;
       }
     | undefined;
   if (!row) {
     return false;
   }
+  if (!isAtOrBeforeAsOf(row.created_at, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
@@ -247,16 +286,16 @@ function isTwinRefVisible(
   edgeCache: Map<string, TwinEdgeRecord | null>
 ): boolean {
   if (ref.kind === 'entity') {
-    return isEntityVisible(adapter, ref.id, visibility.scopes);
+    return isEntityVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'report') {
     return !hasScopes(visibility.scopes);
   }
   if (ref.kind === 'memory') {
-    return isMemoryVisible(adapter, ref.id, visibility.scopes);
+    return isMemoryVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'case') {
-    return isCaseVisible(adapter, ref.id, visibility.scopes);
+    return isCaseVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'raw') {
     return isRawVisible(adapter, ref.id, visibility);
@@ -271,6 +310,9 @@ function isTwinRefVisible(
     edgeCache.set(ref.id, edge);
   }
   if (!edge) {
+    return false;
+  }
+  if (!isAtOrBeforeAsOf(edge.created_at, visibility)) {
     return false;
   }
   const pathWithCurrent = new Set(visitedEdges);

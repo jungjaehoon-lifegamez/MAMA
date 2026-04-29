@@ -8,11 +8,17 @@ import { attachEntityAliasWithEdge } from '../../../mama-core/src/agent-graph/in
 import { upsertConnectorEventIndex } from '../../../mama-core/src/connectors/event-index.js';
 import { normalizeEntityLabel } from '../../../mama-core/src/entities/normalization.js';
 import { attachEntityAlias, createEntityNode } from '../../../mama-core/src/entities/store.js';
-import { beginModelRunInAdapter } from '../../../mama-core/src/model-runs/store.js';
+import {
+  beginModelRunInAdapter,
+  commitModelRunInAdapter,
+} from '../../../mama-core/src/model-runs/store.js';
 
 import Database from '../../src/sqlite.js';
 import { createApiServer } from '../../src/api/index.js';
-import { createAgentGraphRouter } from '../../src/api/agent-graph-handler.js';
+import {
+  createAgentGraphRouter,
+  type AgentGraphRouterOptions,
+} from '../../src/api/agent-graph-handler.js';
 import { requireAuth } from '../../src/api/auth-middleware.js';
 import { applyEnvelopeTablesMigration } from '../../src/db/migrations/envelope-tables.js';
 import { EnvelopeAuthority } from '../../src/envelope/authority.js';
@@ -217,7 +223,7 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
     await cleanupTestDB(testDbPath);
   });
 
-  function makeServer() {
+  function makeServer(overrides: Partial<AgentGraphRouterOptions> = {}) {
     const app = express();
     app.use(express.json());
     app.use('/api', requireAuth);
@@ -226,6 +232,7 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       createAgentGraphRouter({
         memoryAdapter: getAdapter(),
         envelopeAuthority: authority,
+        ...overrides,
       })
     );
     return { app };
@@ -251,6 +258,9 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       scope_id: 'alpha',
       merged_into: null,
     });
+    getAdapter()
+      .prepare('UPDATE entity_nodes SET created_at = ?, updated_at = ? WHERE id = ?')
+      .run(500, 500, 'entity_project_alpha');
     insertEdge({
       edgeId: 'edge_old_mentions',
       edgeType: 'mentions',
@@ -369,6 +379,32 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       expect(withJsonContextRef.body.entity.id).toBe('entity_person_jaehoon');
     });
 
+    it('does not resolve preferred labels for entities created after request as_of', async () => {
+      await createEntityNode({
+        id: 'entity_api_future_preferred',
+        kind: 'person',
+        preferred_label: 'API Future Preferred',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      getAdapter()
+        .prepare('UPDATE entity_nodes SET created_at = ?, updated_at = ? WHERE id = ?')
+        .run(2_000, 2_000, 'entity_api_future_preferred');
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get(
+          '/api/agent/entities/resolve?label=API%20Future%20Preferred&as_of=1970-01-01T00%3A00%3A01.000Z'
+        )
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.entity).toBeNull();
+      expect(response.body.candidates).toHaveLength(0);
+    });
+
     it('filters alias matches by source ref connector visibility', async () => {
       await createEntityNode({
         id: 'entity_alias_api_connector_filtered',
@@ -458,6 +494,32 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
           }),
         ])
       );
+    });
+
+    it('treats envelope as_of as an upper bound over request as_of', async () => {
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+          as_of: '1970-01-01T00:00:01.500Z',
+        },
+      });
+      authority.persist(validEnvelope);
+      await seedGraph();
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get(
+          '/api/agent/graph/neighborhood?ref=entity%3Aentity_project_alpha&depth=1&edge_types=mentions&as_of=1970-01-01T00%3A00%3A03.000Z'
+        )
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.edges.map((edge: { edge_id: string }) => edge.edge_id)).toEqual([
+        'edge_old_mentions',
+      ]);
     });
 
     it('accepts JSON refs, rejects over-wide depth, and filters raw endpoints by full envelope visibility', async () => {
@@ -553,6 +615,31 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       expect(response.body.code).toBe('agent_graph_body_invalid');
     });
 
+    it('requires direct alias writes to carry visible source refs', async () => {
+      await createEntityNode({
+        id: 'entity_alias_requires_sources',
+        kind: 'person',
+        preferred_label: 'Alias Requires Sources',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_requires_sources/aliases')
+          .send({ label: 'No Source Alias', request_idempotency_key: 'alias-no-source-key' })
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('agent_graph_invalid');
+      expect(getAdapter().prepare('SELECT COUNT(*) AS count FROM model_runs').get()).toEqual({
+        count: 0,
+      });
+    });
+
     it('creates a committed model run plus alias_of edge when no model run is supplied', async () => {
       await createEntityNode({
         id: 'entity_alias_target',
@@ -563,16 +650,27 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-target',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
       const apiServer = makeServer();
 
       const response = await authed(
-        request(apiServer.app).post('/api/agent/entities/entity_alias_target/aliases').send({
-          label: '\uC815\uC7AC\uD6C8',
-          confidence: 0.9,
-          request_idempotency_key: 'alias-api-key',
-          source_type: 'human',
-          source_ref: 'raw:hidden-provenance',
-        })
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_target/aliases')
+          .send({
+            label: '\uC815\uC7AC\uD6C8',
+            confidence: 0.9,
+            request_idempotency_key: 'alias-api-key',
+            source_refs: [{ kind: 'raw', id: rawId }],
+            source_type: 'human',
+            source_ref: 'raw:hidden-provenance',
+          })
       );
 
       expect(response.status).toBe(200);
@@ -681,11 +779,20 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-replay',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
       const apiServer = makeServer();
       const payload = {
         label: 'Replay Alias',
         confidence: 0.9,
         request_idempotency_key: 'alias-replay-key',
+        source_refs: [{ kind: 'raw', id: rawId }],
       };
 
       const first = await authed(
@@ -736,17 +843,190 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
         envelope_hash: 'other-envelope',
         input_refs: { test: true },
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-denied',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
       const apiServer = makeServer();
 
       const response = await authed(
         request(apiServer.app)
           .post('/api/agent/entities/entity_alias_denied/aliases')
           .set('x-mama-model-run-id', 'mr_mismatch')
-          .send({ label: 'Denied Alias', request_idempotency_key: 'denied-alias-key' })
+          .send({
+            label: 'Denied Alias',
+            request_idempotency_key: 'denied-alias-key',
+            source_refs: [{ kind: 'raw', id: rawId }],
+          })
       );
 
       expect(response.status).toBe(403);
       expect(response.body.code).toBe('agent_graph_model_run_denied');
+    });
+
+    it('rejects supplied model runs from unrelated same-envelope work', async () => {
+      await createEntityNode({
+        id: 'entity_alias_unrelated_run',
+        kind: 'person',
+        preferred_label: 'Alias Unrelated Run',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-unrelated-run',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      beginModelRunInAdapter(getAdapter(), {
+        model_run_id: 'mr_unrelated_alias',
+        agent_id: validEnvelope.agent_id,
+        instance_id: validEnvelope.instance_id,
+        envelope_hash: validEnvelope.envelope_hash,
+        input_snapshot_ref: 'memory:unrelated',
+        input_refs: { tool: 'memory.write' },
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_unrelated_run/aliases')
+          .set('x-mama-model-run-id', 'mr_unrelated_alias')
+          .send({
+            label: 'Unrelated Run Alias',
+            request_idempotency_key: 'alias-unrelated-run-key',
+            source_refs: [{ kind: 'raw', id: rawId }],
+          })
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('agent_graph_model_run_denied');
+    });
+
+    it('rejects terminal supplied model runs for the matching alias request', async () => {
+      await createEntityNode({
+        id: 'entity_alias_terminal_run',
+        kind: 'person',
+        preferred_label: 'Alias Terminal Run',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-terminal-run',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      beginModelRunInAdapter(getAdapter(), {
+        model_run_id: 'mr_terminal_alias',
+        agent_id: validEnvelope.agent_id,
+        instance_id: validEnvelope.instance_id,
+        envelope_hash: validEnvelope.envelope_hash,
+        input_snapshot_ref: 'entity-alias:entity_alias_terminal_run:alias-terminal-run-key',
+        input_refs: {
+          tool: 'entity.alias',
+          entity_id: 'entity_alias_terminal_run',
+          request_idempotency_key: 'alias-terminal-run-key',
+          source_refs: [{ kind: 'raw', id: rawId }],
+        },
+      });
+      commitModelRunInAdapter(getAdapter(), 'mr_terminal_alias', 'already committed');
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_terminal_run/aliases')
+          .set('x-mama-model-run-id', 'mr_terminal_alias')
+          .send({
+            label: 'Terminal Run Alias',
+            request_idempotency_key: 'alias-terminal-run-key',
+            source_refs: [{ kind: 'raw', id: rawId }],
+          })
+      );
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('agent_graph_model_run_not_running');
+    });
+
+    it('removes owned alias and edge rows when direct model-run commit fails', async () => {
+      await createEntityNode({
+        id: 'entity_alias_commit_failure',
+        kind: 'person',
+        preferred_label: 'Alias Commit Failure',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-api-alias-commit-failure',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      const baseAdapter = getAdapter();
+      const commitFailingAdapter: AgentGraphRouterOptions['memoryAdapter'] = {
+        prepare(sql: string) {
+          const statement = baseAdapter.prepare(sql);
+          if (sql.includes("SET status = 'committed'")) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('graph commit store unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          return statement;
+        },
+        transaction<T>(fn: () => T): T {
+          return baseAdapter.transaction(fn);
+        },
+      };
+      const apiServer = makeServer({ memoryAdapter: commitFailingAdapter });
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_commit_failure/aliases')
+          .send({
+            label: 'Commit Failure Alias',
+            request_idempotency_key: 'alias-commit-failure-key',
+            source_refs: [{ kind: 'raw', id: rawId }],
+          })
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.body.code).toBe('internal_server_error');
+      expect(
+        getAdapter()
+          .prepare(
+            `
+              SELECT
+                (SELECT COUNT(*) FROM entity_aliases WHERE label = 'Commit Failure Alias') AS aliases,
+                (SELECT COUNT(*) FROM twin_edges WHERE request_idempotency_key = 'alias-commit-failure-key') AS edges
+            `
+          )
+          .get()
+      ).toEqual({ aliases: 0, edges: 0 });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
+          .all()
+      ).toEqual([{ status: 'failed', error_summary: 'graph commit store unavailable' }]);
     });
   });
 });

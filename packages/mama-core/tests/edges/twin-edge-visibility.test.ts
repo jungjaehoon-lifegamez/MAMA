@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
 import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import {
+  assertTwinRefsVisible,
   assertTwinRefsVisibleToScopes,
   listVisibleTwinEdgesForRefs,
 } from '../../src/edges/ref-validation.js';
@@ -222,6 +223,60 @@ describe('Story M3.1: Twin Edge Visibility', () => {
           [{ kind: 'project', id: 'alpha' }]
         )
       ).not.toThrow();
+    });
+
+    it('fails closed for raw endpoints missing project or tenant metadata when filters exist', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const nullProjectRaw = insertScopedRaw('raw-null-project', 'project', 'alpha', {
+        source_connector: 'slack',
+        tenant_id: 'default',
+      });
+      const nullTenantRaw = insertScopedRaw('raw-null-tenant', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+      });
+      const visibleRaw = insertScopedRaw('raw-visible-required-fields', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      const visible = insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: visibleRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+      for (const rawId of [nullProjectRaw, nullTenantRaw]) {
+        insertTwinEdge(getAdapter(), {
+          edge_type: 'derived_from',
+          subject_ref: { kind: 'memory', id: 'mem-alpha' },
+          object_ref: { kind: 'raw', id: rawId },
+          source: 'code',
+          reason_text: 'connector replay',
+        });
+      }
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        }
+      );
+
+      expect(scoped.map((edge) => edge.edge_id)).toEqual([visible.edge_id]);
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'raw', id: nullProjectRaw }], {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        })
+      ).toThrow(/not visible/i);
     });
 
     it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {

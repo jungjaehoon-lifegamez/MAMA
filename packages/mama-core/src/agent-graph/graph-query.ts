@@ -122,10 +122,11 @@ function listFilteredEdges(
 function assertRefsVisible(
   adapter: AgentGraphAdapter,
   refs: readonly TwinRef[],
-  visibility: TwinVisibility
+  visibility: TwinVisibility,
+  asOfMs?: number | null
 ): void {
   try {
-    assertTwinRefsVisible(adapter, refs, visibility);
+    assertTwinRefsVisible(adapter, refs, { ...visibility, asOfMs });
   } catch (error) {
     throw new AgentGraphValidationError(error instanceof Error ? error.message : String(error));
   }
@@ -351,7 +352,7 @@ export function getGraphNeighborhood(
   const depth = normalizeDepth(input.depth, 1);
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
   const visibility = graphVisibility(input);
-  assertRefsVisible(adapter, [input.ref], visibility);
+  assertRefsVisible(adapter, [input.ref], visibility, input.as_of_ms);
 
   const nodes: TwinRef[] = [];
   const edges: TwinEdgeRecord[] = [];
@@ -399,7 +400,7 @@ export function getGraphPaths(
   const maxDepth = normalizeDepth(input.max_depth, 3);
   const limit = normalizeLimit(input.limit, DEFAULT_PATH_LIMIT);
   const visibility = graphVisibility(input);
-  assertRefsVisible(adapter, [input.from_ref, input.to_ref], visibility);
+  assertRefsVisible(adapter, [input.from_ref, input.to_ref], visibility, input.as_of_ms);
 
   const targetKey = refKey(input.to_ref);
   const queue: AgentGraphPath[] = [{ refs: [input.from_ref], edges: [] }];
@@ -448,7 +449,7 @@ export function getGraphTimeline(
   input: GraphTimelineInput
 ): GraphTimelineResult {
   const visibility = graphVisibility(input);
-  assertRefsVisible(adapter, [input.ref], visibility);
+  assertRefsVisible(adapter, [input.ref], visibility, input.as_of_ms);
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
   const window = timelineWindow(input);
   const edges = listFilteredEdges(adapter, [input.ref], {
