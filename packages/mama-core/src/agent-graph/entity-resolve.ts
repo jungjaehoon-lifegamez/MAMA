@@ -1,11 +1,8 @@
-import {
-  assertTwinRefsVisibleToScopes,
-  listVisibleTwinEdgesForRefs,
-} from '../edges/ref-validation.js';
+import { assertTwinRefsVisible, listVisibleTwinEdgesForRefs } from '../edges/ref-validation.js';
 import { normalizeEntityLabel } from '../entities/normalization.js';
 import { EntityMergeError, getEntityNode, resolveCanonicalEntityId } from '../entities/store.js';
 import type { EntityNode } from '../entities/types.js';
-import type { TwinRef, TwinScopeRef } from '../edges/types.js';
+import type { TwinRef, TwinScopeRef, TwinVisibility } from '../edges/types.js';
 import type {
   AgentGraphAdapter,
   ResolveEntityInput,
@@ -50,14 +47,17 @@ function contextBoost(
   adapter: AgentGraphAdapter,
   entityId: string,
   contextRefs: readonly TwinRef[] | undefined,
-  scopes: readonly TwinScopeRef[] | undefined,
+  visibility: TwinVisibility,
   asOfMs: number | null | undefined
 ): number {
   if (!contextRefs || contextRefs.length === 0) {
     return 0;
   }
   const edges = listVisibleTwinEdgesForRefs(adapter, contextRefs, {
-    scopes: scopes ? [...scopes] : undefined,
+    scopes: visibility.scopes,
+    connectors: visibility.connectors,
+    projectRefs: visibility.projectRefs,
+    tenantId: visibility.tenantId,
     asOfMs,
   });
   return edges.some(
@@ -75,9 +75,15 @@ export function resolveEntity(
 ): ResolveEntityResult {
   const normalized = normalizeLabel(input.label);
   const limit = Math.max(1, Math.floor(input.limit ?? 5));
+  const visibility: TwinVisibility = {
+    scopes: input.scopes,
+    connectors: input.connectors,
+    projectRefs: input.project_refs,
+    tenantId: input.tenant_id,
+  };
   if (input.context_refs && input.context_refs.length > 0) {
     try {
-      assertTwinRefsVisibleToScopes(adapter, input.context_refs, input.scopes);
+      assertTwinRefsVisible(adapter, input.context_refs, visibility);
     } catch (error) {
       throw new AgentGraphValidationError(error instanceof Error ? error.message : String(error));
     }
@@ -95,8 +101,7 @@ export function resolveEntity(
       return;
     }
     const score =
-      baseScore +
-      contextBoost(adapter, entity.id, input.context_refs, input.scopes, input.as_of_ms);
+      baseScore + contextBoost(adapter, entity.id, input.context_refs, visibility, input.as_of_ms);
     const existing = candidates.get(entity.id);
     if (!existing || score > existing.score) {
       candidates.set(entity.id, {

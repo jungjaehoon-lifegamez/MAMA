@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import express, { type Request, type Response, type Router } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
@@ -49,6 +50,8 @@ const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const EDGE_TYPES = new Set<string>(TWIN_EDGE_TYPES);
 const REF_KINDS = new Set<string>(TWIN_REF_KINDS);
 const LABEL_TYPES = new Set<string>(ENTITY_ALIAS_LABEL_TYPES);
+const MAX_GRAPH_DEPTH = 5;
+const MAX_GRAPH_LIMIT = 100;
 
 export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router {
   const router = express.Router();
@@ -64,6 +67,9 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         label,
         context_refs: contextRefs,
         scopes: visibility.scopes,
+        connectors: visibility.connectors,
+        project_refs: visibility.projectRefs,
+        tenant_id: visibility.tenantId,
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
       });
     });
@@ -73,11 +79,14 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
     await handleGraphRequest(req, res, options, (visibility, envelope) =>
       getGraphNeighborhood(options.memoryAdapter, {
         ref: parseRequiredRef(req.query.ref, 'ref'),
-        depth: parseInteger(req.query.depth, 'depth'),
+        depth: parseBoundedInteger(req.query.depth, 'depth', 0, MAX_GRAPH_DEPTH),
         scopes: visibility.scopes,
+        connectors: visibility.connectors,
+        project_refs: visibility.projectRefs,
+        tenant_id: visibility.tenantId,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
-        limit: parseInteger(req.query.limit, 'limit'),
+        limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
       })
     );
   });
@@ -87,11 +96,14 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
       getGraphPaths(options.memoryAdapter, {
         from_ref: parseRequiredRef(req.query.from, 'from'),
         to_ref: parseRequiredRef(req.query.to, 'to'),
-        max_depth: parseInteger(req.query.max_depth, 'max_depth'),
+        max_depth: parseBoundedInteger(req.query.max_depth, 'max_depth', 0, MAX_GRAPH_DEPTH),
         scopes: visibility.scopes,
+        connectors: visibility.connectors,
+        project_refs: visibility.projectRefs,
+        tenant_id: visibility.tenantId,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
-        limit: parseInteger(req.query.limit, 'limit'),
+        limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
       })
     );
   });
@@ -101,11 +113,14 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
       getGraphTimeline(options.memoryAdapter, {
         ref: parseRequiredRef(req.query.ref, 'ref'),
         scopes: visibility.scopes,
+        connectors: visibility.connectors,
+        project_refs: visibility.projectRefs,
+        tenant_id: visibility.tenantId,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         from_ms: parseOptionalIsoMs(req.query.from, 'from'),
         to_ms: parseOptionalIsoMs(req.query.to, 'to'),
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
-        limit: parseInteger(req.query.limit, 'limit'),
+        limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
       })
     );
   });
@@ -153,19 +168,26 @@ async function handleAliasWrite(
     const body = bodyObject(req.body);
     const entityId = paramString(req.params.entityId, 'entityId');
     const label = stringBody(body, 'label');
+    const requestIdempotencyKey = stringBody(body, 'request_idempotency_key');
     const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const modelRun = suppliedModelRunId
       ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope.envelope_hash)
-      : beginModelRunInAdapter(options.memoryAdapter, {
+      : beginDirectAliasModelRun(options.memoryAdapter, {
+          model_run_id: directAliasModelRunId(
+            envelope.envelope_hash,
+            entityId,
+            requestIdempotencyKey
+          ),
           agent_id: envelope.agent_id,
           instance_id: envelope.instance_id,
           envelope_hash: envelope.envelope_hash,
-          input_snapshot_ref: `entity-alias:${entityId}:${label}`,
+          input_snapshot_ref: `entity-alias:${entityId}:${requestIdempotencyKey}`,
           input_refs: {
             tool: 'entity.alias',
             entity_id: entityId,
-            label,
+            request_idempotency_key: requestIdempotencyKey,
             scopes: visibility.scopes,
+            connectors: visibility.connectors,
             project_refs: visibility.projectRefs,
             tenant_id: visibility.tenantId,
           },
@@ -181,13 +203,16 @@ async function handleAliasWrite(
       lang: optionalStringBody(body, 'lang'),
       script: optionalStringBody(body, 'script'),
       confidence: optionalNumberBody(body, 'confidence'),
-      source_type: optionalStringBody(body, 'source_type') ?? 'agent',
-      source_ref: optionalStringBody(body, 'source_ref') ?? `model_run:${modelRun.model_run_id}`,
+      source_type: 'agent',
+      source_ref: `model_run:${modelRun.model_run_id}`,
       agent_id: envelope.agent_id,
       model_run_id: modelRun.model_run_id,
       envelope_hash: envelope.envelope_hash,
-      edge_idempotency_key: optionalStringBody(body, 'idempotency_key') ?? undefined,
+      request_idempotency_key: requestIdempotencyKey,
       scopes: visibility.scopes,
+      connectors: visibility.connectors,
+      project_refs: visibility.projectRefs,
+      tenant_id: visibility.tenantId,
     });
 
     if (ownedModelRunId) {
@@ -233,6 +258,21 @@ function requireMatchingModelRun(
   return modelRun;
 }
 
+function beginDirectAliasModelRun(
+  adapter: AgentGraphAdapter,
+  input: Parameters<typeof beginModelRunInAdapter>[1]
+) {
+  try {
+    return beginModelRunInAdapter(adapter, input);
+  } catch (error) {
+    const message = getErrorMessage(error);
+    if (message.startsWith('Model run already exists')) {
+      throw new WorkerEnvelopeError(409, 'agent_graph_idempotency_conflict', message);
+    }
+    throw error;
+  }
+}
+
 function parseRequiredRef(value: unknown, name: string): TwinRef {
   const raw = firstString(value)?.trim();
   if (!raw) {
@@ -242,20 +282,77 @@ function parseRequiredRef(value: unknown, name: string): TwinRef {
 }
 
 function parseRefs(value: unknown): TwinRef[] {
-  return stringValues(value)
-    .flatMap((item) => item.split(','))
-    .map((item) => item.trim())
-    .filter(Boolean)
-    .map((item, index) => parseRef(item, `context_refs[${index}]`));
+  const refs: TwinRef[] = [];
+  for (const rawValue of stringValues(value)) {
+    const raw = rawValue.trim();
+    if (!raw) {
+      continue;
+    }
+    if (raw.startsWith('[')) {
+      const parsed = parseJsonValue(raw, 'context_refs');
+      if (!Array.isArray(parsed)) {
+        throw invalidQuery('context_refs JSON must be an array.');
+      }
+      for (const item of parsed) {
+        refs.push(parseJsonRefValue(item, `context_refs[${refs.length}]`));
+      }
+      continue;
+    }
+    if (raw.startsWith('{')) {
+      refs.push(parseJsonRef(raw, `context_refs[${refs.length}]`));
+      continue;
+    }
+    for (const item of raw
+      .split(',')
+      .map((piece) => piece.trim())
+      .filter(Boolean)) {
+      refs.push(parseRef(item, `context_refs[${refs.length}]`));
+    }
+  }
+  return refs;
 }
 
 function parseRef(raw: string, name: string): TwinRef {
+  if (raw.startsWith('{')) {
+    return parseJsonRef(raw, name);
+  }
   const [kind, ...idParts] = raw.split(':');
   const id = idParts.join(':');
   if (!kind || !id || !REF_KINDS.has(kind)) {
-    throw invalidQuery(`${name} must use kind:id syntax.`);
+    throw invalidQuery(`${name} must use kind:id syntax or JSON {kind,id}.`);
   }
   return { kind: kind as TwinRefKind, id } as TwinRef;
+}
+
+function parseJsonRef(raw: string, name: string): TwinRef {
+  const parsed = parseJsonValue(raw, name);
+  return parseJsonRefValue(parsed, name);
+}
+
+function parseJsonRefValue(parsed: unknown, name: string): TwinRef {
+  if (
+    parsed === null ||
+    typeof parsed !== 'object' ||
+    typeof (parsed as Record<string, unknown>).kind !== 'string' ||
+    typeof (parsed as Record<string, unknown>).id !== 'string'
+  ) {
+    throw invalidQuery(`${name} JSON must be an object with string kind and id.`);
+  }
+  const kind = (parsed as { kind: string }).kind;
+  const id = (parsed as { id: string }).id;
+  if (!REF_KINDS.has(kind) || id.trim().length === 0) {
+    throw invalidQuery(`${name} JSON must contain a supported kind and non-empty id.`);
+  }
+  return { kind: kind as TwinRefKind, id: id.trim() } as TwinRef;
+}
+
+function parseJsonValue(raw: string, name: string): unknown {
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw invalidQuery(`${name} must be valid JSON: ${message}`);
+  }
 }
 
 function parseEdgeTypes(req: Request): TwinEdgeType[] | undefined {
@@ -308,6 +405,34 @@ function parseInteger(value: unknown, name: string): number | undefined {
     throw invalidQuery(`${name} must be an integer.`);
   }
   return Number.parseInt(raw, 10);
+}
+
+function parseBoundedInteger(
+  value: unknown,
+  name: string,
+  min: number,
+  max: number
+): number | undefined {
+  const parsed = parseInteger(value, name);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  if (parsed < min || parsed > max) {
+    throw invalidQuery(`${name} must be between ${min} and ${max}.`);
+  }
+  return parsed;
+}
+
+function directAliasModelRunId(
+  envelopeHash: string,
+  entityId: string,
+  requestIdempotencyKey: string
+): string {
+  const hash = createHash('sha256')
+    .update(`${envelopeHash}\0${entityId}\0${requestIdempotencyKey}`, 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+  return `mr_direct_alias_${hash}`;
 }
 
 function bodyObject(value: unknown): Record<string, unknown> {
