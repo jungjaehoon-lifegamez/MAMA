@@ -294,7 +294,7 @@ async function waitForFreshPacket(
       adapter,
       input.cacheKey,
       input.rankingPolicyVersion,
-      Date.now()
+      input.nowMs
     );
     if (fresh) {
       return fresh;
