@@ -20,8 +20,12 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof mama.default.suggest).toBe('function');
       expect(typeof mama.default.updateOutcome).toBe('function');
       expect(typeof mama.default.beginModelRun).toBe('function');
+      expect(typeof mama.default.beginModelRunInAdapter).toBe('function');
       expect(typeof mama.default.commitModelRun).toBe('function');
+      expect(typeof mama.default.commitModelRunInAdapter).toBe('function');
       expect(typeof mama.default.failModelRun).toBe('function');
+      expect(typeof mama.default.failModelRunInAdapter).toBe('function');
+      expect(typeof mama.default.getModelRunInAdapter).toBe('function');
       expect(typeof mama.default.appendToolTrace).toBe('function');
       expect(typeof mama.default.listToolTracesForRun).toBe('function');
     });
@@ -32,9 +36,13 @@ describe('Story M1.1: Core Module Exports', () => {
       const core = await import('../../src/index.js');
 
       expect(typeof core.beginModelRun).toBe('function');
+      expect(typeof core.beginModelRunInAdapter).toBe('function');
       expect(typeof core.commitModelRun).toBe('function');
+      expect(typeof core.commitModelRunInAdapter).toBe('function');
       expect(typeof core.failModelRun).toBe('function');
+      expect(typeof core.failModelRunInAdapter).toBe('function');
       expect(typeof core.getModelRun).toBe('function');
+      expect(typeof core.getModelRunInAdapter).toBe('function');
       expect(typeof core.appendToolTrace).toBe('function');
       expect(typeof core.listToolTracesForRun).toBe('function');
     });

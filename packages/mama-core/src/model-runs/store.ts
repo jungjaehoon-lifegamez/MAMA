@@ -166,54 +166,153 @@ function requireModelRun(adapter: ModelRunAdapter, id: string): ModelRunRecord {
   return run;
 }
 
-export async function beginModelRun(input: BeginModelRunInput): Promise<ModelRunRecord> {
-  const adapter = await initializedAdapter();
+function assertNullableFieldMatches(
+  existing: ModelRunRecord,
+  input: BeginModelRunInput,
+  field: keyof Pick<
+    BeginModelRunInput,
+    | 'model_id'
+    | 'model_provider'
+    | 'prompt_version'
+    | 'tool_manifest_version'
+    | 'output_schema_version'
+    | 'agent_id'
+    | 'instance_id'
+    | 'envelope_hash'
+    | 'parent_model_run_id'
+    | 'input_snapshot_ref'
+    | 'error_summary'
+  >
+): void {
+  if (input[field] === undefined) {
+    return;
+  }
+  if (existing[field] !== nullableString(input[field])) {
+    throw new Error(`Model run already exists with different ${field}: ${existing.model_run_id}`);
+  }
+}
+
+function assertExistingModelRunMatchesInput(
+  existing: ModelRunRecord,
+  input: BeginModelRunInput,
+  inputRefsJson: string | null
+): void {
+  for (const field of [
+    'model_id',
+    'model_provider',
+    'prompt_version',
+    'tool_manifest_version',
+    'output_schema_version',
+    'agent_id',
+    'instance_id',
+    'envelope_hash',
+    'parent_model_run_id',
+    'input_snapshot_ref',
+    'error_summary',
+  ] as const) {
+    assertNullableFieldMatches(existing, input, field);
+  }
+
+  if (input.input_refs !== undefined || input.input_refs_json !== undefined) {
+    if (existing.input_refs_json !== inputRefsJson) {
+      throw new Error(
+        `Model run already exists with different input_refs_json: ${existing.model_run_id}`
+      );
+    }
+  }
+  if (input.status !== undefined && existing.status !== input.status) {
+    throw new Error(`Model run already exists with different status: ${existing.model_run_id}`);
+  }
+  if (
+    input.token_count !== undefined &&
+    existing.token_count !== normalizeNumber(input.token_count, 0)
+  ) {
+    throw new Error(
+      `Model run already exists with different token_count: ${existing.model_run_id}`
+    );
+  }
+  if (
+    input.cost_estimate !== undefined &&
+    existing.cost_estimate !== normalizeCost(input.cost_estimate)
+  ) {
+    throw new Error(
+      `Model run already exists with different cost_estimate: ${existing.model_run_id}`
+    );
+  }
+  if (
+    input.created_at !== undefined &&
+    existing.created_at !== normalizeTimestamp(input.created_at)
+  ) {
+    throw new Error(`Model run already exists with different created_at: ${existing.model_run_id}`);
+  }
+}
+
+export function beginModelRunInAdapter(
+  adapter: ModelRunAdapter,
+  input: BeginModelRunInput
+): ModelRunRecord {
   const id = nullableString(input.model_run_id) ?? modelRunId();
   const createdAt = normalizeTimestamp(input.created_at);
   const status = input.status ?? 'running';
+  const inputRefsJson = normalizeInputRefsJson(input);
 
-  adapter
-    .prepare(
-      `
-        INSERT INTO model_runs (
-          model_run_id, model_id, model_provider, prompt_version, tool_manifest_version,
-          output_schema_version, agent_id, instance_id, envelope_hash, parent_model_run_id,
-          input_snapshot_ref, input_refs_json, completion_summary, status, error_summary,
-          token_count, cost_estimate, created_at, completed_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      id,
-      nullableString(input.model_id),
-      nullableString(input.model_provider),
-      nullableString(input.prompt_version),
-      nullableString(input.tool_manifest_version),
-      nullableString(input.output_schema_version),
-      nullableString(input.agent_id),
-      nullableString(input.instance_id),
-      nullableString(input.envelope_hash),
-      nullableString(input.parent_model_run_id),
-      nullableString(input.input_snapshot_ref),
-      normalizeInputRefsJson(input),
-      null,
-      status,
-      nullableString(input.error_summary),
-      normalizeNumber(input.token_count, 0),
-      normalizeCost(input.cost_estimate),
-      createdAt,
-      null
-    );
+  const existing = selectModelRun(adapter, id);
+  if (existing) {
+    assertExistingModelRunMatchesInput(existing, input, inputRefsJson);
+    return existing;
+  }
+
+  try {
+    adapter
+      .prepare(
+        `
+          INSERT INTO model_runs (
+            model_run_id, model_id, model_provider, prompt_version, tool_manifest_version,
+            output_schema_version, agent_id, instance_id, envelope_hash, parent_model_run_id,
+            input_snapshot_ref, input_refs_json, completion_summary, status, error_summary,
+            token_count, cost_estimate, created_at, completed_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        id,
+        nullableString(input.model_id),
+        nullableString(input.model_provider),
+        nullableString(input.prompt_version),
+        nullableString(input.tool_manifest_version),
+        nullableString(input.output_schema_version),
+        nullableString(input.agent_id),
+        nullableString(input.instance_id),
+        nullableString(input.envelope_hash),
+        nullableString(input.parent_model_run_id),
+        nullableString(input.input_snapshot_ref),
+        inputRefsJson,
+        null,
+        status,
+        nullableString(input.error_summary),
+        normalizeNumber(input.token_count, 0),
+        normalizeCost(input.cost_estimate),
+        createdAt,
+        null
+      );
+  } catch (error) {
+    const duplicate = selectModelRun(adapter, id);
+    if (duplicate) {
+      assertExistingModelRunMatchesInput(duplicate, input, inputRefsJson);
+      return duplicate;
+    }
+    throw error;
+  }
 
   return requireModelRun(adapter, id);
 }
 
-export async function commitModelRun(
+export function commitModelRunInAdapter(
+  adapter: ModelRunAdapter,
   modelRunId: string,
   summary?: string
-): Promise<ModelRunRecord> {
-  const adapter = await initializedAdapter();
+): ModelRunRecord {
   const completedAt = Date.now();
   adapter
     .prepare(
@@ -230,11 +329,11 @@ export async function commitModelRun(
   return requireModelRun(adapter, modelRunId);
 }
 
-export async function failModelRun(
+export function failModelRunInAdapter(
+  adapter: ModelRunAdapter,
   modelRunId: string,
   errorSummary: string
-): Promise<ModelRunRecord> {
-  const adapter = await initializedAdapter();
+): ModelRunRecord {
   const completedAt = Date.now();
   adapter
     .prepare(
@@ -251,7 +350,35 @@ export async function failModelRun(
   return requireModelRun(adapter, modelRunId);
 }
 
+export function getModelRunInAdapter(
+  adapter: ModelRunAdapter,
+  modelRunId: string
+): ModelRunRecord | null {
+  return selectModelRun(adapter, modelRunId);
+}
+
+export async function beginModelRun(input: BeginModelRunInput): Promise<ModelRunRecord> {
+  const adapter = await initializedAdapter();
+  return beginModelRunInAdapter(adapter, input);
+}
+
+export async function commitModelRun(
+  modelRunId: string,
+  summary?: string
+): Promise<ModelRunRecord> {
+  const adapter = await initializedAdapter();
+  return commitModelRunInAdapter(adapter, modelRunId, summary);
+}
+
+export async function failModelRun(
+  modelRunId: string,
+  errorSummary: string
+): Promise<ModelRunRecord> {
+  const adapter = await initializedAdapter();
+  return failModelRunInAdapter(adapter, modelRunId, errorSummary);
+}
+
 export async function getModelRun(modelRunId: string): Promise<ModelRunRecord | null> {
   const adapter = await initializedAdapter();
-  return selectModelRun(adapter, modelRunId);
+  return getModelRunInAdapter(adapter, modelRunId);
 }

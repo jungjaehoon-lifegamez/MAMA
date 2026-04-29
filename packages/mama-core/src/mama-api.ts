@@ -64,7 +64,16 @@ import {
   listMemoriesByGatewayCallId,
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
-import { beginModelRun, commitModelRun, failModelRun, getModelRun } from './model-runs/store.js';
+import {
+  beginModelRun,
+  beginModelRunInAdapter,
+  commitModelRun,
+  commitModelRunInAdapter,
+  failModelRun,
+  failModelRunInAdapter,
+  getModelRun,
+  getModelRunInAdapter,
+} from './model-runs/store.js';
 import { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
 import {
   rollUpSearchHits,
@@ -3885,9 +3894,13 @@ const mama = {
   listMemoryEventsForMemory,
   listRecentMemoryEvents,
   beginModelRun,
+  beginModelRunInAdapter,
   commitModelRun,
+  commitModelRunInAdapter,
   failModelRun,
+  failModelRunInAdapter,
   getModelRun,
+  getModelRunInAdapter,
   appendToolTrace,
   listToolTracesForRun,
   saveCheckpoint,
@@ -3946,9 +3959,13 @@ export {
   listMemoryEventsForMemory,
   listRecentMemoryEvents,
   beginModelRun,
+  beginModelRunInAdapter,
   commitModelRun,
+  commitModelRunInAdapter,
   failModelRun,
+  failModelRunInAdapter,
   getModelRun,
+  getModelRunInAdapter,
   appendToolTrace,
   listToolTracesForRun,
   saveCheckpoint,
