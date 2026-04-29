@@ -43,40 +43,44 @@ describe('Story M2.1: Migration 032 duplicate-column recovery', () => {
     }
   });
 
-  it('repairs a partially applied 032 migration when agent_id already exists', () => {
-    tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-032-'));
-    const dbPath = join(tempDir, 'partial-032.db');
-    const setupDb = new Database(dbPath);
-    setupDb.pragma('foreign_keys = ON');
-    applyThrough031(setupDb);
-    setupDb.exec('ALTER TABLE decisions ADD COLUMN agent_id TEXT');
-    setupDb.close();
+  describe('Acceptance Criteria', () => {
+    describe('AC #1: partial migration recovery', () => {
+      it('repairs a partially applied 032 migration when agent_id already exists', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-032-'));
+        const dbPath = join(tempDir, 'partial-032.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        applyThrough031(setupDb);
+        setupDb.exec('ALTER TABLE decisions ADD COLUMN agent_id TEXT');
+        setupDb.close();
 
-    const adapter = new NodeSQLiteAdapter({ dbPath });
-    adapter.connect();
-    adapter.runMigrations(MIGRATIONS_DIR);
-    adapter.disconnect();
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.disconnect();
 
-    const db = new Database(dbPath);
-    for (const column of [
-      'agent_id',
-      'model_run_id',
-      'envelope_hash',
-      'gateway_call_id',
-      'source_refs_json',
-      'provenance_json',
-    ]) {
-      expect(columnExists(db, 'decisions', column)).toBe(true);
-    }
-    expect(indexExists(db, 'idx_decisions_envelope_hash')).toBe(true);
-    expect(indexExists(db, 'idx_decisions_model_run_id')).toBe(true);
-    expect(indexExists(db, 'idx_decisions_gateway_call_id')).toBe(true);
-    expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
+        const db = new Database(dbPath);
+        for (const column of [
+          'agent_id',
+          'model_run_id',
+          'envelope_hash',
+          'gateway_call_id',
+          'source_refs_json',
+          'provenance_json',
+        ]) {
+          expect(columnExists(db, 'decisions', column)).toBe(true);
+        }
+        expect(indexExists(db, 'idx_decisions_envelope_hash')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_model_run_id')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_gateway_call_id')).toBe(true);
+        expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
 
-    const row = db.prepare('SELECT version FROM schema_version WHERE version = 32').get() as
-      | { version: number }
-      | undefined;
-    expect(row?.version).toBe(32);
-    db.close();
+        const row = db.prepare('SELECT version FROM schema_version WHERE version = 32').get() as
+          | { version: number }
+          | undefined;
+        expect(row?.version).toBe(32);
+        db.close();
+      });
+    });
   });
 });

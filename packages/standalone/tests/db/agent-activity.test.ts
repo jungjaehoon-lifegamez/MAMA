@@ -18,7 +18,7 @@ type AgentStoreWithTraceHelpers = typeof agentStore & {
   ) => agentStore.ActivityRow[];
   listScopeMismatches?: (
     db: Database,
-    input: { envelopeHash?: string; limit?: number; since?: string }
+    input: { envelopeHash?: string; gatewayCallId?: string; limit?: number; since?: string }
   ) => agentStore.ActivityRow[];
   countScopeMismatches?: (db: Database, input: { since?: string }) => number;
 };

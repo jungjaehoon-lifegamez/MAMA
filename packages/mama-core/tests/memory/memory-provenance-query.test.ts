@@ -112,6 +112,17 @@ describe('Story M2.1: Memory Provenance Query Helpers', () => {
       await expect(getMemoryProvenance(projectB.id, { scopes: [PROJECT_A] })).resolves.toBeNull();
     });
 
+    it('treats an empty scopes array as no scope filter', async () => {
+      const projectA = await saveFixture('project_a_empty_scope_filter', PROJECT_A);
+
+      await expect(getMemoryProvenance(projectA.id, { scopes: [] })).resolves.toMatchObject({
+        memory_id: projectA.id,
+      });
+      await expect(listMemoriesByGatewayCallId('gw_query', { scopes: [] })).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ memory_id: projectA.id })])
+      );
+    });
+
     it('continues paging until it finds the requested number of visible memories', async () => {
       const visibleOne = await saveFixture('project_a_visible_1', PROJECT_A);
       const visibleTwo = await saveFixture('project_a_visible_2', PROJECT_A);

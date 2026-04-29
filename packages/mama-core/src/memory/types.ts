@@ -75,13 +75,7 @@ export interface MemoryRecord {
   confidence: number;
   status: MemoryStatus;
   scopes: MemoryScopeRef[];
-  source: {
-    package: 'mama-core' | 'mcp-server' | 'standalone' | 'claude-code-plugin';
-    source_type: string;
-    user_id?: string;
-    channel_id?: string;
-    project_id?: string;
-  };
+  source: MemorySourceRef;
   created_at: number | string;
   updated_at: number | string;
   /** ISO 8601 date when the event actually occurred (e.g. "2023-01-15"). Null if not set. */
@@ -435,13 +429,7 @@ export interface ConversationMessage {
 export interface IngestConversationInput {
   messages: ConversationMessage[];
   scopes: MemoryScopeRef[];
-  source: {
-    package: 'mama-core' | 'mcp-server' | 'standalone' | 'claude-code-plugin';
-    source_type: string;
-    user_id?: string;
-    channel_id?: string;
-    project_id?: string;
-  };
+  source: MemorySourceRef;
   extract?: {
     enabled: boolean;
     model?: string;

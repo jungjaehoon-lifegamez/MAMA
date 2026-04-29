@@ -71,39 +71,86 @@ async function listMemoriesByColumn(
   await initDB();
   const adapter = getAdapter();
   const limit = normalizeLimit(options.limit);
-  const batchSize = options.scopes ? Math.max(limit * 5, 25) : limit;
-  const statement = adapter.prepare(
-    `
-      SELECT id, agent_id, model_run_id, envelope_hash, gateway_call_id,
-             source_refs_json, provenance_json, created_at
-      FROM decisions
-      WHERE ${column} = ?
-      ORDER BY created_at DESC, id DESC
-      LIMIT ? OFFSET ?
-    `
-  );
+  const visibility = buildVisibilityPredicate(options);
+  const rows = adapter
+    .prepare(
+      `
+        SELECT d.id, d.agent_id, d.model_run_id, d.envelope_hash, d.gateway_call_id,
+               d.source_refs_json, d.provenance_json, d.created_at
+        FROM decisions d
+        WHERE d.${column} = ?${visibility.sql}
+        ORDER BY d.created_at DESC, d.id DESC
+        LIMIT ?
+      `
+    )
+    .all(value, ...visibility.params, limit) as ProvenanceRow[];
+
   const records: MemoryProvenanceRecord[] = [];
-  let offset = 0;
-
-  while (records.length < limit) {
-    const rows = statement.all(value, batchSize, offset) as ProvenanceRow[];
-    if (rows.length === 0) {
-      break;
-    }
-
-    for (const row of rows) {
-      if (await isVisibleMemory(row.id, options)) {
-        records.push(await toProvenanceRecord(row));
-      }
-      if (records.length >= limit) {
-        break;
-      }
-    }
-
-    offset += rows.length;
+  for (const row of rows) {
+    records.push(await toProvenanceRecord(row));
   }
 
   return records;
+}
+
+function buildVisibilityPredicate(options: MemoryProvenanceQueryOptions): {
+  sql: string;
+  params: string[];
+} {
+  if (!hasScopeFilter(options)) {
+    return { sql: '', params: [] };
+  }
+
+  const scopeIds = resolveMemoryScopeIds(options.scopes);
+  const legacyUnscopedPredicate = `
+          NOT EXISTS (
+            SELECT 1
+            FROM memory_scope_bindings msb_legacy
+            WHERE msb_legacy.memory_id = d.id
+          )
+        `;
+
+  if (scopeIds.length === 0) {
+    return options.includeLegacyUnscoped === true
+      ? { sql: ` AND ${legacyUnscopedPredicate}`, params: [] }
+      : { sql: ' AND 0 = 1', params: [] };
+  }
+
+  const placeholders = scopeIds.map(() => '?').join(', ');
+  const scopedPredicate = `
+        EXISTS (
+          SELECT 1
+          FROM memory_scope_bindings msb_scope
+          WHERE msb_scope.memory_id = d.id
+            AND msb_scope.scope_id IN (${placeholders})
+        )
+      `;
+
+  if (options.includeLegacyUnscoped === true) {
+    return {
+      sql: ` AND (${scopedPredicate} OR ${legacyUnscopedPredicate})`,
+      params: scopeIds,
+    };
+  }
+
+  return { sql: ` AND ${scopedPredicate}`, params: scopeIds };
+}
+
+function hasScopeFilter(
+  options: MemoryProvenanceQueryOptions
+): options is MemoryProvenanceQueryOptions & { scopes: MemoryScopeRef[] } {
+  return Array.isArray(options.scopes) && options.scopes.length > 0;
+}
+
+function resolveMemoryScopeIds(scopes: MemoryScopeRef[]): string[] {
+  const scopeIds: string[] = [];
+  for (const scope of scopes) {
+    const scopeId = resolveMemoryScopeId(scope.kind, scope.id);
+    if (scopeId) {
+      scopeIds.push(scopeId);
+    }
+  }
+  return scopeIds;
 }
 
 async function toProvenanceRecord(row: ProvenanceRow): Promise<MemoryProvenanceRecord> {
@@ -124,33 +171,26 @@ async function isVisibleMemory(
   memoryId: string,
   options: MemoryProvenanceQueryOptions
 ): Promise<boolean> {
-  if (!options.scopes) {
+  if (!hasScopeFilter(options)) {
     return true;
   }
 
   await initDB();
   const adapter = getAdapter();
-  const scopeIds = [];
-  for (const scope of options.scopes) {
-    const scopeId = resolveMemoryScopeId(scope.kind, scope.id);
-    if (scopeId) {
-      scopeIds.push(scopeId);
-    }
-  }
+  const scopeIds = resolveMemoryScopeIds(options.scopes);
 
-  const bindingCount = (
-    adapter
-      .prepare(
-        `
+  const bindingCount = adapter
+    .prepare(
+      `
           SELECT COUNT(*) as count
           FROM memory_scope_bindings
           WHERE memory_id = ?
         `
-      )
-      .get(memoryId) as { count: number }
-  ).count;
+    )
+    .get(memoryId) as { count: number };
+  const count = bindingCount.count;
 
-  if (bindingCount === 0) {
+  if (count === 0) {
     return options.includeLegacyUnscoped === true;
   }
   if (scopeIds.length === 0) {

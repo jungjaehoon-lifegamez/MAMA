@@ -736,6 +736,12 @@ async function saveMemoryInternal(
     trust_context: JSON.stringify({ source: input.source }),
     event_date: input.eventDate ?? null,
     event_datetime: eventDateTime,
+    agent_id: provenance.agent_id,
+    model_run_id: provenance.model_run_id,
+    envelope_hash: provenance.envelope_hash,
+    gateway_call_id: provenance.gateway_call_id,
+    source_refs_json: JSON.stringify(provenance.source_refs),
+    provenance_json: JSON.stringify(provenance.provenance),
   });
 
   // Pre-resolve scope IDs before the synchronous transaction
@@ -775,31 +781,6 @@ async function saveMemoryInternal(
           )
           .run(id, scopeId, isPrimary ? 1 : 0);
       }
-
-      adapter
-        .prepare(
-          `
-            UPDATE decisions
-            SET agent_id = ?,
-                model_run_id = ?,
-                envelope_hash = ?,
-                gateway_call_id = ?,
-                source_refs_json = ?,
-                provenance_json = ?,
-                updated_at = ?
-            WHERE id = ?
-          `
-        )
-        .run(
-          provenance.agent_id,
-          provenance.model_run_id,
-          provenance.envelope_hash,
-          provenance.gateway_call_id,
-          JSON.stringify(provenance.source_refs),
-          JSON.stringify(provenance.provenance),
-          now,
-          id
-        );
 
       insertMemoryEventInTransaction(adapter, {
         event_type: 'save',

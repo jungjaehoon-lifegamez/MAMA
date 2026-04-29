@@ -26,22 +26,15 @@ const recallMemoryMock = vi.fn(async () => ({
   search_meta: { query: 'legacy save', scope_order: ['project'], retrieval_sources: ['sql_like'] },
 }));
 
-vi.mock('../../src/memory/api.js', () => ({
-  saveMemory: saveMemoryMock,
-  saveMemoryWithTrustedProvenance: saveMemoryMock,
-  recallMemory: recallMemoryMock,
-  buildProfile: vi.fn(),
-  ingestMemory: vi.fn(),
-  ingestWithTrustedProvenance: vi.fn(),
-  ingestConversation: vi.fn(),
-  ingestConversationWithTrustedProvenance: vi.fn(),
-  evolveMemory: vi.fn(),
-  buildMemoryBootstrap: vi.fn(),
-  createAuditAck: vi.fn((input) => input),
-  recordMemoryAudit: vi.fn(),
-  upsertChannelSummary: vi.fn(),
-  getChannelSummary: vi.fn(),
-}));
+vi.mock('../../src/memory/api.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/memory/api.js')>();
+  return {
+    ...actual,
+    saveMemory: saveMemoryMock,
+    saveMemoryWithTrustedProvenance: saveMemoryMock,
+    recallMemory: recallMemoryMock,
+  };
+});
 
 describe('legacy shims', () => {
   beforeAll(() => {
