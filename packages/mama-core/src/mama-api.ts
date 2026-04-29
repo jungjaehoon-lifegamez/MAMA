@@ -64,6 +64,8 @@ import {
   listMemoriesByGatewayCallId,
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
+import { beginModelRun, commitModelRun, failModelRun, getModelRun } from './model-runs/store.js';
+import { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
 import {
   rollUpSearchHits,
   type SearchRollupLeafHit,
@@ -3882,6 +3884,12 @@ const mama = {
   listMemoriesByModelRunId,
   listMemoryEventsForMemory,
   listRecentMemoryEvents,
+  beginModelRun,
+  commitModelRun,
+  failModelRun,
+  getModelRun,
+  appendToolTrace,
+  listToolTracesForRun,
   saveCheckpoint,
   loadCheckpoint,
   // Legacy functions (retained for internal use, not exposed via MCP)
@@ -3937,6 +3945,12 @@ export {
   listMemoriesByModelRunId,
   listMemoryEventsForMemory,
   listRecentMemoryEvents,
+  beginModelRun,
+  commitModelRun,
+  failModelRun,
+  getModelRun,
+  appendToolTrace,
+  listToolTracesForRun,
   saveCheckpoint,
   loadCheckpoint,
   recall,

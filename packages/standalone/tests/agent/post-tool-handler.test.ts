@@ -559,6 +559,34 @@ describe('PostToolHandler', () => {
         expect(searchCalls[0][2]).toBe(executionContext);
         expect(saveCalls[0][2]).toBe(executionContext);
       });
+
+      it('registers the original background promise so drains can observe failures', async () => {
+        handler = new PostToolHandler(executeTool, { enabled: true });
+        const registeredTasks: Promise<unknown>[] = [];
+        const circularResult: Record<string, unknown> = {};
+        circularResult.self = circularResult;
+        const executionContext: GatewayToolExecutionContext = {
+          agentId: 'chat_bot',
+          source: 'telegram',
+          channelId: 'tg:1',
+          executionSurface: 'reactive_internal',
+          backgroundTasks: {
+            register(task: Promise<unknown>): void {
+              registeredTasks.push(task);
+            },
+          },
+        };
+
+        handler.processInBackground(
+          'Write',
+          { path: 'src/api.ts' },
+          circularResult,
+          executionContext
+        );
+
+        expect(registeredTasks).toHaveLength(1);
+        await expect(registeredTasks[0]).rejects.toThrow(/circular/i);
+      });
     });
   });
 

@@ -47,11 +47,13 @@ import type {
   GatewayToolInput,
   ClaudeClientOptions,
   GatewayToolExecutorOptions,
+  BeginModelRunInput,
   StreamCallbacks,
   AgentContext,
   PromptFinalResponse,
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
+  BackgroundTaskRegistry,
 } from './types.js';
 import { AgentError } from './types.js';
 import { buildMinimalContext } from './context-prompt-builder.js';
@@ -851,8 +853,23 @@ export class AgentLoop {
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
     let stopReason: ClaudeResponse['stop_reason'] = 'end_turn';
+    let ownedModelRunId: string | null = null;
+    let ownedModelRunCommitted = false;
+    const pendingBackgroundTasks: Promise<unknown>[] = [];
+    const backgroundTasks: BackgroundTaskRegistry = {
+      register(task: Promise<unknown>): void {
+        const observedTask = Promise.resolve(task);
+        observedTask.catch(() => {
+          // Re-thrown later by drainBackgroundTasks; attach now to prevent unhandled rejections.
+        });
+        pendingBackgroundTasks.push(observedTask);
+      },
+    };
 
-    const toolExecutionContext = this.buildToolExecutionContext(options);
+    let toolExecutionContext = this.withBackgroundTaskRegistry(
+      this.buildToolExecutionContext(options),
+      backgroundTasks
+    );
 
     // Track current tier for code-act execution and prompt sizing.
     if (options?.agentContext) {
@@ -887,6 +904,7 @@ export class AgentLoop {
     // Claude PersistentCLI: process alive → CONTINUE (stdin message), process dead → NEW (spawn with --session-id)
     // Codex: threadId alive → CONTINUE (codex-reply), threadId null → NEW (codex tool)
     const isCodex = this.backend === 'codex-mcp';
+    let resolvedCliSessionId: string | null = options?.cliSessionId ?? null;
 
     const sessionLabel = (isNew: boolean): string => {
       if (isCodex) {
@@ -909,6 +927,7 @@ export class AgentLoop {
       }
       sessionIsNew = isNew;
       ownedSession = true;
+      resolvedCliSessionId = cliSessionId;
       this.agent.setSessionId(cliSessionId);
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
@@ -916,6 +935,20 @@ export class AgentLoop {
     }
 
     try {
+      if (this.shouldBeginModelRun(options)) {
+        const modelRun = await this.mcpExecutor.beginRuntimeModelRun(
+          this.buildModelRunInput(options, resolvedCliSessionId)
+        );
+        ownedModelRunId = modelRun.model_run_id;
+        toolExecutionContext = this.withBackgroundTaskRegistry(
+          this.buildToolExecutionContext({
+            ...options,
+            modelRunId: ownedModelRunId,
+          }),
+          backgroundTasks
+        );
+      }
+
       if (options?.systemPrompt) {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
         const alreadyHasTools =
@@ -1343,13 +1376,44 @@ export class AgentLoop {
       // Extract final text response
       const finalResponse = this.extractTextResponse(history);
 
-      return {
+      const result = {
         response: finalResponse,
         turns: turn,
         history,
         totalUsage,
         stopReason,
+        modelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
       };
+      try {
+        await this.drainBackgroundTasks(pendingBackgroundTasks);
+        if (ownedModelRunId) {
+          await this.mcpExecutor.commitRuntimeModelRun(ownedModelRunId, 'agent_loop completed');
+          ownedModelRunCommitted = true;
+        }
+      } catch (finalizationError) {
+        logger.warn(
+          `AgentLoop post-run finalization failed: ${
+            finalizationError instanceof Error
+              ? finalizationError.message
+              : String(finalizationError)
+          }`
+        );
+      }
+      return result;
+    } catch (error) {
+      if (ownedModelRunId && !ownedModelRunCommitted) {
+        try {
+          const summary = error instanceof Error ? error.message : String(error);
+          await this.mcpExecutor.failRuntimeModelRun(ownedModelRunId, summary);
+        } catch (failError) {
+          logger.warn(
+            `Failed to mark model run ${ownedModelRunId} failed: ${
+              failError instanceof Error ? failError.message : String(failError)
+            }`
+          );
+        }
+      }
+      throw error;
     } finally {
       // Always release session lock, even on error
       // BUT only if we own the session (not passed by caller)
@@ -1358,6 +1422,56 @@ export class AgentLoop {
       }
       this.currentStreamCallbacks = undefined;
     }
+  }
+
+  private shouldBeginModelRun(options?: AgentLoopOptions): boolean {
+    return this.isGatewayMode && !options?.modelRunId;
+  }
+
+  private withBackgroundTaskRegistry(
+    context: AgentToolExecutionContext | null,
+    backgroundTasks: BackgroundTaskRegistry
+  ): AgentToolExecutionContext | null {
+    if (!context) {
+      return null;
+    }
+    return {
+      ...context,
+      backgroundTasks,
+    };
+  }
+
+  private async drainBackgroundTasks(tasks: Promise<unknown>[]): Promise<void> {
+    for (let index = 0; index < tasks.length; index += 1) {
+      await tasks[index];
+    }
+  }
+
+  private buildModelRunInput(
+    options?: AgentLoopOptions,
+    resolvedCliSessionId?: string | null
+  ): BeginModelRunInput {
+    const agentContext = options?.agentContext;
+    return {
+      model_id: options?.model ?? this.model ?? null,
+      model_provider: this.backend,
+      agent_id:
+        agentContext?.source === 'viewer'
+          ? 'os-agent'
+          : (agentContext?.roleName ?? options?.source ?? 'agent'),
+      instance_id: agentContext?.session?.sessionId ?? null,
+      envelope_hash: options?.envelope?.envelope_hash ?? null,
+      parent_model_run_id: options?.parentModelRunId ?? null,
+      status: 'running',
+      input_refs: {
+        source: options?.source ?? agentContext?.source ?? 'default',
+        channelId: options?.channelId ?? agentContext?.session?.channelId ?? this.sessionKey,
+        entrypoint: 'agent_loop',
+        ...(options?.sourceTurnId ? { sourceTurnId: options.sourceTurnId } : {}),
+        ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
+        ...(resolvedCliSessionId ? { cliSessionId: resolvedCliSessionId } : {}),
+      },
+    };
   }
 
   /**

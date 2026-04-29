@@ -11,6 +11,19 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type {
+  AppendToolTraceInput,
+  BeginModelRunInput,
+  ModelRunRecord,
+  ToolTraceRecord,
+} from '@jungjaehoon/mama-core';
+
+export type {
+  AppendToolTraceInput,
+  BeginModelRunInput,
+  ModelRunRecord,
+  ToolTraceRecord,
+} from '@jungjaehoon/mama-core';
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -96,6 +109,10 @@ export interface AgentContext {
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
 
+export interface BackgroundTaskRegistry {
+  register(task: Promise<unknown>): void;
+}
+
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;
   agentId?: string;
@@ -107,6 +124,7 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  backgroundTasks?: BackgroundTaskRegistry;
 };
 
 // ============================================================================
@@ -971,6 +989,8 @@ export interface AgentLoopOptions {
   sourceMessageRef?: string;
   /** Active model-run id for memory provenance. */
   modelRunId?: string | null;
+  /** Parent model-run id when this run is a child/background follow-up. */
+  parentModelRunId?: string | null;
 
   /**
    * Stop the agent loop after the current tool batch completes when any
@@ -1026,6 +1046,8 @@ export interface AgentLoopResult {
   };
   /** Stop reason for the final turn */
   stopReason: StopReason;
+  /** Active model run id when the loop owns or inherited one. */
+  modelRunId?: string | null;
 }
 
 // ============================================================================
@@ -1184,6 +1206,12 @@ export interface MAMAApiInterface {
     modelRunId: string,
     options?: Record<string, unknown>
   ): Promise<unknown[]>;
+  beginModelRun?(input: BeginModelRunInput): Promise<ModelRunRecord>;
+  commitModelRun?(modelRunId: string, summary?: string): Promise<ModelRunRecord>;
+  failModelRun?(modelRunId: string, errorSummary: string): Promise<ModelRunRecord>;
+  getModelRun?(modelRunId: string): Promise<ModelRunRecord | null>;
+  appendToolTrace?(input: AppendToolTraceInput): Promise<ToolTraceRecord>;
+  listToolTracesForRun?(modelRunId: string): Promise<ToolTraceRecord[]>;
   buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,

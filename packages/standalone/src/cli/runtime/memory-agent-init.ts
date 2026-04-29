@@ -175,7 +175,7 @@ export async function initMemoryAgent(
                 stopAfterSuccessfulTools: ['mama_save'],
                 sourceTurnId: options?.sourceTurnId,
                 sourceMessageRef: options?.sourceMessageRef,
-                modelRunId: options?.parentModelRunId,
+                parentModelRunId: options?.parentModelRunId,
               });
               const afterDecisionCount = Number(
                 adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count

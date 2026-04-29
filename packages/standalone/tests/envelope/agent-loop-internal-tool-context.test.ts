@@ -26,6 +26,23 @@ function createMockApi(): MAMAApiInterface {
     updateOutcome: vi.fn().mockResolvedValue({ success: true, message: 'updated' }),
     loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
     ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'ingested_1' }),
+    beginModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_internal_context',
+      status: 'running',
+    }),
+    commitModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_internal_context',
+      status: 'committed',
+    }),
+    failModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_internal_context',
+      status: 'failed',
+    }),
+    appendToolTrace: vi.fn().mockResolvedValue({
+      trace_id: 'trace_internal_context',
+      model_run_id: 'mr_internal_context',
+      tool_name: 'mama_search',
+    }),
   };
 }
 
