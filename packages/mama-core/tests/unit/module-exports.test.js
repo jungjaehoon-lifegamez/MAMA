@@ -12,18 +12,80 @@ describe('Story M1.1: Core Module Exports', () => {
   describe('mama-api.js exports', () => {
     it('should export mama object with required methods', async () => {
       const mama = await import('../../src/mama-api.js');
+      const namedFunctionExports = [
+        'save',
+        'saveWithTrustedProvenance',
+        'suggest',
+        'saveMemory',
+        'saveMemoryWithTrustedProvenance',
+        'recallMemory',
+        'list',
+        'listCheckpoints',
+        'updateOutcome',
+        'buildProfile',
+        'ingestMemory',
+        'ingestWithTrustedProvenance',
+        'ingestConversation',
+        'ingestConversationWithTrustedProvenance',
+        'evolveMemory',
+        'buildMemoryBootstrap',
+        'createAuditAck',
+        'recordMemoryAudit',
+        'upsertChannelSummary',
+        'getChannelSummary',
+        'listOpenAuditFindings',
+        'getMemoryProvenance',
+        'listMemoriesByEnvelopeHash',
+        'listMemoriesByGatewayCallId',
+        'listMemoriesByModelRunId',
+        'listMemoryEventsForMemory',
+        'listRecentMemoryEvents',
+        'beginModelRun',
+        'beginModelRunInAdapter',
+        'commitModelRun',
+        'commitModelRunInAdapter',
+        'failModelRun',
+        'failModelRunInAdapter',
+        'getModelRun',
+        'getModelRunInAdapter',
+        'appendToolTrace',
+        'listToolTracesForRun',
+        'saveCheckpoint',
+        'loadCheckpoint',
+        'recall',
+        'proposeLink',
+        'approveLink',
+        'rejectLink',
+        'getPendingLinks',
+        'deprecateAutoLinks',
+        'calculateCoverage',
+        'calculateQuality',
+        'generateQualityReport',
+        'logRestartAttempt',
+        'calculateRestartSuccessRate',
+        'calculateRestartLatency',
+        'getRestartMetrics',
+        'scanAutoLinks',
+        'createLinkBackup',
+        'generatePreCleanupReport',
+        'restoreLinkBackup',
+        'verifyBackupExists',
+        'deleteAutoLinks',
+        'validateCleanupResult',
+        'expandWithGraph',
+      ];
+      const defaultFunctionExports = [
+        ...namedFunctionExports.filter((exportName) => exportName !== 'listOpenAuditFindings'),
+        'listAuditFindings',
+      ];
 
       expect(mama.default).toBeDefined();
-      expect(typeof mama.default.save).toBe('function');
-      expect(typeof mama.default.recall).toBe('function');
-      expect(typeof mama.default.list).toBe('function');
-      expect(typeof mama.default.suggest).toBe('function');
-      expect(typeof mama.default.updateOutcome).toBe('function');
-      expect(typeof mama.default.beginModelRun).toBe('function');
-      expect(typeof mama.default.commitModelRun).toBe('function');
-      expect(typeof mama.default.failModelRun).toBe('function');
-      expect(typeof mama.default.appendToolTrace).toBe('function');
-      expect(typeof mama.default.listToolTracesForRun).toBe('function');
+      for (const exportName of defaultFunctionExports) {
+        expect(typeof mama.default[exportName]).toBe('function');
+      }
+      for (const exportName of namedFunctionExports) {
+        expect(typeof mama[exportName]).toBe('function');
+      }
     });
   });
 
@@ -32,9 +94,13 @@ describe('Story M1.1: Core Module Exports', () => {
       const core = await import('../../src/index.js');
 
       expect(typeof core.beginModelRun).toBe('function');
+      expect(typeof core.beginModelRunInAdapter).toBe('function');
       expect(typeof core.commitModelRun).toBe('function');
+      expect(typeof core.commitModelRunInAdapter).toBe('function');
       expect(typeof core.failModelRun).toBe('function');
+      expect(typeof core.failModelRunInAdapter).toBe('function');
       expect(typeof core.getModelRun).toBe('function');
+      expect(typeof core.getModelRunInAdapter).toBe('function');
       expect(typeof core.appendToolTrace).toBe('function');
       expect(typeof core.listToolTracesForRun).toBe('function');
     });
