@@ -141,6 +141,12 @@ function mapConnectorEventIndexRow(row: Record<string, unknown>): ConnectorEvent
   };
 }
 
+export function mapConnectorEventIndexRecord(
+  row: Record<string, unknown>
+): ConnectorEventIndexRecord {
+  return mapConnectorEventIndexRow(row);
+}
+
 function mapConnectorCursorRow(row: Record<string, unknown>): ConnectorEventIndexCursorRecord {
   return {
     connector_name: String(row.connector_name),

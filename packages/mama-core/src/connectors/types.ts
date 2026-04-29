@@ -1,4 +1,5 @@
 import type { Buffer } from 'node:buffer';
+import type { MemoryScopeRef } from '../memory/types.js';
 
 export interface ConnectorEventIndexRecord {
   event_index_id: string;
@@ -79,6 +80,39 @@ export interface UpsertConnectorEventIndexCursorInput {
 export interface ConnectorEventSearchHit extends ConnectorEventIndexRecord {
   rank: number;
   score: number;
+}
+
+export interface RawSearchScopeFilter {
+  kind: MemoryScopeRef['kind'];
+  id: string;
+}
+
+export interface RawSearchInput {
+  query: string;
+  connectors?: string[];
+  scopes?: RawSearchScopeFilter[];
+  fromMs?: number;
+  toMs?: number;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface RawSearchHit {
+  raw_id: string;
+  connector: string;
+  source_id: string;
+  channel_id: string | null;
+  author_label: string | null;
+  created_at: string | null;
+  content_preview: string;
+  score: number;
+  source_ref: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface RawSearchResult {
+  hits: RawSearchHit[];
+  next_cursor: string | null;
 }
 
 export type ConnectorEventStalenessStatus =

@@ -699,6 +699,7 @@ export async function runAgentLoop(
     agentLoop,
     getAdapter,
     envelopeMetadata: envelopeBootstrap.metadata,
+    envelopeAuthority: envelopeBootstrap.envelopeAuthority,
   });
 
   await registerApiRoutes({

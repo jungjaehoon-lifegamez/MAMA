@@ -45,6 +45,7 @@
     "./cases/wiki-page-index": "./dist/cases/wiki-page-index.js",
     "./connectors": "./dist/connectors/event-index.js",
     "./connectors/event-index": "./dist/connectors/event-index.js",
+    "./connectors/raw-query": "./dist/connectors/raw-query.js",
     "./connectors/types": "./dist/connectors/types.js",
     "./edges/types": "./dist/edges/types.js",
     "./edges/store": "./dist/edges/store.js",

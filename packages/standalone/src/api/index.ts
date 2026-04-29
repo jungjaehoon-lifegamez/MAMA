@@ -29,6 +29,7 @@ import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
 import { createMemoryProvenanceRouter } from './memory-provenance-handler.js';
+import { createAgentRawRouter, type AgentRawRouterOptions } from './agent-raw-handler.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -86,6 +87,10 @@ export interface ApiServerOptions {
   };
   /** Runtime envelope bootstrap metadata for authenticated status reporting */
   envelope?: ApiEnvelopeMetadata;
+  /** Runtime envelope authority for worker-scoped raw evidence reads */
+  envelopeAuthority?: import('../envelope/authority.js').EnvelopeAuthority;
+  /** Test seam for raw query functions; production loads mama-core raw-query lazily */
+  rawQuery?: AgentRawRouterOptions['rawQuery'];
 }
 
 export type ApiEnvelopeMetadata = {
@@ -134,6 +139,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     enabledConnectors,
     eventBus,
     envelope = { issuance: 'off' },
+    envelopeAuthority,
+    rawQuery,
   } = options;
 
   const app = express();
@@ -161,7 +168,10 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     if (origin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'Content-Type, Authorization, x-mama-envelope-hash'
+      );
     }
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -198,6 +208,17 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
+
+  if (memoryDb) {
+    app.use(
+      '/api/agent/raw',
+      createAgentRawRouter({
+        memoryDb,
+        envelopeAuthority,
+        rawQuery,
+      })
+    );
+  }
 
   // Mount report store (created early so intelligence router can reference it)
   const reportSseClients = new Set<ServerResponse>();

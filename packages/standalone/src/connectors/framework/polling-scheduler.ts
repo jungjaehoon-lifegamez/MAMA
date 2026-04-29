@@ -8,7 +8,7 @@ import { join } from 'path';
 
 import type { ConnectorRegistry } from './connector-registry.js';
 import type { ChannelConfig, NormalizedItem } from './types.js';
-import type { RawStore } from './raw-store.js';
+import type { RawIndexSink, RawStore } from './raw-store.js';
 import { classifyItemsByRole } from '../../memory/history-extractor.js';
 import type { ClassifiedItems } from '../../memory/history-extractor.js';
 
@@ -20,6 +20,7 @@ interface PollState {
 
 export class PollingScheduler {
   private readonly rawStore: RawStore;
+  private readonly rawIndexSink?: RawIndexSink;
   private lastPollTimes = new Map<string, Date>();
   private timers = new Map<string, ReturnType<typeof setInterval>>();
   private readonly stateFile: string;
@@ -27,8 +28,13 @@ export class PollingScheduler {
   /** Initial lookback for connectors with no saved state (default: 24h). Set to 0 for all history. */
   initialLookbackMs: number;
 
-  constructor(rawStore: RawStore, basePath: string, options?: { initialLookbackMs?: number }) {
+  constructor(
+    rawStore: RawStore,
+    basePath: string,
+    options?: { initialLookbackMs?: number; rawIndexSink?: RawIndexSink }
+  ) {
     this.rawStore = rawStore;
+    this.rawIndexSink = options?.rawIndexSink;
     this.stateFile = join(basePath, 'poll-state.json');
     this.initialLookbackMs = options?.initialLookbackMs ?? 24 * 60 * 60 * 1000;
     this.restoreState();
@@ -80,9 +86,12 @@ export class PollingScheduler {
           );
           if (items.length > 0) {
             this.rawStore.save(name, items);
+            if (this.rawIndexSink) {
+              await this.rawIndexSink(name, items);
+            }
             allItems.push(...items);
           }
-          // Only advance the cursor after a successful poll+save
+          // Only advance the cursor after a successful poll+save+index.
           this.lastPollTimes.set(name, new Date());
         } catch (err) {
           console.error(`[connector:${name}] poll error:`, err);
