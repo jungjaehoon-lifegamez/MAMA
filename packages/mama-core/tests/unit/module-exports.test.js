@@ -72,6 +72,7 @@ describe('Story M1.1: Core Module Exports', () => {
         'verifyBackupExists',
         'deleteAutoLinks',
         'validateCleanupResult',
+        'expandWithGraph',
       ];
       const defaultFunctionExports = [
         ...namedFunctionExports.filter((exportName) => exportName !== 'listOpenAuditFindings'),

@@ -253,6 +253,30 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         expect(replay).toEqual(first);
       });
 
+      it('allows partial deterministic replays when stable input refs are the discriminator', () => {
+        const scopedAdapter = createAdapter(tempDbPath('partial-stable-input-ref-replay'));
+        const input = {
+          model_run_id: 'mr_partial_stable_input_ref_replay',
+          model_id: 'gpt-5.4',
+          model_provider: 'openai',
+          agent_id: 'agent-alias',
+          input_refs: {
+            request_idempotency_key: 'alias-key-partial-stable-input-ref',
+          },
+          token_count: 42,
+          cost_estimate: 0.25,
+          created_at: 4_275,
+        };
+
+        const first = beginModelRunInAdapter(scopedAdapter, input);
+        const replay = beginModelRunInAdapter(scopedAdapter, {
+          model_run_id: input.model_run_id,
+          input_refs: input.input_refs,
+        });
+
+        expect(replay).toEqual(first);
+      });
+
       it('compares replay input refs canonically instead of by raw JSON text', () => {
         const scopedAdapter = createAdapter(tempDbPath('canonical-input-refs'));
         const input = {
@@ -276,6 +300,24 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
             ...input,
             input_refs_json:
               '{"request_idempotency_key":"alias-key-canonical","entity_id":"entity_changed"}',
+          })
+        ).toThrow(/different input_refs_json/);
+      });
+
+      it('preserves __proto__ as an own input ref key during canonical comparison', () => {
+        const scopedAdapter = createAdapter(tempDbPath('canonical-proto-input-refs'));
+        const input = {
+          model_run_id: 'mr_canonical_proto_input_refs',
+          input_refs_json: '{"__proto__":{"request_idempotency_key":"proto-key-original"}}',
+          created_at: 4_400,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+
+        expect(() =>
+          beginModelRunInAdapter(scopedAdapter, {
+            ...input,
+            input_refs_json: '{"__proto__":{"request_idempotency_key":"proto-key-changed"}}',
           })
         ).toThrow(/different input_refs_json/);
       });
@@ -448,6 +490,27 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
           token_count: 12,
           created_at: 6_000,
         });
+      });
+
+      it('rejects explicitly replayed error summary conflicts for non-running begin rows', () => {
+        const scopedAdapter = createAdapter(tempDbPath('error-summary-conflict'));
+        const input = {
+          model_run_id: 'mr_error_summary_conflict',
+          envelope_hash: 'env_error_summary_conflict',
+          input_refs: { request_idempotency_key: 'error-summary-conflict-key' },
+          status: 'failed' as const,
+          error_summary: 'original failure',
+          created_at: 6_250,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+
+        expect(() =>
+          beginModelRunInAdapter(scopedAdapter, {
+            ...input,
+            error_summary: 'changed failure',
+          })
+        ).toThrow(/different error_summary/);
       });
 
       it('rejects conflicts for every explicitly replayed stable begin field', () => {

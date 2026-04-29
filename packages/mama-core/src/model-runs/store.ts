@@ -327,9 +327,14 @@ function canonicalJson(value: unknown): unknown {
   }
   if (value && typeof value === 'object') {
     const object = value as Record<string, unknown>;
-    const sorted: Record<string, unknown> = {};
+    const sorted = Object.create(null) as Record<string, unknown>;
     for (const key of Object.keys(object).sort()) {
-      sorted[key] = canonicalJson(object[key]);
+      Object.defineProperty(sorted, key, {
+        value: canonicalJson(object[key]),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     return sorted;
   }
