@@ -511,6 +511,13 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
             error_summary: 'changed failure',
           })
         ).toThrow(/different error_summary/);
+        expect(() =>
+          beginModelRunInAdapter(scopedAdapter, {
+            model_run_id: input.model_run_id,
+            envelope_hash: input.envelope_hash,
+            error_summary: 'changed failure without status',
+          })
+        ).toThrow(/different error_summary/);
       });
 
       it('rejects conflicts for every explicitly replayed stable begin field', () => {

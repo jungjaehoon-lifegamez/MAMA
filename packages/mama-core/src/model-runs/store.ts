@@ -314,9 +314,9 @@ function replayFieldsForInput(
   }
   if (input.status !== undefined && input.status !== 'running') {
     pushReplayField(fields, 'status');
-    if (input.error_summary !== undefined) {
-      pushReplayField(fields, 'error_summary');
-    }
+  }
+  if (input.error_summary !== undefined) {
+    pushReplayField(fields, 'error_summary');
   }
   return fields;
 }
