@@ -30,6 +30,10 @@ import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
 import { createMemoryProvenanceRouter } from './memory-provenance-handler.js';
 import { createAgentRawRouter, type AgentRawRouterOptions } from './agent-raw-handler.js';
+import {
+  createAgentSituationRouter,
+  type AgentSituationRouterOptions,
+} from './agent-situation-handler.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -65,6 +69,8 @@ export interface ApiServerOptions {
   db?: SQLiteDatabase;
   /** Memory database instance (for intelligence queries — mama-memory.db) */
   memoryDb?: SQLiteDatabase;
+  /** Transaction-capable mama-core adapter for worker situation packets */
+  memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'];
   /** Wiki directory path (for wiki API) */
   wikiPath?: string;
   /** Skill registry instance */
@@ -91,6 +97,10 @@ export interface ApiServerOptions {
   envelopeAuthority?: import('../envelope/authority.js').EnvelopeAuthority;
   /** Test seam for raw query functions; production loads mama-core raw-query lazily */
   rawQuery?: AgentRawRouterOptions['rawQuery'];
+  /** Test seam for agent situation packet building */
+  situationBuilder?: AgentSituationRouterOptions['buildPacket'];
+  /** Test seam for agent situation timestamps */
+  situationNow?: AgentSituationRouterOptions['now'];
 }
 
 export type ApiEnvelopeMetadata = {
@@ -132,6 +142,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     enableAutoKillPort = false,
     db,
     memoryDb,
+    memoryAdapter,
     skillRegistry,
     healthService,
     healthCheckService,
@@ -141,6 +152,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     envelope = { issuance: 'off' },
     envelopeAuthority,
     rawQuery,
+    situationBuilder,
+    situationNow,
   } = options;
 
   const app = express();
@@ -216,6 +229,18 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         memoryDb,
         envelopeAuthority,
         rawQuery,
+      })
+    );
+  }
+
+  if (memoryAdapter) {
+    app.use(
+      '/api/agent/situation',
+      createAgentSituationRouter({
+        memoryAdapter,
+        envelopeAuthority,
+        buildPacket: situationBuilder,
+        now: situationNow,
       })
     );
   }
