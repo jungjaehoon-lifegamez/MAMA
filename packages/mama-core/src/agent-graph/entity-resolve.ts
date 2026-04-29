@@ -2,7 +2,12 @@ import { assertTwinRefsVisible, listVisibleTwinEdgesForRefs } from '../edges/ref
 import { normalizeEntityLabel } from '../entities/normalization.js';
 import { EntityMergeError, getEntityNode, resolveCanonicalEntityId } from '../entities/store.js';
 import type { EntityNode } from '../entities/types.js';
-import type { TwinRef, TwinScopeRef, TwinVisibility } from '../edges/types.js';
+import {
+  TWIN_REF_KINDS,
+  type TwinRef,
+  type TwinScopeRef,
+  type TwinVisibility,
+} from '../edges/types.js';
 import type {
   AgentGraphAdapter,
   ResolveEntityInput,
@@ -10,6 +15,8 @@ import type {
   ResolvedEntityCandidate,
 } from './types.js';
 import { AgentGraphValidationError } from './errors.js';
+
+const TWIN_REF_KIND_SET = new Set<string>(TWIN_REF_KINDS);
 
 function hasScopes(scopes: readonly TwinScopeRef[] | undefined): scopes is TwinScopeRef[] {
   return Array.isArray(scopes) && scopes.length > 0;
@@ -28,6 +35,175 @@ function entityVisible(entity: EntityNode, scopes: readonly TwinScopeRef[] | und
     return true;
   }
   return scopes.some((scope) => entity.scope_kind === scope.kind && entity.scope_id === scope.id);
+}
+
+function isAtOrBeforeAsOf(value: number, asOfMs: number | null | undefined): boolean {
+  return typeof asOfMs !== 'number' || value <= asOfMs;
+}
+
+function scopeVisible(
+  scopeKind: string | null,
+  scopeId: string | null,
+  scopes: readonly TwinScopeRef[] | undefined
+): boolean {
+  if (!hasScopes(scopes)) {
+    return true;
+  }
+  return scopes.some((scope) => scope.kind === scopeKind && scope.id === scopeId);
+}
+
+function connectorVisible(connector: string, connectors: readonly string[] | undefined): boolean {
+  return !connectors || connectors.length === 0 || connectors.includes(connector);
+}
+
+function refsVisible(
+  adapter: AgentGraphAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility
+): boolean {
+  if (refs.length === 0) {
+    return true;
+  }
+  try {
+    assertTwinRefsVisible(adapter, refs, visibility);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function parseSourceRefs(value: unknown, context: string): TwinRef[] {
+  if (value === undefined || value === null) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(`${context}.source_refs must be an array.`);
+  }
+  const refs: TwinRef[] = [];
+  for (const item of value) {
+    if (
+      item === null ||
+      typeof item !== 'object' ||
+      typeof (item as Record<string, unknown>).kind !== 'string' ||
+      typeof (item as Record<string, unknown>).id !== 'string'
+    ) {
+      throw new Error(`${context}.source_refs entries must be TwinRef objects.`);
+    }
+    const kind = (item as { kind: string }).kind;
+    const id = (item as { id: string }).id.trim();
+    if (!TWIN_REF_KIND_SET.has(kind) || id.length === 0) {
+      throw new Error(`${context}.source_refs contains an invalid TwinRef.`);
+    }
+    refs.push({ kind, id } as TwinRef);
+  }
+  return refs;
+}
+
+function aliasSourceRefs(adapter: AgentGraphAdapter, aliasId: string, entityId: string): TwinRef[] {
+  const rows = adapter
+    .prepare(
+      `
+        SELECT relation_attrs_json
+        FROM twin_edges
+        WHERE edge_type = 'alias_of'
+          AND subject_kind = 'entity'
+          AND subject_id = ?
+          AND object_kind = 'entity'
+          AND object_id = ?
+          AND relation_attrs_json IS NOT NULL
+        ORDER BY created_at DESC, edge_id ASC
+      `
+    )
+    .all(entityId, entityId) as Array<{ relation_attrs_json: string | null }>;
+
+  const refs: TwinRef[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (!row.relation_attrs_json) {
+      continue;
+    }
+    const parsed = JSON.parse(row.relation_attrs_json) as unknown;
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      (parsed as Record<string, unknown>).alias_id !== aliasId
+    ) {
+      continue;
+    }
+    for (const ref of parseSourceRefs(
+      (parsed as Record<string, unknown>).source_refs,
+      `alias ${aliasId}`
+    )) {
+      const key = `${ref.kind}:${ref.id}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        refs.push(ref);
+      }
+    }
+  }
+  return refs;
+}
+
+function aliasVisible(
+  adapter: AgentGraphAdapter,
+  row: { id: string; entity_id: string; created_at: number },
+  visibility: TwinVisibility,
+  asOfMs: number | null | undefined
+): boolean {
+  if (!isAtOrBeforeAsOf(row.created_at, asOfMs)) {
+    return false;
+  }
+  return refsVisible(adapter, aliasSourceRefs(adapter, row.id, row.entity_id), visibility);
+}
+
+function rawRefForObservation(
+  adapter: AgentGraphAdapter,
+  row: { source_connector: string; source_raw_record_id: string }
+): TwinRef | null {
+  const raw = adapter
+    .prepare(
+      `
+        SELECT event_index_id
+        FROM connector_event_index
+        WHERE event_index_id = ?
+           OR (source_connector = ? AND source_id = ?)
+        ORDER BY CASE WHEN event_index_id = ? THEN 0 ELSE 1 END
+        LIMIT 1
+      `
+    )
+    .get(
+      row.source_raw_record_id,
+      row.source_connector,
+      row.source_raw_record_id,
+      row.source_raw_record_id
+    ) as { event_index_id: string } | undefined;
+  return raw ? { kind: 'raw', id: raw.event_index_id } : null;
+}
+
+function observationVisible(
+  adapter: AgentGraphAdapter,
+  row: {
+    scope_kind: string | null;
+    scope_id: string | null;
+    source_connector: string;
+    source_raw_record_id: string;
+    timestamp_observed: number | null;
+    created_at: number;
+  },
+  visibility: TwinVisibility,
+  asOfMs: number | null | undefined
+): boolean {
+  if (!isAtOrBeforeAsOf(row.timestamp_observed ?? row.created_at, asOfMs)) {
+    return false;
+  }
+  if (!scopeVisible(row.scope_kind, row.scope_id, visibility.scopes)) {
+    return false;
+  }
+  if (!connectorVisible(row.source_connector, visibility.connectors)) {
+    return false;
+  }
+  const rawRef = rawRefForObservation(adapter, row);
+  return rawRef ? refsVisible(adapter, [rawRef], visibility) : true;
 }
 
 function canonicalEntity(adapter: AgentGraphAdapter, entityId: string): EntityNode | null {
@@ -131,14 +307,23 @@ export function resolveEntity(
   const aliasRows = adapter
     .prepare(
       `
-        SELECT entity_id, label, normalized_label
+        SELECT id, entity_id, label, normalized_label, created_at
         FROM entity_aliases
         WHERE status = 'active'
       `
     )
-    .all() as Array<{ entity_id: string; label: string; normalized_label: string }>;
+    .all() as Array<{
+    id: string;
+    entity_id: string;
+    label: string;
+    normalized_label: string;
+    created_at: number;
+  }>;
   for (const row of aliasRows) {
-    if (row.normalized_label === normalized || normalizeLabel(row.label) === normalized) {
+    if (
+      aliasVisible(adapter, row, visibility, input.as_of_ms) &&
+      (row.normalized_label === normalized || normalizeLabel(row.label) === normalized)
+    ) {
       recordCandidate(row.entity_id, row.label, 'alias', 0.95);
     }
   }
@@ -146,7 +331,10 @@ export function resolveEntity(
   const observationRows = adapter
     .prepare(
       `
-        SELECT l.canonical_entity_id, o.surface_form, o.normalized_form
+        SELECT
+          l.canonical_entity_id, o.surface_form, o.normalized_form,
+          o.scope_kind, o.scope_id, o.source_connector, o.source_raw_record_id,
+          o.timestamp_observed, o.created_at
         FROM entity_lineage_links l
         JOIN entity_observations o ON o.id = l.entity_observation_id
         WHERE l.status = 'active'
@@ -156,9 +344,18 @@ export function resolveEntity(
     canonical_entity_id: string;
     surface_form: string;
     normalized_form: string;
+    scope_kind: string | null;
+    scope_id: string | null;
+    source_connector: string;
+    source_raw_record_id: string;
+    timestamp_observed: number | null;
+    created_at: number;
   }>;
   for (const row of observationRows) {
-    if (row.normalized_form === normalized || normalizeLabel(row.surface_form) === normalized) {
+    if (
+      observationVisible(adapter, row, visibility, input.as_of_ms) &&
+      (row.normalized_form === normalized || normalizeLabel(row.surface_form) === normalized)
+    ) {
       recordCandidate(row.canonical_entity_id, row.surface_form, 'observation', 0.85);
     }
   }

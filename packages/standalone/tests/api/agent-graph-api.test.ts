@@ -4,6 +4,7 @@ import express from 'express';
 
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
+import { attachEntityAliasWithEdge } from '../../../mama-core/src/agent-graph/index.js';
 import { upsertConnectorEventIndex } from '../../../mama-core/src/connectors/event-index.js';
 import { normalizeEntityLabel } from '../../../mama-core/src/entities/normalization.js';
 import { attachEntityAlias, createEntityNode } from '../../../mama-core/src/entities/store.js';
@@ -183,6 +184,7 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
     adapter.prepare('DELETE FROM entity_observations').run();
     adapter.prepare('DELETE FROM entity_aliases').run();
     adapter.prepare('DELETE FROM entity_nodes').run();
+    adapter.prepare('DELETE FROM connector_event_index').run();
     adapter.prepare('DELETE FROM memory_scope_bindings').run();
     adapter.prepare('DELETE FROM memory_scopes').run();
     adapter.prepare('DELETE FROM decisions').run();
@@ -366,6 +368,51 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       expect(withJsonContextRef.status).toBe(200);
       expect(withJsonContextRef.body.entity.id).toBe('entity_person_jaehoon');
     });
+
+    it('filters alias matches by source ref connector visibility', async () => {
+      await createEntityNode({
+        id: 'entity_alias_api_connector_filtered',
+        kind: 'project',
+        preferred_label: 'Alias API Connector Filtered',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const discordRaw = insertScopedRaw({
+        sourceId: 'raw-api-alias-discord',
+        connector: 'discord',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      const aliasInput = {
+        entity_id: 'entity_alias_api_connector_filtered',
+        label: 'API Discord Only Alias',
+        label_type: 'alt' as const,
+        source_type: 'agent',
+        source_ref: 'model_run:mr_api_alias_discord',
+        agent_id: 'worker-m6',
+        model_run_id: 'mr_api_alias_discord',
+        envelope_hash: validEnvelope.envelope_hash,
+        request_idempotency_key: 'api-alias-discord-key',
+        source_refs: [{ kind: 'raw' as const, id: discordRaw }],
+        scopes: [{ kind: 'project' as const, id: 'alpha' }],
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        tenant_id: 'default',
+      };
+      attachEntityAliasWithEdge(getAdapter(), aliasInput);
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get('/api/agent/entities/resolve?label=API%20Discord%20Only%20Alias')
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.entity).toBeNull();
+      expect(response.body.candidates).toHaveLength(0);
+    });
   });
 
   describe('AC #3: graph traversal applies edge filters and as_of', () => {
@@ -399,8 +446,18 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
       );
       expect(timeline.status).toBe(200);
       expect(
-        timeline.body.events.map((event: { edge: { edge_id: string } }) => event.edge.edge_id)
+        timeline.body.events
+          .filter((event: { kind: string }) => event.kind === 'edge')
+          .map((event: { edge: { edge_id: string } }) => event.edge.edge_id)
       ).toEqual(['edge_old_mentions']);
+      expect(timeline.body.events).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            kind: 'memory',
+            ref: { kind: 'memory', id: 'mem-visible-old' },
+          }),
+        ])
+      );
     });
 
     it('accepts JSON refs, rejects over-wide depth, and filters raw endpoints by full envelope visibility', async () => {
@@ -530,6 +587,88 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
         .prepare('SELECT status, envelope_hash FROM model_runs ORDER BY created_at')
         .all() as Array<{ status: string; envelope_hash: string }>;
       expect(runs).toEqual([{ status: 'committed', envelope_hash: validEnvelope.envelope_hash }]);
+    });
+
+    it('persists visible direct alias source refs in alias_of relation attrs', async () => {
+      await createEntityNode({
+        id: 'entity_alias_source_refs',
+        kind: 'person',
+        preferred_label: 'Alias Source Refs',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const slackRaw = insertScopedRaw({
+        sourceId: 'raw-api-alias-slack-visible',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_source_refs/aliases')
+          .send({
+            label: 'Alias With Source Refs',
+            request_idempotency_key: 'alias-source-refs-key',
+            source_refs: [{ kind: 'raw', id: slackRaw }],
+          })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.edge.relation_attrs).toEqual(
+        expect.objectContaining({
+          source_refs: [{ kind: 'raw', id: slackRaw }],
+        })
+      );
+    });
+
+    it('rejects hidden direct alias source refs without writing alias or edge rows', async () => {
+      await createEntityNode({
+        id: 'entity_alias_hidden_source_refs',
+        kind: 'person',
+        preferred_label: 'Alias Hidden Source Refs',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const discordRaw = insertScopedRaw({
+        sourceId: 'raw-api-alias-discord-hidden',
+        connector: 'discord',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/entities/entity_alias_hidden_source_refs/aliases')
+          .send({
+            label: 'Alias Hidden Source Refs',
+            request_idempotency_key: 'alias-hidden-source-refs-key',
+            source_refs: [{ kind: 'raw', id: discordRaw }],
+          })
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('agent_graph_invalid');
+      const counts = getAdapter()
+        .prepare(
+          `
+            SELECT
+              (SELECT COUNT(*) FROM entity_aliases WHERE label = 'Alias Hidden Source Refs') AS aliases,
+              (SELECT COUNT(*) FROM twin_edges WHERE request_idempotency_key = 'alias-hidden-source-refs-key') AS edges
+          `
+        )
+        .get() as { aliases: number; edges: number };
+      expect(counts).toEqual({ aliases: 0, edges: 0 });
     });
 
     it('replays identical direct alias writes and rejects changed payloads for the same request key', async () => {

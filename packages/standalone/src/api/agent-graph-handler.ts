@@ -169,6 +169,7 @@ async function handleAliasWrite(
     const entityId = paramString(req.params.entityId, 'entityId');
     const label = stringBody(body, 'label');
     const requestIdempotencyKey = stringBody(body, 'request_idempotency_key');
+    const sourceRefs = optionalSourceRefsBody(body, 'source_refs');
     const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const modelRun = suppliedModelRunId
       ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope.envelope_hash)
@@ -186,6 +187,7 @@ async function handleAliasWrite(
             tool: 'entity.alias',
             entity_id: entityId,
             request_idempotency_key: requestIdempotencyKey,
+            source_refs: sourceRefs,
             scopes: visibility.scopes,
             connectors: visibility.connectors,
             project_refs: visibility.projectRefs,
@@ -209,6 +211,7 @@ async function handleAliasWrite(
       model_run_id: modelRun.model_run_id,
       envelope_hash: envelope.envelope_hash,
       request_idempotency_key: requestIdempotencyKey,
+      source_refs: sourceRefs,
       scopes: visibility.scopes,
       connectors: visibility.connectors,
       project_refs: visibility.projectRefs,
@@ -507,6 +510,45 @@ function optionalNumberBody(body: Record<string, unknown>, field: string): numbe
     throw new WorkerEnvelopeError(400, 'agent_graph_body_invalid', `${field} must be a number.`);
   }
   return value;
+}
+
+function optionalSourceRefsBody(
+  body: Record<string, unknown>,
+  field: string
+): TwinRef[] | undefined {
+  const value = body[field];
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new WorkerEnvelopeError(400, 'agent_graph_body_invalid', `${field} must be an array.`);
+  }
+  return value.map((item, index) => parseBodyRefValue(item, `${field}[${index}]`));
+}
+
+function parseBodyRefValue(value: unknown, name: string): TwinRef {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    typeof (value as Record<string, unknown>).kind !== 'string' ||
+    typeof (value as Record<string, unknown>).id !== 'string'
+  ) {
+    throw new WorkerEnvelopeError(
+      400,
+      'agent_graph_body_invalid',
+      `${name} must be an object with string kind and id.`
+    );
+  }
+  const kind = (value as { kind: string }).kind;
+  const id = (value as { id: string }).id.trim();
+  if (!REF_KINDS.has(kind) || id.length === 0) {
+    throw new WorkerEnvelopeError(
+      400,
+      'agent_graph_body_invalid',
+      `${name} must contain a supported kind and non-empty id.`
+    );
+  }
+  return { kind: kind as TwinRefKind, id } as TwinRef;
 }
 
 function invalidQuery(message: string): WorkerEnvelopeError {
