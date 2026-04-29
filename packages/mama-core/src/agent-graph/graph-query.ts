@@ -1,8 +1,5 @@
-import {
-  assertTwinRefsVisibleToScopes,
-  listVisibleTwinEdgesForRefs,
-} from '../edges/ref-validation.js';
-import type { TwinEdgeRecord, TwinRef, TwinScopeRef } from '../edges/types.js';
+import { assertTwinRefsVisible, listVisibleTwinEdgesForRefs } from '../edges/ref-validation.js';
+import type { TwinEdgeRecord, TwinRef, TwinVisibility } from '../edges/types.js';
 import type {
   AgentGraphAdapter,
   AgentGraphEdgeFilters,
@@ -18,7 +15,7 @@ import { AgentGraphValidationError } from './errors.js';
 
 const DEFAULT_GRAPH_LIMIT = 100;
 const DEFAULT_PATH_LIMIT = 10;
-const MAX_DEPTH = 8;
+const MAX_DEPTH = 5;
 
 function refKey(ref: TwinRef): string {
   return `${ref.kind}:${ref.id}`;
@@ -69,14 +66,17 @@ function listFilteredEdges(
   adapter: AgentGraphAdapter,
   refs: readonly TwinRef[],
   input: {
-    scopes?: TwinScopeRef[];
+    visibility: TwinVisibility;
     edge_filters?: AgentGraphEdgeFilters;
     as_of_ms?: number | null;
     limit?: number;
   }
 ): TwinEdgeRecord[] {
   return listVisibleTwinEdgesForRefs(adapter, refs, {
-    scopes: input.scopes,
+    scopes: input.visibility.scopes,
+    connectors: input.visibility.connectors,
+    projectRefs: input.visibility.projectRefs,
+    tenantId: input.visibility.tenantId,
     edgeTypes: input.edge_filters?.edge_types,
     asOfMs: input.as_of_ms,
     limit: input.limit,
@@ -86,13 +86,27 @@ function listFilteredEdges(
 function assertRefsVisible(
   adapter: AgentGraphAdapter,
   refs: readonly TwinRef[],
-  scopes: TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): void {
   try {
-    assertTwinRefsVisibleToScopes(adapter, refs, scopes);
+    assertTwinRefsVisible(adapter, refs, visibility);
   } catch (error) {
     throw new AgentGraphValidationError(error instanceof Error ? error.message : String(error));
   }
+}
+
+function graphVisibility(input: {
+  scopes?: TwinVisibility['scopes'];
+  connectors?: TwinVisibility['connectors'];
+  project_refs?: TwinVisibility['projectRefs'];
+  tenant_id?: TwinVisibility['tenantId'];
+}): TwinVisibility {
+  return {
+    scopes: input.scopes,
+    connectors: input.connectors,
+    projectRefs: input.project_refs,
+    tenantId: input.tenant_id,
+  };
 }
 
 export function getGraphNeighborhood(
@@ -101,7 +115,8 @@ export function getGraphNeighborhood(
 ): AgentGraphResult {
   const depth = normalizeDepth(input.depth, 1);
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
-  assertRefsVisible(adapter, [input.ref], input.scopes);
+  const visibility = graphVisibility(input);
+  assertRefsVisible(adapter, [input.ref], visibility);
 
   const nodes: TwinRef[] = [];
   const edges: TwinEdgeRecord[] = [];
@@ -112,7 +127,7 @@ export function getGraphNeighborhood(
   let frontier: TwinRef[] = [input.ref];
   for (let currentDepth = 0; currentDepth < depth && frontier.length > 0; currentDepth++) {
     const found = listFilteredEdges(adapter, frontier, {
-      scopes: input.scopes,
+      visibility,
       edge_filters: input.edge_filters,
       as_of_ms: input.as_of_ms,
       limit,
@@ -148,7 +163,8 @@ export function getGraphPaths(
 ): GraphPathsResult {
   const maxDepth = normalizeDepth(input.max_depth, 3);
   const limit = normalizeLimit(input.limit, DEFAULT_PATH_LIMIT);
-  assertRefsVisible(adapter, [input.from_ref, input.to_ref], input.scopes);
+  const visibility = graphVisibility(input);
+  assertRefsVisible(adapter, [input.from_ref, input.to_ref], visibility);
 
   const targetKey = refKey(input.to_ref);
   const queue: AgentGraphPath[] = [{ refs: [input.from_ref], edges: [] }];
@@ -164,7 +180,7 @@ export function getGraphPaths(
       continue;
     }
     const edges = listFilteredEdges(adapter, [current], {
-      scopes: input.scopes,
+      visibility,
       edge_filters: input.edge_filters,
       as_of_ms: input.as_of_ms,
     });
@@ -196,10 +212,11 @@ export function getGraphTimeline(
   adapter: AgentGraphAdapter,
   input: GraphTimelineInput
 ): GraphTimelineResult {
-  assertRefsVisible(adapter, [input.ref], input.scopes);
+  const visibility = graphVisibility(input);
+  assertRefsVisible(adapter, [input.ref], visibility);
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
   const edges = listFilteredEdges(adapter, [input.ref], {
-    scopes: input.scopes,
+    visibility,
     edge_filters: input.edge_filters,
     as_of_ms: input.as_of_ms,
   })
