@@ -107,7 +107,7 @@ describe('Story M2.1: Memory Agent Runtime Provenance', () => {
           expect.objectContaining({
             sourceTurnId: 'turn-1',
             sourceMessageRef: 'telegram:abc:turn-1',
-            modelRunId: 'parent-model-run-1',
+            parentModelRunId: 'parent-model-run-1',
           })
         );
       });

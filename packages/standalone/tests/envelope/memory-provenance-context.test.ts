@@ -9,6 +9,7 @@ import { makeSignedEnvelope } from './fixtures.js';
 type ProvenanceAwareApi = MAMAApiInterface & {
   saveWithTrustedProvenance: ReturnType<typeof vi.fn>;
   ingestWithTrustedProvenance: ReturnType<typeof vi.fn>;
+  appendToolTrace: ReturnType<typeof vi.fn>;
 };
 
 function createContext(): AgentContext {
@@ -51,6 +52,11 @@ function createApi(): ProvenanceAwareApi {
     loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
     ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'public_ingest' }),
     ingestWithTrustedProvenance: vi.fn().mockResolvedValue({ success: true, id: 'trusted_ingest' }),
+    appendToolTrace: vi.fn().mockResolvedValue({
+      trace_id: 'trace_1',
+      model_run_id: 'model-run-1',
+      tool_name: 'mama_save',
+    }),
   };
 }
 
@@ -200,6 +206,13 @@ describe('Story M2.1: Gateway Memory Provenance Context', () => {
     expect(options.provenance.model_run_id).toBe('model-run-1');
     expect(options.provenance.envelope_hash).toBe(envelope.envelope_hash);
     expect(options.provenance.source_message_ref).toBe('telegram:abc:turn-with-fallback');
+    expect(api.appendToolTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model_run_id: 'model-run-1',
+        tool_name: 'mama_save',
+        execution_status: 'completed',
+      })
+    );
     db.close();
   });
 });

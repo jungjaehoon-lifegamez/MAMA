@@ -31,6 +31,23 @@ function makeMAMAApi(): MAMAApiInterface {
       search_meta: { query: 'test', scope_order: [], retrieval_sources: [] },
     }),
     ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'ingested_1' }),
+    beginModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_executor_integration',
+      status: 'running',
+    }),
+    commitModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_executor_integration',
+      status: 'committed',
+    }),
+    failModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_executor_integration',
+      status: 'failed',
+    }),
+    appendToolTrace: vi.fn().mockResolvedValue({
+      trace_id: 'trace_executor_integration',
+      model_run_id: 'mr_executor_integration',
+      tool_name: 'mama_load_checkpoint',
+    }),
   };
 }
 

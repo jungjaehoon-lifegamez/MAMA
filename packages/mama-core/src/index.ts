@@ -139,6 +139,16 @@ export {
   listMemoriesByGatewayCallId,
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
+export {
+  MODEL_RUN_STATUSES,
+  type ModelRunStatus,
+  type BeginModelRunInput,
+  type ModelRunRecord,
+  type AppendToolTraceInput,
+  type ToolTraceRecord,
+} from './model-runs/types.js';
+export { beginModelRun, commitModelRun, failModelRun, getModelRun } from './model-runs/store.js';
+export { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';

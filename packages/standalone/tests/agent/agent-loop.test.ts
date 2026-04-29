@@ -25,6 +25,18 @@ const gatewayExecutorSetUICommandQueueMock = vi.fn();
 const gatewayExecutorSetSessionsDbMock = vi.fn();
 const gatewayExecutorSetValidationServiceMock = vi.fn();
 const gatewayExecutorSetRawStoreMock = vi.fn();
+const gatewayExecutorBeginRuntimeModelRunMock = vi.fn().mockResolvedValue({
+  model_run_id: 'mr_agent_loop_mock',
+  status: 'running',
+});
+const gatewayExecutorCommitRuntimeModelRunMock = vi.fn().mockResolvedValue({
+  model_run_id: 'mr_agent_loop_mock',
+  status: 'committed',
+});
+const gatewayExecutorFailRuntimeModelRunMock = vi.fn().mockResolvedValue({
+  model_run_id: 'mr_agent_loop_mock',
+  status: 'failed',
+});
 
 // Mock the ClaudeCLIWrapper
 vi.mock('../../src/agent/claude-cli-wrapper.js', () => {
@@ -84,6 +96,9 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       setSessionsDb: gatewayExecutorSetSessionsDbMock,
       setValidationService: gatewayExecutorSetValidationServiceMock,
       setRawStore: gatewayExecutorSetRawStoreMock,
+      beginRuntimeModelRun: gatewayExecutorBeginRuntimeModelRunMock,
+      commitRuntimeModelRun: gatewayExecutorCommitRuntimeModelRunMock,
+      failRuntimeModelRun: gatewayExecutorFailRuntimeModelRunMock,
       execute: vi.fn().mockResolvedValue({ success: true }),
     })),
   };
@@ -158,6 +173,9 @@ describe('AgentLoop', () => {
     gatewayExecutorSetSessionsDbMock.mockClear();
     gatewayExecutorSetValidationServiceMock.mockClear();
     gatewayExecutorSetRawStoreMock.mockClear();
+    gatewayExecutorBeginRuntimeModelRunMock.mockClear();
+    gatewayExecutorCommitRuntimeModelRunMock.mockClear();
+    gatewayExecutorFailRuntimeModelRunMock.mockClear();
     laneManagerEnqueueWithSessionMock.mockClear();
   });
 
