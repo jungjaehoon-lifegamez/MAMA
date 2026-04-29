@@ -55,6 +55,7 @@ export function applyAgentStoreTablesMigration(db: SQLiteDatabase): void {
       execution_status TEXT,
       trigger_reason   TEXT,
       envelope_hash    TEXT,
+      gateway_call_id  TEXT,
       requested_scopes TEXT,
       envelope_scopes_snapshot TEXT,
       scope_mismatch   INTEGER DEFAULT 0 CHECK (scope_mismatch IN (0, 1)),

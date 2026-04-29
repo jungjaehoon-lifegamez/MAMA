@@ -84,7 +84,8 @@ export interface AgentLoopClient {
 
 export interface MemoryAgentProcessLike {
   sendMessage(
-    content: string
+    content: string,
+    options?: { sourceTurnId?: string; sourceMessageRef?: string; parentModelRunId?: string }
   ): Promise<{ response?: string; ack?: MemoryAuditAckLike } | { response?: string }>;
 }
 
@@ -360,7 +361,10 @@ export class MessageRouter {
     this.memoryAgentProcessManager = processManager;
     this.memoryAuditQueue = new AuditTaskQueue(async (job) => {
       const process = await processManager.getSharedProcess('memory');
-      const result = await process.sendMessage(this.buildMemoryAuditPrompt(job));
+      const result = await process.sendMessage(this.buildMemoryAuditPrompt(job), {
+        sourceTurnId: job.turnId,
+        sourceMessageRef: [job.source, job.channelId, job.turnId].filter(Boolean).join(':'),
+      });
       if (
         result &&
         typeof result === 'object' &&
@@ -568,6 +572,11 @@ This protects your credentials from being exposed in chat logs.`;
     let cliSessionId = initialSession.sessionId;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
+    const sourceTurnId =
+      message.metadata?.messageId ?? `generated:${randomUUID().replace(/-/g, '')}`;
+    const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
+      .filter(Boolean)
+      .join(':');
 
     // Track lock ownership for proper cleanup in finally block
     let acquiredLock = !busy; // If not busy, we acquired lock from initialSession
@@ -746,6 +755,8 @@ This protects your credentials from being exposed in chat logs.`;
         cliSessionId, // Pass CLI session ID to avoid double-locking
         streamCallbacks: wrappedOnStream || processOptions?.onStream,
         envelope,
+        sourceTurnId,
+        sourceMessageRef,
       };
 
       if (shouldResume) {
@@ -861,7 +872,14 @@ This protects your credentials from being exposed in chat logs.`;
         const rawAssistantText = stripGatewayDecorations(response);
         void (async () => {
           try {
-            await this.triggerMemoryAgent(channelKey, message.text, rawAssistantText, message);
+            await this.triggerMemoryAgent(
+              channelKey,
+              message.text,
+              rawAssistantText,
+              message,
+              sourceTurnId,
+              sourceMessageRef
+            );
           } catch {
             /* non-fatal */
           }
@@ -1501,7 +1519,9 @@ INSTRUCTION:
     channelKey: string,
     userText: string,
     botResponse: string,
-    message?: NormalizedMessage
+    message?: NormalizedMessage,
+    sourceTurnId?: string,
+    _sourceMessageRef?: string
   ): Promise<void> {
     const memoryAuditQueue = this.memoryAuditQueue;
     if (!this.memoryAgentProcessManager || !memoryAuditQueue) {
@@ -1559,7 +1579,7 @@ INSTRUCTION:
       projectId: this.getRuntimeProjectId(),
     });
     const job: MemoryAuditJob = {
-      turnId: `turn_${now}`,
+      turnId: sourceTurnId ?? `turn_${now}`,
       channelKey,
       source,
       channelId,

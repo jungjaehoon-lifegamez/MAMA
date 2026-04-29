@@ -58,6 +58,14 @@ export interface MemoryScopeRef {
   id: string;
 }
 
+export interface MemorySourceRef {
+  package: 'mama-core' | 'mcp-server' | 'standalone' | 'claude-code-plugin';
+  source_type: string;
+  user_id?: string;
+  channel_id?: string;
+  project_id?: string;
+}
+
 export interface MemoryRecord {
   id: string;
   topic: string;
@@ -183,6 +191,66 @@ export interface MemoryEventRecord {
   reason?: string;
   created_at: number;
 }
+
+export interface MemoryWriteProvenance {
+  actor?: MemoryEventRecord['actor'];
+  agent_id?: string;
+  model_run_id?: string;
+  envelope_hash?: string;
+  tool_name?: string;
+  gateway_call_id?: string;
+  source_turn_id?: string;
+  source_message_ref?: string;
+  source_refs?: string[];
+}
+
+export interface MemoryProvenanceRecord {
+  memory_id: string;
+  agent_id: string | null;
+  model_run_id: string | null;
+  envelope_hash: string | null;
+  gateway_call_id: string | null;
+  source_refs: string[];
+  provenance: Record<string, unknown>;
+  latest_event?: MemoryEventRecord;
+}
+
+export interface PublicSaveMemoryInput {
+  topic: string;
+  kind: MemoryKind;
+  summary: string;
+  details: string;
+  confidence?: number;
+  status?: MemoryStatus;
+  scopes: MemoryScopeRef[];
+  source: MemorySourceRef;
+  excludeIds?: string[];
+  eventDate?: string;
+  eventDateTime?: number;
+  entityObservationIds?: string[];
+  timelineEvent?: {
+    id?: string;
+    entity_id?: string;
+    event_type: string;
+    role?: string | null;
+    valid_from?: number | null;
+    valid_to?: number | null;
+    observed_at?: number | null;
+    source_ref?: string | null;
+    summary: string;
+    details?: string | null;
+  };
+}
+
+export interface PublicIngestMemoryInput {
+  content: string;
+  scopes?: MemoryScopeRef[];
+  source: MemorySourceRef;
+  eventDate?: string;
+  eventDateTime?: number;
+}
+
+export type PublicIngestConversationInput = IngestConversationInput;
 
 export interface AuditFindingRecord {
   finding_id: string;

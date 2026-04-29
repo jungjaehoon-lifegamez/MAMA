@@ -24,63 +24,71 @@ import type { AgentProcessManager } from '../../src/multi-agent/agent-process-ma
 import type { DelegationManager } from '../../src/multi-agent/delegation-manager.js';
 
 describe('STORY-V019 - GatewayToolExecutor', () => {
-  const createMockApi = (): MAMAApiInterface => ({
-    save: vi.fn().mockResolvedValue({
-      success: true,
-      id: 'decision_test123',
-      type: 'decision',
-      message: 'Decision saved',
-    }),
-    saveCheckpoint: vi.fn().mockResolvedValue({
-      success: true,
-      id: 'checkpoint_test123',
-      type: 'checkpoint',
-      message: 'Checkpoint saved',
-    }),
-    listDecisions: vi.fn().mockResolvedValue([
-      {
-        id: 'decision_recent',
-        topic: 'recent_topic',
-        decision: 'Recent decision',
-        created_at: '2026-01-28',
+  const createMockApi = (): MAMAApiInterface => {
+    const api: MAMAApiInterface = {
+      save: vi.fn().mockResolvedValue({
+        success: true,
+        id: 'decision_test123',
         type: 'decision',
-      },
-    ]),
-    suggest: vi.fn().mockResolvedValue({
-      success: true,
-      results: [
+        message: 'Decision saved',
+      }),
+      saveCheckpoint: vi.fn().mockResolvedValue({
+        success: true,
+        id: 'checkpoint_test123',
+        type: 'checkpoint',
+        message: 'Checkpoint saved',
+      }),
+      listDecisions: vi.fn().mockResolvedValue([
         {
-          id: 'decision_1',
-          topic: 'auth',
-          decision: 'Use JWT',
-          similarity: 0.85,
+          id: 'decision_recent',
+          topic: 'recent_topic',
+          decision: 'Recent decision',
           created_at: '2026-01-28',
           type: 'decision',
         },
-      ],
-      count: 1,
-    }),
-    updateOutcome: vi.fn().mockResolvedValue({
+      ]),
+      suggest: vi.fn().mockResolvedValue({
+        success: true,
+        results: [
+          {
+            id: 'decision_1',
+            topic: 'auth',
+            decision: 'Use JWT',
+            similarity: 0.85,
+            created_at: '2026-01-28',
+            type: 'decision',
+          },
+        ],
+        count: 1,
+      }),
+      updateOutcome: vi.fn().mockResolvedValue({
+        success: true,
+        message: 'Outcome updated',
+      }),
+      loadCheckpoint: vi.fn().mockResolvedValue({
+        success: true,
+        summary: 'Session summary',
+        next_steps: 'Next steps',
+        open_files: ['file1.ts'],
+      }),
+      recallMemory: vi.fn().mockResolvedValue({
+        profile: { static: [], dynamic: [], evidence: [] },
+        memories: [],
+        graph_context: { primary: [], expanded: [], edges: [] },
+        search_meta: { query: 'test', scope_order: ['project'], retrieval_sources: ['mock'] },
+      }),
+      ingestMemory: vi.fn().mockResolvedValue({
+        success: true,
+        id: 'ingested_123',
+      }),
+    };
+    api.saveWithTrustedProvenance = vi.fn((input) => api.save(input));
+    api.ingestWithTrustedProvenance = vi.fn().mockResolvedValue({
       success: true,
-      message: 'Outcome updated',
-    }),
-    loadCheckpoint: vi.fn().mockResolvedValue({
-      success: true,
-      summary: 'Session summary',
-      next_steps: 'Next steps',
-      open_files: ['file1.ts'],
-    }),
-    recallMemory: vi.fn().mockResolvedValue({
-      profile: { static: [], dynamic: [], evidence: [] },
-      memories: [],
-      graph_context: { primary: [], expanded: [], edges: [] },
-      search_meta: { query: 'test', scope_order: ['project'], retrieval_sources: ['mock'] },
-    }),
-    ingestMemory: vi.fn().mockResolvedValue({
-      success: true,
-      id: 'ingested_123',
-    }),
-  });
+      id: 'trusted_ingest_123',
+    });
+    return api;
+  };
 
   // Shared context helpers (used by multiple test suites)
   const createViewerContext = () => ({
@@ -1063,7 +1071,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('memory v2 tools', () => {
-      it('should route mama_add through ingestMemory instead of fact JSON parsing', async () => {
+      it('should route mama_add through trusted ingest instead of fact JSON parsing', async () => {
         const mockApi = createMockApi();
         const executor = new GatewayToolExecutor({ mamaApi: mockApi });
         executor.setAgentContext({
@@ -1089,14 +1097,56 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           content: 'User prefers concise answers in this repo',
         });
 
-        expect(mockApi.ingestMemory).toHaveBeenCalledWith(
+        expect(mockApi.ingestMemory).not.toHaveBeenCalled();
+        expect(mockApi.ingestWithTrustedProvenance).toHaveBeenCalledWith(
           expect.objectContaining({
             scopes: expect.arrayContaining([
               expect.objectContaining({ kind: 'channel', id: 'telegram:7026976631' }),
               expect.objectContaining({ kind: 'user', id: '7026976631' }),
             ]),
+          }),
+          expect.objectContaining({
+            capability: expect.objectContaining({
+              __trustedProvenanceCapability: 'mama-core',
+            }),
+            provenance: expect.objectContaining({
+              actor: 'main_agent',
+              tool_name: 'mama_add',
+              gateway_call_id: expect.stringMatching(/^gw_/),
+            }),
           })
         );
+        expect(result).toMatchObject({ success: true, saved: 1 });
+      });
+
+      it('should keep mama_add working for injected legacy APIs without trusted provenance helpers', async () => {
+        const mockApi = createMockApi();
+        delete mockApi.ingestWithTrustedProvenance;
+        const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+        executor.setAgentContext({
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'os_agent',
+          role: {
+            allowedTools: ['*'],
+            systemControl: false,
+            sensitiveAccess: false,
+          },
+          session: {
+            sessionId: 'test-session',
+            channelId: '7026976631',
+            userId: '7026976631',
+            startedAt: new Date(),
+          },
+          capabilities: ['mama_add'],
+          limitations: [],
+        });
+
+        const result = await executor.execute('mama_add', {
+          content: 'User prefers concise answers in this repo',
+        });
+
+        expect(mockApi.ingestMemory).toHaveBeenCalledOnce();
         expect(result).toMatchObject({ success: true, saved: 1 });
       });
     });
