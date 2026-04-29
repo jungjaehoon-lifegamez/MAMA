@@ -287,20 +287,77 @@ function isNonEmptyStableInputRefValue(value: unknown): boolean {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function pushReplayField(
+  fields: Array<keyof NormalizedBeginModelRunInput>,
+  field: keyof NormalizedBeginModelRunInput
+): void {
+  if (!fields.includes(field)) {
+    fields.push(field);
+  }
+}
+
 function replayFieldsForInput(
   input: BeginModelRunInput
 ): ReadonlyArray<keyof NormalizedBeginModelRunInput> {
-  const fields: Array<keyof NormalizedBeginModelRunInput> = [...BEGIN_REPLAY_FIELDS];
+  const fields: Array<keyof NormalizedBeginModelRunInput> = [];
+  for (const field of BEGIN_REPLAY_FIELDS) {
+    if (field === 'input_refs_json') {
+      if (input.input_refs !== undefined || input.input_refs_json !== undefined) {
+        pushReplayField(fields, field);
+      }
+    } else if (input[field] !== undefined) {
+      pushReplayField(fields, field);
+    }
+  }
   if (input.created_at !== undefined) {
-    fields.push('created_at');
+    pushReplayField(fields, 'created_at');
   }
   if (input.status !== undefined && input.status !== 'running') {
-    fields.push('status');
+    pushReplayField(fields, 'status');
     if (input.error_summary !== undefined) {
-      fields.push('error_summary');
+      pushReplayField(fields, 'error_summary');
     }
   }
   return fields;
+}
+
+function canonicalJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalJson(item));
+  }
+  if (value && typeof value === 'object') {
+    const object = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(object).sort()) {
+      sorted[key] = canonicalJson(object[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+function canonicalJsonString(value: string): string {
+  return JSON.stringify(canonicalJson(JSON.parse(value) as unknown));
+}
+
+function replayFieldMatches(
+  existing: ModelRunRecord,
+  expected: NormalizedBeginModelRunInput,
+  field: keyof NormalizedBeginModelRunInput
+): boolean {
+  if (field === 'input_refs_json') {
+    if (existing.input_refs_json === expected.input_refs_json) {
+      return true;
+    }
+    if (!existing.input_refs_json || !expected.input_refs_json) {
+      return existing.input_refs_json === expected.input_refs_json;
+    }
+    return (
+      canonicalJsonString(existing.input_refs_json) ===
+      canonicalJsonString(expected.input_refs_json)
+    );
+  }
+  return existing[field] === expected[field];
 }
 
 function assertExistingModelRunMatchesInput(
@@ -310,7 +367,7 @@ function assertExistingModelRunMatchesInput(
 ): void {
   assertReplayHasIdempotencyDiscriminator(expected);
   for (const field of replayFields) {
-    if (existing[field] !== expected[field]) {
+    if (!replayFieldMatches(existing, expected, field)) {
       throw new Error(`Model run already exists with different ${field}: ${existing.model_run_id}`);
     }
   }
