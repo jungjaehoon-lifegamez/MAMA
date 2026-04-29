@@ -18,6 +18,7 @@ import {
 import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
+import type { Envelope } from '../envelope/types.js';
 import {
   deriveWorkerEnvelopeVisibility,
   firstString,
@@ -124,7 +125,7 @@ async function handleSituationRequest(
     });
     const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const suppliedModelRun = suppliedModelRunId
-      ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope.envelope_hash)
+      ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope, key.cacheKey)
       : null;
 
     if (!query.refresh) {
@@ -219,7 +220,8 @@ async function handleSituationRequest(
 function requireMatchingModelRun(
   adapter: AgentSituationAdapter,
   modelRunId: string,
-  envelopeHash: string
+  envelope: Envelope,
+  cacheKey: string
 ) {
   const modelRun = getModelRunInAdapter(adapter, modelRunId);
   if (!modelRun) {
@@ -229,11 +231,41 @@ function requireMatchingModelRun(
       'The supplied model run was not found.'
     );
   }
-  if (modelRun.envelope_hash !== envelopeHash) {
+  if (modelRun.envelope_hash !== envelope.envelope_hash) {
     throw new WorkerEnvelopeError(
       403,
       'agent_situation_model_run_denied',
       'The supplied model run is outside the worker envelope.'
+    );
+  }
+  if (modelRun.status !== 'running') {
+    throw new WorkerEnvelopeError(
+      409,
+      'agent_situation_model_run_not_running',
+      'The supplied model run is no longer running.'
+    );
+  }
+  if (modelRun.agent_id !== envelope.agent_id || modelRun.instance_id !== envelope.instance_id) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_situation_model_run_denied',
+      'The supplied model run belongs to a different worker instance.'
+    );
+  }
+  const expectedSnapshotRef = `situation:${cacheKey}`;
+  if (modelRun.input_snapshot_ref !== expectedSnapshotRef) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_situation_model_run_denied',
+      'The supplied model run is not for this agent.situation packet.'
+    );
+  }
+  const inputRefs = modelRun.input_refs;
+  if (inputRefs?.tool !== 'agent.situation' || inputRefs.cache_key !== cacheKey) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_situation_model_run_denied',
+      'The supplied model run does not match this agent.situation cache key.'
     );
   }
   return modelRun;

@@ -6,6 +6,8 @@ import {
   AGENT_SITUATION_V0_POLICY_VERSION,
   beginModelRunInAdapter,
   buildAgentSituationPacketRecord,
+  buildAgentSituationCacheKey,
+  commitModelRunInAdapter,
   type AgentSituationInput,
   type AgentSituationPacketRecord,
 } from '../../../mama-core/src/index.js';
@@ -47,6 +49,7 @@ const SIGNING_KEY = {
 };
 
 const FIXED_NOW_MS = Date.parse('2026-04-29T03:00:00.000Z');
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
   return signEnvelope(
@@ -143,6 +146,21 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
     return new Promise((resolve) => setTimeout(resolve, 0));
   }
 
+  function defaultSituationCacheKey(): string {
+    return buildAgentSituationCacheKey({
+      scopes: [{ kind: 'project', id: 'alpha' }],
+      connectors: ['slack'],
+      project_refs: [{ kind: 'project', id: 'alpha' }],
+      tenant_id: 'default',
+      as_of: null,
+      range_start_ms: FIXED_NOW_MS - 7 * DAY_MS,
+      range_end_ms: FIXED_NOW_MS,
+      focus: ['decisions', 'risks', 'open_questions'],
+      limit: 7,
+      ranking_policy_version: AGENT_SITUATION_V0_POLICY_VERSION,
+    }).cacheKey;
+  }
+
   describe('AC #1: worker envelope gates packet visibility', () => {
     it('rejects missing envelopes and requested scopes outside the envelope', async () => {
       const apiServer = makeServer();
@@ -159,6 +177,35 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       );
       expect(scopeOutside.status).toBe(403);
       expect(scopeOutside.body.code).toBe('worker_envelope_scope_denied');
+    });
+
+    it('rejects malformed scope tokens instead of widening to the full envelope', async () => {
+      const apiServer = makeServer();
+
+      const malformedToken = await authed(
+        request(apiServer.app).get('/api/agent/situation?scopes=project')
+      );
+      expect(malformedToken.status).toBe(400);
+      expect(malformedToken.body.code).toBe('worker_scope_invalid');
+
+      const missingId = await authed(
+        request(apiServer.app).get('/api/agent/situation?scope_kind=project')
+      );
+      expect(missingId.status).toBe(400);
+      expect(missingId.body.code).toBe('worker_scope_invalid');
+    });
+
+    it('rejects unknown envelope hashes through the explicit invalid-envelope path', async () => {
+      const apiServer = makeServer();
+
+      const response = await request(apiServer.app)
+        .get('/api/agent/situation')
+        .set(TUNNEL_HEADERS)
+        .set('Authorization', 'Bearer agent-situation-token')
+        .set('x-mama-envelope-hash', 'env_missing');
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('worker_envelope_invalid');
     });
 
     it('rejects packet generation when the envelope has no effective project ref', async () => {
@@ -283,6 +330,52 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.code).toBe('agent_situation_model_run_denied');
+    });
+
+    it('rejects supplied model runs from unrelated same-envelope work', async () => {
+      const adapter = getAdapter();
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_unrelated',
+        agent_id: validEnvelope.agent_id,
+        instance_id: validEnvelope.instance_id,
+        envelope_hash: validEnvelope.envelope_hash,
+        input_snapshot_ref: 'memory:unrelated',
+        input_refs: { tool: 'memory.write' },
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .get('/api/agent/situation')
+          .set('x-mama-model-run-id', 'mr_unrelated')
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('agent_situation_model_run_denied');
+    });
+
+    it('rejects terminal supplied model runs for the matching situation cache key', async () => {
+      const adapter = getAdapter();
+      const cacheKey = defaultSituationCacheKey();
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_terminal_situation',
+        agent_id: validEnvelope.agent_id,
+        instance_id: validEnvelope.instance_id,
+        envelope_hash: validEnvelope.envelope_hash,
+        input_snapshot_ref: `situation:${cacheKey}`,
+        input_refs: { tool: 'agent.situation', cache_key: cacheKey },
+      });
+      commitModelRunInAdapter(adapter, 'mr_terminal_situation', 'already used');
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app)
+          .get('/api/agent/situation')
+          .set('x-mama-model-run-id', 'mr_terminal_situation')
+      );
+
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('agent_situation_model_run_not_running');
     });
 
     it('marks an owned direct model run failed when packet generation throws', async () => {
