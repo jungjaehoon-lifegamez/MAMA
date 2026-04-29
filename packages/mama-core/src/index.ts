@@ -165,7 +165,16 @@ export {
   type AppendToolTraceInput,
   type ToolTraceRecord,
 } from './model-runs/types.js';
-export { beginModelRun, commitModelRun, failModelRun, getModelRun } from './model-runs/store.js';
+export {
+  beginModelRun,
+  beginModelRunInAdapter,
+  commitModelRun,
+  commitModelRunInAdapter,
+  failModelRun,
+  failModelRunInAdapter,
+  getModelRun,
+  getModelRunInAdapter,
+} from './model-runs/store.js';
 export { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
 export {
   TWIN_EDGE_SOURCES,
