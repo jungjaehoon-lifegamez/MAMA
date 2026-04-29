@@ -3990,6 +3990,7 @@ export {
   verifyBackupExists,
   deleteAutoLinks,
   validateCleanupResult,
+  expandWithGraph,
 };
 
 // Default export for backward compatibility
