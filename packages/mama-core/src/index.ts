@@ -93,7 +93,13 @@ export {
   type MemoryStatus,
   type MemoryEdgeType,
   type MemoryScopeRef,
+  type MemorySourceRef,
   type MemoryRecord,
+  type MemoryWriteProvenance,
+  type MemoryProvenanceRecord,
+  type PublicSaveMemoryInput,
+  type PublicIngestMemoryInput,
+  type PublicIngestConversationInput,
   type MemorySearchResultHit,
   type MemoryEdge,
   type ProfileSnapshot,
@@ -105,20 +111,34 @@ export {
 } from './memory/types.js';
 export {
   saveMemory,
+  saveMemoryWithTrustedProvenance,
   recallMemory,
   buildProfile,
   ingestMemory,
+  ingestWithTrustedProvenance,
   evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
   recordMemoryAudit,
   ingestConversation,
+  ingestConversationWithTrustedProvenance,
   setExtractionFn,
   upsertChannelSummary,
   getChannelSummary,
 } from './memory/api.js';
 export { buildExtractionPrompt, parseExtractionResponse } from './memory/extraction-prompt.js';
-export { appendMemoryEvent, listRecentMemoryEvents } from './memory/event-store.js';
+export {
+  appendMemoryEvent,
+  insertMemoryEventInTransaction,
+  listMemoryEventsForMemory,
+  listRecentMemoryEvents,
+} from './memory/event-store.js';
+export {
+  getMemoryProvenance,
+  listMemoriesByEnvelopeHash,
+  listMemoriesByGatewayCallId,
+  listMemoriesByModelRunId,
+} from './memory/provenance-query.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';

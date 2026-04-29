@@ -15,6 +15,7 @@ import { cosineSimilarity } from '../embeddings.js';
 
 const LEGACY_DB_PATH = path.join(os.homedir(), '.spinelift', 'memories.db');
 const DEFAULT_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
+const SQLITE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 interface SQLiteAdapterConfig {
   dbPath?: string;
@@ -429,6 +430,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         this.exec('ROLLBACK');
         const message = err instanceof Error ? err.message : String(err);
 
+        if (message.includes('duplicate column') && version === 32) {
+          this.recoverMemoryProvenanceMigration032();
+          info(`[node-sqlite-adapter] Migration ${file} recovered successfully`);
+          continue;
+        }
+
         if (message.includes('duplicate column')) {
           warn(
             `[node-sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`
@@ -469,6 +476,92 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
 
     this.migrateFromVssMemories();
+  }
+
+  private recoverMemoryProvenanceMigration032(): void {
+    this.transaction(() => {
+      const expectedDecisionColumns = [
+        'agent_id',
+        'model_run_id',
+        'envelope_hash',
+        'gateway_call_id',
+        'source_refs_json',
+        'provenance_json',
+      ];
+      const decisionColumns = this.tableColumns('decisions');
+      for (const column of expectedDecisionColumns) {
+        if (!decisionColumns.has(column)) {
+          this.exec(`ALTER TABLE decisions ADD COLUMN ${column} TEXT`);
+          decisionColumns.add(column);
+        }
+      }
+
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_decisions_envelope_hash
+          ON decisions(envelope_hash)
+      `);
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_decisions_model_run_id
+          ON decisions(model_run_id)
+      `);
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_decisions_gateway_call_id
+          ON decisions(gateway_call_id)
+      `);
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_memory_events_memory_created
+          ON memory_events(memory_id, created_at DESC)
+      `);
+
+      this.assertMigration032Complete();
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        32,
+        'Add nullable memory provenance columns'
+      );
+    });
+  }
+
+  private assertMigration032Complete(): void {
+    const decisionColumns = this.tableColumns('decisions');
+    for (const column of [
+      'agent_id',
+      'model_run_id',
+      'envelope_hash',
+      'gateway_call_id',
+      'source_refs_json',
+      'provenance_json',
+    ]) {
+      if (!decisionColumns.has(column)) {
+        throw new Error(`Migration 032 recovery failed: missing decisions.${column}`);
+      }
+    }
+
+    for (const indexName of [
+      'idx_decisions_envelope_hash',
+      'idx_decisions_model_run_id',
+      'idx_decisions_gateway_call_id',
+      'idx_memory_events_memory_created',
+    ]) {
+      if (!this.indexExists(indexName)) {
+        throw new Error(`Migration 032 recovery failed: missing index ${indexName}`);
+      }
+    }
+  }
+
+  private tableColumns(tableName: string): Set<string> {
+    if (!SQLITE_IDENTIFIER_PATTERN.test(tableName)) {
+      throw new Error('Invalid SQLite table identifier');
+    }
+
+    const rows = this.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+    return new Set(rows.map((row) => row.name));
+  }
+
+  private indexExists(indexName: string): boolean {
+    const row = this.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?").get(
+      indexName
+    ) as { name?: string } | undefined;
+    return row?.name === indexName;
   }
 
   private migrateFromVssMemories(): void {

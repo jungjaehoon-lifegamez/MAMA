@@ -26,18 +26,15 @@ const recallMemoryMock = vi.fn(async () => ({
   search_meta: { query: 'legacy save', scope_order: ['project'], retrieval_sources: ['sql_like'] },
 }));
 
-vi.mock('../../src/memory/api.js', () => ({
-  saveMemory: saveMemoryMock,
-  recallMemory: recallMemoryMock,
-  buildProfile: vi.fn(),
-  ingestMemory: vi.fn(),
-  evolveMemory: vi.fn(),
-  buildMemoryBootstrap: vi.fn(),
-  createAuditAck: vi.fn((input) => input),
-  recordMemoryAudit: vi.fn(),
-  upsertChannelSummary: vi.fn(),
-  getChannelSummary: vi.fn(),
-}));
+vi.mock('../../src/memory/api.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/memory/api.js')>();
+  return {
+    ...actual,
+    saveMemory: saveMemoryMock,
+    saveMemoryWithTrustedProvenance: saveMemoryMock,
+    recallMemory: recallMemoryMock,
+  };
+});
 
 describe('legacy shims', () => {
   beforeAll(() => {
@@ -112,7 +109,11 @@ describe('legacy shims', () => {
         },
       ],
       graph_context: { primary: [], expanded: [], edges: [] },
-      search_meta: { query: 'legacy save', scope_order: ['project'], retrieval_sources: ['sql_like'] },
+      search_meta: {
+        query: 'legacy save',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
     });
 
     const mama = (await import('../../src/mama-api.js')).default;
@@ -143,7 +144,11 @@ describe('legacy shims', () => {
         },
       ],
       graph_context: { primary: [], expanded: [], edges: [] },
-      search_meta: { query: 'legacy fact', scope_order: ['project'], retrieval_sources: ['sql_like'] },
+      search_meta: {
+        query: 'legacy fact',
+        scope_order: ['project'],
+        retrieval_sources: ['sql_like'],
+      },
     });
 
     const mama = (await import('../../src/mama-api.js')).default;
@@ -241,7 +246,9 @@ describe('legacy shims', () => {
     const { initDB, getAdapter } = await import('../../src/db-manager.js');
     await initDB();
     getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
-    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
+    getAdapter()
+      .prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'")
+      .run();
     getAdapter()
       .prepare(
         `
@@ -342,7 +349,9 @@ describe('legacy shims', () => {
     const { initDB, getAdapter } = await import('../../src/db-manager.js');
     await initDB();
     getAdapter().prepare('DELETE FROM case_truth WHERE case_id = ?').run('case-base-top');
-    getAdapter().prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'").run();
+    getAdapter()
+      .prepare("DELETE FROM ranker_model_versions WHERE model_id = 'ranker-active'")
+      .run();
     getAdapter()
       .prepare(
         `

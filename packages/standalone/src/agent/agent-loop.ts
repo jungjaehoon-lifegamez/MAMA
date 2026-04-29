@@ -274,12 +274,15 @@ export function buildAgentToolExecutionContext(
     (options.agentContext === undefined &&
       options.source === undefined &&
       options.channelId === undefined &&
-      options.envelope === undefined)
+      options.envelope === undefined &&
+      options.sourceTurnId === undefined &&
+      options.sourceMessageRef === undefined &&
+      options.modelRunId === undefined)
   ) {
     return null;
   }
   const agentContext = options.agentContext;
-  return {
+  const context: AgentToolExecutionContext = {
     agentContext,
     agentId: agentContext
       ? agentContext.source === 'viewer'
@@ -291,6 +294,16 @@ export function buildAgentToolExecutionContext(
     envelope: options.envelope,
     executionSurface: 'model_tool',
   };
+  if (options.sourceTurnId !== undefined) {
+    context.sourceTurnId = options.sourceTurnId;
+  }
+  if (options.sourceMessageRef !== undefined) {
+    context.sourceMessageRef = options.sourceMessageRef;
+  }
+  if (options.modelRunId !== undefined) {
+    context.modelRunId = options.modelRunId;
+  }
+  return context;
 }
 
 function withExecutionSurface(

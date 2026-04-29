@@ -50,6 +50,20 @@ describe('save_decision v2: scopes + event_date', () => {
     expect(callArgs.scopes).toBeUndefined();
   });
 
+  it('does not forward caller-supplied provenance to mama.save()', async () => {
+    await tool.handler({
+      topic: 'test_topic',
+      decision: 'Caller cannot spoof provenance',
+      reasoning: 'MCP input is an untrusted public boundary',
+      provenance: { envelope_hash: 'attacker_env', gateway_call_id: 'attacker_gw' },
+    });
+
+    const callArgs = mockMama.save.mock.calls[0][0];
+    expect(callArgs.provenance).toBeUndefined();
+    expect(callArgs.envelope_hash).toBeUndefined();
+    expect(callArgs.gateway_call_id).toBeUndefined();
+  });
+
   it('scopes appear in inputSchema', () => {
     expect(tool.inputSchema.properties.scopes).toBeDefined();
     expect(tool.inputSchema.properties.scopes.type).toBe('array');

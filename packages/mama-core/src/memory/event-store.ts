@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 
 import { getAdapter, initDB } from '../db-manager.js';
+import type { DatabaseAdapter } from '../db-manager.js';
 import type { MemoryEventRecord } from './types.js';
 
 function deserializeEvent(row: Record<string, unknown>): MemoryEventRecord {
@@ -30,6 +31,13 @@ export async function appendMemoryEvent(
 ): Promise<string> {
   await initDB();
   const adapter = getAdapter();
+  return insertMemoryEventInTransaction(adapter, input);
+}
+
+export function insertMemoryEventInTransaction(
+  adapter: Pick<DatabaseAdapter, 'prepare'>,
+  input: Omit<MemoryEventRecord, 'event_id'>
+): string {
   const eventId = `evt_${crypto.randomUUID().replace(/-/g, '')}`;
 
   adapter
@@ -69,10 +77,29 @@ export async function listMemoryEventsForTopic(topic: string): Promise<MemoryEve
                scope_refs, evidence_refs, reason, created_at
         FROM memory_events
         WHERE topic = ?
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, rowid DESC
       `
     )
     .all(topic) as Record<string, unknown>[];
+
+  return rows.map(deserializeEvent);
+}
+
+export async function listMemoryEventsForMemory(memoryId: string): Promise<MemoryEventRecord[]> {
+  await initDB();
+  const adapter = getAdapter();
+
+  const rows = adapter
+    .prepare(
+      `
+        SELECT event_id, event_type, actor, source_turn_id, memory_id, topic,
+               scope_refs, evidence_refs, reason, created_at
+        FROM memory_events
+        WHERE memory_id = ?
+        ORDER BY created_at DESC, rowid DESC
+      `
+    )
+    .all(memoryId) as Record<string, unknown>[];
 
   return rows.map(deserializeEvent);
 }
@@ -87,7 +114,7 @@ export async function listRecentMemoryEvents(limit = 10): Promise<MemoryEventRec
         SELECT event_id, event_type, actor, source_turn_id, memory_id, topic,
                scope_refs, evidence_refs, reason, created_at
         FROM memory_events
-        ORDER BY created_at DESC
+        ORDER BY created_at DESC, rowid DESC
         LIMIT ?
       `
     )

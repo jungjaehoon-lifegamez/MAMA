@@ -30,6 +30,7 @@ type AuditRow = {
   input_summary: string | null;
   execution_status: string | null;
   envelope_hash: string | null;
+  gateway_call_id: string | null;
   requested_scopes: string | null;
   envelope_scopes_snapshot: string | null;
   scope_mismatch: number;
@@ -40,7 +41,7 @@ type MetricsStoreMock = Pick<MetricsStore, 'record'> & {
 };
 
 function createMAMAApi(): MAMAApiInterface {
-  return {
+  const api: MAMAApiInterface = {
     save: vi.fn().mockResolvedValue({ success: true, id: 'decision_1', type: 'decision' }),
     saveCheckpoint: vi.fn().mockResolvedValue({
       success: true,
@@ -59,6 +60,9 @@ function createMAMAApi(): MAMAApiInterface {
     }),
     ingestMemory: vi.fn().mockResolvedValue({ success: true, id: 'ingested_1' }),
   };
+  api.saveWithTrustedProvenance = vi.fn((input) => api.save(input));
+  api.ingestWithTrustedProvenance = vi.fn((input) => api.ingestMemory!(input));
+  return api;
 }
 
 function createMetricsStore(): MetricsStoreMock {
@@ -94,7 +98,7 @@ function createTelegramContext(channelId = 'abc', allowedPaths?: string[]): Agen
 function readGatewayToolRows(db: Database): AuditRow[] {
   return db
     .prepare(
-      `SELECT id, type, input_summary, execution_status, envelope_hash,
+      `SELECT id, type, input_summary, execution_status, envelope_hash, gateway_call_id,
               requested_scopes, envelope_scopes_snapshot, scope_mismatch
        FROM agent_activity
        WHERE type = 'gateway_tool_call'
@@ -491,6 +495,8 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(new Set(rows.map((row) => row.envelope_hash))).toEqual(
       new Set([envelope.envelope_hash])
     );
+    expect(new Set(rows.map((row) => row.gateway_call_id)).size).toBe(1);
+    expect(rows[0].gateway_call_id).toMatch(/^gw_/);
     const autosave = rows.find((row) => row.input_summary === 'mama_save');
     expect(autosave).toMatchObject({ scope_mismatch: 1 });
     expect(parseScopes(autosave!.requested_scopes)).toEqual([{ kind: 'global', id: 'system' }]);
@@ -542,6 +548,8 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(new Set(rows.map((row) => row.envelope_hash))).toEqual(
       new Set([envelope.envelope_hash])
     );
+    expect(new Set(rows.map((row) => row.gateway_call_id)).size).toBe(1);
+    expect(rows[0].gateway_call_id).toMatch(/^gw_/);
     const autosave = rows.find((row) => row.input_summary === 'mama_save');
     expect(autosave).toMatchObject({ scope_mismatch: 1 });
     expect(parseScopes(autosave!.requested_scopes)).toEqual([{ kind: 'global', id: 'system' }]);

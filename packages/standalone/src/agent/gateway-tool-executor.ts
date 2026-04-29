@@ -21,7 +21,7 @@ import {
   realpathSync,
 } from 'fs';
 import { AsyncLocalStorage } from 'async_hooks';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { join, dirname, resolve, relative, isAbsolute, basename } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
@@ -62,6 +62,7 @@ import type {
   EnvelopeDenialResult,
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
+  TrustedMemoryWriteOptions,
 } from './types.js';
 import { AgentError } from './types.js';
 import {
@@ -111,6 +112,10 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const securityLogger = new DebugLogger('SecurityAudit');
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+type TrustedProvenanceRuntime = {
+  createTrustedProvenanceCapability: () => TrustedMemoryWriteOptions['capability'];
+};
+let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
 const AGENT_DETAIL_TABS = new Set([
   'config',
   'persona',
@@ -134,6 +139,10 @@ type ActiveGatewayExecutionContext = {
   channelId: string;
   envelope?: Envelope;
   executionSurface?: GatewayExecutionSurface;
+  sourceTurnId?: string;
+  sourceMessageRef?: string;
+  modelRunId?: string | null;
+  gatewayCallId?: string;
   parentToolName?: string;
 };
 
@@ -365,20 +374,47 @@ export class GatewayToolExecutor {
       channelId,
       envelope: executionContext?.envelope,
       executionSurface: executionContext?.executionSurface,
+      sourceTurnId: executionContext?.sourceTurnId,
+      sourceMessageRef: executionContext?.sourceMessageRef,
+      modelRunId: executionContext?.modelRunId ?? null,
+      gatewayCallId: executionContext?.gatewayCallId,
     };
   }
 
   private getExecutionState(): ActiveGatewayExecutionContext {
-    const active = this.executionContextStorage.getStore();
-    if (active) {
-      return active;
-    }
+    return this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+  }
+
+  private getFallbackExecutionContext(): ActiveGatewayExecutionContext {
     return this.normalizeExecutionContext({
       agentContext: this.currentContext ?? undefined,
       agentId: this.currentAgentId,
       source: this.currentSource,
       channelId: this.currentChannelId,
     });
+  }
+
+  private mergeWithFallbackExecutionContext(
+    active: ActiveGatewayExecutionContext | undefined
+  ): ActiveGatewayExecutionContext {
+    const fallback = this.getFallbackExecutionContext();
+    if (!active) {
+      return fallback;
+    }
+
+    return {
+      agentContext: active.agentContext ?? fallback.agentContext,
+      agentId: active.agentId || fallback.agentId,
+      source: active.source || fallback.source,
+      channelId: active.channelId || fallback.channelId,
+      envelope: active.envelope ?? fallback.envelope,
+      executionSurface: active.executionSurface ?? fallback.executionSurface,
+      sourceTurnId: active.sourceTurnId ?? fallback.sourceTurnId,
+      sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
+      modelRunId: active.modelRunId ?? fallback.modelRunId,
+      gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
+      parentToolName: active.parentToolName ?? fallback.parentToolName,
+    };
   }
 
   private getActiveContext(): AgentContext | null {
@@ -654,11 +690,20 @@ export class GatewayToolExecutor {
 
       this.mamaApi = {
         save: mama.save.bind(mama),
+        saveWithTrustedProvenance: mama.saveWithTrustedProvenance?.bind(mama),
         saveCheckpoint: mama.saveCheckpoint.bind(mama),
         listDecisions: mama.list.bind(mama), // Note: mama exports listDecisions as 'list'
         suggest: mama.suggest.bind(mama),
         recallMemory: mama.recallMemory?.bind(mama),
         ingestMemory: mama.ingestMemory?.bind(mama),
+        ingestWithTrustedProvenance: mama.ingestWithTrustedProvenance?.bind(mama),
+        saveMemoryWithTrustedProvenance: mama.saveMemoryWithTrustedProvenance?.bind(mama),
+        ingestConversationWithTrustedProvenance:
+          mama.ingestConversationWithTrustedProvenance?.bind(mama),
+        getMemoryProvenance: mama.getMemoryProvenance?.bind(mama),
+        listMemoriesByEnvelopeHash: mama.listMemoriesByEnvelopeHash?.bind(mama),
+        listMemoriesByGatewayCallId: mama.listMemoriesByGatewayCallId?.bind(mama),
+        listMemoriesByModelRunId: mama.listMemoriesByModelRunId?.bind(mama),
         buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
@@ -851,18 +896,37 @@ export class GatewayToolExecutor {
     }
 
     const startedAt = Date.now();
-    const ctx = this.executionContextStorage.getStore();
+    const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
+    const ctx = { ...baseCtx, gatewayCallId };
     const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
 
     try {
-      const result = await this.executeWithEnvelopeAndPermissions(toolName, input);
-      this.logGatewayToolCall(ctx, toolName, result, Date.now() - startedAt, scopeAudit);
+      const result = await this.executionContextStorage.run(ctx, () =>
+        this.executeWithEnvelopeAndPermissions(toolName, input, gatewayCallId)
+      );
+      this.logGatewayToolCall(
+        ctx,
+        toolName,
+        result,
+        Date.now() - startedAt,
+        scopeAudit,
+        gatewayCallId
+      );
       if (scopeAudit.mismatch) {
         this.alarmScopeMismatch(ctx, toolName);
       }
       return result;
     } catch (error) {
-      this.logGatewayToolCall(ctx, toolName, undefined, Date.now() - startedAt, scopeAudit, error);
+      this.logGatewayToolCall(
+        ctx,
+        toolName,
+        undefined,
+        Date.now() - startedAt,
+        scopeAudit,
+        gatewayCallId,
+        error
+      );
       if (scopeAudit.mismatch) {
         this.alarmScopeMismatch(ctx, toolName);
       }
@@ -950,12 +1014,64 @@ export class GatewayToolExecutor {
     });
   }
 
+  private buildTrustedMemoryWriteOptions(
+    toolName: string,
+    gatewayCallId: string
+  ): TrustedMemoryWriteOptions {
+    const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    const capability = getTrustedProvenanceRuntime().createTrustedProvenanceCapability();
+    return {
+      capability,
+      provenance: {
+        actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
+        agent_id: ctx?.agentId,
+        model_run_id: ctx?.modelRunId ?? undefined,
+        envelope_hash: ctx?.envelope?.envelope_hash,
+        tool_name: toolName,
+        gateway_call_id: gatewayCallId,
+        source_turn_id: ctx?.sourceTurnId,
+        source_message_ref: ctx?.sourceMessageRef,
+        source_refs: [
+          ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
+          ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
+        ],
+      },
+    };
+  }
+
+  private supportsTrustedIngest(api: MAMAApiInterface): boolean {
+    return Boolean(api.ingestWithTrustedProvenance);
+  }
+
+  private supportsTrustedSave(api: MAMAApiInterface): boolean {
+    return Boolean(api.saveWithTrustedProvenance);
+  }
+
+  private isMemoryDecisionSaveInput(input: SaveInput): boolean {
+    const candidate = input as {
+      type?: unknown;
+      topic?: unknown;
+      decision?: unknown;
+      reasoning?: unknown;
+    };
+    return (
+      candidate.type === 'decision' &&
+      typeof candidate.topic === 'string' &&
+      candidate.topic.length > 0 &&
+      typeof candidate.decision === 'string' &&
+      candidate.decision.length > 0 &&
+      typeof candidate.reasoning === 'string' &&
+      candidate.reasoning.length > 0
+    );
+  }
+
   private logGatewayToolCall(
     ctx: ActiveGatewayExecutionContext | undefined,
     toolName: string,
     result: GatewayToolResult | undefined,
     durationMs: number,
     scopeAudit: ScopeAuditFields,
+    gatewayCallId: string,
     error?: unknown
   ): void {
     try {
@@ -978,6 +1094,7 @@ export class GatewayToolExecutor {
         trigger_reason: 'gateway_tool_executor',
         error_message: errorMessage,
         envelopeHash: ctx?.envelope?.envelope_hash ?? null,
+        gatewayCallId,
         requestedScopes: scopeAudit.requestedScopes,
         envelopeScopesSnapshot: scopeAudit.envelopeScopesSnapshot,
         scopeMismatch: scopeAudit.mismatch,
@@ -985,6 +1102,7 @@ export class GatewayToolExecutor {
           source: ctx?.source ?? 'unknown',
           channel_id: ctx?.channelId ?? 'unknown',
           tool: toolName,
+          gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),
           ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
         },
@@ -1048,7 +1166,8 @@ export class GatewayToolExecutor {
 
   private async executeWithEnvelopeAndPermissions(
     toolName: string,
-    input: GatewayToolInput
+    input: GatewayToolInput,
+    gatewayCallId: string
   ): Promise<GatewayToolResult> {
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
@@ -1409,14 +1528,20 @@ export class GatewayToolExecutor {
       const getApi = () => this.initializeMAMAApi();
 
       switch (toolName as GatewayToolName) {
-        case 'mama_save':
+        case 'mama_save': {
+          const saveInput = input as SaveInput;
+          const api = await getApi();
           return await handleSave(
-            await getApi(),
-            input as SaveInput,
+            api,
+            saveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
+              : undefined,
+            this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)
+              ? this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId)
               : undefined
           );
+        }
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
@@ -1425,10 +1550,24 @@ export class GatewayToolExecutor {
           return await handleUpdate(await getApi(), input as UpdateInput);
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
-        case 'mama_add':
-          return await this.handleMamaAdd(input as { content: string });
-        case 'mama_ingest':
-          return await this.handleMamaIngest(input as { content: string; scopes?: unknown });
+        case 'mama_add': {
+          const api = await getApi();
+          return await this.handleMamaAdd(
+            input as { content: string },
+            this.supportsTrustedIngest(api)
+              ? this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)
+              : undefined
+          );
+        }
+        case 'mama_ingest': {
+          const api = await getApi();
+          return await this.handleMamaIngest(
+            input as { content: string; scopes?: unknown },
+            this.supportsTrustedIngest(api)
+              ? this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)
+              : undefined
+          );
+        }
         case 'report_publish': {
           const slotsInput = (input as { slots?: Record<string, string> }).slots;
           if (!slotsInput || typeof slotsInput !== 'object') {
@@ -2989,7 +3128,10 @@ export class GatewayToolExecutor {
   /**
    * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
    */
-  private async handleMamaAdd(input: { content: string }): Promise<GatewayToolResult> {
+  private async handleMamaAdd(
+    input: { content: string },
+    options?: TrustedMemoryWriteOptions
+  ): Promise<GatewayToolResult> {
     const context = this.getActiveContext();
     if (!context) {
       return {
@@ -3005,16 +3147,22 @@ export class GatewayToolExecutor {
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
 
-    return this.handleMamaIngest({
-      ...input,
-      scopes,
-    });
+    return this.handleMamaIngest(
+      {
+        ...input,
+        scopes,
+      },
+      options
+    );
   }
 
-  private async handleMamaIngest(input: {
-    content: string;
-    scopes?: unknown;
-  }): Promise<GatewayToolResult> {
+  private async handleMamaIngest(
+    input: {
+      content: string;
+      scopes?: unknown;
+    },
+    options?: TrustedMemoryWriteOptions
+  ): Promise<GatewayToolResult> {
     const { content } = input;
     if (!content || typeof content !== 'string') {
       return {
@@ -3025,7 +3173,14 @@ export class GatewayToolExecutor {
 
     try {
       const api = await this.initializeMAMAApi();
-      if (!api.ingestMemory) {
+      if (options && !api.ingestWithTrustedProvenance) {
+        return {
+          success: false,
+          error: 'Trusted memory ingest API not available.',
+        } as GatewayToolResult;
+      }
+
+      if (!options && !api.ingestMemory) {
         return {
           success: false,
           error: 'Memory ingest API not available.',
@@ -3056,7 +3211,7 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
-      const result = await api.ingestMemory({
+      const payload = {
         content: content.substring(0, 10_000),
         scopes,
         source: {
@@ -3064,7 +3219,10 @@ export class GatewayToolExecutor {
           source_type: 'gateway_tool_executor',
           source: context?.source || null,
         },
-      });
+      };
+      const result = options
+        ? await api.ingestWithTrustedProvenance!(payload, options)
+        : await api.ingestMemory!(payload);
 
       return {
         success: true,
@@ -3147,6 +3305,55 @@ function isTruthyEnv(name: string): boolean {
     return false;
   }
   return TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+function getTrustedProvenanceRuntime(): TrustedProvenanceRuntime {
+  if (trustedProvenanceRuntime) {
+    return trustedProvenanceRuntime;
+  }
+
+  let lastError: unknown;
+  const loaders: Array<() => Partial<TrustedProvenanceRuntime>> = [
+    () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const mamaApiPath = require.resolve('@jungjaehoon/mama-core/mama-api');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require(
+        join(dirname(mamaApiPath), 'runtime', 'trusted-provenance.js')
+      ) as Partial<TrustedProvenanceRuntime>;
+    },
+  ];
+
+  if (process.env.NODE_ENV === 'test' || process.env.VITEST === 'true') {
+    loaders.push(() => {
+      // Local Vitest runs execute standalone before mama-core dist/runtime exists.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      return require('../../../mama-core/src/memory/provenance.ts') as Partial<TrustedProvenanceRuntime>;
+    });
+  }
+
+  for (const loadRuntime of loaders) {
+    try {
+      const runtime = loadRuntime();
+      if (typeof runtime.createTrustedProvenanceCapability === 'function') {
+        trustedProvenanceRuntime = {
+          createTrustedProvenanceCapability: runtime.createTrustedProvenanceCapability,
+        };
+        return trustedProvenanceRuntime;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new AgentError(
+    `Trusted provenance runtime unavailable: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+    'TOOL_ERROR',
+    lastError instanceof Error ? lastError : undefined,
+    false
+  );
 }
 
 function normalizeMemoryScopes(value: unknown): MemoryScope[] | null {

@@ -14,11 +14,11 @@ import type { AgentContext, GatewayToolInput, MAMAApiInterface } from '../../src
 type AgentStoreWithTraceHelpers = typeof agentStore & {
   listGatewayToolCalls?: (
     db: Database,
-    input: { envelopeHash?: string; limit?: number }
+    input: { envelopeHash?: string; gatewayCallId?: string; limit?: number }
   ) => agentStore.ActivityRow[];
   listScopeMismatches?: (
     db: Database,
-    input: { envelopeHash?: string; limit?: number; since?: string }
+    input: { envelopeHash?: string; gatewayCallId?: string; limit?: number; since?: string }
   ) => agentStore.ActivityRow[];
   countScopeMismatches?: (db: Database, input: { since?: string }) => number;
 };
@@ -96,6 +96,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         name: string;
       }>;
       expect(columns.some((column) => column.name === 'envelope_hash')).toBe(true);
+      expect(columns.some((column) => column.name === 'gateway_call_id')).toBe(true);
       expect(columns.some((column) => column.name === 'requested_scopes')).toBe(true);
       expect(columns.some((column) => column.name === 'envelope_scopes_snapshot')).toBe(true);
       expect(columns.some((column) => column.name === 'scope_mismatch')).toBe(true);
@@ -104,6 +105,9 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         name: string;
       }>;
       expect(indexes.some((index) => index.name === 'idx_agent_activity_envelope_hash')).toBe(true);
+      expect(indexes.some((index) => index.name === 'idx_agent_activity_gateway_call_id')).toBe(
+        true
+      );
       expect(indexes.some((index) => index.name === 'idx_agent_activity_scope_mismatch')).toBe(
         true
       );
@@ -148,7 +152,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
 
       const row = legacyDb
         .prepare(
-          `SELECT input_summary, envelope_hash, requested_scopes,
+          `SELECT input_summary, envelope_hash, gateway_call_id, requested_scopes,
                   envelope_scopes_snapshot, scope_mismatch
            FROM agent_activity
            WHERE agent_id = ?`
@@ -156,6 +160,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         .get('legacy-agent') as {
         input_summary: string;
         envelope_hash: string | null;
+        gateway_call_id: string | null;
         requested_scopes: string | null;
         envelope_scopes_snapshot: string | null;
         scope_mismatch: number;
@@ -163,6 +168,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       expect(row).toEqual({
         input_summary: 'before migration',
         envelope_hash: null,
+        gateway_call_id: null,
         requested_scopes: null,
         envelope_scopes_snapshot: null,
         scope_mismatch: 0,
@@ -409,6 +415,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         input_summary: 'mama_save',
         execution_status: 'completed',
         envelopeHash: 'env_hash_1',
+        gatewayCallId: 'gw_trace_1',
         scopeMismatch: 1,
       } as Parameters<typeof logActivity>[1] & {
         envelopeHash: string;
@@ -421,6 +428,7 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         input_summary: 'mama_search',
         execution_status: 'completed',
         envelopeHash: 'env_hash_2',
+        gatewayCallId: 'gw_trace_2',
         scopeMismatch: 0,
       } as Parameters<typeof logActivity>[1] & {
         envelopeHash: string;
@@ -431,6 +439,13 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         expect.objectContaining({
           input_summary: 'mama_save',
           envelope_hash: 'env_hash_1',
+          gateway_call_id: 'gw_trace_1',
+        }),
+      ]);
+      expect(helpers.listGatewayToolCalls!(db, { gatewayCallId: 'gw_trace_2' })).toEqual([
+        expect.objectContaining({
+          input_summary: 'mama_search',
+          gateway_call_id: 'gw_trace_2',
         }),
       ]);
       expect(helpers.listScopeMismatches!(db, { envelopeHash: 'env_hash_1' })).toEqual([
@@ -439,6 +454,14 @@ describe('Story V19.6 - Agent Activity Logging', () => {
           scope_mismatch: 1,
         }),
       ]);
+      expect(helpers.listScopeMismatches!(db, { gatewayCallId: 'gw_trace_1' })).toEqual([
+        expect.objectContaining({
+          input_summary: 'mama_save',
+          gateway_call_id: 'gw_trace_1',
+          scope_mismatch: 1,
+        }),
+      ]);
+      expect(helpers.listScopeMismatches!(db, { gatewayCallId: 'gw_trace_2' })).toEqual([]);
     });
 
     it('AC #13: normalizes ISO since filters for scope mismatch queries', () => {
