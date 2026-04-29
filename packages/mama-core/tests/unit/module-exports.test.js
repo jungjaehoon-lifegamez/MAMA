@@ -12,6 +12,18 @@ describe('Story M1.1: Core Module Exports', () => {
   describe('mama-api.js exports', () => {
     it('should export mama object with required methods', async () => {
       const mama = await import('../../src/mama-api.js');
+      const modelRunExports = [
+        'beginModelRun',
+        'beginModelRunInAdapter',
+        'commitModelRun',
+        'commitModelRunInAdapter',
+        'failModelRun',
+        'failModelRunInAdapter',
+        'getModelRun',
+        'getModelRunInAdapter',
+        'appendToolTrace',
+        'listToolTracesForRun',
+      ];
 
       expect(mama.default).toBeDefined();
       expect(typeof mama.default.save).toBe('function');
@@ -19,19 +31,10 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof mama.default.list).toBe('function');
       expect(typeof mama.default.suggest).toBe('function');
       expect(typeof mama.default.updateOutcome).toBe('function');
-      expect(typeof mama.default.beginModelRun).toBe('function');
-      expect(typeof mama.default.beginModelRunInAdapter).toBe('function');
-      expect(typeof mama.default.commitModelRun).toBe('function');
-      expect(typeof mama.default.commitModelRunInAdapter).toBe('function');
-      expect(typeof mama.default.failModelRun).toBe('function');
-      expect(typeof mama.default.failModelRunInAdapter).toBe('function');
-      expect(typeof mama.default.getModelRunInAdapter).toBe('function');
-      expect(typeof mama.default.appendToolTrace).toBe('function');
-      expect(typeof mama.default.listToolTracesForRun).toBe('function');
-      expect(typeof mama.beginModelRunInAdapter).toBe('function');
-      expect(typeof mama.commitModelRunInAdapter).toBe('function');
-      expect(typeof mama.failModelRunInAdapter).toBe('function');
-      expect(typeof mama.getModelRunInAdapter).toBe('function');
+      for (const exportName of modelRunExports) {
+        expect(typeof mama.default[exportName]).toBe('function');
+        expect(typeof mama[exportName]).toBe('function');
+      }
     });
   });
 

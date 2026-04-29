@@ -39,12 +39,21 @@ const BEGIN_REPLAY_FIELDS = [
   'parent_model_run_id',
   'input_snapshot_ref',
   'input_refs_json',
-  'status',
-  'error_summary',
   'token_count',
   'cost_estimate',
-  'created_at',
 ] as const satisfies ReadonlyArray<keyof NormalizedBeginModelRunInput>;
+
+const STABLE_INPUT_REF_KEYS = new Set([
+  'request_idempotency_key',
+  'gateway_call_id',
+  'source_turn_id',
+  'turn_id',
+  'message_id',
+  'event_id',
+  'raw_event_id',
+  'trace_id',
+  'cache_key',
+]);
 
 function modelRunId(): string {
   return `mr_${crypto.randomUUID().replace(/-/g, '')}`;
@@ -240,7 +249,7 @@ function normalizeBeginModelRunInput(
 }
 
 function assertReplayHasIdempotencyDiscriminator(expected: NormalizedBeginModelRunInput): void {
-  if (expected.envelope_hash || expected.input_refs_json) {
+  if (expected.envelope_hash || hasStableInputRefs(expected.input_refs_json)) {
     return;
   }
   throw new Error(
@@ -248,12 +257,59 @@ function assertReplayHasIdempotencyDiscriminator(expected: NormalizedBeginModelR
   );
 }
 
+function hasStableInputRefs(inputRefsJson: string | null): boolean {
+  if (!inputRefsJson) {
+    return false;
+  }
+  const inputRefs = JSON.parse(inputRefsJson) as unknown;
+  return hasStableInputRef(inputRefs);
+}
+
+function hasStableInputRef(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (STABLE_INPUT_REF_KEYS.has(key) && isNonEmptyStableInputRefValue(item)) {
+      return true;
+    }
+    if (hasStableInputRef(item)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isNonEmptyStableInputRefValue(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return value.trim().length > 0;
+  }
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function replayFieldsForInput(
+  input: BeginModelRunInput
+): ReadonlyArray<keyof NormalizedBeginModelRunInput> {
+  const fields: Array<keyof NormalizedBeginModelRunInput> = [...BEGIN_REPLAY_FIELDS];
+  if (input.created_at !== undefined) {
+    fields.push('created_at');
+  }
+  if (input.status !== undefined && input.status !== 'running') {
+    fields.push('status');
+    if (input.error_summary !== undefined) {
+      fields.push('error_summary');
+    }
+  }
+  return fields;
+}
+
 function assertExistingModelRunMatchesInput(
   existing: ModelRunRecord,
-  expected: NormalizedBeginModelRunInput
+  expected: NormalizedBeginModelRunInput,
+  replayFields: ReadonlyArray<keyof NormalizedBeginModelRunInput>
 ): void {
   assertReplayHasIdempotencyDiscriminator(expected);
-  for (const field of BEGIN_REPLAY_FIELDS) {
+  for (const field of replayFields) {
     if (existing[field] !== expected[field]) {
       throw new Error(`Model run already exists with different ${field}: ${existing.model_run_id}`);
     }
@@ -312,10 +368,11 @@ export function beginModelRunInAdapter(
   const status = input.status ?? 'running';
   const inputRefsJson = normalizeInputRefsJson(input);
   const expected = normalizeBeginModelRunInput(id, input, createdAt, status, inputRefsJson);
+  const replayFields = replayFieldsForInput(input);
 
   const existing = selectModelRun(adapter, id);
   if (existing) {
-    assertExistingModelRunMatchesInput(existing, expected);
+    assertExistingModelRunMatchesInput(existing, expected, replayFields);
     return existing;
   }
 
@@ -359,7 +416,7 @@ export function beginModelRunInAdapter(
     }
     const duplicate = selectModelRun(adapter, id);
     if (duplicate) {
-      assertExistingModelRunMatchesInput(duplicate, expected);
+      assertExistingModelRunMatchesInput(duplicate, expected, replayFields);
       return duplicate;
     }
     throw error;
