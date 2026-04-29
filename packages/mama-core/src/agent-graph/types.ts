@@ -1,6 +1,12 @@
 import type { DatabaseAdapter } from '../db-manager.js';
 import type { EntityAlias, EntityAliasLabelType, EntityNode } from '../entities/types.js';
-import type { TwinEdgeRecord, TwinEdgeType, TwinRef, TwinScopeRef } from '../edges/types.js';
+import type {
+  TwinEdgeRecord,
+  TwinEdgeType,
+  TwinProjectRef,
+  TwinRef,
+  TwinScopeRef,
+} from '../edges/types.js';
 
 export type AgentGraphAdapter = Pick<DatabaseAdapter, 'prepare' | 'transaction'>;
 
@@ -11,6 +17,9 @@ export interface AgentGraphEdgeFilters {
 export interface ResolveEntityInput {
   label: string;
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  project_refs?: TwinProjectRef[];
+  tenant_id?: string | null;
   context_refs?: TwinRef[];
   limit?: number;
   as_of_ms?: number | null;
@@ -32,6 +41,9 @@ export interface GraphNeighborhoodInput {
   ref: TwinRef;
   depth?: number;
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  project_refs?: TwinProjectRef[];
+  tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
   limit?: number;
@@ -47,6 +59,9 @@ export interface GraphPathsInput {
   to_ref: TwinRef;
   max_depth?: number;
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  project_refs?: TwinProjectRef[];
+  tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
   limit?: number;
@@ -64,6 +79,9 @@ export interface GraphPathsResult {
 export interface GraphTimelineInput {
   ref: TwinRef;
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  project_refs?: TwinProjectRef[];
+  tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   from_ms?: number;
   to_ms?: number;
@@ -94,8 +112,12 @@ export interface AttachEntityAliasWithEdgeInput {
   agent_id: string;
   model_run_id: string;
   envelope_hash: string;
+  request_idempotency_key?: string;
   edge_idempotency_key?: string;
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  project_refs?: TwinProjectRef[];
+  tenant_id?: string | null;
 }
 
 export interface AttachEntityAliasWithEdgeResult {

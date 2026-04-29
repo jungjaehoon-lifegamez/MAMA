@@ -290,5 +290,50 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         }),
       });
     });
+
+    it('replays identical alias request keys and rejects changed canonical payloads', async () => {
+      await createEntityNode({
+        id: 'entity_person_alias_replay',
+        kind: 'person',
+        preferred_label: 'Alias Replay',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const input = {
+        entity_id: 'entity_person_alias_replay',
+        label: 'Replay Alias',
+        label_type: 'alt' as const,
+        confidence: 0.9,
+        source_type: 'agent',
+        source_ref: 'model_run:mr_alias_replay',
+        agent_id: 'worker-m6',
+        model_run_id: 'mr_alias_replay',
+        envelope_hash: 'env_alias_replay',
+        request_idempotency_key: 'alias-replay-key',
+        scopes: [{ kind: 'project' as const, id: 'alpha' }],
+      };
+
+      const first = attachEntityAliasWithEdge(getAdapter(), input);
+      const replay = attachEntityAliasWithEdge(getAdapter(), input);
+
+      expect(replay.alias.id).toBe(first.alias.id);
+      expect(replay.edge.edge_id).toBe(first.edge.edge_id);
+      expect(() => attachEntityAliasWithEdge(getAdapter(), { ...input, confidence: 0.7 })).toThrow(
+        /conflicting/i
+      );
+
+      const counts = getAdapter()
+        .prepare(
+          `
+            SELECT
+              (SELECT COUNT(*) FROM entity_aliases) AS aliases,
+              (SELECT COUNT(*) FROM twin_edges) AS edges
+          `
+        )
+        .get() as { aliases: number; edges: number };
+      expect(counts).toEqual({ aliases: 1, edges: 1 });
+    });
   });
 });

@@ -4,8 +4,10 @@ import type {
   ListVisibleTwinEdgesOptions,
   TwinEdgeRecord,
   TwinEdgeType,
+  TwinProjectRef,
   TwinRef,
   TwinScopeRef,
+  TwinVisibility,
 } from './types.js';
 
 type TwinRefVisibilityAdapter = Pick<DatabaseAdapter, 'prepare'>;
@@ -22,6 +24,20 @@ function scopeKey(scope: TwinScopeRef): string {
 
 function hasScopes(scopes: readonly TwinScopeRef[] | undefined): scopes is TwinScopeRef[] {
   return Array.isArray(scopes) && scopes.length > 0;
+}
+
+function hasConnectors(connectors: readonly string[] | undefined): connectors is string[] {
+  return Array.isArray(connectors) && connectors.length > 0;
+}
+
+function hasProjectRefs(
+  projectRefs: readonly TwinProjectRef[] | undefined
+): projectRefs is TwinProjectRef[] {
+  return Array.isArray(projectRefs) && projectRefs.length > 0;
+}
+
+function visibilityFromScopes(scopes: readonly TwinScopeRef[] | undefined): TwinVisibility {
+  return { scopes: scopes ? [...scopes] : undefined };
 }
 
 function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<string> {
@@ -158,7 +174,7 @@ function isCaseVisible(
 function isRawVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
   const row = adapter
     .prepare('SELECT * FROM connector_event_index WHERE event_index_id = ? LIMIT 1')
@@ -166,10 +182,37 @@ function isRawVisible(
   if (!row) {
     return false;
   }
-  if (!hasScopes(scopes)) {
+
+  if (
+    hasConnectors(visibility.connectors) &&
+    !visibility.connectors.includes(String(row.source_connector))
+  ) {
+    return false;
+  }
+
+  if (
+    hasProjectRefs(visibility.projectRefs) &&
+    row.project_id !== null &&
+    row.project_id !== undefined &&
+    !visibility.projectRefs.some((project) => project.id === row.project_id)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof visibility.tenantId === 'string' &&
+    visibility.tenantId.length > 0 &&
+    row.tenant_id !== null &&
+    row.tenant_id !== undefined &&
+    row.tenant_id !== visibility.tenantId
+  ) {
+    return false;
+  }
+
+  if (!hasScopes(visibility.scopes)) {
     return true;
   }
-  return scopes.some(
+  return visibility.scopes.some(
     (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
   );
 }
@@ -199,24 +242,24 @@ function isEntityVisible(
 function isTwinRefVisible(
   adapter: TwinRefVisibilityAdapter,
   ref: TwinRef,
-  scopes: readonly TwinScopeRef[] | undefined,
+  visibility: TwinVisibility,
   visitedEdges: Set<string>,
   edgeCache: Map<string, TwinEdgeRecord | null>
 ): boolean {
   if (ref.kind === 'entity') {
-    return isEntityVisible(adapter, ref.id, scopes);
+    return isEntityVisible(adapter, ref.id, visibility.scopes);
   }
   if (ref.kind === 'report') {
-    return !hasScopes(scopes);
+    return !hasScopes(visibility.scopes);
   }
   if (ref.kind === 'memory') {
-    return isMemoryVisible(adapter, ref.id, scopes);
+    return isMemoryVisible(adapter, ref.id, visibility.scopes);
   }
   if (ref.kind === 'case') {
-    return isCaseVisible(adapter, ref.id, scopes);
+    return isCaseVisible(adapter, ref.id, visibility.scopes);
   }
   if (ref.kind === 'raw') {
-    return isRawVisible(adapter, ref.id, scopes);
+    return isRawVisible(adapter, ref.id, visibility);
   }
 
   if (visitedEdges.has(ref.id)) {
@@ -233,9 +276,22 @@ function isTwinRefVisible(
   const pathWithCurrent = new Set(visitedEdges);
   pathWithCurrent.add(ref.id);
   return (
-    isTwinRefVisible(adapter, edge.subject_ref, scopes, new Set(pathWithCurrent), edgeCache) &&
-    isTwinRefVisible(adapter, edge.object_ref, scopes, new Set(pathWithCurrent), edgeCache)
+    isTwinRefVisible(adapter, edge.subject_ref, visibility, new Set(pathWithCurrent), edgeCache) &&
+    isTwinRefVisible(adapter, edge.object_ref, visibility, new Set(pathWithCurrent), edgeCache)
   );
+}
+
+export function assertTwinRefsVisible(
+  adapter: TwinRefVisibilityAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility = {}
+): void {
+  const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  for (const ref of refs) {
+    if (!isTwinRefVisible(adapter, ref, visibility, new Set(), edgeCache)) {
+      throw new Error(`Twin ref is not visible to requested visibility: ${ref.kind}:${ref.id}`);
+    }
+  }
 }
 
 export function assertTwinRefsVisibleToScopes(
@@ -243,12 +299,7 @@ export function assertTwinRefsVisibleToScopes(
   refs: readonly TwinRef[],
   scopes?: TwinScopeRef[]
 ): void {
-  const edgeCache = new Map<string, TwinEdgeRecord | null>();
-  for (const ref of refs) {
-    if (!isTwinRefVisible(adapter, ref, scopes, new Set(), edgeCache)) {
-      throw new Error(`Twin ref is not visible to requested scopes: ${ref.kind}:${ref.id}`);
-    }
-  }
+  assertTwinRefsVisible(adapter, refs, visibilityFromScopes(scopes));
 }
 
 export function listVisibleTwinEdgesForRefs(
@@ -262,8 +313,8 @@ export function listVisibleTwinEdgesForRefs(
     (edge) =>
       (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
       (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
-      isTwinRefVisible(adapter, edge.subject_ref, options.scopes, new Set(), edgeCache) &&
-      isTwinRefVisible(adapter, edge.object_ref, options.scopes, new Set(), edgeCache)
+      isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache) &&
+      isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache)
   );
   const limit =
     typeof options.limit === 'number' && Number.isFinite(options.limit)
