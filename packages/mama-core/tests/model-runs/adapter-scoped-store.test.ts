@@ -627,6 +627,52 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         ).toThrow(/SQLITE_BUSY/);
         expect(selectCount).toBe(1);
       });
+
+      it('recovers matching duplicate insert errors by replaying the row inserted by a race', () => {
+        let selectCount = 0;
+        let insertCount = 0;
+        const adapter: ModelRunAdapterForTest = {
+          prepare(sql: string) {
+            if (/FROM model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                get() {
+                  selectCount += 1;
+                  return selectCount === 1 ? undefined : modelRunRow();
+                },
+              });
+            }
+            if (/INSERT INTO model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                run() {
+                  insertCount += 1;
+                  throw new Error(
+                    'SQLITE_CONSTRAINT_PRIMARYKEY: UNIQUE constraint failed: model_runs.model_run_id'
+                  );
+                },
+              });
+            }
+            throw new Error(`Unexpected SQL in fake adapter: ${sql}`);
+          },
+        };
+
+        const replay = beginModelRunInAdapter(adapter, {
+          model_run_id: 'mr_fake',
+          agent_id: 'agent-fake',
+          envelope_hash: 'env_fake',
+          input_refs: { request_idempotency_key: 'fake-key' },
+          created_at: 10_000,
+        });
+
+        expect(replay).toMatchObject({
+          model_run_id: 'mr_fake',
+          agent_id: 'agent-fake',
+          envelope_hash: 'env_fake',
+          input_refs: { request_idempotency_key: 'fake-key' },
+          status: 'running',
+        });
+        expect(selectCount).toBe(2);
+        expect(insertCount).toBe(1);
+      });
     });
 
     describe('AC #4: terminal lifecycle safety', () => {
