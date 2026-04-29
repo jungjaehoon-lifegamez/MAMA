@@ -226,6 +226,60 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         expect(replay.created_at).toBe(10_000);
       });
 
+      it('allows partial deterministic replays when the stable envelope matches', () => {
+        const scopedAdapter = createAdapter(tempDbPath('partial-envelope-replay'));
+        const input = {
+          model_run_id: 'mr_partial_envelope_replay',
+          model_id: 'gpt-5.4',
+          model_provider: 'openai',
+          agent_id: 'agent-alias',
+          envelope_hash: 'env_alias_partial_replay',
+          input_refs: {
+            tool: 'entity.alias',
+            entity_id: 'entity_partial',
+            request_idempotency_key: 'alias-key-partial',
+          },
+          token_count: 42,
+          cost_estimate: 0.25,
+          created_at: 4_250,
+        };
+
+        const first = beginModelRunInAdapter(scopedAdapter, input);
+        const replay = beginModelRunInAdapter(scopedAdapter, {
+          model_run_id: input.model_run_id,
+          envelope_hash: input.envelope_hash,
+        });
+
+        expect(replay).toEqual(first);
+      });
+
+      it('compares replay input refs canonically instead of by raw JSON text', () => {
+        const scopedAdapter = createAdapter(tempDbPath('canonical-input-refs'));
+        const input = {
+          model_run_id: 'mr_canonical_input_refs',
+          agent_id: 'agent-alias',
+          input_refs_json:
+            '{"request_idempotency_key":"alias-key-canonical","entity_id":"entity_1"}',
+          created_at: 4_300,
+        };
+
+        const first = beginModelRunInAdapter(scopedAdapter, input);
+        const replay = beginModelRunInAdapter(scopedAdapter, {
+          ...input,
+          input_refs_json:
+            '{\n  "entity_id": "entity_1",\n  "request_idempotency_key": "alias-key-canonical"\n}',
+        });
+
+        expect(replay).toEqual(first);
+        expect(() =>
+          beginModelRunInAdapter(scopedAdapter, {
+            ...input,
+            input_refs_json:
+              '{"request_idempotency_key":"alias-key-canonical","entity_id":"entity_changed"}',
+          })
+        ).toThrow(/different input_refs_json/);
+      });
+
       it('replays matching begin input after the run reaches a terminal status', () => {
         const scopedAdapter = createAdapter(tempDbPath('terminal-replay'));
         const input = {
@@ -243,6 +297,25 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         const committed = commitModelRunInAdapter(scopedAdapter, input.model_run_id, 'done');
 
         expect(beginModelRunInAdapter(scopedAdapter, input)).toEqual(committed);
+      });
+
+      it('replays matching begin input after the run fails', () => {
+        const scopedAdapter = createAdapter(tempDbPath('failed-terminal-replay'));
+        const input = {
+          model_run_id: 'mr_failed_terminal_replay',
+          agent_id: 'agent-alias',
+          envelope_hash: 'env_alias_failed_terminal_replay',
+          input_refs: {
+            tool: 'entity.alias',
+            request_idempotency_key: 'alias-key-failed-terminal-replay',
+          },
+          created_at: 4_750,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+        const failed = failModelRunInAdapter(scopedAdapter, input.model_run_id, 'model failed');
+
+        expect(beginModelRunInAdapter(scopedAdapter, input)).toEqual(failed);
       });
 
       it('rejects underspecified duplicate model run ids instead of binding to an existing run', () => {
@@ -317,6 +390,24 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         }
       });
 
+      it('rejects non-empty unstable input refs as idempotency discriminators', () => {
+        const scopedAdapter = createAdapter(tempDbPath('unstable-input-refs'));
+        const input = {
+          model_run_id: 'mr_unstable_input_refs',
+          input_refs: {
+            tool: 'entity.alias',
+            entity_id: 'entity_unstable',
+          },
+          created_at: 5_750,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+
+        expect(() => beginModelRunInAdapter(scopedAdapter, input)).toThrow(
+          /idempotency discriminator/
+        );
+      });
+
       it('rejects conflicting deterministic replays and preserves the original row', () => {
         const scopedAdapter = createAdapter(tempDbPath('conflict'));
         const input = {
@@ -357,6 +448,47 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
           token_count: 12,
           created_at: 6_000,
         });
+      });
+
+      it('rejects conflicts for every explicitly replayed stable begin field', () => {
+        const scopedAdapter = createAdapter(tempDbPath('all-stable-field-conflicts'));
+        const input = {
+          model_run_id: 'mr_all_stable_field_conflicts',
+          model_id: 'model-original',
+          model_provider: 'provider-original',
+          prompt_version: 'prompt-original',
+          tool_manifest_version: 'tool-original',
+          output_schema_version: 'schema-original',
+          agent_id: 'agent-original',
+          instance_id: 'instance-original',
+          envelope_hash: 'env_all_stable_field_conflicts',
+          parent_model_run_id: 'parent-original',
+          input_snapshot_ref: 'snapshot-original',
+          input_refs_json:
+            '{"request_idempotency_key":"stable-field-key","entity_id":"entity_original"}',
+          token_count: 12,
+          cost_estimate: 0.12,
+          created_at: 6_500,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+
+        for (const conflictingInput of [
+          { ...input, model_id: 'model-changed' },
+          { ...input, model_provider: 'provider-changed' },
+          { ...input, prompt_version: 'prompt-changed' },
+          { ...input, tool_manifest_version: 'tool-changed' },
+          { ...input, output_schema_version: 'schema-changed' },
+          { ...input, agent_id: 'agent-changed' },
+          { ...input, instance_id: 'instance-changed' },
+          { ...input, parent_model_run_id: 'parent-changed' },
+          { ...input, input_snapshot_ref: 'snapshot-changed' },
+          { ...input, cost_estimate: 0.13 },
+        ]) {
+          expect(() => beginModelRunInAdapter(scopedAdapter, conflictingInput)).toThrow(
+            /Model run already exists/
+          );
+        }
       });
 
       it('pins duplicate behavior through the legacy global begin helper', async () => {
@@ -450,6 +582,12 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
           error_summary: null,
           completed_at: committed.completed_at,
         });
+        expect(
+          commitModelRunInAdapter(scopedAdapter, 'mr_terminal_commit', 'packet generated')
+        ).toEqual(committed);
+        expect(() =>
+          commitModelRunInAdapter(scopedAdapter, 'mr_terminal_commit', 'changed summary')
+        ).toThrow(/different completion_summary/);
       });
 
       it('does not allow a failed run to be committed later', () => {
@@ -470,6 +608,12 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
           error_summary: failed.error_summary,
           completed_at: failed.completed_at,
         });
+        expect(failModelRunInAdapter(scopedAdapter, 'mr_terminal_fail', 'alias failed')).toEqual(
+          failed
+        );
+        expect(() =>
+          failModelRunInAdapter(scopedAdapter, 'mr_terminal_fail', 'changed failure')
+        ).toThrow(/different error_summary/);
       });
     });
   });
