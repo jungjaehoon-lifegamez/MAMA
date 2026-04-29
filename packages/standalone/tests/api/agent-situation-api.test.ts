@@ -314,6 +314,53 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       expect(secondRuns).toHaveLength(1);
     });
 
+    it('reuses the default-range cache while a packet is fresh when request time advances', async () => {
+      let currentNowMs = FIXED_NOW_MS;
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({
+        buildPacket,
+        now: () => currentNowMs,
+      });
+
+      const first = await authed(request(apiServer.app).get('/api/agent/situation'));
+      currentNowMs += 7;
+      const second = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(first.status).toBe(200);
+      expect(second.status).toBe(200);
+      expect(second.body.packet_id).toBe(first.body.packet_id);
+      expect(second.body.cache.hit).toBe(true);
+      expect(second.body.range_end).toBe(first.body.range_end);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+      expect(getAdapter().prepare('SELECT model_run_id FROM model_runs').all()).toHaveLength(1);
+    });
+
+    it('stores and serves canonical scope shape for equivalent duplicate-scope requests', async () => {
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({ buildPacket });
+
+      const duplicateScopes = await authed(
+        request(apiServer.app).get('/api/agent/situation?scopes=project%3Aalpha,project%3Aalpha')
+      );
+      const canonicalScope = await authed(
+        request(apiServer.app).get('/api/agent/situation?scopes=project%3Aalpha')
+      );
+
+      expect(duplicateScopes.status).toBe(200);
+      expect(canonicalScope.status).toBe(200);
+      expect(duplicateScopes.body.scope).toEqual([{ kind: 'project', id: 'alpha' }]);
+      expect(canonicalScope.body.packet_id).toBe(duplicateScopes.body.packet_id);
+      expect(canonicalScope.body.scope).toEqual([{ kind: 'project', id: 'alpha' }]);
+      expect(canonicalScope.body.cache.hit).toBe(true);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+    });
+
     it('rejects a supplied model run whose envelope hash does not match the worker envelope', async () => {
       const adapter = getAdapter();
       beginModelRunInAdapter(adapter, {
@@ -398,6 +445,42 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       expect(runs).toEqual([{ status: 'failed', error_summary: 'builder exploded' }]);
     });
 
+    it('removes the just-created packet when committing an owned direct model run fails', async () => {
+      const baseAdapter = getAdapter();
+      const commitFailingAdapter: AgentSituationRouterOptions['memoryAdapter'] = {
+        prepare(sql: string) {
+          const statement = baseAdapter.prepare(sql);
+          if (sql.includes("SET status = 'committed'")) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('commit store unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          return statement;
+        },
+        transaction<T>(fn: () => T): T {
+          return baseAdapter.transaction(fn);
+        },
+      };
+      const apiServer = makeServer({ memoryAdapter: commitFailingAdapter });
+
+      const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(response.status).toBe(500);
+      expect(response.body.code).toBe('agent_situation_api_error');
+      expect(
+        getAdapter().prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 0 });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
+          .all()
+      ).toEqual([{ status: 'failed', error_summary: 'commit store unavailable' }]);
+    });
+
     it('singleflights concurrent API refreshes for the same cache key', async () => {
       let releaseBuilder!: () => void;
       const builderGate = new Promise<void>((resolve) => {
@@ -443,6 +526,36 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       );
       expect(badFocus.status).toBe(400);
       expect(badFocus.body.code).toBe('agent_situation_query_invalid');
+    });
+
+    it('rejects invalid envelope as_of before cache key, packet, or model-run work', async () => {
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+          as_of: 'not-a-date',
+        },
+      });
+      authority.persist(validEnvelope);
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({ buildPacket });
+
+      const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(response.status).toBe(400);
+      expect(response.body.code).toBe('worker_envelope_as_of_invalid');
+      expect(buildPacket).not.toHaveBeenCalled();
+      expect(getAdapter().prepare('SELECT COUNT(*) AS count FROM model_runs').get()).toEqual({
+        count: 0,
+      });
+      expect(
+        getAdapter().prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 0 });
     });
   });
 });
