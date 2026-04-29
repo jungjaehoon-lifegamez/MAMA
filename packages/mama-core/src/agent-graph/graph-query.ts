@@ -1,5 +1,6 @@
 import { assertTwinRefsVisible, listVisibleTwinEdgesForRefs } from '../edges/ref-validation.js';
 import type { TwinEdgeRecord, TwinRef, TwinVisibility } from '../edges/types.js';
+import { getEntityNode } from '../entities/store.js';
 import type {
   AgentGraphAdapter,
   AgentGraphEdgeFilters,
@@ -8,6 +9,7 @@ import type {
   GraphNeighborhoodInput,
   GraphPathsInput,
   GraphPathsResult,
+  AgentGraphTimelineEvent,
   GraphTimelineInput,
   GraphTimelineResult,
 } from './types.js';
@@ -23,6 +25,29 @@ function refKey(ref: TwinRef): string {
 
 function edgeKey(edge: TwinEdgeRecord): string {
   return edge.edge_id;
+}
+
+function eventKey(event: AgentGraphTimelineEvent): string {
+  if (event.kind === 'edge') {
+    return event.edge.edge_id;
+  }
+  return `${event.ref.kind}:${event.ref.id}`;
+}
+
+function eventKindRank(kind: AgentGraphTimelineEvent['kind']): number {
+  if (kind === 'entity') {
+    return 0;
+  }
+  if (kind === 'memory') {
+    return 1;
+  }
+  if (kind === 'raw') {
+    return 2;
+  }
+  if (kind === 'case') {
+    return 3;
+  }
+  return 4;
 }
 
 function normalizeDepth(value: number | undefined, fallback: number): number {
@@ -44,6 +69,17 @@ function addNode(nodes: TwinRef[], seen: Set<string>, ref: TwinRef): void {
   if (!seen.has(key)) {
     seen.add(key);
     nodes.push(ref);
+  }
+}
+
+function addRef(refs: TwinRef[], seen: Set<string>, ref: TwinRef): void {
+  if (ref.kind === 'edge' || ref.kind === 'report') {
+    return;
+  }
+  const key = refKey(ref);
+  if (!seen.has(key)) {
+    seen.add(key);
+    refs.push(ref);
   }
 }
 
@@ -107,6 +143,205 @@ function graphVisibility(input: {
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
   };
+}
+
+function numberMs(value: unknown, field: string, refId: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  throw new Error(`Invalid ${field} timestamp for graph timeline ref ${refId}.`);
+}
+
+function nullableNumberMs(value: unknown, field: string, refId: string): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  return numberMs(value, field, refId);
+}
+
+function parseTimestampMs(value: unknown, field: string, refId: string): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  throw new Error(`Invalid ${field} timestamp for graph timeline ref ${refId}.`);
+}
+
+function timelineWindow(input: GraphTimelineInput): {
+  fromMs: number | undefined;
+  toMs: number | undefined;
+} {
+  const upperBounds = [input.to_ms, input.as_of_ms].filter(
+    (value): value is number => typeof value === 'number'
+  );
+  return {
+    fromMs: input.from_ms,
+    toMs: upperBounds.length > 0 ? Math.min(...upperBounds) : undefined,
+  };
+}
+
+function isInTimelineWindow(
+  atMs: number,
+  window: { fromMs: number | undefined; toMs: number | undefined }
+): boolean {
+  return (
+    (window.fromMs === undefined || atMs >= window.fromMs) &&
+    (window.toMs === undefined || atMs <= window.toMs)
+  );
+}
+
+function loadTimelineRecordEvent(
+  adapter: AgentGraphAdapter,
+  ref: TwinRef
+): AgentGraphTimelineEvent | null {
+  if (ref.kind === 'entity') {
+    const entity = getEntityNode(ref.id, adapter);
+    if (!entity || entity.status !== 'active') {
+      return null;
+    }
+    return { kind: 'entity', at_ms: entity.created_at, ref, entity };
+  }
+
+  if (ref.kind === 'memory') {
+    const row = adapter
+      .prepare(
+        `
+          SELECT id, topic, decision, created_at, event_datetime
+          FROM decisions
+          WHERE id = ?
+          LIMIT 1
+        `
+      )
+      .get(ref.id) as
+      | {
+          id: string;
+          topic: string | null;
+          decision: string | null;
+          created_at: number;
+          event_datetime: number | null;
+        }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    const eventDatetime = nullableNumberMs(row.event_datetime, 'decisions.event_datetime', ref.id);
+    const createdAt = numberMs(row.created_at, 'decisions.created_at', ref.id);
+    return {
+      kind: 'memory',
+      at_ms: eventDatetime ?? createdAt,
+      ref,
+      memory: {
+        id: row.id,
+        topic: row.topic,
+        decision: row.decision,
+        created_at: createdAt,
+        event_datetime: eventDatetime,
+      },
+    };
+  }
+
+  if (ref.kind === 'raw') {
+    const row = adapter
+      .prepare(
+        `
+          SELECT
+            event_index_id, source_connector, source_type, source_id, source_locator,
+            title, event_datetime, source_timestamp_ms
+          FROM connector_event_index
+          WHERE event_index_id = ?
+          LIMIT 1
+        `
+      )
+      .get(ref.id) as
+      | {
+          event_index_id: string;
+          source_connector: string;
+          source_type: string;
+          source_id: string;
+          source_locator: string | null;
+          title: string | null;
+          event_datetime: number | null;
+          source_timestamp_ms: number;
+        }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    const eventDatetime = nullableNumberMs(
+      row.event_datetime,
+      'connector_event_index.event_datetime',
+      ref.id
+    );
+    const sourceTimestampMs = numberMs(
+      row.source_timestamp_ms,
+      'connector_event_index.source_timestamp_ms',
+      ref.id
+    );
+    return {
+      kind: 'raw',
+      at_ms: eventDatetime ?? sourceTimestampMs,
+      ref,
+      raw: {
+        event_index_id: row.event_index_id,
+        source_connector: row.source_connector,
+        source_type: row.source_type,
+        source_id: row.source_id,
+        source_locator: row.source_locator,
+        title: row.title,
+        event_datetime: eventDatetime,
+        source_timestamp_ms: sourceTimestampMs,
+      },
+    };
+  }
+
+  if (ref.kind === 'case') {
+    const row = adapter
+      .prepare(
+        `
+          SELECT case_id, title, status, last_activity_at, created_at, updated_at
+          FROM case_truth
+          WHERE case_id = ?
+          LIMIT 1
+        `
+      )
+      .get(ref.id) as
+      | {
+          case_id: string;
+          title: string;
+          status: string;
+          last_activity_at: string | null;
+          created_at: string | number;
+          updated_at: string | number;
+        }
+      | undefined;
+    if (!row) {
+      return null;
+    }
+    return {
+      kind: 'case',
+      at_ms: parseTimestampMs(
+        row.last_activity_at ?? row.updated_at,
+        'case_truth.updated_at',
+        ref.id
+      ),
+      ref,
+      case: {
+        case_id: row.case_id,
+        title: row.title,
+        status: row.status,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        last_activity_at: row.last_activity_at,
+      },
+    };
+  }
+
+  return null;
 }
 
 export function getGraphNeighborhood(
@@ -215,21 +450,43 @@ export function getGraphTimeline(
   const visibility = graphVisibility(input);
   assertRefsVisible(adapter, [input.ref], visibility);
   const limit = normalizeLimit(input.limit, DEFAULT_GRAPH_LIMIT);
+  const window = timelineWindow(input);
   const edges = listFilteredEdges(adapter, [input.ref], {
     visibility,
     edge_filters: input.edge_filters,
     as_of_ms: input.as_of_ms,
-  })
-    .filter((edge) => input.from_ms === undefined || edge.created_at >= input.from_ms)
-    .filter((edge) => input.to_ms === undefined || edge.created_at <= input.to_ms)
-    .sort(
-      (left, right) =>
-        left.created_at - right.created_at || left.edge_id.localeCompare(right.edge_id)
+  }).filter((edge) => isInTimelineWindow(edge.created_at, window));
+
+  const refs: TwinRef[] = [];
+  const seenRefs = new Set<string>();
+  addRef(refs, seenRefs, input.ref);
+  for (const edge of edges) {
+    addRef(refs, seenRefs, edge.subject_ref);
+    addRef(refs, seenRefs, edge.object_ref);
+  }
+
+  const events: AgentGraphTimelineEvent[] = [];
+  for (const ref of refs) {
+    const event = loadTimelineRecordEvent(adapter, ref);
+    if (event && isInTimelineWindow(event.at_ms, window)) {
+      events.push(event);
+    }
+  }
+  events.push(
+    ...edges.map(
+      (edge): AgentGraphTimelineEvent => ({ kind: 'edge', at_ms: edge.created_at, edge })
     )
-    .slice(0, limit);
+  );
 
   return {
     ref: input.ref,
-    events: edges.map((edge) => ({ kind: 'edge', at_ms: edge.created_at, edge })),
+    events: events
+      .sort(
+        (left, right) =>
+          left.at_ms - right.at_ms ||
+          eventKindRank(left.kind) - eventKindRank(right.kind) ||
+          eventKey(left).localeCompare(eventKey(right))
+      )
+      .slice(0, limit),
   };
 }

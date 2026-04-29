@@ -3,7 +3,12 @@ import { createHash, randomUUID } from 'node:crypto';
 import { canonicalizeJSON } from '../canonicalize.js';
 import { assertTwinRefsVisible } from '../edges/ref-validation.js';
 import { mapTwinEdgeRow } from '../edges/store.js';
-import type { TwinEdgeRecord, TwinVisibility } from '../edges/types.js';
+import {
+  TWIN_REF_KINDS,
+  type TwinEdgeRecord,
+  type TwinRef,
+  type TwinVisibility,
+} from '../edges/types.js';
 import { normalizeEntityLabel } from '../entities/normalization.js';
 import { getEntityNode } from '../entities/store.js';
 import type { EntityAlias } from '../entities/types.js';
@@ -13,6 +18,8 @@ import type {
   AttachEntityAliasWithEdgeInput,
   AttachEntityAliasWithEdgeResult,
 } from './types.js';
+
+const TWIN_REF_KIND_SET = new Set<string>(TWIN_REF_KINDS);
 
 function stableAliasId(input: AttachEntityAliasWithEdgeInput, normalizedLabel: string): string {
   const replayKey = replayIdempotencyKey(input);
@@ -85,8 +92,40 @@ function selectExistingAliasEdge(
   return row ? mapTwinEdgeRow(row) : null;
 }
 
-function expectedRelationAttrs(alias: EntityAlias): Record<string, unknown> {
-  return {
+function normalizeSourceRefs(sourceRefs: readonly TwinRef[] | undefined): TwinRef[] {
+  if (!sourceRefs || sourceRefs.length === 0) {
+    return [];
+  }
+  const refs: TwinRef[] = [];
+  const seen = new Set<string>();
+  for (const ref of sourceRefs) {
+    if (
+      !ref ||
+      typeof ref !== 'object' ||
+      typeof ref.kind !== 'string' ||
+      typeof ref.id !== 'string' ||
+      ref.id.trim().length === 0 ||
+      !TWIN_REF_KIND_SET.has(ref.kind)
+    ) {
+      throw new AgentGraphValidationError('source_refs must be TwinRef objects with kind and id.');
+    }
+    const normalized = { kind: ref.kind, id: ref.id.trim() } as TwinRef;
+    const key = `${normalized.kind}:${normalized.id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push(normalized);
+    }
+  }
+  return refs.sort((left, right) =>
+    `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`)
+  );
+}
+
+function expectedRelationAttrs(
+  alias: EntityAlias,
+  sourceRefs: readonly TwinRef[]
+): Record<string, unknown> {
+  const attrs: Record<string, unknown> = {
     alias_id: alias.id,
     label: alias.label,
     normalized_label: alias.normalized_label,
@@ -94,6 +133,10 @@ function expectedRelationAttrs(alias: EntityAlias): Record<string, unknown> {
     script: alias.script,
     label_type: alias.label_type,
   };
+  if (sourceRefs.length > 0) {
+    attrs.source_refs = sourceRefs.map((ref) => ({ kind: ref.kind, id: ref.id }));
+  }
+  return attrs;
 }
 
 function assertAliasReplayMatches(
@@ -128,7 +171,8 @@ function assertAliasEdgeReplayMatches(
   input: AttachEntityAliasWithEdgeInput,
   alias: EntityAlias,
   confidence: number,
-  edgeIdempotencyKey: string | undefined
+  edgeIdempotencyKey: string | undefined,
+  sourceRefs: readonly TwinRef[]
 ): void {
   const matches =
     edge.edge_type === 'alias_of' &&
@@ -136,7 +180,7 @@ function assertAliasEdgeReplayMatches(
     edge.subject_ref.id === input.entity_id &&
     edge.object_ref.kind === 'entity' &&
     edge.object_ref.id === input.entity_id &&
-    edge.relation_attrs_json === canonicalizeJSON(expectedRelationAttrs(alias)) &&
+    edge.relation_attrs_json === canonicalizeJSON(expectedRelationAttrs(alias, sourceRefs)) &&
     edge.confidence === confidence &&
     edge.source === 'agent' &&
     edge.agent_id === input.agent_id &&
@@ -155,16 +199,24 @@ function insertAliasEdge(
   adapter: AgentGraphAdapter,
   input: AttachEntityAliasWithEdgeInput,
   alias: EntityAlias,
-  confidence: number
+  confidence: number,
+  sourceRefs: readonly TwinRef[]
 ): TwinEdgeRecord {
   const edgeIdempotencyKey = replayIdempotencyKey(input);
   const existing = selectExistingAliasEdge(adapter, input.model_run_id, edgeIdempotencyKey);
 
   const edgeId = `edge_${randomUUID().replace(/-/g, '')}`;
-  const relationAttrs = expectedRelationAttrs(alias);
+  const relationAttrs = expectedRelationAttrs(alias, sourceRefs);
   const relationAttrsJson = canonicalizeJSON(relationAttrs);
   if (existing) {
-    assertAliasEdgeReplayMatches(existing, input, alias, confidence, edgeIdempotencyKey);
+    assertAliasEdgeReplayMatches(
+      existing,
+      input,
+      alias,
+      confidence,
+      edgeIdempotencyKey,
+      sourceRefs
+    );
     return existing;
   }
 
@@ -234,8 +286,13 @@ export function attachEntityAliasWithEdge(
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
   };
+  const sourceRefs = normalizeSourceRefs(input.source_refs);
   try {
-    assertTwinRefsVisible(adapter, [{ kind: 'entity', id: input.entity_id }], visibility);
+    assertTwinRefsVisible(
+      adapter,
+      [{ kind: 'entity', id: input.entity_id }, ...sourceRefs],
+      visibility
+    );
   } catch (error) {
     throw new AgentGraphValidationError(error instanceof Error ? error.message : String(error));
   }
@@ -277,7 +334,7 @@ export function attachEntityAliasWithEdge(
 
     const alias = loadAlias(adapter, aliasId);
     assertAliasReplayMatches(alias, input, normalized, confidence);
-    const edge = insertAliasEdge(adapter, input, alias, confidence);
+    const edge = insertAliasEdge(adapter, input, alias, confidence, sourceRefs);
 
     return { alias, edge };
   });
