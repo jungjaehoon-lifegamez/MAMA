@@ -139,6 +139,10 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       .set('x-mama-envelope-hash', validEnvelope.envelope_hash);
   }
 
+  function waitForMicrotask(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   describe('AC #1: worker envelope gates packet visibility', () => {
     it('rejects missing envelopes and requested scopes outside the envelope', async () => {
       const apiServer = makeServer();
@@ -173,6 +177,31 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.code).toBe('worker_envelope_project_required');
+    });
+
+    it('rejects unavailable, expired, and connector-denied worker envelopes explicitly', async () => {
+      const unavailableServer = makeServer({ envelopeAuthority: undefined });
+      const unavailable = await authed(request(unavailableServer.app).get('/api/agent/situation'));
+      expect(unavailable.status).toBe(503);
+      expect(unavailable.body.code).toBe('worker_envelope_unavailable');
+
+      validEnvelope = makeEnvelope({
+        expires_at: new Date(Date.now() - 1_000).toISOString(),
+      });
+      authority.persist(validEnvelope);
+      const expiredServer = makeServer();
+      const expired = await authed(request(expiredServer.app).get('/api/agent/situation'));
+      expect(expired.status).toBe(403);
+      expect(expired.body.code).toBe('worker_envelope_expired');
+
+      validEnvelope = makeEnvelope();
+      authority.persist(validEnvelope);
+      const connectorDeniedServer = makeServer();
+      const connectorDenied = await authed(
+        request(connectorDeniedServer.app).get('/api/agent/situation?connectors=github')
+      );
+      expect(connectorDenied.status).toBe(403);
+      expect(connectorDenied.body.code).toBe('worker_envelope_connector_denied');
     });
   });
 
@@ -254,6 +283,57 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
 
       expect(response.status).toBe(403);
       expect(response.body.code).toBe('agent_situation_model_run_denied');
+    });
+
+    it('marks an owned direct model run failed when packet generation throws', async () => {
+      const buildPacket = vi.fn(() => {
+        throw new Error('builder exploded');
+      });
+      const apiServer = makeServer({ buildPacket });
+
+      const response = await authed(
+        request(apiServer.app).get('/api/agent/situation?range=7d&refresh=true')
+      );
+
+      expect(response.status).toBe(500);
+      expect(response.body.code).toBe('agent_situation_api_error');
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+
+      const runs = getAdapter()
+        .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
+        .all() as Array<{ status: string; error_summary: string }>;
+      expect(runs).toEqual([{ status: 'failed', error_summary: 'builder exploded' }]);
+    });
+
+    it('singleflights concurrent API refreshes for the same cache key', async () => {
+      let releaseBuilder!: () => void;
+      const builderGate = new Promise<void>((resolve) => {
+        releaseBuilder = resolve;
+      });
+      const buildPacket = vi.fn(async (adapter, input: AgentSituationInput) => {
+        await builderGate;
+        return buildAgentSituationPacketRecord(adapter, input);
+      });
+      const apiServer = makeServer({ buildPacket });
+
+      const responsesPromise = Promise.all(
+        Array.from({ length: 5 }, () =>
+          authed(request(apiServer.app).get('/api/agent/situation?range=7d&refresh=true'))
+        )
+      );
+      while (buildPacket.mock.calls.length === 0) {
+        await waitForMicrotask();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      releaseBuilder();
+      const responses = await responsesPromise;
+
+      expect(responses.map((response) => response.status)).toEqual([200, 200, 200, 200, 200]);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+      expect(new Set(responses.map((response) => response.body.packet_id)).size).toBe(1);
+      expect(getAdapter().prepare('SELECT COUNT(*) AS count FROM model_runs').get()).toEqual({
+        count: 1,
+      });
     });
   });
 
