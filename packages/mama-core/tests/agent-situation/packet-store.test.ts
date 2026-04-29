@@ -1,0 +1,210 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
+
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
+import type { DatabaseAdapter } from '../../src/db-manager.js';
+import { buildAgentSituationPacketRecord } from '../../src/agent-situation/builder.js';
+import {
+  acquireAgentSituationLease,
+  getFreshAgentSituationPacket,
+  getOrRefreshAgentSituationPacket,
+  insertAgentSituationPacket,
+  releaseAgentSituationLease,
+} from '../../src/agent-situation/packet-store.js';
+import type {
+  AgentSituationEffectiveFilters,
+  AgentSituationPacketRecord,
+} from '../../src/agent-situation/types.js';
+
+const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
+const tempPaths = new Set<string>();
+
+const FILTERS: AgentSituationEffectiveFilters = {
+  connectors: ['slack'],
+  scopes: [{ kind: 'project', id: 'repo-a' }],
+  project_refs: [{ kind: 'project', id: 'repo-a' }],
+  tenant_id: 'default',
+  as_of: null,
+};
+
+function tempDbPath(): string {
+  const path = join(os.tmpdir(), `test-agent-situation-store-${randomUUID()}.db`);
+  tempPaths.add(path);
+  return path;
+}
+
+function cleanupDb(path: string): void {
+  for (const file of [path, `${path}-journal`, `${path}-wal`, `${path}-shm`]) {
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      // best effort
+    }
+  }
+}
+
+function createAdapter(): DatabaseAdapter {
+  const adapter = new NodeSQLiteAdapter({ dbPath: tempDbPath() }) as unknown as DatabaseAdapter;
+  adapter.connect();
+  adapter.runMigrations(MIGRATIONS_DIR);
+  return adapter;
+}
+
+function packet(adapter: DatabaseAdapter, nowMs = 2_000): AgentSituationPacketRecord {
+  return buildAgentSituationPacketRecord(adapter, {
+    scope: FILTERS.scopes,
+    range_start_ms: 1_000,
+    range_end_ms: 2_000,
+    focus: ['decisions', 'risks'],
+    limit: 7,
+    effective_filters: FILTERS,
+    envelope_hash: 'env-a',
+    agent_id: 'agent-a',
+    model_run_id: 'mr-a',
+    now_ms: nowMs,
+  });
+}
+
+describe('Story M5: Agent situation packet store', () => {
+  afterEach(() => {
+    for (const path of tempPaths) {
+      cleanupDb(path);
+    }
+    tempPaths.clear();
+  });
+
+  describe('AC #1: packet cache persistence', () => {
+    it('inserts packets with provenance fields and reads the newest fresh packet by key', () => {
+      const adapter = createAdapter();
+      const stale = packet(adapter, 1_000);
+      stale.expires_at = 1_500;
+      insertAgentSituationPacket(adapter, stale);
+
+      const fresh = packet(adapter, 2_000);
+      insertAgentSituationPacket(adapter, fresh);
+
+      const found = getFreshAgentSituationPacket(
+        adapter,
+        fresh.cache_key,
+        fresh.ranking_policy_version,
+        2_100
+      );
+
+      expect(found).toMatchObject({
+        packet_id: fresh.packet_id,
+        cache_key: fresh.cache_key,
+        agent_id: 'agent-a',
+        model_run_id: 'mr-a',
+        envelope_hash: 'env-a',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+      expect(
+        getFreshAgentSituationPacket(
+          adapter,
+          fresh.cache_key,
+          fresh.ranking_policy_version,
+          200_000
+        )
+      ).toBeNull();
+    });
+
+    it('does not call the builder when a fresh cache hit exists', async () => {
+      const adapter = createAdapter();
+      const existing = insertAgentSituationPacket(adapter, packet(adapter, 2_000));
+      let calls = 0;
+
+      const result = await getOrRefreshAgentSituationPacket(
+        adapter,
+        {
+          cacheKey: existing.cache_key,
+          rankingPolicyVersion: existing.ranking_policy_version,
+          nowMs: 2_100,
+          leaseOwner: 'test-owner',
+        },
+        async () => {
+          calls += 1;
+          return packet(adapter, 2_100);
+        }
+      );
+
+      expect(result.packet_id).toBe(existing.packet_id);
+      expect(calls).toBe(0);
+      expect(
+        adapter.prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 1 });
+    });
+  });
+
+  describe('AC #2: durable lease and in-process singleflight', () => {
+    it('allows one live lease per key until release or expiry', () => {
+      const adapter = createAdapter();
+      const item = packet(adapter, 2_000);
+
+      const lease = acquireAgentSituationLease(adapter, {
+        cacheKey: item.cache_key,
+        rankingPolicyVersion: item.ranking_policy_version,
+        leaseOwner: 'owner-a',
+        nowMs: 2_000,
+        leaseSeconds: 30,
+      });
+
+      expect(lease?.lease_owner).toBe('owner-a');
+      expect(
+        acquireAgentSituationLease(adapter, {
+          cacheKey: item.cache_key,
+          rankingPolicyVersion: item.ranking_policy_version,
+          leaseOwner: 'owner-b',
+          nowMs: 2_100,
+          leaseSeconds: 30,
+        })
+      ).toBeNull();
+
+      releaseAgentSituationLease(adapter, item.cache_key, 'owner-a');
+      expect(
+        acquireAgentSituationLease(adapter, {
+          cacheKey: item.cache_key,
+          rankingPolicyVersion: item.ranking_policy_version,
+          leaseOwner: 'owner-b',
+          nowMs: 2_200,
+          leaseSeconds: 30,
+        })?.lease_owner
+      ).toBe('owner-b');
+    });
+
+    it('runs one builder for five concurrent refreshes of the same key', async () => {
+      const adapter = createAdapter();
+      const sample = packet(adapter, 2_000);
+      let calls = 0;
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          getOrRefreshAgentSituationPacket(
+            adapter,
+            {
+              cacheKey: sample.cache_key,
+              rankingPolicyVersion: sample.ranking_policy_version,
+              nowMs: 2_100,
+              leaseOwner: 'owner-singleflight',
+            },
+            async () => {
+              calls += 1;
+              return sample;
+            }
+          )
+        )
+      );
+
+      expect(calls).toBe(1);
+      expect(new Set(results.map((result) => result.packet_id)).size).toBe(1);
+      expect(
+        adapter.prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 1 });
+    });
+  });
+});
