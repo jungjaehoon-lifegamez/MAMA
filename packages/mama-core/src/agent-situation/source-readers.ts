@@ -67,6 +67,18 @@ function normalizeLimit(limit: number): number {
   return Math.max(0, Math.min(100, Math.floor(limit)));
 }
 
+function visibilityEndMs(input: AgentSituationSourceReadInput): number {
+  const asOf = input.effective_filters.as_of;
+  if (!asOf) {
+    return input.range_end_ms;
+  }
+  const parsed = Date.parse(asOf);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`Invalid agent situation as_of: ${asOf}`);
+  }
+  return Math.min(input.range_end_ms, parsed);
+}
+
 function parseJsonArray(value: unknown): unknown[] {
   if (typeof value !== 'string' || value.length === 0) {
     return [];
@@ -141,6 +153,7 @@ export function listVisibleRawCandidates(
   if (connectors.length === 0 || scopes.length === 0 || projectIds.length === 0) {
     return [];
   }
+  const endMs = visibilityEndMs(input);
 
   const scopeClauses = scopes
     .map(() => '(memory_scope_kind = ? AND memory_scope_id = ?)')
@@ -149,7 +162,7 @@ export function listVisibleRawCandidates(
   for (const scope of scopes) {
     params.push(scope.kind, scope.id);
   }
-  params.push(input.range_start_ms, input.range_end_ms, normalizeLimit(input.limit));
+  params.push(input.range_start_ms, endMs, normalizeLimit(input.limit));
 
   const rows = adapter
     .prepare(
@@ -195,13 +208,14 @@ export function listVisibleMemoryCandidates(
   if (scopes.length === 0) {
     return [];
   }
+  const endMs = visibilityEndMs(input);
 
   const scopeClauses = scopes.map(() => '(ms.kind = ? AND ms.external_id = ?)').join(' OR ');
   const params: unknown[] = [];
   for (const scope of scopes) {
     params.push(scope.kind, scope.id);
   }
-  params.push(input.range_start_ms, input.range_end_ms, normalizeLimit(input.limit));
+  params.push(input.range_start_ms, endMs, normalizeLimit(input.limit));
 
   const rows = adapter
     .prepare(
@@ -245,6 +259,7 @@ export function listVisibleCaseCandidates(
   if (!tableExists(adapter, 'case_truth')) {
     return [];
   }
+  const endMs = visibilityEndMs(input);
 
   const rows = adapter
     .prepare(
@@ -252,10 +267,9 @@ export function listVisibleCaseCandidates(
         SELECT case_id, title, status, confidence, scope_refs, last_activity_at, updated_at, created_at
         FROM case_truth
         ORDER BY COALESCE(last_activity_at, updated_at, created_at) DESC, case_id ASC
-        LIMIT ?
       `
     )
-    .all(normalizeLimit(input.limit) * 3 + 10) as Array<Record<string, unknown>>;
+    .all() as Array<Record<string, unknown>>;
 
   return rows
     .map((row): VisibleCaseCandidate | null => {
@@ -263,7 +277,7 @@ export function listVisibleCaseCandidates(
       const scopes = caseScopes(row);
       if (
         timestamp < input.range_start_ms ||
-        timestamp > input.range_end_ms ||
+        timestamp > endMs ||
         !scopes.some((scope) => isScopeVisible(scope, input.effective_filters))
       ) {
         return null;
@@ -295,6 +309,21 @@ export function listVisibleEdgeCandidates(
   if (visible.size === 0) {
     return [];
   }
+  const uniqueVisibleRefs = [...new Map(visibleRefs.map((ref) => [refKey(ref), ref])).values()];
+  const subjectClauses = uniqueVisibleRefs
+    .map(() => '(subject_kind = ? AND subject_id = ?)')
+    .join(' OR ');
+  const objectClauses = uniqueVisibleRefs
+    .map(() => '(object_kind = ? AND object_id = ?)')
+    .join(' OR ');
+  const params: unknown[] = [input.range_start_ms, visibilityEndMs(input)];
+  for (const ref of uniqueVisibleRefs) {
+    params.push(ref.kind, ref.id);
+  }
+  for (const ref of uniqueVisibleRefs) {
+    params.push(ref.kind, ref.id);
+  }
+  params.push(normalizeLimit(input.limit));
 
   const rows = adapter
     .prepare(
@@ -303,13 +332,13 @@ export function listVisibleEdgeCandidates(
                confidence, reason_text, created_at
         FROM twin_edges
         WHERE created_at BETWEEN ? AND ?
+          AND (${subjectClauses})
+          AND (${objectClauses})
         ORDER BY created_at DESC, edge_id ASC
         LIMIT ?
       `
     )
-    .all(input.range_start_ms, input.range_end_ms, normalizeLimit(input.limit) * 3 + 10) as Array<
-    Record<string, unknown>
-  >;
+    .all(...params) as Array<Record<string, unknown>>;
 
   return rows
     .map((row): VisibleEdgeCandidate | null => {

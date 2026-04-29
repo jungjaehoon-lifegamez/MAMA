@@ -100,5 +100,52 @@ describe('Story M5: Agent situation refresh singleflight', () => {
       expect(calls).toBe(1);
       expect(result.packet_id).toBe(sample.packet_id);
     });
+
+    it('keeps in-process refreshes scoped to the adapter that owns the cache key', async () => {
+      const firstAdapter = createAdapter();
+      const secondAdapter = createAdapter();
+      const firstSample = packet(firstAdapter, 2_000);
+      const secondSample = {
+        ...packet(secondAdapter, 2_000),
+        packet_id: 'situ_second_adapter',
+      };
+      let firstCalls = 0;
+      let secondCalls = 0;
+
+      const first = getOrRefreshAgentSituationPacket(
+        firstAdapter,
+        {
+          cacheKey: firstSample.cache_key,
+          rankingPolicyVersion: firstSample.ranking_policy_version,
+          nowMs: 2_100,
+          leaseOwner: 'first-owner',
+        },
+        async () => {
+          firstCalls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return firstSample;
+        }
+      );
+      const second = getOrRefreshAgentSituationPacket(
+        secondAdapter,
+        {
+          cacheKey: secondSample.cache_key,
+          rankingPolicyVersion: secondSample.ranking_policy_version,
+          nowMs: 2_100,
+          leaseOwner: 'second-owner',
+        },
+        async () => {
+          secondCalls += 1;
+          return secondSample;
+        }
+      );
+
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstCalls).toBe(1);
+      expect(secondCalls).toBe(1);
+      expect(firstResult.packet_id).toBe(firstSample.packet_id);
+      expect(secondResult.packet_id).toBe('situ_second_adapter');
+    });
   });
 });
