@@ -41,9 +41,13 @@ import { generate } from './ollama-client.js';
 import { warn as logWarn, error as logError } from './debug-logger.js';
 import {
   saveMemory,
+  saveMemoryWithTrustedProvenance,
   recallMemory,
   buildProfile,
   ingestMemory,
+  ingestWithTrustedProvenance,
+  ingestConversation,
+  ingestConversationWithTrustedProvenance,
   evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
@@ -52,7 +56,14 @@ import {
   getChannelSummary,
 } from './memory/api.js';
 import { listOpenAuditFindings } from './memory/finding-store.js';
-import { listRecentMemoryEvents } from './memory/event-store.js';
+import { listMemoryEventsForMemory, listRecentMemoryEvents } from './memory/event-store.js';
+import type { TrustedMemoryWriteOptions } from './memory/provenance.js';
+import {
+  getMemoryProvenance,
+  listMemoriesByEnvelopeHash,
+  listMemoriesByGatewayCallId,
+  listMemoriesByModelRunId,
+} from './memory/provenance-query.js';
 import {
   rollUpSearchHits,
   type SearchRollupLeafHit,
@@ -515,21 +526,24 @@ const WARNING_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
  *   outcome: 'success'
  * });
  */
-async function save({
-  topic,
-  decision,
-  reasoning,
-  confidence = 0.5,
-  type = 'user_decision',
-  outcome = 'pending',
-  failure_reason = null,
-  limitation = null,
-  trust_context: _trust_context = null,
-  is_static,
-  scopes: inputScopes,
-  event_date,
-  timelineEvent,
-}: SaveParams): Promise<SaveResult> {
+async function saveInternal(
+  {
+    topic,
+    decision,
+    reasoning,
+    confidence = 0.5,
+    type = 'user_decision',
+    outcome = 'pending',
+    failure_reason = null,
+    limitation = null,
+    trust_context: _trust_context = null,
+    is_static,
+    scopes: inputScopes,
+    event_date,
+    timelineEvent,
+  }: SaveParams,
+  options?: TrustedMemoryWriteOptions
+): Promise<SaveResult> {
   // Validate required fields
   if (!topic || typeof topic !== 'string') {
     throw new Error('mama.save() requires topic (string)');
@@ -595,20 +609,38 @@ async function save({
     id: decisionId,
     timeline_event_id: timelineEventId,
     timeline_event_ids: timelineEventIds,
-  } = await saveMemory({
-    topic,
-    kind: is_static === 1 ? 'preference' : 'decision',
-    summary: decision,
-    details: reasoning,
-    confidence,
-    scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
-    source: {
-      package: 'mama-core',
-      source_type: 'legacy_save',
-    },
-    eventDate: event_date ?? undefined,
-    timelineEvent,
-  });
+  } = options
+    ? await saveMemoryWithTrustedProvenance(
+        {
+          topic,
+          kind: is_static === 1 ? 'preference' : 'decision',
+          summary: decision,
+          details: reasoning,
+          confidence,
+          scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
+          source: {
+            package: 'mama-core',
+            source_type: 'legacy_save',
+          },
+          eventDate: event_date ?? undefined,
+          timelineEvent,
+        },
+        options
+      )
+    : await saveMemory({
+        topic,
+        kind: is_static === 1 ? 'preference' : 'decision',
+        summary: decision,
+        details: reasoning,
+        confidence,
+        scopes: Array.isArray(inputScopes) && inputScopes.length > 0 ? inputScopes : [],
+        source: {
+          package: 'mama-core',
+          source_type: 'legacy_save',
+        },
+        eventDate: event_date ?? undefined,
+        timelineEvent,
+      });
   logComplete(`Decision saved: ${decisionId.substring(0, 20)}...`);
 
   // Update user_involvement, outcome, failure_reason, limitation
@@ -701,9 +733,7 @@ async function save({
         if (searchResults && typeof searchResults === 'object' && 'results' in searchResults) {
           // Filter out the decision we just saved
           similar_decisions = (searchResults.results as SimilarDecision[])
-            .filter(
-              (d: SimilarDecision & { source_type?: string }) => d.source_type === 'decision'
-            )
+            .filter((d: SimilarDecision & { source_type?: string }) => d.source_type === 'decision')
             .filter((d: SimilarDecision) => d.id !== decisionId)
             .map((d: SimilarDecision) => ({
               id: d.id,
@@ -1528,6 +1558,17 @@ function mapRolledUpResult(result: SearchRollupResult) {
     source_type: result.source_type,
     contributing_leaves: result.contributing_leaves ?? null,
   };
+}
+
+async function save(params: SaveParams): Promise<SaveResult> {
+  return saveInternal(params);
+}
+
+async function saveWithTrustedProvenance(
+  params: SaveParams,
+  options: TrustedMemoryWriteOptions
+): Promise<SaveResult> {
+  return saveInternal(params, options);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -3815,14 +3856,19 @@ function formatQualityReportMarkdown(report: {
 const mama = {
   // Core functions (used by 4 MCP tools)
   save,
+  saveWithTrustedProvenance,
   suggest,
   saveMemory,
+  saveMemoryWithTrustedProvenance,
   recallMemory,
   list: listDecisions,
   listCheckpoints,
   updateOutcome,
   buildProfile,
   ingestMemory,
+  ingestWithTrustedProvenance,
+  ingestConversation,
+  ingestConversationWithTrustedProvenance,
   evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
@@ -3830,6 +3876,11 @@ const mama = {
   upsertChannelSummary,
   getChannelSummary,
   listAuditFindings: listOpenAuditFindings,
+  getMemoryProvenance,
+  listMemoriesByEnvelopeHash,
+  listMemoriesByGatewayCallId,
+  listMemoriesByModelRunId,
+  listMemoryEventsForMemory,
   listRecentMemoryEvents,
   saveCheckpoint,
   loadCheckpoint,
@@ -3860,14 +3911,19 @@ const mama = {
 // Named exports for ESM consumers
 export {
   save,
+  saveWithTrustedProvenance,
   suggest,
   saveMemory,
+  saveMemoryWithTrustedProvenance,
   recallMemory,
   listDecisions as list,
   listCheckpoints,
   updateOutcome,
   buildProfile,
   ingestMemory,
+  ingestWithTrustedProvenance,
+  ingestConversation,
+  ingestConversationWithTrustedProvenance,
   evolveMemory,
   buildMemoryBootstrap,
   createAuditAck,
@@ -3875,6 +3931,11 @@ export {
   upsertChannelSummary,
   getChannelSummary,
   listOpenAuditFindings,
+  getMemoryProvenance,
+  listMemoriesByEnvelopeHash,
+  listMemoriesByGatewayCallId,
+  listMemoriesByModelRunId,
+  listMemoryEventsForMemory,
   listRecentMemoryEvents,
   saveCheckpoint,
   loadCheckpoint,

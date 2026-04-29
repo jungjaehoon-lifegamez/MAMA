@@ -18,6 +18,7 @@ import type {
   UpdateResult,
   LoadCheckpointResult,
   MAMAApiInterface,
+  TrustedMemoryWriteOptions,
 } from './types.js';
 
 function isSearchResultItem(value: unknown): value is SearchResultItem {
@@ -31,7 +32,8 @@ function isSearchResultItem(value: unknown): value is SearchResultItem {
 export async function handleSave(
   api: MAMAApiInterface,
   input: SaveInput,
-  getRecentConversation?: () => unknown[]
+  getRecentConversation?: () => unknown[],
+  options?: TrustedMemoryWriteOptions
 ): Promise<SaveResult> {
   if (input.type === 'decision') {
     const d = input as SaveDecisionInput;
@@ -48,6 +50,12 @@ export async function handleSave(
       scopes: d.scopes,
       ...(d.event_date && { event_date: d.event_date }),
     };
+    if (options) {
+      if (!api.saveWithTrustedProvenance) {
+        return await api.save(payload);
+      }
+      return await api.saveWithTrustedProvenance(payload, options);
+    }
     return await api.save(payload);
   }
 

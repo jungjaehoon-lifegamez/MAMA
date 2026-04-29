@@ -479,6 +479,12 @@ export interface DecisionInput {
   event_date?: string | null;
   /** Source event timestamp in milliseconds when known. */
   event_datetime?: number | null;
+  agent_id?: string | null;
+  model_run_id?: string | null;
+  envelope_hash?: string | null;
+  gateway_call_id?: string | null;
+  source_refs_json?: string | null;
+  provenance_json?: string | null;
 }
 
 /**
@@ -547,8 +553,9 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
           confidence, created_at, updated_at,
           needs_validation, validation_attempts, last_validated_at, usage_count,
           trust_context, usage_success, usage_failure, time_saved,
-          evidence, alternatives, risks, event_date, event_datetime
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          evidence, alternatives, risks, event_date, event_datetime,
+          agent_id, model_run_id, envelope_hash, gateway_call_id, source_refs_json, provenance_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const insertResult = stmt.run(
@@ -582,7 +589,13 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
         decision.alternatives || null,
         decision.risks || null,
         decision.event_date || null,
-        decision.event_datetime ?? null
+        decision.event_datetime ?? null,
+        decision.agent_id ?? null,
+        decision.model_run_id ?? null,
+        decision.envelope_hash ?? null,
+        decision.gateway_call_id ?? null,
+        decision.source_refs_json ?? null,
+        decision.provenance_json ?? null
       );
 
       const rowid = Number(insertResult.lastInsertRowid);
