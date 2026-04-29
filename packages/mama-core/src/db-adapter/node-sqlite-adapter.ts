@@ -436,6 +436,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
 
+        if (message.includes('duplicate column') && version === 34) {
+          this.recoverConnectorEventScopeMigration034();
+          info(`[node-sqlite-adapter] Migration ${file} recovered successfully`);
+          continue;
+        }
+
         if (message.includes('duplicate column')) {
           warn(
             `[node-sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`
@@ -544,6 +550,61 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     ]) {
       if (!this.indexExists(indexName)) {
         throw new Error(`Migration 032 recovery failed: missing index ${indexName}`);
+      }
+    }
+  }
+
+  private recoverConnectorEventScopeMigration034(): void {
+    this.transaction(() => {
+      const expectedColumns = [
+        'source_cursor',
+        'tenant_id',
+        'project_id',
+        'memory_scope_kind',
+        'memory_scope_id',
+      ];
+      const columns = this.tableColumns('connector_event_index');
+      for (const column of expectedColumns) {
+        if (!columns.has(column)) {
+          this.exec(`ALTER TABLE connector_event_index ADD COLUMN ${column} TEXT`);
+          columns.add(column);
+        }
+      }
+
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_connector_event_scope
+          ON connector_event_index(tenant_id, project_id, memory_scope_kind, memory_scope_id)
+      `);
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_connector_event_source_cursor
+          ON connector_event_index(source_connector, source_cursor)
+      `);
+
+      this.assertMigration034Complete();
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        34,
+        'Add connector event scope columns'
+      );
+    });
+  }
+
+  private assertMigration034Complete(): void {
+    const columns = this.tableColumns('connector_event_index');
+    for (const column of [
+      'source_cursor',
+      'tenant_id',
+      'project_id',
+      'memory_scope_kind',
+      'memory_scope_id',
+    ]) {
+      if (!columns.has(column)) {
+        throw new Error(`Migration 034 recovery failed: missing connector_event_index.${column}`);
+      }
+    }
+
+    for (const indexName of ['idx_connector_event_scope', 'idx_connector_event_source_cursor']) {
+      if (!this.indexExists(indexName)) {
+        throw new Error(`Migration 034 recovery failed: missing index ${indexName}`);
       }
     }
   }

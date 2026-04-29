@@ -95,13 +95,14 @@ best-effort metrics.
 ### M2 Memory Provenance Foundation
 
 Use this focused suite when changing memory provenance columns, trusted
-provenance sanitization, gateway correlation ids, or memory provenance query
-helpers:
+provenance sanitization, gateway correlation ids, model run/tool trace
+lineage, scope-aware provenance reads, raw connector provenance, backfill
+helpers, or the admin provenance API:
 
 ```bash
-pnpm -C packages/mama-core exec vitest run tests/memory/memory-provenance.test.ts tests/memory/memory-provenance-query.test.ts tests/cases/migration-chain.test.ts tests/cases/migration-runner-duplicate-column.test.ts
+pnpm -C packages/mama-core exec vitest run tests/memory/memory-provenance.test.ts tests/memory/memory-provenance-query.test.ts tests/memory/scope-read-filter.test.ts tests/memory/scope-backfill.test.ts tests/connectors/raw-provenance.test.ts tests/model-runs/model-run-store.test.ts tests/model-runs/tool-trace-store.test.ts tests/cases/migration-chain.test.ts tests/cases/migration-runner-duplicate-column.test.ts
 pnpm -C packages/mcp-server exec vitest run tests/tools/save-decision-v2.test.js tests/tools/ingest-conversation-provenance.test.js
-pnpm -C packages/standalone exec vitest run tests/envelope/memory-provenance-context.test.ts tests/envelope/executor-audit.test.ts tests/envelope/memory-scope-mismatch-logging.test.ts tests/db/agent-activity.test.ts tests/gateways/message-router.test.ts tests/agent/gateway-tool-executor.test.ts tests/cli/runtime/memory-agent-init.test.ts
+pnpm -C packages/standalone exec vitest run tests/envelope/memory-provenance-context.test.ts tests/envelope/model-run-context.test.ts tests/envelope/tool-trace.test.ts tests/envelope/executor-audit.test.ts tests/envelope/memory-scope-mismatch-logging.test.ts tests/db/agent-activity.test.ts tests/gateways/message-router.test.ts tests/agent/gateway-tool-executor.test.ts tests/agent/post-tool-handler.test.ts tests/agent/agent-loop-streaming.test.ts tests/agent/streaming-integration.test.ts tests/cli/runtime/memory-agent-init.test.ts tests/connectors/raw-store-provenance.test.ts tests/api/memory-provenance-api.test.ts
 pnpm -C packages/mama-core typecheck
 pnpm -C packages/standalone typecheck
 git diff --check
@@ -110,7 +111,12 @@ git diff --check
 These tests prove that public callers cannot spoof trusted provenance, direct
 writes still create fallback save events, gateway memory writes receive a typed
 `gateway_call_id`, and provenance reads use `memory_scope_bindings` for scoped
-visibility.
+visibility. The Branch 3 additions also prove connector event indexes and
+per-connector `raw_items` DBs carry explicit scope/cursor metadata, legacy rows
+are backfilled without fake envelope/model evidence, legacy unscoped rows are
+hidden from scoped reads unless callers opt in, and `/api/memory/provenance`
+requires `MAMA_ADMIN_TOKEN` rather than normal API auth or Cloudflare Access
+headers alone.
 
 ---
 

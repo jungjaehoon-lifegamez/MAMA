@@ -10,6 +10,12 @@ export interface NormalizedItem {
   author: string;
   content: string;
   timestamp: Date;
+  contentHash?: string;
+  sourceCursor?: string;
+  tenantId?: string;
+  projectId?: string;
+  memoryScopeKind?: string;
+  memoryScopeId?: string;
   type:
     | 'message'
     | 'email'

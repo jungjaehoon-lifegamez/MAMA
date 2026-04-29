@@ -225,3 +225,39 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
   next();
 }
+
+export function requireAdminAuth(req: Request, res: Response, next: NextFunction): void {
+  const clientAddress = getClientAddress(req);
+  const adminToken = process.env.MAMA_ADMIN_TOKEN;
+
+  if (isIpBanned(clientAddress)) {
+    res.status(403).json({ error: true, code: 'FORBIDDEN', message: 'Access denied.' });
+    return;
+  }
+
+  if (!adminToken) {
+    res.status(503).json({
+      error: true,
+      code: 'admin_token_required',
+      message: 'MAMA_ADMIN_TOKEN is required for admin provenance reads.',
+    });
+    return;
+  }
+
+  const authHeader = req.headers.authorization;
+  const token =
+    typeof authHeader === 'string' && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
+  if (!token || !safeTokenEqual(token, adminToken)) {
+    logUnauthorizedAttempt(req);
+    recordAuthFailure(clientAddress);
+    res.status(401).json({
+      error: true,
+      code: 'UNAUTHORIZED',
+      message: 'Admin authentication required.',
+    });
+    return;
+  }
+
+  next();
+}
