@@ -28,6 +28,10 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof mama.default.getModelRunInAdapter).toBe('function');
       expect(typeof mama.default.appendToolTrace).toBe('function');
       expect(typeof mama.default.listToolTracesForRun).toBe('function');
+      expect(typeof mama.beginModelRunInAdapter).toBe('function');
+      expect(typeof mama.commitModelRunInAdapter).toBe('function');
+      expect(typeof mama.failModelRunInAdapter).toBe('function');
+      expect(typeof mama.getModelRunInAdapter).toBe('function');
     });
   });
 
