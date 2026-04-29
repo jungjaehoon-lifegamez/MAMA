@@ -12,6 +12,7 @@ import Database from '../../sqlite.js';
 import type { NormalizedItem } from './types.js';
 
 interface RawRow {
+  id: number;
   source_id: string;
   source: string;
   channel: string;
@@ -51,6 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_raw_items_timestamp ON raw_items(timestamp);
 `;
 
 const CONTENT_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const RAW_STORE_BACKFILL_BATCH_SIZE = 500;
 
 export interface RawStoreBackfillOptions {
   sourceCursor?: string;
@@ -228,7 +230,12 @@ export class RawStore {
 
   backfillProvenance(connectorName: string, options: RawStoreBackfillOptions = {}): number {
     const db = this.getDb(connectorName);
-    const rows = db.prepare('SELECT * FROM raw_items').all() as RawRow[];
+    const rowsStmt = db.prepare(`
+      SELECT * FROM raw_items
+      WHERE id > ?
+      ORDER BY id ASC
+      LIMIT ?
+    `);
     const stmt = db.prepare(`
       UPDATE raw_items
       SET
@@ -242,42 +249,54 @@ export class RawStore {
     `);
 
     let updated = 0;
-    for (const row of rows) {
-      const item = this.mapRawRowToNormalizedItem(row);
-      const contentHash =
-        row.content_hash && CONTENT_HASH_PATTERN.test(row.content_hash)
-          ? row.content_hash
-          : normalizeContentHash({ ...item, contentHash: undefined });
-      const next = {
-        contentHash,
-        sourceCursor: row.source_cursor ?? options.sourceCursor ?? null,
-        tenantId: row.tenant_id ?? options.tenantId ?? null,
-        projectId: row.project_id ?? options.projectId ?? null,
-        memoryScopeKind: row.memory_scope_kind ?? options.memoryScopeKind ?? null,
-        memoryScopeId: row.memory_scope_id ?? options.memoryScopeId ?? null,
-      };
+    let lastId = 0;
+    let hasMoreRows = true;
 
-      if (
-        next.contentHash === row.content_hash &&
-        next.sourceCursor === row.source_cursor &&
-        next.tenantId === row.tenant_id &&
-        next.projectId === row.project_id &&
-        next.memoryScopeKind === row.memory_scope_kind &&
-        next.memoryScopeId === row.memory_scope_id
-      ) {
+    while (hasMoreRows) {
+      const rows = rowsStmt.all(lastId, RAW_STORE_BACKFILL_BATCH_SIZE) as RawRow[];
+      if (rows.length === 0) {
+        hasMoreRows = false;
         continue;
       }
 
-      const result = stmt.run(
-        next.contentHash,
-        next.sourceCursor,
-        next.tenantId,
-        next.projectId,
-        next.memoryScopeKind,
-        next.memoryScopeId,
-        row.source_id
-      );
-      updated += result.changes;
+      for (const row of rows) {
+        lastId = row.id;
+        const item = this.mapRawRowToNormalizedItem(row);
+        const contentHash =
+          row.content_hash && CONTENT_HASH_PATTERN.test(row.content_hash)
+            ? row.content_hash
+            : normalizeContentHash({ ...item, contentHash: undefined });
+        const next = {
+          contentHash,
+          sourceCursor: row.source_cursor ?? options.sourceCursor ?? null,
+          tenantId: row.tenant_id ?? options.tenantId ?? null,
+          projectId: row.project_id ?? options.projectId ?? null,
+          memoryScopeKind: row.memory_scope_kind ?? options.memoryScopeKind ?? null,
+          memoryScopeId: row.memory_scope_id ?? options.memoryScopeId ?? null,
+        };
+
+        if (
+          next.contentHash === row.content_hash &&
+          next.sourceCursor === row.source_cursor &&
+          next.tenantId === row.tenant_id &&
+          next.projectId === row.project_id &&
+          next.memoryScopeKind === row.memory_scope_kind &&
+          next.memoryScopeId === row.memory_scope_id
+        ) {
+          continue;
+        }
+
+        const result = stmt.run(
+          next.contentHash,
+          next.sourceCursor,
+          next.tenantId,
+          next.projectId,
+          next.memoryScopeKind,
+          next.memoryScopeId,
+          row.source_id
+        );
+        updated += result.changes;
+      }
     }
 
     return updated;

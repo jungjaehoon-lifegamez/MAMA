@@ -184,5 +184,34 @@ describe('Story M2.3: RawStore provenance persistence', () => {
       expect(upgraded.memory_scope_kind).toBeNull();
       expect(upgraded.memory_scope_id).toBeNull();
     });
+
+    it('backfills provenance in batches for large raw_items tables', () => {
+      const items = Array.from({ length: 505 }, (_, index) =>
+        provenanceItem({
+          sourceId: `slack-msg-batch-${index}`,
+          content: `batch content ${index}`,
+          timestamp: new Date(Date.UTC(2026, 3, 29, 4, 0, index)),
+          contentHash: undefined,
+          sourceCursor: undefined,
+          tenantId: undefined,
+          projectId: undefined,
+          memoryScopeKind: undefined,
+          memoryScopeId: undefined,
+        })
+      );
+      store.save('slack', items);
+
+      const updated = store.backfillProvenance('slack', {
+        sourceCursor: 'cursor-batch',
+        tenantId: 'tenant-batch',
+      });
+
+      expect(updated).toBe(505);
+      const recent = store.getRecent('slack', 505);
+      expect(recent).toHaveLength(505);
+      expect(recent.every((item) => item.contentHash?.match(/^[a-f0-9]{64}$/))).toBe(true);
+      expect(recent.every((item) => item.sourceCursor === 'cursor-batch')).toBe(true);
+      expect(recent.every((item) => item.tenantId === 'tenant-batch')).toBe(true);
+    });
   });
 });

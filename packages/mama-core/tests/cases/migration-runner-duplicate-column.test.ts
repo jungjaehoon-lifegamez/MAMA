@@ -10,6 +10,13 @@ import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
 let tempDir: string | null = null;
 
+function cleanupTempDir(): void {
+  if (tempDir) {
+    rmSync(tempDir, { recursive: true, force: true });
+    tempDir = null;
+  }
+}
+
 function migrationFilesThrough(version: number): string[] {
   return readdirSync(MIGRATIONS_DIR)
     .filter((file) => /^\d{3}-.+\.sql$/.test(file))
@@ -36,12 +43,7 @@ function indexExists(db: Database.Database, indexName: string): boolean {
 }
 
 describe('Story M2.1: Migration 032 duplicate-column recovery', () => {
-  afterEach(() => {
-    if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true });
-      tempDir = null;
-    }
-  });
+  afterEach(cleanupTempDir);
 
   describe('Acceptance Criteria', () => {
     describe('AC #1: partial migration recovery', () => {
@@ -86,12 +88,7 @@ describe('Story M2.1: Migration 032 duplicate-column recovery', () => {
 });
 
 describe('Story M2.3: Migration 034 duplicate-column recovery', () => {
-  afterEach(() => {
-    if (tempDir) {
-      rmSync(tempDir, { recursive: true, force: true });
-      tempDir = null;
-    }
-  });
+  afterEach(cleanupTempDir);
 
   describe('Acceptance Criteria', () => {
     describe('AC #1: partial connector event scope migration recovery', () => {

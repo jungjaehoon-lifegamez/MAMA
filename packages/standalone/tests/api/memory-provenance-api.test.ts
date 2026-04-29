@@ -183,6 +183,38 @@ describe('Story M2.3: Admin memory provenance API', () => {
         expect(response.body.code).toBe('scope_query_not_supported');
       });
 
+      it('rejects malformed list limits instead of silently coercing them', async () => {
+        const apiServer = createApiServer({ scheduler, port: 0 });
+
+        const response = await request(apiServer.app)
+          .get('/api/memory/provenance?gateway_call_id=gw_admin_api&limit=10abc')
+          .set('Authorization', 'Bearer admin-token');
+
+        expect(response.status).toBe(400);
+        expect(response.body.code).toBe('invalid_provenance_query');
+      });
+
+      it('returns structured JSON 500 when list provenance lookup fails unexpectedly', async () => {
+        const provenanceSpy = vi
+          .spyOn(mamaCore, 'listMemoryProvenanceAudit')
+          .mockRejectedValueOnce(new Error('database unavailable'));
+        const apiServer = createApiServer({ scheduler, port: 0 });
+
+        try {
+          const response = await request(apiServer.app)
+            .get('/api/memory/provenance?gateway_call_id=gw_admin_api')
+            .set('Authorization', 'Bearer admin-token');
+
+          expect(response.status).toBe(500);
+          expect(response.body).toMatchObject({
+            error: true,
+            code: 'internal_server_error',
+          });
+        } finally {
+          provenanceSpy.mockRestore();
+        }
+      });
+
       it('returns structured JSON when single-memory provenance lookup fails', async () => {
         const provenanceSpy = vi
           .spyOn(mamaCore, 'getMemoryProvenanceAudit')
