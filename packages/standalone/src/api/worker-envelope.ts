@@ -141,7 +141,13 @@ export function parseRequestedScopes(req: Request): MemoryScope[] | undefined {
   if (rawValues.length === 0) {
     const kind = firstString(req.query.scope_kind);
     const id = firstString(req.query.scope_id);
-    return kind && id ? [{ kind: parseScopeKind(kind), id }] : undefined;
+    if (kind === undefined && id === undefined) {
+      return undefined;
+    }
+    if (!kind || !id || id.trim().length === 0) {
+      throw invalidScope('scope_kind and scope_id must be provided together.');
+    }
+    return [{ kind: parseScopeKind(kind.trim()), id: id.trim() }];
   }
 
   const scopes: MemoryScope[] = [];
@@ -152,15 +158,19 @@ export function parseRequestedScopes(req: Request): MemoryScope[] | undefined {
           .split(',')
           .map((value) => value.trim())
           .filter(Boolean);
+    if (pieces.length === 0) {
+      throw invalidScope('Scope query must contain at least one scope token.');
+    }
     for (const piece of pieces) {
       const [kind, ...idParts] = piece.split(':');
-      const id = idParts.join(':');
-      if (kind && id) {
-        scopes.push({ kind: parseScopeKind(kind), id });
+      const id = idParts.join(':').trim();
+      if (!kind || idParts.length === 0 || id.length === 0) {
+        throw invalidScope(`Invalid scope token: ${piece}`);
       }
+      scopes.push({ kind: parseScopeKind(kind.trim()), id });
     }
   }
-  return scopes.length > 0 ? scopes : undefined;
+  return scopes;
 }
 
 export function firstString(value: unknown): string | undefined {
@@ -203,6 +213,10 @@ function parseScopeKind(value: string): MemoryScope['kind'] {
     return value;
   }
   throw new WorkerEnvelopeError(400, 'worker_scope_invalid', `Invalid scope kind: ${value}`);
+}
+
+function invalidScope(message: string): WorkerEnvelopeError {
+  return new WorkerEnvelopeError(400, 'worker_scope_invalid', message);
 }
 
 function stringValues(value: unknown): string[] {
