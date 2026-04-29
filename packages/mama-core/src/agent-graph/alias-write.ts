@@ -287,6 +287,9 @@ export function attachEntityAliasWithEdge(
     tenantId: input.tenant_id,
   };
   const sourceRefs = normalizeSourceRefs(input.source_refs);
+  if (sourceRefs.length === 0) {
+    throw new AgentGraphValidationError('source_refs must include at least one visible source.');
+  }
   try {
     assertTwinRefsVisible(
       adapter,

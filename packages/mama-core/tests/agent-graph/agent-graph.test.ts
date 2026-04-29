@@ -167,6 +167,36 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
       expect(outsideScope.candidates).toHaveLength(0);
     });
 
+    it('does not resolve preferred labels for entities created after as_of', async () => {
+      await createEntityNode({
+        id: 'entity_future_preferred_label',
+        kind: 'project',
+        preferred_label: 'Future Preferred Label',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      getAdapter()
+        .prepare('UPDATE entity_nodes SET created_at = ?, updated_at = ? WHERE id = ?')
+        .run(2_000, 2_000, 'entity_future_preferred_label');
+
+      const historical = resolveEntity(getAdapter(), {
+        label: 'Future Preferred Label',
+        scopes: [{ kind: 'project', id: 'alpha' }],
+        as_of_ms: 1_000,
+      });
+      expect(historical.entity).toBeNull();
+      expect(historical.candidates).toHaveLength(0);
+
+      const current = resolveEntity(getAdapter(), {
+        label: 'Future Preferred Label',
+        scopes: [{ kind: 'project', id: 'alpha' }],
+        as_of_ms: 2_000,
+      });
+      expect(current.entity?.id).toBe('entity_future_preferred_label');
+    });
+
     it('does not resolve aliases whose source refs are outside connector visibility', async () => {
       await createEntityNode({
         id: 'entity_alias_connector_filtered',
@@ -300,6 +330,85 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
       });
       expect(visible.entity?.id).toBe('entity_observation_project_filtered');
     });
+
+    it('does not resolve observations missing raw provenance when project or tenant filters exist', async () => {
+      await createEntityNode({
+        id: 'entity_observation_missing_raw',
+        kind: 'project',
+        preferred_label: 'Observation Missing Raw',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      getAdapter()
+        .prepare(
+          `
+            INSERT INTO entity_observations (
+              id, observation_type, entity_kind_hint, surface_form, normalized_form,
+              lang, script, context_summary, related_surface_forms, timestamp_observed,
+              scope_kind, scope_id, extractor_version, embedding_model_version,
+              source_connector, source_locator, source_raw_record_id, created_at
+            ) VALUES (?, 'generic', 'project', ?, ?, 'en', 'Latn', ?, '[]', ?, 'project', ?,
+              'history-extractor@v1', NULL, ?, NULL, ?, ?)
+          `
+        )
+        .run(
+          'obs_missing_raw',
+          'Missing Raw Codename',
+          'missing raw codename',
+          'missing raw observation',
+          1_000,
+          'alpha',
+          'slack',
+          'raw-observation-missing',
+          1_000
+        );
+      getAdapter()
+        .prepare(
+          `
+            INSERT INTO entity_lineage_links (
+              id, canonical_entity_id, entity_observation_id, source_entity_id,
+              contribution_kind, run_id, candidate_id, review_action_id,
+              status, capture_mode, confidence, created_at, superseded_at
+            ) VALUES (?, ?, ?, NULL, 'seed', NULL, NULL, NULL, 'active', 'direct', 1, ?, NULL)
+          `
+        )
+        .run('lineage_missing_raw', 'entity_observation_missing_raw', 'obs_missing_raw', 1_000);
+
+      const hidden = resolveEntity(getAdapter(), {
+        label: 'Missing Raw Codename',
+        scopes: [{ kind: 'project', id: 'alpha' }],
+        connectors: ['slack'],
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        tenant_id: 'default',
+      });
+
+      expect(hidden.entity).toBeNull();
+      expect(hidden.candidates).toHaveLength(0);
+    });
+
+    it('surfaces merge-chain corruption while resolving candidates', async () => {
+      await createEntityNode({
+        id: 'entity_merge_cycle',
+        kind: 'project',
+        preferred_label: 'Merge Cycle Entity',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      getAdapter()
+        .prepare('UPDATE entity_nodes SET merged_into = ? WHERE id = ?')
+        .run('entity_merge_cycle', 'entity_merge_cycle');
+
+      expect(() =>
+        resolveEntity(getAdapter(), {
+          label: 'Merge Cycle Entity',
+          scopes: [{ kind: 'project', id: 'alpha' }],
+        })
+      ).toThrow(/merge_chain_cycle/i);
+    });
   });
 
   describe('AC #2: graph traversal applies edge filters and as_of', () => {
@@ -316,6 +425,9 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      getAdapter()
+        .prepare('UPDATE entity_nodes SET created_at = ?, updated_at = ? WHERE id = ?')
+        .run(500, 500, 'entity_project_alpha');
 
       insertEdge({
         edgeId: 'edge_old_mentions',
@@ -367,6 +479,30 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         { kind: 'entity', id: 'entity_project_alpha' },
         { kind: 'memory', id: 'mem-visible-old' },
       ]);
+    });
+
+    it('rejects seed refs that are newer than as_of', async () => {
+      await createEntityNode({
+        id: 'entity_future_seed',
+        kind: 'project',
+        preferred_label: 'Future Seed',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      getAdapter()
+        .prepare('UPDATE entity_nodes SET created_at = ?, updated_at = ? WHERE id = ?')
+        .run(2_000, 2_000, 'entity_future_seed');
+
+      expect(() =>
+        getGraphNeighborhood(getAdapter(), {
+          ref: { kind: 'entity', id: 'entity_future_seed' },
+          depth: 1,
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          as_of_ms: 1_000,
+        })
+      ).toThrow(/not visible/i);
     });
 
     it('aggregates visible entity, memory, case, raw, and edge events in graph timeline', async () => {
@@ -477,26 +613,52 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-alias-rollback',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
+      getAdapter()
+        .prepare(
+          `
+            CREATE TEMP TRIGGER fail_alias_edge_insert
+            BEFORE INSERT ON twin_edges
+            WHEN NEW.edge_type = 'alias_of'
+            BEGIN
+              SELECT RAISE(ABORT, 'forced alias edge failure');
+            END
+          `
+        )
+        .run();
 
       expect(() =>
         attachEntityAliasWithEdge(getAdapter(), {
           entity_id: 'entity_person_alias_target',
           label: 'Broken Alias',
           label_type: 'alt',
-          confidence: 2,
+          confidence: 0.8,
           source_type: 'agent',
           source_ref: 'model_run:mr_alias',
           agent_id: 'worker-m6',
           model_run_id: 'mr_alias',
           envelope_hash: 'env_alias',
+          request_idempotency_key: 'alias-rollback-key',
+          source_refs: [{ kind: 'raw', id: rawId }],
           scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          tenant_id: 'default',
         })
-      ).toThrow(/confidence/i);
+      ).toThrow(/forced alias edge failure/i);
 
       const aliasCount = getAdapter()
         .prepare('SELECT COUNT(*) AS count FROM entity_aliases WHERE label = ?')
         .get('Broken Alias') as { count: number };
       expect(aliasCount.count).toBe(0);
+      getAdapter().prepare('DROP TRIGGER fail_alias_edge_insert').run();
     });
 
     it('writes an active alias and an alias_of edge in one transaction', async () => {
@@ -509,6 +671,14 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-alias-ok',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
 
       const result = attachEntityAliasWithEdge(getAdapter(), {
         entity_id: 'entity_person_alias_ok',
@@ -520,7 +690,11 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         model_run_id: 'mr_alias_ok',
         envelope_hash: 'env_alias_ok',
         edge_idempotency_key: 'alias-edge-key',
+        source_refs: [{ kind: 'raw', id: rawId }],
         scopes: [{ kind: 'project', id: 'alpha' }],
+        connectors: ['slack'],
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        tenant_id: 'default',
       });
 
       expect(result.alias).toEqual(
@@ -542,8 +716,38 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         relation_attrs: expect.objectContaining({
           alias_id: result.alias.id,
           label: '\uC815\uC7AC\uD6C8',
+          source_refs: [{ kind: 'raw', id: rawId }],
         }),
       });
+    });
+
+    it('rejects agent alias writes without visible source refs', async () => {
+      await createEntityNode({
+        id: 'entity_person_alias_requires_sources',
+        kind: 'person',
+        preferred_label: 'Alias Requires Sources',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+
+      expect(() =>
+        attachEntityAliasWithEdge(getAdapter(), {
+          entity_id: 'entity_person_alias_requires_sources',
+          label: 'No Source Alias',
+          source_type: 'agent',
+          source_ref: 'model_run:mr_alias_no_source',
+          agent_id: 'worker-m6',
+          model_run_id: 'mr_alias_no_source',
+          envelope_hash: 'env_alias_no_source',
+          request_idempotency_key: 'alias-no-source-key',
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          tenant_id: 'default',
+        })
+      ).toThrow(/source_refs/i);
     });
 
     it('persists visible alias source refs and rejects hidden source refs atomically', async () => {
@@ -634,6 +838,14 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         scope_id: 'alpha',
         merged_into: null,
       });
+      const rawId = insertScopedRaw({
+        sourceId: 'raw-alias-replay',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+      });
       const input = {
         entity_id: 'entity_person_alias_replay',
         label: 'Replay Alias',
@@ -645,7 +857,11 @@ describe('Story M6.1: agent graph and entity resolution core', () => {
         model_run_id: 'mr_alias_replay',
         envelope_hash: 'env_alias_replay',
         request_idempotency_key: 'alias-replay-key',
+        source_refs: [{ kind: 'raw' as const, id: rawId }],
         scopes: [{ kind: 'project' as const, id: 'alpha' }],
+        connectors: ['slack'],
+        project_refs: [{ kind: 'project' as const, id: 'alpha' }],
+        tenant_id: 'default',
       };
 
       const first = attachEntityAliasWithEdge(getAdapter(), input);

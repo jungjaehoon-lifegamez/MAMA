@@ -44,6 +44,7 @@ export interface TwinVisibility {
   connectors?: string[];
   projectRefs?: TwinProjectRef[];
   tenantId?: string | null;
+  asOfMs?: number | null;
 }
 
 export interface InsertTwinEdgeInput {

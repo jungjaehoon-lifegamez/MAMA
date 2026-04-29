@@ -56,6 +56,13 @@ function connectorVisible(connector: string, connectors: readonly string[] | und
   return !connectors || connectors.length === 0 || connectors.includes(connector);
 }
 
+function hasProjectOrTenantFilter(visibility: TwinVisibility): boolean {
+  return (
+    (Array.isArray(visibility.projectRefs) && visibility.projectRefs.length > 0) ||
+    (typeof visibility.tenantId === 'string' && visibility.tenantId.length > 0)
+  );
+}
+
 function refsVisible(
   adapter: AgentGraphAdapter,
   refs: readonly TwinRef[],
@@ -146,14 +153,18 @@ function aliasSourceRefs(adapter: AgentGraphAdapter, aliasId: string, entityId: 
 
 function aliasVisible(
   adapter: AgentGraphAdapter,
-  row: { id: string; entity_id: string; created_at: number },
+  row: { id: string; entity_id: string; source_type: string; created_at: number },
   visibility: TwinVisibility,
   asOfMs: number | null | undefined
 ): boolean {
   if (!isAtOrBeforeAsOf(row.created_at, asOfMs)) {
     return false;
   }
-  return refsVisible(adapter, aliasSourceRefs(adapter, row.id, row.entity_id), visibility);
+  const sourceRefs = aliasSourceRefs(adapter, row.id, row.entity_id);
+  if (row.source_type === 'agent' && sourceRefs.length === 0) {
+    return false;
+  }
+  return refsVisible(adapter, sourceRefs, visibility);
 }
 
 function rawRefForObservation(
@@ -203,7 +214,10 @@ function observationVisible(
     return false;
   }
   const rawRef = rawRefForObservation(adapter, row);
-  return rawRef ? refsVisible(adapter, [rawRef], visibility) : true;
+  if (!rawRef) {
+    return !hasProjectOrTenantFilter(visibility);
+  }
+  return refsVisible(adapter, [rawRef], visibility);
 }
 
 function canonicalEntity(adapter: AgentGraphAdapter, entityId: string): EntityNode | null {
@@ -213,7 +227,7 @@ function canonicalEntity(adapter: AgentGraphAdapter, entityId: string): EntityNo
     return entity && entity.status === 'active' ? entity : null;
   } catch (error) {
     if (error instanceof EntityMergeError) {
-      return null;
+      throw new AgentGraphValidationError(`${error.code}: ${error.message}`);
     }
     throw error;
   }
@@ -256,6 +270,7 @@ export function resolveEntity(
     connectors: input.connectors,
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
+    asOfMs: input.as_of_ms,
   };
   if (input.context_refs && input.context_refs.length > 0) {
     try {
@@ -273,7 +288,11 @@ export function resolveEntity(
     baseScore: number
   ): void => {
     const entity = canonicalEntity(adapter, entityId);
-    if (!entity || !entityVisible(entity, input.scopes)) {
+    if (
+      !entity ||
+      !entityVisible(entity, input.scopes) ||
+      !isAtOrBeforeAsOf(entity.created_at, input.as_of_ms)
+    ) {
       return;
     }
     const score =
@@ -307,7 +326,7 @@ export function resolveEntity(
   const aliasRows = adapter
     .prepare(
       `
-        SELECT id, entity_id, label, normalized_label, created_at
+        SELECT id, entity_id, label, normalized_label, source_type, created_at
         FROM entity_aliases
         WHERE status = 'active'
       `
@@ -317,6 +336,7 @@ export function resolveEntity(
     entity_id: string;
     label: string;
     normalized_label: string;
+    source_type: string;
     created_at: number;
   }>;
   for (const row of aliasRows) {

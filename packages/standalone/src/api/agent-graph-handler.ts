@@ -170,9 +170,18 @@ async function handleAliasWrite(
     const label = stringBody(body, 'label');
     const requestIdempotencyKey = stringBody(body, 'request_idempotency_key');
     const sourceRefs = optionalSourceRefsBody(body, 'source_refs');
+    if (!sourceRefs || sourceRefs.length === 0) {
+      throw new AgentGraphValidationError('source_refs must include at least one visible source.');
+    }
     const suppliedModelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const modelRun = suppliedModelRunId
-      ? requireMatchingModelRun(options.memoryAdapter, suppliedModelRunId, envelope.envelope_hash)
+      ? requireMatchingModelRun(options.memoryAdapter, {
+          modelRunId: suppliedModelRunId,
+          envelope,
+          entityId,
+          requestIdempotencyKey,
+          sourceRefs,
+        })
       : beginDirectAliasModelRun(options.memoryAdapter, {
           model_run_id: directAliasModelRunId(
             envelope.envelope_hash,
@@ -219,31 +228,40 @@ async function handleAliasWrite(
     });
 
     if (ownedModelRunId) {
-      commitModelRunInAdapter(
-        options.memoryAdapter,
-        ownedModelRunId,
-        `entity alias ${result.alias.id}`
-      );
+      try {
+        commitModelRunInAdapter(
+          options.memoryAdapter,
+          ownedModelRunId,
+          `entity alias ${result.alias.id}`
+        );
+      } catch (error) {
+        removeOwnedAliasWrite(options.memoryAdapter, ownedModelRunId, requestIdempotencyKey);
+        throw error;
+      }
     }
     res.json(result);
   } catch (error) {
     if (ownedModelRunId) {
       try {
         failModelRunInAdapter(options.memoryAdapter, ownedModelRunId, getErrorMessage(error));
-      } catch {
-        // Preserve the original API error.
+      } catch (failError) {
+        graphApiLogger.error('Failed to mark agent graph model run as failed:', failError);
       }
     }
     sendGraphError(res, error);
   }
 }
 
-function requireMatchingModelRun(
-  adapter: AgentGraphAdapter,
-  modelRunId: string,
-  envelopeHash: string
-) {
-  const modelRun = getModelRunInAdapter(adapter, modelRunId);
+interface SuppliedAliasModelRunInput {
+  modelRunId: string;
+  envelope: ReturnType<typeof loadWorkerEnvelope>;
+  entityId: string;
+  requestIdempotencyKey: string;
+  sourceRefs: readonly TwinRef[];
+}
+
+function requireMatchingModelRun(adapter: AgentGraphAdapter, input: SuppliedAliasModelRunInput) {
+  const modelRun = getModelRunInAdapter(adapter, input.modelRunId);
   if (!modelRun) {
     throw new WorkerEnvelopeError(
       404,
@@ -251,14 +269,90 @@ function requireMatchingModelRun(
       'The supplied model run was not found.'
     );
   }
-  if (modelRun.envelope_hash !== envelopeHash) {
+  if (modelRun.envelope_hash !== input.envelope.envelope_hash) {
     throw new WorkerEnvelopeError(
       403,
       'agent_graph_model_run_denied',
       'The supplied model run is outside the worker envelope.'
     );
   }
+  if (modelRun.status !== 'running') {
+    throw new WorkerEnvelopeError(
+      409,
+      'agent_graph_model_run_not_running',
+      'The supplied model run is no longer running.'
+    );
+  }
+  if (
+    modelRun.agent_id !== input.envelope.agent_id ||
+    modelRun.instance_id !== input.envelope.instance_id
+  ) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_graph_model_run_denied',
+      'The supplied model run belongs to a different worker instance.'
+    );
+  }
+  const expectedSnapshotRef = `entity-alias:${input.entityId}:${input.requestIdempotencyKey}`;
+  if (modelRun.input_snapshot_ref !== expectedSnapshotRef) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_graph_model_run_denied',
+      'The supplied model run is not for this entity alias request.'
+    );
+  }
+  const inputRefs = modelRun.input_refs;
+  if (
+    inputRefs?.tool !== 'entity.alias' ||
+    inputRefs.entity_id !== input.entityId ||
+    inputRefs.request_idempotency_key !== input.requestIdempotencyKey ||
+    !sameRefs(inputRefs.source_refs, input.sourceRefs)
+  ) {
+    throw new WorkerEnvelopeError(
+      403,
+      'agent_graph_model_run_denied',
+      'The supplied model run does not match this entity alias request.'
+    );
+  }
   return modelRun;
+}
+
+function sameRefs(left: unknown, right: readonly TwinRef[]): boolean {
+  if (!Array.isArray(left)) {
+    return right.length === 0;
+  }
+  if (left.length !== right.length) {
+    return false;
+  }
+  const leftKeys = left.map((item) => {
+    if (
+      item === null ||
+      typeof item !== 'object' ||
+      typeof (item as Record<string, unknown>).kind !== 'string' ||
+      typeof (item as Record<string, unknown>).id !== 'string'
+    ) {
+      return '';
+    }
+    return `${(item as { kind: string }).kind}:${(item as { id: string }).id}`;
+  });
+  const rightKeys = right.map((ref) => `${ref.kind}:${ref.id}`);
+  return leftKeys.sort().join('\0') === rightKeys.sort().join('\0');
+}
+
+function removeOwnedAliasWrite(
+  adapter: AgentGraphAdapter,
+  modelRunId: string,
+  requestIdempotencyKey: string
+): void {
+  const edgeResult = adapter
+    .prepare('DELETE FROM twin_edges WHERE model_run_id = ? AND request_idempotency_key = ?')
+    .run(modelRunId, requestIdempotencyKey);
+  const aliasResult = adapter
+    .prepare('DELETE FROM entity_aliases WHERE source_ref = ?')
+    .run(`model_run:${modelRunId}`);
+  if (edgeResult.changes < 1 || aliasResult.changes < 1) {
+    throw new Error(`Failed to remove uncommitted entity alias write for ${modelRunId}`);
+  }
 }
 
 function beginDirectAliasModelRun(
@@ -376,16 +470,24 @@ function parseEdgeTypes(req: Request): TwinEdgeType[] | undefined {
 }
 
 function parseAsOf(req: Request, envelopeAsOf: string | undefined): number | null {
-  const raw = firstString(req.query.as_of)?.trim() ?? envelopeAsOf;
-  if (!raw) {
-    return null;
+  const requestRaw = firstString(req.query.as_of)?.trim();
+  const requestMs = requestRaw ? parseIsoMs(requestRaw, 'as_of') : null;
+  const envelopeMs = envelopeAsOf ? parseIsoMs(envelopeAsOf, 'as_of') : null;
+  if (requestMs === null) {
+    return envelopeMs;
   }
-  return parseIsoMs(raw, 'as_of');
+  if (envelopeMs === null) {
+    return requestMs;
+  }
+  return Math.min(requestMs, envelopeMs);
 }
 
 function parseOptionalIsoMs(value: unknown, name: string): number | undefined {
   const raw = firstString(value)?.trim();
-  return raw ? parseIsoMs(raw, name) : undefined;
+  if (!raw) {
+    return undefined;
+  }
+  return parseIsoMs(raw, name);
 }
 
 function parseIsoMs(raw: string, name: string): number {
