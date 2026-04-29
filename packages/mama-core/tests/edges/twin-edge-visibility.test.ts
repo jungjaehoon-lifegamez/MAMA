@@ -66,6 +66,19 @@ function insertOpaqueObjectEdge(id: string, objectKind: 'entity' | 'report'): vo
     .run(id, objectKind, `${objectKind}-1`, Buffer.alloc(32, id.length));
 }
 
+function insertEntityNode(id: string, kind: ScopeKind, scopeId: string): void {
+  getAdapter()
+    .prepare(
+      `
+        INSERT INTO entity_nodes (
+          id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at
+        )
+        VALUES (?, 'project', ?, 'active', ?, ?, NULL, 1_000, 1_000)
+      `
+    )
+    .run(id, id, kind, scopeId);
+}
+
 describe('Story M3.1: Twin Edge Visibility', () => {
   let testDbPath = '';
 
@@ -139,8 +152,9 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       expect(unscoped).toHaveLength(2);
     });
 
-    it('keeps entity/report endpoints visible for unscoped reads and fail-closed for scoped reads', () => {
+    it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
+      insertEntityNode('entity-1', 'project', 'alpha');
       insertOpaqueObjectEdge('edge_entity_object', 'entity');
       insertOpaqueObjectEdge('edge_report_object', 'report');
 
@@ -159,7 +173,7 @@ describe('Story M3.1: Twin Edge Visibility', () => {
         [{ kind: 'memory', id: 'mem-alpha' }],
         { scopes: [{ kind: 'project', id: 'alpha' }] }
       );
-      expect(scoped).toHaveLength(0);
+      expect(scoped.map((edge) => edge.edge_id)).toEqual(['edge_entity_object']);
     });
 
     it('recursively validates edge refs by checking the referenced edge endpoints', () => {

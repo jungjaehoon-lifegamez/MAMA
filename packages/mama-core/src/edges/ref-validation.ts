@@ -3,6 +3,7 @@ import { getTwinEdge, listTwinEdgesForRefs } from './store.js';
 import type {
   ListVisibleTwinEdgesOptions,
   TwinEdgeRecord,
+  TwinEdgeType,
   TwinRef,
   TwinScopeRef,
 } from './types.js';
@@ -173,6 +174,28 @@ function isRawVisible(
   );
 }
 
+function isEntityVisible(
+  adapter: TwinRefVisibilityAdapter,
+  id: string,
+  scopes: readonly TwinScopeRef[] | undefined
+): boolean {
+  const row = adapter
+    .prepare('SELECT scope_kind, scope_id FROM entity_nodes WHERE id = ? AND status = ? LIMIT 1')
+    .get(id, 'active') as
+    | {
+        scope_kind: string | null;
+        scope_id: string | null;
+      }
+    | undefined;
+  if (!row) {
+    return false;
+  }
+  if (!hasScopes(scopes)) {
+    return true;
+  }
+  return scopes.some((scope) => row.scope_kind === scope.kind && row.scope_id === scope.id);
+}
+
 function isTwinRefVisible(
   adapter: TwinRefVisibilityAdapter,
   ref: TwinRef,
@@ -180,7 +203,10 @@ function isTwinRefVisible(
   visitedEdges: Set<string>,
   edgeCache: Map<string, TwinEdgeRecord | null>
 ): boolean {
-  if (ref.kind === 'entity' || ref.kind === 'report') {
+  if (ref.kind === 'entity') {
+    return isEntityVisible(adapter, ref.id, scopes);
+  }
+  if (ref.kind === 'report') {
     return !hasScopes(scopes);
   }
   if (ref.kind === 'memory') {
@@ -231,8 +257,11 @@ export function listVisibleTwinEdgesForRefs(
   options: ListVisibleTwinEdgesOptions = {}
 ): TwinEdgeRecord[] {
   const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  const edgeTypes = normalizeEdgeTypes(options.edgeTypes);
   const edges = listTwinEdgesForRefs(adapter, refs).filter(
     (edge) =>
+      (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
+      (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
       isTwinRefVisible(adapter, edge.subject_ref, options.scopes, new Set(), edgeCache) &&
       isTwinRefVisible(adapter, edge.object_ref, options.scopes, new Set(), edgeCache)
   );
@@ -241,4 +270,11 @@ export function listVisibleTwinEdgesForRefs(
       ? Math.max(0, Math.floor(options.limit))
       : edges.length;
   return edges.slice(0, limit);
+}
+
+function normalizeEdgeTypes(edgeTypes: readonly TwinEdgeType[] | undefined): Set<TwinEdgeType> {
+  if (!Array.isArray(edgeTypes) || edgeTypes.length === 0) {
+    return new Set();
+  }
+  return new Set(edgeTypes);
 }
