@@ -6,6 +6,7 @@ import {
 } from './signature.js';
 import type { Envelope } from './types.js';
 import type { EnvelopeStore } from './store.js';
+import { parseEnvelopeExpiresAt } from './expiry.js';
 
 export type EnvelopeBuildInput = Omit<Envelope, 'envelope_hash' | 'signature'>;
 
@@ -76,10 +77,7 @@ function validateBuildInput(input: EnvelopeBuildInput): void {
     throw new Error('EnvelopeAuthority.build: budget.cost_cap must be >= 0 if set');
   }
 
-  const expiresMs = Date.parse(input.expires_at);
-  if (Number.isNaN(expiresMs)) {
-    throw new Error(`EnvelopeAuthority.build: expires_at not parseable: ${input.expires_at}`);
-  }
+  const expiresMs = parseEnvelopeBuildExpiry(input.expires_at);
   if (expiresMs <= Date.now()) {
     throw new Error(`EnvelopeAuthority.build: expires_at already past: ${input.expires_at}`);
   }
@@ -95,5 +93,14 @@ function validateBuildInput(input: EnvelopeBuildInput): void {
   }
   if (!Array.isArray(input.scope.allowed_destinations)) {
     throw new Error('EnvelopeAuthority.build: scope.allowed_destinations required');
+  }
+}
+
+function parseEnvelopeBuildExpiry(expiresAt: string): number {
+  try {
+    return parseEnvelopeExpiresAt(expiresAt);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`EnvelopeAuthority.build: ${message}`);
   }
 }

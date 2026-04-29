@@ -2,6 +2,7 @@ import type { Request } from 'express';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
 import type { Envelope, MemoryScope } from '../envelope/types.js';
+import { parseEnvelopeExpiresAt } from '../envelope/expiry.js';
 
 export interface WorkerEnvelopeVisibility {
   envelope: Envelope;
@@ -57,8 +58,13 @@ export function loadWorkerEnvelope(
     throw new WorkerEnvelopeError(403, 'worker_envelope_invalid', 'Worker envelope was not found.');
   }
 
-  const expiresMs = Date.parse(envelope.expires_at);
-  if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) {
+  let expiresMs: number;
+  try {
+    expiresMs = parseEnvelopeExpiresAt(envelope.expires_at);
+  } catch {
+    throw new WorkerEnvelopeError(403, 'worker_envelope_expired', 'Worker envelope is expired.');
+  }
+  if (expiresMs <= Date.now()) {
     throw new WorkerEnvelopeError(403, 'worker_envelope_expired', 'Worker envelope is expired.');
   }
 

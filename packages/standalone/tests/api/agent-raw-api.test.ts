@@ -203,6 +203,23 @@ describe('Story M4: /api/agent/raw worker envelope API', () => {
       expect(response.body.code).toBe('worker_envelope_expired');
     });
 
+    it('rejects parseable non-ISO expires_at values', async () => {
+      const invalidExpiry = makeEnvelope({
+        expires_at: '2099-01-01 00:00:00',
+      });
+      authority.persist(invalidExpiry);
+      const apiServer = makeServer();
+
+      const response = await request(apiServer.app)
+        .get('/api/agent/raw/search-all?query=rawapi')
+        .set(TUNNEL_HEADERS)
+        .set('Authorization', 'Bearer agent-raw-token')
+        .set('x-mama-envelope-hash', invalidExpiry.envelope_hash);
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('worker_envelope_expired');
+    });
+
     it('rejects requested connector or scope filters outside the envelope', async () => {
       const apiServer = makeServer();
 
