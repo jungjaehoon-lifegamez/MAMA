@@ -247,6 +247,158 @@ describe('Story M5: Agent situation source readers and builder', () => {
       expect(sources.cases.map((row) => row.ref.id)).toEqual(['case-visible']);
       expect(sources.edges.map((row) => row.ref.id)).toEqual(['edge-visible']);
     });
+
+    it('enforces as_of across raw, memory, case, and edge source reads', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO decisions (
+            id, topic, decision, reasoning, confidence, user_involvement, status, kind, summary,
+            created_at, updated_at, event_date, event_datetime
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'mem-after-as-of',
+          'future memory',
+          'Future memory should be hidden',
+          'After bounded worker view',
+          0.9,
+          'user',
+          'active',
+          'fact',
+          'Future memory',
+          1_750,
+          1_750,
+          '2026-04-29',
+          1_750
+        );
+      adapter
+        .prepare(
+          'INSERT INTO memory_scope_bindings (memory_id, scope_id, is_primary, created_at) VALUES (?, ?, ?, ?)'
+        )
+        .run('mem-after-as-of', 'scope-repo-a', 1, 1_000);
+      adapter
+        .prepare(
+          `INSERT INTO case_truth (
+            case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'case-after-as-of',
+          'Future case',
+          'active',
+          JSON.stringify([{ kind: 'project', id: 'repo-a' }]),
+          'high',
+          '1970-01-01T00:00:01.750Z',
+          '1970-01-01T00:00:01.750Z',
+          '1970-01-01T00:00:01.750Z'
+        );
+      adapter
+        .prepare(
+          `INSERT INTO twin_edges (
+            edge_id, edge_type, subject_kind, subject_id, object_kind, object_id,
+            relation_attrs_json, confidence, source, agent_id, model_run_id, envelope_hash,
+            reason_classification, reason_text, evidence_refs_json, content_hash, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'edge-after-as-of',
+          'mentions',
+          'memory',
+          'mem-question',
+          'case',
+          'case-visible',
+          '{}',
+          0.9,
+          'agent',
+          'agent-a',
+          'mr-a',
+          'env-a',
+          null,
+          'Future edge should be hidden by as_of',
+          '[]',
+          Buffer.alloc(32, 4),
+          1_750
+        );
+
+      const sources = listVisibleAgentSituationSources(adapter, {
+        effective_filters: {
+          ...EFFECTIVE_FILTERS,
+          as_of: '1970-01-01T00:00:01.650Z',
+        },
+        range_start_ms: 1_000,
+        range_end_ms: 2_000,
+        limit: 10,
+      });
+
+      expect(sources.raw.map((row) => row.ref.id)).toEqual([]);
+      expect(sources.memories.map((row) => row.ref.id)).toEqual(['mem-question']);
+      expect(sources.cases.map((row) => row.ref.id)).toEqual(['case-visible']);
+      expect(sources.edges.map((row) => row.ref.id)).toEqual([]);
+    });
+
+    it('does not let hidden recent case or edge rows starve older visible rows', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      for (let index = 0; index < 45; index += 1) {
+        adapter
+          .prepare(
+            `INSERT INTO case_truth (
+              case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            `hidden-case-${index}`,
+            `Hidden case ${index}`,
+            'active',
+            JSON.stringify([{ kind: 'project', id: 'repo-b' }]),
+            'high',
+            new Date(1_950 - index).toISOString(),
+            new Date(1_950 - index).toISOString(),
+            new Date(1_950 - index).toISOString()
+          );
+        adapter
+          .prepare(
+            `INSERT INTO twin_edges (
+              edge_id, edge_type, subject_kind, subject_id, object_kind, object_id,
+              relation_attrs_json, confidence, source, agent_id, model_run_id, envelope_hash,
+              reason_classification, reason_text, evidence_refs_json, content_hash, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          )
+          .run(
+            `hidden-edge-${index}`,
+            'mentions',
+            'memory',
+            'mem-hidden',
+            'raw',
+            'raw-hidden-project',
+            '{}',
+            0.9,
+            'agent',
+            'agent-a',
+            'mr-hidden',
+            'env-hidden',
+            null,
+            'Hidden edge',
+            '[]',
+            Buffer.alloc(32, 5),
+            1_950 - index
+          );
+      }
+
+      const sources = listVisibleAgentSituationSources(adapter, {
+        effective_filters: EFFECTIVE_FILTERS,
+        range_start_ms: 1_000,
+        range_end_ms: 2_000,
+        limit: 10,
+      });
+
+      expect(sources.cases.map((row) => row.ref.id)).toContain('case-visible');
+      expect(sources.edges.map((row) => row.ref.id)).toContain('edge-visible');
+    });
   });
 
   describe('AC #2: deterministic packet assembly', () => {
@@ -296,6 +448,13 @@ describe('Story M5: Agent situation source readers and builder', () => {
       expect(packet.entity_clusters).toEqual([]);
       expect(packet.recommended_next_tools.map((tool) => tool.tool)).toContain('raw.searchAll');
       expect(packet.caveats.join(' ')).not.toMatch(/\bhidden\b|\bfiltered\b|\d+ .*outside/i);
+      expect(JSON.parse(packet.envelope_effective_filters_json)).toEqual({
+        as_of: null,
+        connectors: ['slack'],
+        project_refs: [{ kind: 'project', id: 'repo-a' }],
+        scopes: [{ kind: 'project', id: 'repo-a' }],
+        tenant_id: 'default',
+      });
 
       expect(adapter.prepare('SELECT COUNT(*) AS count FROM connector_event_index').get()).toEqual(
         beforeCounts.raw

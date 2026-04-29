@@ -34,14 +34,34 @@ export interface AgentSituationRefreshInput {
   refresh?: boolean;
 }
 
-const inProcessRefreshes = new Map<string, Promise<AgentSituationPacketRecord>>();
+const inProcessRefreshesByAdapter = new WeakMap<
+  PacketStoreAdapter,
+  Map<string, Promise<AgentSituationPacketRecord>>
+>();
 
-function parseJson<T>(value: string, fallback: T): T {
+function parseJson<T>(row: Record<string, unknown>, field: string): T {
+  const value = row[field];
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid agent situation packet JSON field ${field}: expected string`);
+  }
   try {
     return JSON.parse(value) as T;
-  } catch {
-    return fallback;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid agent situation packet JSON field ${field}: ${message}`);
   }
+}
+
+function inProcessRefreshesForAdapter(
+  adapter: PacketStoreAdapter
+): Map<string, Promise<AgentSituationPacketRecord>> {
+  const existing = inProcessRefreshesByAdapter.get(adapter);
+  if (existing) {
+    return existing;
+  }
+  const scoped = new Map<string, Promise<AgentSituationPacketRecord>>();
+  inProcessRefreshesByAdapter.set(adapter, scoped);
+  return scoped;
 }
 
 function mapPacketRow(row: Record<string, unknown>): AgentSituationPacketRecord {
@@ -49,17 +69,17 @@ function mapPacketRow(row: Record<string, unknown>): AgentSituationPacketRecord 
     packet_id: String(row.packet_id),
     cache_key: String(row.cache_key),
     scope_json: String(row.scope_json),
-    scope: parseJson(String(row.scope_json), []),
+    scope: parseJson(row, 'scope_json'),
     scope_hash: String(row.scope_hash),
     range_start_ms: Number(row.range_start_ms),
     range_end_ms: Number(row.range_end_ms),
     focus_json: String(row.focus_json),
-    focus: parseJson<SituationFocus[]>(String(row.focus_json), []),
+    focus: parseJson<SituationFocus[]>(row, 'focus_json'),
     envelope_hash: String(row.envelope_hash),
     envelope_effective_filters_json: String(row.envelope_effective_filters_json),
     envelope_effective_filters: parseJson<AgentSituationEffectiveFilters>(
-      String(row.envelope_effective_filters_json),
-      { scopes: [], connectors: [], project_refs: [], tenant_id: 'default', as_of: null }
+      row,
+      'envelope_effective_filters_json'
     ),
     envelope_effective_filters_hash: String(row.envelope_effective_filters_hash),
     ranking_policy_version: String(row.ranking_policy_version),
@@ -67,41 +87,36 @@ function mapPacketRow(row: Record<string, unknown>): AgentSituationPacketRecord 
     expires_at: Number(row.expires_at),
     ttl_seconds: Number(row.ttl_seconds),
     freshness_json: String(row.freshness_json),
-    freshness: parseJson<Record<string, unknown>>(String(row.freshness_json), {}),
+    freshness: parseJson<Record<string, unknown>>(row, 'freshness_json'),
     source_coverage_json: String(row.source_coverage_json),
-    source_coverage: parseJson<SituationSourceCoverage[]>(String(row.source_coverage_json), []),
+    source_coverage: parseJson<SituationSourceCoverage[]>(row, 'source_coverage_json'),
     briefing_json: String(row.briefing_json),
-    briefing: parseJson<SituationBriefing>(String(row.briefing_json), {
-      decisions: [],
-      facts: [],
-      open_questions: [],
-      risks: [],
-    }),
+    briefing: parseJson<SituationBriefing>(row, 'briefing_json'),
     ranked_items_json: String(row.ranked_items_json),
-    ranked_items: parseJson<SituationRankedItem[]>(String(row.ranked_items_json), []),
+    ranked_items: parseJson<SituationRankedItem[]>(row, 'ranked_items_json'),
     top_memory_refs_json: String(row.top_memory_refs_json),
-    top_memory_refs: parseJson<string[]>(String(row.top_memory_refs_json), []),
+    top_memory_refs: parseJson<string[]>(row, 'top_memory_refs_json'),
     pending_human_questions_json: String(row.pending_human_questions_json),
     pending_human_questions: parseJson<SituationPendingHumanQuestion[]>(
-      String(row.pending_human_questions_json),
-      []
+      row,
+      'pending_human_questions_json'
     ),
     entity_clusters_json: String(row.entity_clusters_json),
-    entity_clusters: parseJson<SituationEntityCluster[]>(String(row.entity_clusters_json), []),
+    entity_clusters: parseJson<SituationEntityCluster[]>(row, 'entity_clusters_json'),
     recommended_next_tools_json: String(row.recommended_next_tools_json),
     recommended_next_tools: parseJson<SituationRecommendedTool[]>(
-      String(row.recommended_next_tools_json),
-      []
+      row,
+      'recommended_next_tools_json'
     ),
     generated_from_slice_ids_json: String(row.generated_from_slice_ids_json),
-    generated_from_slice_ids: parseJson<string[]>(String(row.generated_from_slice_ids_json), []),
+    generated_from_slice_ids: parseJson<string[]>(row, 'generated_from_slice_ids_json'),
     caveats_json: String(row.caveats_json),
-    caveats: parseJson<string[]>(String(row.caveats_json), []),
+    caveats: parseJson<string[]>(row, 'caveats_json'),
     agent_id: String(row.agent_id),
     model_run_id: String(row.model_run_id),
     input_snapshot_ref: String(row.input_snapshot_ref),
     source_refs_json: String(row.source_refs_json),
-    source_refs: parseJson<SituationRef[]>(String(row.source_refs_json), []),
+    source_refs: parseJson<SituationRef[]>(row, 'source_refs_json'),
     tenant_id: String(row.tenant_id),
     project_id: String(row.project_id),
     memory_scope_kind: String(
@@ -110,6 +125,15 @@ function mapPacketRow(row: Record<string, unknown>): AgentSituationPacketRecord 
     memory_scope_id: String(row.memory_scope_id),
     created_at: Number(row.created_at),
   };
+}
+
+function isDuplicateLeaseError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return /UNIQUE constraint failed: agent_situation_refresh_leases\.cache_key|PRIMARY KEY constraint failed|SQLITE_CONSTRAINT_(PRIMARYKEY|UNIQUE)/i.test(
+    error.message
+  );
 }
 
 function mapLeaseRow(row: Record<string, unknown>): AgentSituationLease {
@@ -232,8 +256,11 @@ export function acquireAgentSituationLease(
         input.nowMs + input.leaseSeconds * 1000,
         input.nowMs
       );
-  } catch {
-    return null;
+  } catch (error) {
+    if (isDuplicateLeaseError(error)) {
+      return null;
+    }
+    throw error;
   }
   const row = adapter
     .prepare('SELECT * FROM agent_situation_refresh_leases WHERE cache_key = ?')
@@ -294,8 +321,9 @@ export async function getOrRefreshAgentSituationPacket(
     }
   }
 
+  const refreshes = inProcessRefreshesForAdapter(adapter);
   const key = `${input.cacheKey}:${input.rankingPolicyVersion}`;
-  const existing = inProcessRefreshes.get(key);
+  const existing = refreshes.get(key);
   if (existing) {
     return existing;
   }
@@ -324,10 +352,13 @@ export async function getOrRefreshAgentSituationPacket(
     }
   })();
 
-  inProcessRefreshes.set(key, task);
+  refreshes.set(key, task);
   try {
     return await task;
   } finally {
-    inProcessRefreshes.delete(key);
+    refreshes.delete(key);
+    if (refreshes.size === 0) {
+      inProcessRefreshesByAdapter.delete(adapter);
+    }
   }
 }

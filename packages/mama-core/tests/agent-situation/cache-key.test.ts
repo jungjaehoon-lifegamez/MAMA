@@ -37,6 +37,35 @@ describe('Story M5: Agent situation cache key', () => {
       expect(right.scopeHash).toBe(left.scopeHash);
       expect(right.filtersHash).toBe(left.filtersHash);
     });
+
+    it('deduplicates equivalent scopes and project refs before hashing', () => {
+      const baseline = buildAgentSituationCacheKey(BASE_INPUT);
+      const withDuplicates = buildAgentSituationCacheKey({
+        ...BASE_INPUT,
+        scopes: [
+          ...BASE_INPUT.scopes,
+          { kind: 'project' as const, id: 'repo-a' },
+          { kind: 'project' as const, id: ' repo-b ' },
+        ],
+        project_refs: [
+          ...BASE_INPUT.project_refs,
+          { kind: 'project' as const, id: 'repo-a' },
+          { kind: 'project' as const, id: ' repo-b ' },
+        ],
+      });
+
+      expect(withDuplicates.cacheKey).toBe(baseline.cacheKey);
+      expect(withDuplicates.scopeHash).toBe(baseline.scopeHash);
+      expect(withDuplicates.filtersHash).toBe(baseline.filtersHash);
+      expect(withDuplicates.canonicalInput.scopes).toEqual([
+        { kind: 'project', id: 'repo-a' },
+        { kind: 'project', id: 'repo-b' },
+      ]);
+      expect(withDuplicates.canonicalInput.project_refs).toEqual([
+        { kind: 'project', id: 'repo-a' },
+        { kind: 'project', id: 'repo-b' },
+      ]);
+    });
   });
 
   describe('AC #2: key dimensions', () => {

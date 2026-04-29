@@ -2,7 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { canonicalizeJSON } from '../canonicalize.js';
 import type { DatabaseAdapter } from '../db-manager.js';
-import { buildAgentSituationCacheKey } from './cache-key.js';
+import {
+  buildAgentSituationCacheKey,
+  normalizeAgentSituationEffectiveFilters,
+} from './cache-key.js';
 import {
   AGENT_SITUATION_V0_POLICY_VERSION,
   getAgentSituationRankingPolicy,
@@ -213,14 +216,16 @@ export function buildAgentSituationPacketRecord(
   const rankingPolicyVersion = input.ranking_policy_version ?? AGENT_SITUATION_V0_POLICY_VERSION;
   const nowMs = Math.floor(input.now_ms ?? Date.now());
   const limit = Math.floor(input.limit);
+  const effectiveFilters = normalizeAgentSituationEffectiveFilters(input.effective_filters);
+  const normalizedInput = { ...input, effective_filters: effectiveFilters };
   const sources = readVisibleSources(adapter, {
-    effective_filters: input.effective_filters,
+    effective_filters: effectiveFilters,
     range_start_ms: input.range_start_ms,
     range_end_ms: input.range_end_ms,
     limit,
   });
   const key = buildAgentSituationCacheKey({
-    ...input.effective_filters,
+    ...effectiveFilters,
     range_start_ms: input.range_start_ms,
     range_end_ms: input.range_end_ms,
     focus: input.focus,
@@ -232,7 +237,7 @@ export function buildAgentSituationPacketRecord(
   const scope = primaryScope(input);
   const rankedItems = buildRankedItems(sources, limit);
   const briefing = buildBriefing(sources);
-  const coverage = buildCoverage(sources, input);
+  const coverage = buildCoverage(sources, normalizedInput);
   const visibleSourceRefs = sourceRefs(sources);
   const pendingHumanQuestions = sources.memories
     .filter((memory) => memory.is_open_question)
@@ -260,8 +265,8 @@ export function buildAgentSituationPacketRecord(
     focus_json: json(input.focus),
     focus: input.focus,
     envelope_hash: input.envelope_hash,
-    envelope_effective_filters_json: key.canonicalJson,
-    envelope_effective_filters: key.canonicalInput,
+    envelope_effective_filters_json: json(effectiveFilters),
+    envelope_effective_filters: effectiveFilters,
     envelope_effective_filters_hash: key.filtersHash,
     ranking_policy_version: rankingPolicyVersion,
     generated_at: nowMs,
@@ -292,8 +297,8 @@ export function buildAgentSituationPacketRecord(
     input_snapshot_ref: `situation:${key.cacheKey}`,
     source_refs_json: json(visibleSourceRefs),
     source_refs: visibleSourceRefs,
-    tenant_id: input.effective_filters.tenant_id,
-    project_id: primaryProjectId(input),
+    tenant_id: effectiveFilters.tenant_id,
+    project_id: primaryProjectId(normalizedInput),
     memory_scope_kind: scope.kind,
     memory_scope_id: scope.id,
     created_at: nowMs,

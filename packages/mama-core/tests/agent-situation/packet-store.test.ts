@@ -114,6 +114,18 @@ describe('Story M5: Agent situation packet store', () => {
       ).toBeNull();
     });
 
+    it('throws instead of returning fallback fields when stored packet JSON is corrupt', () => {
+      const adapter = createAdapter();
+      const fresh = insertAgentSituationPacket(adapter, packet(adapter, 2_000));
+      adapter
+        .prepare('UPDATE agent_situation_packets SET source_coverage_json = ? WHERE packet_id = ?')
+        .run('{not-json', fresh.packet_id);
+
+      expect(() =>
+        getFreshAgentSituationPacket(adapter, fresh.cache_key, fresh.ranking_policy_version, 2_100)
+      ).toThrow(/source_coverage_json/);
+    });
+
     it('does not call the builder when a fresh cache hit exists', async () => {
       const adapter = createAdapter();
       const existing = insertAgentSituationPacket(adapter, packet(adapter, 2_000));
@@ -175,6 +187,32 @@ describe('Story M5: Agent situation packet store', () => {
           leaseSeconds: 30,
         })?.lease_owner
       ).toBe('owner-b');
+    });
+
+    it('propagates lease storage failures that are not duplicate live leases', () => {
+      const adapter = createAdapter();
+      const item = packet(adapter, 2_000);
+      adapter
+        .prepare(
+          `
+            CREATE TRIGGER block_agent_situation_lease_insert
+            BEFORE INSERT ON agent_situation_refresh_leases
+            BEGIN
+              SELECT RAISE(ABORT, 'lease storage offline');
+            END
+          `
+        )
+        .run();
+
+      expect(() =>
+        acquireAgentSituationLease(adapter, {
+          cacheKey: item.cache_key,
+          rankingPolicyVersion: item.ranking_policy_version,
+          leaseOwner: 'owner-a',
+          nowMs: 2_000,
+          leaseSeconds: 30,
+        })
+      ).toThrow(/lease storage offline/);
     });
 
     it('runs one builder for five concurrent refreshes of the same key', async () => {
