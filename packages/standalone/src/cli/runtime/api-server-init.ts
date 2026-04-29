@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 import { createApiServer } from '../../api/index.js';
 import type { ApiServer } from '../../api/index.js';
+import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import type { AgentLoop } from '../../agent/index.js';
 import type { CronScheduler } from '../../scheduler/index.js';
@@ -36,8 +37,7 @@ export interface InitApiServerParams {
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
   /** mama-core getAdapter() — used to create the memoryDb shim */
-  getAdapter: () => {
-    prepare: (sql: string) => unknown;
+  getAdapter: () => AgentSituationAdapter & {
     exec: (sql: string) => void;
   };
 }
@@ -105,6 +105,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     port: API_PORT,
     db,
     memoryDb: memoryDb as unknown as SQLiteDatabase,
+    memoryAdapter: mamaCoreAdapter,
     skillRegistry,
     wikiPath: wikiApiPath,
     healthService: healthService ?? undefined,

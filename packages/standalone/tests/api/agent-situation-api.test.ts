@@ -1,0 +1,275 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
+import express from 'express';
+
+import {
+  AGENT_SITUATION_V0_POLICY_VERSION,
+  beginModelRunInAdapter,
+  buildAgentSituationPacketRecord,
+  type AgentSituationInput,
+  type AgentSituationPacketRecord,
+} from '../../../mama-core/src/index.js';
+import { getAdapter } from '../../../mama-core/src/db-manager.js';
+import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
+
+import Database from '../../src/sqlite.js';
+import {
+  createAgentSituationRouter,
+  type AgentSituationRouterOptions,
+} from '../../src/api/agent-situation-handler.js';
+import { createApiServer } from '../../src/api/index.js';
+import { requireAuth } from '../../src/api/auth-middleware.js';
+import { applyEnvelopeTablesMigration } from '../../src/db/migrations/envelope-tables.js';
+import { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import { EnvelopeStore } from '../../src/envelope/store.js';
+import { signEnvelope } from '../../src/envelope/signature.js';
+import type { Envelope } from '../../src/envelope/types.js';
+import { CronScheduler } from '../../src/scheduler/index.js';
+
+vi.mock('@jungjaehoon/mama-core/debug-logger', () => ({
+  DebugLogger: class {
+    warn(): void {}
+    debug(): void {}
+    info(): void {}
+    error(): void {}
+  },
+}));
+
+const TUNNEL_HEADERS = {
+  'cf-connecting-ip': '198.51.100.7',
+  'x-forwarded-for': '198.51.100.7',
+};
+
+const SIGNING_KEY = {
+  key_id: 'test',
+  key_version: 1,
+  key: Buffer.from('agent-situation-api-test-key!!'),
+};
+
+const FIXED_NOW_MS = Date.parse('2026-04-29T03:00:00.000Z');
+
+function makeEnvelope(overrides: Partial<Envelope> = {}): Envelope {
+  return signEnvelope(
+    {
+      agent_id: 'worker-m5',
+      instance_id: `inst_${Math.random().toString(36).slice(2)}`,
+      source: 'slack',
+      channel_id: 'slack:C1',
+      trigger_context: {},
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['slack'],
+        memory_scopes: [{ kind: 'project', id: 'alpha' }],
+        allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+      },
+      tier: 1,
+      budget: { wall_seconds: 60 },
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      envelope_hash: '',
+      ...overrides,
+    },
+    SIGNING_KEY
+  );
+}
+
+describe('Story M5.2: /api/agent/situation worker packet API', () => {
+  const originalAuthToken = process.env.MAMA_AUTH_TOKEN;
+  let testDbPath = '';
+  let sessionsDb: Database;
+  let authority: EnvelopeAuthority;
+  let validEnvelope: Envelope;
+
+  beforeAll(async () => {
+    testDbPath = await initTestDB('agent-situation-api');
+  });
+
+  beforeEach(() => {
+    process.env.MAMA_AUTH_TOKEN = 'agent-situation-token';
+    const adapter = getAdapter();
+    adapter.prepare('DELETE FROM agent_situation_refresh_leases').run();
+    adapter.prepare('DELETE FROM agent_situation_packets').run();
+    adapter.prepare('DELETE FROM model_runs').run();
+
+    sessionsDb = new Database(':memory:');
+    applyEnvelopeTablesMigration(sessionsDb);
+    authority = new EnvelopeAuthority(
+      new EnvelopeStore(sessionsDb),
+      SIGNING_KEY,
+      (keyId, keyVersion) =>
+        keyId === SIGNING_KEY.key_id && keyVersion === SIGNING_KEY.key_version
+          ? SIGNING_KEY.key
+          : undefined
+    );
+    validEnvelope = makeEnvelope();
+    authority.persist(validEnvelope);
+  });
+
+  afterEach(() => {
+    sessionsDb.close();
+    if (originalAuthToken === undefined) {
+      delete process.env.MAMA_AUTH_TOKEN;
+    } else {
+      process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+    }
+  });
+
+  afterAll(async () => {
+    await cleanupTestDB(testDbPath);
+  });
+
+  function makeServer(overrides: Partial<AgentSituationRouterOptions> = {}) {
+    const app = express();
+    app.use('/api', requireAuth);
+    app.use(
+      '/api/agent/situation',
+      createAgentSituationRouter({
+        memoryAdapter: getAdapter(),
+        envelopeAuthority: authority,
+        now: () => FIXED_NOW_MS,
+        ...overrides,
+      })
+    );
+    return { app };
+  }
+
+  function authed(req: request.Test): request.Test {
+    return req
+      .set(TUNNEL_HEADERS)
+      .set('Authorization', 'Bearer agent-situation-token')
+      .set('x-mama-envelope-hash', validEnvelope.envelope_hash);
+  }
+
+  describe('AC #1: worker envelope gates packet visibility', () => {
+    it('rejects missing envelopes and requested scopes outside the envelope', async () => {
+      const apiServer = makeServer();
+
+      const missing = await request(apiServer.app)
+        .get('/api/agent/situation')
+        .set(TUNNEL_HEADERS)
+        .set('Authorization', 'Bearer agent-situation-token');
+      expect(missing.status).toBe(401);
+      expect(missing.body.code).toBe('worker_envelope_missing');
+
+      const scopeOutside = await authed(
+        request(apiServer.app).get('/api/agent/situation?scopes=project%3Abeta')
+      );
+      expect(scopeOutside.status).toBe(403);
+      expect(scopeOutside.body.code).toBe('worker_envelope_scope_denied');
+    });
+
+    it('rejects packet generation when the envelope has no effective project ref', async () => {
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [],
+          raw_connectors: ['slack'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+        },
+      });
+      authority.persist(validEnvelope);
+      const apiServer = makeServer();
+
+      const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('worker_envelope_project_required');
+    });
+  });
+
+  describe('AC #2: packet generation is cached and model-run correlated', () => {
+    it('mounts the worker packet route through createApiServer', async () => {
+      const scheduler = new CronScheduler();
+      const apiServer = createApiServer({
+        scheduler,
+        port: 0,
+        memoryAdapter: getAdapter(),
+        envelopeAuthority: authority,
+        situationNow: () => FIXED_NOW_MS,
+      });
+
+      try {
+        const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+        expect(response.status).toBe(200);
+        expect(response.body.packet_id).toMatch(/^situ_/);
+        expect(response.body.cache.hit).toBe(false);
+      } finally {
+        scheduler.shutdown();
+      }
+    });
+
+    it('creates a committed direct model run on cache miss and reuses fresh cache without a new run', async () => {
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({ buildPacket });
+
+      const first = await authed(
+        request(apiServer.app).get('/api/agent/situation?range=7d&focus=decisions,raw&limit=5')
+      );
+
+      expect(first.status).toBe(200);
+      expect(first.body.packet_id).toMatch(/^situ_/);
+      expect(first.body.scope).toEqual([{ kind: 'project', id: 'alpha' }]);
+      expect(first.body.ranking_policy_version).toBe(AGENT_SITUATION_V0_POLICY_VERSION);
+      expect(first.body.cache.hit).toBe(false);
+      expect(first.body.cache.cache_key).toEqual(expect.any(String));
+      expect(first.body.cache.expires_at).toBe('2026-04-29T03:02:00.000Z');
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+
+      const firstRuns = getAdapter()
+        .prepare('SELECT model_run_id, status, envelope_hash FROM model_runs ORDER BY created_at')
+        .all() as Array<{ model_run_id: string; status: string; envelope_hash: string }>;
+      expect(firstRuns).toHaveLength(1);
+      expect(firstRuns[0].status).toBe('committed');
+      expect(firstRuns[0].envelope_hash).toBe(validEnvelope.envelope_hash);
+
+      const second = await authed(
+        request(apiServer.app).get('/api/agent/situation?range=7d&focus=decisions,raw&limit=5')
+      );
+
+      expect(second.status).toBe(200);
+      expect(second.body.packet_id).toBe(first.body.packet_id);
+      expect(second.body.cache.hit).toBe(true);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+
+      const secondRuns = getAdapter().prepare('SELECT model_run_id FROM model_runs').all();
+      expect(secondRuns).toHaveLength(1);
+    });
+
+    it('rejects a supplied model run whose envelope hash does not match the worker envelope', async () => {
+      const adapter = getAdapter();
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_mismatch',
+        agent_id: 'worker-m5',
+        envelope_hash: 'other-envelope',
+        input_refs: { test: true },
+      });
+      const apiServer = makeServer();
+
+      const response = await authed(
+        request(apiServer.app).get('/api/agent/situation').set('x-mama-model-run-id', 'mr_mismatch')
+      );
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('agent_situation_model_run_denied');
+    });
+  });
+
+  describe('AC #3: query parsing is strict', () => {
+    it('rejects malformed limit and focus query values without coercion', async () => {
+      const apiServer = makeServer();
+
+      const badLimit = await authed(request(apiServer.app).get('/api/agent/situation?limit=10abc'));
+      expect(badLimit.status).toBe(400);
+      expect(badLimit.body.code).toBe('agent_situation_query_invalid');
+
+      const badFocus = await authed(
+        request(apiServer.app).get('/api/agent/situation?focus=decisions,unknown')
+      );
+      expect(badFocus.status).toBe(400);
+      expect(badFocus.body.code).toBe('agent_situation_query_invalid');
+    });
+  });
+});
