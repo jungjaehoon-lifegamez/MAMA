@@ -339,6 +339,156 @@ describe('Story M5: Agent situation source readers and builder', () => {
       expect(sources.edges.map((row) => row.ref.id)).toEqual([]);
     });
 
+    it('uses raw event_datetime rather than source_timestamp_ms for as_of visibility', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO connector_event_index (
+            event_index_id, source_connector, source_type, source_id, source_locator, channel,
+            author, title, content, event_datetime, event_date, source_timestamp_ms, metadata_json,
+            artifact_locator, artifact_title, content_hash, indexed_at, updated_at, tenant_id,
+            project_id, memory_scope_kind, memory_scope_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'raw-future-event-backfilled',
+          'slack',
+          'message',
+          's3',
+          'slack://c3/s3',
+          'chan-3',
+          'JH',
+          'Future event backfill',
+          'The event happened after the worker view cutoff',
+          1_750,
+          '2026-04-29',
+          1_500,
+          '{}',
+          null,
+          null,
+          Buffer.alloc(32, 6),
+          '1970-01-01T00:00:01.500Z',
+          '1970-01-01T00:00:01.500Z',
+          'default',
+          'repo-a',
+          'project',
+          'repo-a'
+        );
+
+      const sources = listVisibleAgentSituationSources(adapter, {
+        effective_filters: {
+          ...EFFECTIVE_FILTERS,
+          as_of: '1970-01-01T00:00:01.650Z',
+        },
+        range_start_ms: 1_000,
+        range_end_ms: 2_000,
+        limit: 10,
+      });
+
+      expect(sources.raw.map((row) => row.ref.id)).not.toContain('raw-future-event-backfilled');
+    });
+
+    it('attributes a visible case to the visible scope when hidden scope_refs appear first', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO case_truth (
+            case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'case-hidden-first',
+          'Cross-scope case',
+          'active',
+          JSON.stringify([
+            { kind: 'project', id: 'repo-b' },
+            { kind: 'project', id: 'repo-a' },
+          ]),
+          'medium',
+          '1970-01-01T00:00:01.600Z',
+          '1970-01-01T00:00:01.000Z',
+          '1970-01-01T00:00:01.000Z'
+        );
+
+      const sources = listVisibleAgentSituationSources(adapter, {
+        effective_filters: EFFECTIVE_FILTERS,
+        range_start_ms: 1_000,
+        range_end_ms: 2_000,
+        limit: 10,
+      });
+
+      expect(sources.cases.find((row) => row.ref.id === 'case-hidden-first')?.scope).toEqual({
+        kind: 'project',
+        id: 'repo-a',
+      });
+    });
+
+    it('throws when case scope_refs is corrupt instead of hiding the row', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO case_truth (
+            case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'case-corrupt-scope-refs',
+          'Corrupt case',
+          'active',
+          '{not-json',
+          'medium',
+          '1970-01-01T00:00:01.600Z',
+          '1970-01-01T00:00:01.000Z',
+          '1970-01-01T00:00:01.000Z'
+        );
+
+      expect(() =>
+        listVisibleAgentSituationSources(adapter, {
+          effective_filters: EFFECTIVE_FILTERS,
+          range_start_ms: 1_000,
+          range_end_ms: 2_000,
+          limit: 10,
+        })
+      ).toThrow(/case_truth\.scope_refs/);
+    });
+
+    it('throws when case scope_refs JSON is not an array', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO case_truth (
+            case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'case-object-scope-refs',
+          'Object scope refs',
+          'active',
+          JSON.stringify({ kind: 'project', id: 'repo-a' }),
+          'medium',
+          '1970-01-01T00:00:01.600Z',
+          '1970-01-01T00:00:01.000Z',
+          '1970-01-01T00:00:01.000Z'
+        );
+
+      expect(() =>
+        listVisibleAgentSituationSources(adapter, {
+          effective_filters: EFFECTIVE_FILTERS,
+          range_start_ms: 1_000,
+          range_end_ms: 2_000,
+          limit: 10,
+        })
+      ).toThrow(/case_truth\.scope_refs/);
+    });
+
     it('does not let hidden recent case or edge rows starve older visible rows', () => {
       const adapter = createAdapter();
       seedFixture(adapter);

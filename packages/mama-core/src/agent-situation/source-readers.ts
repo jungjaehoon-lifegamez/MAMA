@@ -1,5 +1,5 @@
 import type { DatabaseAdapter } from '../db-manager.js';
-import type { MemoryScopeRef } from '../memory/types.js';
+import { MEMORY_SCOPE_KINDS, type MemoryScopeRef } from '../memory/types.js';
 import type {
   AgentSituationCandidate,
   AgentSituationEffectiveFilters,
@@ -79,16 +79,40 @@ function visibilityEndMs(input: AgentSituationSourceReadInput): number {
   return Math.min(input.range_end_ms, parsed);
 }
 
-function parseJsonArray(value: unknown): unknown[] {
-  if (typeof value !== 'string' || value.length === 0) {
-    return [];
+function parseCaseScopeRefs(row: { case_id?: unknown; scope_refs?: unknown }): MemoryScopeRef[] {
+  const caseId = String(row.case_id ?? '<unknown>');
+  if (typeof row.scope_refs !== 'string' || row.scope_refs.length === 0) {
+    throw new Error(
+      `Invalid case_truth.scope_refs for case ${caseId}: expected a JSON array string.`
+    );
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed : [];
+    parsed = JSON.parse(row.scope_refs) as unknown;
   } catch {
-    return [];
+    throw new Error(`Invalid case_truth.scope_refs for case ${caseId}: malformed JSON.`);
   }
+  if (!Array.isArray(parsed)) {
+    throw new Error(`Invalid case_truth.scope_refs for case ${caseId}: expected a JSON array.`);
+  }
+  return parsed.map((scope, index) => {
+    if (!scope || typeof scope !== 'object') {
+      throw new Error(
+        `Invalid case_truth.scope_refs for case ${caseId}: entry ${index} must be an object.`
+      );
+    }
+    const record = scope as Record<string, unknown>;
+    if (
+      typeof record.kind !== 'string' ||
+      typeof record.id !== 'string' ||
+      !(MEMORY_SCOPE_KINDS as readonly string[]).includes(record.kind)
+    ) {
+      throw new Error(
+        `Invalid case_truth.scope_refs for case ${caseId}: entry ${index} must include a valid kind and id.`
+      );
+    }
+    return { kind: record.kind as MemoryScopeRef['kind'], id: record.id };
+  });
 }
 
 function isScopeVisible(scope: MemoryScopeRef, effective: AgentSituationEffectiveFilters): boolean {
@@ -110,24 +134,6 @@ function caseTimestampMs(row: {
     }
   }
   return 0;
-}
-
-function caseScopes(row: { scope_refs?: unknown }): MemoryScopeRef[] {
-  return parseJsonArray(row.scope_refs)
-    .map((scope) => {
-      if (
-        scope &&
-        typeof scope === 'object' &&
-        'kind' in scope &&
-        'id' in scope &&
-        typeof scope.kind === 'string' &&
-        typeof scope.id === 'string'
-      ) {
-        return { kind: scope.kind as MemoryScopeRef['kind'], id: scope.id };
-      }
-      return null;
-    })
-    .filter((scope): scope is MemoryScopeRef => Boolean(scope));
 }
 
 function isOpenQuestion(row: {
@@ -167,15 +173,15 @@ export function listVisibleRawCandidates(
   const rows = adapter
     .prepare(
       `
-        SELECT event_index_id, source_connector, channel, title, content, source_timestamp_ms,
+        SELECT event_index_id, source_connector, channel, title, content, event_datetime,
                memory_scope_kind, memory_scope_id
         FROM connector_event_index
         WHERE tenant_id = ?
           AND project_id IN (${placeholders(projectIds)})
           AND source_connector IN (${placeholders(connectors)})
           AND (${scopeClauses})
-          AND source_timestamp_ms BETWEEN ? AND ?
-        ORDER BY source_timestamp_ms DESC, event_index_id ASC
+          AND event_datetime BETWEEN ? AND ?
+        ORDER BY event_datetime DESC, event_index_id ASC
         LIMIT ?
       `
     )
@@ -187,7 +193,7 @@ export function listVisibleRawCandidates(
     title: String(row.title ?? 'Untitled raw event'),
     summary: String(row.content ?? '').slice(0, 240),
     content: String(row.content ?? ''),
-    timestamp_ms: Number(row.source_timestamp_ms),
+    timestamp_ms: Number(row.event_datetime),
     connector: String(row.source_connector),
     channel_id: typeof row.channel === 'string' ? row.channel : null,
     scope:
@@ -274,12 +280,13 @@ export function listVisibleCaseCandidates(
   return rows
     .map((row): VisibleCaseCandidate | null => {
       const timestamp = caseTimestampMs(row);
-      const scopes = caseScopes(row);
-      if (
-        timestamp < input.range_start_ms ||
-        timestamp > endMs ||
-        !scopes.some((scope) => isScopeVisible(scope, input.effective_filters))
-      ) {
+      if (timestamp < input.range_start_ms || timestamp > endMs) {
+        return null;
+      }
+      const visibleScope = parseCaseScopeRefs(row).find((scope) =>
+        isScopeVisible(scope, input.effective_filters)
+      );
+      if (!visibleScope) {
         return null;
       }
       return {
@@ -290,7 +297,7 @@ export function listVisibleCaseCandidates(
         timestamp_ms: timestamp,
         confidence: row.confidence === 'low' ? 0.4 : row.confidence === 'medium' ? 0.7 : 1,
         status: typeof row.status === 'string' ? row.status : null,
-        scope: scopes[0] ?? null,
+        scope: visibleScope,
       } satisfies VisibleCaseCandidate;
     })
     .filter((row): row is VisibleCaseCandidate => Boolean(row))
