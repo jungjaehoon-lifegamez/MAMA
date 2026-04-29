@@ -116,6 +116,9 @@ describe('EnvelopeAuthority', () => {
       expect(() =>
         auth.build(buildInput({ expires_at: new Date(Date.now() - 1_000).toISOString() }))
       ).toThrow(/past/);
+      expect(() => auth.build(buildInput({ expires_at: '2099-01-01 00:00:00' }))).toThrow(
+        /ISO 8601/
+      );
     } finally {
       closeDb(db, dir);
     }

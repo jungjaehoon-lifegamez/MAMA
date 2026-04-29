@@ -24,7 +24,11 @@ import { join } from 'node:path';
 
 import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 
-import type { RawStore } from '../../connectors/framework/raw-store.js';
+import {
+  mapNormalizedItemsToConnectorEventIndexInputs,
+  type RawIndexSink,
+  type RawStore,
+} from '../../connectors/framework/raw-store.js';
 
 const logger = new DebugLogger('connector-init');
 
@@ -60,9 +64,14 @@ export async function initConnectors(
   const { buildProjectTruth, groupByChannel, buildEntityObservations } =
     await import('../../memory/history-extractor.js');
   const { MODEL_NAME } = await import('@jungjaehoon/mama-core');
-  const entityObservationStore = (await import('@jungjaehoon/mama-core')) as unknown as {
+  const mamaCore = (await import('@jungjaehoon/mama-core')) as unknown as {
+    getAdapter?: () => Parameters<
+      typeof import('@jungjaehoon/mama-core/connectors/event-index').upsertConnectorEventIndex
+    >[0];
+    upsertConnectorEventIndex?: typeof import('@jungjaehoon/mama-core/connectors/event-index').upsertConnectorEventIndex;
     upsertEntityObservations?: (inputs: EntityObservationDraft[]) => Promise<unknown>;
   };
+  const entityObservationStore = mamaCore;
   type ConnectorsJson = import('../../connectors/framework/types.js').ConnectorsConfig;
   type ChannelConfigMap = import('../../connectors/framework/types.js').ChannelConfig;
   type NormalizedItem = import('../../connectors/framework/types.js').NormalizedItem;
@@ -93,6 +102,19 @@ export async function initConnectors(
 
   const connectorRegistry = new ConnectorRegistry();
   const rawStore = new RawStore(join(homedir(), '.mama', 'connectors'));
+  const rawIndexSink: RawIndexSink | undefined =
+    typeof mamaCore.getAdapter === 'function' &&
+    typeof mamaCore.upsertConnectorEventIndex === 'function'
+      ? async (connectorName, items) => {
+          const adapter = mamaCore.getAdapter?.();
+          if (!adapter || typeof mamaCore.upsertConnectorEventIndex !== 'function') {
+            throw new Error('[connector] unified raw index unavailable from mama-core');
+          }
+          for (const input of mapNormalizedItemsToConnectorEventIndexInputs(connectorName, items)) {
+            mamaCore.upsertConnectorEventIndex(adapter, input);
+          }
+        }
+      : undefined;
 
   // Build channel configs for role classification
   // For kagemusha connector, channels are keyed as "source:channelId" (e.g., "chatwork:ROOM_ID")
@@ -131,7 +153,8 @@ export async function initConnectors(
   if (connectorRegistry.getActive().size > 0) {
     const connectorScheduler = new PollingScheduler(
       rawStore,
-      join(homedir(), '.mama', 'connectors')
+      join(homedir(), '.mama', 'connectors'),
+      { rawIndexSink }
     );
 
     const observationExtractorVersion = 'history-extractor@v1';
