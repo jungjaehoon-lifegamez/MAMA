@@ -17,17 +17,27 @@ function uniqueSorted(values: readonly string[]): string[] {
 }
 
 function normalizeScopes(scopes: AgentSituationCacheKeyInput['scopes']) {
-  return [...scopes]
-    .map((scope) => ({ kind: scope.kind, id: scope.id.trim() }))
-    .filter((scope) => scope.id.length > 0)
-    .sort((left, right) => `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`));
+  const byKey = new Map<string, { kind: (typeof scopes)[number]['kind']; id: string }>();
+  for (const scope of scopes) {
+    const normalized = { kind: scope.kind, id: scope.id.trim() };
+    if (normalized.id.length > 0) {
+      byKey.set(`${normalized.kind}:${normalized.id}`, normalized);
+    }
+  }
+  return [...byKey.values()].sort((left, right) =>
+    `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`)
+  );
 }
 
 function normalizeProjectRefs(projectRefs: AgentSituationCacheKeyInput['project_refs']) {
-  return [...projectRefs]
-    .map((project) => ({ kind: 'project' as const, id: project.id.trim() }))
-    .filter((project) => project.id.length > 0)
-    .sort((left, right) => left.id.localeCompare(right.id));
+  const byId = new Map<string, { kind: 'project'; id: string }>();
+  for (const project of projectRefs) {
+    const normalized = { kind: 'project' as const, id: project.id.trim() };
+    if (normalized.id.length > 0) {
+      byId.set(normalized.id, normalized);
+    }
+  }
+  return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
 function normalizeFocus(focus: readonly SituationFocus[]): SituationFocus[] {
