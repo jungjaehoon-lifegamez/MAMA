@@ -3,7 +3,7 @@ import os from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { closeDB, getAdapter, initDB, type DatabaseAdapter } from '../../src/db-manager.js';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
@@ -19,6 +19,8 @@ import {
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
 const tempPaths = new Set<string>();
 const scopedAdapters = new Set<DatabaseAdapter>();
+type ModelRunAdapterForTest = Parameters<typeof beginModelRunInAdapter>[0];
+type RunResultForTest = ReturnType<ReturnType<ModelRunAdapterForTest['prepare']>['run']>;
 
 function tempDbPath(label: string): string {
   const path = join(os.tmpdir(), `test-model-run-adapter-${label}-${randomUUID()}.db`);
@@ -44,10 +46,64 @@ function createAdapter(path: string): DatabaseAdapter {
   return adapter;
 }
 
+class FakeModelRunStatement {
+  constructor(
+    private readonly behavior: {
+      get?: (...params: unknown[]) => object | undefined;
+      run?: (...params: unknown[]) => RunResultForTest;
+    }
+  ) {}
+
+  all(): object[] {
+    return [];
+  }
+
+  get(...params: unknown[]): object | undefined {
+    return this.behavior.get?.(...params);
+  }
+
+  run(...params: unknown[]): RunResultForTest {
+    if (!this.behavior.run) {
+      return { changes: 0, lastInsertRowid: 0 };
+    }
+    return this.behavior.run(...params);
+  }
+
+  finalize(): void {
+    // fake statement does not hold native resources
+  }
+}
+
+function modelRunRow(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    model_run_id: 'mr_fake',
+    model_id: null,
+    model_provider: null,
+    prompt_version: null,
+    tool_manifest_version: null,
+    output_schema_version: null,
+    agent_id: 'agent-fake',
+    instance_id: null,
+    envelope_hash: 'env_fake',
+    parent_model_run_id: null,
+    input_snapshot_ref: null,
+    input_refs_json: JSON.stringify({ request_idempotency_key: 'fake-key' }),
+    completion_summary: null,
+    status: 'running',
+    error_summary: null,
+    token_count: 0,
+    cost_estimate: null,
+    created_at: 10_000,
+    completed_at: null,
+    ...overrides,
+  };
+}
+
 describe('Story M5/M6: Adapter-scoped model run helpers', () => {
   afterEach(async () => {
     await closeDB();
     delete process.env.MAMA_DB_PATH;
+    vi.restoreAllMocks();
     for (const adapter of scopedAdapters) {
       adapter.disconnect();
     }
@@ -150,6 +206,45 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         expect(count.count).toBe(1);
       });
 
+      it('replays matching deterministic ids when created_at was omitted', () => {
+        const scopedAdapter = createAdapter(tempDbPath('no-created-at'));
+        vi.spyOn(Date, 'now').mockReturnValueOnce(10_000).mockReturnValueOnce(10_050);
+        const input = {
+          model_run_id: 'mr_direct_no_created_at',
+          agent_id: 'agent-alias',
+          envelope_hash: 'env_alias_no_created_at',
+          input_refs: {
+            tool: 'entity.alias',
+            request_idempotency_key: 'alias-key-no-created-at',
+          },
+        };
+
+        const first = beginModelRunInAdapter(scopedAdapter, input);
+        const replay = beginModelRunInAdapter(scopedAdapter, input);
+
+        expect(replay).toEqual(first);
+        expect(replay.created_at).toBe(10_000);
+      });
+
+      it('replays matching begin input after the run reaches a terminal status', () => {
+        const scopedAdapter = createAdapter(tempDbPath('terminal-replay'));
+        const input = {
+          model_run_id: 'mr_terminal_replay',
+          agent_id: 'agent-alias',
+          envelope_hash: 'env_alias_terminal_replay',
+          input_refs: {
+            tool: 'entity.alias',
+            request_idempotency_key: 'alias-key-terminal-replay',
+          },
+          created_at: 4_500,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+        const committed = commitModelRunInAdapter(scopedAdapter, input.model_run_id, 'done');
+
+        expect(beginModelRunInAdapter(scopedAdapter, input)).toEqual(committed);
+      });
+
       it('rejects underspecified duplicate model run ids instead of binding to an existing run', () => {
         const scopedAdapter = createAdapter(tempDbPath('underspecified'));
         const input = {
@@ -181,6 +276,45 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
             request_idempotency_key: 'alias-key-existing',
           },
         });
+      });
+
+      it('rejects empty input refs as an idempotency discriminator', () => {
+        const scopedAdapter = createAdapter(tempDbPath('empty-input-refs'));
+        const input = {
+          model_run_id: 'mr_empty_input_refs',
+          input_refs: {},
+          created_at: 5_500,
+        };
+
+        beginModelRunInAdapter(scopedAdapter, input);
+
+        expect(() => beginModelRunInAdapter(scopedAdapter, input)).toThrow(
+          /idempotency discriminator/
+        );
+      });
+
+      it('rejects empty stable input ref values as idempotency discriminators', () => {
+        const scopedAdapter = createAdapter(tempDbPath('empty-stable-input-ref-values'));
+        const cases = [
+          ['empty_string', ''],
+          ['blank_string', '  '],
+          ['empty_object', {}],
+          ['empty_array', []],
+        ] as const;
+
+        for (const [label, requestIdempotencyKey] of cases) {
+          const input = {
+            model_run_id: `mr_empty_stable_input_ref_${label}`,
+            input_refs: { request_idempotency_key: requestIdempotencyKey },
+            created_at: 5_600,
+          };
+
+          beginModelRunInAdapter(scopedAdapter, input);
+
+          expect(() => beginModelRunInAdapter(scopedAdapter, input)).toThrow(
+            /idempotency discriminator/
+          );
+        }
       });
 
       it('rejects conflicting deterministic replays and preserves the original row', () => {
@@ -255,6 +389,41 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
             request_idempotency_key: 'legacy-key',
           },
         });
+      });
+
+      it('rethrows non-duplicate insert errors instead of treating them as replay success', () => {
+        let selectCount = 0;
+        const adapter: ModelRunAdapterForTest = {
+          prepare(sql: string) {
+            if (/FROM model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                get() {
+                  selectCount += 1;
+                  return selectCount === 1 ? undefined : modelRunRow();
+                },
+              });
+            }
+            if (/INSERT INTO model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                run() {
+                  throw new Error('SQLITE_BUSY: database is locked');
+                },
+              });
+            }
+            throw new Error(`Unexpected SQL in fake adapter: ${sql}`);
+          },
+        };
+
+        expect(() =>
+          beginModelRunInAdapter(adapter, {
+            model_run_id: 'mr_fake',
+            agent_id: 'agent-fake',
+            envelope_hash: 'env_fake',
+            input_refs: { request_idempotency_key: 'fake-key' },
+            created_at: 10_000,
+          })
+        ).toThrow(/SQLITE_BUSY/);
+        expect(selectCount).toBe(1);
       });
     });
 
