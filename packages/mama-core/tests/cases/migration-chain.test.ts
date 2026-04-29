@@ -291,4 +291,78 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 035 twin edge ledger table and indexes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(tableExists(db, 'twin_edges')).toBe(true);
+
+    const sql = (
+      db
+        .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='twin_edges'")
+        .get() as { sql: string }
+    ).sql;
+    for (const edgeType of [
+      'supersedes',
+      'builds_on',
+      'debates',
+      'synthesizes',
+      'mentions',
+      'derived_from',
+      'case_member',
+      'alias_of',
+      'next_action_for',
+      'blocks',
+    ]) {
+      expect(sql).toContain(edgeType);
+    }
+    expect(sql).toMatch(/subject_kind\s+TEXT\s+NOT\s+NULL\s+CHECK/i);
+    expect(sql).toMatch(/object_kind\s+TEXT\s+NOT\s+NULL\s+CHECK/i);
+    expect(sql).toMatch(
+      /content_hash\s+BLOB\s+NOT\s+NULL\s+CHECK\s*\(\s*length\s*\(\s*content_hash\s*\)\s*=\s*32\s*\)/i
+    );
+
+    for (const column of [
+      'edge_id',
+      'edge_type',
+      'subject_kind',
+      'subject_id',
+      'object_kind',
+      'object_id',
+      'relation_attrs_json',
+      'confidence',
+      'source',
+      'agent_id',
+      'model_run_id',
+      'envelope_hash',
+      'human_actor_id',
+      'human_actor_role',
+      'authority_scope_json',
+      'reason_classification',
+      'reason_text',
+      'evidence_refs_json',
+      'request_idempotency_key',
+      'edge_idempotency_key',
+      'content_hash',
+      'created_at',
+    ]) {
+      expect(columnExists(db, 'twin_edges', column)).toBe(true);
+    }
+
+    expect(indexExists(db, 'idx_twin_edges_subject')).toBe(true);
+    expect(indexExists(db, 'idx_twin_edges_object')).toBe(true);
+    expect(indexExists(db, 'idx_twin_edges_model_run_id')).toBe(true);
+    expect(indexExists(db, 'idx_twin_edges_request_idempotency')).toBe(true);
+    expect(indexExists(db, 'ux_twin_edges_model_run_edge_idempotency')).toBe(true);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 35')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(35);
+    expect(row?.description).toContain('twin edge ledger');
+
+    db.close();
+  });
 });
