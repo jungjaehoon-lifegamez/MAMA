@@ -134,11 +134,29 @@ export {
   listRecentMemoryEvents,
 } from './memory/event-store.js';
 export {
+  createTrustedProvenanceCapability,
+  assertTrustedProvenanceCapability,
+  type TrustedProvenanceCapability,
+  type TrustedMemoryWriteOptions,
+} from './memory/provenance.js';
+export {
   getMemoryProvenance,
   listMemoriesByEnvelopeHash,
   listMemoriesByGatewayCallId,
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
+export {
+  backfillLegacyMemoryProvenance,
+  backfillConnectorEventScopeMetadata,
+  type BackfillResult,
+  type ConnectorEventScopeBackfillInput,
+} from './memory/scope-backfill.js';
+export {
+  getMemoryProvenanceAudit,
+  listMemoryProvenanceAudit,
+  type MemoryProvenanceAuditRecord,
+  type MemoryProvenanceAuditListOptions,
+} from './memory/provenance-audit.js';
 export {
   MODEL_RUN_STATUSES,
   type ModelRunStatus,
