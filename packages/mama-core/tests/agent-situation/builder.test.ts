@@ -310,5 +310,46 @@ describe('Story M5: Agent situation source readers and builder', () => {
         beforeCounts.edges
       );
     });
+
+    it('counts edge coverage only for the connector and scope row that owns the edge endpoints', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+      const filters: AgentSituationEffectiveFilters = {
+        ...EFFECTIVE_FILTERS,
+        scopes: [
+          { kind: 'project', id: 'repo-a' },
+          { kind: 'project', id: 'repo-b' },
+        ],
+        project_refs: [
+          { kind: 'project', id: 'repo-a' },
+          { kind: 'project', id: 'repo-b' },
+        ],
+      };
+
+      const packet = buildAgentSituationPacketRecord(adapter, {
+        scope: filters.scopes,
+        range_start_ms: 1_000,
+        range_end_ms: 2_000,
+        focus: ['decisions', 'risks'],
+        limit: 7,
+        effective_filters: filters,
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        model_run_id: 'mr-a',
+        now_ms: 2_000,
+      });
+
+      const repoBCoverage = packet.source_coverage.find(
+        (coverage) => coverage.memory_scope.id === 'repo-b'
+      );
+
+      expect(repoBCoverage).toMatchObject({
+        raw_count: 1,
+        memory_count: 1,
+        case_count: 0,
+        edge_count: 0,
+        last_seen: '1970-01-01T00:00:01.800Z',
+      });
+    });
   });
 });
