@@ -126,6 +126,11 @@ function mapConnectorEventIndexRow(row: Record<string, unknown>): ConnectorEvent
         : null,
     event_date: row.event_date === null ? null : String(row.event_date),
     source_timestamp_ms: Number(row.source_timestamp_ms),
+    source_cursor: row.source_cursor === null ? null : String(row.source_cursor),
+    tenant_id: row.tenant_id === null ? null : String(row.tenant_id),
+    project_id: row.project_id === null ? null : String(row.project_id),
+    memory_scope_kind: row.memory_scope_kind === null ? null : String(row.memory_scope_kind),
+    memory_scope_id: row.memory_scope_id === null ? null : String(row.memory_scope_id),
     metadata_json: row.metadata_json === null ? null : String(row.metadata_json),
     artifact_locator: row.artifact_locator === null ? null : String(row.artifact_locator),
     artifact_title: row.artifact_title === null ? null : String(row.artifact_title),
@@ -216,10 +221,11 @@ export function upsertConnectorEventIndex(
           INSERT INTO connector_event_index (
             event_index_id, source_connector, source_type, source_id, source_locator,
             channel, author, title, content, event_datetime, event_date, source_timestamp_ms,
-            metadata_json, artifact_locator, artifact_title, content_hash, indexed_at,
-            updated_at, expires_at
+            source_cursor, tenant_id, project_id, memory_scope_kind, memory_scope_id,
+            metadata_json, artifact_locator, artifact_title, content_hash, indexed_at, updated_at,
+            expires_at
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(source_connector, source_id) DO UPDATE SET
             source_type = excluded.source_type,
             source_locator = excluded.source_locator,
@@ -230,6 +236,11 @@ export function upsertConnectorEventIndex(
             event_datetime = excluded.event_datetime,
             event_date = excluded.event_date,
             source_timestamp_ms = excluded.source_timestamp_ms,
+            source_cursor = excluded.source_cursor,
+            tenant_id = excluded.tenant_id,
+            project_id = excluded.project_id,
+            memory_scope_kind = excluded.memory_scope_kind,
+            memory_scope_id = excluded.memory_scope_id,
             metadata_json = excluded.metadata_json,
             artifact_locator = excluded.artifact_locator,
             artifact_title = excluded.artifact_title,
@@ -251,6 +262,11 @@ export function upsertConnectorEventIndex(
         eventDatetime,
         eventDate,
         sourceTimestampMs,
+        input.source_cursor ?? null,
+        input.tenant_id ?? null,
+        input.project_id ?? null,
+        input.memory_scope_kind ?? null,
+        input.memory_scope_id ?? null,
         metadataJson,
         input.artifact_locator ?? null,
         input.artifact_title ?? null,

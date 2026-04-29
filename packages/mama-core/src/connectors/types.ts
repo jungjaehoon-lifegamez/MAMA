@@ -13,6 +13,11 @@ export interface ConnectorEventIndexRecord {
   event_datetime: number | null;
   event_date: string | null;
   source_timestamp_ms: number;
+  source_cursor: string | null;
+  tenant_id: string | null;
+  project_id: string | null;
+  memory_scope_kind: string | null;
+  memory_scope_id: string | null;
   metadata_json: string | null;
   artifact_locator: string | null;
   artifact_title: string | null;
@@ -34,6 +39,11 @@ export interface UpsertConnectorEventIndexInput {
   event_datetime?: number | null;
   event_date?: string | null;
   source_timestamp_ms?: number | null;
+  source_cursor?: string | null;
+  tenant_id?: string | null;
+  project_id?: string | null;
+  memory_scope_kind?: string | null;
+  memory_scope_id?: string | null;
   metadata_json?: string | null;
   metadata?: unknown;
   artifact_locator?: string | null;

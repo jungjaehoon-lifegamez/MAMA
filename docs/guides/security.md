@@ -139,6 +139,36 @@ or sensitive payload bodies. For memory-scope visibility, provenance reads use
 `memory_scope_bindings` as the source of truth instead of trusting provenance
 JSON.
 
+M2 scope read/backfill adds two operational guarantees:
+
+- Legacy memory rows can be marked with explicit `legacy` provenance without
+  inventing envelope hashes, model run ids, source refs, or scope bindings.
+- Connector raw metadata keeps real evidence hashes and only fills
+  tenant/project/scope/cursor fields when those values are explicitly known.
+
+Admin memory provenance reads are exposed only through:
+
+```text
+GET /api/memory/provenance/:memoryId
+GET /api/memory/provenance?envelope_hash=...
+GET /api/memory/provenance?model_run_id=...
+GET /api/memory/provenance?gateway_call_id=...
+```
+
+These routes require `Authorization: Bearer <MAMA_ADMIN_TOKEN>`. Normal
+`MAMA_AUTH_TOKEN`, localhost-only access, and Cloudflare Access identity headers
+do not grant admin provenance access. If `MAMA_ADMIN_TOKEN` is unset, the route
+returns an explicit disabled/admin-token-required response. The response is a
+compact lineage view: memory id, topic, summary, envelope hash, model run id,
+gateway call id, tool name, latest save event, scope refs, and legacy caveats.
+It intentionally does not return prompt text, full tool arguments, raw tool
+results, or raw connector payloads.
+
+Scoped operator views remain out of scope until the API has an authenticated
+principal with memory scopes. The admin provenance endpoint rejects
+caller-supplied scope query params instead of pretending query-time scope
+narrowing is a security boundary.
+
 ---
 
 ## Localhost-Only Mode (Default)

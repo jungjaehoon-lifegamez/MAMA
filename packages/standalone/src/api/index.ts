@@ -19,7 +19,7 @@ import { countScopeMismatches, initAgentTables } from '../db/agent-store.js';
 import { applyTokenUsageAgentVersionMigration } from '../db/migrations/token-usage-agent-version.js';
 import { createSkillsRouter } from './skills-handler.js';
 import { errorHandler, notFoundHandler } from './error-handler.js';
-import { requireAuth } from './auth-middleware.js';
+import { requireAdminAuth, requireAuth } from './auth-middleware.js';
 import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
@@ -28,6 +28,7 @@ import { createReportRouter, createReportStore } from './report-handler.js';
 import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
+import { createMemoryProvenanceRouter } from './memory-provenance-handler.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -168,6 +169,10 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     }
     next();
   });
+
+  // Admin provenance reads require a separate admin token and must be mounted
+  // before the broad /api auth gate so normal API tokens cannot reach them.
+  app.use('/api/memory/provenance', requireAdminAuth, createMemoryProvenanceRouter());
 
   // Global auth gate for ALL /api/* routes
   // When MAMA_AUTH_TOKEN is set, every /api request must carry a valid Bearer token.

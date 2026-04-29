@@ -257,4 +257,38 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 034 connector event scope columns and indexes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    for (const column of [
+      'source_cursor',
+      'tenant_id',
+      'project_id',
+      'memory_scope_kind',
+      'memory_scope_id',
+    ]) {
+      expect(columnExists(db, 'connector_event_index', column)).toBe(true);
+    }
+
+    const contentHash = (
+      db.prepare(`PRAGMA table_info(connector_event_index)`).all() as Array<{
+        name: string;
+        type: string;
+      }>
+    ).find((column) => column.name === 'content_hash');
+    expect(contentHash?.type.toUpperCase()).toBe('BLOB');
+    expect(indexExists(db, 'idx_connector_event_scope')).toBe(true);
+    expect(indexExists(db, 'idx_connector_event_source_cursor')).toBe(true);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 34')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(34);
+    expect(row?.description).toContain('connector event scope');
+
+    db.close();
+  });
 });
