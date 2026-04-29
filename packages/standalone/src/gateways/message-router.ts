@@ -72,14 +72,17 @@ export interface AgentLoopClient {
   /**
    * Run the agent loop with a prompt
    */
-  run(prompt: string, options?: AgentLoopOptions): Promise<{ response: string }>;
+  run(
+    prompt: string,
+    options?: AgentLoopOptions
+  ): Promise<{ response: string; modelRunId?: string | null }>;
   /**
    * Run the agent loop with multimodal content
    */
   runWithContent?(
     content: ContentBlock[],
     options?: AgentLoopOptions
-  ): Promise<{ response: string }>;
+  ): Promise<{ response: string; modelRunId?: string | null }>;
 }
 
 export interface MemoryAgentProcessLike {
@@ -364,6 +367,7 @@ export class MessageRouter {
       const result = await process.sendMessage(this.buildMemoryAuditPrompt(job), {
         sourceTurnId: job.turnId,
         sourceMessageRef: [job.source, job.channelId, job.turnId].filter(Boolean).join(':'),
+        parentModelRunId: job.parentModelRunId,
       });
       if (
         result &&
@@ -725,6 +729,7 @@ This protects your credentials from being exposed in chat logs.`;
     }
 
     let response: string;
+    let parentModelRunId: string | undefined;
 
     // Skill on-demand injection: prepend matched skill content to user message
     // (not system prompt — PersistentCLI can't update system prompt after creation)
@@ -857,6 +862,7 @@ This protects your credentials from being exposed in chat logs.`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.runWithContent(contentBlocks, options);
         response = result.response;
+        parentModelRunId = result.modelRunId ?? undefined;
         this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       } else {
         const pageCtx = this.getPageContextPrefix(message);
@@ -864,6 +870,7 @@ This protects your credentials from being exposed in chat logs.`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
+        parentModelRunId = result.modelRunId ?? undefined;
         this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       }
 
@@ -878,7 +885,8 @@ This protects your credentials from being exposed in chat logs.`;
               rawAssistantText,
               message,
               sourceTurnId,
-              sourceMessageRef
+              sourceMessageRef,
+              parentModelRunId
             );
           } catch {
             /* non-fatal */
@@ -1521,7 +1529,8 @@ INSTRUCTION:
     botResponse: string,
     message?: NormalizedMessage,
     sourceTurnId?: string,
-    _sourceMessageRef?: string
+    _sourceMessageRef?: string,
+    parentModelRunId?: string
   ): Promise<void> {
     const memoryAuditQueue = this.memoryAuditQueue;
     if (!this.memoryAgentProcessManager || !memoryAuditQueue) {
@@ -1584,6 +1593,7 @@ INSTRUCTION:
       source,
       channelId,
       userId,
+      parentModelRunId,
       scopeContext: scopes,
       conversation: content,
       candidates,
@@ -1715,7 +1725,10 @@ export function createMockAgentLoop(
   responseGenerator: (prompt: string) => string = () => 'Mock response'
 ): AgentLoopClient {
   return {
-    async run(prompt: string, _options?: AgentLoopOptions): Promise<{ response: string }> {
+    async run(
+      prompt: string,
+      _options?: AgentLoopOptions
+    ): Promise<{ response: string; modelRunId?: string | null }> {
       return { response: responseGenerator(prompt) };
     },
   };

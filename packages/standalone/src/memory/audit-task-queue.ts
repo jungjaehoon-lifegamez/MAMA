@@ -7,6 +7,7 @@ export interface MemoryAuditJob {
   source?: string;
   channelId?: string;
   userId?: string;
+  parentModelRunId?: string;
   scopeContext: MemoryScopeRef[];
   conversation: string;
   candidates?: SaveCandidate[];

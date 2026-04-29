@@ -53,7 +53,9 @@ export class PostToolHandler {
       return;
     }
 
-    this.processAsync(toolName, input, result, executionContext).catch(() => {});
+    const task = this.processAsync(toolName, input, result, executionContext);
+    executionContext?.backgroundTasks?.register(task);
+    void task.catch(() => {});
   }
 
   private async processAsync(
