@@ -904,6 +904,7 @@ export class AgentLoop {
     // Claude PersistentCLI: process alive → CONTINUE (stdin message), process dead → NEW (spawn with --session-id)
     // Codex: threadId alive → CONTINUE (codex-reply), threadId null → NEW (codex tool)
     const isCodex = this.backend === 'codex-mcp';
+    let resolvedCliSessionId: string | null = options?.cliSessionId ?? null;
 
     const sessionLabel = (isNew: boolean): string => {
       if (isCodex) {
@@ -926,6 +927,7 @@ export class AgentLoop {
       }
       sessionIsNew = isNew;
       ownedSession = true;
+      resolvedCliSessionId = cliSessionId;
       this.agent.setSessionId(cliSessionId);
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
@@ -935,7 +937,7 @@ export class AgentLoop {
     try {
       if (this.shouldBeginModelRun(options)) {
         const modelRun = await this.mcpExecutor.beginRuntimeModelRun(
-          this.buildModelRunInput(options)
+          this.buildModelRunInput(options, resolvedCliSessionId)
         );
         ownedModelRunId = modelRun.model_run_id;
         toolExecutionContext = this.withBackgroundTaskRegistry(
@@ -1382,10 +1384,20 @@ export class AgentLoop {
         stopReason,
         modelRunId: ownedModelRunId ?? options?.modelRunId ?? null,
       };
-      await this.drainBackgroundTasks(pendingBackgroundTasks);
-      if (ownedModelRunId) {
-        await this.mcpExecutor.commitRuntimeModelRun(ownedModelRunId, 'agent_loop completed');
-        ownedModelRunCommitted = true;
+      try {
+        await this.drainBackgroundTasks(pendingBackgroundTasks);
+        if (ownedModelRunId) {
+          await this.mcpExecutor.commitRuntimeModelRun(ownedModelRunId, 'agent_loop completed');
+          ownedModelRunCommitted = true;
+        }
+      } catch (finalizationError) {
+        logger.warn(
+          `AgentLoop post-run finalization failed: ${
+            finalizationError instanceof Error
+              ? finalizationError.message
+              : String(finalizationError)
+          }`
+        );
       }
       return result;
     } catch (error) {
@@ -1435,7 +1447,10 @@ export class AgentLoop {
     }
   }
 
-  private buildModelRunInput(options?: AgentLoopOptions): BeginModelRunInput {
+  private buildModelRunInput(
+    options?: AgentLoopOptions,
+    resolvedCliSessionId?: string | null
+  ): BeginModelRunInput {
     const agentContext = options?.agentContext;
     return {
       model_id: options?.model ?? this.model ?? null,
@@ -1454,7 +1469,7 @@ export class AgentLoop {
         entrypoint: 'agent_loop',
         ...(options?.sourceTurnId ? { sourceTurnId: options.sourceTurnId } : {}),
         ...(options?.sourceMessageRef ? { sourceMessageRef: options.sourceMessageRef } : {}),
-        ...(options?.cliSessionId ? { cliSessionId: options.cliSessionId } : {}),
+        ...(resolvedCliSessionId ? { cliSessionId: resolvedCliSessionId } : {}),
       },
     };
   }

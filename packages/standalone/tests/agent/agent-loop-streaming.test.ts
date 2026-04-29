@@ -59,28 +59,6 @@ vi.mock('../../src/agent/session-pool.js', () => {
   };
 });
 
-// Mock the GatewayToolExecutor
-vi.mock('../../src/agent/gateway-tool-executor.js', () => {
-  return {
-    GatewayToolExecutor: vi.fn().mockImplementation(() => ({
-      setDiscordGateway: vi.fn(),
-      beginRuntimeModelRun: vi.fn().mockResolvedValue({
-        model_run_id: 'mr_streaming_mock',
-        status: 'running',
-      }),
-      commitRuntimeModelRun: vi.fn().mockResolvedValue({
-        model_run_id: 'mr_streaming_mock',
-        status: 'committed',
-      }),
-      failRuntimeModelRun: vi.fn().mockResolvedValue({
-        model_run_id: 'mr_streaming_mock',
-        status: 'failed',
-      }),
-      execute: vi.fn().mockResolvedValue({ success: true }),
-    })),
-  };
-});
-
 // Mock the lane manager
 vi.mock('../../src/concurrency/index.js', () => {
   return {
@@ -114,6 +92,84 @@ describe('AgentLoop - Streaming Detection', () => {
     suggest: vi.fn().mockResolvedValue({ success: true, results: [], count: 0 }),
     updateOutcome: vi.fn().mockResolvedValue({ success: true }),
     loadCheckpoint: vi.fn().mockResolvedValue({ success: true }),
+    beginModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_streaming_real_executor',
+      model_id: null,
+      model_provider: null,
+      prompt_version: null,
+      tool_manifest_version: null,
+      output_schema_version: null,
+      agent_id: null,
+      instance_id: null,
+      envelope_hash: null,
+      parent_model_run_id: null,
+      input_snapshot_ref: null,
+      input_refs_json: null,
+      input_refs: null,
+      completion_summary: null,
+      status: 'running',
+      error_summary: null,
+      token_count: 0,
+      cost_estimate: null,
+      created_at: 1,
+      completed_at: null,
+    }),
+    commitModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_streaming_real_executor',
+      model_id: null,
+      model_provider: null,
+      prompt_version: null,
+      tool_manifest_version: null,
+      output_schema_version: null,
+      agent_id: null,
+      instance_id: null,
+      envelope_hash: null,
+      parent_model_run_id: null,
+      input_snapshot_ref: null,
+      input_refs_json: null,
+      input_refs: null,
+      completion_summary: 'agent_loop completed',
+      status: 'committed',
+      error_summary: null,
+      token_count: 0,
+      cost_estimate: null,
+      created_at: 1,
+      completed_at: 2,
+    }),
+    failModelRun: vi.fn().mockResolvedValue({
+      model_run_id: 'mr_streaming_real_executor',
+      model_id: null,
+      model_provider: null,
+      prompt_version: null,
+      tool_manifest_version: null,
+      output_schema_version: null,
+      agent_id: null,
+      instance_id: null,
+      envelope_hash: null,
+      parent_model_run_id: null,
+      input_snapshot_ref: null,
+      input_refs_json: null,
+      input_refs: null,
+      completion_summary: null,
+      status: 'failed',
+      error_summary: 'failed',
+      token_count: 0,
+      cost_estimate: null,
+      created_at: 1,
+      completed_at: 2,
+    }),
+    appendToolTrace: vi.fn().mockResolvedValue({
+      trace_id: 'trace_streaming_real_executor',
+      model_run_id: 'mr_streaming_real_executor',
+      gateway_call_id: null,
+      tool_name: 'noop',
+      input_summary: null,
+      output_summary: null,
+      execution_status: 'completed',
+      duration_ms: 0,
+      envelope_hash: null,
+      created_at: 1,
+    }),
   });
 
   let agentLoop: AgentLoop;

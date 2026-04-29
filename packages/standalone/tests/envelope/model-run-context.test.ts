@@ -216,6 +216,62 @@ describe('Story M2.2: AgentLoop Model Run Context', () => {
         expect(api.saveWithTrustedProvenance).toHaveBeenCalled();
         expect(api.commitModelRun).toHaveBeenCalledWith('mr_agent_loop', 'agent_loop completed');
       });
+
+      it('records the resolved CLI session id when the session pool selects it', async () => {
+        promptSpy.mockResolvedValueOnce({
+          response: 'Done',
+          usage: { input_tokens: 3, output_tokens: 2 },
+        });
+
+        const api = createApi();
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {},
+          {},
+          { mamaApi: api, envelopeIssuanceMode: 'off' }
+        );
+
+        await agentLoop.run('respond once', {
+          source: 'discord',
+          channelId: 'channel-1',
+          agentContext: createAgentContext(),
+        });
+
+        expect(api.beginModelRun).toHaveBeenCalledOnce();
+        expect(api.beginModelRun.mock.calls[0][0].input_refs).toEqual(
+          expect.objectContaining({
+            cliSessionId: expect.any(String),
+          })
+        );
+      });
+
+      it('does not fail the model run when post-run finalization fails', async () => {
+        promptSpy.mockResolvedValueOnce({
+          response: 'Done',
+          usage: { input_tokens: 3, output_tokens: 2 },
+        });
+
+        const api = createApi();
+        api.commitModelRun.mockRejectedValueOnce(new Error('commit store unavailable'));
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {},
+          {},
+          { mamaApi: api, envelopeIssuanceMode: 'off' }
+        );
+
+        const result = await agentLoop.run('respond once', {
+          source: 'discord',
+          channelId: 'channel-1',
+          agentContext: createAgentContext(),
+          cliSessionId: 'cli-session-1',
+          resumeSession: true,
+        });
+
+        expect(result.response).toBe('Done');
+        expect(api.commitModelRun).toHaveBeenCalledWith('mr_agent_loop', 'agent_loop completed');
+        expect(api.failModelRun).not.toHaveBeenCalled();
+      });
     });
   });
 });

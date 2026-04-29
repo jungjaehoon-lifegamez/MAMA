@@ -935,45 +935,38 @@ export class GatewayToolExecutor {
     const ctx = { ...baseCtx, gatewayCallId };
     const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
+    const activeCtx = traceState ? { ...ctx, modelRunId: traceState.modelRunId } : ctx;
 
+    let result!: GatewayToolResult;
     try {
-      const result = await this.executionContextStorage.run(ctx, () =>
+      result = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, input, gatewayCallId)
       );
-      await this.appendToolTraceIfNeeded(
-        traceState,
-        ctx,
-        toolName,
-        result,
-        Date.now() - startedAt,
-        gatewayCallId
-      );
-      await this.completeDirectModelRunIfNeeded(traceState, toolName, result);
-      this.logGatewayToolCall(
-        ctx,
-        toolName,
-        result,
-        Date.now() - startedAt,
-        scopeAudit,
-        gatewayCallId
-      );
-      if (scopeAudit.mismatch) {
-        this.alarmScopeMismatch(ctx, toolName);
-      }
-      return result;
     } catch (error) {
       await this.appendToolTraceIfNeeded(
         traceState,
-        ctx,
+        activeCtx,
         toolName,
         undefined,
         Date.now() - startedAt,
         gatewayCallId,
         error
+      ).catch((appendError: unknown) => {
+        securityLogger.warn(
+          '[model-run] failed to append failed tool trace before finalization',
+          appendError
+        );
+      });
+      await this.failDirectModelRunIfNeeded(traceState, toolName, error).catch(
+        (finalizationError: unknown) => {
+          securityLogger.warn(
+            '[model-run] failed to finalize failed direct model run',
+            finalizationError
+          );
+        }
       );
-      await this.failDirectModelRunIfNeeded(traceState, toolName, error);
       this.logGatewayToolCall(
-        ctx,
+        activeCtx,
         toolName,
         undefined,
         Date.now() - startedAt,
@@ -982,10 +975,52 @@ export class GatewayToolExecutor {
         error
       );
       if (scopeAudit.mismatch) {
-        this.alarmScopeMismatch(ctx, toolName);
+        this.alarmScopeMismatch(activeCtx, toolName);
       }
       throw error;
     }
+
+    try {
+      try {
+        await this.appendToolTraceIfNeeded(
+          traceState,
+          activeCtx,
+          toolName,
+          result,
+          Date.now() - startedAt,
+          gatewayCallId
+        );
+      } finally {
+        await this.completeDirectModelRunIfNeeded(traceState, toolName, result);
+      }
+    } catch (postRunError) {
+      this.logGatewayToolCall(
+        activeCtx,
+        toolName,
+        result,
+        Date.now() - startedAt,
+        scopeAudit,
+        gatewayCallId,
+        postRunError
+      );
+      if (scopeAudit.mismatch) {
+        this.alarmScopeMismatch(activeCtx, toolName);
+      }
+      throw postRunError;
+    }
+
+    this.logGatewayToolCall(
+      activeCtx,
+      toolName,
+      result,
+      Date.now() - startedAt,
+      scopeAudit,
+      gatewayCallId
+    );
+    if (scopeAudit.mismatch) {
+      this.alarmScopeMismatch(activeCtx, toolName);
+    }
+    return result;
   }
 
   private async beginTraceIfNeeded(

@@ -172,6 +172,34 @@ describe('Story M2.2: Model Run Ledger', () => {
         });
       });
 
+      it('rejects invalid input refs before inserting a model run row', async () => {
+        await expect(
+          beginModelRun({
+            model_run_id: 'mr_invalid_input_refs_json',
+            input_refs_json: 'not json',
+          })
+        ).rejects.toThrow(/Invalid model_runs\.input_refs_json/);
+        await expect(getModelRun('mr_invalid_input_refs_json')).resolves.toBeNull();
+
+        await expect(
+          beginModelRun({
+            model_run_id: 'mr_non_object_input_refs_json',
+            input_refs_json: '"not an object"',
+          })
+        ).rejects.toThrow(/model_runs\.input_refs_json/);
+        await expect(getModelRun('mr_non_object_input_refs_json')).resolves.toBeNull();
+
+        const circular: Record<string, unknown> = {};
+        circular.self = circular;
+        await expect(
+          beginModelRun({
+            model_run_id: 'mr_circular_input_refs',
+            input_refs: circular,
+          })
+        ).rejects.toThrow(/Invalid model_runs\.input_refs/);
+        await expect(getModelRun('mr_circular_input_refs')).resolves.toBeNull();
+      });
+
       it('commits a model run and persists the completion summary', async () => {
         await beginModelRun({
           model_run_id: 'mr_store_commit',

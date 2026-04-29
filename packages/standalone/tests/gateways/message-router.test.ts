@@ -589,38 +589,42 @@ describe('MessageRouter', () => {
       });
     });
 
-    it('should pass the main model run id as the memory-agent parent model run id', async () => {
-      const agentLoop = {
-        async run(): Promise<{ response: string; modelRunId: string }> {
-          return { response: 'Saved.', modelRunId: 'mr_main_turn' };
-        },
-      };
-      const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
-      const sendMessage = vi.fn().mockResolvedValue({
-        response: 'DONE',
-        ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved' },
-      });
+    describe('Story M2.2: Memory agent model-run parentage', () => {
+      describe('Acceptance Criteria', () => {
+        it('should pass the main model run id as the memory-agent parent model run id', async () => {
+          const agentLoop = {
+            async run(): Promise<{ response: string; modelRunId: string }> {
+              return { response: 'Saved.', modelRunId: 'mr_main_turn' };
+            },
+          };
+          const mamaApi = createMockMamaApi(mockDecisions);
+          const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+          const sendMessage = vi.fn().mockResolvedValue({
+            response: 'DONE',
+            ack: { status: 'applied', action: 'save', event_ids: [], reason: 'saved' },
+          });
 
-      customRouter.setMemoryAgent({
-        getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
-      } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
+          customRouter.setMemoryAgent({
+            getSharedProcess: vi.fn().mockResolvedValue({ sendMessage }),
+          } as unknown as import('../../src/multi-agent/agent-process-manager.js').AgentProcessManager);
 
-      await customRouter.process({
-        source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
-        text: 'Use SQLite as the default database going forward. Remember this.',
-      });
+          await customRouter.process({
+            source: 'telegram',
+            channelId: '7026976631',
+            userId: '7026976631',
+            text: 'Use SQLite as the default database going forward. Remember this.',
+          });
 
-      await vi.waitFor(() => {
-        expect(sendMessage).toHaveBeenCalled();
+          await vi.waitFor(() => {
+            expect(sendMessage).toHaveBeenCalled();
+          });
+          expect(sendMessage.mock.calls[0][1]).toEqual(
+            expect.objectContaining({
+              parentModelRunId: 'mr_main_turn',
+            })
+          );
+        });
       });
-      expect(sendMessage.mock.calls[0][1]).toEqual(
-        expect.objectContaining({
-          parentModelRunId: 'mr_main_turn',
-        })
-      );
     });
 
     it('should only drain notices that were present at peek time', async () => {

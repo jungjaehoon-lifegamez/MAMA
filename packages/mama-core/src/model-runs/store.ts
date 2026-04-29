@@ -45,14 +45,33 @@ function normalizeCost(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function requireInputRefsObject(value: unknown, field: string): Record<string, unknown> {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  throw new Error(`model_runs.${field} must be a JSON object`);
+}
+
 function normalizeInputRefsJson(input: BeginModelRunInput): string | null {
   if (typeof input.input_refs_json === 'string') {
+    try {
+      requireInputRefsObject(JSON.parse(input.input_refs_json) as unknown, 'input_refs_json');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Invalid model_runs.input_refs_json: ${message}`);
+    }
     return input.input_refs_json;
   }
   if (input.input_refs === null || input.input_refs === undefined) {
     return null;
   }
-  return JSON.stringify(input.input_refs);
+  const inputRefs = requireInputRefsObject(input.input_refs, 'input_refs');
+  try {
+    return JSON.stringify(inputRefs);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid model_runs.input_refs: ${message}`);
+  }
 }
 
 function parseInputRefs(row: { model_run_id: string; input_refs_json: unknown }): {

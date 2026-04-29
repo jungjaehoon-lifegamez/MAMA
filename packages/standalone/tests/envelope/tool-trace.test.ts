@@ -10,6 +10,7 @@ import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 
 type TraceAwareApi = MAMAApiInterface & {
+  saveWithTrustedProvenance: ReturnType<typeof vi.fn>;
   beginModelRun: ReturnType<typeof vi.fn>;
   commitModelRun: ReturnType<typeof vi.fn>;
   failModelRun: ReturnType<typeof vi.fn>;
@@ -20,6 +21,9 @@ type TraceAwareApi = MAMAApiInterface & {
 function createApi(): TraceAwareApi {
   return {
     save: vi.fn().mockResolvedValue({ success: true, id: 'save_1' }),
+    saveWithTrustedProvenance: vi
+      .fn()
+      .mockResolvedValue({ success: true, id: 'trusted_save_1', type: 'decision' }),
     saveCheckpoint: vi.fn().mockResolvedValue({ success: true, id: 'checkpoint_1' }),
     listDecisions: vi.fn().mockResolvedValue([]),
     suggest: vi.fn().mockResolvedValue({ success: true, results: [], count: 0 }),
@@ -130,6 +134,63 @@ describe('Story M2.2: Gateway Tool Trace Runtime', () => {
         expect(api.failModelRun).not.toHaveBeenCalled();
       });
 
+      it('exposes the direct model run id to trusted memory write provenance', async () => {
+        const api = createApi();
+        api.saveWithTrustedProvenance = vi
+          .fn()
+          .mockResolvedValue({ success: true, id: 'save_1', type: 'decision' });
+        const executor = new GatewayToolExecutor({
+          mamaApi: api,
+          envelopeIssuanceMode: 'enabled',
+        });
+
+        const result = await executor.execute(
+          'mama_save',
+          {
+            type: 'decision',
+            topic: 'direct_model_run',
+            decision: 'Direct runs are visible to trusted provenance',
+            reasoning:
+              'The direct GatewayToolExecutor context should include the generated model run id.',
+          },
+          {
+            source: 'cli',
+            channelId: 'local',
+            executionSurface: 'direct',
+          }
+        );
+
+        expect(result).toMatchObject({ success: true });
+        expect(api.saveWithTrustedProvenance).toHaveBeenCalledOnce();
+        expect(api.saveWithTrustedProvenance.mock.calls[0][1].provenance.model_run_id).toBe(
+          'mr_direct_trace'
+        );
+      });
+
+      it('commits a successful direct model run even when trace insertion fails', async () => {
+        const api = createApi();
+        api.appendToolTrace.mockRejectedValueOnce(new Error('trace insert failed'));
+        const executor = new GatewayToolExecutor({
+          mamaApi: api,
+          envelopeIssuanceMode: 'enabled',
+        });
+
+        await expect(
+          executor.execute(
+            'mama_search',
+            { query: 'direct lineage' },
+            {
+              source: 'cli',
+              channelId: 'local',
+              executionSurface: 'direct',
+            }
+          )
+        ).rejects.toThrow(/trace insert failed/);
+
+        expect(api.commitModelRun).toHaveBeenCalledWith('mr_direct_trace', 'mama_search completed');
+        expect(api.failModelRun).not.toHaveBeenCalled();
+      });
+
       it('fails a direct model run when the tool returns success false', async () => {
         const api = createApi();
         const executor = new GatewayToolExecutor({
@@ -159,6 +220,32 @@ describe('Story M2.2: Gateway Tool Trace Runtime', () => {
         expect(api.failModelRun).toHaveBeenCalledWith(
           'mr_direct_trace',
           'mama_save failed: Decision requires: topic, decision, reasoning'
+        );
+      });
+
+      it('fails an errored direct model run even when failure trace insertion fails', async () => {
+        const api = createApi();
+        api.appendToolTrace.mockRejectedValueOnce(new Error('trace insert failed'));
+        const executor = new GatewayToolExecutor({
+          mamaApi: api,
+          envelopeIssuanceMode: 'enabled',
+        });
+
+        await expect(
+          executor.execute(
+            'report_publish',
+            {},
+            {
+              source: 'cli',
+              channelId: 'local',
+              executionSurface: 'direct',
+            }
+          )
+        ).rejects.toThrow(/report_publish requires slots object/);
+
+        expect(api.failModelRun).toHaveBeenCalledWith(
+          'mr_direct_trace',
+          'report_publish failed: report_publish requires slots object'
         );
       });
     });
