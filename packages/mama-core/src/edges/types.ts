@@ -89,6 +89,8 @@ export interface TwinEdgeRecord {
 
 export interface ListVisibleTwinEdgesOptions {
   scopes?: TwinScopeRef[];
+  edgeTypes?: TwinEdgeType[];
+  asOfMs?: number | null;
   limit?: number;
 }
 

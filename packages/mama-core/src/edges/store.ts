@@ -190,13 +190,14 @@ function exists(adapter: TwinEdgeReadAdapter, table: string, column: string, id:
 }
 
 function validateRefExists(adapter: TwinEdgeReadAdapter, ref: TwinRef, field: string): void {
-  if (ref.kind === 'entity' || ref.kind === 'report') {
+  if (ref.kind === 'report') {
     throw new Error(`${field} ${ref.kind}:${ref.id} is not supported by twin_edges yet`);
   }
 
   const found =
     (ref.kind === 'memory' && exists(adapter, 'decisions', 'id', ref.id)) ||
     (ref.kind === 'case' && exists(adapter, 'case_truth', 'case_id', ref.id)) ||
+    (ref.kind === 'entity' && exists(adapter, 'entity_nodes', 'id', ref.id)) ||
     (ref.kind === 'edge' && exists(adapter, 'twin_edges', 'edge_id', ref.id)) ||
     (ref.kind === 'raw' && exists(adapter, 'connector_event_index', 'event_index_id', ref.id));
 
