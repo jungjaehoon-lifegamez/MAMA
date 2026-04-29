@@ -63,6 +63,9 @@ import type {
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
   TrustedMemoryWriteOptions,
+  BeginModelRunInput,
+  ModelRunRecord,
+  AppendToolTraceInput,
 } from './types.js';
 import { AgentError } from './types.js';
 import {
@@ -144,12 +147,20 @@ type ActiveGatewayExecutionContext = {
   modelRunId?: string | null;
   gatewayCallId?: string;
   parentToolName?: string;
+  backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
 };
 
 type ScopeAuditFields = {
   requestedScopes: MemoryScope[] | null;
   envelopeScopesSnapshot: MemoryScope[] | null;
   mismatch: 0 | 1;
+};
+
+type TraceCapableMAMAApi = MAMAApiInterface & {
+  beginModelRun: (input: BeginModelRunInput) => Promise<ModelRunRecord>;
+  commitModelRun: (modelRunId: string, summary?: string) => Promise<ModelRunRecord>;
+  failModelRun: (modelRunId: string, errorSummary: string) => Promise<ModelRunRecord>;
+  appendToolTrace: (input: AppendToolTraceInput) => Promise<unknown>;
 };
 
 const managedAgentMutationTails = new Map<string, Promise<void>>();
@@ -378,6 +389,7 @@ export class GatewayToolExecutor {
       sourceMessageRef: executionContext?.sourceMessageRef,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
+      backgroundTasks: executionContext?.backgroundTasks,
     };
   }
 
@@ -414,6 +426,7 @@ export class GatewayToolExecutor {
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
+      backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
     };
   }
 
@@ -637,6 +650,21 @@ export class GatewayToolExecutor {
     this.refreshDelegationExecutor();
   }
 
+  async beginRuntimeModelRun(input: BeginModelRunInput): Promise<ModelRunRecord> {
+    const api = this.requireTraceApi(await this.initializeMAMAApi(), true);
+    return api.beginModelRun(input);
+  }
+
+  async commitRuntimeModelRun(modelRunId: string, summary?: string): Promise<ModelRunRecord> {
+    const api = this.requireTraceApi(await this.initializeMAMAApi(), true);
+    return api.commitModelRun(modelRunId, summary);
+  }
+
+  async failRuntimeModelRun(modelRunId: string, errorSummary: string): Promise<ModelRunRecord> {
+    const api = this.requireTraceApi(await this.initializeMAMAApi(), true);
+    return api.failModelRun(modelRunId, errorSummary);
+  }
+
   /**
    * Set the current agent context for permission checks
    * @param context - AgentContext with role and permissions
@@ -704,6 +732,12 @@ export class GatewayToolExecutor {
         listMemoriesByEnvelopeHash: mama.listMemoriesByEnvelopeHash?.bind(mama),
         listMemoriesByGatewayCallId: mama.listMemoriesByGatewayCallId?.bind(mama),
         listMemoriesByModelRunId: mama.listMemoriesByModelRunId?.bind(mama),
+        beginModelRun: mama.beginModelRun?.bind(mama),
+        commitModelRun: mama.commitModelRun?.bind(mama),
+        failModelRun: mama.failModelRun?.bind(mama),
+        getModelRun: mama.getModelRun?.bind(mama),
+        appendToolTrace: mama.appendToolTrace?.bind(mama),
+        listToolTracesForRun: mama.listToolTracesForRun?.bind(mama),
         buildProfile: mama.buildProfile?.bind(mama),
         updateOutcome: mama.updateOutcome.bind(mama),
         loadCheckpoint: mama.loadCheckpoint.bind(mama),
@@ -900,11 +934,21 @@ export class GatewayToolExecutor {
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
     const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
+    const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
 
     try {
       const result = await this.executionContextStorage.run(ctx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, input, gatewayCallId)
       );
+      await this.appendToolTraceIfNeeded(
+        traceState,
+        ctx,
+        toolName,
+        result,
+        Date.now() - startedAt,
+        gatewayCallId
+      );
+      await this.completeDirectModelRunIfNeeded(traceState, toolName, result);
       this.logGatewayToolCall(
         ctx,
         toolName,
@@ -918,6 +962,16 @@ export class GatewayToolExecutor {
       }
       return result;
     } catch (error) {
+      await this.appendToolTraceIfNeeded(
+        traceState,
+        ctx,
+        toolName,
+        undefined,
+        Date.now() - startedAt,
+        gatewayCallId,
+        error
+      );
+      await this.failDirectModelRunIfNeeded(traceState, toolName, error);
       this.logGatewayToolCall(
         ctx,
         toolName,
@@ -932,6 +986,134 @@ export class GatewayToolExecutor {
       }
       throw error;
     }
+  }
+
+  private async beginTraceIfNeeded(
+    ctx: ActiveGatewayExecutionContext,
+    gatewayCallId: string
+  ): Promise<{ api: TraceCapableMAMAApi; modelRunId: string; direct: boolean } | null> {
+    if (ctx.modelRunId) {
+      const api = await this.initializeMAMAApi();
+      return {
+        api: this.requireTraceApi(api, false),
+        modelRunId: ctx.modelRunId,
+        direct: false,
+      };
+    }
+
+    if (ctx.executionSurface !== 'direct') {
+      return null;
+    }
+
+    const api = this.requireTraceApi(await this.initializeMAMAApi(), true);
+    const run = await api.beginModelRun({
+      agent_id: 'direct',
+      envelope_hash: null,
+      status: 'running',
+      input_refs: {
+        executionSurface: ctx.executionSurface,
+        source: ctx.source,
+        channelId: ctx.channelId,
+        gateway_call_id: gatewayCallId,
+      },
+    });
+
+    return {
+      api,
+      modelRunId: run.model_run_id,
+      direct: true,
+    };
+  }
+
+  private requireTraceApi(api: MAMAApiInterface, includeLifecycle: boolean): TraceCapableMAMAApi {
+    const missing: string[] = [];
+    if (!api.appendToolTrace) {
+      missing.push('appendToolTrace');
+    }
+    if (includeLifecycle) {
+      if (!api.beginModelRun) {
+        missing.push('beginModelRun');
+      }
+      if (!api.commitModelRun) {
+        missing.push('commitModelRun');
+      }
+      if (!api.failModelRun) {
+        missing.push('failModelRun');
+      }
+    }
+    if (missing.length > 0) {
+      throw new AgentError(
+        `MAMA API missing model-run trace helpers: ${missing.join(', ')}`,
+        'TOOL_ERROR',
+        undefined,
+        false
+      );
+    }
+    return api as TraceCapableMAMAApi;
+  }
+
+  private async appendToolTraceIfNeeded(
+    traceState: { api: TraceCapableMAMAApi; modelRunId: string; direct: boolean } | null,
+    ctx: ActiveGatewayExecutionContext,
+    toolName: string,
+    result: GatewayToolResult | undefined,
+    durationMs: number,
+    gatewayCallId: string,
+    error?: unknown
+  ): Promise<void> {
+    if (!traceState) {
+      return;
+    }
+
+    await traceState.api.appendToolTrace({
+      model_run_id: traceState.modelRunId,
+      gateway_call_id: gatewayCallId,
+      tool_name: toolName,
+      input_summary: `tool:${toolName}`,
+      output_summary: this.summarizeToolTraceOutput(result, error),
+      execution_status: error || result?.success === false ? 'failed' : 'completed',
+      duration_ms: durationMs,
+      envelope_hash: ctx.envelope?.envelope_hash ?? null,
+    });
+  }
+
+  private summarizeToolTraceOutput(result: GatewayToolResult | undefined, error?: unknown): string {
+    if (error) {
+      return (error instanceof Error ? error.message : String(error)).slice(0, 200);
+    }
+    const failure = getFailureMessage(result);
+    if (failure) {
+      return failure.slice(0, 200);
+    }
+    return 'success';
+  }
+
+  private async completeDirectModelRunIfNeeded(
+    traceState: { api: TraceCapableMAMAApi; modelRunId: string; direct: boolean } | null,
+    toolName: string,
+    result: GatewayToolResult
+  ): Promise<void> {
+    if (!traceState?.direct) {
+      return;
+    }
+    const failure = getFailureMessage(result);
+    if (failure) {
+      await traceState.api.failModelRun(traceState.modelRunId, `${toolName} failed: ${failure}`);
+      return;
+    }
+    await traceState.api.commitModelRun(traceState.modelRunId, `${toolName} completed`);
+  }
+
+  private async failDirectModelRunIfNeeded(
+    traceState: { api: TraceCapableMAMAApi; modelRunId: string; direct: boolean } | null,
+    toolName: string,
+    error: unknown
+  ): Promise<void> {
+    if (!traceState?.direct) {
+      return;
+    }
+    const summary = error instanceof Error ? error.message : String(error);
+    await traceState.api.failModelRun(traceState.modelRunId, `${toolName} failed: ${summary}`);
   }
 
   private computeScopeAuditFields(
@@ -1145,7 +1327,7 @@ export class GatewayToolExecutor {
 
   private auditedAutoSave(parentToolName: string, input: SaveInput): void {
     const parentContext = this.executionContextStorage.getStore();
-    void (async () => {
+    const task = (async () => {
       try {
         if (parentContext) {
           const autosaveContext: ActiveGatewayExecutionContext = {
@@ -1162,6 +1344,8 @@ export class GatewayToolExecutor {
         // Autosave is intentionally non-fatal for report/wiki publish tools.
       }
     })();
+    parentContext?.backgroundTasks?.register(task);
+    void task;
   }
 
   private async executeWithEnvelopeAndPermissions(

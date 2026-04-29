@@ -64,6 +64,18 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
   return {
     GatewayToolExecutor: vi.fn().mockImplementation(() => ({
       setDiscordGateway: vi.fn(),
+      beginRuntimeModelRun: vi.fn().mockResolvedValue({
+        model_run_id: 'mr_streaming_mock',
+        status: 'running',
+      }),
+      commitRuntimeModelRun: vi.fn().mockResolvedValue({
+        model_run_id: 'mr_streaming_mock',
+        status: 'committed',
+      }),
+      failRuntimeModelRun: vi.fn().mockResolvedValue({
+        model_run_id: 'mr_streaming_mock',
+        status: 'failed',
+      }),
       execute: vi.fn().mockResolvedValue({ success: true }),
     })),
   };

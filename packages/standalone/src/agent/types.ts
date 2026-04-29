@@ -96,6 +96,10 @@ export interface AgentContext {
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
 
+export interface BackgroundTaskRegistry {
+  register(task: Promise<unknown>): void;
+}
+
 export type GatewayToolExecutionContext = {
   agentContext?: AgentContext;
   agentId?: string;
@@ -107,6 +111,7 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  backgroundTasks?: BackgroundTaskRegistry;
 };
 
 // ============================================================================
@@ -971,6 +976,8 @@ export interface AgentLoopOptions {
   sourceMessageRef?: string;
   /** Active model-run id for memory provenance. */
   modelRunId?: string | null;
+  /** Parent model-run id when this run is a child/background follow-up. */
+  parentModelRunId?: string | null;
 
   /**
    * Stop the agent loop after the current tool batch completes when any
@@ -1026,6 +1033,8 @@ export interface AgentLoopResult {
   };
   /** Stop reason for the final turn */
   stopReason: StopReason;
+  /** Active model run id when the loop owns or inherited one. */
+  modelRunId?: string | null;
 }
 
 // ============================================================================
@@ -1136,6 +1145,55 @@ export interface TrustedMemoryWriteOptions {
   capability: unknown;
 }
 
+export interface BeginModelRunInput {
+  model_run_id?: string;
+  model_id?: string | null;
+  model_provider?: string | null;
+  prompt_version?: string | null;
+  tool_manifest_version?: string | null;
+  output_schema_version?: string | null;
+  agent_id?: string | null;
+  instance_id?: string | null;
+  envelope_hash?: string | null;
+  parent_model_run_id?: string | null;
+  input_snapshot_ref?: string | null;
+  input_refs?: Record<string, unknown> | null;
+  input_refs_json?: string | null;
+  status?: 'running' | 'committed' | 'failed' | 'legacy';
+  error_summary?: string | null;
+  token_count?: number | null;
+  cost_estimate?: number | null;
+  created_at?: number;
+}
+
+export interface ModelRunRecord {
+  model_run_id: string;
+  status: 'running' | 'committed' | 'failed' | 'legacy';
+  created_at?: number;
+  completed_at?: number | null;
+  [key: string]: unknown;
+}
+
+export interface AppendToolTraceInput {
+  trace_id?: string;
+  model_run_id: string;
+  gateway_call_id?: string | null;
+  tool_name: string;
+  input_summary?: string | null;
+  output_summary?: string | null;
+  execution_status?: string | null;
+  duration_ms?: number | null;
+  envelope_hash?: string | null;
+  created_at?: number;
+}
+
+export interface ToolTraceRecord {
+  trace_id: string;
+  model_run_id: string;
+  tool_name: string;
+  [key: string]: unknown;
+}
+
 /**
  * Interface for MAMA API (for dependency injection)
  */
@@ -1184,6 +1242,12 @@ export interface MAMAApiInterface {
     modelRunId: string,
     options?: Record<string, unknown>
   ): Promise<unknown[]>;
+  beginModelRun?(input: BeginModelRunInput): Promise<ModelRunRecord>;
+  commitModelRun?(modelRunId: string, summary?: string): Promise<ModelRunRecord>;
+  failModelRun?(modelRunId: string, errorSummary: string): Promise<ModelRunRecord>;
+  getModelRun?(modelRunId: string): Promise<ModelRunRecord | null>;
+  appendToolTrace?(input: AppendToolTraceInput): Promise<ToolTraceRecord>;
+  listToolTracesForRun?(modelRunId: string): Promise<ToolTraceRecord[]>;
   buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,
