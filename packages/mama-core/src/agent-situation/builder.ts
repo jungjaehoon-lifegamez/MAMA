@@ -48,6 +48,10 @@ function topStrings(values: string[], limit = 3): string[] {
     .slice(0, limit);
 }
 
+function refKey(ref: SituationRef): string {
+  return `${ref.kind}:${ref.id}`;
+}
+
 function buildBriefing(sources: VisibleAgentSituationSources): SituationBriefing {
   const memories = sources.memories;
   const openQuestions = memories.filter((memory) => memory.is_open_question);
@@ -87,13 +91,16 @@ function buildCoverage(
       const cases = sources.cases.filter(
         (item) => item.scope?.kind === scope.kind && item.scope.id === scope.id
       );
-      const edgeCount = sources.edges.length;
+      const rowRefs = new Set([...raw, ...memories, ...cases].map((item) => refKey(item.ref)));
+      const edges = sources.edges.filter(
+        (item) => rowRefs.has(refKey(item.subject_ref)) && rowRefs.has(refKey(item.object_ref))
+      );
       const lastSeenMs = Math.max(
         0,
         ...raw.map((item) => item.timestamp_ms),
         ...memories.map((item) => item.timestamp_ms),
         ...cases.map((item) => item.timestamp_ms),
-        ...sources.edges.map((item) => item.timestamp_ms)
+        ...edges.map((item) => item.timestamp_ms)
       );
       coverage.push({
         connector,
@@ -102,7 +109,7 @@ function buildCoverage(
         raw_count: raw.length,
         memory_count: memories.length,
         case_count: cases.length,
-        edge_count: edgeCount,
+        edge_count: edges.length,
         last_seen: lastSeenMs > 0 ? iso(lastSeenMs) : null,
         stale:
           lastSeenMs > 0
