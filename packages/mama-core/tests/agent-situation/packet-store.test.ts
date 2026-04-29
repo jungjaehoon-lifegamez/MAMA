@@ -215,6 +215,36 @@ describe('Story M5: Agent situation packet store', () => {
       ).toThrow(/lease storage offline/);
     });
 
+    it('waits for a durable lease winner using the caller logical clock', async () => {
+      const adapter = createAdapter();
+      const item = packet(adapter, 6_000);
+      const lease = acquireAgentSituationLease(adapter, {
+        cacheKey: item.cache_key,
+        rankingPolicyVersion: item.ranking_policy_version,
+        leaseOwner: 'owner-a',
+        nowMs: 6_000,
+        leaseSeconds: 30,
+      });
+      insertAgentSituationPacket(adapter, item);
+
+      expect(lease?.lease_owner).toBe('owner-a');
+      await expect(
+        getOrRefreshAgentSituationPacket(
+          adapter,
+          {
+            cacheKey: item.cache_key,
+            rankingPolicyVersion: item.ranking_policy_version,
+            nowMs: 6_100,
+            leaseOwner: 'owner-b',
+            pollIntervalMs: 1,
+            maxPollMs: 10,
+            refresh: true,
+          },
+          async () => packet(adapter, 6_100)
+        )
+      ).resolves.toMatchObject({ packet_id: item.packet_id });
+    });
+
     it('runs one builder for five concurrent refreshes of the same key', async () => {
       const adapter = createAdapter();
       const sample = packet(adapter, 2_000);
