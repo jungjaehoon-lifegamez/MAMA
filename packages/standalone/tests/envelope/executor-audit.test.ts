@@ -6,6 +6,7 @@ import { initAgentTables } from '../../src/db/agent-store.js';
 import { makeSignedEnvelope } from './fixtures.js';
 
 type GatewayAuditRow = {
+  agent_id: string;
   type: string;
   input_summary: string | null;
   execution_status: string | null;
@@ -47,7 +48,7 @@ function createTelegramGateway() {
 function readGatewayToolRows(db: Database): GatewayAuditRow[] {
   return db
     .prepare(
-      `SELECT type, input_summary, execution_status, error_message, envelope_hash
+      `SELECT agent_id, type, input_summary, execution_status, error_message, envelope_hash
        FROM agent_activity
        WHERE type = 'gateway_tool_call'
        ORDER BY id ASC`
@@ -81,6 +82,64 @@ describe('Story M1R: gateway tool execution audit ledger', () => {
     expect(result).toMatchObject({ success: true });
     expect(readGatewayToolRows(db)).toEqual([
       expect.objectContaining({
+        input_summary: 'mama_search',
+        execution_status: 'completed',
+        envelope_hash: envelope.envelope_hash,
+      }),
+    ]);
+    db.close();
+  });
+
+  it('records gateway audit rows with merged fallback context when async context is partial', async () => {
+    const db = new Database(':memory:');
+    initAgentTables(db);
+    const executor = new GatewayToolExecutor({ mamaApi: createMAMAApi() });
+    executor.setSessionsDb(db);
+    executor.setAgentContext({
+      source: 'telegram',
+      platform: 'telegram',
+      roleName: 'chat_bot',
+      role: {
+        allowedTools: ['*'],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      session: {
+        sessionId: 'telegram:abc',
+        channelId: 'abc',
+        userId: 'user-1',
+        startedAt: new Date(),
+      },
+      capabilities: ['*'],
+      limitations: [],
+      tier: 2,
+      backend: 'claude',
+    });
+    executor.setCurrentAgentContext('fallback-chat-bot', 'telegram', 'abc');
+    const envelope = makeSignedEnvelope({
+      source: 'telegram',
+      channel_id: 'abc',
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'channel', id: 'telegram:abc' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'abc' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      { query: 'audit' },
+      {
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(readGatewayToolRows(db)).toEqual([
+      expect.objectContaining({
+        agent_id: 'fallback-chat-bot',
         input_summary: 'mama_search',
         execution_status: 'completed',
         envelope_hash: envelope.envelope_hash,

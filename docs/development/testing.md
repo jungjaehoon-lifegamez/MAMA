@@ -92,6 +92,26 @@ keeps local and CI runs faster and less sensitive to embedding runtime latency.
 `/api/envelope/status`, with the count sourced from `agent_activity`, not
 best-effort metrics.
 
+### M2 Memory Provenance Foundation
+
+Use this focused suite when changing memory provenance columns, trusted
+provenance sanitization, gateway correlation ids, or memory provenance query
+helpers:
+
+```bash
+pnpm -C packages/mama-core exec vitest run tests/memory/memory-provenance.test.ts tests/memory/memory-provenance-query.test.ts tests/cases/migration-chain.test.ts tests/cases/migration-runner-duplicate-column.test.ts
+pnpm -C packages/mcp-server exec vitest run tests/tools/save-decision-v2.test.js tests/tools/ingest-conversation-provenance.test.js
+pnpm -C packages/standalone exec vitest run tests/envelope/memory-provenance-context.test.ts tests/envelope/executor-audit.test.ts tests/envelope/memory-scope-mismatch-logging.test.ts tests/db/agent-activity.test.ts tests/gateways/message-router.test.ts tests/agent/gateway-tool-executor.test.ts tests/cli/runtime/memory-agent-init.test.ts
+pnpm -C packages/mama-core typecheck
+pnpm -C packages/standalone typecheck
+git diff --check
+```
+
+These tests prove that public callers cannot spoof trusted provenance, direct
+writes still create fallback save events, gateway memory writes receive a typed
+`gateway_call_id`, and provenance reads use `memory_scope_bindings` for scoped
+visibility.
+
 ---
 
 ## Test Coverage

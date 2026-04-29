@@ -35,50 +35,25 @@ import type {
   MemoryStatus,
   MemoryTruthRow,
   ProfileSnapshot,
+  PublicIngestMemoryInput,
+  PublicSaveMemoryInput,
   RecallBundle,
   IngestConversationInput,
   ExtractedMemoryUnit,
   IngestConversationResult,
 } from './types.js';
+import { insertMemoryEventInTransaction } from './event-store.js';
+import {
+  appendProvenanceSourceRefs,
+  normalizeMemoryWriteProvenance,
+  sanitizePublicIngestConversationInput,
+  sanitizePublicIngestMemoryInput,
+  sanitizePublicSaveMemoryInput,
+  type TrustedMemoryWriteOptions,
+} from './provenance.js';
 
-interface SaveMemoryInput {
-  topic: string;
-  kind: MemoryKind;
-  summary: string;
-  details: string;
-  confidence?: number;
-  status?: MemoryStatus;
-  scopes: MemoryScopeRef[];
-  source: {
-    package: 'mama-core' | 'mcp-server' | 'standalone' | 'claude-code-plugin';
-    source_type: string;
-    user_id?: string;
-    channel_id?: string;
-    project_id?: string;
-  };
-  /** IDs to exclude from supersede candidates (e.g., sibling facts from same ingestion batch) */
-  excludeIds?: string[];
-  /**
-   * ISO 8601 date string for when the event actually occurred (e.g. "2023-01-15").
-   * Stored in the event_date column. Defaults to created_at if omitted.
-   */
-  eventDate?: string;
-  /** Source event timestamp in milliseconds when known. */
-  eventDateTime?: number;
-  entityObservationIds?: string[];
-  timelineEvent?: {
-    id?: string;
-    entity_id?: string;
-    event_type: string;
-    role?: string | null;
-    valid_from?: number | null;
-    valid_to?: number | null;
-    observed_at?: number | null;
-    source_ref?: string | null;
-    summary: string;
-    details?: string | null;
-  };
-}
+type SaveMemoryInput = PublicSaveMemoryInput;
+type IngestMemoryInput = PublicIngestMemoryInput;
 
 interface RecallMemoryOptions {
   scopes?: MemoryScopeRef[];
@@ -87,14 +62,6 @@ interface RecallMemoryOptions {
   skipGraphExpansion?: boolean;
   topicPrefix?: string;
   limit?: number;
-}
-
-interface IngestMemoryInput {
-  content: string;
-  scopes?: MemoryScopeRef[];
-  source: SaveMemoryInput['source'];
-  eventDate?: string;
-  eventDateTime?: number;
 }
 
 export interface FusedHit {
@@ -111,6 +78,17 @@ interface SaveMemoryRollbackError extends Error {
 function buildDecisionId(topic: string): string {
   const safeTopic = topic.replace(/[^a-z0-9_]+/gi, '_').toLowerCase();
   return `decision_${safeTopic}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function buildSaveEventReason(toolName: string | null, gatewayCallId: string | null): string {
+  const parts = ['saved'];
+  if (toolName) {
+    parts.push(`via ${toolName}`);
+  }
+  if (gatewayCallId) {
+    parts.push(`gateway_call_id=${gatewayCallId}`);
+  }
+  return parts.join(' ');
 }
 
 function toMemoryRecord(
@@ -623,18 +601,24 @@ export async function loadEdgesForIds(ids: string[]): Promise<MemoryEdge[]> {
   }));
 }
 
-export async function saveMemory(input: SaveMemoryInput): Promise<{
+type SaveMemoryResult = {
   success: boolean;
   id: string;
   saved_decision_id?: string;
   timeline_event_id?: string | null;
   timeline_event_ids?: string[];
-}> {
+};
+
+async function saveMemoryInternal(
+  input: SaveMemoryInput,
+  options?: TrustedMemoryWriteOptions
+): Promise<SaveMemoryResult> {
   await initDB();
   const adapter = getAdapter();
 
   const id = buildDecisionId(input.topic);
   const now = Date.now();
+  const provenance = normalizeMemoryWriteProvenance(options);
   // Find evolution candidates: exact topic match first, then semantic search fallback
   const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
   const excludeIds = new Set(input.excludeIds ?? []);
@@ -752,6 +736,12 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{
     trust_context: JSON.stringify({ source: input.source }),
     event_date: input.eventDate ?? null,
     event_datetime: eventDateTime,
+    agent_id: provenance.agent_id,
+    model_run_id: provenance.model_run_id,
+    envelope_hash: provenance.envelope_hash,
+    gateway_call_id: provenance.gateway_call_id,
+    source_refs_json: JSON.stringify(provenance.source_refs),
+    provenance_json: JSON.stringify(provenance.provenance),
   });
 
   // Pre-resolve scope IDs before the synchronous transaction
@@ -791,6 +781,18 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{
           )
           .run(id, scopeId, isPrimary ? 1 : 0);
       }
+
+      insertMemoryEventInTransaction(adapter, {
+        event_type: 'save',
+        actor: provenance.actor,
+        source_turn_id: provenance.source_turn_id ?? undefined,
+        memory_id: id,
+        topic: input.topic,
+        scope_refs: input.scopes,
+        evidence_refs: provenance.source_refs,
+        reason: buildSaveEventReason(provenance.tool_name, provenance.gateway_call_id),
+        created_at: now,
+      });
 
       for (const entityObservationId of entityObservationIds) {
         adapter
@@ -860,6 +862,17 @@ export async function saveMemory(input: SaveMemoryInput): Promise<{
     timeline_event_id: timelineEvent?.id ?? null,
     timeline_event_ids: timelineEvent ? [timelineEvent.id] : [],
   };
+}
+
+export async function saveMemory(input: SaveMemoryInput): Promise<SaveMemoryResult> {
+  return saveMemoryInternal(sanitizePublicSaveMemoryInput(input));
+}
+
+export async function saveMemoryWithTrustedProvenance(
+  input: SaveMemoryInput,
+  options: TrustedMemoryWriteOptions
+): Promise<SaveMemoryResult> {
+  return saveMemoryInternal(sanitizePublicSaveMemoryInput(input), options);
 }
 
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {
@@ -1443,25 +1456,42 @@ export async function recallMemory(
   return bundle;
 }
 
+async function ingestMemoryInternal(
+  input: IngestMemoryInput,
+  options?: TrustedMemoryWriteOptions
+): Promise<{ success: boolean; id: string }> {
+  const normalized = input.content.trim();
+  return saveMemoryInternal(
+    {
+      topic:
+        normalized
+          .slice(0, 40)
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '_')
+          .replace(/^_+|_+$/g, '') || 'ingested_memory',
+      kind: 'fact',
+      summary: normalized.slice(0, 200),
+      details: normalized,
+      scopes: input.scopes ?? [],
+      source: input.source,
+      eventDate: input.eventDate,
+      eventDateTime: input.eventDateTime,
+    },
+    options
+  );
+}
+
 export async function ingestMemory(
   input: IngestMemoryInput
 ): Promise<{ success: boolean; id: string }> {
-  const normalized = input.content.trim();
-  return saveMemory({
-    topic:
-      normalized
-        .slice(0, 40)
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '_')
-        .replace(/^_+|_+$/g, '') || 'ingested_memory',
-    kind: 'fact',
-    summary: normalized.slice(0, 200),
-    details: normalized,
-    scopes: input.scopes ?? [],
-    source: input.source,
-    eventDate: input.eventDate,
-    eventDateTime: input.eventDateTime,
-  });
+  return ingestMemoryInternal(sanitizePublicIngestMemoryInput(input));
+}
+
+export async function ingestWithTrustedProvenance(
+  input: IngestMemoryInput,
+  options: TrustedMemoryWriteOptions
+): Promise<{ success: boolean; id: string }> {
+  return ingestMemoryInternal(sanitizePublicIngestMemoryInput(input), options);
 }
 
 export async function evolveMemory(input: Parameters<typeof resolveMemoryEvolution>[0]) {
@@ -1544,8 +1574,9 @@ export function setExtractionFn(fn: typeof callExtractionLLM | null): void {
   extractionFn = fn ?? callExtractionLLM;
 }
 
-export async function ingestConversation(
-  input: IngestConversationInput
+async function ingestConversationInternal(
+  input: IngestConversationInput,
+  options?: TrustedMemoryWriteOptions
 ): Promise<IngestConversationResult> {
   if (!input.messages || input.messages.length === 0) {
     throw new Error('messages array must not be empty');
@@ -1554,12 +1585,15 @@ export async function ingestConversation(
   const conversationText = input.messages.map((m) => `${m.role}: ${m.content}`).join('\n');
   const topicPrefix = input.topicPrefix || '';
 
-  const rawResult = await ingestMemory({
-    content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
-    scopes: input.scopes,
-    source: input.source,
-    eventDate: input.sessionDate,
-  });
+  const rawResult = await ingestMemoryInternal(
+    {
+      content: topicPrefix ? `${topicPrefix}${conversationText}` : conversationText,
+      scopes: input.scopes,
+      source: input.source,
+      eventDate: input.sessionDate,
+    },
+    options
+  );
 
   const result: IngestConversationResult = {
     rawId: rawResult.id,
@@ -1619,17 +1653,20 @@ export async function ingestConversation(
 
   for (const unit of units) {
     try {
-      const saved = await saveMemory({
-        topic: topicPrefix ? `${topicPrefix}${unit.topic}` : unit.topic,
-        kind: unit.kind,
-        summary: unit.summary,
-        details: unit.details,
-        confidence: unit.confidence,
-        scopes: input.scopes,
-        source: input.source,
-        excludeIds: batchSavedIds,
-        eventDate: input.sessionDate,
-      });
+      const saved = await saveMemoryInternal(
+        {
+          topic: topicPrefix ? `${topicPrefix}${unit.topic}` : unit.topic,
+          kind: unit.kind,
+          summary: unit.summary,
+          details: unit.details,
+          confidence: unit.confidence,
+          scopes: input.scopes,
+          source: input.source,
+          excludeIds: batchSavedIds,
+          eventDate: input.sessionDate,
+        },
+        appendProvenanceSourceRefs(options, [`raw_memory:${rawResult.id}`])
+      );
 
       const now = Date.now();
       adapter
@@ -1660,6 +1697,19 @@ export async function ingestConversation(
   }
 
   return result;
+}
+
+export async function ingestConversation(
+  input: IngestConversationInput
+): Promise<IngestConversationResult> {
+  return ingestConversationInternal(sanitizePublicIngestConversationInput(input));
+}
+
+export async function ingestConversationWithTrustedProvenance(
+  input: IngestConversationInput,
+  options: TrustedMemoryWriteOptions
+): Promise<IngestConversationResult> {
+  return ingestConversationInternal(sanitizePublicIngestConversationInput(input), options);
 }
 
 export { upsertChannelSummary, getChannelSummary };

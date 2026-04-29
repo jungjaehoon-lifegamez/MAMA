@@ -121,7 +121,14 @@ export async function initMemoryAgent(
     const memoryProcessManager = {
       async getSharedProcess() {
         return {
-          async sendMessage(content: string) {
+          async sendMessage(
+            content: string,
+            options?: {
+              sourceTurnId?: string;
+              sourceMessageRef?: string;
+              parentModelRunId?: string;
+            }
+          ) {
             if (!memoryAgentLoop) {
               throw new Error('Memory agent loop is not initialized');
             }
@@ -166,6 +173,9 @@ export async function initMemoryAgent(
                 channelId: 'shared',
                 agentContext: memoryAgentContext,
                 stopAfterSuccessfulTools: ['mama_save'],
+                sourceTurnId: options?.sourceTurnId,
+                sourceMessageRef: options?.sourceMessageRef,
+                modelRunId: options?.parentModelRunId,
               });
               const afterDecisionCount = Number(
                 adapter.prepare('SELECT COUNT(*) AS count FROM decisions').get().count

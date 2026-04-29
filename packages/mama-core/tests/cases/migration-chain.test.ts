@@ -155,20 +155,18 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
     applyAll(db);
 
     const baselineTables = (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        .all() as Array<{ name: string }>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+        name: string;
+      }>
     ).map((row) => row.name);
 
-    const alreadyApplied = !!db
-      .prepare('SELECT 1 FROM schema_version WHERE version = ?')
-      .get(30);
+    const alreadyApplied = !!db.prepare('SELECT 1 FROM schema_version WHERE version = ?').get(30);
     expect(alreadyApplied).toBe(true);
 
     const afterTables = (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        .all() as Array<{ name: string }>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+        name: string;
+      }>
     ).map((row) => row.name);
     expect(afterTables).toEqual(baselineTables);
 
@@ -183,9 +181,9 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
     applyAll(db);
 
     const baselineTables = (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        .all() as Array<{ name: string }>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+        name: string;
+      }>
     ).map((row) => row.name);
 
     const badSql = `
@@ -207,9 +205,9 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
     expect(tableExists(db, 'fixture_partial_999')).toBe(false);
 
     const afterTables = (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
-        .all() as Array<{ name: string }>
+      db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as Array<{
+        name: string;
+      }>
     ).map((row) => row.name);
     expect(afterTables).toEqual(baselineTables);
 
@@ -226,6 +224,36 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
       .get() as { version: number; description: string } | undefined;
     expect(row?.version).toBe(30);
     expect(row?.description).toContain('Case-First Memory Substrate');
+
+    db.close();
+  });
+
+  it('records migration 032 memory provenance columns and indexes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    for (const column of [
+      'agent_id',
+      'model_run_id',
+      'envelope_hash',
+      'gateway_call_id',
+      'source_refs_json',
+      'provenance_json',
+    ]) {
+      expect(columnExists(db, 'decisions', column)).toBe(true);
+    }
+
+    expect(indexExists(db, 'idx_decisions_envelope_hash')).toBe(true);
+    expect(indexExists(db, 'idx_decisions_model_run_id')).toBe(true);
+    expect(indexExists(db, 'idx_decisions_gateway_call_id')).toBe(true);
+    expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 32')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(32);
+    expect(row?.description).toContain('memory provenance');
 
     db.close();
   });

@@ -115,6 +115,38 @@ describe('MessageRouter', () => {
       expect(history[0].bot).toBe('Agent response');
     });
 
+    it('passes stable source turn refs to the agent loop', async () => {
+      const run = vi.fn().mockResolvedValue({ response: 'Agent response' });
+      const customRouter = new MessageRouter(
+        sessionStore,
+        { run },
+        createMockMamaApi(mockDecisions)
+      );
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: 'channel-123',
+        userId: 'user-456',
+        text: 'Hello',
+        metadata: { messageId: 'msg-1' },
+      });
+      await customRouter.process({
+        source: 'discord',
+        channelId: 'channel-123',
+        userId: 'user-456',
+        text: 'Hello again',
+      });
+
+      expect(run.mock.calls[0][1]).toMatchObject({
+        sourceTurnId: 'msg-1',
+        sourceMessageRef: 'discord:channel-123:msg-1',
+      });
+      const generatedTurnId = run.mock.calls[1][1].sourceTurnId;
+      expect(generatedTurnId).toMatch(/^generated:/);
+      expect(run.mock.calls[1][1].sourceMessageRef).toBe(`discord:channel-123:${generatedTurnId}`);
+      expect(generatedTurnId).not.toBe('msg-1');
+    });
+
     it('should inject profile-aware recall bundle into the prompt', async () => {
       let receivedPrompt = '';
       const agentLoop = createMockAgentLoop((prompt) => {
@@ -363,6 +395,10 @@ describe('MessageRouter', () => {
 
       await vi.waitFor(() => {
         expect(sendMessage).toHaveBeenCalled();
+      });
+      expect(sendMessage.mock.calls[0][1]).toMatchObject({
+        sourceTurnId: expect.stringMatching(/^generated:/),
+        sourceMessageRef: expect.stringMatching(/^discord:channel-autosave:generated:/),
       });
       expect(saveSpy).not.toHaveBeenCalled();
     });

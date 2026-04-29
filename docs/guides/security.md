@@ -9,6 +9,7 @@
 - [Security Model](#security-model)
 - [Envelope Threat Model and Posture](#envelope-threat-model-and-posture)
 - [Built-in Detection and Response](#built-in-detection-and-response)
+- [Memory Provenance Foundation](#memory-provenance-foundation)
 - [Localhost-Only Mode (Default)](#localhost-only-mode-default)
 - [External Access via Tunnels](#external-access-via-tunnels)
 - [🌟 Cloudflare Zero Trust (Recommended for Production)](#cloudflare-zero-trust-recommended-for-production)
@@ -118,6 +119,25 @@ When mismatches spike, compare `requested_scopes` with
 `envelope_scopes_snapshot` for the same `envelope_hash`. Classify the cause as
 prompt injection, agent hallucination, or a legitimate caller-side scope
 derivation bug before changing policy.
+
+### Memory Provenance Foundation
+
+M2 provenance foundation records compact origin metadata on new memory writes:
+`agent_id`, `envelope_hash`, `gateway_call_id`, `model_run_id`, source refs, and
+the matching `memory_events(event_type='save')` row. This explains where a
+memory row came from and gives operators a stable join from standalone
+`agent_activity.gateway_call_id` to mama-core `decisions.gateway_call_id`.
+
+Caller-supplied provenance from MCP, LLM-visible gateway tool input, or public
+core APIs is ignored. Trusted provenance can only arrive through runtime-only
+options guarded by an in-process capability, so it is not a boundary against
+malicious arbitrary code running inside the same Node process.
+
+The compact provenance record intentionally excludes prompts, raw tool
+arguments, model completions, raw connector payloads, and other high-cardinality
+or sensitive payload bodies. For memory-scope visibility, provenance reads use
+`memory_scope_bindings` as the source of truth instead of trusting provenance
+JSON.
 
 ---
 
@@ -1120,8 +1140,8 @@ The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
   the socket peer is the rate-limit identity
 - Records gateway audit rows with envelope hash, requested scopes, envelope
   scope snapshots, and `scope_mismatch`. The signed envelope/audit row gives
-  durable request provenance; independent tamper-evidence for the memory row
-  itself remains future work.
+  durable request provenance, while the memory row stores compact M2 origin
+  metadata for operator lookup.
 
 ### Risk Assessment
 

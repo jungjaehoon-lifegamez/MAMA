@@ -103,6 +103,10 @@ export type GatewayToolExecutionContext = {
   channelId?: string;
   envelope?: Envelope;
   executionSurface: GatewayExecutionSurface;
+  sourceTurnId?: string;
+  sourceMessageRef?: string;
+  modelRunId?: string | null;
+  gatewayCallId?: string;
 };
 
 // ============================================================================
@@ -961,6 +965,12 @@ export interface AgentLoopOptions {
 
   /** Runtime authority envelope bound to this agent loop invocation */
   envelope?: Envelope;
+  /** Stable per-message source turn id for memory provenance. */
+  sourceTurnId?: string;
+  /** Compact source/channel/message ref for memory provenance. */
+  sourceMessageRef?: string;
+  /** Active model-run id for memory provenance. */
+  modelRunId?: string | null;
 
   /**
    * Stop the agent loop after the current tool batch completes when any
@@ -1109,11 +1119,32 @@ export interface GatewayToolExecutorOptions {
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
 }
 
+export interface MemoryWriteProvenance {
+  actor?: 'memory_agent' | 'main_agent' | `actor:${string}`;
+  agent_id?: string;
+  model_run_id?: string;
+  envelope_hash?: string;
+  tool_name?: string;
+  gateway_call_id?: string;
+  source_turn_id?: string;
+  source_message_ref?: string;
+  source_refs?: string[];
+}
+
+export interface TrustedMemoryWriteOptions {
+  provenance: MemoryWriteProvenance;
+  capability: unknown;
+}
+
 /**
  * Interface for MAMA API (for dependency injection)
  */
 export interface MAMAApiInterface {
   save(input: SaveDecisionPayload): Promise<SaveResult>;
+  saveWithTrustedProvenance?(
+    input: SaveDecisionPayload,
+    options: TrustedMemoryWriteOptions
+  ): Promise<SaveResult>;
   saveCheckpoint(
     summary: string,
     openFiles: string[],
@@ -1128,6 +1159,31 @@ export interface MAMAApiInterface {
     options?: { scopes?: ScopeRef[]; includeProfile?: boolean }
   ): Promise<unknown>;
   ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
+  ingestWithTrustedProvenance?(
+    input: Record<string, unknown>,
+    options: TrustedMemoryWriteOptions
+  ): Promise<unknown>;
+  saveMemoryWithTrustedProvenance?(
+    input: Record<string, unknown>,
+    options: TrustedMemoryWriteOptions
+  ): Promise<unknown>;
+  ingestConversationWithTrustedProvenance?(
+    input: Record<string, unknown>,
+    options: TrustedMemoryWriteOptions
+  ): Promise<unknown>;
+  getMemoryProvenance?(memoryId: string, options?: Record<string, unknown>): Promise<unknown>;
+  listMemoriesByEnvelopeHash?(
+    envelopeHash: string,
+    options?: Record<string, unknown>
+  ): Promise<unknown[]>;
+  listMemoriesByGatewayCallId?(
+    gatewayCallId: string,
+    options?: Record<string, unknown>
+  ): Promise<unknown[]>;
+  listMemoriesByModelRunId?(
+    modelRunId: string,
+    options?: Record<string, unknown>
+  ): Promise<unknown[]>;
   buildProfile?(scopes?: ScopeRef[], options?: Record<string, unknown>): Promise<unknown>;
   updateOutcome(
     id: string,

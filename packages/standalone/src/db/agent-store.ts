@@ -10,6 +10,7 @@ import { applyAgentStoreTablesMigration } from './migrations/agent-store-tables.
 import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-metrics-response-avg.js';
 import { applyAgentActivityValidationColumnsMigration } from './migrations/agent-activity-validation-columns.js';
 import { applyAgentActivityEnvelopeColumnsMigration } from './migrations/agent-activity-envelope-hash.js';
+import { applyAgentActivityGatewayCallIdMigration } from './migrations/agent-activity-gateway-call-id.js';
 import { applyEnvelopeTablesMigration } from './migrations/envelope-tables.js';
 
 type DB = SQLiteDatabase;
@@ -37,6 +38,7 @@ export function initAgentTables(db: SQLiteDatabase): void {
   applyAgentMetricsResponseAverageMigration(db);
   applyAgentActivityValidationColumnsMigration(db);
   applyAgentActivityEnvelopeColumnsMigration(db);
+  applyAgentActivityGatewayCallIdMigration(db);
   applyEnvelopeTablesMigration(db);
 }
 
@@ -259,6 +261,7 @@ export interface LogActivityInput {
   execution_status?: string;
   trigger_reason?: string;
   envelopeHash?: string | null;
+  gatewayCallId?: string | null;
   requestedScopes?: unknown[] | null;
   envelopeScopesSnapshot?: unknown[] | null;
   scopeMismatch?: boolean | number;
@@ -281,6 +284,7 @@ export interface ActivityRow {
   execution_status: string | null;
   trigger_reason: string | null;
   envelope_hash: string | null;
+  gateway_call_id: string | null;
   requested_scopes: string | null;
   envelope_scopes_snapshot: string | null;
   scope_mismatch: number;
@@ -294,6 +298,7 @@ export interface GetActivityOptions {
 export interface GatewayToolCallQuery {
   envelopeHash?: string;
   agentId?: string;
+  gatewayCallId?: string;
   limit?: number;
 }
 
@@ -312,9 +317,9 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     INSERT INTO agent_activity (
       agent_id, agent_version, type, input_summary, output_summary, tokens_used,
       tools_called, duration_ms, score, details, error_message, run_id, execution_status, trigger_reason,
-      envelope_hash, requested_scopes, envelope_scopes_snapshot, scope_mismatch
+      envelope_hash, gateway_call_id, requested_scopes, envelope_scopes_snapshot, scope_mismatch
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.agent_id,
@@ -332,6 +337,7 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.execution_status ?? null,
     input.trigger_reason ?? null,
     input.envelopeHash ?? null,
+    input.gatewayCallId ?? null,
     input.requestedScopes ? JSON.stringify(input.requestedScopes) : null,
     input.envelopeScopesSnapshot ? JSON.stringify(input.envelopeScopesSnapshot) : null,
     Number(Boolean(input.scopeMismatch))
@@ -386,6 +392,10 @@ export function listGatewayToolCalls(db: DB, input: GatewayToolCallQuery = {}): 
     conditions.push('agent_id = ?');
     params.push(input.agentId);
   }
+  if (input.gatewayCallId) {
+    conditions.push('gateway_call_id = ?');
+    params.push(input.gatewayCallId);
+  }
 
   params.push(normalizeActivityLimit(input.limit));
   return db
@@ -409,6 +419,10 @@ export function listScopeMismatches(db: DB, input: ScopeMismatchQuery = {}): Act
   if (input.agentId) {
     conditions.push('agent_id = ?');
     params.push(input.agentId);
+  }
+  if (input.gatewayCallId) {
+    conditions.push('gateway_call_id = ?');
+    params.push(input.gatewayCallId);
   }
   if (input.since) {
     conditions.push('created_at >= datetime(?)');
