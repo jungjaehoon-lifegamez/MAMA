@@ -167,6 +167,29 @@ export {
 } from './model-runs/types.js';
 export { beginModelRun, commitModelRun, failModelRun, getModelRun } from './model-runs/store.js';
 export { appendToolTrace, listToolTracesForRun } from './model-runs/tool-trace-store.js';
+export {
+  TWIN_EDGE_SOURCES,
+  TWIN_EDGE_TYPES,
+  TWIN_REF_KINDS,
+  type InsertTwinEdgeInput,
+  type ListVisibleTwinEdgesOptions,
+  type TwinEdgeRecord,
+  type TwinEdgeSource,
+  type TwinEdgeType,
+  type TwinRef,
+  type TwinRefKind,
+  type TwinScopeRef,
+} from './edges/types.js';
+export {
+  getTwinEdge,
+  insertTwinEdge,
+  listTwinEdgesForRefs,
+  mapTwinEdgeRow,
+} from './edges/store.js';
+export {
+  assertTwinRefsVisibleToScopes,
+  listVisibleTwinEdgesForRefs,
+} from './edges/ref-validation.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';
