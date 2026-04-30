@@ -360,6 +360,29 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         expect(beginModelRunInAdapter(scopedAdapter, input)).toEqual(failed);
       });
 
+      it('rejects non-running begin statuses before inserting model run rows', () => {
+        const scopedAdapter = createAdapter(tempDbPath('non-running-begin-status'));
+
+        for (const status of ['committed', 'failed', 'legacy'] as const) {
+          const modelRunId = `mr_reject_begin_${status}`;
+          expect(() =>
+            beginModelRunInAdapter(scopedAdapter, {
+              model_run_id: modelRunId,
+              envelope_hash: `env_reject_begin_${status}`,
+              input_refs: { request_idempotency_key: `reject-begin-${status}` },
+              status,
+              error_summary: status === 'failed' ? 'failed before begin' : null,
+              created_at: 4_900,
+            })
+          ).toThrow(/must begin in running status/);
+
+          const row = scopedAdapter
+            .prepare('SELECT model_run_id FROM model_runs WHERE model_run_id = ?')
+            .get(modelRunId);
+          expect(row).toBeUndefined();
+        }
+      });
+
       it('rejects underspecified duplicate model run ids instead of binding to an existing run', () => {
         const scopedAdapter = createAdapter(tempDbPath('underspecified'));
         const input = {
@@ -470,7 +493,6 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         for (const conflictingInput of [
           { ...input, envelope_hash: 'env_alias_changed' },
           { ...input, input_refs: { ...input.input_refs, entity_id: 'entity_changed' } },
-          { ...input, status: 'failed' as const },
           { ...input, token_count: 13 },
           { ...input, created_at: 6_001 },
         ]) {
@@ -490,34 +512,6 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
           token_count: 12,
           created_at: 6_000,
         });
-      });
-
-      it('rejects explicitly replayed error summary conflicts for non-running begin rows', () => {
-        const scopedAdapter = createAdapter(tempDbPath('error-summary-conflict'));
-        const input = {
-          model_run_id: 'mr_error_summary_conflict',
-          envelope_hash: 'env_error_summary_conflict',
-          input_refs: { request_idempotency_key: 'error-summary-conflict-key' },
-          status: 'failed' as const,
-          error_summary: 'original failure',
-          created_at: 6_250,
-        };
-
-        beginModelRunInAdapter(scopedAdapter, input);
-
-        expect(() =>
-          beginModelRunInAdapter(scopedAdapter, {
-            ...input,
-            error_summary: 'changed failure',
-          })
-        ).toThrow(/different error_summary/);
-        expect(() =>
-          beginModelRunInAdapter(scopedAdapter, {
-            model_run_id: input.model_run_id,
-            envelope_hash: input.envelope_hash,
-            error_summary: 'changed failure without status',
-          })
-        ).toThrow(/different error_summary/);
       });
 
       it('rejects conflicts for every explicitly replayed stable begin field', () => {
@@ -672,6 +666,52 @@ describe('Story M5/M6: Adapter-scoped model run helpers', () => {
         });
         expect(selectCount).toBe(2);
         expect(insertCount).toBe(1);
+      });
+
+      it('recovers duplicate insert errors reported through sqlite error codes', () => {
+        let selectCount = 0;
+        const adapter: ModelRunAdapterForTest = {
+          prepare(sql: string) {
+            if (/FROM model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                get() {
+                  selectCount += 1;
+                  return selectCount === 1 ? undefined : modelRunRow();
+                },
+              });
+            }
+            if (/INSERT INTO model_runs/i.test(sql)) {
+              return new FakeModelRunStatement({
+                run() {
+                  const error = new Error('insert failed without constraint text');
+                  Object.defineProperty(error, 'code', {
+                    value: 'SQLITE_CONSTRAINT_PRIMARYKEY',
+                    enumerable: true,
+                  });
+                  throw error;
+                },
+              });
+            }
+            throw new Error(`Unexpected SQL in fake adapter: ${sql}`);
+          },
+        };
+
+        const replay = beginModelRunInAdapter(adapter, {
+          model_run_id: 'mr_fake',
+          agent_id: 'agent-fake',
+          envelope_hash: 'env_fake',
+          input_refs: { request_idempotency_key: 'fake-key' },
+          created_at: 10_000,
+        });
+
+        expect(replay).toMatchObject({
+          model_run_id: 'mr_fake',
+          agent_id: 'agent-fake',
+          envelope_hash: 'env_fake',
+          input_refs: { request_idempotency_key: 'fake-key' },
+          status: 'running',
+        });
+        expect(selectCount).toBe(2);
       });
     });
 

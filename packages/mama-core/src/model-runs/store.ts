@@ -160,6 +160,14 @@ function requireModelRunStatus(value: unknown, modelRunId: string): ModelRunStat
   throw new Error(`Invalid model_runs.status for ${modelRunId}: ${formatInvalidValue(value)}`);
 }
 
+function normalizeBeginStatus(value: unknown, modelRunId: string): ModelRunStatus {
+  const status = requireModelRunStatus(value ?? 'running', modelRunId);
+  if (status !== 'running') {
+    throw new Error(`model_runs.status must begin in running status for ${modelRunId}: ${status}`);
+  }
+  return status;
+}
+
 function mapModelRunRow(row: Record<string, unknown>): ModelRunRecord {
   const model_run_id = requireString(row.model_run_id, 'model_run_id');
   const inputRefs = parseInputRefs({ model_run_id, input_refs_json: row.input_refs_json });
@@ -379,6 +387,16 @@ function assertExistingModelRunMatchesInput(
 }
 
 function isDuplicateModelRunError(error: unknown): boolean {
+  if (error && typeof error === 'object' && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    if (
+      code === 'SQLITE_CONSTRAINT' ||
+      code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+      code === 'SQLITE_CONSTRAINT_UNIQUE'
+    ) {
+      return true;
+    }
+  }
   const message = error instanceof Error ? error.message : String(error);
   return /UNIQUE constraint failed: model_runs\.model_run_id|PRIMARY KEY constraint failed/i.test(
     message
@@ -427,7 +445,7 @@ export function beginModelRunInAdapter(
 ): ModelRunRecord {
   const id = nullableString(input.model_run_id) ?? modelRunId();
   const createdAt = normalizeTimestamp(input.created_at);
-  const status = input.status ?? 'running';
+  const status = normalizeBeginStatus(input.status, id);
   const inputRefsJson = normalizeInputRefsJson(input);
   const expected = normalizeBeginModelRunInput(id, input, createdAt, status, inputRefsJson);
   const replayFields = replayFieldsForInput(input);

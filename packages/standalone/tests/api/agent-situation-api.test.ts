@@ -250,6 +250,34 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       expect(connectorDenied.status).toBe(403);
       expect(connectorDenied.body.code).toBe('worker_envelope_connector_denied');
     });
+
+    it('splits comma-delimited singular connector query values before envelope checks', async () => {
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack', 'github'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+        },
+      });
+      authority.persist(validEnvelope);
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({ buildPacket });
+
+      const response = await authed(
+        request(apiServer.app).get('/api/agent/situation?connector=slack,github')
+      );
+
+      expect(response.status).toBe(200);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+      expect(buildPacket.mock.calls[0][1].effective_filters.connectors).toEqual([
+        'github',
+        'slack',
+      ]);
+    });
   });
 
   describe('AC #2: packet generation is cached and model-run correlated', () => {
@@ -474,6 +502,51 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       expect(
         getAdapter().prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
       ).toEqual({ count: 0 });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
+          .all()
+      ).toEqual([{ status: 'failed', error_summary: 'commit store unavailable' }]);
+    });
+
+    it('preserves the commit failure when uncommitted packet cleanup fails', async () => {
+      const baseAdapter = getAdapter();
+      const cleanupFailingAdapter: AgentSituationRouterOptions['memoryAdapter'] = {
+        prepare(sql: string) {
+          const statement = baseAdapter.prepare(sql);
+          if (sql.includes("SET status = 'committed'")) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('commit store unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          if (sql.includes('DELETE FROM agent_situation_packets')) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('cleanup delete unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          return statement;
+        },
+        transaction<T>(fn: () => T): T {
+          return baseAdapter.transaction(fn);
+        },
+      };
+      const apiServer = makeServer({ memoryAdapter: cleanupFailingAdapter });
+
+      const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(response.status).toBe(500);
+      expect(response.body.code).toBe('agent_situation_api_error');
+      expect(
+        getAdapter().prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 1 });
       expect(
         getAdapter()
           .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
