@@ -199,6 +199,7 @@ export {
   assertTwinRefsVisibleToScopes,
   listVisibleTwinEdgesForRefs,
 } from './edges/ref-validation.js';
+export * from './agent-situation/index.js';
 export * from './entities/types.js';
 export * from './entities/errors.js';
 export * from './entities/store.js';
