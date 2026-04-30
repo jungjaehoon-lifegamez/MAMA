@@ -16,6 +16,7 @@ import type { AgentSituationEffectiveFilters } from '../../src/agent-situation/t
 
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
 const tempPaths = new Set<string>();
+const adapters = new Set<DatabaseAdapter>();
 const FILTERS: AgentSituationEffectiveFilters = {
   connectors: ['slack'],
   scopes: [{ kind: 'project', id: 'repo-a' }],
@@ -44,6 +45,7 @@ function createAdapter(): DatabaseAdapter {
   const adapter = new NodeSQLiteAdapter({ dbPath: tempDbPath() }) as unknown as DatabaseAdapter;
   adapter.connect();
   adapter.runMigrations(MIGRATIONS_DIR);
+  adapters.add(adapter);
   return adapter;
 }
 
@@ -64,6 +66,10 @@ function packet(adapter: DatabaseAdapter, nowMs = 2_000) {
 
 describe('Story M5: Agent situation refresh singleflight', () => {
   afterEach(() => {
+    for (const adapter of adapters) {
+      adapter.disconnect();
+    }
+    adapters.clear();
     for (const path of tempPaths) {
       cleanupDb(path);
     }

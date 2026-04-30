@@ -341,7 +341,9 @@ export async function getOrRefreshAgentSituationPacket(
       if (fresh) {
         return fresh;
       }
-      throw new Error('Timed out waiting for agent situation refresh lease');
+      throw new Error(
+        `Timed out waiting for agent situation refresh lease for cache key ${input.cacheKey} and ranking policy ${input.rankingPolicyVersion}`
+      );
     }
 
     try {
