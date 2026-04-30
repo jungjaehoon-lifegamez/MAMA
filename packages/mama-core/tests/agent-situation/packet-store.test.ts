@@ -126,6 +126,29 @@ describe('Story M5: Agent situation packet store', () => {
       ).toThrow(/source_coverage_json/);
     });
 
+    it('rejects invalid packet cache time ranges at the database boundary', () => {
+      const adapter = createAdapter();
+      const invalidRange = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_range',
+        range_end_ms: 999,
+      };
+      const invalidExpiry = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_expiry',
+        expires_at: 1_999,
+      };
+      const invalidTtl = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_ttl',
+        ttl_seconds: 0,
+      };
+
+      expect(() => insertAgentSituationPacket(adapter, invalidRange)).toThrow(/constraint/i);
+      expect(() => insertAgentSituationPacket(adapter, invalidExpiry)).toThrow(/constraint/i);
+      expect(() => insertAgentSituationPacket(adapter, invalidTtl)).toThrow(/constraint/i);
+    });
+
     it('does not call the builder when a fresh cache hit exists', async () => {
       const adapter = createAdapter();
       const existing = insertAgentSituationPacket(adapter, packet(adapter, 2_000));
