@@ -1011,6 +1011,7 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
 
       expect(response.status).toBe(500);
       expect(response.body.code).toBe('internal_server_error');
+      expect(response.body.message).toBe('An internal error occurred.');
       expect(
         getAdapter()
           .prepare(
