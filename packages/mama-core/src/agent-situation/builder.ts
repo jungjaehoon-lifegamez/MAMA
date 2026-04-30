@@ -249,6 +249,7 @@ export function buildAgentSituationPacketRecord(
     }));
   const caveats = visibleSourceRefs.length === 0 ? ['no_visible_sources'] : ([] as string[]);
   const recommendedNextTools = buildRecommendations(sources, rankedItems);
+  const topMemoryRefs = sources.memories.map((memory) => memory.ref.id).slice(0, limit);
   const freshness = {
     generated_at_ms: nowMs,
     visible_source_count: visibleSourceRefs.length,
@@ -280,8 +281,8 @@ export function buildAgentSituationPacketRecord(
     briefing,
     ranked_items_json: json(rankedItems),
     ranked_items: rankedItems,
-    top_memory_refs_json: json(sources.memories.map((memory) => memory.ref.id).slice(0, limit)),
-    top_memory_refs: sources.memories.map((memory) => memory.ref.id).slice(0, limit),
+    top_memory_refs_json: json(topMemoryRefs),
+    top_memory_refs: topMemoryRefs,
     pending_human_questions_json: json(pendingHumanQuestions),
     pending_human_questions: pendingHumanQuestions,
     entity_clusters_json: '[]',
