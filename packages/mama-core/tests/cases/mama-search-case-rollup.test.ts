@@ -14,6 +14,7 @@ import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { rollUpSearchHits, type SearchRollupLeafHit } from '../../src/cases/search-rollup.js';
 import { upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
 import { suggest } from '../../src/mama-api.js';
+import type { SearchHitDiagnostics } from '../../src/search/search-quality.js';
 import { handleSearch } from '../../../standalone/src/agent/mama-tool-handlers.js';
 import type { MAMAApiInterface } from '../../../standalone/src/agent/types.js';
 
@@ -142,12 +143,14 @@ function insertDecision(input: {
 function leaf(
   sourceId: string,
   score: number,
-  record: Record<string, unknown> = {}
+  record: Record<string, unknown> = {},
+  retrievalDiagnostics?: SearchHitDiagnostics
 ): SearchRollupLeafHit {
   return {
     source_type: 'decision',
     source_id: sourceId,
     fused_rank_score: score,
+    retrieval_diagnostics: retrievalDiagnostics,
     record: {
       id: sourceId,
       topic: sourceId,
@@ -155,6 +158,32 @@ function leaf(
       details: '',
       ...record,
     },
+  };
+}
+
+function diagnostics(input: {
+  source?: string;
+  vectorSimilarity?: number | null;
+  lexical?: boolean;
+  entity?: boolean;
+  scope?: boolean;
+  graphSource?: 'primary' | 'expanded' | null;
+  vectorOnly?: boolean;
+  confirmations?: string[];
+  metadata?: string[];
+  threshold?: number;
+}): SearchHitDiagnostics {
+  return {
+    retrieval_source: input.source ?? 'hybrid_rrf',
+    vector_similarity: input.vectorSimilarity ?? null,
+    lexical_support: input.lexical ?? false,
+    entity_support: input.entity ?? false,
+    scope_support: input.scope ?? true,
+    graph_source: input.graphSource ?? 'primary',
+    is_vector_only: input.vectorOnly ?? false,
+    confirmation_signals: input.confirmations ?? (input.lexical ? ['lexical'] : []),
+    metadata_signals: input.metadata ?? ['graph_primary'],
+    candidate_threshold_used: input.threshold ?? 0.45,
   };
 }
 
@@ -377,6 +406,57 @@ describe('Task 11: mama_search case membership roll-up', () => {
     ]);
   });
 
+  it('preserves strongest retrieval diagnostics and all contributing leaf diagnostics', () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-diagnostics' });
+    insertMembership('case-diagnostics', 'D-vector');
+    insertMembership('case-diagnostics', 'D-lexical');
+
+    const vectorOnlyDiagnostics = diagnostics({
+      source: 'vector_search',
+      vectorSimilarity: 0.88,
+      graphSource: 'expanded',
+      vectorOnly: true,
+      confirmations: [],
+      metadata: ['graph_expanded'],
+    });
+    const confirmedDiagnostics = diagnostics({
+      source: 'hybrid_rrf',
+      vectorSimilarity: 0.93,
+      lexical: true,
+      graphSource: 'primary',
+      vectorOnly: false,
+      confirmations: ['lexical'],
+      metadata: ['graph_primary'],
+    });
+
+    const results = rollUpSearchHits({
+      adapter,
+      fusedHits: [
+        leaf('D-vector', 10, {}, vectorOnlyDiagnostics),
+        leaf('D-lexical', 8, {}, confirmedDiagnostics),
+      ],
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].retrieval_diagnostics).toMatchObject({
+      retrieval_source: 'hybrid_rrf',
+      graph_source: 'primary',
+      is_vector_only: false,
+      confirmation_signals: ['lexical'],
+    });
+    expect(results[0].contributing_leaf_diagnostics).toMatchObject({
+      'D-vector': expect.objectContaining({
+        retrieval_source: 'vector_search',
+        is_vector_only: true,
+      }),
+      'D-lexical': expect.objectContaining({
+        retrieval_source: 'hybrid_rrf',
+        lexical_support: true,
+      }),
+    });
+  });
+
   it.each([
     {
       name: 'suggest',
@@ -419,6 +499,45 @@ describe('Task 11: mama_search case membership roll-up', () => {
     expect(rows[0]).toHaveProperty('reasoning');
     expect(rows[0]).toHaveProperty('confidence');
     expect(rows[0]).toHaveProperty('retrieval_score');
+  });
+
+  it('surfaces memory_v2 diagnostics through suggest case roll-up', async () => {
+    insertCase({ case_id: 'case-diagnostic-path', title: 'Diagnostic Path Case' });
+    insertMembership('case-diagnostic-path', 'decision_diagnostic_path');
+    insertDecision({
+      id: 'decision_diagnostic_path',
+      topic: 'diagnostic path topic',
+      decision: 'diagnosticpathtoken decision body',
+      reasoning: 'diagnostic path reasoning',
+      embedding: unitVector(1),
+    });
+
+    const result = await suggest('diagnosticpathtoken', {
+      limit: 5,
+      diagnostics: true,
+      strictness: 'balanced',
+    });
+    const rows = (result.results ?? []) as Array<Record<string, unknown>>;
+
+    expect(result.diagnostics?.candidate_counts.lexical).toBeGreaterThan(0);
+    expect(rows[0]).toMatchObject({
+      id: 'case-diagnostic-path',
+      source_type: 'case',
+      case_id: 'case-diagnostic-path',
+      graph_source: 'primary',
+      retrieval_diagnostics: expect.objectContaining({
+        lexical_support: true,
+        graph_source: 'primary',
+        is_vector_only: false,
+        confirmation_signals: ['lexical'],
+      }),
+      contributing_leaf_diagnostics: {
+        decision_diagnostic_path: expect.objectContaining({
+          lexical_support: true,
+          is_vector_only: false,
+        }),
+      },
+    });
   });
 
   it('returns a case result when the query matches only wiki_page_index content', async () => {

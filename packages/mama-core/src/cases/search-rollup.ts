@@ -1,5 +1,6 @@
 import type { AdapterLike } from './wiki-page-index.js';
 import { resolveCanonicalCaseChain } from './store.js';
+import type { SearchHitDiagnostics } from '../search/search-quality.js';
 
 export type { AdapterLike };
 
@@ -10,6 +11,7 @@ export interface SearchRollupLeafHit {
   page_type?: 'case';
   case_id?: string | null;
   record: unknown;
+  retrieval_diagnostics?: SearchHitDiagnostics;
 }
 
 export interface SearchRollupResult {
@@ -18,6 +20,8 @@ export interface SearchRollupResult {
   case_id: string | null;
   score: number;
   contributing_leaves?: string[];
+  contributing_leaf_diagnostics?: Record<string, SearchHitDiagnostics>;
+  retrieval_diagnostics?: SearchHitDiagnostics;
   record: unknown;
 }
 
@@ -26,6 +30,8 @@ interface CaseGroup {
   score: number;
   max_leaf_score: number;
   contributing_leaves: Set<string>;
+  contributing_leaf_diagnostics: Map<string, SearchHitDiagnostics>;
+  retrieval_diagnostics?: SearchHitDiagnostics;
   dedupe_keys: Set<string>;
   record: unknown;
 }
@@ -46,6 +52,77 @@ function stringOrNull(value: unknown): string | null {
     return null;
   }
   return String(value);
+}
+
+function searchHitDiagnostics(value: unknown): SearchHitDiagnostics | undefined {
+  const object = objectRecord(value);
+  if (!object) {
+    return undefined;
+  }
+  if (
+    typeof object.retrieval_source !== 'string' ||
+    typeof object.is_vector_only !== 'boolean' ||
+    typeof object.lexical_support !== 'boolean' ||
+    typeof object.entity_support !== 'boolean'
+  ) {
+    return undefined;
+  }
+  return value as SearchHitDiagnostics;
+}
+
+function leafDiagnostics(leaf: SearchRollupLeafHit): SearchHitDiagnostics | undefined {
+  const record = objectRecord(leaf.record);
+  return leaf.retrieval_diagnostics ?? searchHitDiagnostics(record?.retrieval_diagnostics);
+}
+
+function diagnosticsRank(diagnostics: SearchHitDiagnostics): number {
+  let rank = 0;
+  if (!diagnostics.is_vector_only) {
+    rank += 100;
+  }
+  if (diagnostics.graph_source === 'primary') {
+    rank += 10;
+  }
+  rank += diagnostics.confirmation_signals.length;
+  if (diagnostics.lexical_support) {
+    rank += 1;
+  }
+  if (diagnostics.entity_support) {
+    rank += 1;
+  }
+  return rank;
+}
+
+function betterDiagnostics(
+  candidate: SearchHitDiagnostics,
+  current: SearchHitDiagnostics | undefined
+): boolean {
+  if (!current) {
+    return true;
+  }
+  return diagnosticsRank(candidate) > diagnosticsRank(current);
+}
+
+function diagnosticsRecord(
+  diagnosticsByLeaf: Map<string, SearchHitDiagnostics>
+): Record<string, SearchHitDiagnostics> | undefined {
+  if (diagnosticsByLeaf.size === 0) {
+    return undefined;
+  }
+  return Object.fromEntries(
+    Array.from(diagnosticsByLeaf.entries()).sort(([left], [right]) => left.localeCompare(right))
+  );
+}
+
+function attachLeafDiagnostics(group: CaseGroup, leaf: SearchRollupLeafHit): void {
+  const diagnostics = leafDiagnostics(leaf);
+  if (!diagnostics) {
+    return;
+  }
+  group.contributing_leaf_diagnostics.set(leaf.source_id, diagnostics);
+  if (betterDiagnostics(diagnostics, group.retrieval_diagnostics)) {
+    group.retrieval_diagnostics = diagnostics;
+  }
 }
 
 function placeholders(values: readonly unknown[]): string {
@@ -167,12 +244,19 @@ function upsertOrphan(orphans: Map<string, SearchRollupResult>, leaf: SearchRoll
     return;
   }
 
+  const diagnostics = leafDiagnostics(leaf);
+  const contributingLeafDiagnostics = diagnostics ? { [leaf.source_id]: diagnostics } : undefined;
+
   orphans.set(key, {
     source_type:
       leaf.source_type === 'connector_event' ? 'standalone_connector_hit' : leaf.source_type,
     source_id: leaf.source_id,
     case_id: null,
     score: leaf.fused_rank_score,
+    ...(diagnostics ? { retrieval_diagnostics: diagnostics } : {}),
+    ...(contributingLeafDiagnostics
+      ? { contributing_leaf_diagnostics: contributingLeafDiagnostics }
+      : {}),
     record: leaf.record,
   });
 }
@@ -191,9 +275,14 @@ function upsertDirectCase(
       score: leaf.fused_rank_score,
       max_leaf_score: leaf.fused_rank_score,
       contributing_leaves: new Set([leaf.source_id]),
+      contributing_leaf_diagnostics: new Map(),
       dedupe_keys: new Set([leaf.source_id]),
       record: withCaseId(leaf.record, survivorCaseId),
     });
+  }
+  const group = directCases.get(survivorCaseId);
+  if (group) {
+    attachLeafDiagnostics(group, leaf);
   }
   return survivorCaseId;
 }
@@ -212,6 +301,7 @@ function upsertCaseGroup(
       score: 0,
       max_leaf_score: 0,
       contributing_leaves: new Set(),
+      contributing_leaf_diagnostics: new Map(),
       dedupe_keys: new Set(),
       record: loadCaseRecord(adapter, survivorCaseId),
     };
@@ -224,6 +314,7 @@ function upsertCaseGroup(
 
   group.dedupe_keys.add(dedupeKey);
   group.contributing_leaves.add(leaf.source_id);
+  attachLeafDiagnostics(group, leaf);
   group.score += leaf.fused_rank_score;
   group.max_leaf_score = Math.max(group.max_leaf_score, leaf.fused_rank_score);
 }
@@ -233,6 +324,7 @@ function groupToResult(group: CaseGroup): SearchRollupResult {
     case_id: group.case_id,
   };
   const record = { ...baseRecord, max_leaf_score: group.max_leaf_score };
+  const contributingLeafDiagnostics = diagnosticsRecord(group.contributing_leaf_diagnostics);
   return {
     source_type: 'case',
     source_id: group.case_id,
@@ -241,6 +333,10 @@ function groupToResult(group: CaseGroup): SearchRollupResult {
     contributing_leaves: Array.from(group.contributing_leaves).sort((left, right) =>
       left.localeCompare(right)
     ),
+    ...(contributingLeafDiagnostics
+      ? { contributing_leaf_diagnostics: contributingLeafDiagnostics }
+      : {}),
+    ...(group.retrieval_diagnostics ? { retrieval_diagnostics: group.retrieval_diagnostics } : {}),
     record,
   };
 }
