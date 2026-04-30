@@ -85,6 +85,12 @@ export interface PersistentProcessOptions {
   useGatewayTools?: boolean;
   /** Timeout for each request in ms (default: 120000) */
   requestTimeout?: number;
+  /** Idle timeout for pooled persistent processes in ms (default: session_ms) */
+  idleTimeoutMs?: number;
+  /** Cleanup interval for pooled persistent processes in ms (default: session_cleanup_ms) */
+  cleanupIntervalMs?: number;
+  /** Maximum time to keep a process waiting for host-side tool results (default: max(4 * idleTimeoutMs, 30m)) */
+  pendingToolUseTimeoutMs?: number;
   /** Environment variables to pass to the Claude CLI process */
   env?: Record<string, string>;
   /** Structurally allowed tools (--allowedTools CLI flag) */
@@ -185,6 +191,8 @@ export class PersistentClaudeProcess extends EventEmitter {
   private currentReject: ((error: Error) => void) | null = null;
   private requestTimeoutHandle: NodeJS.Timeout | null = null;
   private toolUseBlocks: ToolUseBlock[] = [];
+  private awaitingToolResults = false;
+  private pendingToolUseStartedAt: number | null = null;
   private accumulatedText: string = '';
   private startPromise: Promise<void> | null = null;
   private onTokenUsage?: (record: TokenUsageRecord) => void;
@@ -430,6 +438,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     this.state = 'busy';
+    this.awaitingToolResults = false;
+    this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
     this.accumulatedText = '';
@@ -505,6 +515,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     this.state = 'busy';
+    this.awaitingToolResults = false;
+    this.pendingToolUseStartedAt = null;
     this.currentCallbacks = callbacks || null;
     this.toolUseBlocks = [];
     this.accumulatedText = '';
@@ -631,6 +643,7 @@ export class PersistentClaudeProcess extends EventEmitter {
         this.clearRequestTimeout();
 
         if (event.subtype === 'success') {
+          const hasToolUse = this.toolUseBlocks.length > 0;
           const result: PromptResult = {
             response: event.result || this.accumulatedText,
             session_id: event.session_id || this.options.sessionId,
@@ -642,8 +655,8 @@ export class PersistentClaudeProcess extends EventEmitter {
               cache_creation_input_tokens: event.usage?.cache_creation_input_tokens,
               cache_read_input_tokens: event.usage?.cache_read_input_tokens,
             },
-            toolUseBlocks: this.toolUseBlocks.length > 0 ? this.toolUseBlocks : undefined,
-            hasToolUse: this.toolUseBlocks.length > 0,
+            toolUseBlocks: hasToolUse ? this.toolUseBlocks : undefined,
+            hasToolUse,
           };
 
           // Record token usage
@@ -670,6 +683,8 @@ export class PersistentClaudeProcess extends EventEmitter {
             toolUseBlocks: this.toolUseBlocks,
           });
           this.state = 'idle';
+          this.awaitingToolResults = hasToolUse;
+          this.pendingToolUseStartedAt = hasToolUse ? Date.now() : null;
           this.currentResolve?.(result);
           this.resetRequestState();
           this.emit('idle'); // F7: Trigger message queue drain (after resolve/cleanup)
@@ -677,6 +692,8 @@ export class PersistentClaudeProcess extends EventEmitter {
           const error = new Error(event.error || 'Unknown error');
           this.currentCallbacks?.onError?.(error);
           this.state = 'idle';
+          this.awaitingToolResults = false;
+          this.pendingToolUseStartedAt = null;
           this.currentReject?.(error);
           this.resetRequestState();
           this.emit('idle'); // F7: Trigger message queue drain (after reject/cleanup)
@@ -688,6 +705,8 @@ export class PersistentClaudeProcess extends EventEmitter {
         const error = new Error(event.error || 'Unknown error');
         this.currentCallbacks?.onError?.(error);
         this.state = 'idle';
+        this.awaitingToolResults = false;
+        this.pendingToolUseStartedAt = null;
         this.currentReject?.(error);
         this.resetRequestState();
         this.emit('idle'); // F7: Trigger message queue drain (after reject/cleanup)
@@ -713,6 +732,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     persistentLogger.info(`[PersistentCLI] Process closed with code ${code}`);
     this.state = 'dead';
     this.process = null;
+    this.awaitingToolResults = false;
+    this.pendingToolUseStartedAt = null;
 
     // Reject any pending request
     if (this.currentReject) {
@@ -737,6 +758,8 @@ export class PersistentClaudeProcess extends EventEmitter {
     // Transition to idle so subsequent requests aren't blocked
     if (this.state === 'busy') {
       this.state = 'idle';
+      this.awaitingToolResults = false;
+      this.pendingToolUseStartedAt = null;
       this.emit('idle');
     }
 
@@ -768,6 +791,8 @@ export class PersistentClaudeProcess extends EventEmitter {
       }, 3000);
     }
     this.state = 'dead';
+    this.awaitingToolResults = false;
+    this.pendingToolUseStartedAt = null;
     this.emit('idle'); // F7: Trigger message queue drain (after cleanup)
   }
 
@@ -806,13 +831,30 @@ export class PersistentClaudeProcess extends EventEmitter {
     }
 
     if (this.process) {
+      const child = this.process;
+      let exited = false;
+      const markExited = () => {
+        exited = true;
+      };
+      if (typeof child.once === 'function') {
+        child.once('exit', markExited);
+        child.once('close', markExited);
+      }
       this.clearRequestTimeout();
-      this.process.stdin?.end();
-      this.process.kill('SIGTERM');
+      child.stdin?.end();
+      child.kill('SIGTERM');
+      const forceKillTimer = setTimeout(() => {
+        if (!exited) {
+          child.kill('SIGKILL');
+        }
+      }, 3000);
+      forceKillTimer.unref();
       this.process = null;
     }
 
     this.state = 'dead';
+    this.awaitingToolResults = false;
+    this.pendingToolUseStartedAt = null;
     this.resetRequestState();
   }
 
@@ -828,6 +870,19 @@ export class PersistentClaudeProcess extends EventEmitter {
    */
   isReady(): boolean {
     return this.state === 'idle';
+  }
+
+  /**
+   * True while Claude has requested tools and the host has not sent tool_result yet.
+   * The process is technically idle during host-side tool execution, but it must not
+   * be reclaimed because the next prompt depends on this live Claude context.
+   */
+  hasPendingToolUse(): boolean {
+    return this.awaitingToolResults;
+  }
+
+  getPendingToolUseStartedAt(): number | null {
+    return this.pendingToolUseStartedAt;
   }
 
   /**
@@ -854,11 +909,82 @@ export class PersistentClaudeProcess extends EventEmitter {
  * - Process reuse for multi-turn conversations
  */
 export class PersistentProcessPool {
-  private processes: Map<string, PersistentClaudeProcess> = new Map();
+  private processes: Map<
+    string,
+    { process: PersistentClaudeProcess; lastUsedAt: number; pendingToolUseSince?: number }
+  > = new Map();
   private defaultOptions: Partial<PersistentProcessOptions>;
+  private idleTimeoutMs: number;
+  private cleanupIntervalMs: number;
+  private pendingToolUseTimeoutMs: number;
+  private cleanupTimer: NodeJS.Timeout | null = null;
 
   constructor(defaultOptions: Partial<PersistentProcessOptions> = {}) {
     this.defaultOptions = defaultOptions;
+    this.idleTimeoutMs = this.resolveIdleTimeoutMs(defaultOptions);
+    this.cleanupIntervalMs = this.resolveCleanupIntervalMs(defaultOptions);
+    this.pendingToolUseTimeoutMs = this.resolvePendingToolUseTimeoutMs(defaultOptions);
+    this.startCleanupTimer();
+  }
+
+  private resolveIdleTimeoutMs(defaultOptions: Partial<PersistentProcessOptions>): number {
+    if (defaultOptions.idleTimeoutMs !== undefined) {
+      return Math.max(0, defaultOptions.idleTimeoutMs);
+    }
+    try {
+      return Math.max(
+        0,
+        (getConfig().timeouts?.persistent_process_idle_ms as number | undefined) ??
+          getConfig().timeouts?.session_ms ??
+          1_800_000
+      );
+    } catch {
+      return 1_800_000;
+    }
+  }
+
+  private resolveCleanupIntervalMs(defaultOptions: Partial<PersistentProcessOptions>): number {
+    if (defaultOptions.cleanupIntervalMs !== undefined) {
+      return Math.max(0, defaultOptions.cleanupIntervalMs);
+    }
+    try {
+      return Math.max(
+        0,
+        (getConfig().timeouts?.persistent_process_cleanup_ms as number | undefined) ??
+          getConfig().timeouts?.session_cleanup_ms ??
+          300_000
+      );
+    } catch {
+      return 300_000;
+    }
+  }
+
+  private resolvePendingToolUseTimeoutMs(
+    defaultOptions: Partial<PersistentProcessOptions>
+  ): number {
+    if (defaultOptions.pendingToolUseTimeoutMs !== undefined) {
+      return Math.max(0, defaultOptions.pendingToolUseTimeoutMs);
+    }
+    try {
+      return Math.max(
+        0,
+        (getConfig().timeouts?.persistent_process_pending_tool_ms as number | undefined) ??
+          Math.max(this.idleTimeoutMs * 4, 1_800_000)
+      );
+    } catch {
+      return Math.max(this.idleTimeoutMs * 4, 1_800_000);
+    }
+  }
+
+  private startCleanupTimer(): void {
+    if (this.cleanupTimer || this.cleanupIntervalMs === 0 || this.idleTimeoutMs === 0) {
+      return;
+    }
+
+    this.cleanupTimer = setInterval(() => {
+      this.cleanupIdleProcesses();
+    }, this.cleanupIntervalMs);
+    this.cleanupTimer.unref();
   }
 
   /**
@@ -868,7 +994,10 @@ export class PersistentProcessPool {
     channelKey: string,
     options?: Partial<PersistentProcessOptions>
   ): Promise<PersistentClaudeProcess> {
-    let process = this.processes.get(channelKey);
+    this.startCleanupTimer();
+    const now = Date.now();
+    const entry = this.processes.get(channelKey);
+    let process = entry?.process;
 
     if (!process || !process.isAlive()) {
       // Create new process
@@ -882,31 +1011,101 @@ export class PersistentProcessPool {
       process = new PersistentClaudeProcess(mergedOptions);
 
       // Handle process errors - prevent unhandled 'error' event crash
+      const removeIfCurrent = () => {
+        const current = this.processes.get(channelKey);
+        if (current?.process === process) {
+          this.processes.delete(channelKey);
+        }
+      };
+
+      const touchIfCurrent = () => {
+        const current = this.processes.get(channelKey);
+        if (!current || current.process !== process) {
+          return;
+        }
+        current.lastUsedAt = Date.now();
+        if (process.hasPendingToolUse()) {
+          current.pendingToolUseSince = process.getPendingToolUseStartedAt() ?? current.lastUsedAt;
+        } else {
+          current.pendingToolUseSince = undefined;
+        }
+      };
+
       process.on('error', (err) => {
         poolLogger.error(`Process error for ${channelKey}:`, err);
-        this.processes.delete(channelKey);
+        removeIfCurrent();
       });
 
       // Handle process death - remove from pool
       process.on('close', () => {
         poolLogger.info(`Process for ${channelKey} closed, removing from pool`);
-        this.processes.delete(channelKey);
+        removeIfCurrent();
       });
+      process.on('idle', touchIfCurrent);
 
-      this.processes.set(channelKey, process);
+      this.processes.set(channelKey, { process, lastUsedAt: now });
       await process.start();
+    } else if (entry) {
+      entry.lastUsedAt = now;
     }
 
     return process;
   }
 
   /**
+   * Stop idle ready processes that have outlived the configured idle timeout.
+   */
+  cleanupIdleProcesses(now: number = Date.now()): number {
+    let cleaned = 0;
+
+    for (const [key, entry] of this.processes) {
+      const process = entry.process;
+      if (!process.isAlive()) {
+        this.processes.delete(key);
+        cleaned++;
+        continue;
+      }
+
+      if (process.hasPendingToolUse()) {
+        entry.pendingToolUseSince =
+          process.getPendingToolUseStartedAt() ?? entry.pendingToolUseSince ?? now;
+        if (
+          this.pendingToolUseTimeoutMs === 0 ||
+          now - entry.pendingToolUseSince <= this.pendingToolUseTimeoutMs
+        ) {
+          continue;
+        }
+
+        poolLogger.warn(`Stopping process with expired pending tool result wait for: ${key}`);
+        process.stop();
+        this.processes.delete(key);
+        cleaned++;
+        continue;
+      }
+      entry.pendingToolUseSince = undefined;
+
+      if (
+        this.idleTimeoutMs > 0 &&
+        process.isReady() &&
+        now - entry.lastUsedAt > this.idleTimeoutMs
+      ) {
+        poolLogger.info(`Stopping idle process for: ${key}`);
+        process.stop();
+        this.processes.delete(key);
+        cleaned++;
+      }
+    }
+
+    return cleaned;
+  }
+
+  /**
    * Stop a specific process
    */
   stopProcess(channelKey: string): void {
-    const process = this.processes.get(channelKey);
-    if (process) {
-      process.stop();
+    const entry = this.processes.get(channelKey);
+    if (entry) {
+      entry.process.stop();
       this.processes.delete(channelKey);
     }
   }
@@ -915,11 +1114,15 @@ export class PersistentProcessPool {
    * Stop all processes
    */
   stopAll(): void {
-    for (const [key, process] of this.processes) {
+    for (const [key, entry] of this.processes) {
       poolLogger.info(`Stopping process for: ${key}`);
-      process.stop();
+      entry.process.stop();
     }
     this.processes.clear();
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
   }
 
   /**
@@ -942,8 +1145,8 @@ export class PersistentProcessPool {
    */
   getProcessStates(): Map<string, string> {
     const states = new Map<string, string>();
-    for (const [key, proc] of this.processes) {
-      states.set(key, proc.getState());
+    for (const [key, entry] of this.processes) {
+      states.set(key, entry.process.getState());
     }
     return states;
   }

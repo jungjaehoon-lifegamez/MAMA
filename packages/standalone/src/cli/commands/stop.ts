@@ -21,19 +21,69 @@ const { DebugLogger } = debugLogger as unknown as {
 const logger = new DebugLogger('Stop');
 
 export function isStandaloneDaemonCommand(command: string): boolean {
+  const args = splitCommand(command);
+  const first = args[0];
+  const second = args[1];
+  const third = args[2];
+
   return (
-    command.includes('mama daemon') ||
-    command.includes('/packages/standalone/dist/cli/index.js daemon') ||
-    command.includes('\\packages\\standalone\\dist\\cli\\index.js daemon')
+    (isMamaExecutable(first) && second === 'daemon') ||
+    (isNodeExecutable(first) &&
+      (isMamaExecutable(second) || isStandaloneCliPath(second)) &&
+      third === 'daemon')
   );
 }
 
 export function isStandaloneWatchdogCommand(command: string): boolean {
+  const args = splitCommand(command);
+  const first = args[0];
+
   return (
-    command.includes('mama-watchdog') ||
-    (command.includes('DAEMON_CMD = "') &&
+    (isNodeExecutable(first) &&
+      args.some((arg) => arg === 'mama-watchdog' || arg === '--mama-watchdog')) ||
+    (isNodeExecutable(first) &&
+      command.includes('DAEMON_CMD = "') &&
       command.includes('/packages/standalone/dist/cli/index.js') &&
       command.includes('function checkHealth()'))
+  );
+}
+
+function splitCommand(command: string): string[] {
+  return command
+    .trim()
+    .split(/\s+/)
+    .map((arg) => arg.replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+}
+
+function isMamaExecutable(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  return (
+    arg === 'mama' ||
+    arg === 'mama-os' ||
+    arg.endsWith('/mama') ||
+    arg.endsWith('\\mama') ||
+    arg.endsWith('/mama-os') ||
+    arg.endsWith('\\mama-os')
+  );
+}
+
+function isNodeExecutable(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  return arg === 'node' || arg.endsWith('/node') || arg.endsWith('\\node');
+}
+
+function isStandaloneCliPath(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  return (
+    arg.endsWith('/packages/standalone/dist/cli/index.js') ||
+    arg.endsWith('\\packages\\standalone\\dist\\cli\\index.js')
   );
 }
 
@@ -212,6 +262,7 @@ function isPortInUse(port: number): boolean {
  */
 export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
   let killed = false;
+  const processesByPid = new Map(listProcesses().map((proc) => [proc.pid, proc.command]));
   for (const port of ports) {
     try {
       const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
@@ -221,18 +272,31 @@ export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
         .split('\n')
         .map((p) => parseInt(p.trim(), 10))
         .filter((p) => Number.isFinite(p) && p !== process.pid);
+      let killedOnPort = 0;
       for (const pid of pids) {
+        const command = processesByPid.get(pid);
+        if (!command || !isMamaPortProcess(command)) {
+          logger.warn(
+            `Skipping unverified process on port ${port} (PID ${pid}) during MAMA cleanup`
+          );
+          continue;
+        }
         try {
           process.kill(pid, 'SIGTERM');
+          killed = true;
+          killedOnPort++;
         } catch {
           /* already dead */
         }
       }
 
       if (pids.length > 0) {
-        killed = true;
         await sleep(1000);
         for (const pid of pids) {
+          const command = processesByPid.get(pid);
+          if (!command || !isMamaPortProcess(command)) {
+            continue;
+          }
           if (isProcessRunning(pid)) {
             try {
               process.kill(pid, 'SIGKILL');
@@ -241,13 +305,19 @@ export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
             }
           }
         }
-        console.log(`✓ Cleaned up ${pids.length} process(es) on port ${port}`);
+        if (killedOnPort > 0) {
+          console.log(`✓ Cleaned up ${killedOnPort} verified MAMA process(es) on port ${port}`);
+        }
       }
     } catch {
       /* lsof not available or no processes */
     }
   }
   return killed;
+}
+
+function isMamaPortProcess(command: string): boolean {
+  return isStandaloneDaemonCommand(command) || isStandaloneWatchdogCommand(command);
 }
 
 /**
@@ -325,12 +395,17 @@ async function stopWatchdog(): Promise<void> {
     const content = readFileSync(watchdogPidPath, 'utf-8');
     const { pid } = JSON.parse(content);
     if (typeof pid === 'number' && isProcessRunning(pid)) {
-      process.kill(pid, 'SIGTERM');
-      await sleep(500);
-      if (isProcessRunning(pid)) {
-        process.kill(pid, 'SIGKILL');
+      const command = listProcesses().find((proc) => proc.pid === pid)?.command;
+      if (!command || !isStandaloneWatchdogCommand(command)) {
+        logger.warn(`Skipping unverified watchdog PID ${pid}; removing stale watchdog pid file`);
+      } else {
+        process.kill(pid, 'SIGTERM');
+        await sleep(500);
+        if (isProcessRunning(pid)) {
+          process.kill(pid, 'SIGKILL');
+        }
+        console.log(`✓ Watchdog stopped (PID ${pid})`);
       }
-      console.log(`✓ Watchdog stopped (PID ${pid})`);
     }
   } catch {
     // ignore
@@ -377,9 +452,14 @@ export async function killAllMamaWatchdogs(): Promise<boolean> {
   return true;
 }
 
-function listProcesses(): Array<{ pid: number; command: string }> {
+const PROCESS_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+export function listProcesses(): Array<{ pid: number; command: string }> {
   try {
-    const output = execSync('ps -eo pid=,command=', { encoding: 'utf-8' });
+    const output = execSync('ps -eo pid=,command=', {
+      encoding: 'utf-8',
+      maxBuffer: PROCESS_LIST_MAX_BUFFER_BYTES,
+    });
     return output
       .split('\n')
       .map((line) => line.trim())
@@ -399,8 +479,11 @@ function listProcesses(): Array<{ pid: number; command: string }> {
       })
       .filter((p): p is { pid: number; command: string } => p !== null);
   } catch (err) {
-    throw new Error(
-      `Failed to list processes: ${err instanceof Error ? err.message : String(err)}`
+    logger.warn(
+      `Failed to list processes; continuing best-effort cleanup: ${
+        err instanceof Error ? err.message : String(err)
+      }`
     );
+    return [];
   }
 }

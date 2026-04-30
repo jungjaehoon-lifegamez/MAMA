@@ -19,6 +19,14 @@ describe('Story: standalone stop command detection', () => {
       expect(isStandaloneDaemonCommand('mama daemon')).toBe(true);
     });
 
+    it('matches wrapper mama-os daemon command', () => {
+      expect(isStandaloneDaemonCommand('mama-os daemon')).toBe(true);
+    });
+
+    it('does not match unrelated commands that merely mention mama daemon', () => {
+      expect(isStandaloneDaemonCommand('echo "mama daemon"')).toBe(false);
+    });
+
     it('does not match unrelated mama-server processes', () => {
       expect(
         isStandaloneDaemonCommand(
@@ -31,6 +39,10 @@ describe('Story: standalone stop command detection', () => {
   describe('AC #2: detect watchdog commands', () => {
     it('matches explicit watchdog marker', () => {
       expect(isStandaloneWatchdogCommand('node -e watchdog-script --mama-watchdog')).toBe(true);
+    });
+
+    it('does not match unrelated commands that merely mention the watchdog marker', () => {
+      expect(isStandaloneWatchdogCommand('echo mama-watchdog')).toBe(false);
     });
 
     it('matches legacy inline watchdog command', () => {
