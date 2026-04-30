@@ -1,21 +1,26 @@
-# MAMA OS — Local AI Runtime with Connected Memory
+# MAMA OS - Local AI Runtime for Provenance-Backed Context
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval](https://img.shields.io/badge/LongMemEval-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-2800%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-3000%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Your scattered knowledge, organized by AI agents that never sleep.
+> Bounded, provenance-backed working context for AI agents running on your machine.
 
 ## The Problem
 
 Your knowledge is everywhere — Slack threads, email chains, code reviews, meeting notes, spreadsheets, Telegram messages. No human can track all of it. Important decisions get buried. Context gets lost between tools. When you need to make a decision, the information that would help is scattered across ten different apps and three months of history.
 
-This isn't a memory problem. It's an intelligence problem.
+For AI agents, the problem is sharper. A vector search can find something vaguely similar, but the
+agent still needs to know whether that result is in scope, which raw evidence supports it, which
+model run produced it, and whether it is allowed to act on it.
+
+This isn't just a memory problem. It's a bounded context problem.
 
 ## What MAMA OS Does
 
-MAMA OS is a local daemon that connects to your apps, reads everything continuously, and turns scattered records into organized knowledge — then delivers actionable briefings so you can make better decisions faster.
+MAMA OS is a local daemon that connects to your apps, reads continuously, and turns scattered
+records into scoped, auditable context for agents and humans.
 
 The browser viewer is the live operating surface for that work: `Dashboard`, `Memory`, `Feed`,
 `Wiki`, `Agents`, `Logs`, and `Settings`, with a global chat shell layered on top instead of a
@@ -27,6 +32,9 @@ separate chat tab.
 - **Identify what matters** — Out of thousands of messages, surface the decisions, deadlines, and changes that affect your work
 - **Connect across sources** — A Slack conversation + a Trello card + an email about the same project are linked automatically
 - **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
+- **Operate inside envelopes** — Gateway and worker calls carry signed scope boundaries and audit rows
+- **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
+- **Search with evidence** — Strict and balanced modes reject vector-only noise unless lexical/entity/raw/seed evidence confirms the result
 - **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and next steps
 - **Brief you proactively** — When you start working, relevant context from all sources is already there
 
@@ -38,7 +46,8 @@ With MAMA:     Agents already read everything. You get a briefing with
                what changed, what's at risk, and what needs your decision.
 ```
 
-**This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
+**This is what local AI agents should do** — read every channel, every thread, every document, every
+day, then explain exactly which evidence they used and which permission boundary they were inside.
 
 ## How It Runs
 
@@ -84,22 +93,23 @@ MAMA answers "why did we switch?" — not just "what do we use?"
 ## Architecture
 
 ```
-Connectors (15)          Gateways (4)
-Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
-       |                        |
-       v                        v
- 3-Pass Extraction       Knowledge Agents
- (Truth → Hub → Spoke)  (os-agent, Conductor audit, Dashboard, Wiki, Memory)
-       |                        |
-       +--------+-------+------+
-                |
-         MAMA Core (mama-memory.db)
-         Local SQLite + 1024-dim embeddings
-         Knowledge graph + evolution edges
-                |
-         +------+------+
-         |             |
-    Viewer UI     Claude Code Plugin
+Connectors (15)              Gateways (4)
+Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
+       |                            |
+       v                            v
+ 3-Pass Extraction          Reactive Runtime Envelopes
+ (Truth -> Hub -> Spoke)    scope, expiry, signature, audit
+       |                            |
+       +------------+---------------+
+                    |
+             MAMA Core (mama-memory.db)
+             SQLite + 1024-dim embeddings
+             memory, raw refs, model runs,
+             tool traces, twin edges, packets
+                    |
+             +------+------+
+             |             |
+        Viewer UI     Claude Code Plugin / MCP
 ```
 
 **Local-first.** All data stays on your device. No cloud. AI provider independent — works with Claude, Codex, or any future backend.
@@ -109,6 +119,10 @@ Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
 MAMA OS has full system access via the backend CLI — so security is foundational, not optional.
 
 - **Local-only by default** — Binds to localhost. External access requires explicit tunnel + authentication.
+- **Signed runtime envelopes** — Gateway and worker tool calls carry verifiable scope, expiry, and
+  actor context before irreversible side effects are allowed.
+- **Provenance ledger** — Memory writes, raw refs, model runs, and tool traces can be audited after
+  the fact without exposing prompt bodies or hidden connector payloads.
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode, bulk extraction limits. Built from a [real incident](docs/guides/security.md), not theory.
 - **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
 - **Agent permission tiers** — Tier 1 (full), Tier 2 (read-only), Tier 3 (scoped). Each agent gets only the tools it needs.
@@ -131,13 +145,13 @@ MAMA outperforms SuperMemory while running **entirely locally** with open-source
 
 ## Packages
 
-| Package                                          | Version | Description                                              |
-| ------------------------------------------------ | ------- | -------------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.19.1  | Always-on runtime — connectors, knowledge agents, viewer |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.13.0  | MCP server for Claude Desktop/Code                       |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.5.0   | Core library (memory engine, embeddings, DB)             |
-| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)                         |
-| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework                  |
+| Package                                          | Version | Description                                           |
+| ------------------------------------------------ | ------- | ----------------------------------------------------- |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.19.1  | Always-on runtime, envelopes, connectors, worker APIs |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.13.0  | MCP server for Claude Desktop/Code                    |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.5.0   | Core memory, provenance, raw refs, graph, embeddings  |
+| [mama plugin](packages/claude-code-plugin/)      | 1.9.0   | Claude Code plugin (marketplace)                      |
+| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
 ## Quick Start
 
@@ -183,6 +197,8 @@ dedicated tab. Connects to Discord, Slack, Telegram.
 - **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
 - **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
 - **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion, with strict modes and diagnostics for vector-noise debugging
+- **Runtime boundary:** Signed reactive envelopes with scope snapshots, expiry, and mismatch audit rows
+- **Provenance:** Compact source refs, model runs, tool traces, twin edges, and worker situation packets
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
@@ -193,6 +209,9 @@ Anyone who installs MAMA OS and connects their apps gets:
 - **Automatic knowledge extraction** — Connectors poll 15 sources, AI extracts decisions/deadlines/changes without manual input
 - **Cross-source search** — "What did we decide about X?" searches Slack + email + code + docs simultaneously
 - **Noise-resistant search** — Strict and balanced modes can reject vector-only matches and show why a result was included
+- **Bounded agent calls** — Gateway and worker calls can be tied to runtime envelopes and audited for scope mismatches
+- **Evidence provenance** — Memory rows can be traced to raw refs, model runs, tool traces, and trusted runtime context
+- **Worker context APIs** — Raw search, situation packets, graph/entity APIs, and twin edges give sub-agents structured evidence surfaces
 - **Decision evolution tracking** — Not just what was decided, but what it replaced and why
 - **Proactive briefings** — Dashboard agent compiles what changed across all sources
 - **Wiki compilation** — Knowledge agents organize raw conversations into structured Obsidian pages
@@ -200,23 +219,24 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                      |
-| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                               |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                         |
-| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                       |
-| **Done** | v0.19   | Agent-management foundation shipped: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation |
-| **Next** | v0.20   | Strict memory search controls, retrieval diagnostics, scoped search hardening, and persistent CLI process cleanup                                          |
-|          | Later   | Context compile, browser onboarding for non-developers, and domain-specific extraction templates                                                           |
-|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                      |
+| Phase    | Version | Focus                                                                                                                                                |
+| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                         |
+| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                      |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                   |
+| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                  |
+| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                          |
+| **Now**  | v0.20   | M1-M6 runtime foundation: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, process cleanup            |
+| **Next** | v0.21   | Context Compile V0: append-only `context_packets`, deterministic compiler, `context_compile` tool/API, and downstream `context_packet_id` provenance |
+|          | Later   | Report composer, packet retention policy, search-quality feedback loops, browser onboarding for non-developers, and domain extraction templates      |
+|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                          |
 
 ## Development
 
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 2800+ tests across all packages
+pnpm test     # 3000+ tests across all packages
 ```
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.

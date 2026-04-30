@@ -6,6 +6,18 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Reactive runtime envelopes** — Gateway and worker tool calls now carry signed runtime
+  envelopes, scope snapshots, and mismatch audit rows so agents operate inside an explicit
+  permission boundary instead of relying on prompt-only intent
+- **Memory provenance foundation** — Memory writes can preserve trusted origin metadata including
+  agent id, envelope hash, gateway call id, model run id, source refs, scope bindings, and
+  provenance audit/backfill helpers
+- **Model run and tool trace ledger** — Added adapter-scoped model run stores, tool trace stores,
+  replay compatibility helpers, and lifecycle hardening for reconstructing what an agent did
+- **Worker context APIs** — Added unified raw search, agent situation packets, and worker graph/entity
+  APIs so subordinate agents can read bounded evidence without manually stitching DB internals
+- **Twin edge ledger** — Added first-class twin edges with ref validation, visibility rules, and
+  graph provenance tests for durable relationships between memory, raw, entity, and case refs
 - **Strict memory search controls** — `mama_search`, MCP search, and `mama.suggest()` now accept
   `strict`, `strictness`, `threshold`, `disableRecency`, `includeRelated`, `topicPrefix`,
   `minLexicalSupport`, `diagnostics`, and `scopes` so agents can choose recall-friendly,
@@ -16,6 +28,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **North Star shifted toward bounded context** — MAMA now treats memory as one substrate inside a
+  larger local runtime for permission-scoped, provenance-backed agent context
+- **Standalone gateway execution** — Gateway tool execution and delegation were split into clearer
+  pipeline modules, with envelope context propagated through internal calls and Code-Act paths
+- **Raw connector indexing** — Connector raw stores now keep unified indexes and provenance so raw
+  rows can be queried and traced as evidence, not just treated as ingest byproducts
 - **Search quality pipeline** — Strict search options now flow through MCP and standalone handlers
   into `mama.suggest()` and `recallMemory()`, including the memory_v2 fusion/rollup path, wiki
   hits, graph-expanded hits, and learned-ranker metadata
@@ -24,6 +42,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Envelope and provenance review gaps** — Hardened reactive envelope issuance, public health vs
+  authenticated status separation, gateway scope mismatch logging, model-run replay contracts,
+  situation packet visibility, graph visibility, alias replay, and graph API internal error
+  sanitization
 - **Vector-noise leaks in strict search** — Strict and balanced modes no longer allow vector-only
   fallback, wiki vector hits, or graph-expanded rows through without independent relevance
   confirmation

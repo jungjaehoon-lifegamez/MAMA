@@ -1,6 +1,6 @@
 # @jungjaehoon/mama-core
 
-Shared core modules for MAMA (Memory-Augmented MCP Assistant).
+Shared memory, provenance, graph, and context substrate for MAMA.
 
 ## What is MAMA Core?
 
@@ -10,7 +10,9 @@ MAMA Core is a shared package containing the fundamental modules used by all MAM
 - **claude-code-plugin**: Claude Code plugin
 - **standalone**: Standalone HTTP server
 
-This package provides embedding generation, database management, decision tracking, and other core functionality without the transport layer (MCP/HTTP).
+This package provides embedding generation, database management, scoped memory, provenance, raw
+evidence refs, graph/entity helpers, and worker context primitives without the transport layer
+(MCP/HTTP).
 
 ## Installation
 
@@ -102,6 +104,25 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 - **memory/channel-summary-state-store** - Channel state management
   - `recordChannelAudit(input)` - Accumulate audit outcomes into channel state
 
+- **memory/provenance** - Trusted memory provenance
+  - Preserves compact runtime origin metadata in `provenance_json`
+  - Keeps underlying raw/memory/case/entity refs in `source_refs_json`
+  - Ignores caller-supplied untrusted provenance on public paths
+
+- **model-runs** - Agent execution lineage
+  - `model-runs/store` records model run lifecycle and replay metadata
+  - `model-runs/tool-trace-store` records tool calls for later audit and reconstruction
+
+- **connectors/raw-query** - Unified raw evidence reads
+  - Query raw connector rows through scope-aware filters
+  - Preserve raw source ids for downstream provenance
+
+- **agent-situation** - Worker situation packets
+  - Build, rank, cache, insert, and read append-only situation packets for worker context
+
+- **agent-graph** - Worker graph/entity helpers
+  - Query graph neighborhoods, resolve entities, and write aliases with visibility checks
+
 ### Core API (Legacy)
 
 - **mama-api** - High-level API interface (wraps memory API)
@@ -112,6 +133,9 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 - **search/search-quality** - Search option normalization
   - `normalizeSearchQualityOptions(options)` - Normalize recall/balanced/strict thresholds and confirmation requirements
+
+- **edges** - Twin edge ledger
+  - Validate refs and store durable edges between memory, raw, entity, case, and packet refs
 
 - **decision-tracker** - Decision graph management
   - `learnDecision(decision)` - Learn from decision
@@ -156,7 +180,7 @@ pnpm test:watch
 
 ## Test Coverage
 
-- 99 unit/integration test files in `packages/mama-core/tests`
+- 120+ unit/integration test files in `packages/mama-core/tests`
 - 100% passing
 - Tests cover:
   - Config loader, database initialization, module exports
@@ -164,6 +188,9 @@ pnpm test:watch
   - Truth store, evolution engine, scope schema
   - Channel summary, channel summary state
   - Event store, finding store, bootstrap builder
+  - Memory provenance, model runs, tool traces
+  - Twin edges, raw query, agent situation, agent graph
+  - Strict search diagnostics and rollup provenance
   - Legacy shim compatibility
 
 ## Architecture
@@ -178,7 +205,7 @@ packages/mama-core/
 │   ├── db-manager.ts         # Database management
 │   ├── mama-api.ts           # High-level API (wraps memory API)
 │   ├── db-adapter/           # Database adapter (SQLite)
-│   └── memory/               # Memory infrastructure
+│   ├── memory/               # Memory infrastructure
 │       ├── types.ts          # MemoryRecord, MemoryScopeRef, RecallBundle, etc.
 │       ├── api.ts            # saveMemory, recallMemory, buildProfile, etc.
 │       ├── truth-store.ts    # Truth projection layer
@@ -191,6 +218,12 @@ packages/mama-core/
 │       ├── channel-summary-state-store.ts # Channel state reducer
 │       ├── bootstrap-builder.ts           # Memory agent bootstrap
 │       └── profile-builder.ts             # Profile classification
+│   ├── model-runs/           # Model run + tool trace lineage
+│   ├── connectors/           # Raw connector query/index helpers
+│   ├── edges/                # Twin edge ledger
+│   ├── agent-situation/      # Worker situation packets
+│   ├── agent-graph/          # Worker graph/entity helpers
+│   └── search/               # Search quality option normalization
 ├── db/migrations/            # SQLite migrations (001-036)
 └── tests/                    # Unit and integration tests
 ```

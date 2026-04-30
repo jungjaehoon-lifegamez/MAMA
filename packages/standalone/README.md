@@ -1,22 +1,27 @@
 # @jungjaehoon/mama-os
 
-> Your scattered knowledge, organized by AI agents that never sleep.
+> Bounded, provenance-backed working context for AI agents running on your machine.
 
 ## The Problem
 
 Your knowledge is everywhere — Slack threads, email chains, code reviews, meeting notes, spreadsheets, Telegram messages. No human can track all of it. Important decisions get buried. Context gets lost between tools. When you need to make a decision, the information that would help is scattered across ten different apps and three months of history.
 
-This isn't a memory problem. It's an intelligence problem. You don't just need to _store_ information — you need something that reads everything, connects the dots, identifies what matters, and tells you what you're missing.
+This isn't just a memory problem. It's a bounded context problem. You don't just need to
+_store_ information — you need something that reads everything, connects the dots, identifies what
+matters, proves where it came from, and keeps agents inside the scope they were given.
 
 ## What MAMA OS Does
 
-MAMA OS is a local AI runtime that connects to your apps, reads everything continuously, and turns scattered records into organized knowledge.
+MAMA OS is a local AI runtime that connects to your apps, reads continuously, and turns scattered
+records into scoped, auditable context for agents and humans.
 
 **What the agents actually do:**
 
 - **Identify what matters** — Out of thousands of daily messages, surface the decisions, deadlines, and changes that affect your work
 - **Connect across sources** — A Slack conversation + a Trello card + an email attachment about the same project are linked automatically
 - **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
+- **Operate inside envelopes** — Gateway and worker calls carry signed scope boundaries and audit rows
+- **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
 - **Search with evidence** — Strict memory search can reject vector-only noise and show which lexical, entity, scope, or graph signals confirmed a result
 - **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and suggested next steps
 - **Brief you proactively** — When you start working, relevant context from all sources is already there — you didn't ask for it
@@ -29,7 +34,8 @@ With MAMA:     Agents already read everything. You get a briefing with
                what changed, what's at risk, and what needs your decision.
 ```
 
-**This is what AI agents can do that humans can't** — read every channel, every thread, every document, every day, and never miss a connection.
+**This is what local AI agents should do** — read every channel, every thread, every document, every
+day, then explain exactly which evidence they used and which permission boundary they were inside.
 
 - **Private by design** — All data stays on your device. Nothing leaves your machine.
 - **AI-independent** — Works with Claude, Codex, or any future backend. Your memory outlives any AI provider.
@@ -50,6 +56,10 @@ mama start   # That's it. MAMA uses your existing CLI authentication.
 MAMA OS has full system access — so security is not optional, it's foundational.
 
 - **Local-only by default** — Binds to localhost. External access requires explicit tunnel setup with authentication (Cloudflare Zero Trust).
+- **Signed runtime envelopes** — Gateway and worker tool calls carry verifiable scope, expiry, and
+  actor context before irreversible side effects are allowed.
+- **Provenance ledger** — Memory writes, raw refs, model runs, and tool traces can be audited after
+  the fact without exposing prompt bodies or hidden connector payloads.
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode for unknown sources, bulk extraction limits. Built from a real incident, not theory.
 - **Intrusion detection** — Honeypot traps for scanner probes (`.git`, `.env`, `wp-login.php`), per-IP suspicion scoring, automatic tarpit delays, and IP deny-listing when thresholds are exceeded.
 - **Agent permission tiers** — Tier 1 (full access), Tier 2 (read-only), Tier 3 (scoped read-only). Each agent only gets the tools it needs.
@@ -140,20 +150,21 @@ Run MAMA as a bot in Discord, Slack, Telegram, or Chatwork. Configure via `mama 
 ## Architecture
 
 ```
-Connectors (15)          Gateways (4)
-Slack, Gmail, Sheets...  Discord, Slack, Telegram, Chatwork
-       |                        |
-       v                        v
- 3-Pass Extraction       Multi-Agent System
-       |                        |
-       +--------+-------+------+
-                |
-         MAMA Core (mama-memory.db)
-         Local SQLite + 1024-dim embeddings
-                |
-         +------+------+
-         |             |
-    Viewer UI     Claude Code Plugin
+Connectors (15)              Gateways (4)
+Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
+       |                            |
+       v                            v
+ 3-Pass Extraction          Reactive Runtime Envelopes
+       |                    scope, expiry, signature, audit
+       +------------+---------------+
+                    |
+             MAMA Core (mama-memory.db)
+             memory, raw refs, model runs,
+             tool traces, twin edges, packets
+                    |
+             +------+------+
+             |             |
+        Viewer UI     Claude Code Plugin / MCP
 ```
 
 ## CLI
@@ -198,7 +209,7 @@ Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI proce
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test       # 2800+ tests across all packages
+pnpm test       # 3000+ tests across all packages
 ```
 
 ## Links

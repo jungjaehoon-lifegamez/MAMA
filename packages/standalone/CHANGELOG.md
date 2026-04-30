@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Reactive envelope runtime** — Standalone now issues and stores signed gateway envelopes, exposes
+  public health separately from authenticated envelope status, and audits scope mismatches through
+  `agent_activity`
+- **Worker evidence APIs** — Added authenticated memory provenance, raw search, agent situation,
+  and agent graph/entity API handlers so workers can retrieve bounded evidence without direct DB
+  access
+- **Envelope-aware gateway tooling** — Code-Act, gateway execution, internal agent-loop calls, and
+  model/tool trace paths now propagate envelope context for trusted provenance
 - **Strict `mama_search` controls** — Gateway, MCP, Code-Act, ToolRegistry, and generated tool docs
   now expose `scopes`, `strict`, `strictness`, `threshold`, `disableRecency`, `includeRelated`,
   `topicPrefix`, `minLexicalSupport`, and `diagnostics`
@@ -18,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Gateway executor architecture** — Delegation execution and gateway tool execution were split
+  into clearer modules, with ToolRegistry kept as the valid-tool source of truth for generated
+  prompts and executor validation
+- **Connector raw stores** — Raw connector persistence now writes provenance and unified indexes so
+  worker APIs can query raw evidence consistently
 - **Envelope-aware memory search** — `mama_search` now defaults to effective envelope scopes and
   rejects caller scopes outside the active envelope before searching
 - **Search diagnostics preservation** — Standalone search result types and handler responses now
@@ -26,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Envelope hardening** — Reactive envelope startup, internal tool contexts, scope mismatch
+  logging, authenticated status reporting, worker graph/entity visibility, and graph API internal
+  error responses now have review-driven regression coverage
 - **Scoped recent-list search** — No-query `mama_search` now passes scopes into recent decision
   listing instead of returning global recent decisions
 - **Long-lived Claude process buildup** — Persistent CLI processes are now reclaimed after idle
