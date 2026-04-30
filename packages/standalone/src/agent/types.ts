@@ -837,6 +837,8 @@ export interface SearchResult {
   count: number;
   diagnostics?: SearchDiagnostics | null;
   meta?: Record<string, unknown>;
+  error?: string;
+  code?: string;
 }
 
 /**

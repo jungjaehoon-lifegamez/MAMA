@@ -103,6 +103,16 @@ export async function handleSearch(
   } = input;
 
   if (type === 'checkpoint') {
+    if (Array.isArray(scopes) && scopes.length > 0) {
+      return {
+        success: false,
+        results: [],
+        count: 0,
+        error: 'Scoped checkpoint search is not supported until checkpoints have scoped reads.',
+        code: 'scoped_checkpoint_unsupported',
+      };
+    }
+
     const checkpoint = await api.loadCheckpoint();
     if (checkpoint && typeof checkpoint === 'object' && 'summary' in checkpoint) {
       const cp = checkpoint as {

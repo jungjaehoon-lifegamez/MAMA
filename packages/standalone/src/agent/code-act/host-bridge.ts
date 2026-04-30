@@ -38,7 +38,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'minLexicalSupport', type: 'boolean', required: false },
       { name: 'diagnostics', type: 'boolean', required: false },
     ],
-    returnType: '{ results: SearchResult[]; count: number }',
+    returnType:
+      '{ results: Array<Record<string, unknown>>; count: number; diagnostics?: Record<string, unknown> | null; meta?: Record<string, unknown> }',
     category: 'memory',
   },
   {

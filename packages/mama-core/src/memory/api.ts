@@ -986,12 +986,13 @@ export async function recallMemory(
       );
 
       let filtered = vectorResults;
+      let vectorScopeMap = new Map<string, MemoryScopeRef[]>();
       if (options.scopes && options.scopes.length > 0) {
         const vectorIds = vectorResults.map((r) => String(r.id));
-        const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
+        vectorScopeMap = batchLoadScopes(getAdapter(), vectorIds);
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
         filtered = vectorResults.filter((r) => {
-          const scopes = scopeMap.get(String(r.id)) ?? [];
+          const scopes = vectorScopeMap.get(String(r.id)) ?? [];
           // When scopes are requested, zero-binding results must NOT pass through
           if (scopes.length === 0) return false;
           return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
@@ -1013,7 +1014,7 @@ export async function recallMemory(
           details: String(result.reasoning || ''),
           confidence: (result as { similarity?: number }).similarity ?? 0.5,
           status: (effectiveStatus as MemoryStatus) || 'active',
-          scopes: [],
+          scopes: vectorScopeMap.get(String(result.id)) ?? [],
           source: { package: 'mama-core', source_type: 'vector_search' },
           created_at: result.created_at ?? Date.now(),
           updated_at: result.created_at ?? Date.now(),
@@ -1378,6 +1379,86 @@ export async function recallMemory(
     const normalizedContent = record.content.trim().toLowerCase();
     return normalizedTitle.includes(normalizedQuery) || normalizedContent.includes(normalizedQuery);
   };
+  const wikiDecisionIdCache = new Map<number, string[]>();
+  const loadWikiDecisionIds = (record: WikiPageIndexRecord): string[] => {
+    const cached = wikiDecisionIdCache.get(record.id);
+    if (cached) {
+      return cached;
+    }
+
+    const ids = new Set(record.source_ids.filter((id) => id.trim().length > 0));
+    if (record.case_id) {
+      const rows = getAdapter()
+        .prepare(
+          `
+            SELECT source_id
+            FROM case_memberships
+            WHERE case_id = ?
+              AND source_type = 'decision'
+              AND status = 'active'
+          `
+        )
+        .all(record.case_id) as Array<{ source_id?: string }>;
+      for (const row of rows) {
+        if (row.source_id) {
+          ids.add(row.source_id);
+        }
+      }
+    }
+
+    const decisionIds = Array.from(ids);
+    wikiDecisionIdCache.set(record.id, decisionIds);
+    return decisionIds;
+  };
+  const wikiScopeSupportCache = new Map<number, boolean>();
+  const hasRequestedWikiScopeSupport = (record: WikiPageIndexRecord): boolean => {
+    if (requestedScopeKeys.size === 0) {
+      return true;
+    }
+    const cached = wikiScopeSupportCache.get(record.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const decisionIds = loadWikiDecisionIds(record);
+    if (decisionIds.length === 0) {
+      wikiScopeSupportCache.set(record.id, false);
+      return false;
+    }
+
+    const scopeMap = batchLoadScopes(getAdapter(), decisionIds);
+    const supported = decisionIds.some((id) =>
+      (scopeMap.get(id) ?? []).some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`))
+    );
+    wikiScopeSupportCache.set(record.id, supported);
+    return supported;
+  };
+  const wikiTopicPrefixSupportCache = new Map<number, boolean>();
+  const hasWikiTopicPrefixSupport = (record: WikiPageIndexRecord): boolean => {
+    if (!searchOptions.topicPrefix) {
+      return true;
+    }
+    const cached = wikiTopicPrefixSupportCache.get(record.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const decisionIds = loadWikiDecisionIds(record);
+    if (decisionIds.length === 0) {
+      wikiTopicPrefixSupportCache.set(record.id, false);
+      return false;
+    }
+
+    const placeholders = decisionIds.map(() => '?').join(', ');
+    const rows = getAdapter()
+      .prepare(`SELECT topic FROM decisions WHERE id IN (${placeholders})`)
+      .all(...decisionIds) as Array<{ topic?: string }>;
+    const supported = rows.some((row) =>
+      String(row.topic ?? '').startsWith(searchOptions.topicPrefix!)
+    );
+    wikiTopicPrefixSupportCache.set(record.id, supported);
+    return supported;
+  };
   const buildDiagnostics = (
     record: MemoryRecord,
     graphSource: SearchHitDiagnostics['graph_source']
@@ -1424,7 +1505,7 @@ export async function recallMemory(
   const buildWikiDiagnostics = (entry: WikiScoreEntry): SearchHitDiagnostics => {
     const lexicalSupport = entry.lexicalSupport;
     const exactTopicSupport = hasExactWikiSupport(entry.record);
-    const scopeSupport = requestedScopeKeys.size === 0;
+    const scopeSupport = hasRequestedWikiScopeSupport(entry.record);
     const confirmationSignals = [
       lexicalSupport ? 'lexical' : null,
       exactTopicSupport ? 'exact_topic' : null,
@@ -1492,6 +1573,10 @@ export async function recallMemory(
   const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
     .sort((a, b) => b.score - a.score)
     .flatMap((entry) => {
+      if (!hasWikiTopicPrefixSupport(entry.record) || !hasRequestedWikiScopeSupport(entry.record)) {
+        return [];
+      }
+
       const wikiDiagnostics = buildWikiDiagnostics(entry);
       if (wikiDiagnostics.is_vector_only) {
         diagnostics.candidate_counts.vector_only += 1;
@@ -1509,7 +1594,7 @@ export async function recallMemory(
             ? { ...entry.record, retrieval_diagnostics: wikiDiagnostics }
             : entry.record,
           fused_rank_score: entry.score,
-          retrieval_diagnostics: wikiDiagnostics,
+          ...(searchOptions.diagnostics ? { retrieval_diagnostics: wikiDiagnostics } : {}),
           ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
           ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
         },
@@ -1600,6 +1685,7 @@ export async function recallMemory(
       const expanded = await mamaDefault.expandWithGraph(candidates);
       const primaryIds = new Set(matched.map((m) => m.id));
       let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));
+      let expandedScopeMap = new Map<string, MemoryScopeRef[]>();
 
       // Re-filter expanded results: apply status and scope checks
       if (!options.includeHistory) {
@@ -1614,16 +1700,16 @@ export async function recallMemory(
       }
       if (options.scopes && options.scopes.length > 0) {
         const expandedIds = expandedOnly.map((e) => e.id);
-        const scopeMap = batchLoadScopes(getAdapter(), expandedIds);
+        expandedScopeMap = batchLoadScopes(getAdapter(), expandedIds);
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
         expandedOnly = expandedOnly.filter((e) => {
-          const scopes = scopeMap.get(e.id) ?? [];
+          const scopes = expandedScopeMap.get(e.id) ?? [];
           if (scopes.length === 0) return false;
           return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
         });
       }
 
-      bundle.graph_context.expanded = expandedOnly.map((e) => {
+      bundle.graph_context.expanded = expandedOnly.flatMap((e) => {
         const expandedRecord: MemoryRecord = {
           id: String(e.id),
           topic: String(e.topic || ''),
@@ -1632,7 +1718,7 @@ export async function recallMemory(
           details: '',
           confidence: (e.graph_rank as number) ?? 0.5,
           status: 'active' as const,
-          scopes: [],
+          scopes: expandedScopeMap.get(e.id) ?? [],
           source: {
             package: 'mama-core' as const,
             source_type: String(e.graph_source || 'graph_expansion'),
@@ -1640,12 +1726,19 @@ export async function recallMemory(
           created_at: (e.created_at as number) ?? Date.now(),
           updated_at: (e.created_at as number) ?? Date.now(),
         };
-        return searchOptions.diagnostics
-          ? {
-              ...expandedRecord,
-              retrieval_diagnostics: buildDiagnostics(expandedRecord, 'expanded'),
-            }
-          : expandedRecord;
+        const expandedDiagnostics = buildDiagnostics(expandedRecord, 'expanded');
+        if (!passesStrictness(expandedDiagnostics)) {
+          diagnostics.candidate_counts.rejected_by_strictness += 1;
+          return [];
+        }
+        return [
+          searchOptions.diagnostics
+            ? {
+                ...expandedRecord,
+                retrieval_diagnostics: expandedDiagnostics,
+              }
+            : expandedRecord,
+        ];
       });
       diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
       fusedHits = [
@@ -1655,6 +1748,7 @@ export async function recallMemory(
           source_id: record.id,
           record,
           fused_rank_score: (record.confidence ?? 0.5) * 0.1,
+          retrieval_diagnostics: record.retrieval_diagnostics,
         })),
       ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
 

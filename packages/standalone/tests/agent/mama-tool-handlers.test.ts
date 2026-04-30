@@ -145,4 +145,21 @@ describe('MAMA search handler option threading', () => {
 
     expect(api.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes });
   });
+
+  it('denies scoped checkpoint search until checkpoints have scoped reads', async () => {
+    const api = createLegacyApi();
+
+    const result = await handleSearch(api, {
+      type: 'checkpoint',
+      scopes: [{ kind: 'project', id: 'alpha' }],
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      count: 0,
+      results: [],
+      code: 'scoped_checkpoint_unsupported',
+    });
+    expect(api.loadCheckpoint).not.toHaveBeenCalled();
+  });
 });

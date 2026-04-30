@@ -40,6 +40,12 @@ describe('TypeDefinitionGenerator', () => {
       );
     });
 
+    it('advertises mama_search diagnostics and meta return fields', () => {
+      const dts = TypeDefinitionGenerator.generate(1);
+      expect(dts).toContain('diagnostics?: Record<string, unknown> | null');
+      expect(dts).toContain('meta?: Record<string, unknown>');
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/path: string/);

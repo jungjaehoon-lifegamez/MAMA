@@ -363,6 +363,38 @@ describe('gateway-tool-executor envelope integration', () => {
     );
   });
 
+  it('defaults empty mama_search query scopes to the active envelope scopes', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelopeScopes = [{ kind: 'project' as const, id: 'alpha' }];
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: envelopeScopes,
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      { query: 'contracts', scopes: [] } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(mamaApi.suggest).toHaveBeenCalledWith(
+      'contracts',
+      expect.objectContaining({ scopes: envelopeScopes })
+    );
+  });
+
   it('defaults mama_search recent-list scopes to the active envelope scopes', async () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });
@@ -386,6 +418,81 @@ describe('gateway-tool-executor envelope integration', () => {
 
     expect(result).toMatchObject({ success: true });
     expect(mamaApi.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes: envelopeScopes });
+  });
+
+  it('defaults empty mama_search recent-list scopes to the active envelope scopes', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelopeScopes = [{ kind: 'project' as const, id: 'alpha' }];
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: envelopeScopes,
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      { limit: 3, scopes: [] } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(mamaApi.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes: envelopeScopes });
+  });
+
+  it('checks role permission before envelope scope membership for mama_search', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'project', id: 'alpha' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      {
+        query: 'contracts',
+        scopes: [{ kind: 'project', id: 'beta' }],
+      } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+        agentContext: {
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'read_only_without_mama',
+          role: { allowedTools: ['Read'] },
+          session: {
+            sessionId: 'session-permission-first',
+            channelId: 'tg:OWN',
+            startedAt: new Date(),
+          },
+        },
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      error: expect.stringContaining('Permission denied'),
+    });
+    expect(result).not.toMatchObject({ code: 'memory_scope_out_of_scope' });
+    expect(mamaApi.suggest).not.toHaveBeenCalled();
   });
 
   it('rejects tier 3 write tools before calling MAMA API', async () => {

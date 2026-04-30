@@ -171,6 +171,10 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_add',
   'mama_ingest',
 ]);
+const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
+  'mama_search',
+  'mama_recall',
+]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'model_tool',
   'reactive_internal',
@@ -1247,7 +1251,10 @@ export class GatewayToolExecutor {
     }
 
     const searchInput = input as SearchInput;
-    if (searchInput.scopes !== undefined || ctx.envelope.scope.memory_scopes.length === 0) {
+    const hasCallerScopes = Array.isArray(searchInput.scopes)
+      ? searchInput.scopes.length > 0
+      : searchInput.scopes !== undefined;
+    if (hasCallerScopes || ctx.envelope.scope.memory_scopes.length === 0) {
       return input;
     }
 
@@ -1423,11 +1430,6 @@ export class GatewayToolExecutor {
       );
     }
 
-    const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
-    if (envelopeDenied) {
-      return envelopeDenied;
-    }
-
     // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
     if (this.disallowedGatewayTools.has(toolName)) {
       return {
@@ -1436,13 +1438,33 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // Check tool permission
-    const toolPermission = this.checkToolPermission(toolName);
-    if (!toolPermission.allowed) {
-      return {
-        success: false,
-        error: toolPermission.error,
-      } as GatewayToolResult;
+    const shouldCheckPermissionBeforeEnvelope =
+      MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS.has(toolName) &&
+      Boolean(this.executionContextStorage.getStore()?.envelope);
+
+    if (shouldCheckPermissionBeforeEnvelope) {
+      const toolPermission = this.checkToolPermission(toolName);
+      if (!toolPermission.allowed) {
+        return {
+          success: false,
+          error: toolPermission.error,
+        } as GatewayToolResult;
+      }
+    }
+
+    const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
+    if (envelopeDenied) {
+      return envelopeDenied;
+    }
+
+    if (!shouldCheckPermissionBeforeEnvelope) {
+      const toolPermission = this.checkToolPermission(toolName);
+      if (!toolPermission.allowed) {
+        return {
+          success: false,
+          error: toolPermission.error,
+        } as GatewayToolResult;
+      }
     }
 
     try {
