@@ -48,6 +48,7 @@
     "./connectors/raw-query": "./dist/connectors/raw-query.js",
     "./connectors/types": "./dist/connectors/types.js",
     "./agent-situation": "./dist/agent-situation/index.js",
+    "./agent-graph": "./dist/agent-graph/index.js",
     "./edges/types": "./dist/edges/types.js",
     "./edges/store": "./dist/edges/store.js",
     "./edges/ref-validation": "./dist/edges/ref-validation.js"
