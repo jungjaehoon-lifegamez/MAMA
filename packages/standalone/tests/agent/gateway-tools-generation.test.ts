@@ -31,10 +31,12 @@ describe('Gateway tools generation', () => {
       expect(prompt).toContain('(url)');
       expect(prompt).toContain('strictness?');
       expect(prompt).toContain('diagnostics?');
+      expect(prompt).toContain('scopes?');
     });
 
     it('keeps mama_search registry params aligned with strict search options', () => {
       const tool = ToolRegistry.getTool('mama_search');
+      expect(tool?.params).toContain('scopes?');
       expect(tool?.params).toContain('strictness?');
       expect(tool?.params).toContain('threshold?');
       expect(tool?.params).toContain('diagnostics?');

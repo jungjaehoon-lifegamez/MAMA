@@ -24,6 +24,11 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'query', type: 'string', required: false, description: 'Search query' },
       { name: 'type', type: "'decision' | 'checkpoint' | 'all'", required: false },
       { name: 'limit', type: 'number', required: false },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
       { name: 'strict', type: 'boolean', required: false },
       { name: 'strictness', type: "'recall' | 'balanced' | 'strict'", required: false },
       { name: 'threshold', type: 'number', required: false },

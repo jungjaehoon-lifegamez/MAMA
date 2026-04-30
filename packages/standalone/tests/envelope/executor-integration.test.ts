@@ -295,6 +295,99 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(gateway.sendMessage).toHaveBeenCalledWith('tg:OWN', 'safe');
   });
 
+  it('rejects mama_search requested scopes outside the envelope before calling MAMA API', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_search_scope',
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'project', id: 'alpha' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      {
+        query: 'contracts',
+        scopes: [{ kind: 'project', id: 'beta' }],
+      } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'memory_scope_out_of_scope',
+      envelope_hash: 'envhash_search_scope',
+    });
+    expect(mamaApi.suggest).not.toHaveBeenCalled();
+  });
+
+  it('defaults mama_search query scopes to the active envelope scopes', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelopeScopes = [{ kind: 'project' as const, id: 'alpha' }];
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: envelopeScopes,
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      { query: 'contracts' } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(mamaApi.suggest).toHaveBeenCalledWith(
+      'contracts',
+      expect.objectContaining({ scopes: envelopeScopes })
+    );
+  });
+
+  it('defaults mama_search recent-list scopes to the active envelope scopes', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelopeScopes = [{ kind: 'project' as const, id: 'alpha' }];
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: envelopeScopes,
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute('mama_search', { limit: 3 } as GatewayToolInput, {
+      agentId: 'worker',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool',
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(mamaApi.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes: envelopeScopes });
+  });
+
   it('rejects tier 3 write tools before calling MAMA API', async () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });

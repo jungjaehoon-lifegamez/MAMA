@@ -78,4 +78,71 @@ describe('MAMA search handler option threading', () => {
       })
     );
   });
+
+  it('preserves diagnostics from mama.suggest responses', async () => {
+    const api = createLegacyApi();
+    vi.mocked(api.suggest).mockResolvedValueOnce({
+      success: true,
+      count: 1,
+      diagnostics: {
+        candidate_counts: {
+          vector: 1,
+          lexical: 1,
+          entity: 0,
+          graph_expanded: 0,
+          vector_only: 0,
+          rejected_by_strictness: 0,
+        },
+        threshold: 0.45,
+        strictness: 'balanced',
+      },
+      results: [
+        {
+          id: 'decision_diagnostic',
+          topic: 'diagnostic topic',
+          decision: 'Diagnostic decision',
+          created_at: '2026-04-30T00:00:00.000Z',
+          type: 'decision',
+          retrieval_diagnostics: {
+            retrieval_source: 'hybrid_rrf',
+            vector_similarity: 0.9,
+            lexical_support: true,
+            entity_support: false,
+            scope_support: true,
+            graph_source: 'primary',
+            is_vector_only: false,
+            confirmation_signals: ['lexical'],
+            metadata_signals: ['scope', 'graph_primary'],
+            candidate_threshold_used: 0.45,
+          },
+        },
+      ],
+    });
+
+    const result = await handleSearch(api, {
+      query: 'diagnostic topic',
+      diagnostics: true,
+    });
+
+    expect(result.diagnostics).toMatchObject({
+      threshold: 0.45,
+      strictness: 'balanced',
+    });
+    expect(result.results[0].retrieval_diagnostics).toMatchObject({
+      lexical_support: true,
+      is_vector_only: false,
+    });
+  });
+
+  it('passes scopes to listDecisions for recent scoped search', async () => {
+    const api = createLegacyApi();
+    const scopes = [{ kind: 'project' as const, id: 'alpha' }];
+
+    await handleSearch(api, {
+      limit: 3,
+      scopes,
+    });
+
+    expect(api.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes });
+  });
 });

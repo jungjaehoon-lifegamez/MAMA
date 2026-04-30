@@ -562,6 +562,7 @@ After failure → save a NEW decision with same topic to create evolution histor
     }
 
     const results = [];
+    let searchDiagnostics;
 
     // Search decisions
     if (type === 'all' || type === 'decision') {
@@ -579,6 +580,7 @@ After failure → save a NEW decision with same topic to create evolution histor
           ...(minLexicalSupport !== undefined && { minLexicalSupport }),
           ...(diagnostics !== undefined && { diagnostics }),
         });
+        searchDiagnostics = suggestResult?.diagnostics;
         decisions = suggestResult?.results || [];
       } else {
         decisions = await mama.list({ limit, ...(scopes && { scopes }) });
@@ -635,6 +637,7 @@ After failure → save a NEW decision with same topic to create evolution histor
       success: true,
       count: limited.length,
       results: limited,
+      ...(searchDiagnostics !== undefined ? { diagnostics: searchDiagnostics } : {}),
     };
   }
 

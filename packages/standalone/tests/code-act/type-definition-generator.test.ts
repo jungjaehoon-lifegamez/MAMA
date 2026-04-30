@@ -35,6 +35,9 @@ describe('TypeDefinitionGenerator', () => {
     it('marks optional params with ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/query\?: string/);
+      expect(dts).toMatch(
+        /scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>/
+      );
     });
 
     it('marks required params without ?', () => {

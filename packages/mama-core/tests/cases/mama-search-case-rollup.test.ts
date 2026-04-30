@@ -457,6 +457,44 @@ describe('Task 11: mama_search case membership roll-up', () => {
     });
   });
 
+  it('prefers confirmed diagnostics before metadata-only graph/source signals', () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-diagnostics-rank' });
+    insertMembership('case-diagnostics-rank', 'D-primary-vector');
+    insertMembership('case-diagnostics-rank', 'D-expanded-unconfirmed');
+
+    const vectorOnlyPrimary = diagnostics({
+      source: 'vector_search',
+      vectorSimilarity: 0.88,
+      graphSource: 'primary',
+      vectorOnly: true,
+      confirmations: [],
+      metadata: ['graph_primary'],
+    });
+    const unconfirmedExpanded = diagnostics({
+      source: 'graph_expansion',
+      vectorSimilarity: null,
+      graphSource: 'expanded',
+      vectorOnly: false,
+      confirmations: [],
+      metadata: ['graph_expanded'],
+    });
+
+    const results = rollUpSearchHits({
+      adapter,
+      fusedHits: [
+        leaf('D-primary-vector', 10, {}, vectorOnlyPrimary),
+        leaf('D-expanded-unconfirmed', 8, {}, unconfirmedExpanded),
+      ],
+    });
+
+    expect(results[0].retrieval_diagnostics).toMatchObject({
+      retrieval_source: 'vector_search',
+      graph_source: 'primary',
+      confirmation_signals: [],
+    });
+  });
+
   it.each([
     {
       name: 'suggest',
@@ -565,6 +603,34 @@ describe('Task 11: mama_search case membership roll-up', () => {
       case_id: 'case-wiki-only',
       id: 'case-wiki-only',
     });
+  });
+
+  it('does not return wiki vector-only hits in strict search', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-vector-only', title: 'Wiki Vector Only Case' });
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-vector-only.md',
+      page_type: 'case',
+      title: 'Wiki Vector Only',
+      content: 'Compiled case body without the requested strict token',
+      case_id: 'case-wiki-vector-only',
+      source_ids: [],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+      embedding: unitVector(1),
+    });
+
+    const result = await suggest('strictwikivectornoise', {
+      limit: 5,
+      strictness: 'strict',
+      diagnostics: true,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
+    expect(result.diagnostics?.candidate_counts.rejected_by_strictness).toBeGreaterThan(0);
   });
 
   it('feeds fused RRF scores into roll-up before case scoring in the production search path', async () => {

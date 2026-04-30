@@ -66,6 +66,16 @@ export interface FusedHit {
   source_id: string;
   record: MemoryRecord | WikiPageIndexRecord;
   fused_rank_score: number;
+  page_type?: WikiPageIndexRecord['page_type'];
+  case_id?: string | null;
+  retrieval_diagnostics?: SearchHitDiagnostics;
+}
+
+interface WikiScoreEntry {
+  record: WikiPageIndexRecord;
+  score: number;
+  lexicalSupport: boolean;
+  vectorSimilarity: number | null;
 }
 
 interface SaveMemoryRollbackError extends Error {
@@ -1234,8 +1244,9 @@ export async function recallMemory(
   }));
 
   let hasWikiHits = false;
-  const wikiScores = new Map<number, { record: WikiPageIndexRecord; score: number }>();
+  const wikiScores = new Map<number, WikiScoreEntry>();
   const wikiVectorRankMap = new Map<number, number>();
+  const wikiVectorScoreById = new Map<number, number>();
 
   try {
     const adapter = getAdapter();
@@ -1254,7 +1265,10 @@ export async function recallMemory(
 
     for (let i = 0; i < wikiVectorHits.length; i++) {
       wikiVectorRankMap.set(wikiVectorHits[i].record.id, i);
+      wikiVectorScoreById.set(wikiVectorHits[i].record.id, wikiVectorHits[i].raw_score);
     }
+    diagnostics.candidate_counts.lexical += wikiFtsHits.length;
+    diagnostics.candidate_counts.vector += wikiVectorHits.length;
 
     for (let i = 0; i < wikiFtsHits.length; i++) {
       const hit = wikiFtsHits[i];
@@ -1264,6 +1278,8 @@ export async function recallMemory(
       wikiScores.set(hit.record.id, {
         record: hit.record,
         score: lexScore + vecBoost,
+        lexicalSupport: true,
+        vectorSimilarity: wikiVectorScoreById.get(hit.record.id) ?? null,
       });
     }
 
@@ -1275,30 +1291,16 @@ export async function recallMemory(
       wikiScores.set(hit.record.id, {
         record: hit.record,
         score: 0.15 * (1 / (RRF_K + i + 1)),
+        lexicalSupport: false,
+        vectorSimilarity: hit.raw_score,
       });
     }
-
-    hasWikiHits = wikiScores.size > 0;
   } catch (wikiFtsErr) {
     warn(
       `[recallMemory] Wiki FTS search failed: ${wikiFtsErr instanceof Error ? wikiFtsErr.message : String(wikiFtsErr)}`
     );
   }
-
-  const wikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => ({
-      source_type: 'wiki_page',
-      source_id: entry.record.source_locator,
-      record: entry.record,
-      fused_rank_score: entry.score,
-      ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
-      ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
-    }));
-
-  fusedHits = [...decisionFusedHits, ...wikiFusedHits].sort(
-    (left, right) => right.fused_rank_score - left.fused_rank_score
-  );
+  fusedHits = decisionFusedHits;
 
   // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
   // similarity displays) get meaningful values.  The raw RRF score for K=60 tops out
@@ -1315,10 +1317,6 @@ export async function recallMemory(
     retrievalSource = 'vector_search';
   } else if (lexicalCandidates.length > 0) {
     retrievalSource = 'lexical_search';
-  }
-
-  if (hasWikiHits) {
-    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
   }
 
   let canonicalMatched: MemoryRecord[] = [];
@@ -1371,6 +1369,15 @@ export async function recallMemory(
       normalizedTopic.includes(normalizedQuery)
     );
   };
+  const hasExactWikiSupport = (record: WikiPageIndexRecord): boolean => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) {
+      return false;
+    }
+    const normalizedTitle = record.title.trim().toLowerCase();
+    const normalizedContent = record.content.trim().toLowerCase();
+    return normalizedTitle.includes(normalizedQuery) || normalizedContent.includes(normalizedQuery);
+  };
   const buildDiagnostics = (
     record: MemoryRecord,
     graphSource: SearchHitDiagnostics['graph_source']
@@ -1414,6 +1421,39 @@ export async function recallMemory(
       candidate_threshold_used: searchOptions.threshold,
     };
   };
+  const buildWikiDiagnostics = (entry: WikiScoreEntry): SearchHitDiagnostics => {
+    const lexicalSupport = entry.lexicalSupport;
+    const exactTopicSupport = hasExactWikiSupport(entry.record);
+    const scopeSupport = requestedScopeKeys.size === 0;
+    const confirmationSignals = [
+      lexicalSupport ? 'lexical' : null,
+      exactTopicSupport ? 'exact_topic' : null,
+    ].filter((signal): signal is string => signal !== null);
+    const metadataSignals = [scopeSupport ? 'scope' : null, 'graph_primary'].filter(
+      (signal): signal is string => signal !== null
+    );
+    const retrievalSourceForRecord =
+      entry.vectorSimilarity !== null && lexicalSupport
+        ? 'wiki_hybrid_rrf'
+        : entry.vectorSimilarity !== null
+          ? 'wiki_vector_search'
+          : lexicalSupport
+            ? 'wiki_lexical_search'
+            : 'wiki_page';
+
+    return {
+      retrieval_source: retrievalSourceForRecord,
+      vector_similarity: entry.vectorSimilarity,
+      lexical_support: lexicalSupport,
+      entity_support: false,
+      scope_support: scopeSupport,
+      graph_source: 'primary',
+      is_vector_only: entry.vectorSimilarity !== null && confirmationSignals.length === 0,
+      confirmation_signals: confirmationSignals,
+      metadata_signals: metadataSignals,
+      candidate_threshold_used: searchOptions.threshold,
+    };
+  };
   const passesStrictness = (hitDiagnostics: SearchHitDiagnostics): boolean => {
     if (searchOptions.strictness === 'recall') {
       return true;
@@ -1449,6 +1489,40 @@ export async function recallMemory(
   fusedHits = fusedHits.filter(
     (hit) => hit.source_type !== 'decision' || acceptedPrimaryIds.has(hit.source_id)
   );
+  const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
+    .sort((a, b) => b.score - a.score)
+    .flatMap((entry) => {
+      const wikiDiagnostics = buildWikiDiagnostics(entry);
+      if (wikiDiagnostics.is_vector_only) {
+        diagnostics.candidate_counts.vector_only += 1;
+      }
+      if (!passesStrictness(wikiDiagnostics)) {
+        diagnostics.candidate_counts.rejected_by_strictness += 1;
+        return [];
+      }
+
+      return [
+        {
+          source_type: 'wiki_page' as const,
+          source_id: entry.record.source_locator,
+          record: searchOptions.diagnostics
+            ? { ...entry.record, retrieval_diagnostics: wikiDiagnostics }
+            : entry.record,
+          fused_rank_score: entry.score,
+          retrieval_diagnostics: wikiDiagnostics,
+          ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
+          ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
+        },
+      ];
+    });
+  hasWikiHits = acceptedWikiFusedHits.length > 0;
+  fusedHits = [...fusedHits, ...acceptedWikiFusedHits].sort(
+    (left, right) => right.fused_rank_score - left.fused_rank_score
+  );
+
+  if (hasWikiHits) {
+    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
+  }
 
   if (matched.length > 0) {
     const readIdentityIndex = await loadDecisionReadIdentityIndex(

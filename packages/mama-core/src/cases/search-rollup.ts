@@ -77,17 +77,17 @@ function leafDiagnostics(leaf: SearchRollupLeafHit): SearchHitDiagnostics | unde
 
 function diagnosticsRank(diagnostics: SearchHitDiagnostics): number {
   let rank = 0;
-  if (!diagnostics.is_vector_only) {
-    rank += 100;
+  rank += diagnostics.confirmation_signals.length * 100;
+  if (diagnostics.lexical_support) {
+    rank += 20;
+  }
+  if (diagnostics.entity_support) {
+    rank += 20;
   }
   if (diagnostics.graph_source === 'primary') {
     rank += 10;
   }
-  rank += diagnostics.confirmation_signals.length;
-  if (diagnostics.lexical_support) {
-    rank += 1;
-  }
-  if (diagnostics.entity_support) {
+  if (!diagnostics.is_vector_only) {
     rank += 1;
   }
   return rank;

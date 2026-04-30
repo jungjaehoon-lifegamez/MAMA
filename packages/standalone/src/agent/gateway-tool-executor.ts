@@ -166,6 +166,7 @@ type TraceCapableMAMAApi = MAMAApiInterface & {
 const managedAgentMutationTails = new Map<string, Promise<void>>();
 const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
+  'mama_search',
   'mama_update',
   'mama_add',
   'mama_ingest',
@@ -933,14 +934,15 @@ export class GatewayToolExecutor {
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
-    const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
+    const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
+    const scopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
     const activeCtx = traceState ? { ...ctx, modelRunId: traceState.modelRunId } : ctx;
 
     let result!: GatewayToolResult;
     try {
       result = await this.executionContextStorage.run(activeCtx, () =>
-        this.executeWithEnvelopeAndPermissions(toolName, input, gatewayCallId)
+        this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
     } catch (error) {
       await this.appendToolTraceIfNeeded(
@@ -1196,6 +1198,10 @@ export class GatewayToolExecutor {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
+    if (toolName === 'mama_search') {
+      return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+    }
+
     if (toolName === 'mama_update') {
       return null;
     }
@@ -1229,6 +1235,26 @@ export class GatewayToolExecutor {
       userId: context.session.userId,
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
+  }
+
+  private applyEnvelopeScopedReadDefaults(
+    toolName: string,
+    input: GatewayToolInput,
+    ctx: ActiveGatewayExecutionContext | undefined
+  ): GatewayToolInput {
+    if (toolName !== 'mama_search' || !ctx?.envelope) {
+      return input;
+    }
+
+    const searchInput = input as SearchInput;
+    if (searchInput.scopes !== undefined || ctx.envelope.scope.memory_scopes.length === 0) {
+      return input;
+    }
+
+    return {
+      ...searchInput,
+      scopes: ctx.envelope.scope.memory_scopes,
+    };
   }
 
   private buildTrustedMemoryWriteOptions(

@@ -789,6 +789,32 @@ export interface SaveResult {
 /**
  * Search result item
  */
+export interface SearchHitDiagnostics {
+  retrieval_source: string;
+  vector_similarity: number | null;
+  lexical_support: boolean;
+  entity_support: boolean;
+  scope_support: boolean;
+  graph_source: 'primary' | 'expanded' | null;
+  is_vector_only: boolean;
+  confirmation_signals: string[];
+  metadata_signals: string[];
+  candidate_threshold_used: number;
+}
+
+export interface SearchDiagnostics {
+  candidate_counts?: {
+    vector: number;
+    lexical: number;
+    entity: number;
+    graph_expanded: number;
+    vector_only: number;
+    rejected_by_strictness: number;
+  };
+  threshold?: number;
+  strictness?: 'recall' | 'balanced' | 'strict';
+}
+
 export interface SearchResultItem {
   id: string;
   topic?: string;
@@ -798,6 +824,8 @@ export interface SearchResultItem {
   similarity?: number;
   created_at: string;
   type: 'decision' | 'checkpoint';
+  retrieval_diagnostics?: SearchHitDiagnostics;
+  contributing_leaf_diagnostics?: Record<string, SearchHitDiagnostics>;
 }
 
 /**
@@ -807,6 +835,8 @@ export interface SearchResult {
   success: boolean;
   results: SearchResultItem[];
   count: number;
+  diagnostics?: SearchDiagnostics | null;
+  meta?: Record<string, unknown>;
 }
 
 /**
@@ -1183,7 +1213,7 @@ export interface MAMAApiInterface {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recentConversation?: any[]
   ): Promise<SaveResult>;
-  listDecisions(options?: { limit?: number }): Promise<unknown[]>;
+  listDecisions(options?: { limit?: number; scopes?: ScopeRef[] }): Promise<unknown[]>;
   suggest(
     query: string,
     options?: {

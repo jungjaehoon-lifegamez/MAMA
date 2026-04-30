@@ -124,7 +124,7 @@ export async function handleSearch(
   }
 
   if (!query) {
-    const decisions = await api.listDecisions({ limit });
+    const decisions = await api.listDecisions({ limit, ...(scopes && { scopes }) });
     const raw = Array.isArray(decisions) ? decisions : [];
     let results = raw.filter(isSearchResultItem);
 
@@ -149,7 +149,7 @@ export async function handleSearch(
   });
   if (!result || typeof result !== 'object') {
     // suggest() can return null on vector search failure — fallback to list
-    const decisions = await api.listDecisions({ limit });
+    const decisions = await api.listDecisions({ limit, ...(scopes && { scopes }) });
     const raw = Array.isArray(decisions) ? decisions : [];
     const filtered = raw.filter(isSearchResultItem);
     return { success: true, results: filtered, count: filtered.length };
@@ -161,7 +161,13 @@ export async function handleSearch(
     filteredResults = filteredResults.filter((item) => item.id.startsWith('decision_'));
   }
 
-  return { success: true, results: filteredResults, count: filteredResults.length };
+  return {
+    success: true,
+    results: filteredResults,
+    count: filteredResults.length,
+    ...(result.diagnostics !== undefined ? { diagnostics: result.diagnostics } : {}),
+    ...(result.meta !== undefined ? { meta: result.meta } : {}),
+  };
 }
 
 export async function handleUpdate(

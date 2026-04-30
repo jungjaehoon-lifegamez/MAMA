@@ -82,7 +82,11 @@ import {
 } from './cases/search-rollup.js';
 import { isSearchRankerEnabled, rescoreSearchResults } from './search/ranker-rescore.js';
 import { SEARCH_RANKER_FEATURE_SET_VERSION } from './search/ranker-features.js';
-import type { SearchHitDiagnostics, SearchQualityOptions } from './search/search-quality.js';
+import {
+  normalizeSearchQualityOptions,
+  type SearchHitDiagnostics,
+  type SearchQualityOptions,
+} from './search/search-quality.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -1609,6 +1613,25 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     minLexicalSupport,
     diagnostics: includeDiagnostics,
   } = options;
+  const normalizedSearchOptions = normalizeSearchQualityOptions({
+    threshold,
+    strict,
+    strictness,
+    disableRecency,
+    includeRelated,
+    topicPrefix: options.topicPrefix,
+    minLexicalSupport,
+    diagnostics: includeDiagnostics,
+  });
+  const memoryV2QualityContractRequested =
+    threshold !== undefined ||
+    strict !== undefined ||
+    strictness !== undefined ||
+    includeRelated !== undefined ||
+    minLexicalSupport !== undefined ||
+    includeDiagnostics === true ||
+    options.topicPrefix !== undefined ||
+    options.scopes !== undefined;
   const rerankPoolLimit = rerankWithLearned ? Math.max(limit * 4, limit + 5) : limit;
 
   try {
@@ -1855,6 +1878,36 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: summarizeGraphExpansion(limitedRows),
+          ranker: rankerMeta,
+        },
+      };
+    }
+
+    if (memoryV2QualityContractRequested) {
+      const emptyRows: Array<{ id: string; source_type?: string; graph_source?: string | null }> =
+        [];
+      const { meta: rankerMeta } = applyLearnedRanker(emptyRows);
+
+      if (format === 'markdown') {
+        return '🔍 Search method: memory_v2\n';
+      }
+
+      return {
+        query: userQuestion,
+        results: emptyRows,
+        ...diagnosticsResponse,
+        meta: {
+          count: 0,
+          search_method: 'memory_v2',
+          threshold: normalizedSearchOptions.threshold,
+          recency_boost: disableRecency
+            ? null
+            : {
+                weight: recencyWeight,
+                scale: recencyScale,
+                decay: recencyDecay,
+              },
+          graph_expansion: summarizeGraphExpansion(emptyRows),
           ranker: rankerMeta,
         },
       };

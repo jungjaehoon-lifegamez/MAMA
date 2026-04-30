@@ -9,7 +9,7 @@ Call tools via JSON block:
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
-- **mama_search**(query?, type?, limit?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?) — Search decisions
+- **mama_search**(query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?) — Search decisions
 - **mama_recall**(query, scopes?, includeProfile?) — Recall memory bundle with profile, memories, and graph context
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
