@@ -677,7 +677,7 @@ function sendGraphError(res: Response, error: unknown): void {
   res.status(500).json({
     error: true,
     code: 'internal_server_error',
-    message,
+    message: 'An internal error occurred.',
   });
 }
 
