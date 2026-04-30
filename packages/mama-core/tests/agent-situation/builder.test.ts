@@ -489,6 +489,37 @@ describe('Story M5: Agent situation source readers and builder', () => {
       ).toThrow(/case_truth\.scope_refs/);
     });
 
+    it('throws when a visible case has no valid timestamp instead of treating it as epoch', () => {
+      const adapter = createAdapter();
+      seedFixture(adapter);
+
+      adapter
+        .prepare(
+          `INSERT INTO case_truth (
+            case_id, title, status, scope_refs, confidence, last_activity_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'case-invalid-timestamp',
+          'Invalid timestamp',
+          'active',
+          JSON.stringify([{ kind: 'project', id: 'repo-a' }]),
+          'medium',
+          null,
+          'not-a-date',
+          'also-not-a-date'
+        );
+
+      expect(() =>
+        listVisibleAgentSituationSources(adapter, {
+          effective_filters: EFFECTIVE_FILTERS,
+          range_start_ms: 0,
+          range_end_ms: 2_000,
+          limit: 10,
+        })
+      ).toThrow(/case_truth timestamp.*case-invalid-timestamp/);
+    });
+
     it('does not let hidden recent case or edge rows starve older visible rows', () => {
       const adapter = createAdapter();
       seedFixture(adapter);
