@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { handleSave } from '../../src/agent/mama-tool-handlers.js';
+import { handleSave, handleSearch } from '../../src/agent/mama-tool-handlers.js';
 import type { MAMAApiInterface, TrustedMemoryWriteOptions } from '../../src/agent/types.js';
 
 function createLegacyApi(): MAMAApiInterface {
@@ -55,5 +55,27 @@ describe('Story M2.1: MAMA save handler compatibility', () => {
         })
       );
     });
+  });
+});
+
+describe('MAMA search handler option threading', () => {
+  it('passes strictness and diagnostics to mama.suggest', async () => {
+    const api = createLegacyApi();
+
+    await handleSearch(api, {
+      query: 'context compile',
+      limit: 4,
+      strictness: 'balanced',
+      diagnostics: true,
+    });
+
+    expect(api.suggest).toHaveBeenCalledWith(
+      'context compile',
+      expect.objectContaining({
+        limit: 4,
+        strictness: 'balanced',
+        diagnostics: true,
+      })
+    );
   });
 });

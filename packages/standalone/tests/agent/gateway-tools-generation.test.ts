@@ -29,7 +29,15 @@ describe('Gateway tools generation', () => {
       const prompt = ToolRegistry.generatePrompt();
       expect(prompt).toContain('(path)');
       expect(prompt).toContain('(url)');
-      expect(prompt).toContain('(query?, type?, limit?)');
+      expect(prompt).toContain('strictness?');
+      expect(prompt).toContain('diagnostics?');
+    });
+
+    it('keeps mama_search registry params aligned with strict search options', () => {
+      const tool = ToolRegistry.getTool('mama_search');
+      expect(tool?.params).toContain('strictness?');
+      expect(tool?.params).toContain('threshold?');
+      expect(tool?.params).toContain('diagnostics?');
     });
 
     it('should use dash separator for description', () => {

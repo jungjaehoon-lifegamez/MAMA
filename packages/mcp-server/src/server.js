@@ -327,6 +327,41 @@ class MAMAServer {
               description: "Filter by type. Default: 'all'",
             },
             limit: { type: 'number', description: 'Max results. Default: 10' },
+            threshold: {
+              type: 'number',
+              minimum: 0,
+              maximum: 1,
+              description: 'Minimum retrieval threshold. Omit for mode default.',
+            },
+            strict: {
+              type: 'boolean',
+              description: 'Shortcut for strict search mode.',
+            },
+            strictness: {
+              type: 'string',
+              enum: ['recall', 'balanced', 'strict'],
+              description: "Search quality mode. Default: 'recall'.",
+            },
+            disableRecency: {
+              type: 'boolean',
+              description: 'Disable recency weighting in search.',
+            },
+            includeRelated: {
+              type: 'boolean',
+              description: 'Include related graph-expanded results.',
+            },
+            topicPrefix: {
+              type: 'string',
+              description: 'Restrict search to topics with this prefix.',
+            },
+            minLexicalSupport: {
+              type: 'boolean',
+              description: 'Require lexical/entity/exact-topic confirmation.',
+            },
+            diagnostics: {
+              type: 'boolean',
+              description: 'Return retrieval diagnostics for search quality inspection.',
+            },
             scopes: {
               type: 'array',
               items: {
@@ -506,7 +541,20 @@ After failure → save a NEW decision with same topic to create evolution histor
    * Handle unified search (decisions + checkpoints)
    */
   async handleSearch(args) {
-    const { query, type = 'all', limit = 10, scopes } = args;
+    const {
+      query,
+      type = 'all',
+      limit = 10,
+      scopes,
+      threshold,
+      strict,
+      strictness,
+      disableRecency,
+      includeRelated,
+      topicPrefix,
+      minLexicalSupport,
+      diagnostics,
+    } = args;
 
     // type='checkpoint' without query → load latest checkpoint (resume session)
     if (type === 'checkpoint' && !query) {
@@ -522,6 +570,14 @@ After failure → save a NEW decision with same topic to create evolution histor
         const suggestResult = await mama.suggest(query, {
           limit,
           ...(scopes && { scopes }),
+          ...(threshold !== undefined && { threshold }),
+          ...(strict !== undefined && { strict }),
+          ...(strictness !== undefined && { strictness }),
+          ...(disableRecency !== undefined && { disableRecency }),
+          ...(includeRelated !== undefined && { includeRelated }),
+          ...(topicPrefix !== undefined && { topicPrefix }),
+          ...(minLexicalSupport !== undefined && { minLexicalSupport }),
+          ...(diagnostics !== undefined && { diagnostics }),
         });
         decisions = suggestResult?.results || [];
       } else {

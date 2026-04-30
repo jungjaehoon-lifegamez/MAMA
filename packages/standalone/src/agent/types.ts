@@ -402,6 +402,15 @@ export interface SearchInput {
   query?: string;
   type?: 'all' | 'decision' | 'checkpoint';
   limit?: number;
+  scopes?: ScopeRef[];
+  threshold?: number;
+  strict?: boolean;
+  strictness?: 'recall' | 'balanced' | 'strict';
+  disableRecency?: boolean;
+  includeRelated?: boolean;
+  topicPrefix?: string;
+  minLexicalSupport?: boolean;
+  diagnostics?: boolean;
 }
 
 export interface RecallInput {
@@ -1175,7 +1184,21 @@ export interface MAMAApiInterface {
     recentConversation?: any[]
   ): Promise<SaveResult>;
   listDecisions(options?: { limit?: number }): Promise<unknown[]>;
-  suggest(query: string, options?: { limit?: number }): Promise<SearchResult>;
+  suggest(
+    query: string,
+    options?: {
+      limit?: number;
+      scopes?: ScopeRef[];
+      threshold?: number;
+      strict?: boolean;
+      strictness?: 'recall' | 'balanced' | 'strict';
+      disableRecency?: boolean;
+      includeRelated?: boolean;
+      topicPrefix?: string;
+      minLexicalSupport?: boolean;
+      diagnostics?: boolean;
+    }
+  ): Promise<SearchResult>;
   recallMemory?(
     query: string,
     options?: { scopes?: ScopeRef[]; includeProfile?: boolean }

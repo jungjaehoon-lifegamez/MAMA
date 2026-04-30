@@ -87,7 +87,20 @@ export async function handleSearch(
   api: MAMAApiInterface,
   input: SearchInput
 ): Promise<SearchResult> {
-  const { query, type, limit = 10 } = input;
+  const {
+    query,
+    type,
+    limit = 10,
+    scopes,
+    threshold,
+    strict,
+    strictness,
+    disableRecency,
+    includeRelated,
+    topicPrefix,
+    minLexicalSupport,
+    diagnostics,
+  } = input;
 
   if (type === 'checkpoint') {
     const checkpoint = await api.loadCheckpoint();
@@ -122,7 +135,18 @@ export async function handleSearch(
     return { success: true, results, count: results.length };
   }
 
-  const result = await api.suggest(query, { limit });
+  const result = await api.suggest(query, {
+    limit,
+    ...(scopes && { scopes }),
+    ...(threshold !== undefined && { threshold }),
+    ...(strict !== undefined && { strict }),
+    ...(strictness !== undefined && { strictness }),
+    ...(disableRecency !== undefined && { disableRecency }),
+    ...(includeRelated !== undefined && { includeRelated }),
+    ...(topicPrefix !== undefined && { topicPrefix }),
+    ...(minLexicalSupport !== undefined && { minLexicalSupport }),
+    ...(diagnostics !== undefined && { diagnostics }),
+  });
   if (!result || typeof result !== 'object') {
     // suggest() can return null on vector search failure — fallback to list
     const decisions = await api.listDecisions({ limit });
