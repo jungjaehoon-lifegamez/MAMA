@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { getAdapter } from '../../src/db-manager.js';
 import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import {
+  assertTwinRefsVisible,
   assertTwinRefsVisibleToScopes,
   listVisibleTwinEdgesForRefs,
 } from '../../src/edges/ref-validation.js';
@@ -40,15 +41,26 @@ function insertScopedMemory(id: string, kind: ScopeKind, externalId: string): vo
     .run(id, scopeId);
 }
 
-function insertScopedRaw(sourceId: string, kind: ScopeKind, scopeId: string): string {
+function insertScopedRaw(
+  sourceId: string,
+  kind: ScopeKind,
+  scopeId: string,
+  overrides: {
+    source_connector?: string;
+    project_id?: string;
+    tenant_id?: string;
+  } = {}
+): string {
   return upsertConnectorEventIndex(getAdapter(), {
-    source_connector: 'slack',
+    source_connector: overrides.source_connector ?? 'slack',
     source_type: 'message',
     source_id: sourceId,
     content: `raw ${sourceId}`,
     event_datetime: 1_000,
     memory_scope_kind: kind,
     memory_scope_id: scopeId,
+    project_id: overrides.project_id,
+    tenant_id: overrides.tenant_id,
   }).event_index_id;
 }
 
@@ -64,6 +76,19 @@ function insertOpaqueObjectEdge(id: string, objectKind: 'entity' | 'report'): vo
       `
     )
     .run(id, objectKind, `${objectKind}-1`, Buffer.alloc(32, id.length));
+}
+
+function insertEntityNode(id: string, kind: ScopeKind, scopeId: string): void {
+  getAdapter()
+    .prepare(
+      `
+        INSERT INTO entity_nodes (
+          id, kind, preferred_label, status, scope_kind, scope_id, merged_into, created_at, updated_at
+        )
+        VALUES (?, 'project', ?, 'active', ?, ?, NULL, 1_000, 1_000)
+      `
+    )
+    .run(id, id, kind, scopeId);
 }
 
 describe('Story M3.1: Twin Edge Visibility', () => {
@@ -139,8 +164,124 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       expect(unscoped).toHaveLength(2);
     });
 
-    it('keeps entity/report endpoints visible for unscoped reads and fail-closed for scoped reads', () => {
+    it('excludes raw endpoints outside requested connector, project, and tenant visibility', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const visibleRaw = insertScopedRaw('raw-visible', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      const discordRaw = insertScopedRaw('raw-discord', 'project', 'alpha', {
+        source_connector: 'discord',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      const betaProjectRaw = insertScopedRaw('raw-beta-project', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'beta',
+        tenant_id: 'default',
+      });
+      const otherTenantRaw = insertScopedRaw('raw-other-tenant', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'other-tenant',
+      });
+
+      const visible = insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: visibleRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+      for (const rawId of [discordRaw, betaProjectRaw, otherTenantRaw]) {
+        insertTwinEdge(getAdapter(), {
+          edge_type: 'derived_from',
+          subject_ref: { kind: 'memory', id: 'mem-alpha' },
+          object_ref: { kind: 'raw', id: rawId },
+          source: 'code',
+          reason_text: 'connector replay',
+        });
+      }
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        }
+      );
+      expect(scoped.map((edge) => edge.edge_id)).toEqual([visible.edge_id]);
+
+      expect(() =>
+        assertTwinRefsVisibleToScopes(
+          getAdapter(),
+          [{ kind: 'raw', id: discordRaw }],
+          [{ kind: 'project', id: 'alpha' }]
+        )
+      ).not.toThrow();
+    });
+
+    it('fails closed for raw endpoints missing project or tenant metadata when filters exist', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const nullProjectRaw = insertScopedRaw('raw-null-project', 'project', 'alpha', {
+        source_connector: 'slack',
+        tenant_id: 'default',
+      });
+      const nullTenantRaw = insertScopedRaw('raw-null-tenant', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+      });
+      const visibleRaw = insertScopedRaw('raw-visible-required-fields', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      const visible = insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: visibleRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+      for (const rawId of [nullProjectRaw, nullTenantRaw]) {
+        insertTwinEdge(getAdapter(), {
+          edge_type: 'derived_from',
+          subject_ref: { kind: 'memory', id: 'mem-alpha' },
+          object_ref: { kind: 'raw', id: rawId },
+          source: 'code',
+          reason_text: 'connector replay',
+        });
+      }
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        }
+      );
+
+      expect(scoped.map((edge) => edge.edge_id)).toEqual([visible.edge_id]);
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'raw', id: nullProjectRaw }], {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        })
+      ).toThrow(/not visible/i);
+    });
+
+    it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      insertEntityNode('entity-1', 'project', 'alpha');
       insertOpaqueObjectEdge('edge_entity_object', 'entity');
       insertOpaqueObjectEdge('edge_report_object', 'report');
 
@@ -159,7 +300,7 @@ describe('Story M3.1: Twin Edge Visibility', () => {
         [{ kind: 'memory', id: 'mem-alpha' }],
         { scopes: [{ kind: 'project', id: 'alpha' }] }
       );
-      expect(scoped).toHaveLength(0);
+      expect(scoped.map((edge) => edge.edge_id)).toEqual(['edge_entity_object']);
     });
 
     it('recursively validates edge refs by checking the referenced edge endpoints', () => {

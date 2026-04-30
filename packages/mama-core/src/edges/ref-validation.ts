@@ -3,8 +3,11 @@ import { getTwinEdge, listTwinEdgesForRefs } from './store.js';
 import type {
   ListVisibleTwinEdgesOptions,
   TwinEdgeRecord,
+  TwinEdgeType,
+  TwinProjectRef,
   TwinRef,
   TwinScopeRef,
+  TwinVisibility,
 } from './types.js';
 
 type TwinRefVisibilityAdapter = Pick<DatabaseAdapter, 'prepare'>;
@@ -21,6 +24,40 @@ function scopeKey(scope: TwinScopeRef): string {
 
 function hasScopes(scopes: readonly TwinScopeRef[] | undefined): scopes is TwinScopeRef[] {
   return Array.isArray(scopes) && scopes.length > 0;
+}
+
+function hasConnectors(connectors: readonly string[] | undefined): connectors is string[] {
+  return Array.isArray(connectors) && connectors.length > 0;
+}
+
+function hasProjectRefs(
+  projectRefs: readonly TwinProjectRef[] | undefined
+): projectRefs is TwinProjectRef[] {
+  return Array.isArray(projectRefs) && projectRefs.length > 0;
+}
+
+function visibilityFromScopes(scopes: readonly TwinScopeRef[] | undefined): TwinVisibility {
+  return { scopes: scopes ? [...scopes] : undefined };
+}
+
+function asOfMs(visibility: TwinVisibility): number | null {
+  return typeof visibility.asOfMs === 'number' ? visibility.asOfMs : null;
+}
+
+function isAtOrBeforeAsOf(value: number | null | undefined, visibility: TwinVisibility): boolean {
+  const asOf = asOfMs(visibility);
+  return asOf === null || (typeof value === 'number' && value <= asOf);
+}
+
+function parseTimestamp(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 }
 
 function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<string> {
@@ -46,21 +83,28 @@ function tableColumns(adapter: TwinRefVisibilityAdapter, table: string): Set<str
   return columns;
 }
 
-function memoryExists(adapter: TwinRefVisibilityAdapter, id: string): boolean {
-  const row = adapter.prepare('SELECT 1 AS ok FROM decisions WHERE id = ? LIMIT 1').get(id) as
-    | { ok: number }
-    | undefined;
-  return Boolean(row?.ok);
-}
-
 function isMemoryVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
-  if (!memoryExists(adapter, id)) {
+  const row = adapter
+    .prepare(
+      `
+        SELECT created_at, event_datetime
+        FROM decisions
+        WHERE id = ?
+        LIMIT 1
+      `
+    )
+    .get(id) as { created_at: number; event_datetime: number | null } | undefined;
+  if (!row) {
     return false;
   }
+  if (!isAtOrBeforeAsOf(row.event_datetime ?? row.created_at, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
@@ -126,7 +170,7 @@ function parseCaseScopeRefs(scopeRefs: unknown): TwinScopeRef[] {
 function isCaseVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
   const row = adapter.prepare('SELECT * FROM case_truth WHERE case_id = ? LIMIT 1').get(id) as
     | Record<string, unknown>
@@ -134,6 +178,11 @@ function isCaseVisible(
   if (!row) {
     return false;
   }
+  const timestamp = parseTimestamp(row.last_activity_at) ?? parseTimestamp(row.updated_at);
+  if (!isAtOrBeforeAsOf(timestamp, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
@@ -157,7 +206,7 @@ function isCaseVisible(
 function isRawVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
-  scopes: readonly TwinScopeRef[] | undefined
+  visibility: TwinVisibility
 ): boolean {
   const row = adapter
     .prepare('SELECT * FROM connector_event_index WHERE event_index_id = ? LIMIT 1')
@@ -165,32 +214,91 @@ function isRawVisible(
   if (!row) {
     return false;
   }
+
+  if (
+    hasConnectors(visibility.connectors) &&
+    !visibility.connectors.includes(String(row.source_connector))
+  ) {
+    return false;
+  }
+
+  if (
+    hasProjectRefs(visibility.projectRefs) &&
+    !visibility.projectRefs.some((project) => project.id === row.project_id)
+  ) {
+    return false;
+  }
+
+  if (
+    typeof visibility.tenantId === 'string' &&
+    visibility.tenantId.length > 0 &&
+    row.tenant_id !== visibility.tenantId
+  ) {
+    return false;
+  }
+
+  if (!isAtOrBeforeAsOf(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
+    return false;
+  }
+
+  if (!hasScopes(visibility.scopes)) {
+    return true;
+  }
+  return visibility.scopes.some(
+    (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
+  );
+}
+
+function isEntityVisible(
+  adapter: TwinRefVisibilityAdapter,
+  id: string,
+  visibility: TwinVisibility
+): boolean {
+  const row = adapter
+    .prepare(
+      'SELECT scope_kind, scope_id, created_at FROM entity_nodes WHERE id = ? AND status = ? LIMIT 1'
+    )
+    .get(id, 'active') as
+    | {
+        scope_kind: string | null;
+        scope_id: string | null;
+        created_at: number;
+      }
+    | undefined;
+  if (!row) {
+    return false;
+  }
+  if (!isAtOrBeforeAsOf(row.created_at, visibility)) {
+    return false;
+  }
+  const scopes = visibility.scopes;
   if (!hasScopes(scopes)) {
     return true;
   }
-  return scopes.some(
-    (scope) => row.memory_scope_kind === scope.kind && row.memory_scope_id === scope.id
-  );
+  return scopes.some((scope) => row.scope_kind === scope.kind && row.scope_id === scope.id);
 }
 
 function isTwinRefVisible(
   adapter: TwinRefVisibilityAdapter,
   ref: TwinRef,
-  scopes: readonly TwinScopeRef[] | undefined,
+  visibility: TwinVisibility,
   visitedEdges: Set<string>,
   edgeCache: Map<string, TwinEdgeRecord | null>
 ): boolean {
-  if (ref.kind === 'entity' || ref.kind === 'report') {
-    return !hasScopes(scopes);
+  if (ref.kind === 'entity') {
+    return isEntityVisible(adapter, ref.id, visibility);
+  }
+  if (ref.kind === 'report') {
+    return !hasScopes(visibility.scopes);
   }
   if (ref.kind === 'memory') {
-    return isMemoryVisible(adapter, ref.id, scopes);
+    return isMemoryVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'case') {
-    return isCaseVisible(adapter, ref.id, scopes);
+    return isCaseVisible(adapter, ref.id, visibility);
   }
   if (ref.kind === 'raw') {
-    return isRawVisible(adapter, ref.id, scopes);
+    return isRawVisible(adapter, ref.id, visibility);
   }
 
   if (visitedEdges.has(ref.id)) {
@@ -204,12 +312,28 @@ function isTwinRefVisible(
   if (!edge) {
     return false;
   }
+  if (!isAtOrBeforeAsOf(edge.created_at, visibility)) {
+    return false;
+  }
   const pathWithCurrent = new Set(visitedEdges);
   pathWithCurrent.add(ref.id);
   return (
-    isTwinRefVisible(adapter, edge.subject_ref, scopes, new Set(pathWithCurrent), edgeCache) &&
-    isTwinRefVisible(adapter, edge.object_ref, scopes, new Set(pathWithCurrent), edgeCache)
+    isTwinRefVisible(adapter, edge.subject_ref, visibility, new Set(pathWithCurrent), edgeCache) &&
+    isTwinRefVisible(adapter, edge.object_ref, visibility, new Set(pathWithCurrent), edgeCache)
   );
+}
+
+export function assertTwinRefsVisible(
+  adapter: TwinRefVisibilityAdapter,
+  refs: readonly TwinRef[],
+  visibility: TwinVisibility = {}
+): void {
+  const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  for (const ref of refs) {
+    if (!isTwinRefVisible(adapter, ref, visibility, new Set(), edgeCache)) {
+      throw new Error(`Twin ref is not visible to requested visibility: ${ref.kind}:${ref.id}`);
+    }
+  }
 }
 
 export function assertTwinRefsVisibleToScopes(
@@ -217,12 +341,7 @@ export function assertTwinRefsVisibleToScopes(
   refs: readonly TwinRef[],
   scopes?: TwinScopeRef[]
 ): void {
-  const edgeCache = new Map<string, TwinEdgeRecord | null>();
-  for (const ref of refs) {
-    if (!isTwinRefVisible(adapter, ref, scopes, new Set(), edgeCache)) {
-      throw new Error(`Twin ref is not visible to requested scopes: ${ref.kind}:${ref.id}`);
-    }
-  }
+  assertTwinRefsVisible(adapter, refs, visibilityFromScopes(scopes));
 }
 
 export function listVisibleTwinEdgesForRefs(
@@ -231,14 +350,24 @@ export function listVisibleTwinEdgesForRefs(
   options: ListVisibleTwinEdgesOptions = {}
 ): TwinEdgeRecord[] {
   const edgeCache = new Map<string, TwinEdgeRecord | null>();
+  const edgeTypes = normalizeEdgeTypes(options.edgeTypes);
   const edges = listTwinEdgesForRefs(adapter, refs).filter(
     (edge) =>
-      isTwinRefVisible(adapter, edge.subject_ref, options.scopes, new Set(), edgeCache) &&
-      isTwinRefVisible(adapter, edge.object_ref, options.scopes, new Set(), edgeCache)
+      (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
+      (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
+      isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache) &&
+      isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache)
   );
   const limit =
     typeof options.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(0, Math.floor(options.limit))
       : edges.length;
   return edges.slice(0, limit);
+}
+
+function normalizeEdgeTypes(edgeTypes: readonly TwinEdgeType[] | undefined): Set<TwinEdgeType> {
+  if (!Array.isArray(edgeTypes) || edgeTypes.length === 0) {
+    return new Set();
+  }
+  return new Set(edgeTypes);
 }

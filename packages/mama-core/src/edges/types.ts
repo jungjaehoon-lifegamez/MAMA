@@ -34,6 +34,19 @@ export interface TwinScopeRef {
   id: string;
 }
 
+export interface TwinProjectRef {
+  kind: string;
+  id: string;
+}
+
+export interface TwinVisibility {
+  scopes?: TwinScopeRef[];
+  connectors?: string[];
+  projectRefs?: TwinProjectRef[];
+  tenantId?: string | null;
+  asOfMs?: number | null;
+}
+
 export interface InsertTwinEdgeInput {
   edge_id?: string;
   edge_type: TwinEdgeType;
@@ -89,6 +102,11 @@ export interface TwinEdgeRecord {
 
 export interface ListVisibleTwinEdgesOptions {
   scopes?: TwinScopeRef[];
+  connectors?: string[];
+  projectRefs?: TwinProjectRef[];
+  tenantId?: string | null;
+  edgeTypes?: TwinEdgeType[];
+  asOfMs?: number | null;
   limit?: number;
 }
 
