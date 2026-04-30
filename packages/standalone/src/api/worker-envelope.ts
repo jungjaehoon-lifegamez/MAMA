@@ -1,13 +1,15 @@
 import type { Request } from 'express';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
-import type { Envelope, MemoryScope } from '../envelope/types.js';
+import type { Envelope, MemoryScope, ProjectRef } from '../envelope/types.js';
 import { parseEnvelopeExpiresAt } from '../envelope/expiry.js';
 
 export interface WorkerEnvelopeVisibility {
   envelope: Envelope;
   connectors: string[];
   scopes: MemoryScope[];
+  projectRefs: ProjectRef[];
+  tenantId: string;
 }
 
 export class WorkerEnvelopeError extends Error {
@@ -109,9 +111,117 @@ export function deriveWorkerEnvelopeVisibility(
     envelope,
     connectors: requestedConnectors,
     scopes: requestedScopes,
+    projectRefs: deriveEffectiveProjectRefs(envelope),
+    tenantId: deriveEffectiveTenantId(),
   };
+}
+
+export function deriveEffectiveProjectRefs(envelope: Envelope): ProjectRef[] {
+  return envelope.scope.project_refs
+    .map((project) => ({ kind: project.kind, id: project.id.trim() }))
+    .filter((project) => project.id.length > 0);
+}
+
+export function deriveEffectiveTenantId(): string {
+  return 'default';
+}
+
+export function parseRequestedConnectors(req: Request): string[] | undefined {
+  const connectorValues = [
+    ...stringValues(req.query.connector).flatMap((value) => value.split(',')),
+    ...stringValues(req.query.connectors).flatMap((value) => value.split(',')),
+  ]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return connectorValues.length > 0 ? uniqueStrings(connectorValues) : undefined;
+}
+
+export function parseRequestedScopes(req: Request): MemoryScope[] | undefined {
+  const rawValues = stringValues(req.query.scope).concat(stringValues(req.query.scopes));
+  if (rawValues.length === 0) {
+    const kind = firstString(req.query.scope_kind);
+    const id = firstString(req.query.scope_id);
+    if (kind === undefined && id === undefined) {
+      return undefined;
+    }
+    if (!kind || !id || id.trim().length === 0) {
+      throw invalidScope('scope_kind and scope_id must be provided together.');
+    }
+    return [{ kind: parseScopeKind(kind.trim()), id: id.trim() }];
+  }
+
+  const scopes: MemoryScope[] = [];
+  for (const rawValue of rawValues) {
+    const pieces = rawValue.trim().startsWith('[')
+      ? parseJsonScopes(rawValue)
+      : rawValue
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+    if (pieces.length === 0) {
+      throw invalidScope('Scope query must contain at least one scope token.');
+    }
+    for (const piece of pieces) {
+      const [kind, ...idParts] = piece.split(':');
+      const id = idParts.join(':').trim();
+      if (!kind || idParts.length === 0 || id.length === 0) {
+        throw invalidScope(`Invalid scope token: ${piece}`);
+      }
+      scopes.push({ kind: parseScopeKind(kind.trim()), id });
+    }
+  }
+  return scopes;
+}
+
+export function firstString(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    const first = value[0];
+    return typeof first === 'string' ? first : undefined;
+  }
+  return typeof value === 'string' ? value : undefined;
 }
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function parseJsonScopes(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      throw new Error('expected array');
+    }
+    return parsed.map((scope) => {
+      if (
+        scope === null ||
+        typeof scope !== 'object' ||
+        typeof (scope as Record<string, unknown>).kind !== 'string' ||
+        typeof (scope as Record<string, unknown>).id !== 'string'
+      ) {
+        throw new Error('expected {kind,id} objects');
+      }
+      return `${(scope as { kind: string }).kind}:${(scope as { id: string }).id}`;
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new WorkerEnvelopeError(400, 'worker_scope_invalid', `Invalid scopes JSON: ${message}`);
+  }
+}
+
+function parseScopeKind(value: string): MemoryScope['kind'] {
+  if (value === 'global' || value === 'user' || value === 'channel' || value === 'project') {
+    return value;
+  }
+  throw new WorkerEnvelopeError(400, 'worker_scope_invalid', `Invalid scope kind: ${value}`);
+}
+
+function invalidScope(message: string): WorkerEnvelopeError {
+  return new WorkerEnvelopeError(400, 'worker_scope_invalid', message);
+}
+
+function stringValues(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === 'string');
+  }
+  return typeof value === 'string' ? [value] : [];
 }
