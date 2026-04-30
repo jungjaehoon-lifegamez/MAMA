@@ -250,6 +250,34 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       expect(connectorDenied.status).toBe(403);
       expect(connectorDenied.body.code).toBe('worker_envelope_connector_denied');
     });
+
+    it('splits comma-delimited singular connector query values before envelope checks', async () => {
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack', 'github'],
+          memory_scopes: [{ kind: 'project', id: 'alpha' }],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+        },
+      });
+      authority.persist(validEnvelope);
+      const buildPacket = vi.fn(
+        (adapter, input: AgentSituationInput): AgentSituationPacketRecord =>
+          buildAgentSituationPacketRecord(adapter, input)
+      );
+      const apiServer = makeServer({ buildPacket });
+
+      const response = await authed(
+        request(apiServer.app).get('/api/agent/situation?connector=slack,github')
+      );
+
+      expect(response.status).toBe(200);
+      expect(buildPacket).toHaveBeenCalledTimes(1);
+      expect(buildPacket.mock.calls[0][1].effective_filters.connectors).toEqual([
+        'github',
+        'slack',
+      ]);
+    });
   });
 
   describe('AC #2: packet generation is cached and model-run correlated', () => {
