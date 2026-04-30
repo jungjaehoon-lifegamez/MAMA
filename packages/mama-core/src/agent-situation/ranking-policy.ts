@@ -5,9 +5,11 @@ export const AGENT_SITUATION_V0_POLICY_VERSION = 'agent_situation.v0';
 export const AGENT_SITUATION_V0_WEIGHTS = {
   urgency: 0.35,
   confidence_gap: 0.2,
+  debate_edge: 0.2,
   source_freshness: 0.2,
   cross_channel_signal: 0.15,
   pending_human_question: 0.1,
+  open_question_urgency_boost: 0.2,
 } as const;
 
 export interface AgentSituationRankingPolicy {
@@ -64,7 +66,7 @@ export function scoreAgentSituationCandidate(
   }
 
   if (candidate.has_debate_edge) {
-    score += policy.weights.confidence_gap;
+    score += policy.weights.debate_edge;
     reasons.push('debated_visible_memory');
   }
 
@@ -80,7 +82,7 @@ export function scoreAgentSituationCandidate(
   }
 
   if (candidate.is_open_question) {
-    score += policy.weights.pending_human_question + 0.2;
+    score += policy.weights.pending_human_question + policy.weights.open_question_urgency_boost;
     reasons.push('pending_open_question');
   }
 
