@@ -128,7 +128,7 @@ export function deriveEffectiveTenantId(): string {
 
 export function parseRequestedConnectors(req: Request): string[] | undefined {
   const connectorValues = [
-    ...stringValues(req.query.connector),
+    ...stringValues(req.query.connector).flatMap((value) => value.split(',')),
     ...stringValues(req.query.connectors).flatMap((value) => value.split(',')),
   ]
     .map((value) => value.trim())

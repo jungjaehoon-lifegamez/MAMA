@@ -121,11 +121,26 @@ function isScopeVisible(scope: MemoryScopeRef, effective: AgentSituationEffectiv
 }
 
 function caseTimestampMs(row: {
+  case_id?: unknown;
   last_activity_at?: unknown;
   updated_at?: unknown;
   created_at?: unknown;
 }): number {
-  for (const value of [row.last_activity_at, row.updated_at, row.created_at]) {
+  const caseId = String(row.case_id ?? 'unknown');
+  const timestampFields = [
+    ['last_activity_at', row.last_activity_at],
+    ['updated_at', row.updated_at],
+    ['created_at', row.created_at],
+  ] as const;
+  for (const [field, value] of timestampFields) {
+    if (value === null || value === undefined || value === '') {
+      continue;
+    }
+    if (typeof value !== 'string') {
+      throw new Error(
+        `Invalid case_truth timestamp for case ${caseId}: ${field} must be an ISO timestamp string.`
+      );
+    }
     if (typeof value === 'string') {
       const parsed = Date.parse(value);
       if (Number.isFinite(parsed)) {
@@ -133,7 +148,9 @@ function caseTimestampMs(row: {
       }
     }
   }
-  return 0;
+  throw new Error(
+    `Invalid case_truth timestamp for case ${caseId}: expected last_activity_at, updated_at, or created_at to contain a valid ISO timestamp.`
+  );
 }
 
 function isOpenQuestion(row: {

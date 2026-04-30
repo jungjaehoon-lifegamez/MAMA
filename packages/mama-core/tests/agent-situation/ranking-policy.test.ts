@@ -29,6 +29,8 @@ describe('Story M5: Agent situation ranking policy', () => {
 
       expect(policy.version).toBe(AGENT_SITUATION_V0_POLICY_VERSION);
       expect(policy.weights.pending_human_question).toBeGreaterThan(0);
+      expect(policy.weights.debate_edge).toBeGreaterThan(0);
+      expect(policy.weights.open_question_urgency_boost).toBeGreaterThan(0);
     });
   });
 
@@ -59,14 +61,38 @@ describe('Story M5: Agent situation ranking policy', () => {
     });
 
     it('marks low-confidence or debated visible memory as a confidence gap', () => {
+      const policy = getAgentSituationRankingPolicy();
       const score = scoreAgentSituationCandidate(
-        candidate({ confidence: 0.35, has_debate_edge: true }),
-        getAgentSituationRankingPolicy()
+        candidate({
+          confidence: 0.35,
+          has_debate_edge: true,
+          timestamp_ms: 0,
+        }),
+        policy
       );
 
+      expect(score.score).toBe(policy.weights.confidence_gap + policy.weights.debate_edge);
       expect(score.reasons).toContain('low_confidence_memory');
       expect(score.reasons).toContain('debated_visible_memory');
       expect(score.caveats).toContain('low_confidence_visible_memory');
+    });
+
+    it('keeps open-question urgency fully policy-weighted', () => {
+      const policy = getAgentSituationRankingPolicy();
+      const score = scoreAgentSituationCandidate(
+        candidate({
+          title: 'Question',
+          summary: 'Awaiting answer',
+          is_open_question: true,
+          timestamp_ms: 0,
+        }),
+        policy
+      );
+
+      expect(score.score).toBeCloseTo(
+        policy.weights.pending_human_question + policy.weights.open_question_urgency_boost
+      );
+      expect(score.reasons).toContain('pending_open_question');
     });
 
     it('does not emit reason strings that reveal hidden source counts', () => {

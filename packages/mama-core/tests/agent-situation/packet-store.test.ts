@@ -126,6 +126,29 @@ describe('Story M5: Agent situation packet store', () => {
       ).toThrow(/source_coverage_json/);
     });
 
+    it('rejects invalid packet cache time ranges at the database boundary', () => {
+      const adapter = createAdapter();
+      const invalidRange = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_range',
+        range_end_ms: 999,
+      };
+      const invalidExpiry = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_expiry',
+        expires_at: 1_999,
+      };
+      const invalidTtl = {
+        ...packet(adapter, 2_000),
+        packet_id: 'situ_invalid_ttl',
+        ttl_seconds: 0,
+      };
+
+      expect(() => insertAgentSituationPacket(adapter, invalidRange)).toThrow(/constraint/i);
+      expect(() => insertAgentSituationPacket(adapter, invalidExpiry)).toThrow(/constraint/i);
+      expect(() => insertAgentSituationPacket(adapter, invalidTtl)).toThrow(/constraint/i);
+    });
+
     it('does not call the builder when a fresh cache hit exists', async () => {
       const adapter = createAdapter();
       const existing = insertAgentSituationPacket(adapter, packet(adapter, 2_000));
@@ -243,6 +266,34 @@ describe('Story M5: Agent situation packet store', () => {
           async () => packet(adapter, 6_100)
         )
       ).resolves.toMatchObject({ packet_id: item.packet_id });
+    });
+
+    it('includes the cache key when waiting for a durable lease times out', async () => {
+      const adapter = createAdapter();
+      const item = packet(adapter, 6_000);
+      acquireAgentSituationLease(adapter, {
+        cacheKey: item.cache_key,
+        rankingPolicyVersion: item.ranking_policy_version,
+        leaseOwner: 'owner-a',
+        nowMs: 6_000,
+        leaseSeconds: 30,
+      });
+
+      await expect(
+        getOrRefreshAgentSituationPacket(
+          adapter,
+          {
+            cacheKey: item.cache_key,
+            rankingPolicyVersion: item.ranking_policy_version,
+            nowMs: 6_100,
+            leaseOwner: 'owner-b',
+            pollIntervalMs: 1,
+            maxPollMs: 1,
+            refresh: true,
+          },
+          async () => packet(adapter, 6_100)
+        )
+      ).rejects.toThrow(item.cache_key);
     });
 
     it('runs one builder for five concurrent refreshes of the same key', async () => {
