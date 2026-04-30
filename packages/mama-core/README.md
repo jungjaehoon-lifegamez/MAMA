@@ -78,7 +78,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 
 - **memory/api** - Scoped memory operations
   - `saveMemory(input)` - Save typed memory with scopes and optional event_date (preference, fact, decision, lesson, constraint)
-  - `recallMemory(query, options)` - Truth-aware recall with scope filtering
+  - `recallMemory(query, options)` - Truth-aware recall with scope filtering, strictness modes, and retrieval diagnostics
   - `buildProfile(scopes)` - Build memory profile (static/dynamic/evidence)
   - `ingestMemory(input)` - Ingest raw content as memory
   - `ingestConversation(input)` - Decompose conversations into typed memory units via optional LLM extraction
@@ -107,8 +107,11 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 - **mama-api** - High-level API interface (wraps memory API)
   - `save(decision)` - Save decision
   - `recall(topic)` - Retrieve decision history
-  - `suggest(query)` - Semantic search with hybrid FTS5 + vector + recency
+  - `suggest(query, options)` - Semantic search with hybrid FTS5 + vector + recency, strictness controls, and diagnostics
   - `updateOutcome(id, outcome)` - Update decision outcome
+
+- **search/search-quality** - Search option normalization
+  - `normalizeSearchQualityOptions(options)` - Normalize recall/balanced/strict thresholds and confirmation requirements
 
 - **decision-tracker** - Decision graph management
   - `learnDecision(decision)` - Learn from decision
@@ -135,7 +138,7 @@ const mamaApi = require('@jungjaehoon/mama-core/mama-api');
 ## Dependencies
 
 - **@huggingface/transformers** - Local embedding generation
-- **node:sqlite** - Built-in SQLite runtime (Node.js 22+)
+- **better-sqlite3** - SQLite runtime with FTS5 support
 - **Pure-TS cosine similarity** - Vector search (no native extensions)
 
 ## Development
@@ -153,7 +156,7 @@ pnpm test:watch
 
 ## Test Coverage
 
-- 72 unit tests across 17 test files
+- 99 unit/integration test files in `packages/mama-core/tests`
 - 100% passing
 - Tests cover:
   - Config loader, database initialization, module exports
@@ -188,13 +191,13 @@ packages/mama-core/
 │       ├── channel-summary-state-store.ts # Channel state reducer
 │       ├── bootstrap-builder.ts           # Memory agent bootstrap
 │       └── profile-builder.ts             # Profile classification
-├── db/migrations/            # SQLite migrations (001-023)
-└── tests/                    # 16 test files, 59 tests
+├── db/migrations/            # SQLite migrations (001-036)
+└── tests/                    # Unit and integration tests
 ```
 
 ## Migration Files
 
-Database migrations are included in `db/migrations/` (001-023):
+Database migrations are included in `db/migrations/` (001-036):
 
 - 001-013: Core schema (decisions, embeddings, graph edges)
 - 014: Add is_static column
@@ -204,6 +207,8 @@ Database migrations are included in `db/migrations/` (001-023):
 - 019-020: Memory events and audit findings
 - 021: Memory truth projection
 - 022-023: Channel summaries and state
+- 024-036: event dates, connector memory kinds, canonical entities, case-first memory, wiki/index
+  provenance, model/tool traces, twin edges, and agent situation packets
 
 ## License
 

@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Search quality options**: Added reusable strict search normalization for `threshold`,
+  `strictness`, `disableRecency`, `includeRelated`, `topicPrefix`, `minLexicalSupport`, and
+  diagnostics
+- **Retrieval diagnostics**: `recallMemory()` and `mama.suggest()` can now return per-hit
+  confirmation metadata plus candidate counts for vector, lexical, entity, graph-expanded,
+  vector-only, and strictness-rejected candidates
+
+### Changed
+
+- **memory_v2 recall filtering**: Balanced and strict search modes now require lexical, entity,
+  raw-id, or seed confirmation instead of accepting metadata-only signals such as scope support or
+  graph position
+- **Search rollup provenance**: Rolled-up results preserve primary and contributing-leaf retrieval
+  diagnostics so downstream callers can audit why a case result matched
+
+### Fixed
+
+- **Strict fallback bypass**: `mama.suggest()` no longer falls back to unfiltered legacy search when
+  a strict or balanced memory_v2 search returns no confirmed rows
+- **Wiki vector strictness**: Wiki vector hits now receive the same strictness and diagnostics
+  treatment as decision hits
+
 ## [1.1.5] - 2026-02-22
 
 ### Added

@@ -182,7 +182,7 @@ dedicated tab. Connects to Discord, Slack, Telegram.
 
 - **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
 - **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
-- **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion
+- **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion, with strict modes and diagnostics for vector-noise debugging
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
@@ -192,6 +192,7 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 - **Automatic knowledge extraction** — Connectors poll 15 sources, AI extracts decisions/deadlines/changes without manual input
 - **Cross-source search** — "What did we decide about X?" searches Slack + email + code + docs simultaneously
+- **Noise-resistant search** — Strict and balanced modes can reject vector-only matches and show why a result was included
 - **Decision evolution tracking** — Not just what was decided, but what it replaced and why
 - **Proactive briefings** — Dashboard agent compiles what changed across all sources
 - **Wiki compilation** — Knowledge agents organize raw conversations into structured Obsidian pages
@@ -199,16 +200,16 @@ Anyone who installs MAMA OS and connects their apps gets:
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                                                |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                                          |
-| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                                                         |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                   |
-| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                                                 |
-| **Done** | v0.19   | Agent-management foundation shipped: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation                           |
-| **Next** | v0.20   | Canonical entity memory + `os-agent` / auditor architecture reset: alias resolution substrate, same-view main-agent vertical slice, functional workers, and reviewable entity merges |
-|          | Later   | Browser onboarding — non-developers set up in 5 minutes, no terminal needed. Domain-specific extraction templates (marketing, manufacturing, design)                                 |
-|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                                                |
+| Phase    | Version | Focus                                                                                                                                                      |
+| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% → 88%)                                                                                                |
+| **Done** | v0.16   | event_date API, tool-use answer, memory agent v5 (88% → 93%)                                                                                               |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                         |
+| **Done** | v0.18   | Output layer — knowledge agents, viewer redesign, security hardening                                                                                       |
+| **Done** | v0.19   | Agent-management foundation shipped: viewer-aware frontdoor groundwork, agent activity/validation UI, legacy viewer cleanup, and conductor audit isolation |
+| **Next** | v0.20   | Strict memory search controls, retrieval diagnostics, scoped search hardening, and persistent CLI process cleanup                                          |
+|          | Later   | Context compile, browser onboarding for non-developers, and domain-specific extraction templates                                                           |
+|          | v1.0    | Team mode — shared knowledge graph for organizations. General release                                                                                      |
 
 ## Development
 
@@ -220,7 +221,7 @@ pnpm test     # 2800+ tests across all packages
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-_Last updated: 2026-04-20_
+_Last updated: 2026-04-30_
 
 ## License
 

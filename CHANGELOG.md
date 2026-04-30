@@ -4,6 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Strict memory search controls** — `mama_search`, MCP search, and `mama.suggest()` now accept
+  `strict`, `strictness`, `threshold`, `disableRecency`, `includeRelated`, `topicPrefix`,
+  `minLexicalSupport`, `diagnostics`, and `scopes` so agents can choose recall-friendly,
+  balanced, or strict retrieval per request
+- **Retrieval diagnostics** — Search results can now expose lexical/entity/scope/graph support,
+  vector-only status, strictness rejection counts, and contributing-leaf diagnostics so operators
+  can see why a result was included instead of trusting a broad vector match
+
+### Changed
+
+- **Search quality pipeline** — Strict search options now flow through MCP and standalone handlers
+  into `mama.suggest()` and `recallMemory()`, including the memory_v2 fusion/rollup path, wiki
+  hits, graph-expanded hits, and learned-ranker metadata
+- **Standalone search scope handling** — `mama_search` now defaults to the active envelope scopes
+  and rejects out-of-envelope caller scopes before they reach core memory search
+
+### Fixed
+
+- **Vector-noise leaks in strict search** — Strict and balanced modes no longer allow vector-only
+  fallback, wiki vector hits, or graph-expanded rows through without independent relevance
+  confirmation
+- **Persistent CLI process buildup** — Standalone now reclaims idle persistent Claude processes,
+  preserves active tool-result leases, and makes `mama stop` process discovery safer under large
+  process tables
+
 ## [0.19.1] / mama-core [1.5.0] / mcp-server [1.13.0] - 2026-04-20
 
 ### Added

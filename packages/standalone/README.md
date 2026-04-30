@@ -17,6 +17,7 @@ MAMA OS is a local AI runtime that connects to your apps, reads everything conti
 - **Identify what matters** — Out of thousands of daily messages, surface the decisions, deadlines, and changes that affect your work
 - **Connect across sources** — A Slack conversation + a Trello card + an email attachment about the same project are linked automatically
 - **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
+- **Search with evidence** — Strict memory search can reject vector-only noise and show which lexical, entity, scope, or graph signals confirmed a result
 - **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and suggested next steps
 - **Brief you proactively** — When you start working, relevant context from all sources is already there — you didn't ask for it
 
@@ -176,6 +177,14 @@ Main config: `~/.mama/config.yaml`
 | `MAMA_HTTP_PORT` | `3847`                   |
 | `MAMA_WORKSPACE` | `~/.mama/workspace`      |
 
+Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI process pool supports:
+
+| Option                               | Default                     | Purpose                                     |
+| ------------------------------------ | --------------------------- | ------------------------------------------- |
+| `persistent_process_idle_ms`         | `session_ms`                | Reclaim idle Claude/Codex CLI processes     |
+| `persistent_process_cleanup_ms`      | `session_cleanup_ms`        | How often idle-process cleanup runs         |
+| `persistent_process_pending_tool_ms` | `max(4 * idle, 30 minutes)` | Max wait for pending tool-result handshakes |
+
 ## Related Packages
 
 | Package                      | Purpose                             |
@@ -202,4 +211,4 @@ MIT
 
 ---
 
-**Last Updated:** 2026-04-20
+**Last Updated:** 2026-04-30

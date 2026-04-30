@@ -4,9 +4,13 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) provides **13 tools** for decision tracking, scoped memory, semantic search, conversation ingestion, contracts lookup, bounded case timelines, and session continuity.
+MAMA (Memory-Augmented MCP Assistant) provides **13 tools** for decision tracking, scoped memory,
+semantic search, search-quality diagnostics, conversation ingestion, contracts lookup, bounded case
+timelines, and session continuity.
 
-The current MCP server ships both the consolidated memory tools (`save`, `search`, `update`, `load_checkpoint`) and compatibility / operational helpers such as `search_decisions_and_contracts` and `case_timeline_range`.
+The current MCP server ships both the consolidated memory tools (`save`, `search`, `update`,
+`load_checkpoint`) and compatibility / operational helpers such as
+`search_decisions_and_contracts` and `case_timeline_range`.
 
 **Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
@@ -78,7 +82,7 @@ The current `@jungjaehoon/mama-server` package exposes these 13 tools:
 | -------------------------------- | ----------------------------------------------------- |
 | `save_decision`                  | Save a decision with optional scopes and `event_date` |
 | `recall_decision`                | Recall history for a topic or scoped memory           |
-| `suggest_decision`               | Semantic search for related decisions                 |
+| `suggest_decision`               | Semantic search with strictness controls              |
 | `list_decisions`                 | List recent decisions/checkpoints                     |
 | `update_outcome`                 | Update a decision outcome                             |
 | `search_narrative`               | Narrative search with link expansion                  |
@@ -161,21 +165,38 @@ Save a decision or checkpoint to MAMA's memory.
 ### 2. `search`
 
 Search decisions and checkpoints. Semantic search with query, or list recent items without query.
+For operator and agent workflows, search can run in recall, balanced, or strict mode and can return
+diagnostics explaining which signals confirmed each hit.
 
 #### Input Schema
 
-| Field   | Type   | Required | Description                                           |
-| ------- | ------ | -------- | ----------------------------------------------------- |
-| `query` | string | No       | Search query. If empty, returns recent items by time. |
-| `type`  | string | No       | `'all'` (default), `'decision'`, or `'checkpoint'`    |
-| `limit` | number | No       | Maximum results, default 10                           |
+| Field               | Type    | Required | Description                                                          |
+| ------------------- | ------- | -------- | -------------------------------------------------------------------- |
+| `query`             | string  | No       | Search query. If empty, returns recent items by time.                |
+| `type`              | string  | No       | `'all'` (default), `'decision'`, or `'checkpoint'`                   |
+| `limit`             | number  | No       | Maximum results, default 10                                          |
+| `scopes`            | array   | No       | Memory scope refs for project/channel/user/global isolation          |
+| `strict`            | boolean | No       | Shortcut for `strictness: "strict"`                                  |
+| `strictness`        | string  | No       | `'recall'` (default), `'balanced'`, or `'strict'`                    |
+| `threshold`         | number  | No       | Minimum candidate threshold. Defaults by strictness mode             |
+| `disableRecency`    | boolean | No       | Disable recency boosting for a pure relevance-oriented search        |
+| `includeRelated`    | boolean | No       | Include graph-related results. Defaults to false in strict mode      |
+| `topicPrefix`       | string  | No       | Limit recall to topics with this prefix                              |
+| `minLexicalSupport` | boolean | No       | Require lexical/entity/raw-id/seed confirmation for non-recall modes |
+| `diagnostics`       | boolean | No       | Return top-level and per-hit retrieval diagnostics when available    |
+
+Default thresholds are `0.3` for `recall`, `0.45` for `balanced`, and `0.6` for `strict`.
+Balanced and strict modes reject vector-only matches unless another relevance signal confirms the
+hit.
 
 #### Example: Semantic Search
 
 ```json
 {
   "query": "authentication approach",
-  "limit": 5
+  "limit": 5,
+  "strictness": "balanced",
+  "diagnostics": true
 }
 ```
 
@@ -194,12 +215,43 @@ Search decisions and checkpoints. Semantic search with query, or list recent ite
       "confidence": 0.85,
       "created_at": 1732530000,
       "_type": "decision",
-      "similarity": 0.87
+      "similarity": 0.87,
+      "retrieval_diagnostics": {
+        "retrieval_source": "hybrid_rrf",
+        "vector_similarity": 0.87,
+        "lexical_support": true,
+        "entity_support": false,
+        "scope_support": true,
+        "graph_source": "primary",
+        "is_vector_only": false,
+        "confirmation_signals": ["lexical"],
+        "metadata_signals": ["scope"],
+        "candidate_threshold_used": 0.45
+      }
+    }
+  ],
+  "diagnostics": {
+    "candidate_counts": {
+      "vector": 6,
+      "lexical": 3,
+      "entity": 0,
+      "graph_expanded": 1,
+      "vector_only": 2,
+      "rejected_by_strictness": 2
     },
-    ...
-  ]
+    "threshold": 0.45,
+    "strictness": "balanced"
+  }
 }
 ```
+
+#### Search Quality Modes
+
+| Mode       | Use When                                            | Behavior                                                                 |
+| ---------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| `recall`   | You want broad memory recall and can tolerate noise | Lowest threshold, related results on, lexical confirmation not required  |
+| `balanced` | You want normal agent search with less vector noise | Medium threshold and independent relevance confirmation required         |
+| `strict`   | You are about to act on a result or cite provenance | Highest threshold, related expansion off by default, confirmation needed |
 
 #### Example: List Recent Items
 
@@ -1033,5 +1085,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2026-04-20
-**Version:** 1.13.0
+**Last Updated:** 2026-04-30
+**Version:** unreleased search-quality candidate
