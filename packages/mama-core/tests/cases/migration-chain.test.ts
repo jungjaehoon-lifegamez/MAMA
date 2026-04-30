@@ -365,4 +365,65 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 036 agent situation packet cache tables and indexes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(tableExists(db, 'agent_situation_packets')).toBe(true);
+    expect(tableExists(db, 'agent_situation_refresh_leases')).toBe(true);
+
+    for (const column of [
+      'packet_id',
+      'cache_key',
+      'scope_json',
+      'scope_hash',
+      'range_start_ms',
+      'range_end_ms',
+      'focus_json',
+      'envelope_hash',
+      'envelope_effective_filters_json',
+      'envelope_effective_filters_hash',
+      'ranking_policy_version',
+      'generated_at',
+      'expires_at',
+      'ttl_seconds',
+      'freshness_json',
+      'source_coverage_json',
+      'briefing_json',
+      'ranked_items_json',
+      'top_memory_refs_json',
+      'pending_human_questions_json',
+      'entity_clusters_json',
+      'recommended_next_tools_json',
+      'generated_from_slice_ids_json',
+      'caveats_json',
+      'agent_id',
+      'model_run_id',
+      'input_snapshot_ref',
+      'source_refs_json',
+      'tenant_id',
+      'project_id',
+      'memory_scope_kind',
+      'memory_scope_id',
+      'created_at',
+    ]) {
+      expect(columnExists(db, 'agent_situation_packets', column)).toBe(true);
+    }
+
+    expect(indexExists(db, 'idx_agent_situation_cache_fresh')).toBe(true);
+    expect(indexExists(db, 'idx_agent_situation_envelope')).toBe(true);
+    expect(indexExists(db, 'idx_agent_situation_model_run')).toBe(true);
+    expect(indexExists(db, 'idx_agent_situation_scope')).toBe(true);
+    expect(indexExists(db, 'idx_agent_situation_leases_expiry')).toBe(true);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 36')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(36);
+    expect(row?.description).toContain('agent situation packet cache');
+
+    db.close();
+  });
 });
