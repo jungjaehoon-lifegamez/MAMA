@@ -24,6 +24,10 @@ import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import { queryCanonicalEntities } from '../entities/recall-bridge.js';
 import { loadDecisionReadIdentityIndex, resolveReadIdentity } from '../entities/read-identity.js';
+import {
+  normalizeSearchQualityOptions,
+  type SearchHitDiagnostics,
+} from '../search/search-quality.js';
 import type {
   MemoryKind,
   MemoryAgentBootstrap,
@@ -41,6 +45,8 @@ import type {
   IngestConversationInput,
   ExtractedMemoryUnit,
   IngestConversationResult,
+  RecallMemoryOptions,
+  RecallSearchDiagnostics,
 } from './types.js';
 import { insertMemoryEventInTransaction } from './event-store.js';
 import {
@@ -54,15 +60,6 @@ import {
 
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
-
-interface RecallMemoryOptions {
-  scopes?: MemoryScopeRef[];
-  includeProfile?: boolean;
-  includeHistory?: boolean;
-  skipGraphExpansion?: boolean;
-  topicPrefix?: string;
-  limit?: number;
-}
 
 export interface FusedHit {
   source_type: 'decision' | 'wiki_page';
@@ -470,6 +467,22 @@ export function getLexicalQueryTokens(query: string): string[] {
     .toLowerCase()
     .split(/[\s,.!?;:()[\]{}"']+/)
     .filter((token) => token.length > 2 && !LEXICAL_STOPWORDS.has(token));
+}
+
+function queryTokenCount(query: string): number {
+  const lexicalTokens = getLexicalQueryTokens(query);
+  if (lexicalTokens.length > 0) {
+    return lexicalTokens.length;
+  }
+  return query.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function looksMixedKoreanEnglish(query: string): boolean {
+  return /[\uac00-\ud7a3]/.test(query) && /[a-z]/i.test(query);
+}
+
+function looksEntityLike(query: string): boolean {
+  return /\b[A-Z][A-Za-z0-9_-]{2,}\b/.test(query) || /[#/][A-Za-z0-9_-]{2,}/.test(query);
 }
 
 function buildLexicalCandidates(
@@ -892,11 +905,27 @@ export async function recallMemory(
   options: RecallMemoryOptions = {}
 ): Promise<RecallBundle> {
   const bundle = createEmptyRecallBundle(query);
+  const searchOptions = normalizeSearchQualityOptions(options);
+  const diagnostics: RecallSearchDiagnostics = {
+    candidate_counts: {
+      vector: 0,
+      lexical: 0,
+      entity: 0,
+      graph_expanded: 0,
+      vector_only: 0,
+      rejected_by_strictness: 0,
+    },
+    threshold: searchOptions.threshold,
+    strictness: searchOptions.strictness,
+  };
 
   let matched: MemoryRecord[] = [];
   let fusedHits: FusedHit[] = [];
   let retrievalSource = 'none';
   const projectionMode = process.env.MAMA_ENTITY_PROJECTION_MODE ?? 'shadow';
+  const vectorSimilarityById = new Map<string, number>();
+  const lexicalScoreById = new Map<string, number>();
+  const entitySupportIds = new Set<string>();
   let _lexicalRecords: MemoryRecord[] | null = null;
   const loadLexical = async () => {
     if (_lexicalRecords === null) {
@@ -942,8 +971,8 @@ export async function recallMemory(
       const vectorResults = await vectorSearch(
         queryEmbedding,
         vectorLimit,
-        0.3,
-        options.topicPrefix
+        searchOptions.threshold,
+        searchOptions.topicPrefix
       );
 
       let filtered = vectorResults;
@@ -981,6 +1010,10 @@ export async function recallMemory(
           event_date: result.event_date ?? null,
           event_datetime: result.event_datetime ?? null,
         });
+        diagnostics.candidate_counts.vector += 1;
+        if (typeof result.similarity === 'number' && Number.isFinite(result.similarity)) {
+          vectorSimilarityById.set(String(result.id), result.similarity);
+        }
       }
     } // end sub-query loop
   } catch (vectorErr) {
@@ -1005,7 +1038,16 @@ export async function recallMemory(
   // Lazy lexical: skip expensive FTS5/lexical when vector already returned enough results,
   // unless this is an aggregation query that benefits from broader coverage.
   const VECTOR_SUFFICIENT_THRESHOLD = 5;
-  const needsLexical = isAggregation || vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD;
+  const shouldForceLexicalConfirmation =
+    searchOptions.strictness !== 'recall' ||
+    searchOptions.minLexicalSupport ||
+    queryTokenCount(query) <= 3 ||
+    looksMixedKoreanEnglish(query) ||
+    looksEntityLike(query);
+  const needsLexical =
+    isAggregation ||
+    vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD ||
+    shouldForceLexicalConfirmation;
   let lexicalCandidates: Array<{ memory: MemoryRecord; score: number }> = [];
   const lexicalLimit = isAggregation ? 100 : 50;
 
@@ -1086,7 +1128,8 @@ export async function recallMemory(
           const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
 
           // Topic prefix filtering (matches vectorSearch behavior)
-          if (options.topicPrefix && !record.topic.startsWith(options.topicPrefix)) continue;
+          if (searchOptions.topicPrefix && !record.topic.startsWith(searchOptions.topicPrefix))
+            continue;
 
           // Scope filtering
           if (options.scopes && options.scopes.length > 0) {
@@ -1120,8 +1163,10 @@ export async function recallMemory(
       }
 
       // Topic prefix filtering for in-memory lexical (matches vectorSearch behavior)
-      if (options.topicPrefix) {
-        lexicalRecords = lexicalRecords.filter((r) => r.topic.startsWith(options.topicPrefix!));
+      if (searchOptions.topicPrefix) {
+        lexicalRecords = lexicalRecords.filter((r) =>
+          r.topic.startsWith(searchOptions.topicPrefix!)
+        );
       }
 
       lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
@@ -1138,6 +1183,11 @@ export async function recallMemory(
       }
     }
   } // end needsLexical
+
+  diagnostics.candidate_counts.lexical = lexicalCandidates.length;
+  for (const candidate of lexicalCandidates) {
+    lexicalScoreById.set(candidate.memory.id, candidate.score);
+  }
 
   // RRF Fusion: combine vector and lexical/FTS5 results by reciprocal rank
   // FTS5 BM25 gets 2x weight — it naturally demotes records where query terms
@@ -1275,6 +1325,10 @@ export async function recallMemory(
   if (projectionMode !== 'off') {
     try {
       canonicalMatched = await queryCanonicalEntities(query, options.scopes ?? [], { limit: 10 });
+      diagnostics.candidate_counts.entity = canonicalMatched.length;
+      for (const canonical of canonicalMatched) {
+        entitySupportIds.add(canonical.id);
+      }
       if (projectionMode === 'dual-write' && canonicalMatched.length > 0) {
         const seenIds = new Set(matched.map((item) => item.id));
         for (const canonical of canonicalMatched) {
@@ -1295,6 +1349,106 @@ export async function recallMemory(
       );
     }
   }
+
+  const requestedScopeKeys = new Set(
+    (options.scopes ?? []).map((scope) => `${scope.kind}:${scope.id}`)
+  );
+  const hasRequestedScopeSupport = (record: MemoryRecord): boolean => {
+    if (requestedScopeKeys.size === 0) {
+      return true;
+    }
+    return record.scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
+  };
+  const hasExactTopicSupport = (record: MemoryRecord): boolean => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedTopic = record.topic.trim().toLowerCase();
+    if (!normalizedQuery || !normalizedTopic) {
+      return false;
+    }
+    return (
+      normalizedQuery === normalizedTopic ||
+      normalizedQuery.includes(normalizedTopic) ||
+      normalizedTopic.includes(normalizedQuery)
+    );
+  };
+  const buildDiagnostics = (
+    record: MemoryRecord,
+    graphSource: SearchHitDiagnostics['graph_source']
+  ): SearchHitDiagnostics => {
+    const vectorSimilarity = vectorSimilarityById.get(record.id) ?? null;
+    const lexicalSupport = lexicalScoreById.has(record.id);
+    const entitySupport = entitySupportIds.has(record.id);
+    const exactTopicSupport = hasExactTopicSupport(record);
+    const scopeSupport = hasRequestedScopeSupport(record);
+    const confirmationSignals = [
+      lexicalSupport ? 'lexical' : null,
+      entitySupport ? 'entity' : null,
+      exactTopicSupport ? 'exact_topic' : null,
+    ].filter((signal): signal is string => signal !== null);
+    const metadataSignals = [
+      requestedScopeKeys.size > 0 && scopeSupport ? 'scope' : null,
+      graphSource === 'primary' ? 'graph_primary' : null,
+      graphSource === 'expanded' ? 'graph_expanded' : null,
+    ].filter((signal): signal is string => signal !== null);
+    const retrievalSourceForRecord =
+      vectorSimilarity !== null && lexicalSupport
+        ? 'hybrid_rrf'
+        : vectorSimilarity !== null
+          ? 'vector_search'
+          : lexicalSupport
+            ? 'lexical_search'
+            : entitySupport
+              ? 'entity_canonical'
+              : String(record.source.source_type || 'unknown');
+
+    return {
+      retrieval_source: retrievalSourceForRecord,
+      vector_similarity: vectorSimilarity,
+      lexical_support: lexicalSupport,
+      entity_support: entitySupport,
+      scope_support: scopeSupport,
+      graph_source: graphSource,
+      is_vector_only: vectorSimilarity !== null && confirmationSignals.length === 0,
+      confirmation_signals: confirmationSignals,
+      metadata_signals: metadataSignals,
+      candidate_threshold_used: searchOptions.threshold,
+    };
+  };
+  const passesStrictness = (hitDiagnostics: SearchHitDiagnostics): boolean => {
+    if (searchOptions.strictness === 'recall') {
+      return true;
+    }
+    if (hitDiagnostics.confirmation_signals.length === 0) {
+      return false;
+    }
+    if (!searchOptions.minLexicalSupport) {
+      return true;
+    }
+    return (
+      hitDiagnostics.lexical_support ||
+      hitDiagnostics.entity_support ||
+      hitDiagnostics.confirmation_signals.includes('exact_topic')
+    );
+  };
+
+  const acceptedPrimaryIds = new Set<string>();
+  matched = matched.flatMap((record) => {
+    const recordDiagnostics = buildDiagnostics(record, 'primary');
+    if (recordDiagnostics.is_vector_only) {
+      diagnostics.candidate_counts.vector_only += 1;
+    }
+    if (!passesStrictness(recordDiagnostics)) {
+      diagnostics.candidate_counts.rejected_by_strictness += 1;
+      return [];
+    }
+    acceptedPrimaryIds.add(record.id);
+    return [
+      searchOptions.diagnostics ? { ...record, retrieval_diagnostics: recordDiagnostics } : record,
+    ];
+  });
+  fusedHits = fusedHits.filter(
+    (hit) => hit.source_type !== 'decision' || acceptedPrimaryIds.has(hit.source_id)
+  );
 
   if (matched.length > 0) {
     const readIdentityIndex = await loadDecisionReadIdentityIndex(
@@ -1342,7 +1496,7 @@ export async function recallMemory(
   bundle.graph_context.expanded = [];
   bundle.graph_context.edges = [];
 
-  if (matched.length > 0 && !options.skipGraphExpansion) {
+  if (matched.length > 0 && !options.skipGraphExpansion && searchOptions.includeRelated) {
     try {
       const candidates = matched.map((m) => ({
         id: m.id,
@@ -1395,22 +1549,40 @@ export async function recallMemory(
         });
       }
 
-      bundle.graph_context.expanded = expandedOnly.map((e) => ({
-        id: String(e.id),
-        topic: String(e.topic || ''),
-        kind: 'decision' as const,
-        summary: String(e.decision || ''),
-        details: '',
-        confidence: (e.graph_rank as number) ?? 0.5,
-        status: 'active' as const,
-        scopes: [],
-        source: {
-          package: 'mama-core' as const,
-          source_type: String(e.graph_source || 'graph_expansion'),
-        },
-        created_at: (e.created_at as number) ?? Date.now(),
-        updated_at: (e.created_at as number) ?? Date.now(),
-      }));
+      bundle.graph_context.expanded = expandedOnly.map((e) => {
+        const expandedRecord: MemoryRecord = {
+          id: String(e.id),
+          topic: String(e.topic || ''),
+          kind: 'decision' as const,
+          summary: String(e.decision || ''),
+          details: '',
+          confidence: (e.graph_rank as number) ?? 0.5,
+          status: 'active' as const,
+          scopes: [],
+          source: {
+            package: 'mama-core' as const,
+            source_type: String(e.graph_source || 'graph_expansion'),
+          },
+          created_at: (e.created_at as number) ?? Date.now(),
+          updated_at: (e.created_at as number) ?? Date.now(),
+        };
+        return searchOptions.diagnostics
+          ? {
+              ...expandedRecord,
+              retrieval_diagnostics: buildDiagnostics(expandedRecord, 'expanded'),
+            }
+          : expandedRecord;
+      });
+      diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
+      fusedHits = [
+        ...fusedHits,
+        ...bundle.graph_context.expanded.map((record) => ({
+          source_type: 'decision' as const,
+          source_id: record.id,
+          record,
+          fused_rank_score: (record.confidence ?? 0.5) * 0.1,
+        })),
+      ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
 
       const allIds = [...matched.map((m) => m.id), ...expandedOnly.map((e) => e.id)];
       const allEdges = await loadEdgesForIds(allIds);
@@ -1448,6 +1620,9 @@ export async function recallMemory(
   (bundle as RecallBundle & { fused_hits?: FusedHit[] }).fused_hits = fusedHits;
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
   bundle.search_meta.retrieval_sources = [retrievalSource];
+  if (searchOptions.diagnostics) {
+    bundle.search_meta.diagnostics = diagnostics;
+  }
 
   if (options.includeProfile) {
     bundle.profile = await buildProfile(options.scopes ?? []);
