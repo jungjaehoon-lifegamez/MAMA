@@ -481,6 +481,51 @@ describe('Story M5.2: /api/agent/situation worker packet API', () => {
       ).toEqual([{ status: 'failed', error_summary: 'commit store unavailable' }]);
     });
 
+    it('preserves the commit failure when uncommitted packet cleanup fails', async () => {
+      const baseAdapter = getAdapter();
+      const cleanupFailingAdapter: AgentSituationRouterOptions['memoryAdapter'] = {
+        prepare(sql: string) {
+          const statement = baseAdapter.prepare(sql);
+          if (sql.includes("SET status = 'committed'")) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('commit store unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          if (sql.includes('DELETE FROM agent_situation_packets')) {
+            return {
+              run: (..._args: unknown[]) => {
+                throw new Error('cleanup delete unavailable');
+              },
+              get: (...args: unknown[]) => statement.get(...args),
+              all: (...args: unknown[]) => statement.all(...args),
+            };
+          }
+          return statement;
+        },
+        transaction<T>(fn: () => T): T {
+          return baseAdapter.transaction(fn);
+        },
+      };
+      const apiServer = makeServer({ memoryAdapter: cleanupFailingAdapter });
+
+      const response = await authed(request(apiServer.app).get('/api/agent/situation'));
+
+      expect(response.status).toBe(500);
+      expect(response.body.code).toBe('agent_situation_api_error');
+      expect(
+        getAdapter().prepare('SELECT COUNT(*) AS count FROM agent_situation_packets').get()
+      ).toEqual({ count: 1 });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
+          .all()
+      ).toEqual([{ status: 'failed', error_summary: 'commit store unavailable' }]);
+    });
+
     it('singleflights concurrent API refreshes for the same cache key', async () => {
       let releaseBuilder!: () => void;
       const builderGate = new Promise<void>((resolve) => {

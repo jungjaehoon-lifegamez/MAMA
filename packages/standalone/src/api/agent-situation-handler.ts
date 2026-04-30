@@ -28,6 +28,7 @@ import {
   WorkerEnvelopeError,
 } from './worker-envelope.js';
 
+// The core debug-logger package is CommonJS-shaped at runtime while this file uses ESM import syntax.
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
     error: (...args: unknown[]) => void;
@@ -218,7 +219,14 @@ async function handleSituationRequest(
             `agent.situation packet ${packet.packet_id}`
           );
         } catch (error) {
-          removeOwnedPacket(options.memoryAdapter, packet.packet_id, ownedModelRunId);
+          try {
+            removeOwnedPacket(options.memoryAdapter, packet.packet_id, ownedModelRunId);
+          } catch (cleanupError) {
+            situationApiLogger.error(
+              'Failed to clean up uncommitted agent.situation packet:',
+              cleanupError
+            );
+          }
           throw error;
         }
       }
