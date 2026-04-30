@@ -34,6 +34,7 @@ import {
   createAgentSituationRouter,
   type AgentSituationRouterOptions,
 } from './agent-situation-handler.js';
+import { createAgentGraphRouter, type AgentGraphRouterOptions } from './agent-graph-handler.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -70,7 +71,8 @@ export interface ApiServerOptions {
   /** Memory database instance (for intelligence queries — mama-memory.db) */
   memoryDb?: SQLiteDatabase;
   /** Transaction-capable mama-core adapter for worker situation packets */
-  memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'];
+  memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'] &
+    AgentGraphRouterOptions['memoryAdapter'];
   /** Wiki directory path (for wiki API) */
   wikiPath?: string;
   /** Skill registry instance */
@@ -183,7 +185,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       res.setHeader(
         'Access-Control-Allow-Headers',
-        'Content-Type, Authorization, x-mama-envelope-hash'
+        'Content-Type, Authorization, x-mama-envelope-hash, x-mama-model-run-id'
       );
     }
     if (req.method === 'OPTIONS') {
@@ -241,6 +243,13 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         envelopeAuthority,
         buildPacket: situationBuilder,
         now: situationNow,
+      })
+    );
+    app.use(
+      '/api/agent',
+      createAgentGraphRouter({
+        memoryAdapter,
+        envelopeAuthority,
       })
     );
   }
