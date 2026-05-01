@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { MEMORY_SCOPE_KINDS, type MemoryScopeRef } from '../memory/types.js';
-import type { ContextBoundary, ContextRef } from './types.js';
+import type { ContextBoundary, ContextProjectRef, ContextRef } from './types.js';
 import { normalizeContextRef, normalizeContextRefs } from './ref.js';
 
 const SCOPE_ORDER: Record<MemoryScopeRef['kind'], number> = {
@@ -15,6 +15,8 @@ type BoundaryCheckInput = {
   boundary: ContextBoundary;
   requestedScopes?: readonly MemoryScopeRef[];
   requestedConnectors?: readonly string[];
+  requestedProjectRefs?: readonly ContextProjectRef[];
+  requestedTenantId?: string | null;
   seedRefs?: readonly unknown[];
 };
 
@@ -39,6 +41,15 @@ function connectorKey(connector: string): string {
     throw new Error('Connector must not be empty');
   }
   return trimmed;
+}
+
+function projectKey(project: ContextProjectRef): string {
+  const kind = project.kind.trim();
+  const id = project.id.trim();
+  if (kind.length === 0 || id.length === 0) {
+    throw new Error('Project ref kind and id must not be empty');
+  }
+  return `${kind}\0${id}`;
 }
 
 function sortScopes(scopes: MemoryScopeRef[]): MemoryScopeRef[] {
@@ -90,9 +101,10 @@ export function assertContextBoundaryAllowsInput(input: BoundaryCheckInput): voi
     }
   }
 
+  const hasConnectorBoundary = Array.isArray(input.boundary.connectors);
   const boundaryConnectors = new Set((input.boundary.connectors ?? []).map(connectorKey));
   const requestedConnectors = (input.requestedConnectors ?? []).map(connectorKey);
-  if (boundaryConnectors.size > 0) {
+  if (hasConnectorBoundary) {
     const disallowedConnector = requestedConnectors.find(
       (connector) => !boundaryConnectors.has(connector)
     );
@@ -103,20 +115,38 @@ export function assertContextBoundaryAllowsInput(input: BoundaryCheckInput): voi
     }
   }
 
+  const boundaryProjects = new Set((input.boundary.project_refs ?? []).map(projectKey));
+  const requestedProjects = (input.requestedProjectRefs ?? []).map(projectKey);
+  if (boundaryProjects.size > 0) {
+    const disallowedProject = requestedProjects.find((project) => !boundaryProjects.has(project));
+    if (disallowedProject) {
+      const [kind, id] = disallowedProject.split('\0');
+      throw new Error(`Requested project ref is outside the context boundary: ${kind}:${id}`);
+    }
+  }
+
+  const boundaryTenantId = input.boundary.tenant_id;
+  if (
+    typeof boundaryTenantId === 'string' &&
+    boundaryTenantId.length > 0 &&
+    input.requestedTenantId !== undefined &&
+    input.requestedTenantId !== null &&
+    input.requestedTenantId !== boundaryTenantId
+  ) {
+    throw new Error('Requested tenant is outside the context boundary');
+  }
+
   const seedRefs = normalizeContextRefs(input.seedRefs);
-  assertSeedRefsAllowed(seedRefs, boundaryConnectors);
+  assertSeedRefsAllowed(seedRefs, boundaryConnectors, hasConnectorBoundary);
 }
 
 function assertSeedRefsAllowed(
   seedRefs: readonly ContextRef[],
-  boundaryConnectors: Set<string>
+  boundaryConnectors: Set<string>,
+  hasConnectorBoundary: boolean
 ): void {
   for (const ref of seedRefs) {
-    if (
-      ref.kind === 'raw' &&
-      boundaryConnectors.size > 0 &&
-      !boundaryConnectors.has(ref.connector)
-    ) {
+    if (ref.kind === 'raw' && hasConnectorBoundary && !boundaryConnectors.has(ref.connector)) {
       throw new Error(`Seed raw ref connector is outside the context boundary: ${ref.connector}`);
     }
   }

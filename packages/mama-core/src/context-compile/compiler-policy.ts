@@ -129,7 +129,6 @@ export function applyContextCompilerPolicy(
       rejectedRefs.push(candidate.ref);
       continue;
     }
-    seen.add(key);
 
     if (shouldRejectVectorOnly(candidate, strictness)) {
       counters.strictVectorOnly += 1;
@@ -153,6 +152,7 @@ export function applyContextCompilerPolicy(
 
     selected.push(evidence);
     sourceRefs.push(candidate.ref);
+    seen.add(key);
     estimatedTokens += nextTokens;
   }
 

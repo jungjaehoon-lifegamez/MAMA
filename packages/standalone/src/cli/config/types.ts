@@ -101,6 +101,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       allowedTools: [
         'mama_search',
         'mama_recall',
+        'context_compile',
         'mama_load_checkpoint',
         'Read',
         'discord_send',

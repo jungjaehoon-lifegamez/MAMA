@@ -1191,6 +1191,9 @@ export class GatewayToolExecutor {
     }
 
     if (!requestedScopes || requestedScopes.length === 0) {
+      if (toolName === 'context_compile' && Array.isArray((input as { scopes?: unknown }).scopes)) {
+        return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
+      }
       return {
         requestedScopes,
         envelopeScopesSnapshot,
@@ -1276,7 +1279,7 @@ export class GatewayToolExecutor {
 
     const scopedInput = input as SearchInput | RecallInput | ContextCompileInput;
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
-      ? scopedInput.scopes.length > 0
+      ? toolName === 'context_compile' || scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
     if (hasCallerScopes) {
       return input;

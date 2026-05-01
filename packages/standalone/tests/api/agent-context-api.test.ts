@@ -189,6 +189,36 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
     });
   });
 
+  it('AC: rejects malformed compile filter fields before calling the shared service', async () => {
+    const service = makeServiceMock();
+    const apiServer = makeRouterServer({ contextCompileService: service });
+
+    const malformedInputs = [
+      { task: 'compile API context', connectors: 'telegram' },
+      { task: 'compile API context', scopes: { kind: 'project', id: '/workspace/project-a' } },
+      { task: 'compile API context', project_refs: 'repo-a' },
+      { task: 'compile API context', seed_refs: { kind: 'memory', id: 'mem-api' } },
+      { task: 'compile API context', range: { start_ms: '1000' } },
+      { task: 'compile API context', limit: 'abc' },
+      { task: 'compile API context', max_tool_calls: '0' },
+      { task: 'compile API context', max_ms: null },
+      { task: 'compile API context', max_tokens: '1000' },
+    ];
+
+    for (const body of malformedInputs) {
+      const response = await authed(
+        request(apiServer.app).post('/api/agent/context/compile').send(body)
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'context_compile_input_invalid',
+      });
+    }
+    expect(service.compileAndPersistContext).not.toHaveBeenCalled();
+  });
+
   it('AC: preserves stable service error codes and hides unexpected error details', async () => {
     const invalidService = makeServiceMock(
       vi.fn(async () => {
