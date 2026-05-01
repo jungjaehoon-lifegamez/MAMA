@@ -130,6 +130,9 @@ export class EnvelopeEnforcer {
 
     const requestedScopes = requestedMemoryScopesForTool(toolName, args);
     if (requestedScopes.length === 0) {
+      if (toolName === 'context_compile' && isRecord(args) && Array.isArray(args.scopes)) {
+        return;
+      }
       throw new EnvelopeViolation(
         'Memory read tools must execute with an explicit envelope memory scope',
         'memory_scope_out_of_scope',

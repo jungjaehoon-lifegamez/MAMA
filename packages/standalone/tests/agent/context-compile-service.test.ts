@@ -154,6 +154,283 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
   });
 
+  it('AC: clamps request as_of to the worker envelope snapshot', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+        as_of: '1970-01-01T00:00:01.500Z',
+      },
+    });
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_asof_clamped',
+          task: input.task,
+          scopes: input.scopes,
+        })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      childModelRunId: () => 'mr_context_asof',
+      packetId: () => 'ctxp_asof_clamped',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: {
+        task: 'compile branch context',
+        as_of: '1970-01-01T00:00:03.000Z',
+      },
+    });
+
+    expect(compileContext.mock.calls[0][0]).toMatchObject({
+      as_of: '1970-01-01T00:00:01.500Z',
+    });
+    expect(getModelRunInAdapter(adapter, 'mr_context_asof')?.input_refs).toMatchObject({
+      as_of: '1970-01-01T00:00:01.500Z',
+    });
+  });
+
+  it('AC: validates and clamps numeric compile budgets before compiling', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_numeric_budget',
+          task: input.task,
+          scopes: input.scopes,
+        })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      childModelRunId: () => 'mr_context_numeric_budget',
+      packetId: () => 'ctxp_numeric_budget',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: {
+        task: 'compile branch context',
+        limit: 999,
+        max_tool_calls: 1.9,
+        max_ms: 10.8,
+        max_tokens: 42.7,
+      },
+    });
+
+    expect(compileContext.mock.calls[0][0]).toMatchObject({
+      limit: 100,
+      max_tool_calls: 1,
+      max_ms: 10,
+      max_tokens: 42,
+    });
+  });
+
+  it('AC: keeps the envelope as the upper-bound boundary when explicit empty filters narrow reads', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(
+      async (
+        input: ContextCompileInput,
+        deps: {
+          boundary?: {
+            scopes?: unknown[];
+            connectors?: string[];
+            project_refs?: unknown[];
+            tenant_id?: string | null;
+          };
+          packetId?: () => string;
+        }
+      ) => {
+        expect(input).toMatchObject({
+          scopes: [],
+          connectors: [],
+        });
+        expect(deps.boundary).toMatchObject({
+          scopes: envelope.scope.memory_scopes,
+          connectors: envelope.scope.raw_connectors,
+          project_refs: envelope.scope.project_refs,
+          tenant_id: 'default',
+        });
+        return makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_empty_filters',
+          task: input.task,
+          scopes: input.scopes,
+        });
+      }
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      childModelRunId: () => 'mr_context_empty_filters',
+      packetId: () => 'ctxp_empty_filters',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: {
+        task: 'compile branch context',
+        scopes: [],
+        connectors: [],
+      },
+    });
+
+    expect(compileContext).toHaveBeenCalledTimes(1);
+    expect(getContextPacket(adapter, 'ctxp_empty_filters')).toMatchObject({
+      packet_id: 'ctxp_empty_filters',
+      model_run_id: 'mr_context_empty_filters',
+    });
+  });
+
+  it('AC: rejects seed refs when explicit empty filters narrow below the envelope', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const emptyScopeService = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_context_empty_scope_seed',
+      packetId: () => 'ctxp_empty_scope_seed',
+    });
+
+    await expect(
+      emptyScopeService.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          scopes: [],
+          seed_refs: [{ kind: 'memory', id: 'mem-alpha' }],
+          max_tool_calls: 0,
+        },
+      })
+    ).rejects.toThrow(/empty requested context scope/i);
+    expect(getContextPacket(adapter, 'ctxp_empty_scope_seed')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_empty_scope_seed')).toMatchObject({
+      status: 'failed',
+    });
+
+    const emptyConnectorService = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_context_empty_connector_seed',
+      packetId: () => 'ctxp_empty_connector_seed',
+    });
+
+    await expect(
+      emptyConnectorService.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          connectors: [],
+          seed_refs: [{ kind: 'raw', connector: 'telegram', raw_id: 'raw-alpha' }],
+          max_tool_calls: 0,
+        },
+      })
+    ).rejects.toThrow(/empty requested connector/i);
+    expect(getContextPacket(adapter, 'ctxp_empty_connector_seed')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_empty_connector_seed')).toMatchObject({
+      status: 'failed',
+    });
+  });
+
+  it('AC: rejects seed refs when the worker envelope has no memory scopes', async () => {
+    const adapter = getAdapter();
+    adapter
+      .prepare(
+        `
+          INSERT INTO decisions (
+            id, topic, decision, reasoning, confidence, created_at, updated_at,
+            kind, status, summary, event_datetime
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(
+        'mem-no-scope-seed',
+        'context compile no scope seed',
+        'No-scope envelope must not trust seed refs.',
+        'Empty worker memory scopes mean there is no readable memory window.',
+        0.8,
+        1_200,
+        1_200,
+        'decision',
+        'active',
+        'No-scope envelope must not trust seed refs.',
+        1_200
+      );
+    const envelope = makeSignedEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+        as_of: '2026-04-30T09:00:00.000Z',
+      },
+    });
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_context_no_scope_seed',
+      packetId: () => 'ctxp_no_scope_seed',
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          seed_refs: [{ kind: 'memory', id: 'mem-no-scope-seed' }],
+          max_tool_calls: 0,
+        },
+      })
+    ).rejects.toThrow(/empty requested context scope/i);
+    expect(getContextPacket(adapter, 'ctxp_no_scope_seed')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_no_scope_seed')).toMatchObject({
+      status: 'failed',
+    });
+  });
+
+  it('AC: rejects raw seed refs when the worker envelope has no raw connectors', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: [],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+        as_of: '2026-04-30T09:00:00.000Z',
+      },
+    });
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_context_no_connector_seed',
+      packetId: () => 'ctxp_no_connector_seed',
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          seed_refs: [{ kind: 'raw', connector: 'slack', raw_id: 'raw-no-connector' }],
+          max_tool_calls: 0,
+        },
+      })
+    ).rejects.toThrow(/connector/i);
+    expect(getContextPacket(adapter, 'ctxp_no_connector_seed')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_no_connector_seed')).toBeNull();
+  });
+
   it('AC: rejects parent runs outside the worker envelope before compiling', async () => {
     const adapter = getAdapter();
     const envelope = makeSignedEnvelope();
@@ -227,6 +504,17 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
           task: 'compile',
           seed_refs: [{ kind: 'raw', connector: 'slack', raw_id: 'raw-hidden' }],
         },
+      })
+    ).rejects.toMatchObject({
+      code: 'context_compile_input_invalid',
+      status: 400,
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: { task: 'compile', max_tool_calls: '0' as unknown as number },
       })
     ).rejects.toMatchObject({
       code: 'context_compile_input_invalid',

@@ -128,4 +128,47 @@ describe('STORY-CC-B4: deterministic context compiler policy - AC1, AC2, AC3', (
     expect(result.retrieval_diagnostics).toMatchObject({ truncated_by_tokens: true });
     expect(JSON.stringify(result.rejected_summary)).not.toContain('long hidden-ish');
   });
+
+  it('allows a later confirmed duplicate when an earlier vector-only hit is rejected', () => {
+    const result = applyContextCompilerPolicy({
+      task: 'compile branch context',
+      candidates: [
+        candidate({
+          ref: { kind: 'memory', id: 'mem-a' },
+          title: 'Vector-only duplicate',
+          score: 0.99,
+          support: {
+            retrieval_source: 'vector_search',
+            is_vector_only: true,
+            lexical_support: false,
+            confirmation_signals: [],
+            metadata_signals: [],
+          },
+        }),
+        candidate({
+          ref: { kind: 'memory', id: 'mem-a' },
+          title: 'Confirmed duplicate',
+          score: 0.5,
+          support: {
+            retrieval_source: 'hybrid_rrf',
+            is_vector_only: false,
+            lexical_support: true,
+            confirmation_signals: ['lexical'],
+            metadata_signals: [],
+          },
+        }),
+      ],
+      hidden: hidden(),
+      limit: 5,
+      strictness: 'high',
+      max_tokens: 1_000,
+    });
+
+    expect(result.selected_evidence.map((item) => item.title)).toEqual(['Confirmed duplicate']);
+    expect(result.retrieval_diagnostics).toMatchObject({
+      selected_count: 1,
+      strict_vector_only_rejected_count: 1,
+      deduplicated_count: 0,
+    });
+  });
 });

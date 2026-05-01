@@ -1,6 +1,6 @@
 import express, { type Request, type Response, type Router } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import type { ContextCompileInput } from '@jungjaehoon/mama-core';
+import { normalizeContextRefs, type ContextCompileInput } from '@jungjaehoon/mama-core';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
 import {
@@ -71,7 +71,115 @@ function parseContextCompileInput(body: unknown): ContextCompileInput {
       'Request body must be a JSON object.'
     );
   }
+  const input = body as Record<string, unknown>;
+  validateStringArrayField(input, 'connectors');
+  validateScopeArrayField(input);
+  validateProjectRefArrayField(input);
+  validateSeedRefsField(input);
+  validateRangeField(input);
+  validateNumericCompileFields(input);
   return body as ContextCompileInput;
+}
+
+function validateStringArrayField(input: Record<string, unknown>, field: string): void {
+  const value = input[field];
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throwInvalidInput(`${field} must be an array.`);
+  }
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      throwInvalidInput(`${field} must contain only strings.`);
+    }
+  }
+}
+
+function validateScopeArrayField(input: Record<string, unknown>): void {
+  const value = input.scopes;
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throwInvalidInput('scopes must be an array.');
+  }
+  for (const scope of value) {
+    if (!isRecord(scope) || typeof scope.kind !== 'string' || typeof scope.id !== 'string') {
+      throwInvalidInput('scopes must contain { kind, id } objects.');
+    }
+    if (!['global', 'user', 'channel', 'project'].includes(scope.kind)) {
+      throwInvalidInput(`Invalid scope kind: ${scope.kind}`);
+    }
+  }
+}
+
+function validateProjectRefArrayField(input: Record<string, unknown>): void {
+  const value = input.project_refs;
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throwInvalidInput('project_refs must be an array.');
+  }
+  for (const projectRef of value) {
+    if (
+      !isRecord(projectRef) ||
+      projectRef.kind !== 'project' ||
+      typeof projectRef.id !== 'string'
+    ) {
+      throwInvalidInput('project_refs must contain { kind: "project", id } objects.');
+    }
+  }
+}
+
+function validateSeedRefsField(input: Record<string, unknown>): void {
+  const value = input.seed_refs;
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    throwInvalidInput('seed_refs must be an array.');
+  }
+  try {
+    normalizeContextRefs(value);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throwInvalidInput(message);
+  }
+}
+
+function validateRangeField(input: Record<string, unknown>): void {
+  const value = input.range;
+  if (value === undefined) {
+    return;
+  }
+  if (!isRecord(value)) {
+    throwInvalidInput('range must be an object.');
+  }
+  for (const field of ['start_ms', 'end_ms'] as const) {
+    const boundary = value[field];
+    if (boundary !== undefined && (typeof boundary !== 'number' || !Number.isFinite(boundary))) {
+      throwInvalidInput(`range.${field} must be a finite number.`);
+    }
+  }
+}
+
+function validateNumericCompileFields(input: Record<string, unknown>): void {
+  for (const field of ['limit', 'max_tool_calls', 'max_ms', 'max_tokens'] as const) {
+    const value = input[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throwInvalidInput(`${field} must be a finite number.`);
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function throwInvalidInput(message: string): never {
+  throw new ContextCompileServiceError(400, 'context_compile_input_invalid', message);
 }
 
 function sendContextError(res: Response, error: unknown): void {

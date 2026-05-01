@@ -64,6 +64,28 @@ describe('Story V0.21: Context compile visibility - AC2', () => {
     ).toThrow(/connector/i);
   });
 
+  it('AC: rejects requested project refs and tenant outside the envelope boundary', () => {
+    const boundary = {
+      scopes: [{ kind: 'project' as const, id: 'alpha' }],
+      connectors: ['slack'],
+      project_refs: [{ kind: 'project' as const, id: 'repo-a' }],
+      tenant_id: 'tenant-a',
+    };
+
+    expect(() =>
+      assertContextBoundaryAllowsInput({
+        boundary,
+        requestedProjectRefs: [{ kind: 'project', id: 'repo-b' }],
+      })
+    ).toThrow(/project/i);
+    expect(() =>
+      assertContextBoundaryAllowsInput({
+        boundary,
+        requestedTenantId: 'tenant-b',
+      })
+    ).toThrow(/tenant/i);
+  });
+
   it('AC: rejects seed refs outside the envelope boundary', () => {
     expect(() =>
       assertContextBoundaryAllowsInput({

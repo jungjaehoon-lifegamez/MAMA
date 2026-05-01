@@ -26,10 +26,6 @@ function hasScopes(scopes: readonly TwinScopeRef[] | undefined): scopes is TwinS
   return Array.isArray(scopes) && scopes.length > 0;
 }
 
-function hasConnectors(connectors: readonly string[] | undefined): connectors is string[] {
-  return Array.isArray(connectors) && connectors.length > 0;
-}
-
 function hasProjectRefs(
   projectRefs: readonly TwinProjectRef[] | undefined
 ): projectRefs is TwinProjectRef[] {
@@ -44,9 +40,24 @@ function asOfMs(visibility: TwinVisibility): number | null {
   return typeof visibility.asOfMs === 'number' ? visibility.asOfMs : null;
 }
 
-function isAtOrBeforeAsOf(value: number | null | undefined, visibility: TwinVisibility): boolean {
+function startMs(visibility: TwinVisibility): number | null {
+  return typeof visibility.startMs === 'number' ? visibility.startMs : null;
+}
+
+function isWithinVisibilityTime(
+  value: number | null | undefined,
+  visibility: TwinVisibility
+): boolean {
+  const start = startMs(visibility);
   const asOf = asOfMs(visibility);
-  return asOf === null || (typeof value === 'number' && value <= asOf);
+  if (start === null && asOf === null) {
+    return true;
+  }
+  return (
+    typeof value === 'number' &&
+    (start === null || value >= start) &&
+    (asOf === null || value <= asOf)
+  );
 }
 
 function parseTimestamp(value: unknown): number | null {
@@ -101,7 +112,7 @@ function isMemoryVisible(
   if (!row) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(row.event_datetime ?? row.created_at, visibility)) {
+  if (!isWithinVisibilityTime(row.event_datetime ?? row.created_at, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -179,7 +190,7 @@ function isCaseVisible(
     return false;
   }
   const timestamp = parseTimestamp(row.last_activity_at) ?? parseTimestamp(row.updated_at);
-  if (!isAtOrBeforeAsOf(timestamp, visibility)) {
+  if (!isWithinVisibilityTime(timestamp, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -216,7 +227,7 @@ function isRawVisible(
   }
 
   if (
-    hasConnectors(visibility.connectors) &&
+    Array.isArray(visibility.connectors) &&
     !visibility.connectors.includes(String(row.source_connector))
   ) {
     return false;
@@ -237,7 +248,7 @@ function isRawVisible(
     return false;
   }
 
-  if (!isAtOrBeforeAsOf(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
+  if (!isWithinVisibilityTime(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
     return false;
   }
 
@@ -268,7 +279,7 @@ function isEntityVisible(
   if (!row) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(row.created_at, visibility)) {
+  if (!isWithinVisibilityTime(row.created_at, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -312,7 +323,7 @@ function isTwinRefVisible(
   if (!edge) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(edge.created_at, visibility)) {
+  if (!isWithinVisibilityTime(edge.created_at, visibility)) {
     return false;
   }
   const pathWithCurrent = new Set(visitedEdges);
@@ -354,6 +365,7 @@ export function listVisibleTwinEdgesForRefs(
   const edges = listTwinEdgesForRefs(adapter, refs).filter(
     (edge) =>
       (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
+      (typeof options.startMs !== 'number' || edge.created_at >= options.startMs) &&
       (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
       isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache) &&
       isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache)

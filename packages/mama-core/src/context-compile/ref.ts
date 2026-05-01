@@ -97,7 +97,7 @@ export function toTwinRef(ref: ContextRef): TwinRef {
   if (ref.kind === 'raw') {
     return {
       kind: 'raw',
-      id: `${ref.connector}:${ref.raw_id}`,
+      id: ref.raw_id,
     };
   }
   return {

@@ -232,6 +232,32 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     );
   });
 
+  it('preserves explicit empty scopes for context_compile boundary narrowing', async () => {
+    const service = makeService();
+    const executor = new GatewayToolExecutor({
+      contextCompileService: service,
+    });
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile context', scopes: [] } as GatewayToolInput,
+      makeContext()
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      packet_id: 'ctxp_gateway_tool',
+    });
+    expect(service.compileAndPersistContext).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          task: 'compile context',
+          scopes: [],
+        }),
+      })
+    );
+  });
+
   it('rejects context_compile memory scopes outside the envelope before service execution and records audit mismatch', async () => {
     const service = makeService();
     const metricsStore = { record: vi.fn() };

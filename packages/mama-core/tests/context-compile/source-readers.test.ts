@@ -3,11 +3,12 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter } from '../../src/db-manager.js';
+import { insertTwinEdge } from '../../src/edges/store.js';
 import type { TwinEdgeRecord } from '../../src/edges/types.js';
 import type { MemoryRecord, RecallBundle } from '../../src/memory/types.js';
 import {
@@ -93,6 +94,61 @@ function recallBundle(memories: MemoryRecord[], extra: Record<string, unknown> =
   };
 }
 
+function insertScopedDecision(
+  adapter: DatabaseAdapter,
+  input: {
+    id: string;
+    topic: string;
+    summary: string;
+    details: string;
+    scopeId?: string;
+    timestampMs?: number;
+  }
+): void {
+  const scopeId = input.scopeId ?? 'repo-a';
+  const memoryScopeId = `scope_project_${scopeId}`;
+  const timestampMs = input.timestampMs ?? 1_200;
+  adapter
+    .prepare(
+      `
+        INSERT INTO decisions (
+          id, topic, decision, reasoning, confidence, created_at, updated_at,
+          kind, status, summary, event_datetime
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.id,
+      input.topic,
+      input.summary,
+      input.details,
+      0.75,
+      timestampMs,
+      timestampMs,
+      'decision',
+      'active',
+      input.summary,
+      timestampMs
+    );
+  adapter
+    .prepare(
+      `
+        INSERT OR IGNORE INTO memory_scopes (id, kind, external_id)
+        VALUES (?, ?, ?)
+      `
+    )
+    .run(memoryScopeId, 'project', scopeId);
+  adapter
+    .prepare(
+      `
+        INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
+        VALUES (?, ?, 1)
+      `
+    )
+    .run(input.id, memoryScopeId);
+}
+
 describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
   afterEach(() => {
     for (const path of tempPaths) {
@@ -135,6 +191,21 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       });
     });
 
+    it('treats explicit empty scopes as no readable memory scope', async () => {
+      const recallMemory = vi.fn(async () => recallBundle([memory()]));
+
+      const result = await readMemoryCandidates(input({ scopes: [] }), {
+        recallMemory,
+      });
+
+      expect(recallMemory).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        candidates: [],
+        hidden: { total: 0, by_kind: {}, by_reason: {} },
+        source_refs: [],
+      });
+    });
+
     it('filters by range and as_of, dropping timestamp-missing candidates into aggregates only', async () => {
       const hiddenId = 'mem-hidden-missing-time';
       const hiddenExcerpt = 'this hidden excerpt must not leak';
@@ -167,6 +238,14 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       expect(JSON.stringify(result)).not.toContain(hiddenExcerpt);
     });
 
+    it('rejects malformed range boundaries instead of widening memory reads', async () => {
+      await expect(
+        readMemoryCandidates(input({ range: { start_ms: '1000' as unknown as number } }), {
+          recallMemory: async () => recallBundle([memory({ event_datetime: 1_200 })]),
+        })
+      ).rejects.toThrow(/range\.start_ms/);
+    });
+
     it('ignores wiki-derived fused hits without concrete visible V0 source refs', async () => {
       const result = await readMemoryCandidates(input(), {
         recallMemory: async () =>
@@ -184,6 +263,87 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
 
       expect(result.candidates).toEqual([]);
       expect(result.source_refs).toEqual([]);
+    });
+
+    it('uses the supplied adapter for default memory reads', async () => {
+      const adapter = createAdapter();
+      insertScopedDecision(adapter, {
+        id: 'mem-adapter-owned',
+        topic: 'context compile adapter isolation',
+        summary: 'Adapter scoped memory should be read from this database only.',
+        details: 'The context compiler must not fall back to the global mama-core DB.',
+      });
+
+      const result = await readMemoryCandidates(input({ task: 'adapter isolation memory' }), {
+        adapter,
+      });
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        { kind: 'memory', id: 'mem-adapter-owned' },
+      ]);
+      expect(result.candidates[0].support).toMatchObject({
+        retrieval_source: 'context_compile_adapter',
+        lexical_support: true,
+      });
+    });
+
+    it('applies lexical filtering before the adapter recency limit', async () => {
+      const adapter = createAdapter();
+      for (let index = 0; index < 60; index += 1) {
+        insertScopedDecision(adapter, {
+          id: `mem-newer-unrelated-${index}`,
+          topic: `newer unrelated ${index}`,
+          summary: 'Recent operational note without the target phrase.',
+          details: 'This row should not hide the older matching memory.',
+          timestampMs: 10_000 + index,
+        });
+      }
+      insertScopedDecision(adapter, {
+        id: 'mem-older-exact-match',
+        topic: 'needle exact context',
+        summary: 'The relevant branch context lives in this older memory.',
+        details: 'Older exact lexical matches must be ranked before the recency limit is applied.',
+        timestampMs: 1_000,
+      });
+
+      const result = await readMemoryCandidates(
+        input({ task: 'needle exact context', limit: 10 }),
+        { adapter }
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toContainEqual({
+        kind: 'memory',
+        id: 'mem-older-exact-match',
+      });
+    });
+
+    it('applies time filtering before the adapter recency limit', async () => {
+      const adapter = createAdapter();
+      for (let index = 0; index < 60; index += 1) {
+        insertScopedDecision(adapter, {
+          id: `mem-newer-outside-window-${index}`,
+          topic: `needle exact context newer ${index}`,
+          summary: 'Newer exact matches are outside the requested snapshot.',
+          details: 'They must not consume the adapter fetch window before time filtering.',
+          timestampMs: 10_000 + index,
+        });
+      }
+      insertScopedDecision(adapter, {
+        id: 'mem-older-inside-window',
+        topic: 'needle exact context',
+        summary: 'The relevant branch context is older but inside the requested snapshot.',
+        details: 'Time bounds must be applied before the adapter recency limit.',
+        timestampMs: 1_000,
+      });
+
+      const result = await readMemoryCandidates(
+        input({ task: 'needle exact context', as_of: 2_000, limit: 10 }),
+        { adapter }
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        { kind: 'memory', id: 'mem-older-inside-window' },
+      ]);
     });
   });
 
@@ -245,6 +405,115 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       });
     });
 
+    it('raw reader uses source_timestamp_ms for temporal filters when event_datetime is missing', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-source-timestamp',
+        channel: 'C-eng',
+        title: 'Source timestamp raw event',
+        content: 'Context compile raw evidence with only source timestamp.',
+        event_datetime: null,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({ range: { start_ms: 1_000, end_ms: 2_000 } })
+      );
+
+      expect(result.candidates[0]).toMatchObject({
+        ref: {
+          kind: 'raw',
+          connector: 'slack',
+          source_id: 'm-source-timestamp',
+        },
+        timestamp_ms: 1_200,
+      });
+    });
+
+    it('treats explicit empty project refs under a project boundary as no raw project access', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-cross-project',
+        channel: 'C-eng',
+        title: 'Hidden cross-project raw event',
+        content: 'This raw event must not leak when project refs are narrowed to none.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-b',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          project_refs: [],
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+          },
+        })
+      );
+
+      expect(result).toEqual({
+        candidates: [],
+        hidden: { total: 0, by_kind: {}, by_reason: {} },
+        source_refs: [],
+      });
+      expect(JSON.stringify(result)).not.toContain('Hidden cross-project raw event');
+    });
+
+    it('raw reader does not require project refs when the boundary has none', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-projectless',
+        channel: 'C-eng',
+        title: 'Projectless raw event',
+        content: 'Channel-scoped context without a project id.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        memory_scope_kind: 'channel',
+        memory_scope_id: 'C-eng',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          scopes: [{ kind: 'channel', id: 'C-eng' }],
+          project_refs: [],
+          tenant_id: null,
+          boundary: {
+            scopes: [{ kind: 'channel', id: 'C-eng' }],
+            connectors: ['slack'],
+            project_refs: [],
+            tenant_id: null,
+          },
+        })
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        expect.objectContaining({
+          kind: 'raw',
+          connector: 'slack',
+          source_id: 'm-projectless',
+        }),
+      ]);
+    });
+
     it('graph reader maps only visible twin-edge neighbors returned by the visibility API', () => {
       const visibleEdge = {
         edge_id: 'edge-visible',
@@ -269,6 +538,217 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         { kind: 'case', id: 'case-a' },
       ]);
       expect(JSON.stringify(result)).not.toContain('edge-hidden');
+    });
+
+    it('graph reader keeps raw edge lookups in event-index id space', () => {
+      const adapter = createAdapter();
+      const rawId = upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-graph',
+        channel: 'C-eng',
+        title: 'Graph raw event',
+        content: 'Graph raw context.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      }).event_index_id;
+      const visibleEdge = {
+        edge_id: 'edge-raw',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'raw', id: rawId },
+        confidence: 0.8,
+        reason_text: 'Memory mentions the raw event.',
+        created_at: 1_300,
+      } as TwinEdgeRecord;
+      let refsSeenByGraph: unknown[] = [];
+
+      const result = readGraphCandidates(
+        adapter,
+        input({ as_of: 1_500 }),
+        [{ kind: 'raw', connector: 'slack', raw_id: rawId }],
+        {
+          listVisibleTwinEdgesForRefs: (_adapter, refs) => {
+            refsSeenByGraph = [...refs];
+            return [visibleEdge];
+          },
+        }
+      );
+
+      expect(refsSeenByGraph).toEqual([{ kind: 'raw', id: rawId }]);
+      expect(result.candidates.map((candidate) => candidate.ref)).toContainEqual({
+        kind: 'memory',
+        id: 'mem-a',
+      });
+    });
+
+    it('treats an explicit empty connector window as no raw graph expansion access', () => {
+      const adapter = createAdapter();
+      insertScopedDecision(adapter, {
+        id: 'mem-raw-denied',
+        topic: 'Context compile raw connector boundary',
+        summary: 'Visible memory has a raw neighbor.',
+        details: 'The raw neighbor must stay hidden when connectors are empty.',
+      });
+      const rawId = upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-raw-denied',
+        channel: 'C-eng',
+        title: 'Denied raw event',
+        content: 'This raw event is outside the empty connector envelope.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      }).event_index_id;
+      insertTwinEdge(adapter, {
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-raw-denied' },
+        object_ref: { kind: 'raw', id: rawId },
+        source: 'code',
+        reason_text: 'Memory mentions the raw event.',
+      });
+
+      const result = readGraphCandidates(
+        adapter,
+        input({
+          connectors: [],
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: [],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+          },
+        }),
+        [{ kind: 'memory', id: 'mem-raw-denied' }]
+      );
+
+      expect(result.candidates).toEqual([]);
+      expect(result.source_refs).toEqual([]);
+    });
+
+    it('graph reader excludes edges created before the requested range start', () => {
+      const oldEdge = {
+        edge_id: 'edge-old',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'case', id: 'case-old' },
+        confidence: 0.8,
+        reason_text: 'Old edge.',
+        created_at: 900,
+      } as TwinEdgeRecord;
+      const freshEdge = {
+        edge_id: 'edge-fresh',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'case', id: 'case-fresh' },
+        confidence: 0.8,
+        reason_text: 'Fresh edge.',
+        created_at: 1_100,
+      } as TwinEdgeRecord;
+
+      const result = readGraphCandidates(
+        createAdapter(),
+        input({ range: { start_ms: 1_000, end_ms: 2_000 } }),
+        [{ kind: 'memory', id: 'mem-a' }],
+        {
+          listVisibleTwinEdgesForRefs: () => [oldEdge, freshEdge],
+        }
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        { kind: 'case', id: 'case-fresh' },
+      ]);
+    });
+
+    it('graph reader excludes edges created after the requested range end', () => {
+      const inRangeEdge = {
+        edge_id: 'edge-in-range',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'case', id: 'case-in-range' },
+        confidence: 0.8,
+        reason_text: 'In range edge.',
+        created_at: 1_900,
+      } as TwinEdgeRecord;
+      const lateEdge = {
+        edge_id: 'edge-late',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'case', id: 'case-late' },
+        confidence: 0.8,
+        reason_text: 'Late edge.',
+        created_at: 2_100,
+      } as TwinEdgeRecord;
+
+      const result = readGraphCandidates(
+        createAdapter(),
+        input({ range: { end_ms: 2_000 } }),
+        [{ kind: 'memory', id: 'mem-a' }],
+        {
+          listVisibleTwinEdgesForRefs: () => [inRangeEdge, lateEdge],
+        }
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        { kind: 'case', id: 'case-in-range' },
+      ]);
+    });
+
+    it('graph reader treats explicit empty scopes as no graph expansion scope', () => {
+      const listVisibleTwinEdgesForRefs = vi.fn(() => [
+        {
+          edge_id: 'edge-visible',
+          edge_type: 'mentions',
+          subject_ref: { kind: 'memory', id: 'mem-a' },
+          object_ref: { kind: 'case', id: 'case-a' },
+          confidence: 0.8,
+          reason_text: 'Memory mentions the case.',
+          created_at: 1_100,
+        } as TwinEdgeRecord,
+      ]);
+
+      const result = readGraphCandidates(
+        createAdapter(),
+        input({ scopes: [] }),
+        [{ kind: 'memory', id: 'mem-a' }],
+        { listVisibleTwinEdgesForRefs }
+      );
+
+      expect(listVisibleTwinEdgesForRefs).not.toHaveBeenCalled();
+      expect(result.candidates).toEqual([]);
+      expect(result.source_refs).toEqual([]);
+    });
+
+    it('graph reader rejects requests outside the source boundary before querying edges', () => {
+      const listVisibleTwinEdgesForRefs = vi.fn(() => [
+        {
+          edge_id: 'edge-visible',
+          edge_type: 'mentions',
+          subject_ref: { kind: 'memory', id: 'mem-a' },
+          object_ref: { kind: 'case', id: 'case-a' },
+          confidence: 0.8,
+          reason_text: 'Memory mentions the case.',
+          created_at: 1_100,
+        } as TwinEdgeRecord,
+      ]);
+
+      expect(() =>
+        readGraphCandidates(
+          createAdapter(),
+          input({ project_refs: [{ kind: 'project', id: 'repo-b' }] }),
+          [{ kind: 'memory', id: 'mem-a' }],
+          { listVisibleTwinEdgesForRefs }
+        )
+      ).toThrow(/Requested project ref is outside the context boundary/);
+      expect(listVisibleTwinEdgesForRefs).not.toHaveBeenCalled();
     });
   });
 

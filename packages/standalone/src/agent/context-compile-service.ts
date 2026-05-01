@@ -104,6 +104,103 @@ function requiredTask(input: ContextCompileInput): string {
   return input.task.trim();
 }
 
+function parseAsOfMs(value: string | number | null | undefined, field: string): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  if (typeof value === 'string') {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return Math.floor(numeric);
+    }
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  throw new ContextCompileServiceError(
+    400,
+    'context_compile_input_invalid',
+    `Invalid context_compile ${field}.`
+  );
+}
+
+function clampAsOfToBoundary(
+  requested: ContextCompileInput['as_of'],
+  boundaryAsOf: ContextBoundary['as_of']
+): ContextCompileInput['as_of'] {
+  const requestedMs = parseAsOfMs(requested, 'as_of');
+  const boundaryMs = parseAsOfMs(boundaryAsOf, 'envelope as_of');
+  if (requestedMs === null) {
+    return boundaryAsOf ?? null;
+  }
+  if (boundaryMs === null) {
+    return requested ?? null;
+  }
+  return requestedMs <= boundaryMs ? (requested ?? null) : (boundaryAsOf ?? null);
+}
+
+function validateRange(range: ContextCompileInput['range']): void {
+  if (range === undefined) {
+    return;
+  }
+  if (range === null || typeof range !== 'object' || Array.isArray(range)) {
+    throw new ContextCompileServiceError(
+      400,
+      'context_compile_input_invalid',
+      'Invalid context_compile range.'
+    );
+  }
+  for (const field of ['start_ms', 'end_ms'] as const) {
+    const value = range[field];
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
+      throw new ContextCompileServiceError(
+        400,
+        'context_compile_input_invalid',
+        `Invalid context_compile range.${field}.`
+      );
+    }
+  }
+}
+
+const NUMERIC_COMPILE_FIELDS = ['limit', 'max_tool_calls', 'max_ms', 'max_tokens'] as const;
+type NumericCompileField = (typeof NUMERIC_COMPILE_FIELDS)[number];
+
+function normalizeNumericCompileField(
+  input: ContextCompileInput,
+  field: NumericCompileField
+): number | undefined {
+  const value = input[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new ContextCompileServiceError(
+      400,
+      'context_compile_input_invalid',
+      `Invalid context_compile ${field}.`
+    );
+  }
+  const max = field === 'limit' ? 100 : Number.POSITIVE_INFINITY;
+  return Math.min(max, Math.max(0, Math.floor(value)));
+}
+
+function normalizeNumericCompileOptions(
+  input: ContextCompileInput
+): Partial<Pick<ContextCompileInput, NumericCompileField>> {
+  const normalized: Partial<Pick<ContextCompileInput, NumericCompileField>> = {};
+  for (const field of NUMERIC_COMPILE_FIELDS) {
+    const value = normalizeNumericCompileField(input, field);
+    if (value !== undefined) {
+      normalized[field] = value;
+    }
+  }
+  return normalized;
+}
+
 function validateParentModelRun(
   adapter: CoreAdapter,
   modelRunId: string,
@@ -191,14 +288,17 @@ function coerceCompileInput(
   }
 
   const task = requiredTask(request.input);
+  validateRange(request.input.range);
+  const numericOptions = normalizeNumericCompileOptions(request.input);
   return {
     ...request.input,
+    ...numericOptions,
     task,
     scopes: request.input.scopes ?? boundary.scopes,
     connectors: request.input.connectors ?? boundary.connectors,
     project_refs: request.input.project_refs ?? boundary.project_refs,
     tenant_id: request.input.tenant_id ?? boundary.tenant_id ?? 'default',
-    as_of: request.input.as_of ?? boundary.as_of ?? null,
+    as_of: clampAsOfToBoundary(request.input.as_of, boundary.as_of),
   };
 }
 
@@ -285,25 +385,26 @@ export function createContextCompileService(
         validateParentModelRun(adapter, parentModelRunId, request.envelope);
       }
 
-      const visibility = deriveWorkerEnvelopeVisibility(request.envelope, {
+      const envelopeVisibility = deriveWorkerEnvelopeVisibility(request.envelope, {});
+      deriveWorkerEnvelopeVisibility(request.envelope, {
         scopes: request.input.scopes,
         connectors: request.input.connectors,
       });
-      const requestedProjectRefs = request.input.project_refs ?? visibility.projectRefs;
+      const requestedProjectRefs = request.input.project_refs ?? envelopeVisibility.projectRefs;
       validateProjectRefs({
         requested: requestedProjectRefs,
-        allowed: visibility.projectRefs,
+        allowed: envelopeVisibility.projectRefs,
       });
       validateTenant({
         requested: request.input.tenant_id ?? null,
-        allowed: visibility.tenantId,
+        allowed: envelopeVisibility.tenantId,
       });
 
       const boundary: ContextBoundary = {
-        scopes: visibility.scopes,
-        connectors: visibility.connectors,
-        project_refs: visibility.projectRefs,
-        tenant_id: visibility.tenantId,
+        scopes: envelopeVisibility.scopes,
+        connectors: envelopeVisibility.connectors,
+        project_refs: envelopeVisibility.projectRefs,
+        tenant_id: envelopeVisibility.tenantId,
         as_of: request.envelope.scope.as_of ?? null,
       };
       const compileInput = coerceCompileInput(request, boundary);
@@ -358,7 +459,7 @@ export function createContextCompileService(
             envelope: request.envelope,
             modelRunId,
             createdAt: now(),
-            tenantId: visibility.tenantId,
+            tenantId: envelopeVisibility.tenantId,
             projectId,
             inputSnapshotRef,
           })
