@@ -341,6 +341,7 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
 
   it('treats context_compile as envelope-scoped but not a Tier 3 read-only Code-Act tool', () => {
     const envelope = makeSignedEnvelope();
+    const tier3Envelope = makeSignedEnvelope({ tier: 3 });
     const enforcer = new EnvelopeEnforcer();
 
     expect(() =>
@@ -355,6 +356,12 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
         scopes: [{ kind: 'project', id: '/workspace/project-b' }],
       })
     ).toThrow(/memory_scope_out_of_scope/);
+    expect(() =>
+      enforcer.check(tier3Envelope, 'context_compile', {
+        task: 'compile context',
+        scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+      })
+    ).toThrow(/tier_violation/);
 
     const bridge = new HostBridge({ execute: vi.fn() } as unknown as GatewayToolExecutor);
     const tier2Names = bridge.getAvailableFunctions(2).map((fn) => fn.name);
@@ -363,6 +370,25 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     expect(tier3Names).not.toContain('context_compile');
     expect(tier3Names).toContain('mama_search');
     expect(tier3Names).not.toContain('mama_save');
+  });
+
+  it('denies direct gateway context_compile calls from Tier 3 envelopes', async () => {
+    const service = makeService();
+    const executor = new GatewayToolExecutor({
+      contextCompileService: service,
+    });
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile context' } as GatewayToolInput,
+      makeContext({ envelope: makeSignedEnvelope({ tier: 3 }) })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+    });
+    expect(String(result.error)).toContain('tier_violation');
+    expect(service.compileAndPersistContext).not.toHaveBeenCalled();
   });
 
   it('derives trusted mama_save provenance from a committed context packet and ignores caller refs', async () => {

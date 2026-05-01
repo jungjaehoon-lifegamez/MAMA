@@ -8,7 +8,7 @@ Call tools via JSON block:
 
 ## MAMA Memory
 
-- **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
+- **mama_save**(type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?) — Save decision (topic, decision, reasoning, context_packet_id?) or checkpoint (summary, next_steps?)
 - **mama_search**(query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?) — Search decisions
 - **mama_recall**(query, scopes?, includeProfile?) — Recall memory bundle with profile, memories, and graph context
 - **context_compile**(task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?) — Compile a scoped context packet from visible memory, raw, graph, and case evidence

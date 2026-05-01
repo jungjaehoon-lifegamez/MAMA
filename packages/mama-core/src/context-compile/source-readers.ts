@@ -13,6 +13,7 @@ import type { SearchHitDiagnostics, SearchStrictness } from '../search/search-qu
 import type { ContextBoundary, ContextProjectRef, ContextRange, ContextRef } from './types.js';
 import { serializeContextRefForProvenance, toTwinRef } from './ref.js';
 import { assertContextBoundaryAllowsInput } from './visibility.js';
+import { applyContextBoundaryReadDefaults } from './boundary-defaults.js';
 import type { MemoryScopeRef } from '../memory/types.js';
 
 type ContextSourceAdapter = Pick<DatabaseAdapter, 'prepare'>;
@@ -183,19 +184,7 @@ function hasExplicitEmptyProjectWindow(input: ContextSourceReadInput): boolean {
 }
 
 function applyBoundaryDefaults(input: ContextSourceReadInput): ContextSourceReadInput {
-  if (!input.boundary) {
-    return input;
-  }
-  const boundary = input.boundary;
-  return {
-    ...input,
-    scopes: input.scopes !== undefined ? input.scopes : boundary.scopes,
-    connectors: input.connectors !== undefined ? input.connectors : boundary.connectors,
-    project_refs: input.project_refs !== undefined ? input.project_refs : boundary.project_refs,
-    tenant_id: input.tenant_id !== undefined ? input.tenant_id : boundary.tenant_id,
-    range: input.range !== undefined ? input.range : boundary.range,
-    as_of: input.as_of !== undefined ? input.as_of : boundary.as_of,
-  };
+  return applyContextBoundaryReadDefaults(input, input.boundary);
 }
 
 function memoryTimestampMs(memory: MemoryRecord): number | null {

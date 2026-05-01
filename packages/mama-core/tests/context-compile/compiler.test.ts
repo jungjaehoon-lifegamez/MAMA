@@ -366,6 +366,35 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     );
   });
 
+  it('clamps requested as_of to the active boundary snapshot', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+    const boundary = {
+      scopes: [{ kind: 'project' as const, id: 'repo-a' }],
+      connectors: ['slack'],
+      project_refs: [{ kind: 'project' as const, id: 'repo-a' }],
+      tenant_id: 'default',
+      as_of: 2_000,
+    };
+
+    await compileContext(
+      {
+        task: 'compile branch context',
+        as_of: 5_000,
+        max_tool_calls: 1,
+      },
+      compilerDeps({
+        boundary,
+        readMemoryCandidates,
+      })
+    );
+
+    expect(readMemoryCandidates).toHaveBeenCalledWith(
+      expect.objectContaining({
+        as_of: 2_000,
+      })
+    );
+  });
+
   it('preserves explicit empty project refs as a boundary narrowing', async () => {
     const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
     const readRawCandidates = vi.fn(() => EMPTY_RESULT);
