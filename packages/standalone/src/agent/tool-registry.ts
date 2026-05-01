@@ -64,6 +64,13 @@ register({
   params: 'query, scopes?, includeProfile?',
 });
 register({
+  name: 'context_compile',
+  description: 'Compile a scoped context packet from visible memory, raw, graph, and case evidence',
+  category: 'memory',
+  params:
+    'task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?',
+});
+register({
   name: 'mama_update',
   description: 'Update outcome',
   category: 'memory',

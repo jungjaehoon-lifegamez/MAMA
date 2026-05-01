@@ -39,7 +39,7 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'human.correction',
 ]);
 
-const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall']);
+const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall', 'context_compile']);
 
 export class EnvelopeEnforcer {
   check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
@@ -163,6 +163,13 @@ export class EnvelopeEnforcer {
 }
 
 function requestedRawConnectorsForTool(toolName: string, args: unknown): string[] {
+  if (toolName === 'context_compile') {
+    return uniqueStrings([
+      ...(getStringArrayArg(args, 'connectors') ?? []),
+      ...rawSeedRefConnectors(args),
+    ]);
+  }
+
   if (toolName === 'kagemusha_messages') {
     const channelId = getStringArg(args, 'channelId');
     if (!channelId) {
@@ -185,7 +192,7 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
 }
 
 function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
-  if (!['mama_search', 'mama_recall'].includes(toolName)) {
+  if (!['mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
     return [];
   }
   if (!isRecord(args) || args.scopes === undefined) {
@@ -206,6 +213,26 @@ function requestedMemoryScopesForTool(toolName: string, args: unknown): MemorySc
     scopes.push({ kind: item.kind, id: item.id });
   }
   return scopes;
+}
+
+function rawSeedRefConnectors(args: unknown): string[] {
+  if (!isRecord(args) || !Array.isArray(args.seed_refs)) {
+    return [];
+  }
+  const connectors: string[] = [];
+  for (const ref of args.seed_refs) {
+    if (!isRecord(ref) || ref.kind !== 'raw') {
+      continue;
+    }
+    if (typeof ref.connector === 'string') {
+      connectors.push(ref.connector);
+    }
+  }
+  return connectors;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function getStringArg(args: unknown, key: string): string | undefined {

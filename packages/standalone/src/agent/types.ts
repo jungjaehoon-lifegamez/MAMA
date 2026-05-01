@@ -11,9 +11,11 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type { ContextCompileService } from './context-compile-service.js';
 import type {
   AppendToolTraceInput,
   BeginModelRunInput,
+  ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
@@ -24,6 +26,8 @@ export type {
   ModelRunRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
+
+export type ContextCompileInput = CoreContextCompileInput;
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -668,6 +672,7 @@ export type GatewayToolInput =
   | SaveInput
   | SearchInput
   | RecallInput
+  | CoreContextCompileInput
   | AddInput
   | IngestInput
   | UpdateInput
@@ -698,6 +703,7 @@ export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
   | 'mama_recall'
+  | 'context_compile'
   | 'mama_update'
   | 'mama_load_checkpoint'
   | 'mama_add'
@@ -1180,6 +1186,8 @@ export interface GatewayToolExecutorOptions {
   envelopeIssuanceMode?: 'off' | 'enabled' | 'required';
   /** Optional metrics store for envelope/audit counters. */
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
+  /** Shared context compile service for gateway context_compile calls. */
+  contextCompileService?: ContextCompileService;
 }
 
 export interface MemoryWriteProvenance {

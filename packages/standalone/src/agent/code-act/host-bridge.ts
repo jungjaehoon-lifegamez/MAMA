@@ -43,6 +43,28 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'context_compile',
+    description: 'Compile a scoped context packet from visible evidence',
+    params: [
+      { name: 'task', type: 'string', required: true },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+      { name: 'connectors', type: 'string[]', required: false },
+      { name: 'seed_refs', type: 'Array<Record<string, unknown>>', required: false },
+      { name: 'limit', type: 'number', required: false },
+      { name: 'max_tool_calls', type: 'number', required: false },
+      { name: 'max_ms', type: 'number', required: false },
+      { name: 'max_tokens', type: 'number', required: false },
+      { name: 'strictness', type: "'low' | 'medium' | 'high'", required: false },
+    ],
+    returnType:
+      '{ packet_id: string; packet: Record<string, unknown>; model_run_id?: string; parent_model_run_id?: string | null }',
+    category: 'memory',
+  },
+  {
     name: 'mama_save',
     description: 'Save a decision or checkpoint',
     params: [
@@ -602,6 +624,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
 /** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
+  'context_compile',
   'mama_load_checkpoint',
   'viewer_state',
   'Read',
