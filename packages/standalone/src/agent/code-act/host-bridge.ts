@@ -54,6 +54,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
       { name: 'connectors', type: 'string[]', required: false },
       { name: 'seed_refs', type: 'Array<Record<string, unknown>>', required: false },
+      { name: 'range', type: '{ start_ms?: number; end_ms?: number }', required: false },
+      { name: 'as_of', type: 'string | number | null', required: false },
       { name: 'limit', type: 'number', required: false },
       { name: 'max_tool_calls', type: 'number', required: false },
       { name: 'max_ms', type: 'number', required: false },
@@ -624,7 +626,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
 /** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
-  'context_compile',
   'mama_load_checkpoint',
   'viewer_state',
   'Read',
@@ -637,8 +638,9 @@ export const READ_ONLY_TOOLS = new Set([
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
-const MEMORY_WRITE_TOOLS = new Set([
+export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',

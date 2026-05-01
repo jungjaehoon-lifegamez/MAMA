@@ -77,6 +77,7 @@ function parseContextCompileInput(body: unknown): ContextCompileInput {
   validateProjectRefArrayField(input);
   validateSeedRefsField(input);
   validateRangeField(input);
+  validateStrictnessField(input);
   validateNumericCompileFields(input);
   return body as ContextCompileInput;
 }
@@ -162,6 +163,16 @@ function validateRangeField(input: Record<string, unknown>): void {
     if (boundary !== undefined && (typeof boundary !== 'number' || !Number.isFinite(boundary))) {
       throwInvalidInput(`range.${field} must be a finite number.`);
     }
+  }
+}
+
+function validateStrictnessField(input: Record<string, unknown>): void {
+  const value = input.strictness;
+  if (value === undefined) {
+    return;
+  }
+  if (value !== 'low' && value !== 'medium' && value !== 'high') {
+    throwInvalidInput('strictness must be one of low, medium, or high.');
   }
 }
 

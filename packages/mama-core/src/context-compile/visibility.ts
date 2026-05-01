@@ -89,9 +89,10 @@ export function derivePrimaryContextScope(scopes: readonly MemoryScopeRef[]): Me
 }
 
 export function assertContextBoundaryAllowsInput(input: BoundaryCheckInput): void {
+  const hasScopeBoundary = Array.isArray(input.boundary.scopes);
   const boundaryScopes = canonicalizeContextScopes(input.boundary.scopes).scopes;
   const requestedScopes = canonicalizeContextScopes(input.requestedScopes).scopes;
-  if (boundaryScopes.length > 0 && requestedScopes.length > 0) {
+  if (hasScopeBoundary && requestedScopes.length > 0) {
     const allowed = new Set(boundaryScopes.map(scopeKey));
     const disallowed = requestedScopes.find((scope) => !allowed.has(scopeKey(scope)));
     if (disallowed) {
@@ -115,9 +116,10 @@ export function assertContextBoundaryAllowsInput(input: BoundaryCheckInput): voi
     }
   }
 
+  const hasProjectBoundary = Array.isArray(input.boundary.project_refs);
   const boundaryProjects = new Set((input.boundary.project_refs ?? []).map(projectKey));
   const requestedProjects = (input.requestedProjectRefs ?? []).map(projectKey);
-  if (boundaryProjects.size > 0) {
+  if (hasProjectBoundary && requestedProjects.length > 0) {
     const disallowedProject = requestedProjects.find((project) => !boundaryProjects.has(project));
     if (disallowedProject) {
       const [kind, id] = disallowedProject.split('\0');

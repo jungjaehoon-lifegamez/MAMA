@@ -182,6 +182,22 @@ function hasExplicitEmptyProjectWindow(input: ContextSourceReadInput): boolean {
   );
 }
 
+function applyBoundaryDefaults(input: ContextSourceReadInput): ContextSourceReadInput {
+  if (!input.boundary) {
+    return input;
+  }
+  const boundary = input.boundary;
+  return {
+    ...input,
+    scopes: input.scopes !== undefined ? input.scopes : boundary.scopes,
+    connectors: input.connectors !== undefined ? input.connectors : boundary.connectors,
+    project_refs: input.project_refs !== undefined ? input.project_refs : boundary.project_refs,
+    tenant_id: input.tenant_id !== undefined ? input.tenant_id : boundary.tenant_id,
+    range: input.range !== undefined ? input.range : boundary.range,
+    as_of: input.as_of !== undefined ? input.as_of : boundary.as_of,
+  };
+}
+
 function memoryTimestampMs(memory: MemoryRecord): number | null {
   return (
     parseTimestampMs(memory.event_datetime) ??
@@ -499,40 +515,41 @@ export async function readMemoryCandidates(
   input: ContextSourceReadInput,
   deps: ContextSourceReaderDeps = {}
 ): Promise<ContextSourceReadResult> {
-  if (input.boundary) {
+  const effectiveInput = applyBoundaryDefaults(input);
+  if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
-      boundary: input.boundary,
-      requestedScopes: input.scopes,
-      requestedConnectors: input.connectors,
-      requestedProjectRefs: input.project_refs,
-      requestedTenantId: input.tenant_id,
+      boundary: effectiveInput.boundary,
+      requestedScopes: effectiveInput.scopes,
+      requestedConnectors: effectiveInput.connectors,
+      requestedProjectRefs: effectiveInput.project_refs,
+      requestedTenantId: effectiveInput.tenant_id,
     });
   }
-  if (Array.isArray(input.scopes) && input.scopes.length === 0) {
+  if (Array.isArray(effectiveInput.scopes) && effectiveInput.scopes.length === 0) {
     return resultFromCandidates([], hiddenAggregate());
   }
 
   const bundle = deps.recallMemory
-    ? await deps.recallMemory(input.task, {
-        scopes: input.scopes,
-        limit: normalizeLimit(input.limit),
+    ? await deps.recallMemory(effectiveInput.task, {
+        scopes: effectiveInput.scopes,
+        limit: normalizeLimit(effectiveInput.limit),
         diagnostics: true,
-        strictness: input.strictness,
-        threshold: input.threshold,
+        strictness: effectiveInput.strictness,
+        threshold: effectiveInput.threshold,
       })
     : deps.adapter
-      ? adapterScopedRecallMemory(deps.adapter, input)
-      : await defaultRecallMemory(input.task, {
-          scopes: input.scopes,
-          limit: normalizeLimit(input.limit),
+      ? adapterScopedRecallMemory(deps.adapter, effectiveInput)
+      : await defaultRecallMemory(effectiveInput.task, {
+          scopes: effectiveInput.scopes,
+          limit: normalizeLimit(effectiveInput.limit),
           diagnostics: true,
-          strictness: input.strictness,
-          threshold: input.threshold,
+          strictness: effectiveInput.strictness,
+          threshold: effectiveInput.threshold,
         });
 
   const candidates: ContextCandidate[] = [];
   const hidden = hiddenAggregate();
-  const requiresTime = timeFilterRequired(input);
+  const requiresTime = timeFilterRequired(effectiveInput);
   for (const memory of bundle.memories) {
     const ref: ContextRef = { kind: 'memory', id: memory.id };
     const timestampMs = memoryTimestampMs(memory);
@@ -540,7 +557,7 @@ export async function readMemoryCandidates(
       candidates.push(hiddenCandidate(ref, 'memory', 'timestamp_missing'));
       continue;
     }
-    if (timestampMs !== null && !isWithinTimeBoundary(timestampMs, input)) {
+    if (timestampMs !== null && !isWithinTimeBoundary(timestampMs, effectiveInput)) {
       candidates.push(hiddenCandidate(ref, 'memory', 'time_boundary'));
       continue;
     }
@@ -584,13 +601,14 @@ export function readRawCandidates(
   adapter: ContextSourceAdapter,
   input: ContextSourceReadInput
 ): ContextSourceReadResult {
-  if (input.boundary) {
+  const effectiveInput = applyBoundaryDefaults(input);
+  if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
-      boundary: input.boundary,
-      requestedScopes: input.scopes,
-      requestedConnectors: input.connectors,
-      requestedProjectRefs: input.project_refs,
-      requestedTenantId: input.tenant_id,
+      boundary: effectiveInput.boundary,
+      requestedScopes: effectiveInput.scopes,
+      requestedConnectors: effectiveInput.connectors,
+      requestedProjectRefs: effectiveInput.project_refs,
+      requestedTenantId: effectiveInput.tenant_id,
     });
   }
 
@@ -598,10 +616,14 @@ export function readRawCandidates(
     return resultFromCandidates([], hiddenAggregate());
   }
 
-  const connectors = input.connectors ?? [];
-  const scopes = input.scopes ?? [];
-  const projectIds = (input.project_refs ?? []).map((project) => project.id);
-  if (connectors.length === 0 || scopes.length === 0 || hasExplicitEmptyProjectWindow(input)) {
+  const connectors = effectiveInput.connectors ?? [];
+  const scopes = effectiveInput.scopes ?? [];
+  const projectIds = (effectiveInput.project_refs ?? []).map((project) => project.id);
+  if (
+    connectors.length === 0 ||
+    scopes.length === 0 ||
+    hasExplicitEmptyProjectWindow(effectiveInput)
+  ) {
     return resultFromCandidates([], hiddenAggregate());
   }
 
@@ -611,9 +633,9 @@ export function readRawCandidates(
     clauses.push(`project_id IN (${placeholders(projectIds)})`);
     params.push(...projectIds);
   }
-  if (input.tenant_id) {
+  if (effectiveInput.tenant_id) {
     clauses.push('tenant_id = ?');
-    params.push(input.tenant_id);
+    params.push(effectiveInput.tenant_id);
   }
   clauses.push(
     `(${scopes.map(() => '(memory_scope_kind = ? AND memory_scope_id = ?)').join(' OR ')})`
@@ -621,8 +643,8 @@ export function readRawCandidates(
   for (const scope of scopes) {
     params.push(scope.kind, scope.id);
   }
-  const min = minVisibleTimeMs(input);
-  const max = maxVisibleTimeMs(input);
+  const min = minVisibleTimeMs(effectiveInput);
+  const max = maxVisibleTimeMs(effectiveInput);
   if (min !== null) {
     clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
     params.push(min);
@@ -631,7 +653,7 @@ export function readRawCandidates(
     clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
     params.push(max);
   }
-  params.push(normalizeLimit(input.limit));
+  params.push(normalizeLimit(effectiveInput.limit));
 
   const rows = adapter
     .prepare(
@@ -675,19 +697,20 @@ export function readGraphCandidates(
   visibleRefs: readonly ContextRef[],
   deps: ContextSourceReaderDeps = {}
 ): ContextSourceReadResult {
-  if (input.boundary) {
+  const effectiveInput = applyBoundaryDefaults(input);
+  if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
-      boundary: input.boundary,
-      requestedScopes: input.scopes,
-      requestedConnectors: input.connectors,
-      requestedProjectRefs: input.project_refs,
-      requestedTenantId: input.tenant_id,
+      boundary: effectiveInput.boundary,
+      requestedScopes: effectiveInput.scopes,
+      requestedConnectors: effectiveInput.connectors,
+      requestedProjectRefs: effectiveInput.project_refs,
+      requestedTenantId: effectiveInput.tenant_id,
     });
   }
-  if (Array.isArray(input.scopes) && input.scopes.length === 0) {
+  if (Array.isArray(effectiveInput.scopes) && effectiveInput.scopes.length === 0) {
     return resultFromCandidates([], hiddenAggregate());
   }
-  if (hasExplicitEmptyProjectWindow(input)) {
+  if (hasExplicitEmptyProjectWindow(effectiveInput)) {
     return resultFromCandidates([], hiddenAggregate());
   }
   if (visibleRefs.length === 0) {
@@ -697,16 +720,16 @@ export function readGraphCandidates(
   const refs = visibleRefs.map((ref) => toTwinRef(ref));
   const visibleRefKeys = new Set(visibleRefs.map(serializeContextRefForProvenance));
   const listEdges = deps.listVisibleTwinEdgesForRefs ?? listVisibleTwinEdgesForRefs;
-  const min = minVisibleTimeMs(input);
-  const max = maxVisibleTimeMs(input);
+  const min = minVisibleTimeMs(effectiveInput);
+  const max = maxVisibleTimeMs(effectiveInput);
   const edges = listEdges(adapter, refs, {
-    scopes: input.scopes,
-    connectors: input.connectors,
-    projectRefs: input.project_refs,
-    tenantId: input.tenant_id,
+    scopes: effectiveInput.scopes,
+    connectors: effectiveInput.connectors,
+    projectRefs: effectiveInput.project_refs,
+    tenantId: effectiveInput.tenant_id,
     startMs: min,
     asOfMs: max,
-    limit: normalizeLimit(input.limit),
+    limit: normalizeLimit(effectiveInput.limit),
   }).filter(
     (edge) => (min === null || edge.created_at >= min) && (max === null || edge.created_at <= max)
   );

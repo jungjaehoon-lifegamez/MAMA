@@ -373,8 +373,16 @@ export function listVisibleTwinEdgesForRefs(
   const limit =
     typeof options.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(0, Math.floor(options.limit))
-      : edges.length;
-  return edges.slice(0, limit);
+      : null;
+  if (limit === null) {
+    return edges;
+  }
+  return [...edges]
+    .sort((left, right) => {
+      const createdDiff = right.created_at - left.created_at;
+      return createdDiff !== 0 ? createdDiff : left.edge_id.localeCompare(right.edge_id);
+    })
+    .slice(0, limit);
 }
 
 function normalizeEdgeTypes(edgeTypes: readonly TwinEdgeType[] | undefined): Set<TwinEdgeType> {

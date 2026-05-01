@@ -61,6 +61,12 @@ import { deriveMemoryScopes } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES } from '../config/types.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import {
+  beginModelRunInAdapter,
+  commitModelRunInAdapter,
+  failModelRunInAdapter,
+} from '@jungjaehoon/mama-core';
+import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -71,6 +77,7 @@ const codeActLogger = new DebugLogger('CodeAct');
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',
@@ -80,6 +87,84 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
 
 function isTruthyEnvValue(value: string | undefined): boolean {
   return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+type CodeActModelRunAdapter = Pick<DatabaseAdapter, 'prepare'>;
+
+type CodeActExecutionResultLike = {
+  success?: boolean;
+  error?: { message?: string } | string;
+};
+
+export interface CodeActParentModelRunOptions {
+  inputSnapshotRef: string;
+  inputRefs: Record<string, unknown>;
+}
+
+export function bindCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  executionContext: GatewayToolExecutionContext | null,
+  options: CodeActParentModelRunOptions
+): { executionContext: GatewayToolExecutionContext | null; modelRunId: string | null } {
+  if (!executionContext?.envelope) {
+    return { executionContext, modelRunId: null };
+  }
+
+  const run = beginModelRunInAdapter(adapter, {
+    agent_id: executionContext.agentId,
+    instance_id: executionContext.envelope.instance_id,
+    envelope_hash: executionContext.envelope.envelope_hash,
+    input_snapshot_ref: options.inputSnapshotRef,
+    input_refs: options.inputRefs,
+  });
+
+  return {
+    executionContext: {
+      ...executionContext,
+      modelRunId: run.model_run_id,
+    },
+    modelRunId: run.model_run_id,
+  };
+}
+
+function codeActErrorSummary(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function resultErrorSummary(result: CodeActExecutionResultLike): string {
+  if (typeof result.error === 'string') {
+    return result.error;
+  }
+  return result.error?.message ?? 'Code-Act execution failed';
+}
+
+export function finalizeCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  modelRunId: string | null,
+  result: CodeActExecutionResultLike
+): void {
+  if (!modelRunId) {
+    return;
+  }
+  if (result.success === false) {
+    failModelRunInAdapter(adapter, modelRunId, resultErrorSummary(result));
+    return;
+  }
+  commitModelRunInAdapter(adapter, modelRunId, 'code-act completed');
+}
+
+export function failCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  modelRunId: string | null,
+  error: unknown
+): void {
+  if (!modelRunId) {
+    return;
+  }
+  failModelRunInAdapter(adapter, modelRunId, codeActErrorSummary(error));
 }
 
 /**
@@ -383,6 +468,7 @@ export async function runAgentLoop(
       const codeActAgentId = config.multi_agent?.default_agent || 'conductor';
       const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const codeActTier = codeActReadOnly ? 3 : 2;
+      const instanceId = randomUUID();
       let executionContext: GatewayToolExecutionContext | null = null;
       if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
         const projectId = resolveReactiveProjectRoot(config, process.env);
@@ -393,7 +479,6 @@ export async function runAgentLoop(
           userId: 'api',
           projectId,
         });
-        const instanceId = randomUUID();
         const wallSeconds = Math.min(
           Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
           300
@@ -440,6 +525,16 @@ export async function runAgentLoop(
           executionSurface: 'code_act',
         };
       }
+      const parentRun = bindCodeActParentModelRun(getAdapter(), executionContext, {
+        inputSnapshotRef: `code-act:${instanceId}`,
+        inputRefs: {
+          tool: 'code_act',
+          source: 'api',
+          channel_id: 'api:code-act',
+          read_only: codeActReadOnly,
+        },
+      });
+      executionContext = parentRun.executionContext;
       const bridge = new HostBridge(toolExecutor, undefined, executionContext);
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
@@ -462,6 +557,7 @@ export async function runAgentLoop(
         toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
         bridge.injectInto(sandbox, codeActTier);
         const result = await sandbox.execute(code);
+        finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
         return {
           success: result.success,
           value: result.value,
@@ -470,6 +566,9 @@ export async function runAgentLoop(
           metrics: result.metrics,
           toolCalls,
         };
+      } catch (error) {
+        failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
+        throw error;
       } finally {
         toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
       }
