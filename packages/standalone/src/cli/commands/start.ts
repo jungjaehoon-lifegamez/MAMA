@@ -20,6 +20,7 @@ import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
@@ -319,6 +320,11 @@ export async function runAgentLoop(
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+  const contextCompileService = createContextCompileService({
+    memoryAdapter: getAdapter(),
+  });
+  toolExecutor.setContextCompileService(contextCompileService);
+  agentLoop.setContextCompileService(contextCompileService);
 
   // ── Phase 4: Memory Agent + MessageRouter ─────────────────────────────────
 
@@ -700,6 +706,7 @@ export async function runAgentLoop(
     getAdapter,
     envelopeMetadata: envelopeBootstrap.metadata,
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
+    contextCompileService,
   });
 
   await registerApiRoutes({

@@ -11,7 +11,10 @@ import { join } from 'node:path';
 import { createApiServer } from '../../api/index.js';
 import type { ApiServer } from '../../api/index.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
-import { createContextCompileService } from '../../agent/context-compile-service.js';
+import {
+  createContextCompileService,
+  type ContextCompileService,
+} from '../../agent/context-compile-service.js';
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import type { AgentLoop } from '../../agent/index.js';
 import type { CronScheduler } from '../../scheduler/index.js';
@@ -37,6 +40,7 @@ export interface InitApiServerParams {
   agentLoop: AgentLoop;
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
+  contextCompileService?: ContextCompileService;
   /** mama-core getAdapter() — used to create the memoryDb shim */
   getAdapter: () => AgentSituationAdapter & {
     exec: (sql: string) => void;
@@ -62,6 +66,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     getAdapter,
     envelopeMetadata,
     envelopeAuthority,
+    contextCompileService: suppliedContextCompileService,
   } = params;
 
   // ── SkillRegistry + MCP config migration ──────────────────────────────
@@ -101,9 +106,11 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
   const eventBus = new AgentEventBus();
 
   // ── createApiServer() ─────────────────────────────────────────────────
-  const contextCompileService = createContextCompileService({
-    memoryAdapter: mamaCoreAdapter,
-  });
+  const contextCompileService =
+    suppliedContextCompileService ??
+    createContextCompileService({
+      memoryAdapter: mamaCoreAdapter,
+    });
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,

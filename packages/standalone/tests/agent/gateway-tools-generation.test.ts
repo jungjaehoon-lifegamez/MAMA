@@ -12,6 +12,7 @@ describe('Gateway tools generation', () => {
       // Core tools that must always exist
       expect(names).toContain('mama_save');
       expect(names).toContain('mama_search');
+      expect(names).toContain('context_compile');
       expect(names).toContain('Read');
       expect(names).toContain('Write');
       expect(names).toContain('Bash');
@@ -32,6 +33,7 @@ describe('Gateway tools generation', () => {
       expect(prompt).toContain('strictness?');
       expect(prompt).toContain('diagnostics?');
       expect(prompt).toContain('scopes?');
+      expect(prompt).toContain('seed_refs?');
     });
 
     it('keeps mama_search registry params aligned with strict search options', () => {
@@ -40,6 +42,15 @@ describe('Gateway tools generation', () => {
       expect(tool?.params).toContain('strictness?');
       expect(tool?.params).toContain('threshold?');
       expect(tool?.params).toContain('diagnostics?');
+    });
+
+    it('keeps context_compile registry params aligned with scoped compile input', () => {
+      const tool = ToolRegistry.getTool('context_compile');
+      expect(tool?.category).toBe('memory');
+      expect(tool?.params).toContain('task');
+      expect(tool?.params).toContain('scopes?');
+      expect(tool?.params).toContain('connectors?');
+      expect(tool?.params).toContain('seed_refs?');
     });
 
     it('should use dash separator for description', () => {

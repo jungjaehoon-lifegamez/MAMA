@@ -36,6 +36,7 @@ import type {
   SaveInput,
   SearchInput,
   RecallInput,
+  ContextCompileInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -168,6 +169,7 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',
@@ -175,6 +177,7 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_search',
   'mama_recall',
+  'context_compile',
 ]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'model_tool',
@@ -294,6 +297,7 @@ export class GatewayToolExecutor {
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
+  private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -635,6 +639,7 @@ export class GatewayToolExecutor {
     this.sessionStore = options.sessionStore;
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
+    this.contextCompileService = options.contextCompileService;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -696,6 +701,10 @@ export class GatewayToolExecutor {
 
   setTelegramGateway(gateway: TelegramGatewayInterface): void {
     this.telegramGateway = gateway;
+  }
+
+  setContextCompileService(service: GatewayToolExecutorOptions['contextCompileService']): void {
+    this.contextCompileService = service;
   }
 
   /**
@@ -1203,7 +1212,11 @@ export class GatewayToolExecutor {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
-    if (toolName === 'mama_search' || toolName === 'mama_recall') {
+    if (
+      toolName === 'mama_search' ||
+      toolName === 'mama_recall' ||
+      toolName === 'context_compile'
+    ) {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
@@ -1254,7 +1267,7 @@ export class GatewayToolExecutor {
       return input;
     }
 
-    const scopedInput = input as SearchInput | RecallInput;
+    const scopedInput = input as SearchInput | RecallInput | ContextCompileInput;
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
       ? scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
@@ -1817,6 +1830,8 @@ export class GatewayToolExecutor {
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
+        case 'context_compile':
+          return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update':
           return await handleUpdate(await getApi(), input as UpdateInput);
         case 'mama_load_checkpoint':
@@ -3560,6 +3575,47 @@ export class GatewayToolExecutor {
    */
   static isValidTool(toolName: string): toolName is GatewayToolName {
     return VALID_TOOLS.includes(toolName as GatewayToolName);
+  }
+
+  private async handleContextCompile(input: ContextCompileInput): Promise<GatewayToolResult> {
+    if (!this.contextCompileService) {
+      return {
+        success: false,
+        code: 'context_compile_unavailable',
+        error: 'context_compile service is not available.',
+      } as GatewayToolResult;
+    }
+
+    const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    if (!ctx?.envelope) {
+      return {
+        success: false,
+        code: 'envelope_missing',
+        error: 'context_compile requires an active worker envelope.',
+      } as GatewayToolResult;
+    }
+
+    try {
+      const result = await this.contextCompileService.compileAndPersistContext({
+        caller: 'gateway',
+        envelope: ctx.envelope,
+        modelRunId: ctx.modelRunId ?? null,
+        input,
+      });
+      return {
+        success: true,
+        packet: result.packet,
+        packet_id: result.packet.packet_id,
+        model_run_id: result.modelRunId,
+        parent_model_run_id: result.parentModelRunId,
+      } as GatewayToolResult;
+    } catch (err) {
+      return {
+        success: false,
+        code: 'context_compile_failed',
+        error: `context_compile failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
   }
 }
 
