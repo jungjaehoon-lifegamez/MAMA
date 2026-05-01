@@ -89,4 +89,24 @@ describe('standalone stop process listing', () => {
     expect(killSpy).toHaveBeenCalledWith(MAMA_PID, 'SIGTERM');
     expect(killSpy).not.toHaveBeenCalledWith(NON_MAMA_PID, 'SIGTERM');
   });
+
+  it('does not verify a stale PID that has been reused by an unrelated process', async () => {
+    execSyncMock.mockReturnValue('123 /usr/bin/python -m http.server 3847\n');
+
+    const { findStandaloneDaemonCommandForPid } = await import('../../src/cli/commands/stop.js');
+
+    expect(findStandaloneDaemonCommandForPid(123)).toBeUndefined();
+  });
+
+  it('verifies a PID only when the live command is a standalone daemon', async () => {
+    execSyncMock.mockReturnValue(
+      '123 /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon\n'
+    );
+
+    const { findStandaloneDaemonCommandForPid } = await import('../../src/cli/commands/stop.js');
+
+    expect(findStandaloneDaemonCommandForPid(123)).toBe(
+      '/usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon'
+    );
+  });
 });

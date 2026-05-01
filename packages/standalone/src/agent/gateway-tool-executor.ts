@@ -167,6 +167,7 @@ const managedAgentMutationTails = new Map<string, Promise<void>>();
 const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
+  'mama_recall',
   'mama_update',
   'mama_add',
   'mama_ingest',
@@ -1202,7 +1203,7 @@ export class GatewayToolExecutor {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
-    if (toolName === 'mama_search') {
+    if (toolName === 'mama_search' || toolName === 'mama_recall') {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
@@ -1259,7 +1260,7 @@ export class GatewayToolExecutor {
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
       ? scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
-    if (hasCallerScopes || ctx.envelope.scope.memory_scopes.length === 0) {
+    if (hasCallerScopes) {
       return input;
     }
 
@@ -3528,15 +3529,8 @@ export class GatewayToolExecutor {
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];
-    let scopes = fallbackScopes;
-    if (Array.isArray(input.scopes) && input.scopes.length > 0) {
-      const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
-      const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
-      if (allInDerived)
-        scopes = fallbackScopes.filter((s) =>
-          input.scopes!.some((is) => is.kind === s.kind && is.id === s.id)
-        );
-    }
+    const inputScopes = Array.isArray(input.scopes) ? input.scopes : [];
+    const scopes = inputScopes.length > 0 ? inputScopes : fallbackScopes;
 
     if (scopes.length === 0) {
       return {

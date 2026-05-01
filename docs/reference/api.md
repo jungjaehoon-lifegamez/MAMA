@@ -4,19 +4,20 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) ships **6 advertised MCP tools** plus a backward-compatible
+MAMA (Memory-Augmented MCP Assistant) ships **5 advertised MCP tools** plus a backward-compatible
 fallback for legacy callers. The advertised surface covers decision tracking, scoped memory,
 semantic search, search-quality diagnostics, conversation ingestion (via `save`), contracts lookup,
 bounded case timelines, and session continuity.
 
-The current MCP server advertises the consolidated memory tools (`save`, `search`, `update`,
-`load_checkpoint`) along with two operational helpers (`search_decisions_and_contracts`,
+The current MCP server advertises the consolidated memory tools (`save`, `search`, `update`)
+along with two operational helpers (`search_decisions_and_contracts`,
 `case_timeline_range`). The pre-consolidation tool names (`save_decision`, `suggest_decision`,
 `recall_decision`, `update_outcome`, `list_decisions`, `save_checkpoint`, `ingest_conversation`,
 `search_narrative`, `generate_quality_report`, `get_restart_metrics`) remain callable as
-backward-compatible aliases but are not advertised in `ListTools`.
+backward-compatible aliases but are not advertised in `ListTools`. `load_checkpoint` is also
+callable for backward compatibility but is intentionally not discoverable through `ListTools`.
 
-**Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
+**Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. Decision and ingest paths support `scopes` for project/channel isolation, and decision/ingest save paths support temporal fields where documented. Operational helper tools expose their own bounded schemas. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
 - **Transport**: Stdio
 - **Server Name**: `mama-server`
@@ -112,24 +113,27 @@ clients but are not advertised in `ListTools`. New integrations should use the c
 
 ### 1. `save`
 
-Save a decision or checkpoint to MAMA's memory.
+Save a decision, checkpoint, or ingested conversation to MAMA's memory.
 
 **Key Concept:** Same topic = new decision **supersedes** previous, creating an evolution chain.
 
 #### Input Schema
 
-| Field        | Type   | Required       | Description                                                                                                    |
-| ------------ | ------ | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `type`       | string | Yes            | `'decision'` or `'checkpoint'`                                                                                 |
-| `topic`      | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                    |
-| `decision`   | string | For decision   | The decision made                                                                                              |
-| `reasoning`  | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                    |
-| `confidence` | number | No             | 0.0-1.0, default 0.5                                                                                           |
-| `scopes`     | array  | No             | Memory scope refs for isolation, e.g. `[{kind:"project",id:"/path"}]`. Supported in MCP server and standalone. |
-| `event_date` | string | No             | ISO 8601 date when the event occurred (e.g. "2024-01-15"). Defaults to current time if omitted.                |
-| `summary`    | string | For checkpoint | Session state: what was done, what's pending                                                                   |
-| `next_steps` | string | No             | Instructions for next session                                                                                  |
-| `open_files` | array  | No             | List of relevant file paths                                                                                    |
+| Field          | Type    | Required       | Description                                                                                                    |
+| -------------- | ------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `type`         | string  | Yes            | `'decision'`, `'checkpoint'`, or `'ingest'`                                                                    |
+| `topic`        | string  | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                    |
+| `decision`     | string  | For decision   | The decision made                                                                                              |
+| `reasoning`    | string  | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                    |
+| `confidence`   | number  | No             | 0.0-1.0, default 0.5                                                                                           |
+| `scopes`       | array   | No             | Memory scope refs for isolation, e.g. `[{kind:"project",id:"/path"}]`. Supported in MCP server and standalone. |
+| `event_date`   | string  | No             | ISO 8601 date when the event occurred (e.g. "2024-01-15"). Defaults to current time if omitted.                |
+| `summary`      | string  | For checkpoint | Session state: what was done, what's pending                                                                   |
+| `next_steps`   | string  | No             | Instructions for next session                                                                                  |
+| `open_files`   | array   | No             | List of relevant file paths                                                                                    |
+| `messages`     | array   | For ingest     | Conversation messages as `{role, content}` objects                                                             |
+| `session_date` | string  | No             | For ingest: ISO 8601 date when the conversation occurred                                                       |
+| `extract`      | boolean | No             | For ingest: extract structured memories through LLM. Defaults to `false`                                       |
 
 #### Example: Save Decision
 
@@ -173,6 +177,32 @@ Save a decision or checkpoint to MAMA's memory.
   "id": "checkpoint_3",
   "type": "checkpoint",
   "message": "Checkpoint saved"
+}
+```
+
+#### Example: Ingest Conversation
+
+```json
+{
+  "type": "ingest",
+  "messages": [
+    { "role": "user", "content": "We decided to keep auth local-first." },
+    { "role": "assistant", "content": "I will remember that as an architecture constraint." }
+  ],
+  "scopes": [{ "kind": "project", "id": "/workspace/demo" }],
+  "session_date": "2026-05-01T09:30:00Z",
+  "extract": false
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "raw_id": "memory_raw_abc",
+  "extracted_memories": [],
+  "message": "✅ Conversation ingested (ID: memory_raw_abc)"
 }
 ```
 
@@ -362,13 +392,14 @@ Search prior decisions together with related contract metadata used by hook/tool
 
 #### Input Schema
 
-| Field           | Type   | Required | Description                              |
-| --------------- | ------ | -------- | ---------------------------------------- |
-| `query`         | string | No       | Semantic search query                    |
-| `decisionLimit` | number | No       | Max decision hits to return              |
-| `contractLimit` | number | No       | Max contract hits to return              |
-| `filePath`      | string | No       | Narrow contract search to a file path    |
-| `toolName`      | string | No       | Narrow contract search to a tool context |
+| Field                 | Type   | Required | Description                               |
+| --------------------- | ------ | -------- | ----------------------------------------- |
+| `query`               | string | No       | Semantic search query                     |
+| `decisionLimit`       | number | No       | Max decision hits to return               |
+| `contractLimit`       | number | No       | Max contract hits to return               |
+| `filePath`            | string | No       | Narrow contract search to a file path     |
+| `toolName`            | string | No       | Narrow contract search to a tool context  |
+| `similarityThreshold` | number | No       | Vector similarity threshold. Default: 0.7 |
 
 #### Response Notes
 
@@ -384,12 +415,14 @@ Read a bounded timeline window for a case-first workflow.
 
 #### Input Schema
 
-| Field     | Type   | Required | Description                                             |
-| --------- | ------ | -------- | ------------------------------------------------------- |
-| `case_id` | string | Yes      | Requested case id (may resolve through canonical chain) |
-| `from`    | string | No       | Inclusive lower timestamp/date bound                    |
-| `to`      | string | No       | Inclusive upper timestamp/date bound                    |
-| `limit`   | number | No       | Maximum timeline items to return                        |
+| Field                           | Type          | Required | Description                                                  |
+| ------------------------------- | ------------- | -------- | ------------------------------------------------------------ |
+| `case_id`                       | string        | Yes      | Requested case id (may resolve through canonical chain)      |
+| `from`                          | string/number | No       | Inclusive lower timestamp/date bound (ISO 8601 or epoch ms)  |
+| `to`                            | string/number | No       | Inclusive upper timestamp/date bound (ISO 8601 or epoch ms)  |
+| `order`                         | string        | No       | `'asc'` or `'desc'`. Default: `'asc'`                        |
+| `limit`                         | number        | No       | Maximum timeline items to return. Default: 100, maximum: 500 |
+| `include_connector_enrichments` | boolean       | No       | Include connector event snapshots when available             |
 
 #### Response Notes
 

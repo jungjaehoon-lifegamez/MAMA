@@ -39,6 +39,8 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'human.correction',
 ]);
 
+const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall']);
+
 export class EnvelopeEnforcer {
   check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
     if (!envelope) {
@@ -115,9 +117,24 @@ export class EnvelopeEnforcer {
   }
 
   private checkMemoryScopes(envelope: Envelope, toolName: string, args: unknown): void {
+    if (toolName === 'mama_load_checkpoint') {
+      throw new EnvelopeViolation(
+        'Checkpoint reads are not scoped yet; use scoped search for checkpoint queries.',
+        'scoped_checkpoint_unsupported'
+      );
+    }
+
+    if (!MEMORY_READ_TOOLS.has(toolName)) {
+      return;
+    }
+
     const requestedScopes = requestedMemoryScopesForTool(toolName, args);
     if (requestedScopes.length === 0) {
-      return;
+      throw new EnvelopeViolation(
+        'Memory read tools must execute with an explicit envelope memory scope',
+        'memory_scope_out_of_scope',
+        { allowed: envelope.scope.memory_scopes }
+      );
     }
 
     const allowedScopeKeys = new Set(

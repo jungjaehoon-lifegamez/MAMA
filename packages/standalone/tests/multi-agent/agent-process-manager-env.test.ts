@@ -245,6 +245,24 @@ describe('AgentProcessManager env vars by tier', () => {
     });
   });
 
+  describe('process lifecycle events', () => {
+    it('emits process-created for newly created Claude pool processes', async () => {
+      const config = makeConfig({
+        developer: { tier: 1 },
+      });
+      manager = new AgentProcessManager(config);
+      const listener = vi.fn();
+
+      manager.on('process-created', listener);
+      const process = await manager.getProcess('discord', 'channel-1', 'developer');
+
+      expect(listener).toHaveBeenCalledWith({
+        agentId: 'developer',
+        process,
+      });
+    });
+  });
+
   // Story: BMAD-SEL-001 — BMAD prompt block injection selection logic
   // AC: Conductor/planning agents get BMAD block; non-planning agents do not
   describe('BMAD prompt injection selector', () => {

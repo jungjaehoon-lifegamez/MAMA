@@ -6,6 +6,8 @@ import {
 } from '../../src/cli/commands/stop.js';
 
 const PROJECT_STANDALONE_CLI = '/path/to/project/packages/standalone/dist/cli/index.js';
+const INSTALLED_STANDALONE_CLI =
+  '/Users/me/app/node_modules/@jungjaehoon/mama-os/dist/cli/index.js';
 
 describe('Story: standalone stop command detection', () => {
   describe('AC #1: detect daemon commands', () => {
@@ -13,6 +15,12 @@ describe('Story: standalone stop command detection', () => {
       expect(isStandaloneDaemonCommand(`/usr/bin/node ${PROJECT_STANDALONE_CLI} daemon`)).toBe(
         true
       );
+    });
+
+    it('matches installed @jungjaehoon/mama-os daemon node command', () => {
+      expect(
+        isStandaloneDaemonCommand(`/usr/local/bin/node ${INSTALLED_STANDALONE_CLI} daemon`)
+      ).toBe(true);
     });
 
     it('matches wrapper mama daemon command', () => {

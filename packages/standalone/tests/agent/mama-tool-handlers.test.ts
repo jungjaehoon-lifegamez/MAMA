@@ -134,6 +134,29 @@ describe('MAMA search handler option threading', () => {
     });
   });
 
+  it('propagates mama.suggest failures instead of returning an empty successful search', async () => {
+    const api = createLegacyApi();
+    vi.mocked(api.suggest).mockResolvedValueOnce({
+      success: false,
+      results: [],
+      count: 0,
+      code: 'suggest_failed',
+      error: 'Vector index is unavailable',
+    });
+
+    const result = await handleSearch(api, {
+      query: 'diagnostic topic',
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      results: [],
+      count: 0,
+      code: 'suggest_failed',
+      error: 'Vector index is unavailable',
+    });
+  });
+
   it('passes scopes to listDecisions for recent scoped search', async () => {
     const api = createLegacyApi();
     const scopes = [{ kind: 'project' as const, id: 'alpha' }];

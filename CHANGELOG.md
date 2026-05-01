@@ -581,7 +581,6 @@ All notable changes to this project will be documented in this file.
   - 3 built-in playgrounds: Skill Lab, Cron Workflow Lab, Wave Visualizer
   - Skill Registry API (`/api/skills/list`) for playground consumption
   - "Open in new tab" support for full-screen playground editing
-  - ![Skill Lab Playground](docs/website/assets/screenshot-skill-lab.png)
 - **Built-in Skill Templates**: 4 new skill templates (frontend-design, multi-agent-collab, playground, scheduling)
 - **Tool Status Tracker**: In-place tool execution status updates in Viewer chat
   - Real-time tool progress display (running → completed/failed)

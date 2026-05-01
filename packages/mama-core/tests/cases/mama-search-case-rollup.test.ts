@@ -774,6 +774,44 @@ describe('Task 11: mama_search case membership roll-up', () => {
     expect(result.results).toEqual([]);
   });
 
+  it('normalizes decision-prefixed wiki source IDs for scoped topicPrefix filtering', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-prefixed-source', title: 'Wiki Prefixed Source' });
+    insertDecision({
+      id: 'decision_wiki_prefixed_source',
+      topic: 'alpha/wiki/source',
+      decision: 'prefixed wiki source decision',
+      reasoning: 'source is bound to alpha and uses decision-prefixed refs',
+    });
+    await bindDecisionScope('decision_wiki_prefixed_source', {
+      kind: 'project',
+      id: 'alpha',
+    });
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-prefixed-source.md',
+      page_type: 'case',
+      title: 'Wiki Prefixed Source',
+      content: 'prefixedsourcewikitoken appears only in compiled markdown',
+      case_id: 'case-wiki-prefixed-source',
+      source_ids: ['decision:decision_wiki_prefixed_source', 'checkpoint:checkpoint_ignored'],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+    });
+
+    const result = await suggest('prefixedsourcewikitoken', {
+      limit: 5,
+      strictness: 'balanced',
+      topicPrefix: 'alpha/',
+      scopes: [{ kind: 'project', id: 'alpha' }],
+    });
+
+    expect(result.results.map((row: Record<string, unknown>) => row.id)).toContain(
+      'case-wiki-prefixed-source'
+    );
+  });
+
   it('feeds fused RRF scores into roll-up before case scoring in the production search path', async () => {
     insertCase({ case_id: 'C1' });
     insertCase({ case_id: 'C2' });

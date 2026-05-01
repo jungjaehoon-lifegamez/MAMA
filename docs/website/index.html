@@ -678,6 +678,7 @@
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 32px;
+        min-width: 0;
       }
       .tn-col.shipped {
         border-top: 4px solid var(--green);
@@ -729,6 +730,7 @@
         border-radius: 6px;
         background: #fbfafc;
         font-size: 0.92rem;
+        overflow-wrap: anywhere;
       }
       .tn-list li::before {
         position: absolute;
@@ -751,12 +753,14 @@
         grid-template-columns: 1fr 1fr;
         gap: 8px;
         margin-top: 14px;
+        min-width: 0;
       }
       .cc-cell {
         padding: 12px;
         border: 1px solid var(--line);
         border-radius: 6px;
         background: var(--white);
+        min-width: 0;
       }
       .cc-cell .label {
         font-family: var(--mono);
@@ -792,7 +796,21 @@
         font-size: 0.82rem;
         line-height: 1.6;
         margin: 0;
+        max-width: 100%;
         overflow-x: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 520px) {
+        .today-next {
+          gap: 18px;
+        }
+        .tn-col {
+          padding: 20px;
+        }
+        .cc-cells {
+          grid-template-columns: 1fr;
+        }
       }
 
       /* Install */

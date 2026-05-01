@@ -449,6 +449,124 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(mamaApi.listDecisions).toHaveBeenCalledWith({ limit: 3, scopes: envelopeScopes });
   });
 
+  it('rejects mama_search without scopes when the active envelope has no memory scopes', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_empty_memory_scopes',
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_search',
+      { query: 'contracts' } as GatewayToolInput,
+      {
+        agentId: 'worker',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'memory_scope_out_of_scope',
+      envelope_hash: 'envhash_empty_memory_scopes',
+    });
+    expect(mamaApi.suggest).not.toHaveBeenCalled();
+  });
+
+  it('passes envelope-defaulted mama_recall scopes to recallMemory without active-context widening', async () => {
+    const previousWorkspace = process.env.MAMA_WORKSPACE;
+    process.env.MAMA_WORKSPACE = '/derived/workspace';
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelopeScopes = [{ kind: 'project' as const, id: 'alpha' }];
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: envelopeScopes,
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    try {
+      const result = await executor.execute(
+        'mama_recall',
+        { query: 'contracts' } as GatewayToolInput,
+        {
+          agentId: 'worker',
+          source: 'telegram',
+          channelId: 'tg:OWN',
+          envelope,
+          executionSurface: 'model_tool',
+          agentContext: {
+            source: 'telegram',
+            platform: 'telegram',
+            roleName: 'memory_agent',
+            role: { allowedTools: ['mama_*'] },
+            session: {
+              sessionId: 'session-recall-scope',
+              channelId: 'tg:OWN',
+              userId: 'user-1',
+              startedAt: new Date(),
+            },
+            capabilities: [],
+            limitations: [],
+          },
+        }
+      );
+
+      expect(result).toMatchObject({ success: true });
+      expect(mamaApi.recallMemory).toHaveBeenCalledWith(
+        'contracts',
+        expect.objectContaining({ scopes: envelopeScopes, includeProfile: true })
+      );
+    } finally {
+      if (previousWorkspace === undefined) {
+        delete process.env.MAMA_WORKSPACE;
+      } else {
+        process.env.MAMA_WORKSPACE = previousWorkspace;
+      }
+    }
+  });
+
+  it('rejects mama_load_checkpoint under a scoped envelope', async () => {
+    const mamaApi = makeMAMAApi();
+    const executor = new GatewayToolExecutor({ mamaApi });
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_checkpoint_scope',
+      scope: {
+        project_refs: [{ kind: 'project', id: 'alpha' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'project', id: 'alpha' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:OWN' }],
+      },
+    });
+
+    const result = await executor.execute('mama_load_checkpoint', {} as GatewayToolInput, {
+      agentId: 'worker',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool',
+    });
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'scoped_checkpoint_unsupported',
+      envelope_hash: 'envhash_checkpoint_scope',
+    });
+    expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
+  });
+
   it('checks role permission before envelope scope membership for mama_search', async () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });

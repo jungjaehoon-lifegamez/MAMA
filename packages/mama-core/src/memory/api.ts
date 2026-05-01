@@ -1402,13 +1402,37 @@ export async function recallMemory(
     return titleTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTitle);
   };
   const wikiDecisionIdCache = new Map<number, string[]>();
+  const normalizeWikiDecisionSourceId = (sourceId: string): string | null => {
+    const trimmed = sourceId.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.startsWith('decision://')) {
+      const id = trimmed.slice('decision://'.length).trim();
+      return id || null;
+    }
+    if (trimmed.startsWith('decision:')) {
+      const id = trimmed.slice('decision:'.length).trim();
+      return id || null;
+    }
+    if (/^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
+      return null;
+    }
+    return trimmed;
+  };
   const loadWikiDecisionIds = (record: WikiPageIndexRecord): string[] => {
     const cached = wikiDecisionIdCache.get(record.id);
     if (cached) {
       return cached;
     }
 
-    const ids = new Set(record.source_ids.filter((id) => id.trim().length > 0));
+    const ids = new Set<string>();
+    for (const sourceId of record.source_ids) {
+      const decisionId = normalizeWikiDecisionSourceId(sourceId);
+      if (decisionId) {
+        ids.add(decisionId);
+      }
+    }
     if (record.case_id) {
       const rows = getAdapter()
         .prepare(

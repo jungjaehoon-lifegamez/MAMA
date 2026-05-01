@@ -144,10 +144,20 @@ function isStandaloneCliPath(arg: string | undefined): boolean {
   if (!arg) {
     return false;
   }
+  const normalized = arg.replace(/\\/g, '/');
   return (
-    arg.endsWith('/packages/standalone/dist/cli/index.js') ||
-    arg.endsWith('\\packages\\standalone\\dist\\cli\\index.js')
+    normalized.endsWith('/packages/standalone/dist/cli/index.js') ||
+    normalized.endsWith('/@jungjaehoon/mama-os/dist/cli/index.js') ||
+    normalized.endsWith('/mama-os/dist/cli/index.js')
   );
+}
+
+export function findStandaloneDaemonCommandForPid(pid: number): string | undefined {
+  const processInfo = listProcesses().find((proc) => proc.pid === pid);
+  if (!processInfo || !isStandaloneDaemonCommand(processInfo.command)) {
+    return undefined;
+  }
+  return processInfo.command;
 }
 
 /**
@@ -177,6 +187,22 @@ export async function stopCommand(): Promise<void> {
   }
 
   const { pid } = runningInfo;
+  const daemonCommand = findStandaloneDaemonCommandForPid(pid);
+  if (!daemonCommand) {
+    await deletePid();
+    console.log(
+      `⚠️  PID file pointed at PID ${pid}, but that process is not a verified MAMA daemon.`
+    );
+    console.log('PID file cleaned up. Checking for orphaned MAMA processes...');
+    const cleaned = await killProcessesOnPorts([3847, 3849]);
+    const orphans = await killAllMamaDaemons();
+    if (cleaned || orphans) {
+      console.log('✓ Orphaned MAMA processes cleaned up.\n');
+      process.exit(0);
+    }
+    console.log('⚠️  MAMA is not running.\n');
+    process.exit(1);
+  }
 
   // Send SIGTERM to gracefully stop the process
   process.stdout.write('Stopping process... ');

@@ -172,6 +172,17 @@ export async function handleSearch(
       error: 'Search failed: suggest() returned no result for query',
     };
   }
+  if (result.success === false) {
+    return {
+      success: false,
+      results: [],
+      count: result.count ?? 0,
+      error: result.error ?? 'Search failed: suggest() reported failure',
+      ...(result.code !== undefined ? { code: result.code } : {}),
+      ...(result.diagnostics !== undefined ? { diagnostics: result.diagnostics } : {}),
+      ...(result.meta !== undefined ? { meta: result.meta } : {}),
+    };
+  }
   let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 
   // type === 'checkpoint' already handled above with early return

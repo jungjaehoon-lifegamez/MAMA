@@ -111,6 +111,11 @@ export interface PersistentProcessOptions {
   effort?: 'low' | 'medium' | 'high' | 'max';
 }
 
+export interface PersistentProcessAcquireResult {
+  process: PersistentClaudeProcess;
+  created: boolean;
+}
+
 export type { ToolUseBlock } from './types.js';
 
 export interface ContentBlock {
@@ -994,10 +999,21 @@ export class PersistentProcessPool {
     channelKey: string,
     options?: Partial<PersistentProcessOptions>
   ): Promise<PersistentClaudeProcess> {
+    return (await this.getProcessWithStatus(channelKey, options)).process;
+  }
+
+  /**
+   * Get or create a process for a channel and report whether this call created it.
+   */
+  async getProcessWithStatus(
+    channelKey: string,
+    options?: Partial<PersistentProcessOptions>
+  ): Promise<PersistentProcessAcquireResult> {
     this.startCleanupTimer();
     const now = Date.now();
     const entry = this.processes.get(channelKey);
     let process = entry?.process;
+    let created = false;
 
     if (!process || !process.isAlive()) {
       // Create new process
@@ -1045,11 +1061,12 @@ export class PersistentProcessPool {
 
       this.processes.set(channelKey, { process, lastUsedAt: now });
       await process.start();
+      created = true;
     } else if (entry) {
       entry.lastUsedAt = now;
     }
 
-    return process;
+    return { process, created };
   }
 
   /**
