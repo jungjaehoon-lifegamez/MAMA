@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { createApiServer } from '../../api/index.js';
 import type { ApiServer } from '../../api/index.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
+import { createContextCompileService } from '../../agent/context-compile-service.js';
 import { SkillRegistry } from '../../skills/skill-registry.js';
 import type { AgentLoop } from '../../agent/index.js';
 import type { CronScheduler } from '../../scheduler/index.js';
@@ -100,6 +101,9 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
   const eventBus = new AgentEventBus();
 
   // ── createApiServer() ─────────────────────────────────────────────────
+  const contextCompileService = createContextCompileService({
+    memoryAdapter: mamaCoreAdapter,
+  });
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,
@@ -115,6 +119,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     eventBus,
     envelope: envelopeMetadata,
     envelopeAuthority,
+    contextCompileService,
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);

@@ -1,0 +1,263 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
+import express from 'express';
+
+import { getAdapter } from '../../../mama-core/src/db-manager.js';
+import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
+import type { ContextPacket } from '../../../mama-core/src/index.js';
+
+import Database from '../../src/sqlite.js';
+import {
+  ContextCompileServiceError,
+  type ContextCompileService,
+} from '../../src/agent/context-compile-service.js';
+import {
+  createAgentContextRouter,
+  type AgentContextRouterOptions,
+} from '../../src/api/agent-context-handler.js';
+import { createApiServer } from '../../src/api/index.js';
+import { requireAuth } from '../../src/api/auth-middleware.js';
+import { CronScheduler } from '../../src/scheduler/index.js';
+import { makeAuthorityHarness, makeSignedEnvelope } from '../envelope/fixtures.js';
+import type { EnvelopeAuthority } from '../../src/envelope/authority.js';
+import type { Envelope } from '../../src/envelope/types.js';
+
+vi.mock('@jungjaehoon/mama-core/debug-logger', () => ({
+  DebugLogger: class {
+    warn(): void {}
+    debug(): void {}
+    info(): void {}
+    error(): void {}
+  },
+}));
+
+const TUNNEL_HEADERS = {
+  'cf-connecting-ip': '198.51.100.7',
+  'x-forwarded-for': '198.51.100.7',
+};
+
+function makePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
+  return {
+    packet_id: 'ctxp_api_test',
+    task: 'compile API context',
+    scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+    scope_hash: 'scope-hash',
+    generated_at: '2026-04-30T09:00:00.000Z',
+    source_refs: [{ kind: 'memory', id: 'mem-api' }],
+    selected_evidence: [],
+    evidence_clusters: [],
+    related_decisions: [],
+    rejected_refs: [],
+    rejected_summary: [],
+    missing_context: [],
+    caveats: [],
+    expansion_trace: [],
+    retrieval_diagnostics: {},
+    budget: {
+      used_tool_calls: 0,
+      elapsed_ms: 1,
+      estimated_tokens: 0,
+    },
+    ...overrides,
+  };
+}
+
+describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
+  const originalAuthToken = process.env.MAMA_AUTH_TOKEN;
+  let testDbPath = '';
+  let sessionsDb: Database;
+  let authority: EnvelopeAuthority;
+  let validEnvelope: Envelope;
+
+  beforeAll(async () => {
+    testDbPath = await initTestDB('agent-context-api');
+  });
+
+  beforeEach(() => {
+    process.env.MAMA_AUTH_TOKEN = 'agent-context-token';
+    getAdapter().prepare('DELETE FROM context_packets').run();
+    getAdapter().prepare('DELETE FROM model_runs').run();
+    sessionsDb = new Database(':memory:');
+    const harness = makeAuthorityHarness(sessionsDb);
+    authority = harness.authority;
+    validEnvelope = makeSignedEnvelope();
+    authority.persist(validEnvelope);
+  });
+
+  afterEach(() => {
+    sessionsDb.close();
+    if (originalAuthToken === undefined) {
+      delete process.env.MAMA_AUTH_TOKEN;
+    } else {
+      process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+    }
+  });
+
+  afterAll(async () => {
+    await cleanupTestDB(testDbPath);
+  });
+
+  function makeServiceMock(
+    impl?: ContextCompileService['compileAndPersistContext']
+  ): ContextCompileService {
+    return {
+      compileAndPersistContext:
+        impl ??
+        vi.fn(async ({ input }) => ({
+          packet: makePacket({ task: input.task }),
+        })),
+    };
+  }
+
+  function makeRouterServer(overrides: Partial<AgentContextRouterOptions> = {}) {
+    const app = express();
+    app.use(express.json());
+    app.use('/api', requireAuth);
+    app.use(
+      '/api/agent/context',
+      createAgentContextRouter({
+        memoryAdapter: getAdapter(),
+        envelopeAuthority: authority,
+        contextCompileService: makeServiceMock(),
+        ...overrides,
+      })
+    );
+    return { app };
+  }
+
+  function authed(req: request.Test): request.Test {
+    return req
+      .set(TUNNEL_HEADERS)
+      .set('Authorization', 'Bearer agent-context-token')
+      .set('x-mama-envelope-hash', validEnvelope.envelope_hash);
+  }
+
+  it('AC: rejects missing worker envelopes before calling the shared service', async () => {
+    const service = makeServiceMock();
+    const apiServer = makeRouterServer({ contextCompileService: service });
+
+    const response = await request(apiServer.app)
+      .post('/api/agent/context/compile')
+      .set(TUNNEL_HEADERS)
+      .set('Authorization', 'Bearer agent-context-token')
+      .send({ task: 'compile API context' });
+
+    expect(response.status).toBe(401);
+    expect(response.body.code).toBe('worker_envelope_missing');
+    expect(service.compileAndPersistContext).not.toHaveBeenCalled();
+  });
+
+  it('AC: converts headers to a loaded envelope only in the HTTP handler and returns { packet }', async () => {
+    const compileAndPersistContext = vi.fn(async ({ input, envelope, modelRunId, caller }) => {
+      expect(caller).toBe('http');
+      expect(modelRunId).toBe('mr_parent_from_header');
+      expect(envelope).toMatchObject({
+        envelope_hash: validEnvelope.envelope_hash,
+        agent_id: validEnvelope.agent_id,
+        instance_id: validEnvelope.instance_id,
+      });
+      return { packet: makePacket({ packet_id: 'ctxp_api_success', task: input.task }) };
+    });
+    const apiServer = makeRouterServer({
+      contextCompileService: makeServiceMock(compileAndPersistContext),
+    });
+
+    const response = await authed(
+      request(apiServer.app)
+        .post('/api/agent/context/compile')
+        .set('x-mama-model-run-id', 'mr_parent_from_header')
+        .send({
+          task: 'compile API context',
+          scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+          connectors: ['telegram'],
+          seed_refs: [{ kind: 'memory', id: 'mem-api' }],
+          limit: 3,
+        })
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      packet: makePacket({ packet_id: 'ctxp_api_success', task: 'compile API context' }),
+    });
+    expect(compileAndPersistContext).toHaveBeenCalledTimes(1);
+    expect(compileAndPersistContext.mock.calls[0][0].input).toMatchObject({
+      task: 'compile API context',
+      scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+      connectors: ['telegram'],
+      seed_refs: [{ kind: 'memory', id: 'mem-api' }],
+      limit: 3,
+    });
+  });
+
+  it('AC: preserves stable service error codes and hides unexpected error details', async () => {
+    const invalidService = makeServiceMock(
+      vi.fn(async () => {
+        throw new ContextCompileServiceError(
+          400,
+          'context_compile_input_invalid',
+          'task is required'
+        );
+      })
+    );
+    const invalidServer = makeRouterServer({ contextCompileService: invalidService });
+
+    const invalid = await authed(
+      request(invalidServer.app).post('/api/agent/context/compile').send({})
+    );
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toMatchObject({
+      error: true,
+      code: 'context_compile_input_invalid',
+      message: 'task is required',
+    });
+
+    const explodingService = makeServiceMock(
+      vi.fn(async () => {
+        throw new Error('database path /secret leaked');
+      })
+    );
+    const explodingServer = makeRouterServer({ contextCompileService: explodingService });
+
+    const exploded = await authed(
+      request(explodingServer.app)
+        .post('/api/agent/context/compile')
+        .send({ task: 'compile API context' })
+    );
+    expect(exploded.status).toBe(500);
+    expect(exploded.body).toEqual({
+      error: true,
+      code: 'agent_context_api_error',
+      message: 'Internal server error',
+    });
+  });
+
+  it('AC: mounts the compile route through createApiServer with the shared service', async () => {
+    const scheduler = new CronScheduler();
+    const service = makeServiceMock(
+      vi.fn(async ({ input }) => ({
+        packet: makePacket({ packet_id: 'ctxp_create_api_server', task: input.task }),
+      }))
+    );
+    const apiServer = createApiServer({
+      scheduler,
+      port: 0,
+      memoryAdapter: getAdapter(),
+      envelopeAuthority: authority,
+      contextCompileService: service,
+    });
+
+    try {
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/context/compile')
+          .send({ task: 'compile through createApiServer' })
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.body.packet.packet_id).toBe('ctxp_create_api_server');
+      expect(service.compileAndPersistContext).toHaveBeenCalledTimes(1);
+    } finally {
+      scheduler.shutdown();
+    }
+  });
+});
