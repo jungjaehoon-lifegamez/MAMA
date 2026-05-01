@@ -1246,20 +1246,25 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     ctx: ActiveGatewayExecutionContext | undefined
   ): GatewayToolInput {
-    if (toolName !== 'mama_search' || !ctx?.envelope) {
+    // Both mama_search and mama_recall participate in the
+    // MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS bucket, so they must inherit
+    // envelope.scope.memory_scopes consistently when the caller omits scopes.
+    // Otherwise the enforcer sees no requested scopes for recall and the recall
+    // path can fall back to agent-context-derived scopes outside the envelope.
+    if ((toolName !== 'mama_search' && toolName !== 'mama_recall') || !ctx?.envelope) {
       return input;
     }
 
-    const searchInput = input as SearchInput;
-    const hasCallerScopes = Array.isArray(searchInput.scopes)
-      ? searchInput.scopes.length > 0
-      : searchInput.scopes !== undefined;
+    const scopedInput = input as SearchInput | RecallInput;
+    const hasCallerScopes = Array.isArray(scopedInput.scopes)
+      ? scopedInput.scopes.length > 0
+      : scopedInput.scopes !== undefined;
     if (hasCallerScopes || ctx.envelope.scope.memory_scopes.length === 0) {
       return input;
     }
 
     return {
-      ...searchInput,
+      ...scopedInput,
       scopes: ctx.envelope.scope.memory_scopes,
     };
   }

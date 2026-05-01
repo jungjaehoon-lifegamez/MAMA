@@ -48,12 +48,75 @@ export function isStandaloneWatchdogCommand(command: string): boolean {
   );
 }
 
+/**
+ * Quote-aware argv split. Naive `split(/\s+/)` mangles quoted paths like
+ * `node "C:\Program Files\…\index.js" daemon` and inlined `node -e "<script>"`
+ * source text, which can cause stop-path checks to miss real daemons or
+ * false-positive unrelated scripts. This walks the string as a small state
+ * machine respecting single/double quotes and backslash escapes.
+ */
 function splitCommand(command: string): string[] {
-  return command
-    .trim()
-    .split(/\s+/)
-    .map((arg) => arg.replace(/^['"]|['"]$/g, ''))
-    .filter(Boolean);
+  const result: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  let hasContent = false;
+
+  for (const ch of command) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      escaped = true;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      hasContent = true;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else {
+        current += ch;
+      }
+      hasContent = true;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      hasContent = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (hasContent) {
+        result.push(current);
+        current = '';
+        hasContent = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasContent = true;
+  }
+  if (hasContent) {
+    result.push(current);
+  }
+  return result;
 }
 
 function isMamaExecutable(arg: string | undefined): boolean {
@@ -456,7 +519,10 @@ const PROCESS_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
 
 export function listProcesses(): Array<{ pid: number; command: string }> {
   try {
-    const output = execSync('ps -eo pid=,command=', {
+    // -ww disables ps's command-column truncation. maxBuffer only governs how much
+    // Node reads from stdout, not how much ps writes — without -ww long argv lists
+    // (e.g., inlined `node -e <long script>`) get cut and break daemon detection.
+    const output = execSync('ps -ww -eo pid=,command=', {
       encoding: 'utf-8',
       maxBuffer: PROCESS_LIST_MAX_BUFFER_BYTES,
     });

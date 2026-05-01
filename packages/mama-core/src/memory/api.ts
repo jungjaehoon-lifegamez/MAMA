@@ -1449,13 +1449,23 @@ export async function recallMemory(
       return false;
     }
 
-    const placeholders = decisionIds.map(() => '?').join(', ');
-    const rows = getAdapter()
-      .prepare(`SELECT topic FROM decisions WHERE id IN (${placeholders})`)
-      .all(...decisionIds) as Array<{ topic?: string }>;
-    const supported = rows.some((row) =>
-      String(row.topic ?? '').startsWith(searchOptions.topicPrefix!)
-    );
+    // SQLite caps host parameters at 999 by default and large argument arrays
+    // can blow the stack when spread into prepared.all(...). Chunk the lookup
+    // so a wiki page with many linked decisions never trips that limit.
+    const IN_CHUNK_SIZE = 900;
+    let supported = false;
+    const adapter = getAdapter();
+    for (let i = 0; i < decisionIds.length; i += IN_CHUNK_SIZE) {
+      const chunk = decisionIds.slice(i, i + IN_CHUNK_SIZE);
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = adapter
+        .prepare(`SELECT topic FROM decisions WHERE id IN (${placeholders})`)
+        .all(...chunk) as Array<{ topic?: string }>;
+      if (rows.some((row) => String(row.topic ?? '').startsWith(searchOptions.topicPrefix!))) {
+        supported = true;
+        break;
+      }
+    }
     wikiTopicPrefixSupportCache.set(record.id, supported);
     return supported;
   };
@@ -1510,9 +1520,13 @@ export async function recallMemory(
       lexicalSupport ? 'lexical' : null,
       exactTopicSupport ? 'exact_topic' : null,
     ].filter((signal): signal is string => signal !== null);
-    const metadataSignals = [scopeSupport ? 'scope' : null, 'graph_primary'].filter(
-      (signal): signal is string => signal !== null
-    );
+    // Only attribute 'scope' when the caller actually requested a scope filter.
+    // hasRequestedWikiScopeSupport() returns true by default for unscoped searches,
+    // so without this guard the diagnostics would overstate why the wiki hit passed.
+    const metadataSignals = [
+      requestedScopeKeys.size > 0 && scopeSupport ? 'scope' : null,
+      'graph_primary',
+    ].filter((signal): signal is string => signal !== null);
     const retrievalSourceForRecord =
       entry.vectorSimilarity !== null && lexicalSupport
         ? 'wiki_hybrid_rrf'

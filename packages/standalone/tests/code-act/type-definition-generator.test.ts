@@ -35,15 +35,20 @@ describe('TypeDefinitionGenerator', () => {
     it('marks optional params with ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/query\?: string/);
+      // Anchor to the mama_search declaration so an unrelated declaration
+      // exposing `scopes?` would not silently keep this assertion green.
       expect(dts).toMatch(
-        /scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>/
+        /declare function mama_search[\s\S]*scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>/
       );
     });
 
     it('advertises mama_search diagnostics and meta return fields', () => {
       const dts = TypeDefinitionGenerator.generate(1);
-      expect(dts).toContain('diagnostics?: Record<string, unknown> | null');
-      expect(dts).toContain('meta?: Record<string, unknown>');
+      // Anchor to the mama_search declaration so the assertion fails if those
+      // return fields are removed from mama_search specifically.
+      expect(dts).toMatch(
+        /declare function mama_search[\s\S]*diagnostics\?: Record<string, unknown> \| null; meta\?: Record<string, unknown>/
+      );
     });
 
     it('marks required params without ?', () => {

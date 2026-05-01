@@ -43,7 +43,7 @@ describe('standalone stop process listing', () => {
       },
     ]);
     expect(execSyncMock).toHaveBeenCalledWith(
-      'ps -eo pid=,command=',
+      'ps -ww -eo pid=,command=',
       expect.objectContaining({
         encoding: 'utf-8',
         maxBuffer: expect.any(Number),
@@ -65,7 +65,7 @@ describe('standalone stop process listing', () => {
 
   it('only kills verified MAMA-owned port listeners during orphan cleanup', async () => {
     execSyncMock.mockImplementation((command: string) => {
-      if (command === 'ps -eo pid=,command=') {
+      if (command === 'ps -ww -eo pid=,command=') {
         return [
           '123 /usr/bin/python -m http.server 3847',
           '456 /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon',

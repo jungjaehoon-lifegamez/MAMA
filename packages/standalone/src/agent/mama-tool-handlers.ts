@@ -158,11 +158,17 @@ export async function handleSearch(
     ...(diagnostics !== undefined && { diagnostics }),
   });
   if (!result || typeof result !== 'object') {
-    // suggest() can return null on vector search failure — fallback to list
-    const decisions = await api.listDecisions({ limit, ...(scopes && { scopes }) });
-    const raw = Array.isArray(decisions) ? decisions : [];
-    const filtered = raw.filter(isSearchResultItem);
-    return { success: true, results: filtered, count: filtered.length };
+    // suggest() returned no result for the supplied query. Do NOT fall back to
+    // listDecisions(): that drops the query entirely and returns unrelated
+    // records while still reporting success: true, which would undermine the
+    // strict-search guarantees the rest of this path provides.
+    return {
+      success: false,
+      results: [],
+      count: 0,
+      code: 'suggest_returned_null',
+      error: 'Search failed: suggest() returned no result for query',
+    };
   }
   let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 

@@ -556,8 +556,19 @@ After failure → save a NEW decision with same topic to create evolution histor
       diagnostics,
     } = args;
 
-    // type='checkpoint' without query → load latest checkpoint (resume session)
+    // type='checkpoint' without query → load latest checkpoint (resume session).
+    // load_checkpoint does not yet honor scopes, so reject scoped checkpoint reads
+    // explicitly rather than silently bypass scope isolation.
     if (type === 'checkpoint' && !query) {
+      if (Array.isArray(scopes) && scopes.length > 0) {
+        return {
+          success: false,
+          code: 'scoped_checkpoint_unsupported',
+          count: 0,
+          results: [],
+          message: 'Scoped checkpoint reads are not supported yet',
+        };
+      }
       return await memoryTools.load_checkpoint.handler(args);
     }
 

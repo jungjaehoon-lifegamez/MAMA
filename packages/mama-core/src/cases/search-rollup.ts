@@ -61,12 +61,22 @@ function searchHitDiagnostics(value: unknown): SearchHitDiagnostics | undefined 
   }
   if (
     typeof object.retrieval_source !== 'string' ||
+    !(object.vector_similarity === null || typeof object.vector_similarity === 'number') ||
     typeof object.is_vector_only !== 'boolean' ||
     typeof object.lexical_support !== 'boolean' ||
-    typeof object.entity_support !== 'boolean'
+    typeof object.entity_support !== 'boolean' ||
+    typeof object.scope_support !== 'boolean' ||
+    (object.graph_source !== 'primary' &&
+      object.graph_source !== 'expanded' &&
+      object.graph_source !== null) ||
+    !Array.isArray(object.confirmation_signals) ||
+    !Array.isArray(object.metadata_signals) ||
+    typeof object.candidate_threshold_used !== 'number'
   ) {
     return undefined;
   }
+  // Type assertion is safe: every required field of SearchHitDiagnostics has been
+  // validated above (including the array-typed signals consumed by diagnosticsRank).
   return value as SearchHitDiagnostics;
 }
 
