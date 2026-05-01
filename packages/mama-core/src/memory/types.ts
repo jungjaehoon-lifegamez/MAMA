@@ -221,6 +221,7 @@ export interface MemoryWriteProvenance {
   envelope_hash?: string;
   tool_name?: string;
   gateway_call_id?: string;
+  context_packet_id?: string;
   source_turn_id?: string;
   source_message_ref?: string;
   source_refs?: string[];
