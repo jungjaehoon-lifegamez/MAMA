@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: jungjaehoon-lifegamez/claude-plugins
-          token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
+          token: ${{ secrets.GIT || secrets.PLUGIN_DEPLOY_TOKEN }}
           path: claude-plugins
 
       - name: Sync plugin files
@@ -50,7 +50,8 @@ jobs:
           cd claude-plugins
           jq --arg ver "${{ steps.version.outputs.version }}" \
              --arg desc "${{ steps.version.outputs.description }}" \
-             '.plugins[0].version = $ver | .plugins[0].description = $desc' \
+             '(.plugins[] | select(.name == "mama")).version = $ver |
+              (.plugins[] | select(.name == "mama")).description = $desc' \
              .claude-plugin/marketplace.json > .claude-plugin/marketplace.json.tmp
           mv .claude-plugin/marketplace.json.tmp .claude-plugin/marketplace.json
 
