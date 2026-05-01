@@ -47,8 +47,11 @@ function register(meta: ToolDefinitionMeta): void {
 // Memory tools
 register({
   name: 'mama_save',
-  description: 'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)',
+  description:
+    'Save decision (topic, decision, reasoning, context_packet_id?) or checkpoint (summary, next_steps?)',
   category: 'memory',
+  params:
+    'type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?',
 });
 register({
   name: 'mama_search',
