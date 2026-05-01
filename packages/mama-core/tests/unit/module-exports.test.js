@@ -118,6 +118,20 @@ describe('Story M1.1: Core Module Exports', () => {
     });
   });
 
+  describe('package root context-compile exports', () => {
+    it('should export context compile ref and visibility helpers', async () => {
+      const core = await import('../../src/index.js');
+
+      expect(typeof core.normalizeContextRef).toBe('function');
+      expect(typeof core.serializeContextRefForProvenance).toBe('function');
+      expect(typeof core.toTwinRef).toBe('function');
+      expect(typeof core.canonicalizeContextScopes).toBe('function');
+      expect(typeof core.derivePrimaryContextScope).toBe('function');
+      expect(typeof core.assertContextBoundaryAllowsInput).toBe('function');
+      expect(typeof core.sanitizeContextPacketForVisibility).toBe('function');
+    });
+  });
+
   describe('embeddings.js exports', () => {
     it('should export generateEmbedding function', async () => {
       const embeddings = await import('../../src/embeddings.js');
