@@ -1801,7 +1801,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         meta: {
           count: limitedResults.length,
           search_method: 'memory_v2',
-          threshold: threshold || 'adaptive',
+          threshold: normalizedSearchOptions.threshold,
           recency_boost: disableRecency
             ? null
             : {
@@ -1869,7 +1869,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         meta: {
           count: limitedRows.length,
           search_method: 'memory_v2',
-          threshold: threshold || 'adaptive',
+          threshold: normalizedSearchOptions.threshold,
           recency_boost: disableRecency
             ? null
             : {

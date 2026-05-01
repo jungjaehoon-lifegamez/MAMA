@@ -4,13 +4,17 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) provides **13 tools** for decision tracking, scoped memory,
-semantic search, search-quality diagnostics, conversation ingestion, contracts lookup, bounded case
-timelines, and session continuity.
+MAMA (Memory-Augmented MCP Assistant) ships **6 advertised MCP tools** plus a backward-compatible
+fallback for legacy callers. The advertised surface covers decision tracking, scoped memory,
+semantic search, search-quality diagnostics, conversation ingestion (via `save`), contracts lookup,
+bounded case timelines, and session continuity.
 
-The current MCP server ships both the consolidated memory tools (`save`, `search`, `update`,
-`load_checkpoint`) and compatibility / operational helpers such as
-`search_decisions_and_contracts` and `case_timeline_range`.
+The current MCP server advertises the consolidated memory tools (`save`, `search`, `update`,
+`load_checkpoint`) along with two operational helpers (`search_decisions_and_contracts`,
+`case_timeline_range`). The pre-consolidation tool names (`save_decision`, `suggest_decision`,
+`recall_decision`, `update_outcome`, `list_decisions`, `save_checkpoint`, `ingest_conversation`,
+`search_narrative`, `generate_quality_report`, `get_restart_metrics`) remain callable as
+backward-compatible aliases but are not advertised in `ListTools`.
 
 **Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
@@ -26,16 +30,16 @@ The current MCP server ships both the consolidated memory tools (`save`, `search
 
 ### OpenClaw Plugin
 
-OpenClaw uses key tools with `mama_` prefix:
+OpenClaw uses MAMA's consolidated MCP tools with a `mama_` prefix:
 
-| MCP Server            | OpenClaw Plugin        |
-| --------------------- | ---------------------- |
-| `save_decision`       | `mama_save`            |
-| `suggest_decision`    | `mama_search`          |
-| `recall_decision`     | `mama_recall`          |
-| `update_outcome`      | `mama_update`          |
-| `ingest_conversation` | `mama_ingest`          |
-| `load_checkpoint`     | `mama_load_checkpoint` |
+| MCP Server                       | OpenClaw Plugin                   |
+| -------------------------------- | --------------------------------- |
+| `save` (`type: 'decision'`)      | `mama_save`                       |
+| `save` (`type: 'ingest'`)        | `mama_ingest`                     |
+| `search`                         | `mama_search`                     |
+| `update`                         | `mama_update`                     |
+| `load_checkpoint`                | `mama_load_checkpoint`            |
+| `search_decisions_and_contracts` | `mama_search_decisions_contracts` |
 
 OpenClaw also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
 
@@ -76,23 +80,35 @@ All tools return a standard MCP response structure.
 
 ### Current MCP Tool Surface
 
-The current `@jungjaehoon/mama-server` package exposes these 13 tools:
+The current `@jungjaehoon/mama-server` package advertises these tools via `ListTools`:
 
-| Tool                             | Purpose                                               |
-| -------------------------------- | ----------------------------------------------------- |
-| `save_decision`                  | Save a decision with optional scopes and `event_date` |
-| `recall_decision`                | Recall history for a topic or scoped memory           |
-| `suggest_decision`               | Semantic search with strictness controls              |
-| `list_decisions`                 | List recent decisions/checkpoints                     |
-| `update_outcome`                 | Update a decision outcome                             |
-| `search_narrative`               | Narrative search with link expansion                  |
-| `ingest_conversation`            | Ingest message history into memory                    |
-| `save_checkpoint`                | Save a session checkpoint                             |
-| `load_checkpoint`                | Resume the latest checkpoint                          |
-| `generate_quality_report`        | Emit quality/coverage metrics                         |
-| `get_restart_metrics`            | Read restart health metrics                           |
-| `search_decisions_and_contracts` | Joint decision + contract lookup                      |
-| `case_timeline_range`            | Read bounded case-first timeline windows              |
+| Tool                             | Purpose                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `save`                           | Save decisions, checkpoints, or ingest conversations (`type: 'decision' \| 'checkpoint' \| 'ingest'`)            |
+| `search`                         | Unified semantic search across decisions and checkpoints with strictness/diagnostics; latest-checkpoint fallback |
+| `update`                         | Update a decision outcome (`success` / `failed` / `partial`)                                                     |
+| `search_decisions_and_contracts` | Joint decision + contract lookup used by hook flows                                                              |
+| `case_timeline_range`            | Read bounded case-first timeline windows                                                                         |
+
+`load_checkpoint` is also callable directly (as is invoked by some plugins) and is documented in
+section 4 below; it is the same code path that `search` enters when called with
+`type: 'checkpoint'` and no `query`.
+
+**Backward-compatible aliases.** The pre-consolidation names below remain callable for legacy
+clients but are not advertised in `ListTools`. New integrations should use the consolidated tools.
+
+| Legacy alias              | Consolidated equivalent          |
+| ------------------------- | -------------------------------- |
+| `save_decision`           | `save` with `type: 'decision'`   |
+| `save_checkpoint`         | `save` with `type: 'checkpoint'` |
+| `ingest_conversation`     | `save` with `type: 'ingest'`     |
+| `suggest_decision`        | `search` (with `query`)          |
+| `recall_decision`         | `search` (with `query`)          |
+| `list_decisions`          | `search` (without `query`)       |
+| `search_narrative`        | `search` (with link expansion)   |
+| `update_outcome`          | `update`                         |
+| `generate_quality_report` | (callable as legacy alias)       |
+| `get_restart_metrics`     | (callable as legacy alias)       |
 
 ### 1. `save`
 

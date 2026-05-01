@@ -1,31 +1,22 @@
+/**
+ * Tests for the standalone stop-command process-listing helpers.
+ *
+ * Per AGENTS.md: do NOT mock internal modules. We mock `node:child_process`
+ * because it is the system-call boundary the helpers wrap, but the project's
+ * own `pid-manager` and `debug-logger` modules run as the real implementations.
+ */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const execSyncMock = vi.hoisted(() => vi.fn());
-const isProcessRunningMock = vi.hoisted(() => vi.fn());
 
 vi.mock('node:child_process', () => ({
   execSync: execSyncMock,
 }));
 
-vi.mock('../../src/cli/utils/pid-manager.js', () => ({
-  deletePid: vi.fn(),
-  isDaemonRunning: vi.fn(),
-  isProcessRunning: isProcessRunningMock,
-}));
-
-vi.mock('@jungjaehoon/mama-core/debug-logger', () => ({
-  DebugLogger: vi.fn().mockImplementation(() => ({
-    debug: vi.fn(),
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-  })),
-}));
-
 describe('standalone stop process listing', () => {
   afterEach(() => {
     execSyncMock.mockReset();
-    isProcessRunningMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -64,25 +55,38 @@ describe('standalone stop process listing', () => {
   });
 
   it('only kills verified MAMA-owned port listeners during orphan cleanup', async () => {
+    // Use very large PIDs that are guaranteed not to map to real processes,
+    // so the real `isProcessRunning(pid)` (process.kill(pid, 0)) returns
+    // ESRCH/false and the helpers do not escalate to a SIGKILL on us.
+    const NON_MAMA_PID = 999_999_990;
+    const MAMA_PID = 999_999_991;
+
     execSyncMock.mockImplementation((command: string) => {
       if (command === 'ps -ww -eo pid=,command=') {
         return [
-          '123 /usr/bin/python -m http.server 3847',
-          '456 /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon',
+          `${NON_MAMA_PID} /usr/bin/python -m http.server 3847`,
+          `${MAMA_PID} /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon`,
         ].join('\n');
       }
       if (command.startsWith('lsof -ti :3847')) {
-        return '123\n456\n';
+        return `${NON_MAMA_PID}\n${MAMA_PID}\n`;
       }
       return '';
     });
-    isProcessRunningMock.mockReturnValue(false);
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      // signal 0 is the liveness probe used by pid-manager.isProcessRunning.
+      // Returning false means "not running" so the SIGKILL escalation path
+      // is not exercised, which keeps assertions focused on SIGTERM intent.
+      if (signal === 0) {
+        return false as unknown as true;
+      }
+      return true;
+    });
 
     const { killProcessesOnPorts } = await import('../../src/cli/commands/stop.js');
 
     await expect(killProcessesOnPorts([3847])).resolves.toBe(true);
-    expect(killSpy).toHaveBeenCalledWith(456, 'SIGTERM');
-    expect(killSpy).not.toHaveBeenCalledWith(123, 'SIGTERM');
+    expect(killSpy).toHaveBeenCalledWith(MAMA_PID, 'SIGTERM');
+    expect(killSpy).not.toHaveBeenCalledWith(NON_MAMA_PID, 'SIGTERM');
   });
 });

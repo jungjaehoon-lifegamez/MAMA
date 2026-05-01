@@ -133,8 +133,10 @@ export async function handleSearch(
     return { success: true, results: [], count: 0 };
   }
 
+  const hasScopes = Array.isArray(scopes) && scopes.length > 0;
+
   if (!query) {
-    const decisions = await api.listDecisions({ limit, ...(scopes && { scopes }) });
+    const decisions = await api.listDecisions({ limit, ...(hasScopes ? { scopes } : {}) });
     const raw = Array.isArray(decisions) ? decisions : [];
     let results = raw.filter(isSearchResultItem);
 
@@ -147,7 +149,7 @@ export async function handleSearch(
 
   const result = await api.suggest(query, {
     limit,
-    ...(scopes && { scopes }),
+    ...(hasScopes ? { scopes } : {}),
     ...(threshold !== undefined && { threshold }),
     ...(strict !== undefined && { strict }),
     ...(strictness !== undefined && { strictness }),

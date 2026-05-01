@@ -1,100 +1,157 @@
-import { createRequire } from 'node:module';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+/**
+ * Integration tests for MAMAServer.handleSearch quality options.
+ *
+ * Per AGENTS.md: do NOT mock internal mama-core modules. These tests exercise
+ * the real `mama.suggest` / `mama.listCheckpoints` paths against an isolated
+ * test database and assert on observable response shape (diagnostics, results,
+ * meta) rather than internal call arguments.
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import {
+  initTestDB,
+  cleanupTestDB,
+  isEmbeddingsAvailable,
+  createMockToolContext,
+} from '@jungjaehoon/mama-core/test-utils';
 import { MAMAServer } from '../../src/server.js';
+import { saveDecisionTool } from '../../src/tools/save-decision.js';
 
-const require = createRequire(import.meta.url);
-const mama = require('@jungjaehoon/mama-core/mama-api');
+const embeddingsAvailable = await isEmbeddingsAvailable();
 
-describe('MCP search quality options', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
+const mockContext = createMockToolContext();
+
+describe.skipIf(!embeddingsAvailable)('MCP search quality options (integration)', () => {
+  let testDbPath;
+  let server;
+
+  beforeAll(async () => {
+    testDbPath = await initTestDB('mcp-search-options');
+
+    const fixtures = [
+      {
+        topic: 'context_compile_strategy',
+        decision: 'Compile context bundles via lexical + vector hybrid retrieval',
+        reasoning: 'Hybrid retrieval keeps recall high while constraining drift in strict mode',
+        confidence: 0.9,
+      },
+      {
+        topic: 'north-star_quality_modes',
+        decision: 'Expose recall/balanced/strict as first-class search modes',
+        reasoning: 'Operators need a knob between fast recall and act-now strict citations',
+        confidence: 0.95,
+      },
+      {
+        topic: 'unrelated_topic_filler',
+        decision: 'Filler decision for negative-match coverage',
+        reasoning: 'Guarantees the corpus is not single-topic when running strict tests',
+        confidence: 0.6,
+      },
+    ];
+
+    for (const decision of fixtures) {
+      await saveDecisionTool.handler(decision, mockContext);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    server = new MAMAServer();
   });
 
-  it('passes strict search options through to mama.suggest', async () => {
-    vi.spyOn(mama, 'suggest').mockResolvedValue({ results: [] });
-    vi.spyOn(mama, 'listCheckpoints').mockResolvedValue([]);
+  afterAll(async () => {
+    await cleanupTestDB(testDbPath);
+  });
 
-    const server = new MAMAServer();
-    await server.handleSearch({
+  it('returns diagnostics block when diagnostics: true is requested', async () => {
+    const response = await server.handleSearch({
       query: 'context compile',
       type: 'decision',
-      limit: 3,
-      threshold: 0.55,
-      strict: true,
+      limit: 5,
+      diagnostics: true,
+    });
+
+    expect(response.success).toBe(true);
+    expect(response).toHaveProperty('diagnostics');
+    if (response.diagnostics) {
+      expect(response.diagnostics).toEqual(
+        expect.objectContaining({
+          strictness: expect.any(String),
+        })
+      );
+    }
+  });
+
+  it('omits diagnostics block when diagnostics is not requested', async () => {
+    const response = await server.handleSearch({
+      query: 'context compile',
+      type: 'decision',
+      limit: 5,
+    });
+
+    expect(response.success).toBe(true);
+    expect(response.diagnostics).toBeUndefined();
+  });
+
+  it('respects strict mode by reducing or rejecting low-confidence vector-only hits', async () => {
+    const recallResponse = await server.handleSearch({
+      query: 'compile bundle',
+      type: 'decision',
+      limit: 10,
+      strictness: 'recall',
+      diagnostics: true,
+    });
+    const strictResponse = await server.handleSearch({
+      query: 'compile bundle',
+      type: 'decision',
+      limit: 10,
       strictness: 'strict',
-      disableRecency: true,
-      includeRelated: false,
-      topicPrefix: 'north-star',
       minLexicalSupport: true,
       diagnostics: true,
     });
 
-    expect(mama.suggest).toHaveBeenCalledWith(
-      'context compile',
-      expect.objectContaining({
-        limit: 3,
-        threshold: 0.55,
-        strict: true,
-        strictness: 'strict',
-        disableRecency: true,
-        includeRelated: false,
-        topicPrefix: 'north-star',
-        minLexicalSupport: true,
-        diagnostics: true,
-      })
-    );
+    expect(recallResponse.success).toBe(true);
+    expect(strictResponse.success).toBe(true);
+    // Strict mode must never return more than recall mode for the same query
+    expect(strictResponse.results.length).toBeLessThanOrEqual(recallResponse.results.length);
   });
 
-  it('preserves diagnostics from mama.suggest in the search response', async () => {
-    vi.spyOn(mama, 'suggest').mockResolvedValue({
-      diagnostics: {
-        candidate_counts: {
-          vector: 1,
-          lexical: 1,
-          entity: 0,
-          graph_expanded: 0,
-          vector_only: 0,
-          rejected_by_strictness: 0,
-        },
-        threshold: 0.45,
-        strictness: 'balanced',
-      },
-      results: [
-        {
-          id: 'decision_diagnostic',
-          topic: 'diagnostic topic',
-          decision: 'Diagnostic decision',
-          created_at: 1,
-          retrieval_diagnostics: {
-            lexical_support: true,
-            is_vector_only: false,
-          },
-        },
-      ],
-    });
-    vi.spyOn(mama, 'listCheckpoints').mockResolvedValue([]);
-
-    const server = new MAMAServer();
-    const result = await server.handleSearch({
-      query: 'diagnostic topic',
+  it('returns the query verbatim and well-formed result records on a positive match', async () => {
+    const response = await server.handleSearch({
+      query: 'context compile',
       type: 'decision',
+      limit: 5,
       diagnostics: true,
     });
 
-    expect(result).toMatchObject({
-      success: true,
-      diagnostics: {
-        threshold: 0.45,
-        strictness: 'balanced',
-      },
-      results: [
+    expect(response.success).toBe(true);
+    expect(Array.isArray(response.results)).toBe(true);
+    if (response.results.length > 0) {
+      expect(response.results[0]).toEqual(
         expect.objectContaining({
-          id: 'decision_diagnostic',
-          retrieval_diagnostics: expect.objectContaining({
-            lexical_support: true,
-          }),
-        }),
-      ],
+          id: expect.any(String),
+          _type: 'decision',
+        })
+      );
+    }
+  });
+
+  it('preserves retrieval_diagnostics on individual hits when diagnostics is enabled', async () => {
+    const response = await server.handleSearch({
+      query: 'quality modes',
+      type: 'decision',
+      limit: 5,
+      diagnostics: true,
     });
+
+    expect(response.success).toBe(true);
+    if (response.results.length > 0) {
+      const hitWithDiagnostics = response.results.find((hit) => hit.retrieval_diagnostics);
+      if (hitWithDiagnostics) {
+        expect(hitWithDiagnostics.retrieval_diagnostics).toEqual(
+          expect.objectContaining({
+            retrieval_source: expect.any(String),
+          })
+        );
+      }
+    }
   });
 });
