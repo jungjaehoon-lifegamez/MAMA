@@ -552,7 +552,7 @@ export class AgentProcessManager extends EventEmitter {
     const bmadBlock = includeBmadBlock ? await this.buildBmadBlock() : '';
     const bmadMs = includeBmadBlock ? Date.now() - bmadStart : 0;
 
-    const skillsPrompt = this.buildSkillsPrompt();
+    const skillsPrompt = this.buildSkillsPrompt(agentId, agentConfig);
     const agentBackend = this.getAgentBackend(agentConfig, agentId);
     const backendAgentsMd = loadBackendAgentsMd(agentBackend);
 
@@ -590,10 +590,16 @@ ${skillsPrompt}## Guidelines
     const tier = agentConfig.tier ?? 1;
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
-      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3);
+      const allowedTools = agentConfig.tool_permissions?.allowed;
+      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3, allowedTools);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
       const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
-      return getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```\n';
+      return (
+        getCodeActInstructions(codeActBackend, allowedTools) +
+        '\n```typescript\n' +
+        typeDefs +
+        '\n```\n'
+      );
     }
 
     // Per-agent tool filtering via ToolRegistry (STORY-018)
@@ -672,7 +678,10 @@ ${skillsPrompt}## Guidelines
   /**
    * Build installed skills prompt section
    */
-  private buildSkillsPrompt(): string {
+  private buildSkillsPrompt(agentId: string, agentConfig: Omit<AgentPersonaConfig, 'id'>): string {
+    if (this.shouldOmitSkillCatalog(agentId, agentConfig)) {
+      return '';
+    }
     const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(), null);
     if (skillCatalog.length === 0) return '';
 
@@ -683,6 +692,23 @@ The full skill instructions will be provided automatically when matched.
 
 ${skillCatalog.join('\n')}
 `;
+  }
+
+  private shouldOmitSkillCatalog(
+    agentId: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): boolean {
+    const systemAutomationAgents = new Set([
+      'conductor',
+      'dashboard-agent',
+      'wiki-agent',
+      'memory',
+      'memory-agent',
+    ]);
+    if (systemAutomationAgents.has(agentId.toLowerCase())) {
+      return true;
+    }
+    return agentConfig.can_delegate === false && agentConfig.useCodeAct === true;
   }
 
   /**

@@ -32,8 +32,8 @@ function stringField(row: Record<string, unknown>, field: string): string {
 
 function numberField(row: Record<string, unknown>, field: string): number {
   const value = row[field];
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`Invalid context packet field ${field}: expected finite number`);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid context packet field ${field}: expected non-negative finite number`);
   }
   return Math.floor(value);
 }
@@ -78,19 +78,80 @@ function modelRunStatus(adapter: ContextPacketAdapter, modelRunId: string): stri
   return typeof row?.status === 'string' ? row.status : null;
 }
 
-function modelRunParentModelRunId(
+type ModelRunLineageNode = {
+  model_run_id: string;
+  parent_model_run_id: string | null;
+  envelope_hash: string | null;
+};
+
+function modelRunLineageNode(
   adapter: ContextPacketAdapter,
   modelRunId: string
-): string | null {
+): ModelRunLineageNode | null {
   if (!modelRunsTableExists(adapter)) {
     return null;
   }
   const row = adapter
-    .prepare('SELECT parent_model_run_id FROM model_runs WHERE model_run_id = ?')
-    .get(modelRunId) as { parent_model_run_id?: unknown } | undefined;
-  return typeof row?.parent_model_run_id === 'string' && row.parent_model_run_id.length > 0
-    ? row.parent_model_run_id
-    : null;
+    .prepare(
+      `
+        SELECT model_run_id, parent_model_run_id, envelope_hash
+        FROM model_runs
+        WHERE model_run_id = ?
+      `
+    )
+    .get(modelRunId) as
+    | { model_run_id?: unknown; parent_model_run_id?: unknown; envelope_hash?: unknown }
+    | undefined;
+  if (typeof row?.model_run_id !== 'string') {
+    return null;
+  }
+  return {
+    model_run_id: row.model_run_id,
+    parent_model_run_id:
+      typeof row.parent_model_run_id === 'string' && row.parent_model_run_id.length > 0
+        ? row.parent_model_run_id
+        : null,
+    envelope_hash:
+      typeof row.envelope_hash === 'string' && row.envelope_hash.length > 0
+        ? row.envelope_hash
+        : null,
+  };
+}
+
+function modelRunLineage(adapter: ContextPacketAdapter, modelRunId: string): ModelRunLineageNode[] {
+  const lineage: ModelRunLineageNode[] = [];
+  const seen = new Set<string>();
+  let currentId: string | null = modelRunId;
+  while (currentId && !seen.has(currentId) && lineage.length < 1_000) {
+    seen.add(currentId);
+    const node = modelRunLineageNode(adapter, currentId);
+    if (!node) {
+      break;
+    }
+    lineage.push(node);
+    currentId = node.parent_model_run_id;
+  }
+  return lineage;
+}
+
+function sharesTrustedModelRunLineage(
+  adapter: ContextPacketAdapter,
+  packet: ContextPacketRecord,
+  callerModelRunId: string
+): boolean {
+  const packetLineage = modelRunLineage(adapter, packet.model_run_id);
+  const callerLineage = modelRunLineage(adapter, callerModelRunId);
+  if (packetLineage.length === 0 || callerLineage.length === 0) {
+    return false;
+  }
+  if (packetLineage.some((node) => node.envelope_hash !== packet.envelope_hash)) {
+    return false;
+  }
+  if (callerLineage.some((node) => node.envelope_hash !== packet.envelope_hash)) {
+    return false;
+  }
+  const callerAncestors = new Set(callerLineage.map((node) => node.model_run_id));
+  return packetLineage.some((node) => callerAncestors.has(node.model_run_id));
 }
 
 function assertTrustedModelRunStatus(
@@ -131,8 +192,7 @@ function assertTrustedModelRunLineage(
   if (!modelRunsTableExists(adapter)) {
     throw new Error(`Context packet model run lineage cannot be verified: ${packet.model_run_id}`);
   }
-  const parentModelRunId = modelRunParentModelRunId(adapter, packet.model_run_id);
-  if (parentModelRunId === callerModelRunId) {
+  if (sharesTrustedModelRunLineage(adapter, packet, callerModelRunId)) {
     return;
   }
   throw new Error(

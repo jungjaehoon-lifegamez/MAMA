@@ -262,7 +262,9 @@ export class PersistentClaudeProcess extends EventEmitter {
     );
 
     const args = this.buildArgs();
-    persistentLogger.info(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
+    persistentLogger.info(
+      `[PersistentCLI] Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`
+    );
 
     // Clean environment: Remove conflicting MAMA_* variables before merging
     const cleanEnv = { ...process.env };
@@ -903,6 +905,20 @@ export class PersistentClaudeProcess extends EventEmitter {
   getSessionId(): string {
     return this.options.sessionId;
   }
+}
+
+export function formatClaudeArgsForLog(args: string[]): string[] {
+  const redacted: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    redacted.push(arg);
+    if ((arg === '--system-prompt' || arg === '--append-system-prompt') && i + 1 < args.length) {
+      const value = args[i + 1] ?? '';
+      redacted.push(`[redacted ${value.length} chars]`);
+      i++;
+    }
+  }
+  return redacted;
 }
 
 /**

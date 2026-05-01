@@ -40,6 +40,15 @@ export async function handleSave(
     if (!d.topic || !d.decision || !d.reasoning) {
       return { success: false, message: 'Decision requires: topic, decision, reasoning' };
     }
+    if (isOperationalRunSummaryDecision(d)) {
+      return {
+        success: true,
+        skipped: true,
+        code: 'operational_memory_skipped',
+        message:
+          'Operational audit, dashboard, and wiki run summaries are kept in agent activity/notices, not saved as long-term decisions.',
+      };
+    }
     const payload: SaveDecisionPayload = {
       topic: d.topic,
       decision: d.decision,
@@ -81,6 +90,40 @@ export async function handleSave(
     success: false,
     message: `Invalid save type: ${(input as { type?: string }).type}. Must be 'decision' or 'checkpoint'`,
   };
+}
+
+function normalizeOperationalText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-');
+}
+
+function isOperationalRunSummaryDecision(input: SaveDecisionInput): boolean {
+  const topic = normalizeOperationalText(input.topic);
+  const decision = normalizeOperationalText(input.decision);
+  const reasoning = normalizeOperationalText(input.reasoning);
+
+  const operationalTopic =
+    /^dashboard-briefing(?:-|$|\d)/.test(topic) ||
+    /^wiki-compilation(?:-|$|\d)/.test(topic) ||
+    /^system-audit(?:-|$|\d)/.test(topic) ||
+    /^audit[-_]/.test(input.topic.toLowerCase()) ||
+    /^test-audit(?:-|$|\d)/.test(topic);
+
+  if (operationalTopic) {
+    return true;
+  }
+
+  return (
+    decision.startsWith('dashboard-briefing-(') ||
+    decision.startsWith('wiki-compilation-(') ||
+    decision.startsWith('audit-complete') ||
+    decision.startsWith('audit-completed') ||
+    decision.startsWith('system-audit-') ||
+    reasoning.includes('auto-saved-by-dashboard-agent-after-report-publish') ||
+    reasoning.includes('auto-saved-by-wiki-agent-after-wiki-publish')
+  );
 }
 
 export async function handleSearch(

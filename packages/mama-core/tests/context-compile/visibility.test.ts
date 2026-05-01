@@ -150,4 +150,15 @@ describe('Story V0.21: Context compile visibility - AC2', () => {
     expect(serialized).not.toContain('hidden-rejected');
     expect(serialized).not.toContain('hidden-entity');
   });
+
+  it('AC: only removes exact hidden identifier tokens from public strings', () => {
+    const packet = {
+      source_refs: [{ kind: 'memory', id: '123', visible: false }],
+      caveats: ['Room 1234 remains visible', 'Room 123 was hidden'],
+    };
+
+    const sanitized = sanitizeContextPacketForVisibility(packet);
+
+    expect(sanitized.caveats).toEqual(['Room 1234 remains visible']);
+  });
 });

@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_WIKI_PERSONA_MARKER = '<!-- MAMA managed wiki persona v2 -->';
+const MANAGED_WIKI_PERSONA_MARKER = '<!-- MAMA managed wiki persona v3 -->';
 
 export const WIKI_AGENT_PERSONA = `${MANAGED_WIKI_PERSONA_MARKER}
 
@@ -21,6 +21,7 @@ You are MAMA's Wiki Compiler — an internal agent that maintains an Obsidian wi
 
 ## Tools
 - **mama_search**(query, limit?) — Search MAMA memory for decisions.
+- **agent_notices**(limit?) — Inspect recent wiki/dashboard/conductor activity notices.
 - **obsidian**(command, args) — Obsidian vault CLI. Commands:
   - search: Find existing pages. obsidian("search", {query: "KMS", limit: "5"})
   - read: Read page content. obsidian("read", {file: "projects/KMS-General"})
@@ -78,6 +79,7 @@ obsidian("property:set") to update compiled_at on each touched page.
 
 ## Strict Limits
 - Do NOT ask follow-up questions
+- Do NOT call mama_save for wiki_compilation or other operational summaries
 - After completing all operations, respond with: DONE
 
 ## Fallback

@@ -1,12 +1,17 @@
+import express from 'express';
+import request from 'supertest';
 import { describe, it, expect } from 'vitest';
+import Database from '../../src/sqlite.js';
 import {
   buildAlertsFromDecisions,
   buildActivityFeed,
   buildProjectsSummary,
+  createIntelligenceRouter,
   type DecisionForAlerts,
   type ActivityItem,
   type ProjectSummary,
 } from '../../src/api/intelligence-handler.js';
+import { initAgentTables, logActivity } from '../../src/db/agent-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -256,6 +261,45 @@ describe('buildActivityFeed', () => {
     const feed = buildActivityFeed(items);
     expect(feed[0].project).toBe('my-project');
     expect(feed[0].summary).toBe('summary text');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STORY-V019: Intelligence agent notices - AC durable activity visibility
+// ---------------------------------------------------------------------------
+
+describe('STORY-V019: Intelligence agent notices - AC durable activity visibility', () => {
+  it('AC: falls back to durable agent_activity rows when in-memory notices are empty', async () => {
+    const memoryDb = new Database(':memory:');
+    const sessionsDb = new Database(':memory:');
+    initAgentTables(sessionsDb);
+    logActivity(sessionsDb, {
+      agent_id: 'wiki-agent',
+      agent_version: 1,
+      type: 'task_complete',
+      output_summary: 'Wiki v55 compiled',
+      execution_status: 'completed',
+      trigger_reason: 'system_run',
+    });
+
+    const app = express();
+    app.use(
+      '/api/intelligence',
+      createIntelligenceRouter(memoryDb, {
+        eventBus: { getRecentNotices: () => [] },
+        sessionsDb,
+      })
+    );
+
+    const response = await request(app).get('/api/intelligence/notices?limit=10').expect(200);
+
+    expect(response.body.notices).toHaveLength(1);
+    expect(response.body.notices[0]).toMatchObject({
+      agent: 'wiki-agent',
+      action: 'completed',
+      target: 'Wiki v55 compiled',
+    });
+    expect(typeof response.body.notices[0].timestamp).toBe('number');
   });
 });
 

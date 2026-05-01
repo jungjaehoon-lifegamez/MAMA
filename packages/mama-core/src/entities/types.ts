@@ -25,7 +25,7 @@ export type EntityNodeStatus = (typeof ENTITY_NODE_STATUSES)[number];
 export const ENTITY_ALIAS_STATUSES = ['active', 'suppressed'] as const;
 export type EntityAliasStatus = (typeof ENTITY_ALIAS_STATUSES)[number];
 
-export const ENTITY_OBSERVATION_TYPES = ['generic', 'author', 'channel'] as const;
+export const ENTITY_OBSERVATION_TYPES = ['generic', 'author', 'channel', 'thread'] as const;
 export type EntityObservationType = (typeof ENTITY_OBSERVATION_TYPES)[number];
 
 export const ENTITY_CANDIDATE_KINDS = ['alias_to_entity', 'entity_to_entity', 'cluster'] as const;
@@ -99,6 +99,10 @@ export interface EntityObservation {
   source_connector: string;
   source_locator: string | null;
   source_raw_record_id: string;
+  workspace_context_key?: string | null;
+  channel_context_key?: string | null;
+  thread_context_key?: string | null;
+  actor_context_key?: string | null;
   created_at: number;
 }
 

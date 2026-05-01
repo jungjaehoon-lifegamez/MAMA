@@ -21,6 +21,7 @@ import {
   getActivitySummary,
   compareVersionMetrics,
   type AgentVersionRow,
+  type ActivitySummaryRow,
 } from '../db/agent-store.js';
 import {
   createManagedAgentRuntime,
@@ -69,6 +70,19 @@ function agentConfigToResponse(
     updated_at: latest?.created_at ?? null,
     archived_at: null,
   };
+}
+
+export function buildActivitySummaryAlerts(summary: ActivitySummaryRow[]): string[] {
+  const alerts: string[] = [];
+  for (const s of summary) {
+    if (s.consecutive_errors > 0 && s.error_rate > 30) {
+      alerts.push(`${s.agent_id}: error rate ${s.error_rate}%`);
+    }
+    if (s.consecutive_errors >= 3) {
+      alerts.push(`${s.agent_id}: ${s.consecutive_errors} consecutive errors`);
+    }
+  }
+  return alerts;
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -266,12 +280,7 @@ export function handleGetActivitySummary(
   since: string
 ): void {
   const summary = getActivitySummary(db, since);
-  const alerts: string[] = [];
-  for (const s of summary) {
-    if (s.error_rate > 30) alerts.push(`${s.agent_id}: error rate ${s.error_rate}%`);
-    if (s.consecutive_errors >= 3)
-      alerts.push(`${s.agent_id}: ${s.consecutive_errors} consecutive errors`);
-  }
+  const alerts = buildActivitySummaryAlerts(summary);
   json(res, 200, { summary, alerts });
 }
 
