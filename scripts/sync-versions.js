@@ -84,7 +84,7 @@ function buildRules(versions) {
           suffix: true,
         },
         {
-          regex: new RegExp(`(\\| \\[mama\\][^|]+\\| )${SEMVER}(\\s*\\|)`, 'g'),
+          regex: new RegExp(`(\\| \\[mama(?: plugin)?\\][^|]+\\| )${SEMVER}(\\s*\\|)`, 'g'),
           version: versions['claude-code-plugin'],
           suffix: true,
         },
@@ -159,6 +159,13 @@ function buildRules(versions) {
         {
           regex: new RegExp(
             `(\\| \`packages/claude-code-plugin/package\\.json\`[^|]+\\|[^|]+\\| )${SEMVER}`,
+            'g'
+          ),
+          version: versions['claude-code-plugin'],
+        },
+        {
+          regex: new RegExp(
+            `(\\| \`packages/claude-code-plugin/\\.claude-plugin/plugin\\.json\`[^|]+\\|[^|]+\\| )${SEMVER}`,
             'g'
           ),
           version: versions['claude-code-plugin'],
