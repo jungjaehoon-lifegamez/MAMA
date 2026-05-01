@@ -92,13 +92,14 @@ Call tools via JSON block:
 \`\`\`tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 \`\`\`
+
 `;
 
 const toolList = ToolRegistry.generatePrompt();
 // generatePrompt() includes "# Gateway Tools" header — strip it to avoid duplication
 const toolListBody = toolList.replace(/^# Gateway Tools\n*/, '');
 
-const output = header + toolListBody + '\n' + STATIC_SECTIONS.trim() + '\n';
+const output = header + toolListBody.trimEnd() + '\n\n' + STATIC_SECTIONS.trim() + '\n';
 
 // Write to src (for dev hot-reload) and dist (for production)
 const srcPath = join(__dirname, '..', 'src', 'agent', 'gateway-tools.md');

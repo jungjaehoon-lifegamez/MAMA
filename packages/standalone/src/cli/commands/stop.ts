@@ -70,7 +70,7 @@ function splitCommand(command: string): string[] {
       hasContent = true;
       continue;
     }
-    if (ch === '\\' && !inSingle) {
+    if (ch === '\\' && !inSingle && !inDouble) {
       escaped = true;
       continue;
     }
@@ -167,8 +167,16 @@ export async function stopCommand(): Promise<void> {
   console.log('\n🛑 MAMA Standalone Shutdown\n');
 
   // Stop watchdog first to prevent auto-restart during shutdown
-  await stopWatchdog();
-  await killAllMamaWatchdogs();
+  try {
+    await stopWatchdog();
+    await killAllMamaWatchdogs();
+  } catch (error) {
+    logger.warn(
+      `Skipping watchdog cleanup because process listing failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 
   // Check if running
   const runningInfo = await isDaemonRunning();
@@ -176,8 +184,12 @@ export async function stopCommand(): Promise<void> {
     // PID file missing — but a daemon process may still be holding the port.
     // Attempt port-based cleanup before giving up.
     console.log('⚠️  PID file not found. Checking for orphaned processes...');
-    const cleaned = await killProcessesOnPorts([3847, 3849]);
-    const orphans = await killAllMamaDaemons();
+    const cleanupResult = await cleanupOrphanedProcessesSafely();
+    if (cleanupResult === null) {
+      console.error('Could not inspect running processes. No cleanup was attempted.\n');
+      process.exit(1);
+    }
+    const { cleaned, orphans } = cleanupResult;
     if (cleaned || orphans) {
       console.log('✓ Orphaned MAMA processes cleaned up.\n');
       process.exit(0);
@@ -187,15 +199,28 @@ export async function stopCommand(): Promise<void> {
   }
 
   const { pid } = runningInfo;
-  const daemonCommand = findStandaloneDaemonCommandForPid(pid);
+  let daemonCommand: string | undefined;
+  try {
+    daemonCommand = findStandaloneDaemonCommandForPid(pid);
+  } catch (error) {
+    console.error(
+      `Unable to verify PID ${pid}: ${error instanceof Error ? error.message : String(error)}`
+    );
+    console.error('Leaving PID file in place and skipping daemon cleanup.\n');
+    process.exit(1);
+  }
   if (!daemonCommand) {
     await deletePid();
     console.log(
       `⚠️  PID file pointed at PID ${pid}, but that process is not a verified MAMA daemon.`
     );
     console.log('PID file cleaned up. Checking for orphaned MAMA processes...');
-    const cleaned = await killProcessesOnPorts([3847, 3849]);
-    const orphans = await killAllMamaDaemons();
+    const cleanupResult = await cleanupOrphanedProcessesSafely();
+    if (cleanupResult === null) {
+      console.error('Could not inspect running processes. No daemon cleanup was attempted.\n');
+      process.exit(1);
+    }
+    const { cleaned, orphans } = cleanupResult;
     if (cleaned || orphans) {
       console.log('✓ Orphaned MAMA processes cleaned up.\n');
       process.exit(0);
@@ -259,6 +284,24 @@ export async function stopCommand(): Promise<void> {
     );
     console.error(`Please stop manually: kill ${pid}\n`);
     process.exit(1);
+  }
+}
+
+async function cleanupOrphanedProcessesSafely(): Promise<{
+  cleaned: boolean;
+  orphans: boolean;
+} | null> {
+  try {
+    const cleaned = await killProcessesOnPorts([3847, 3849]);
+    const orphans = await killAllMamaDaemons();
+    return { cleaned, orphans };
+  } catch (error) {
+    logger.warn(
+      `Skipping orphan cleanup because process listing failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return null;
   }
 }
 
@@ -479,12 +522,19 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
 async function stopWatchdog(): Promise<void> {
   const watchdogPidPath = `${homedir()}/.mama/watchdog.pid`;
   if (!existsSync(watchdogPidPath)) return;
+  let removePidFile = true;
 
   try {
     const content = readFileSync(watchdogPidPath, 'utf-8');
     const { pid } = JSON.parse(content);
     if (typeof pid === 'number' && isProcessRunning(pid)) {
-      const command = listProcesses().find((proc) => proc.pid === pid)?.command;
+      let command: string | undefined;
+      try {
+        command = listProcesses().find((proc) => proc.pid === pid)?.command;
+      } catch (error) {
+        removePidFile = false;
+        throw error;
+      }
       if (!command || !isStandaloneWatchdogCommand(command)) {
         logger.warn(`Skipping unverified watchdog PID ${pid}; removing stale watchdog pid file`);
       } else {
@@ -498,6 +548,10 @@ async function stopWatchdog(): Promise<void> {
     }
   } catch {
     // ignore
+  }
+
+  if (!removePidFile) {
+    return;
   }
 
   try {
@@ -571,11 +625,8 @@ export function listProcesses(): Array<{ pid: number; command: string }> {
       })
       .filter((p): p is { pid: number; command: string } => p !== null);
   } catch (err) {
-    logger.warn(
-      `Failed to list processes; continuing best-effort cleanup: ${
-        err instanceof Error ? err.message : String(err)
-      }`
+    throw new Error(
+      `Failed to list processes with ps: ${err instanceof Error ? err.message : String(err)}`
     );
-    return [];
   }
 }

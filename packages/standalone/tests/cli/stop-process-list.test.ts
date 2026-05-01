@@ -14,13 +14,14 @@ vi.mock('node:child_process', () => ({
   execSync: execSyncMock,
 }));
 
-describe('standalone stop process listing', () => {
+describe('STORY-STOP-PROCESS-LIST: standalone stop process listing', () => {
   afterEach(() => {
     execSyncMock.mockReset();
     vi.restoreAllMocks();
   });
 
-  it('uses a large buffer so long Claude prompts do not break mama stop', async () => {
+  it('AC: uses a large buffer so long Claude prompts do not break mama stop', async () => {
+    // AC: process listing preserves long command lines for daemon detection.
     execSyncMock.mockReturnValue(
       '123 /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon\n'
     );
@@ -44,17 +45,19 @@ describe('standalone stop process listing', () => {
     expect(options.maxBuffer).toBeGreaterThanOrEqual(64 * 1024 * 1024);
   });
 
-  it('returns an empty list instead of throwing when ps output cannot be read', async () => {
+  it('AC: throws when process listing cannot be read', async () => {
+    // AC: process listing failures propagate instead of masquerading as no processes.
     execSyncMock.mockImplementation(() => {
       throw new Error('spawnSync /bin/sh ENOBUFS');
     });
 
     const { listProcesses } = await import('../../src/cli/commands/stop.js');
 
-    expect(listProcesses()).toEqual([]);
+    expect(() => listProcesses()).toThrow(/Failed to list processes/);
   });
 
-  it('only kills verified MAMA-owned port listeners during orphan cleanup', async () => {
+  it('AC: only kills verified MAMA-owned port listeners during orphan cleanup', async () => {
+    // AC: port cleanup never signals unverified processes.
     // Use very large PIDs that are guaranteed not to map to real processes,
     // so the real `isProcessRunning(pid)` (process.kill(pid, 0)) returns
     // ESRCH/false and the helpers do not escalate to a SIGKILL on us.
@@ -90,7 +93,8 @@ describe('standalone stop process listing', () => {
     expect(killSpy).not.toHaveBeenCalledWith(NON_MAMA_PID, 'SIGTERM');
   });
 
-  it('does not verify a stale PID that has been reused by an unrelated process', async () => {
+  it('AC: does not verify a stale PID that has been reused by an unrelated process', async () => {
+    // AC: stale PID verification fails closed for unrelated commands.
     execSyncMock.mockReturnValue('123 /usr/bin/python -m http.server 3847\n');
 
     const { findStandaloneDaemonCommandForPid } = await import('../../src/cli/commands/stop.js');
@@ -98,7 +102,8 @@ describe('standalone stop process listing', () => {
     expect(findStandaloneDaemonCommandForPid(123)).toBeUndefined();
   });
 
-  it('verifies a PID only when the live command is a standalone daemon', async () => {
+  it('AC: verifies a PID when live command is standalone daemon', async () => {
+    // AC: live PID verification accepts only standalone daemon commands.
     execSyncMock.mockReturnValue(
       '123 /usr/bin/node /path/to/project/packages/standalone/dist/cli/index.js daemon\n'
     );

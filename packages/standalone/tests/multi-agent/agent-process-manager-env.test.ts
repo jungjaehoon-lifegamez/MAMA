@@ -260,6 +260,10 @@ describe('AgentProcessManager env vars by tier', () => {
         agentId: 'developer',
         process,
       });
+
+      const reusedProcess = await manager.getProcess('discord', 'channel-1', 'developer');
+      expect(reusedProcess).toBe(process);
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 

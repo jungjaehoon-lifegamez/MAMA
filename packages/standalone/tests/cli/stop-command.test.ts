@@ -23,6 +23,14 @@ describe('Story: standalone stop command detection', () => {
       ).toBe(true);
     });
 
+    it('preserves backslashes in double-quoted Windows package paths', () => {
+      expect(
+        isStandaloneDaemonCommand(
+          '/usr/bin/node "C:\\Users\\me\\node_modules\\@jungjaehoon\\mama-os\\dist\\cli\\index.js" daemon'
+        )
+      ).toBe(true);
+    });
+
     it('matches wrapper mama daemon command', () => {
       expect(isStandaloneDaemonCommand('mama daemon')).toBe(true);
     });

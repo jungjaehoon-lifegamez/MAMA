@@ -982,7 +982,7 @@ export class PersistentProcessPool {
   }
 
   private startCleanupTimer(): void {
-    if (this.cleanupTimer || this.cleanupIntervalMs === 0 || this.idleTimeoutMs === 0) {
+    if (this.cleanupTimer || this.cleanupIntervalMs === 0) {
       return;
     }
 

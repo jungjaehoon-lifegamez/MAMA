@@ -1247,12 +1247,10 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     ctx: ActiveGatewayExecutionContext | undefined
   ): GatewayToolInput {
-    // Both mama_search and mama_recall participate in the
-    // MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS bucket, so they must inherit
-    // envelope.scope.memory_scopes consistently when the caller omits scopes.
-    // Otherwise the enforcer sees no requested scopes for recall and the recall
-    // path can fall back to agent-context-derived scopes outside the envelope.
-    if ((toolName !== 'mama_search' && toolName !== 'mama_recall') || !ctx?.envelope) {
+    // Memory read tools must inherit envelope scopes consistently when the
+    // caller omits scopes. Otherwise recall can fall back to active-context
+    // scopes outside the envelope.
+    if (!MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS.has(toolName) || !ctx?.envelope) {
       return input;
     }
 

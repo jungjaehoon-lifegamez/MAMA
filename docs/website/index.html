@@ -46,6 +46,11 @@
       html {
         scroll-behavior: smooth;
       }
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+      }
       body {
         margin: 0;
         font-family: var(--font-body);
@@ -1305,10 +1310,11 @@ context.compile(task, scope, range,
           </p>
         </div>
         <p class="install-warning">
-          <strong>⚠ Run inside an isolated environment.</strong> The Claude / Codex CLI MAMA spawns
-          has the same filesystem and network access as the shell that started it. For shared or
-          production setups, run MAMA OS inside Docker, a dedicated VM, or a non-privileged user
-          account so its agents cannot reach files or services you don't intend to expose.
+          <strong>⚠ Run inside an isolated environment.</strong> A Claude / Codex CLI MAMA process
+          you spawn has the same filesystem and network access as the shell that started it. For
+          shared or production setups, run MAMA OS inside Docker, a dedicated VM, or a
+          non-privileged user account so its agents cannot reach files or services you don't intend
+          to expose.
         </p>
         <div class="install-grid">
           <div class="step">

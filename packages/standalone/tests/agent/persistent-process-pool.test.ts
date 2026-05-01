@@ -12,6 +12,21 @@ describe('PersistentProcessPool idle cleanup', () => {
     vi.restoreAllMocks();
   });
 
+  it('starts cleanup interval when idle timeout is disabled so pending tool waits can expire', () => {
+    vi.useFakeTimers();
+    const cleanupSpy = vi.spyOn(PersistentProcessPool.prototype, 'cleanupIdleProcesses');
+    const pool = new PersistentProcessPool({
+      idleTimeoutMs: 0,
+      cleanupIntervalMs: 100,
+      pendingToolUseTimeoutMs: 200,
+    });
+
+    vi.advanceTimersByTime(100);
+
+    expect(cleanupSpy).toHaveBeenCalled();
+    pool.stopAll();
+  });
+
   it('stops and removes ready processes after the idle timeout', async () => {
     const startedAt = 1_000;
     const pool = new PersistentProcessPool({

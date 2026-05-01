@@ -609,13 +609,22 @@ After failure → save a NEW decision with same topic to create evolution histor
         // mama.suggest() unchanged so callers see the real cause instead of
         // a synthetic empty success.
         if (suggestResult.success === false) {
-          return {
+          const hasOwn = Object.prototype.hasOwnProperty;
+          const forwarded = {
+            ...suggestResult,
             success: false,
             code: suggestResult.code || 'suggest_failed',
-            count: 0,
-            results: [],
-            message: suggestResult.error || suggestResult.message || 'Search pipeline failed',
           };
+          if (!hasOwn.call(forwarded, 'count')) {
+            forwarded.count = 0;
+          }
+          if (!hasOwn.call(forwarded, 'results')) {
+            forwarded.results = [];
+          }
+          if (!hasOwn.call(forwarded, 'message')) {
+            forwarded.message = suggestResult.error || 'Search pipeline failed';
+          }
+          return forwarded;
         }
         searchDiagnostics = suggestResult.diagnostics;
         decisions = Array.isArray(suggestResult.results) ? suggestResult.results : [];
@@ -689,6 +698,7 @@ After failure → save a NEW decision with same topic to create evolution histor
 
     return {
       success: true,
+      ...(query ? { query } : {}),
       count: limited.length,
       results: limited,
       ...(searchDiagnostics !== undefined ? { diagnostics: searchDiagnostics } : {}),
