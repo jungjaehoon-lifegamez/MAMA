@@ -193,6 +193,24 @@ describe('ConfigManager', () => {
 
       expect(multiAgentConfig.agents['os-agent']).toBeDefined();
       expect(multiAgentConfig.agents['os-agent']?.enabled).toBe(true);
+      expect(multiAgentConfig.agents['dashboard-agent']).toMatchObject({
+        tier: 2,
+        can_delegate: false,
+        enabled: true,
+        persona_file: '~/.mama/personas/dashboard.md',
+      });
+      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
+        'report_publish'
+      );
+      expect(multiAgentConfig.agents['wiki-agent']).toMatchObject({
+        tier: 2,
+        can_delegate: false,
+        enabled: true,
+        persona_file: '~/.mama/personas/wiki.md',
+      });
+      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain(
+        'wiki_publish'
+      );
     });
 
     it('should exclude legacy swarm agents from the default agent set', () => {
