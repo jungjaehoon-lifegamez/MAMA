@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.0] / mama-core [1.6.0] / mcp-server [1.14.0] / plugin [1.10.0] - 2026-05-01
+
 ### Added
 
 - **Reactive runtime envelopes** — Gateway and worker tool calls now carry signed runtime
