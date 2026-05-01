@@ -282,6 +282,24 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     expect(readMemoryCandidates).not.toHaveBeenCalled();
   });
 
+  it('rejects requested scopes when the boundary scopes are explicitly empty', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+        },
+        compilerDeps({
+          boundary: { scopes: [] },
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/scope/i);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
+  });
+
   it('defaults omitted source read fields to the active boundary', async () => {
     const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
     const readRawCandidates = vi.fn(() => EMPTY_RESULT);

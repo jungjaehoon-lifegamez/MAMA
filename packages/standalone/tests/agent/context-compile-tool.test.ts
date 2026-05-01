@@ -339,7 +339,7 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     );
   });
 
-  it('treats context_compile as an envelope-scoped read tool in the enforcer and Code-Act bridge', () => {
+  it('treats context_compile as envelope-scoped but not a Tier 3 read-only Code-Act tool', () => {
     const envelope = makeSignedEnvelope();
     const enforcer = new EnvelopeEnforcer();
 
@@ -357,8 +357,10 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     ).toThrow(/memory_scope_out_of_scope/);
 
     const bridge = new HostBridge({ execute: vi.fn() } as unknown as GatewayToolExecutor);
+    const tier2Names = bridge.getAvailableFunctions(2).map((fn) => fn.name);
     const tier3Names = bridge.getAvailableFunctions(3).map((fn) => fn.name);
-    expect(tier3Names).toContain('context_compile');
+    expect(tier2Names).toContain('context_compile');
+    expect(tier3Names).not.toContain('context_compile');
     expect(tier3Names).toContain('mama_search');
     expect(tier3Names).not.toContain('mama_save');
   });

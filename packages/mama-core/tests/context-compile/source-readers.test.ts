@@ -206,6 +206,27 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       });
     });
 
+    it('uses boundary scopes as defaults for direct exported memory reader calls', async () => {
+      const recallMemory = vi.fn(async () => recallBundle([memory()]));
+
+      await readMemoryCandidates(
+        input({
+          scopes: undefined,
+          connectors: undefined,
+          project_refs: undefined,
+          tenant_id: undefined,
+        }),
+        { recallMemory }
+      );
+
+      expect(recallMemory).toHaveBeenCalledWith(
+        'compile branch context',
+        expect.objectContaining({
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+        })
+      );
+    });
+
     it('filters by range and as_of, dropping timestamp-missing candidates into aggregates only', async () => {
       const hiddenId = 'mem-hidden-missing-time';
       const hiddenExcerpt = 'this hidden excerpt must not leak';
@@ -405,6 +426,42 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       });
     });
 
+    it('uses boundary connector, scope, project, and tenant defaults for direct raw reads', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-boundary-default',
+        channel: 'C-eng',
+        title: 'Boundary default raw event',
+        content: 'Direct reader calls should inherit the boundary.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          connectors: undefined,
+          scopes: undefined,
+          project_refs: undefined,
+          tenant_id: undefined,
+        })
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        expect.objectContaining({
+          kind: 'raw',
+          connector: 'slack',
+          source_id: 'm-boundary-default',
+        }),
+      ]);
+    });
+
     it('raw reader uses source_timestamp_ms for temporal filters when event_datetime is missing', () => {
       const adapter = createAdapter();
       upsertConnectorEventIndex(adapter, {
@@ -538,6 +595,42 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         { kind: 'case', id: 'case-a' },
       ]);
       expect(JSON.stringify(result)).not.toContain('edge-hidden');
+    });
+
+    it('uses boundary defaults for direct graph reader calls', () => {
+      const visibleEdge = {
+        edge_id: 'edge-visible',
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-a' },
+        object_ref: { kind: 'case', id: 'case-a' },
+        confidence: 0.8,
+        reason_text: 'Memory mentions the case.',
+        created_at: 1_100,
+      } as TwinEdgeRecord;
+      const listVisibleTwinEdgesForRefs = vi.fn(() => [visibleEdge]);
+
+      readGraphCandidates(
+        createAdapter(),
+        input({
+          connectors: undefined,
+          scopes: undefined,
+          project_refs: undefined,
+          tenant_id: undefined,
+        }),
+        [{ kind: 'memory', id: 'mem-a' }],
+        { listVisibleTwinEdgesForRefs }
+      );
+
+      expect(listVisibleTwinEdgesForRefs).toHaveBeenCalledWith(
+        expect.anything(),
+        [{ kind: 'memory', id: 'mem-a' }],
+        expect.objectContaining({
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'repo-a' }],
+          tenantId: 'default',
+        })
+      );
     });
 
     it('graph reader keeps raw edge lookups in event-index id space', () => {

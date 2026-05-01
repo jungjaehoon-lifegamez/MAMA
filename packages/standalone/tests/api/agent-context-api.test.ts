@@ -4,7 +4,12 @@ import express from 'express';
 
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
-import type { ContextPacket } from '../../../mama-core/src/index.js';
+import {
+  beginModelRunInAdapter,
+  getContextPacket,
+  getModelRunInAdapter,
+  type ContextPacket,
+} from '../../../mama-core/src/index.js';
 
 import Database from '../../src/sqlite.js';
 import {
@@ -62,6 +67,49 @@ function makePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
   };
 }
 
+function insertScopedDecision(input: {
+  id: string;
+  topic: string;
+  summary: string;
+  details: string;
+  scopeId?: string;
+}): void {
+  const adapter = getAdapter();
+  const scopeId = input.scopeId ?? '/workspace/project-a';
+  const memoryScopeId = `scope_project_${scopeId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  adapter
+    .prepare(
+      `
+        INSERT INTO decisions (
+          id, topic, decision, reasoning, confidence, created_at, updated_at,
+          kind, status, summary, event_datetime
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(
+      input.id,
+      input.topic,
+      input.summary,
+      input.details,
+      0.8,
+      1_200,
+      1_200,
+      'decision',
+      'active',
+      input.summary,
+      1_200
+    );
+  adapter
+    .prepare('INSERT OR IGNORE INTO memory_scopes (id, kind, external_id) VALUES (?, ?, ?)')
+    .run(memoryScopeId, 'project', scopeId);
+  adapter
+    .prepare(
+      'INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary) VALUES (?, ?, 1)'
+    )
+    .run(input.id, memoryScopeId);
+}
+
 describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
   const originalAuthToken = process.env.MAMA_AUTH_TOKEN;
   let testDbPath = '';
@@ -77,6 +125,9 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
     process.env.MAMA_AUTH_TOKEN = 'agent-context-token';
     getAdapter().prepare('DELETE FROM context_packets').run();
     getAdapter().prepare('DELETE FROM model_runs').run();
+    getAdapter().prepare('DELETE FROM memory_scope_bindings').run();
+    getAdapter().prepare('DELETE FROM memory_scopes').run();
+    getAdapter().prepare('DELETE FROM decisions').run();
     sessionsDb = new Database(':memory:');
     const harness = makeAuthorityHarness(sessionsDb);
     authority = harness.authority;
@@ -199,6 +250,7 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
       { task: 'compile API context', project_refs: 'repo-a' },
       { task: 'compile API context', seed_refs: { kind: 'memory', id: 'mem-api' } },
       { task: 'compile API context', range: { start_ms: '1000' } },
+      { task: 'compile API context', strictness: 'strict' },
       { task: 'compile API context', limit: 'abc' },
       { task: 'compile API context', max_tool_calls: '0' },
       { task: 'compile API context', max_ms: null },
@@ -286,6 +338,60 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
       expect(response.status).toBe(200);
       expect(response.body.packet.packet_id).toBe('ctxp_create_api_server');
       expect(service.compileAndPersistContext).toHaveBeenCalledTimes(1);
+    } finally {
+      scheduler.shutdown();
+    }
+  });
+
+  it('AC: createApiServer default service persists a packet and committed child model_run', async () => {
+    const adapter = getAdapter();
+    insertScopedDecision({
+      id: 'mem-api-real-path',
+      topic: 'real context compile API path',
+      summary: 'The real API path should persist a context packet.',
+      details: 'This verifies createApiServer default service construction and DB persistence.',
+    });
+    beginModelRunInAdapter(adapter, {
+      model_run_id: 'mr_api_parent',
+      agent_id: validEnvelope.agent_id,
+      instance_id: validEnvelope.instance_id,
+      envelope_hash: validEnvelope.envelope_hash,
+      input_snapshot_ref: 'agent-loop:api-test',
+      input_refs: { tool: 'agent.loop', test: true },
+    });
+    const scheduler = new CronScheduler();
+    const apiServer = createApiServer({
+      scheduler,
+      port: 0,
+      memoryAdapter: adapter,
+      envelopeAuthority: authority,
+    });
+
+    try {
+      const response = await authed(
+        request(apiServer.app)
+          .post('/api/agent/context/compile')
+          .set('x-mama-model-run-id', 'mr_api_parent')
+          .send({ task: 'real context compile API path', limit: 5, max_tool_calls: 1 })
+      );
+
+      expect(response.status).toBe(200);
+      const packetId = response.body.packet.packet_id as string;
+      const stored = getContextPacket(adapter, packetId);
+      expect(stored).toMatchObject({
+        packet_id: packetId,
+        envelope_hash: validEnvelope.envelope_hash,
+        agent_id: validEnvelope.agent_id,
+      });
+      expect(response.body.packet.selected_evidence).toEqual([
+        expect.objectContaining({
+          ref: { kind: 'memory', id: 'mem-api-real-path' },
+        }),
+      ]);
+      expect(getModelRunInAdapter(adapter, stored?.model_run_id ?? '')).toMatchObject({
+        status: 'committed',
+        parent_model_run_id: 'mr_api_parent',
+      });
     } finally {
       scheduler.shutdown();
     }

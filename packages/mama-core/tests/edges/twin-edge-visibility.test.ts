@@ -164,6 +164,40 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       expect(unscoped).toHaveLength(2);
     });
 
+    it('applies limits to the newest visible edges first', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      insertScopedMemory('mem-old', 'project', 'alpha');
+      insertScopedMemory('mem-new', 'project', 'alpha');
+      const oldEdge = insertTwinEdge(getAdapter(), {
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'memory', id: 'mem-old' },
+        source: 'code',
+        reason_text: 'old context',
+      });
+      const newEdge = insertTwinEdge(getAdapter(), {
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'memory', id: 'mem-new' },
+        source: 'code',
+        reason_text: 'new context',
+      });
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(1_000, oldEdge.edge_id);
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(2_000, newEdge.edge_id);
+
+      const limited = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        { scopes: [{ kind: 'project', id: 'alpha' }], limit: 1 }
+      );
+
+      expect(limited.map((edge) => edge.edge_id)).toEqual([newEdge.edge_id]);
+    });
+
     it('excludes raw endpoints outside requested connector, project, and tenant visibility', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
       const visibleRaw = insertScopedRaw('raw-visible', 'project', 'alpha', {
