@@ -368,6 +368,7 @@ export interface SaveDecisionInput {
   confidence?: number;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: ScopeRef[];
+  context_packet_id?: string;
   /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
   event_date?: string;
 }
@@ -1197,6 +1198,7 @@ export interface MemoryWriteProvenance {
   envelope_hash?: string;
   tool_name?: string;
   gateway_call_id?: string;
+  context_packet_id?: string;
   source_turn_id?: string;
   source_message_ref?: string;
   source_refs?: string[];

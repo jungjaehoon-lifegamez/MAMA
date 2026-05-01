@@ -78,6 +78,21 @@ function modelRunStatus(adapter: ContextPacketAdapter, modelRunId: string): stri
   return typeof row?.status === 'string' ? row.status : null;
 }
 
+function modelRunParentModelRunId(
+  adapter: ContextPacketAdapter,
+  modelRunId: string
+): string | null {
+  if (!modelRunsTableExists(adapter)) {
+    return null;
+  }
+  const row = adapter
+    .prepare('SELECT parent_model_run_id FROM model_runs WHERE model_run_id = ?')
+    .get(modelRunId) as { parent_model_run_id?: unknown } | undefined;
+  return typeof row?.parent_model_run_id === 'string' && row.parent_model_run_id.length > 0
+    ? row.parent_model_run_id
+    : null;
+}
+
 function assertTrustedModelRunStatus(
   adapter: ContextPacketAdapter,
   packet: ContextPacketRecord,
@@ -99,6 +114,29 @@ function assertTrustedModelRunStatus(
   }
   throw new Error(
     `Context packet model run must be committed before trusted use: ${packet.model_run_id} (${status})`
+  );
+}
+
+function assertTrustedModelRunLineage(
+  adapter: ContextPacketAdapter,
+  packet: ContextPacketRecord,
+  callerModelRunId: string | undefined
+): void {
+  if (!callerModelRunId) {
+    return;
+  }
+  if (packet.model_run_id === callerModelRunId) {
+    return;
+  }
+  if (!modelRunsTableExists(adapter)) {
+    throw new Error(`Context packet model run lineage cannot be verified: ${packet.model_run_id}`);
+  }
+  const parentModelRunId = modelRunParentModelRunId(adapter, packet.model_run_id);
+  if (parentModelRunId === callerModelRunId) {
+    return;
+  }
+  throw new Error(
+    `Context packet model run lineage mismatch for ${packet.packet_id}: caller ${callerModelRunId}, packet ${packet.model_run_id}`
   );
 }
 
@@ -194,6 +232,7 @@ export function getContextPacketForTrustedUse(
       `Context packet model run mismatch for ${input.packetId}: expected ${input.modelRunId}, got ${packet.model_run_id}`
     );
   }
+  assertTrustedModelRunLineage(adapter, packet, input.callerModelRunId);
   assertTrustedModelRunStatus(adapter, packet, input.includeFailed === true);
   return packet;
 }
