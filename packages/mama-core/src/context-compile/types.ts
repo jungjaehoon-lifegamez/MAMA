@@ -109,3 +109,31 @@ export interface ContextPacket {
     estimated_tokens: number;
   };
 }
+
+export interface ContextPacketRecord {
+  packet_id: string;
+  task: string;
+  packet_json: string;
+  packet: ContextPacket;
+  scope_json: string;
+  scopes: MemoryScopeRef[];
+  scope_hash: string;
+  envelope_hash: string;
+  model_run_id: string;
+  agent_id: string;
+  input_snapshot_ref: string;
+  source_refs_json: string;
+  source_refs: ContextRef[];
+  tenant_id: string;
+  project_id: string;
+  memory_scope_kind: MemoryScopeRef['kind'];
+  memory_scope_id: string;
+  created_at: number;
+}
+
+export interface TrustedContextPacketLookupInput {
+  packetId: string;
+  envelopeHash: string;
+  modelRunId?: string;
+  includeFailed?: boolean;
+}
