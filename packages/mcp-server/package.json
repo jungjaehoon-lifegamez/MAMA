@@ -25,7 +25,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jungjaehoon-lifegamez/MAMA.git",
+    "url": "git+https://github.com/jungjaehoon-lifegamez/MAMA.git",
     "directory": "packages/mcp-server"
   },
   "bugs": {
