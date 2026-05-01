@@ -1,4 +1,4 @@
-import { HostBridge, READ_ONLY_TOOLS } from './host-bridge.js';
+import { HostBridge, MEMORY_WRITE_TOOLS, READ_ONLY_TOOLS } from './host-bridge.js';
 
 /**
  * Generates TypeScript-style function declarations for LLM context.
@@ -11,6 +11,7 @@ export class TypeDefinitionGenerator {
     const registry = HostBridge.getToolRegistry();
     const filtered = registry.filter((meta) => {
       if (tier === 1) return true;
+      if (tier === 2) return READ_ONLY_TOOLS.has(meta.name) || MEMORY_WRITE_TOOLS.has(meta.name);
       return READ_ONLY_TOOLS.has(meta.name);
     });
 

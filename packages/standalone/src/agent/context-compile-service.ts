@@ -166,6 +166,21 @@ function validateRange(range: ContextCompileInput['range']): void {
   }
 }
 
+function validateStrictness(strictness: ContextCompileInput['strictness']): void {
+  if (
+    strictness !== undefined &&
+    strictness !== 'low' &&
+    strictness !== 'medium' &&
+    strictness !== 'high'
+  ) {
+    throw new ContextCompileServiceError(
+      400,
+      'context_compile_input_invalid',
+      'Invalid context_compile strictness.'
+    );
+  }
+}
+
 const NUMERIC_COMPILE_FIELDS = ['limit', 'max_tool_calls', 'max_ms', 'max_tokens'] as const;
 type NumericCompileField = (typeof NUMERIC_COMPILE_FIELDS)[number];
 
@@ -289,6 +304,7 @@ function coerceCompileInput(
 
   const task = requiredTask(request.input);
   validateRange(request.input.range);
+  validateStrictness(request.input.strictness);
   const numericOptions = normalizeNumericCompileOptions(request.input);
   return {
     ...request.input,

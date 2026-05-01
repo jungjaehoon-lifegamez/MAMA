@@ -235,6 +235,33 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
   });
 
+  it('AC: rejects unknown strictness values before compiling', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(async () => makePacket());
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      childModelRunId: () => 'mr_context_invalid_strictness',
+      packetId: () => 'ctxp_invalid_strictness',
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          strictness: 'strict' as unknown as ContextCompileInput['strictness'],
+        },
+      })
+    ).rejects.toMatchObject({
+      code: 'context_compile_input_invalid',
+    });
+    expect(compileContext).not.toHaveBeenCalled();
+    expect(getModelRunInAdapter(adapter, 'mr_context_invalid_strictness')).toBeNull();
+  });
+
   it('AC: keeps the envelope as the upper-bound boundary when explicit empty filters narrow reads', async () => {
     const adapter = getAdapter();
     const envelope = makeSignedEnvelope();

@@ -64,6 +64,15 @@ describe('Story V0.21: Context compile visibility - AC2', () => {
     ).toThrow(/connector/i);
   });
 
+  it('AC: treats an explicit empty scope boundary as deny-all', () => {
+    expect(() =>
+      assertContextBoundaryAllowsInput({
+        boundary: { scopes: [] },
+        requestedScopes: [{ kind: 'project', id: 'alpha' }],
+      })
+    ).toThrow(/scope/i);
+  });
+
   it('AC: rejects requested project refs and tenant outside the envelope boundary', () => {
     const boundary = {
       scopes: [{ kind: 'project' as const, id: 'alpha' }],
