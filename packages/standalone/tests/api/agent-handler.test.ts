@@ -13,6 +13,7 @@ import {
   handleCreateAgent,
   handleUpdateAgent,
   handleArchiveAgent,
+  buildActivitySummaryAlerts,
   handleListVersions,
   handleCompareVersions,
   handleGetAgentMetrics,
@@ -65,6 +66,62 @@ describe('agent-handler', () => {
       handleGetAgents(res, config, db);
       const body = JSON.parse(res._body);
       expect(body.agents[0].version).toBe(0);
+    });
+  });
+
+  describe('buildActivitySummaryAlerts', () => {
+    it('does not alert on historical error rate after the latest terminal activity recovered', () => {
+      const alerts = buildActivitySummaryAlerts([
+        {
+          agent_id: 'conductor',
+          total: 92,
+          completed: 16,
+          errors: 76,
+          error_rate: 82.61,
+          consecutive_errors: 0,
+          last_activity_type: 'audit_complete',
+          last_activity_at: '2026-05-01 15:16:36',
+          avg_duration_ms: 55810,
+        },
+      ]);
+
+      expect(alerts).toEqual([]);
+    });
+
+    it('alerts when the latest terminal activity is failed and the error rate is high', () => {
+      const alerts = buildActivitySummaryAlerts([
+        {
+          agent_id: 'conductor',
+          total: 10,
+          completed: 4,
+          errors: 6,
+          error_rate: 60,
+          consecutive_errors: 1,
+          last_activity_type: 'audit_failed',
+          last_activity_at: '2026-05-01 15:16:36',
+          avg_duration_ms: 1000,
+        },
+      ]);
+
+      expect(alerts).toEqual(['conductor: error rate 60%']);
+    });
+
+    it('alerts on consecutive errors even when aggregate error rate is low', () => {
+      const alerts = buildActivitySummaryAlerts([
+        {
+          agent_id: 'wiki-agent',
+          total: 20,
+          completed: 17,
+          errors: 3,
+          error_rate: 15,
+          consecutive_errors: 3,
+          last_activity_type: 'task_error',
+          last_activity_at: '2026-05-01 15:16:36',
+          avg_duration_ms: 1000,
+        },
+      ]);
+
+      expect(alerts).toEqual(['wiki-agent: 3 consecutive errors']);
     });
   });
 

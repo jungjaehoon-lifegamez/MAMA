@@ -10,6 +10,7 @@ import {
   failModelRunInAdapter,
   getModelRunInAdapter,
   insertContextPacket,
+  normalizeContextRefs,
   sanitizeContextPacketForVisibility,
   type ContextBoundary,
   type ContextCompileInput,
@@ -95,6 +96,105 @@ function trimOptional(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function contextCompileInvalid(message: string): ContextCompileServiceError {
+  return new ContextCompileServiceError(400, 'context_compile_input_invalid', message);
+}
+
+function normalizeCompileScopes(
+  scopes: ContextCompileInput['scopes']
+): ContextCompileInput['scopes'] {
+  if (scopes === undefined) {
+    return undefined;
+  }
+  try {
+    return canonicalizeContextScopes(scopes).scopes;
+  } catch (error) {
+    throw contextCompileInvalid(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function normalizeCompileStringList(
+  values: string[] | undefined,
+  field: string
+): string[] | undefined {
+  if (values === undefined) {
+    return undefined;
+  }
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw contextCompileInvalid(`${field} must not contain empty values.`);
+    }
+    if (!seen.has(trimmed)) {
+      seen.add(trimmed);
+      normalized.push(trimmed);
+    }
+  }
+  return normalized;
+}
+
+function normalizeCompileProjectRefs(
+  projectRefs: ContextCompileInput['project_refs']
+): ContextCompileInput['project_refs'] {
+  if (projectRefs === undefined) {
+    return undefined;
+  }
+  const normalized: NonNullable<ContextCompileInput['project_refs']> = [];
+  const seen = new Set<string>();
+  for (const projectRef of projectRefs) {
+    if (projectRef.kind !== 'project') {
+      throw contextCompileInvalid('project_refs must contain project refs.');
+    }
+    const id = projectRef.id.trim();
+    if (id.length === 0) {
+      throw contextCompileInvalid('project_refs must not contain empty ids.');
+    }
+    const key = `${projectRef.kind}:${id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      normalized.push({ kind: projectRef.kind, id });
+    }
+  }
+  return normalized;
+}
+
+function normalizeCompileSeedRefs(
+  seedRefs: ContextCompileInput['seed_refs']
+): ContextCompileInput['seed_refs'] {
+  try {
+    return normalizeContextRefs(seedRefs);
+  } catch (error) {
+    throw contextCompileInvalid(error instanceof Error ? error.message : String(error));
+  }
+}
+
+function normalizeCompileTenantId(
+  tenantId: ContextCompileInput['tenant_id']
+): ContextCompileInput['tenant_id'] {
+  if (tenantId === undefined || tenantId === null) {
+    return tenantId;
+  }
+  const trimmed = tenantId.trim();
+  if (trimmed.length === 0) {
+    throw contextCompileInvalid('tenant_id must not be empty.');
+  }
+  return trimmed;
+}
+
+function normalizeCompileFilters(
+  input: ContextCompileInput
+): Pick<ContextCompileInput, 'scopes' | 'connectors' | 'project_refs' | 'seed_refs' | 'tenant_id'> {
+  return {
+    scopes: normalizeCompileScopes(input.scopes),
+    connectors: normalizeCompileStringList(input.connectors, 'connectors'),
+    project_refs: normalizeCompileProjectRefs(input.project_refs),
+    seed_refs: normalizeCompileSeedRefs(input.seed_refs),
+    tenant_id: normalizeCompileTenantId(input.tenant_id),
+  };
 }
 
 function requiredTask(input: ContextCompileInput): string {
@@ -298,12 +398,25 @@ function coerceCompileInput(
   request: CompileAndPersistContextRequest,
   boundary: ContextBoundary
 ): ContextCompileInput {
+  const requestFilters = normalizeCompileFilters(request.input);
+  const normalizedScopes = normalizeCompileScopes(requestFilters.scopes ?? boundary.scopes);
+  const normalizedConnectors = normalizeCompileStringList(
+    requestFilters.connectors ?? boundary.connectors,
+    'connectors'
+  );
+  const normalizedProjectRefs = normalizeCompileProjectRefs(
+    requestFilters.project_refs ?? boundary.project_refs
+  );
+  const normalizedTenantId = requestFilters.tenant_id ?? boundary.tenant_id ?? 'default';
+  const normalizedSeedRefs = requestFilters.seed_refs ?? [];
   try {
     assertContextBoundaryAllowsInput({
       boundary,
-      requestedScopes: request.input.scopes,
-      requestedConnectors: request.input.connectors,
-      seedRefs: request.input.seed_refs,
+      requestedScopes: normalizedScopes,
+      requestedConnectors: normalizedConnectors,
+      requestedProjectRefs: normalizedProjectRefs,
+      requestedTenantId: normalizedTenantId,
+      seedRefs: normalizedSeedRefs,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -318,10 +431,11 @@ function coerceCompileInput(
     ...request.input,
     ...numericOptions,
     task,
-    scopes: request.input.scopes ?? boundary.scopes,
-    connectors: request.input.connectors ?? boundary.connectors,
-    project_refs: request.input.project_refs ?? boundary.project_refs,
-    tenant_id: request.input.tenant_id ?? boundary.tenant_id ?? 'default',
+    scopes: normalizedScopes,
+    connectors: normalizedConnectors,
+    project_refs: normalizedProjectRefs,
+    seed_refs: normalizedSeedRefs,
+    tenant_id: normalizedTenantId,
     as_of: clampAsOfToBoundary(request.input.as_of, boundary.as_of),
   };
 }
@@ -342,7 +456,7 @@ function buildPacketRecord(input: {
   modelRunId: string;
   createdAt: number;
   tenantId: string;
-  projectId: string;
+  projectId?: string | null;
   inputSnapshotRef: string;
 }): ContextPacketRecord {
   const canonicalScopes = canonicalizeContextScopes(input.packet.scopes);
@@ -364,7 +478,7 @@ function buildPacketRecord(input: {
     source_refs_json: sourceRefsJson,
     source_refs: input.packet.source_refs,
     tenant_id: input.tenantId,
-    project_id: input.projectId,
+    project_id: input.projectId ?? '',
     memory_scope_kind: primaryScope.kind,
     memory_scope_id: primaryScope.id,
     created_at: input.createdAt,
@@ -410,17 +524,18 @@ export function createContextCompileService(
       }
 
       const envelopeVisibility = deriveWorkerEnvelopeVisibility(request.envelope, {});
+      const requestFilters = normalizeCompileFilters(request.input);
       deriveWorkerEnvelopeVisibility(request.envelope, {
-        scopes: request.input.scopes,
-        connectors: request.input.connectors,
+        scopes: requestFilters.scopes,
+        connectors: requestFilters.connectors,
       });
-      const requestedProjectRefs = request.input.project_refs ?? envelopeVisibility.projectRefs;
+      const requestedProjectRefs = requestFilters.project_refs ?? envelopeVisibility.projectRefs;
       validateProjectRefs({
         requested: requestedProjectRefs,
         allowed: envelopeVisibility.projectRefs,
       });
       validateTenant({
-        requested: request.input.tenant_id ?? null,
+        requested: requestFilters.tenant_id ?? null,
         allowed: envelopeVisibility.tenantId,
       });
 
@@ -474,8 +589,7 @@ export function createContextCompileService(
           packetWithServiceIdentity(compiled, packetId)
         );
         const projectId =
-          requestedProjectRefs.find((project) => project.kind === 'project')?.id ??
-          derivePrimaryContextScope(packet.scopes).id;
+          requestedProjectRefs.find((project) => project.kind === 'project')?.id ?? null;
         const record = insertContextPacket(
           adapter,
           buildPacketRecord({

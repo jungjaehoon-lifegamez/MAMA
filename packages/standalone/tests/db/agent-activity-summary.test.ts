@@ -141,6 +141,50 @@ describe('STORY-V019 - Agent activity summary', () => {
       expect(a1.consecutive_errors).toBe(2);
     });
 
+    it('ignores gateway trace rows when selecting the latest activity status', () => {
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'task_complete',
+        duration_ms: 1000,
+      });
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'gateway_tool_call',
+        execution_status: 'failed',
+        error_message: 'tool trace failure',
+      });
+
+      const summary = getActivitySummary(db, '2000-01-01');
+      const a1 = summary.find((s) => s.agent_id === 'a1')!;
+      expect(a1.last_activity_type).toBe('task_complete');
+      expect(a1.consecutive_errors).toBe(0);
+    });
+
+    it('ignores user-stop errors from daemon restarts in summary health', () => {
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'task_complete',
+        duration_ms: 1000,
+      });
+      logActivity(db, {
+        agent_id: 'a1',
+        agent_version: 1,
+        type: 'audit_failed',
+        execution_status: 'failed',
+        error_message: 'CLI error: Process stopped by user',
+      });
+
+      const summary = getActivitySummary(db, '2000-01-01');
+      const a1 = summary.find((s) => s.agent_id === 'a1')!;
+      expect(a1.total).toBe(1);
+      expect(a1.errors).toBe(0);
+      expect(a1.consecutive_errors).toBe(0);
+      expect(a1.last_activity_type).toBe('task_complete');
+    });
+
     it('ignores non-terminal task_start rows when computing consecutive errors', () => {
       logActivity(db, { agent_id: 'a1', agent_version: 1, type: 'task_start' });
       logActivity(db, {

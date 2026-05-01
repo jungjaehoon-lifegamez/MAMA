@@ -1,6 +1,10 @@
 import express, { type Request, type Response, type Router } from 'express';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
-import { normalizeContextRefs, type ContextCompileInput } from '@jungjaehoon/mama-core';
+import {
+  MEMORY_SCOPE_KINDS,
+  normalizeContextRefs,
+  type ContextCompileInput,
+} from '@jungjaehoon/mama-core';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
 import {
@@ -18,6 +22,7 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 
 const contextApiLogger = new DebugLogger('AgentContextAPI');
+const MEMORY_SCOPE_KIND_SET = new Set<string>(MEMORY_SCOPE_KINDS);
 
 export interface AgentContextRouterOptions {
   memoryAdapter: ContextCompileServiceAdapter;
@@ -109,7 +114,7 @@ function validateScopeArrayField(input: Record<string, unknown>): void {
     if (!isRecord(scope) || typeof scope.kind !== 'string' || typeof scope.id !== 'string') {
       throwInvalidInput('scopes must contain { kind, id } objects.');
     }
-    if (!['global', 'user', 'channel', 'project'].includes(scope.kind)) {
+    if (!MEMORY_SCOPE_KIND_SET.has(scope.kind)) {
       throwInvalidInput(`Invalid scope kind: ${scope.kind}`);
     }
   }

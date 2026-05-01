@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import type { DatabaseAdapter } from '../db-manager.js';
 import { assertTwinRefsVisible } from '../edges/ref-validation.js';
 import type { ContextBoundary, ContextCompileInput, ContextPacket, ContextRef } from './types.js';
-import { toTwinRef } from './ref.js';
+import { serializeContextRefForProvenance, toTwinRef } from './ref.js';
 import { normalizeSeedRefs } from './visibility.js';
 import { canonicalizeContextScopes, assertContextBoundaryAllowsInput } from './visibility.js';
 import { applyContextBoundaryReadDefaults } from './boundary-defaults.js';
@@ -94,11 +94,15 @@ function parseTimeMs(value: string | number | null | undefined, field: string): 
     return Math.floor(value);
   }
   if (typeof value === 'string') {
-    const numeric = Number(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error(`Invalid context compile ${field}: ${String(value)}`);
+    }
+    const numeric = Number(trimmed);
     if (Number.isFinite(numeric)) {
       return Math.floor(numeric);
     }
-    const parsed = Date.parse(value);
+    const parsed = Date.parse(trimmed);
     if (Number.isFinite(parsed)) {
       return parsed;
     }
@@ -242,7 +246,7 @@ function uniqueRefs(refs: readonly ContextRef[]): ContextRef[] {
   const seen = new Set<string>();
   const unique: ContextRef[] = [];
   for (const ref of refs) {
-    const key = JSON.stringify(ref);
+    const key = serializeContextRefForProvenance(ref);
     if (seen.has(key)) {
       continue;
     }
@@ -268,6 +272,7 @@ export async function compileContext(
   const boundary = deps.boundary;
   const seedRefs = normalizeSeedRefs(input.seed_refs);
   const effectiveInput = applyContextBoundaryReadDefaults(input, boundary);
+  parseTimeMs(effectiveInput.as_of, 'as_of');
   if (boundary) {
     assertContextBoundaryAllowsInput({
       boundary,

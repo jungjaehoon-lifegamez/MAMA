@@ -623,6 +623,7 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         tool_permissions: {
           allowed: [
             'mama_search',
+            'agent_notices',
             'case_list',
             'case_assemble',
             'obsidian',

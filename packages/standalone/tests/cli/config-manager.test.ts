@@ -211,6 +211,9 @@ describe('ConfigManager', () => {
       expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain(
         'wiki_publish'
       );
+      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain(
+        'agent_notices'
+      );
     });
 
     it('should exclude legacy swarm agents from the default agent set', () => {

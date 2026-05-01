@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { getAdapter } from '../../src/db-manager.js';
-import { upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
+import { ftsSearchWikiPages, upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
 
 function insertPage(
   overrides: Partial<{
@@ -127,6 +127,11 @@ describe('case-first substrate — wiki_page_search_index schema', () => {
       .all() as Array<{ page_id: string }>;
     const ids = rows.map((r) => r.page_id);
     expect(ids).toContain('page-fts-1');
+  });
+
+  it('FTS helper returns no hits for punctuation-only queries', () => {
+    const adapter = getAdapter();
+    expect(ftsSearchWikiPages(adapter, ':', 5)).toEqual([]);
   });
 
   it('FTS reflects UPDATE: old keyword no longer matches, new keyword matches', () => {

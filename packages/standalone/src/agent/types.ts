@@ -782,6 +782,8 @@ export interface SaveResult {
   id?: string;
   type?: 'decision' | 'checkpoint';
   message?: string;
+  code?: string;
+  skipped?: boolean;
   similar_decisions?: Array<{
     id: string;
     topic: string;

@@ -328,7 +328,6 @@ export class AgentLoop {
   private readonly agent: IModelRunner;
   private readonly persistentCLI: PersistentCLIAdapter | null = null;
   private readonly mcpExecutor: GatewayToolExecutor;
-  private systemPromptOverride?: string;
   private readonly maxTurns: number;
   private readonly model: string;
   private readonly onTurn?: (turn: TurnInfo) => void;
@@ -482,10 +481,14 @@ export class AgentLoop {
           options.agentContext?.tier === 3
             ? options.agentContext.tier
             : 1;
-        const typeDefs = TypeDefinitionGenerator.generate(tierForTypeDefs);
+        const allowedGatewayTools = options.agentContext?.role.allowedTools;
+        const typeDefs = TypeDefinitionGenerator.generate(tierForTypeDefs, allowedGatewayTools);
         const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
         const codeActPrompt =
-          getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
+          getCodeActInstructions(codeActBackend, allowedGatewayTools) +
+          '\n```typescript\n' +
+          typeDefs +
+          '\n```';
         promptLayers.push({ name: 'codeAct', content: codeActPrompt, priority: 2 });
       } else {
         const gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
@@ -567,7 +570,6 @@ export class AgentLoop {
     if (this.disallowedTools?.length) {
       this.mcpExecutor.setDisallowedGatewayTools(this.disallowedTools);
     }
-    this.systemPromptOverride = options.systemPrompt;
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.model = options.model!;
     this.onTurn = options.onTurn;
@@ -620,10 +622,6 @@ export class AgentLoop {
     } else {
       this.stopContinuationHandler = null;
     }
-
-    if (!this.systemPromptOverride) {
-      loadComposedSystemPrompt(true);
-    }
   }
 
   setContextCompileService(service: GatewayToolExecutorOptions['contextCompileService']): void {
@@ -661,7 +659,9 @@ export class AgentLoop {
    * Set system prompt override (for per-message context injection)
    */
   setSystemPrompt(prompt: string | undefined): void {
-    this.systemPromptOverride = prompt;
+    if (prompt !== undefined) {
+      this.agent.setSystemPrompt(prompt);
+    }
   }
 
   /**
@@ -963,10 +963,17 @@ export class AgentLoop {
         const isResumingSession = options?.resumeSession === true;
         if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
           if (this.useCodeAct) {
-            const typeDefs = TypeDefinitionGenerator.generate(this.currentTier);
+            const allowedGatewayTools = options.agentContext?.role.allowedTools;
+            const typeDefs = TypeDefinitionGenerator.generate(
+              this.currentTier,
+              allowedGatewayTools
+            );
             const codeActBackend = this.backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
             gatewayToolsPrompt =
-              getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```';
+              getCodeActInstructions(codeActBackend, allowedGatewayTools) +
+              '\n```typescript\n' +
+              typeDefs +
+              '\n```';
           } else {
             gatewayToolsPrompt = getGatewayToolsPrompt(this.disallowedTools);
           }

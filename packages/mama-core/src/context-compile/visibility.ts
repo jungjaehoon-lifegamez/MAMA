@@ -186,9 +186,31 @@ function collectHiddenIdentifiers(value: unknown, hidden: Set<string>): void {
   }
 }
 
+function isIdentifierBoundary(character: string | undefined): boolean {
+  return character === undefined || !/[A-Za-z0-9_]/.test(character);
+}
+
+function containsHiddenIdentifier(value: string, identifier: string): boolean {
+  if (identifier.length === 0) {
+    return false;
+  }
+  let index = value.indexOf(identifier);
+  while (index !== -1) {
+    const before = value[index - 1];
+    const after = value[index + identifier.length];
+    if (isIdentifierBoundary(before) && isIdentifierBoundary(after)) {
+      return true;
+    }
+    index = value.indexOf(identifier, index + 1);
+  }
+  return false;
+}
+
 function sanitizeValue(value: unknown, hidden: Set<string>): unknown {
   if (typeof value === 'string') {
-    return [...hidden].some((identifier) => value.includes(identifier)) ? undefined : value;
+    return [...hidden].some((identifier) => containsHiddenIdentifier(value, identifier))
+      ? undefined
+      : value;
   }
   if (Array.isArray(value)) {
     return value

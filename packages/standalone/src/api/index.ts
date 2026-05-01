@@ -286,6 +286,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     const intelligenceRouter = createIntelligenceRouter(intelligenceDb, {
       reportStore,
       eventBus,
+      sessionsDb: db,
     });
     app.use('/api/intelligence', intelligenceRouter);
   }

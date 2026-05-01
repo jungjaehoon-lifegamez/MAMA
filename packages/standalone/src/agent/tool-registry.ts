@@ -48,7 +48,7 @@ function register(meta: ToolDefinitionMeta): void {
 register({
   name: 'mama_save',
   description:
-    'Save decision (topic, decision, reasoning, context_packet_id?) or checkpoint (summary, next_steps?)',
+    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context.',
   category: 'memory',
   params:
     'type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?',
@@ -68,7 +68,8 @@ register({
 });
 register({
   name: 'context_compile',
-  description: 'Compile a scoped context packet from visible memory, raw, graph, and case evidence',
+  description:
+    'Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. Unavailable to Tier 3/read-only agents.',
   category: 'memory',
   params:
     'task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?',

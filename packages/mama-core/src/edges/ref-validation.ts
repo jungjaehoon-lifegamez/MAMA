@@ -374,15 +374,14 @@ export function listVisibleTwinEdgesForRefs(
     typeof options.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(0, Math.floor(options.limit))
       : null;
+  const sortedEdges = [...edges].sort((left, right) => {
+    const createdDiff = right.created_at - left.created_at;
+    return createdDiff !== 0 ? createdDiff : left.edge_id.localeCompare(right.edge_id);
+  });
   if (limit === null) {
-    return edges;
+    return sortedEdges;
   }
-  return [...edges]
-    .sort((left, right) => {
-      const createdDiff = right.created_at - left.created_at;
-      return createdDiff !== 0 ? createdDiff : left.edge_id.localeCompare(right.edge_id);
-    })
-    .slice(0, limit);
+  return sortedEdges.slice(0, limit);
 }
 
 function normalizeEdgeTypes(edgeTypes: readonly TwinEdgeType[] | undefined): Set<TwinEdgeType> {

@@ -139,18 +139,14 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     tempPaths.clear();
   });
 
-  it('returns a complete empty packet without storage writes', async () => {
-    const insertContextPacket = vi.fn();
+  it('returns a complete empty packet for an empty visible set', async () => {
     const packet = await compileContext(
       {
         task: 'compile branch context',
         scopes: [{ kind: 'project', id: 'repo-a' }],
         max_tokens: 1_000,
       },
-      {
-        ...compilerDeps(),
-        insertContextPacket,
-      } as ContextCompilerDeps & { insertContextPacket: typeof insertContextPacket }
+      compilerDeps()
     );
 
     expect(packet).toMatchObject({
@@ -170,7 +166,6 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       },
     });
     expect(packet.missing_context.length).toBeGreaterThan(0);
-    expect(insertContextPacket).not.toHaveBeenCalled();
   });
 
   it('respects max_tool_calls by stopping before raw and graph readers', async () => {
@@ -255,6 +250,44 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     expect(packet.rejected_refs).toContainEqual({ kind: 'case', id: 'case-long' });
     expect(packet.budget.max_tokens).toBe(25);
     expect(packet.budget.estimated_tokens).toBeLessThanOrEqual(25);
+  });
+
+  it('deduplicates packet source refs by provenance identity', async () => {
+    const packet = await compileContext(
+      {
+        task: 'compile branch context',
+        seed_refs: [{ kind: 'raw', connector: 'slack', raw_id: 'raw-a' }],
+        max_tool_calls: 1,
+      },
+      compilerDeps({
+        readMemoryCandidates: async () => ({
+          ...EMPTY_RESULT,
+          candidates: [
+            candidate({
+              ref: {
+                kind: 'raw',
+                connector: 'slack',
+                raw_id: 'raw-a',
+                source_id: 'message-a',
+                channel_id: 'C-eng',
+              },
+              source: 'raw',
+            }),
+          ],
+          source_refs: [
+            {
+              kind: 'raw',
+              connector: 'slack',
+              raw_id: 'raw-a',
+              source_id: 'message-a',
+              channel_id: 'C-eng',
+            },
+          ],
+        }),
+      })
+    );
+
+    expect(packet.source_refs).toEqual([{ kind: 'raw', connector: 'slack', raw_id: 'raw-a' }]);
   });
 
   it('throws hard security errors before any source read', async () => {
@@ -393,6 +426,47 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
         as_of: 2_000,
       })
     );
+  });
+
+  it('rejects blank as_of values before source reads', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          as_of: '   ',
+          max_tool_calls: 1,
+        },
+        compilerDeps({
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/as_of/);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
+  });
+
+  it('rejects requested tenant ids outside the active boundary', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          tenant_id: 'tenant-b',
+        },
+        compilerDeps({
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'tenant-a',
+          },
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/tenant/i);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
   });
 
   it('preserves explicit empty project refs as a boundary narrowing', async () => {

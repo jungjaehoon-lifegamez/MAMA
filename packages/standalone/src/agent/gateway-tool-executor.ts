@@ -1455,29 +1455,6 @@ export class GatewayToolExecutor {
     }
   }
 
-  private auditedAutoSave(parentToolName: string, input: SaveInput): void {
-    const parentContext = this.executionContextStorage.getStore();
-    const task = (async () => {
-      try {
-        if (parentContext) {
-          const autosaveContext: ActiveGatewayExecutionContext = {
-            ...parentContext,
-            parentToolName,
-          };
-          await this.executionContextStorage.run(autosaveContext, () =>
-            this.execute('mama_save', input)
-          );
-          return;
-        }
-        await this.execute('mama_save', input);
-      } catch {
-        // Autosave is intentionally non-fatal for report/wiki publish tools.
-      }
-    })();
-    parentContext?.backgroundTasks?.register(task);
-    void task;
-  }
-
   private async executeWithEnvelopeAndPermissions(
     toolName: string,
     input: GatewayToolInput,
@@ -1930,22 +1907,6 @@ export class GatewayToolExecutor {
             this.reportPublisher(slotsInput);
             const slotNames = Object.keys(slotsInput);
 
-            // Persist report summary to mama memory for Conductor querying
-            const slotValues = Object.values(slotsInput).join(' ');
-            const textSummary = slotValues
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-            const truncated =
-              textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
-            this.auditedAutoSave('report_publish', {
-              type: 'decision' as const,
-              topic: 'dashboard_briefing',
-              decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
-              reasoning: 'Auto-saved by dashboard agent after report_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            });
-
             return {
               success: true,
               message: `Dashboard updated: ${slotNames.join(', ')} (${slotNames.length} slots)`,
@@ -1985,23 +1946,6 @@ export class GatewayToolExecutor {
               confidence: p.confidence || 'medium',
             }));
             this.wikiPublisher(wikiPages);
-
-            // Persist wiki compilation summary to mama memory for Conductor querying
-            const pageSummary = pagesInput
-              .slice(0, 20)
-              .map(
-                (p: { title?: string; path: string; type?: string }) =>
-                  `- ${p.title || p.path} (${p.type || 'page'})`
-              )
-              .join('\n');
-            const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
-            this.auditedAutoSave('wiki_publish', {
-              type: 'decision' as const,
-              topic: 'wiki_compilation',
-              decision: wikiSummary,
-              reasoning: 'Auto-saved by wiki agent after wiki_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            });
 
             return {
               success: true,
@@ -3649,6 +3593,14 @@ export class GatewayToolExecutor {
     }
 
     const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    const activeTier = ctx?.agentContext?.tier ?? ctx?.envelope?.tier;
+    if (activeTier === 3) {
+      return {
+        success: false,
+        code: 'permission_denied_tier3',
+        error: 'context_compile is not allowed for Tier 3 agents.',
+      } as GatewayToolResult;
+    }
     if (!ctx?.envelope) {
       return {
         success: false,

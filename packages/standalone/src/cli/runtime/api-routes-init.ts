@@ -312,10 +312,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // Dashboard cron: 30-min interval via AgentProcessManager
     const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
-1. Use mama_search to find the most recent "dashboard_briefing" decision (limit 1). Note its timestamp and content.
-2. Use mama_search to find recent decisions (limit 20). Check if any were created AFTER the last briefing.
-3. If NO new decisions exist since the last briefing → respond "NO_UPDATE" and stop. Do NOT call report_publish.
-4. If new decisions exist → analyze them, write a new briefing, and publish via report_publish in the "briefing" slot.
+1. Use agent_notices({limit: 50}) to find the most recent dashboard-agent publish/task_complete notice. Treat that as the last briefing boundary.
+2. Use mama_search to find recent substantive decisions (limit 20). Ignore operational run summaries such as dashboard_briefing, wiki_compilation, system-audit, and raw audit logs.
+3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
+4. If new substantive information exists → analyze it, write a new briefing, and publish via report_publish in the "briefing" slot.
+5. Do NOT call mama_save for the briefing; report_publish and agent_activity are the durable operational record.
 
 This saves resources. Only publish when there is genuinely new information to report.`;
 
@@ -406,10 +407,11 @@ This saves resources. Only publish when there is genuinely new information to re
 
           const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
-1. Use mama_search to find the most recent "wiki_compilation" decision (limit 1). Note its timestamp.
-2. Use mama_search to find recent decisions (limit 20). Check if any were created AFTER the last wiki compilation.
-3. If NO new decisions exist since the last compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
-4. If new decisions exist → use obsidian("search") to check existing pages, then update or create pages as needed. Clean up duplicates.
+1. Use agent_notices({limit: 100}) to find the most recent wiki-agent compiled/publish/task_complete notice. Treat that as the last compilation boundary.
+2. Use mama_search to find recent substantive decisions (limit 30). Ignore operational run summaries such as wiki_compilation, dashboard_briefing, system-audit, and raw audit logs.
+3. If NO substantive decisions exist since the last wiki compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
+4. If new substantive decisions exist → use obsidian("search") to check existing pages, then update or create pages as needed. Clean up duplicates.
+5. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
 
 This saves resources. Only compile when there is genuinely new information to document.`;
 
@@ -468,7 +470,8 @@ This saves resources. Only compile when there is genuinely new information to do
       'Classify findings as MINOR or MAJOR. ' +
       'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
       'For MAJOR items: report to human via channel alert. ' +
-      'After all fixes and reports, save audit results to memory.';
+      'Do NOT save raw audit results or audit logs as mama_save decisions. ' +
+      'Only call mama_save when the audit produces a durable policy/remediation decision or reusable lesson; otherwise rely on validation sessions and agent_activity for the audit record.';
 
     const runConductorAudit = async () => {
       let auditSession: ValidationSessionRow | null = null;
