@@ -256,6 +256,7 @@ describe('RoleManager', () => {
 
       expect(manager.isToolAllowed(role, 'mama_search')).toBe(true);
       expect(manager.isToolAllowed(role, 'mama_recall')).toBe(true);
+      expect(manager.isToolAllowed(role, 'context_compile')).toBe(true);
       expect(manager.isToolAllowed(role, 'mama_save')).toBe(false);
     });
   });

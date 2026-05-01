@@ -2703,6 +2703,7 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
             allowedTools: [
               'mama_search',
               'mama_recall',
+              'context_compile',
               'mama_load_checkpoint',
               'Read',
               'discord_send',

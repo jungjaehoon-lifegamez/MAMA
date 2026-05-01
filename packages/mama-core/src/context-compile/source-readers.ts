@@ -1,8 +1,14 @@
 import type { DatabaseAdapter } from '../db-manager.js';
 import { listVisibleTwinEdgesForRefs } from '../edges/ref-validation.js';
 import type { ListVisibleTwinEdgesOptions, TwinEdgeRecord, TwinRef } from '../edges/types.js';
-import { recallMemory as defaultRecallMemory } from '../memory/api.js';
-import type { MemoryRecord, RecallBundle, RecallMemoryOptions } from '../memory/types.js';
+import { getLexicalQueryTokens, recallMemory as defaultRecallMemory } from '../memory/api.js';
+import type {
+  MemoryKind,
+  MemoryRecord,
+  MemoryScopeKind,
+  RecallBundle,
+  RecallMemoryOptions,
+} from '../memory/types.js';
 import type { SearchHitDiagnostics, SearchStrictness } from '../search/search-quality.js';
 import type { ContextBoundary, ContextProjectRef, ContextRange, ContextRef } from './types.js';
 import { serializeContextRefForProvenance, toTwinRef } from './ref.js';
@@ -69,6 +75,7 @@ export interface ContextSourceReadInput {
 }
 
 export interface ContextSourceReaderDeps {
+  adapter?: ContextSourceAdapter;
   recallMemory?: (query: string, options?: RecallMemoryOptions) => Promise<RecallBundle>;
   listVisibleTwinEdgesForRefs?: (
     adapter: ContextSourceAdapter,
@@ -140,23 +147,39 @@ function timeFilterRequired(input: ContextSourceReadInput): boolean {
   );
 }
 
+function rangeBoundaryMs(value: unknown, field: string): number | null {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.floor(value);
+  }
+  throw new Error(`Invalid context source ${field}: ${String(value)}`);
+}
+
 function maxVisibleTimeMs(input: ContextSourceReadInput): number | null {
-  const ends = [input.range?.end_ms, asOfMs(input)].filter(
+  const ends = [rangeBoundaryMs(input.range?.end_ms, 'range.end_ms'), asOfMs(input)].filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value)
   );
   return ends.length > 0 ? Math.min(...ends) : null;
 }
 
 function minVisibleTimeMs(input: ContextSourceReadInput): number | null {
-  return typeof input.range?.start_ms === 'number' && Number.isFinite(input.range.start_ms)
-    ? Math.floor(input.range.start_ms)
-    : null;
+  return rangeBoundaryMs(input.range?.start_ms, 'range.start_ms');
 }
 
 function isWithinTimeBoundary(timestampMs: number, input: ContextSourceReadInput): boolean {
   const min = minVisibleTimeMs(input);
   const max = maxVisibleTimeMs(input);
   return (min === null || timestampMs >= min) && (max === null || timestampMs <= max);
+}
+
+function hasExplicitEmptyProjectWindow(input: ContextSourceReadInput): boolean {
+  return (
+    Array.isArray(input.project_refs) &&
+    input.project_refs.length === 0 &&
+    (input.boundary?.project_refs?.length ?? 0) > 0
+  );
 }
 
 function memoryTimestampMs(memory: MemoryRecord): number | null {
@@ -223,6 +246,227 @@ function emptySupport(retrievalSource?: string): ContextCandidateSupport {
   };
 }
 
+const EXCLUDED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
+
+function loadScopesForMemoryIds(
+  adapter: ContextSourceAdapter,
+  memoryIds: readonly string[]
+): Map<string, MemoryScopeRef[]> {
+  const scopeMap = new Map<string, MemoryScopeRef[]>();
+  if (memoryIds.length === 0 || !tableExists(adapter, 'memory_scope_bindings')) {
+    return scopeMap;
+  }
+
+  const rows = adapter
+    .prepare(
+      `
+        SELECT msb.memory_id, ms.kind, ms.external_id
+        FROM memory_scope_bindings msb
+        JOIN memory_scopes ms ON ms.id = msb.scope_id
+        WHERE msb.memory_id IN (${placeholders(memoryIds)})
+        ORDER BY msb.is_primary DESC
+      `
+    )
+    .all(...memoryIds) as Array<{ memory_id: string; kind: string; external_id: string }>;
+
+  for (const row of rows) {
+    const existing = scopeMap.get(row.memory_id) ?? [];
+    existing.push({ kind: row.kind as MemoryScopeKind, id: row.external_id });
+    scopeMap.set(row.memory_id, existing);
+  }
+  return scopeMap;
+}
+
+function sourceFromTrustContext(value: unknown): MemoryRecord['source'] {
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as { source?: MemoryRecord['source'] };
+      if (parsed.source) {
+        return parsed.source;
+      }
+    } catch {
+      // malformed trust_context falls back to local adapter source
+    }
+  }
+  return { package: 'mama-core', source_type: 'context_compile_adapter' };
+}
+
+function memoryRecordFromRow(row: Record<string, unknown>, scopes: MemoryScopeRef[]): MemoryRecord {
+  return {
+    id: String(row.id),
+    topic: String(row.topic ?? ''),
+    kind: ((row.kind as MemoryKind | undefined) ?? 'decision') as MemoryKind,
+    summary: String(row.summary ?? row.decision ?? ''),
+    details: String(row.reasoning ?? row.decision ?? ''),
+    confidence: typeof row.confidence === 'number' ? row.confidence : 0.5,
+    status: (typeof row.status === 'string' ? row.status : 'active') as MemoryRecord['status'],
+    scopes,
+    source: sourceFromTrustContext(row.trust_context),
+    created_at: (row.created_at as number | string | undefined) ?? 0,
+    updated_at:
+      (row.updated_at as number | string | undefined) ??
+      (row.created_at as number | string | undefined) ??
+      0,
+    event_date: typeof row.event_date === 'string' ? row.event_date : null,
+    event_datetime:
+      typeof row.event_datetime === 'number' && Number.isFinite(row.event_datetime)
+        ? row.event_datetime
+        : null,
+  };
+}
+
+function memoryLexicalScore(memory: MemoryRecord, query: string): number {
+  const tokens = getLexicalQueryTokens(query);
+  if (tokens.length === 0) {
+    return 1;
+  }
+  const haystack = [memory.topic, memory.summary, memory.details].join(' ').toLowerCase();
+  const phraseBoost = haystack.includes(query.toLowerCase()) ? 2 : 0;
+  return tokens.reduce(
+    (score, token) => (haystack.includes(token) ? score + 1 : score),
+    phraseBoost
+  );
+}
+
+function memoryLexicalWhereClause(tokens: readonly string[]): string | null {
+  if (tokens.length === 0) {
+    return null;
+  }
+  const fields = [
+    "LOWER(COALESCE(d.topic, ''))",
+    "LOWER(COALESCE(d.summary, ''))",
+    "LOWER(COALESCE(d.decision, ''))",
+    "LOWER(COALESCE(d.reasoning, ''))",
+  ];
+  return `(${tokens
+    .map(() => `(${fields.map((field) => `instr(${field}, ?) > 0`).join(' OR ')})`)
+    .join(' OR ')})`;
+}
+
+function pushMemoryLexicalParams(params: unknown[], tokens: readonly string[]): void {
+  for (const token of tokens) {
+    const normalized = token.toLowerCase();
+    params.push(normalized, normalized, normalized, normalized);
+  }
+}
+
+function memoryTimestampSql(): string {
+  return 'COALESCE(d.event_datetime, d.updated_at, d.created_at)';
+}
+
+function adapterScopedRecallMemory(
+  adapter: ContextSourceAdapter,
+  input: ContextSourceReadInput
+): RecallBundle {
+  if (!tableExists(adapter, 'decisions')) {
+    return {
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: {
+        query: input.task,
+        scope_order: [],
+        retrieval_sources: ['context_compile_adapter'],
+      },
+    };
+  }
+
+  const scopes = input.scopes ?? [];
+  const params: unknown[] = [];
+  const joins: string[] = [];
+  const where = [
+    `(d.status IS NULL OR d.status NOT IN (${[...EXCLUDED_MEMORY_STATUSES].map(() => '?').join(', ')}))`,
+  ];
+  const lexicalTokens = getLexicalQueryTokens(input.task);
+  params.push(...EXCLUDED_MEMORY_STATUSES);
+
+  if (scopes.length > 0) {
+    joins.push('JOIN memory_scope_bindings msb ON msb.memory_id = d.id');
+    joins.push('JOIN memory_scopes ms ON ms.id = msb.scope_id');
+    where.push(`(${scopes.map(() => '(ms.kind = ? AND ms.external_id = ?)').join(' OR ')})`);
+    for (const scope of scopes) {
+      params.push(scope.kind, scope.id);
+    }
+  }
+  const lexicalWhere = memoryLexicalWhereClause(lexicalTokens);
+  if (lexicalWhere) {
+    where.push(lexicalWhere);
+    pushMemoryLexicalParams(params, lexicalTokens);
+  }
+  const min = minVisibleTimeMs(input);
+  const max = maxVisibleTimeMs(input);
+  const timestampSql = memoryTimestampSql();
+  if (min !== null) {
+    where.push(`${timestampSql} >= ?`);
+    params.push(min);
+  }
+  if (max !== null) {
+    where.push(`${timestampSql} <= ?`);
+    params.push(max);
+  }
+
+  const rows = adapter
+    .prepare(
+      `
+        SELECT DISTINCT d.id, d.topic, d.decision, d.reasoning, d.confidence, d.created_at,
+               d.updated_at, d.trust_context, d.kind, d.status, d.summary, d.event_date,
+               d.event_datetime
+        FROM decisions d
+        ${joins.join('\n        ')}
+        WHERE ${where.join('\n          AND ')}
+        ORDER BY ${timestampSql} DESC, d.created_at DESC
+        LIMIT ?
+      `
+    )
+    .all(
+      ...params,
+      Math.max(normalizeLimit(input.limit) * 5, normalizeLimit(input.limit))
+    ) as Array<Record<string, unknown>>;
+
+  const scopeMap = loadScopesForMemoryIds(
+    adapter,
+    rows.map((row) => String(row.id))
+  );
+  const memories = rows
+    .map((row) => memoryRecordFromRow(row, scopeMap.get(String(row.id)) ?? []))
+    .map((memory) => ({ memory, score: memoryLexicalScore(memory, input.task) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return (memoryTimestampMs(right.memory) ?? 0) - (memoryTimestampMs(left.memory) ?? 0);
+    })
+    .slice(0, normalizeLimit(input.limit))
+    .map(({ memory, score }) => ({
+      ...memory,
+      confidence: Math.max(memory.confidence, Math.min(0.95, 0.45 + score * 0.05)),
+      retrieval_diagnostics: {
+        retrieval_source: 'context_compile_adapter',
+        vector_similarity: null,
+        lexical_support: true,
+        entity_support: false,
+        scope_support: scopes.length > 0,
+        graph_source: null,
+        is_vector_only: false,
+        confirmation_signals: ['lexical'],
+        metadata_signals: ['adapter_scoped'],
+        candidate_threshold_used: 0,
+      },
+    }));
+
+  return {
+    profile: { static: [], dynamic: [], evidence: [] },
+    memories,
+    graph_context: { primary: memories, expanded: [], edges: [] },
+    search_meta: {
+      query: input.task,
+      scope_order: scopes.map((scope) => scope.kind),
+      retrieval_sources: ['context_compile_adapter'],
+    },
+  };
+}
+
 function resultFromCandidates(
   candidates: readonly ContextCandidate[],
   hidden: HiddenCandidateAggregate
@@ -260,17 +504,31 @@ export async function readMemoryCandidates(
       boundary: input.boundary,
       requestedScopes: input.scopes,
       requestedConnectors: input.connectors,
+      requestedProjectRefs: input.project_refs,
+      requestedTenantId: input.tenant_id,
     });
   }
+  if (Array.isArray(input.scopes) && input.scopes.length === 0) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
 
-  const recall = deps.recallMemory ?? defaultRecallMemory;
-  const bundle = await recall(input.task, {
-    scopes: input.scopes,
-    limit: normalizeLimit(input.limit),
-    diagnostics: true,
-    strictness: input.strictness,
-    threshold: input.threshold,
-  });
+  const bundle = deps.recallMemory
+    ? await deps.recallMemory(input.task, {
+        scopes: input.scopes,
+        limit: normalizeLimit(input.limit),
+        diagnostics: true,
+        strictness: input.strictness,
+        threshold: input.threshold,
+      })
+    : deps.adapter
+      ? adapterScopedRecallMemory(deps.adapter, input)
+      : await defaultRecallMemory(input.task, {
+          scopes: input.scopes,
+          limit: normalizeLimit(input.limit),
+          diagnostics: true,
+          strictness: input.strictness,
+          threshold: input.threshold,
+        });
 
   const candidates: ContextCandidate[] = [];
   const hidden = hiddenAggregate();
@@ -331,6 +589,8 @@ export function readRawCandidates(
       boundary: input.boundary,
       requestedScopes: input.scopes,
       requestedConnectors: input.connectors,
+      requestedProjectRefs: input.project_refs,
+      requestedTenantId: input.tenant_id,
     });
   }
 
@@ -341,15 +601,16 @@ export function readRawCandidates(
   const connectors = input.connectors ?? [];
   const scopes = input.scopes ?? [];
   const projectIds = (input.project_refs ?? []).map((project) => project.id);
-  if (connectors.length === 0 || scopes.length === 0 || projectIds.length === 0) {
+  if (connectors.length === 0 || scopes.length === 0 || hasExplicitEmptyProjectWindow(input)) {
     return resultFromCandidates([], hiddenAggregate());
   }
 
-  const clauses = [
-    `source_connector IN (${placeholders(connectors)})`,
-    `project_id IN (${placeholders(projectIds)})`,
-  ];
-  const params: unknown[] = [...connectors, ...projectIds];
+  const clauses = [`source_connector IN (${placeholders(connectors)})`];
+  const params: unknown[] = [...connectors];
+  if (projectIds.length > 0) {
+    clauses.push(`project_id IN (${placeholders(projectIds)})`);
+    params.push(...projectIds);
+  }
   if (input.tenant_id) {
     clauses.push('tenant_id = ?');
     params.push(input.tenant_id);
@@ -363,11 +624,11 @@ export function readRawCandidates(
   const min = minVisibleTimeMs(input);
   const max = maxVisibleTimeMs(input);
   if (min !== null) {
-    clauses.push('event_datetime >= ?');
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
     params.push(min);
   }
   if (max !== null) {
-    clauses.push('event_datetime <= ?');
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
     params.push(max);
   }
   params.push(normalizeLimit(input.limit));
@@ -376,10 +637,10 @@ export function readRawCandidates(
     .prepare(
       `
         SELECT event_index_id, source_connector, source_id, channel, title, content,
-               event_datetime
+               event_datetime, source_timestamp_ms
         FROM connector_event_index
         WHERE ${clauses.join('\n          AND ')}
-        ORDER BY event_datetime DESC, event_index_id ASC
+        ORDER BY COALESCE(event_datetime, source_timestamp_ms) DESC, event_index_id ASC
         LIMIT ?
       `
     )
@@ -398,7 +659,7 @@ export function readRawCandidates(
       title: String(row.title ?? 'Raw event'),
       excerpt: String(row.content ?? '').slice(0, 500),
       score: 0.7,
-      timestamp_ms: parseTimestampMs(row.event_datetime),
+      timestamp_ms: parseTimestampMs(row.event_datetime ?? row.source_timestamp_ms),
       source: 'raw',
       visible: true,
       support: emptySupport('connector_event_index'),
@@ -414,6 +675,21 @@ export function readGraphCandidates(
   visibleRefs: readonly ContextRef[],
   deps: ContextSourceReaderDeps = {}
 ): ContextSourceReadResult {
+  if (input.boundary) {
+    assertContextBoundaryAllowsInput({
+      boundary: input.boundary,
+      requestedScopes: input.scopes,
+      requestedConnectors: input.connectors,
+      requestedProjectRefs: input.project_refs,
+      requestedTenantId: input.tenant_id,
+    });
+  }
+  if (Array.isArray(input.scopes) && input.scopes.length === 0) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
+  if (hasExplicitEmptyProjectWindow(input)) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
   if (visibleRefs.length === 0) {
     return resultFromCandidates([], hiddenAggregate());
   }
@@ -421,19 +697,24 @@ export function readGraphCandidates(
   const refs = visibleRefs.map((ref) => toTwinRef(ref));
   const visibleRefKeys = new Set(visibleRefs.map(serializeContextRefForProvenance));
   const listEdges = deps.listVisibleTwinEdgesForRefs ?? listVisibleTwinEdgesForRefs;
+  const min = minVisibleTimeMs(input);
+  const max = maxVisibleTimeMs(input);
   const edges = listEdges(adapter, refs, {
     scopes: input.scopes,
     connectors: input.connectors,
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
-    asOfMs: asOfMs(input),
+    startMs: min,
+    asOfMs: max,
     limit: normalizeLimit(input.limit),
-  });
+  }).filter(
+    (edge) => (min === null || edge.created_at >= min) && (max === null || edge.created_at <= max)
+  );
 
   const candidates: ContextCandidate[] = [];
   const emitted = new Set<string>();
   for (const edge of edges) {
-    for (const ref of edgeNeighborRefs(edge)) {
+    for (const ref of edgeNeighborRefs(adapter, edge)) {
       const key = serializeContextRefForProvenance(ref);
       if (visibleRefKeys.has(key) || emitted.has(key)) {
         continue;
@@ -463,29 +744,49 @@ export function readGraphCandidates(
   return resultFromCandidates(candidates, hiddenAggregate());
 }
 
-function edgeNeighborRefs(edge: TwinEdgeRecord): ContextRef[] {
+function edgeNeighborRefs(adapter: ContextSourceAdapter, edge: TwinEdgeRecord): ContextRef[] {
   return [edge.subject_ref, edge.object_ref].flatMap((ref) => {
-    const contextRef = contextRefFromTwinRef(ref);
+    const contextRef = contextRefFromTwinRef(adapter, ref);
     return contextRef ? [contextRef] : [];
   });
 }
 
-function contextRefFromTwinRef(ref: TwinRef): ContextRef | null {
+function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): ContextRef | null {
   switch (ref.kind) {
     case 'memory':
     case 'entity':
     case 'case':
       return { kind: ref.kind, id: ref.id };
     case 'raw': {
-      const delimiter = ref.id.indexOf(':');
-      if (delimiter <= 0 || delimiter === ref.id.length - 1) {
+      const row = adapter
+        .prepare(
+          `
+            SELECT source_connector, source_id, channel
+            FROM connector_event_index
+            WHERE event_index_id = ?
+            LIMIT 1
+          `
+        )
+        .get(ref.id) as
+        | {
+            source_connector: unknown;
+            source_id: unknown;
+            channel: unknown;
+          }
+        | undefined;
+      if (!row || typeof row.source_connector !== 'string') {
         return null;
       }
-      return {
+      const contextRef: ContextRef = {
         kind: 'raw',
-        connector: ref.id.slice(0, delimiter),
-        raw_id: ref.id.slice(delimiter + 1),
+        connector: row.source_connector,
+        raw_id: ref.id,
       };
+      if (typeof row.source_id === 'string' && row.source_id.length > 0) {
+        contextRef.source_id = row.source_id;
+      }
+      contextRef.channel_id = typeof row.channel === 'string' ? row.channel : null;
+      return contextRef;
     }
     default:
       return null;

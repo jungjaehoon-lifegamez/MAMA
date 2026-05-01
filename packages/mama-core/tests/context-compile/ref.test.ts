@@ -79,7 +79,7 @@ describe('Story V0.21: Context compile refs - AC1', () => {
     expect(toTwinRef({ kind: 'case', id: 'case-1' })).toEqual({ kind: 'case', id: 'case-1' });
     expect(toTwinRef({ kind: 'raw', raw_id: 'event-1', connector: 'slack' })).toEqual({
       kind: 'raw',
-      id: 'slack:event-1',
+      id: 'event-1',
     });
   });
 });
