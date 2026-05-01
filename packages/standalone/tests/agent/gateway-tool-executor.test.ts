@@ -16,7 +16,7 @@ import {
   createAgentVersion,
   logActivity,
 } from '../../src/db/agent-store.js';
-import { saveConfig } from '../../src/cli/config/config-manager.js';
+import { getDefaultMultiAgentConfig, saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 import { UICommandQueue } from '../../src/api/ui-command-handler.js';
@@ -539,15 +539,17 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         executor.setApplyMultiAgentConfig(applyMultiAgentConfig);
         executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
 
-        const createResult = await executor.execute('agent_create', {
-          id: 'wiki-agent',
-          name: 'Wiki Agent',
-          model: 'claude-sonnet-4-6',
-          tier: 2,
-          backend: 'claude',
-          system: 'Compile wiki updates.',
+        const multiAgentConfig = getDefaultMultiAgentConfig();
+        await saveConfig({ ...DEFAULT_CONFIG, multi_agent: multiAgentConfig });
+
+        const wikiAgentConfig = multiAgentConfig.agents['wiki-agent'];
+        expect(wikiAgentConfig).toBeDefined();
+        createAgentVersion(db, {
+          agent_id: 'wiki-agent',
+          snapshot: wikiAgentConfig as Record<string, unknown>,
+          persona_text: 'Compile wiki updates.',
+          change_note: 'Initial wiki agent version',
         });
-        expect(createResult).toMatchObject({ success: true, version: 1 });
 
         const updateResult = await executor.execute('agent_update', {
           agent_id: 'wiki',

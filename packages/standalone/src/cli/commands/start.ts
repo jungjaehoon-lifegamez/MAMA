@@ -617,6 +617,11 @@ export async function runAgentLoop(
         model: string;
         can_delegate?: boolean;
         enabled?: boolean;
+        useCodeAct?: boolean;
+        tool_permissions?: {
+          allowed?: string[];
+          blocked?: string[];
+        };
       }
     > = {
       'os-agent': {
@@ -641,7 +646,69 @@ export async function runAgentLoop(
         can_delegate: false,
         enabled: true,
       },
+      'dashboard-agent': {
+        name: 'Dashboard Agent',
+        display_name: '📊 Dashboard',
+        trigger_prefix: '!dashboard',
+        persona_file: '~/.mama/personas/dashboard.md',
+        tier: 2,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: ['mama_search', 'agent_notices', 'report_publish', 'code_act'],
+          blocked: [
+            'Bash',
+            'Read',
+            'Write',
+            'Edit',
+            'Grep',
+            'Glob',
+            'Agent',
+            'WebSearch',
+            'WebFetch',
+          ],
+        },
+      },
     };
+    const wikiConfig = config.wiki as { enabled?: boolean } | undefined;
+    if (wikiConfig?.enabled) {
+      osAgents['wiki-agent'] = {
+        name: 'Wiki Agent',
+        display_name: '📚 Wiki',
+        trigger_prefix: '!wiki',
+        persona_file: '~/.mama/personas/wiki.md',
+        tier: 2,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: [
+            'mama_search',
+            'case_list',
+            'case_assemble',
+            'obsidian',
+            'wiki_publish',
+            'code_act',
+          ],
+          blocked: [
+            'Bash',
+            'Read',
+            'Write',
+            'Edit',
+            'Grep',
+            'Glob',
+            'Agent',
+            'WebSearch',
+            'WebFetch',
+          ],
+        },
+      };
+    }
     let osAgentsAdded = false;
     for (const [id, cfg] of Object.entries(osAgents)) {
       if (!config.multi_agent.agents[id]) {
@@ -727,13 +794,14 @@ export async function runAgentLoop(
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
   // (Viewer, Telegram, iMessage, Terminal).
-  if (!toolExecutor.hasDelegateSupport() && config.multi_agent?.enabled) {
+  const hasSystemRunAgents = Boolean(
+    config.multi_agent?.agents?.['dashboard-agent'] || config.multi_agent?.agents?.['wiki-agent']
+  );
+  if (
+    !toolExecutor.getAgentProcessManager() &&
+    (config.multi_agent?.enabled || hasSystemRunAgents)
+  ) {
     const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
-    const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
-    const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
-      id,
-      ...cfg,
-    }));
     const pm = new AgentProcessManager(
       config.multi_agent,
       {},
@@ -742,15 +810,12 @@ export async function runAgentLoop(
         model: config.agent.model,
       }
     );
-    const dm = new DelegationManager(agentConfigs);
-    dm.setSessionsDb(db);
     toolExecutor.setAgentProcessManager(pm);
-    toolExecutor.setDelegationManager(dm);
+    agentLoop.setAgentProcessManager(pm);
 
     graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
       const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
       pm.updateConfig(nextConfig);
-      dm.updateAgents(Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg })));
     };
     graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
       pm.reloadPersona(agentId);
@@ -760,11 +825,29 @@ export async function runAgentLoop(
     agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
     agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
-    // Also wire to the main AgentLoop's internal GatewayToolExecutor
-    // (MessageRouter uses agentLoop which has its own executor instance)
-    agentLoop.setAgentProcessManager(pm);
-    agentLoop.setDelegationManager(dm);
-    console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
+    if (config.multi_agent?.enabled && !toolExecutor.hasDelegateSupport()) {
+      const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
+      const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
+        id,
+        ...cfg,
+      }));
+      const dm = new DelegationManager(agentConfigs);
+      dm.setSessionsDb(db);
+      toolExecutor.setDelegationManager(dm);
+      agentLoop.setDelegationManager(dm);
+      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+        const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
+        pm.updateConfig(nextConfig);
+        dm.updateAgents(
+          Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg }))
+        );
+      };
+      toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+      agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+      console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
+    } else {
+      console.log('[start] ✓ System agent process manager wired');
+    }
   }
 
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
