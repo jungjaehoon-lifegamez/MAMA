@@ -6,6 +6,8 @@ import {
 } from '../../src/cli/commands/stop.js';
 
 const PROJECT_STANDALONE_CLI = '/path/to/project/packages/standalone/dist/cli/index.js';
+const INSTALLED_STANDALONE_CLI =
+  '/Users/me/app/node_modules/@jungjaehoon/mama-os/dist/cli/index.js';
 
 describe('Story: standalone stop command detection', () => {
   describe('AC #1: detect daemon commands', () => {
@@ -15,8 +17,30 @@ describe('Story: standalone stop command detection', () => {
       );
     });
 
+    it('matches installed @jungjaehoon/mama-os daemon node command', () => {
+      expect(
+        isStandaloneDaemonCommand(`/usr/local/bin/node ${INSTALLED_STANDALONE_CLI} daemon`)
+      ).toBe(true);
+    });
+
+    it('preserves backslashes in double-quoted Windows package paths', () => {
+      expect(
+        isStandaloneDaemonCommand(
+          '/usr/bin/node "C:\\Users\\me\\node_modules\\@jungjaehoon\\mama-os\\dist\\cli\\index.js" daemon'
+        )
+      ).toBe(true);
+    });
+
     it('matches wrapper mama daemon command', () => {
       expect(isStandaloneDaemonCommand('mama daemon')).toBe(true);
+    });
+
+    it('matches wrapper mama-os daemon command', () => {
+      expect(isStandaloneDaemonCommand('mama-os daemon')).toBe(true);
+    });
+
+    it('does not match unrelated commands that merely mention mama daemon', () => {
+      expect(isStandaloneDaemonCommand('echo "mama daemon"')).toBe(false);
     });
 
     it('does not match unrelated mama-server processes', () => {
@@ -31,6 +55,10 @@ describe('Story: standalone stop command detection', () => {
   describe('AC #2: detect watchdog commands', () => {
     it('matches explicit watchdog marker', () => {
       expect(isStandaloneWatchdogCommand('node -e watchdog-script --mama-watchdog')).toBe(true);
+    });
+
+    it('does not match unrelated commands that merely mention the watchdog marker', () => {
+      expect(isStandaloneWatchdogCommand('echo mama-watchdog')).toBe(false);
     });
 
     it('matches legacy inline watchdog command', () => {

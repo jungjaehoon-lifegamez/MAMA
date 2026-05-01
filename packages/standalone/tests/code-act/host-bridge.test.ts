@@ -81,6 +81,12 @@ describe('HostBridge', () => {
       expect(fn).toHaveProperty('description');
       expect(fn).toHaveProperty('category');
     });
+
+    it('advertises scopes for mama_search', () => {
+      const bridge = new HostBridge(makeExecutor());
+      const mamaSearch = bridge.getAvailableFunctions(1).find((fn) => fn.name === 'mama_search');
+      expect(mamaSearch?.params.map((param) => param.name)).toContain('scopes');
+    });
   });
 
   describe('injectInto', () => {

@@ -82,6 +82,11 @@ import {
 } from './cases/search-rollup.js';
 import { isSearchRankerEnabled, rescoreSearchResults } from './search/ranker-rescore.js';
 import { SEARCH_RANKER_FEATURE_SET_VERSION } from './search/ranker-features.js';
+import {
+  normalizeSearchQualityOptions,
+  type SearchHitDiagnostics,
+  type SearchQualityOptions,
+} from './search/search-quality.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // Type Definitions
@@ -131,6 +136,7 @@ interface SimilarDecision {
   created_at?: number | string;
   event_date?: string | null;
   event_datetime?: number | null;
+  retrieval_diagnostics?: SearchHitDiagnostics;
 }
 
 /**
@@ -1454,18 +1460,15 @@ function applyRecencyBoost(
  * const markdown = await mama.suggest('mesh optimization', { format: 'markdown' });
  * // → "💡 MAMA found 3 related topics:\n1. ..."
  */
-interface SuggestFunctionOptions {
+interface SuggestFunctionOptions extends SearchQualityOptions {
   format?: 'json' | 'markdown';
   limit?: number;
-  threshold?: number;
   useReranking?: boolean;
   /** Phase 3 Task 33: apply learned offline ranker rescoring. */
   rerankWithLearned?: boolean;
   recencyWeight?: number;
   recencyScale?: number;
   recencyDecay?: number;
-  disableRecency?: boolean;
-  topicPrefix?: string;
   scopes?: Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>;
 }
 
@@ -1532,6 +1535,7 @@ function confidenceValue(record: Record<string, unknown>, fallback: number): num
 
 function mapRolledUpResult(result: SearchRollupResult) {
   const record = resultRecord(result);
+  const retrievalDiagnostics = result.retrieval_diagnostics;
   const topic = stringOrNull(record.topic ?? record.title) ?? result.source_id;
   // For wiki_page leaves, prefer the markdown body (`content`) in `decision` so
   // downstream consumers see the meaningful body rather than the short title.
@@ -1561,13 +1565,17 @@ function mapRolledUpResult(result: SearchRollupResult) {
     created_at: record.created_at ?? null,
     event_date: record.event_date ?? null,
     event_datetime: record.event_datetime ?? null,
-    graph_source: 'primary',
+    graph_source: retrievalDiagnostics?.graph_source ?? 'primary',
     graph_rank: 1,
     related_to: null,
     edge_reason: null,
     case_id: result.case_id,
     source_type: result.source_type,
     contributing_leaves: result.contributing_leaves ?? null,
+    ...(result.contributing_leaf_diagnostics
+      ? { contributing_leaf_diagnostics: result.contributing_leaf_diagnostics }
+      : {}),
+    ...(retrievalDiagnostics ? { retrieval_diagnostics: retrievalDiagnostics } : {}),
   };
 }
 
@@ -1599,7 +1607,31 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
     recencyScale = 7, // Days until recency score drops to 50%
     recencyDecay = 0.5, // Score at scale point (0.5 = 50%)
     disableRecency = false, // Set true to disable recency boosting entirely
+    strict,
+    strictness,
+    includeRelated,
+    minLexicalSupport,
+    diagnostics: includeDiagnostics,
   } = options;
+  const normalizedSearchOptions = normalizeSearchQualityOptions({
+    threshold,
+    strict,
+    strictness,
+    disableRecency,
+    includeRelated,
+    topicPrefix: options.topicPrefix,
+    minLexicalSupport,
+    diagnostics: includeDiagnostics,
+  });
+  const memoryV2QualityContractRequested =
+    threshold !== undefined ||
+    strict !== undefined ||
+    strictness !== undefined ||
+    includeRelated !== undefined ||
+    minLexicalSupport !== undefined ||
+    includeDiagnostics === true ||
+    options.topicPrefix !== undefined ||
+    options.scopes !== undefined;
   const rerankPoolLimit = rerankWithLearned ? Math.max(limit * 4, limit + 5) : limit;
 
   try {
@@ -1607,11 +1639,49 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       includeProfile: false,
       topicPrefix: options.topicPrefix,
       limit: rerankPoolLimit,
+      threshold,
+      strict,
+      strictness,
+      disableRecency,
+      includeRelated,
+      minLexicalSupport,
+      diagnostics: includeDiagnostics,
       ...(options.scopes && { scopes: options.scopes }),
     });
-    const fusedHits = (bundle as { fused_hits?: SearchRollupLeafHit[] }).fused_hits ?? [];
+    const diagnosticsByMemoryId = new Map(
+      bundle.memories
+        .filter((memory) => memory.retrieval_diagnostics)
+        .map((memory) => [memory.id, memory.retrieval_diagnostics as SearchHitDiagnostics])
+    );
+    const rawFusedHits = (bundle as { fused_hits?: SearchRollupLeafHit[] }).fused_hits ?? [];
+    const fusedHits = rawFusedHits.map((hit) => {
+      if (hit.source_type !== 'decision') {
+        return hit;
+      }
+
+      const recordDiagnostics =
+        typeof hit.record === 'object' && hit.record !== null && !Array.isArray(hit.record)
+          ? (hit.record as { retrieval_diagnostics?: SearchHitDiagnostics }).retrieval_diagnostics
+          : undefined;
+      const retrievalDiagnostics = diagnosticsByMemoryId.get(hit.source_id) ?? recordDiagnostics;
+      if (!retrievalDiagnostics) {
+        return hit;
+      }
+
+      const record =
+        typeof hit.record === 'object' && hit.record !== null && !Array.isArray(hit.record)
+          ? { ...hit.record, retrieval_diagnostics: retrievalDiagnostics }
+          : hit.record;
+      return {
+        ...hit,
+        record,
+        retrieval_diagnostics: retrievalDiagnostics,
+      };
+    });
     const rolledUp =
       fusedHits.length > 0 ? rollUpSearchHits({ fusedHits, adapter: getAdapter() }) : [];
+    const diagnosticsResponse =
+      includeDiagnostics === true ? { diagnostics: bundle.search_meta.diagnostics ?? null } : {};
 
     // Phase 3 Task 33: compute base ranker meta once so every return path
     // (rolledUp, memories fallback, vector-search fallback) can attach it.
@@ -1727,10 +1797,11 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       return {
         query: userQuestion,
         results: limitedResults,
+        ...diagnosticsResponse,
         meta: {
           count: limitedResults.length,
           search_method: 'memory_v2',
-          threshold: threshold || 'adaptive',
+          threshold: normalizedSearchOptions.threshold,
           recency_boost: disableRecency
             ? null
             : {
@@ -1766,7 +1837,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
         created_at: memory.created_at,
         event_date: memory.event_date ?? null,
         event_datetime: memory.event_datetime ?? null,
-        graph_source: 'primary',
+        graph_source: memory.retrieval_diagnostics?.graph_source ?? 'primary',
         graph_rank: 1,
         related_to: null,
         edge_reason: null,
@@ -1777,6 +1848,9 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
           (memory as { source_type?: string; type?: string }).source_type ??
           (memory as { type?: string }).type ??
           'decision',
+        ...(memory.retrieval_diagnostics
+          ? { retrieval_diagnostics: memory.retrieval_diagnostics }
+          : {}),
       }));
       const { results: rankedRows, meta: rankerMeta } = applyLearnedRanker(baseRows);
       const limitedRows = rankedRows.slice(0, limit);
@@ -1791,10 +1865,11 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       return {
         query: userQuestion,
         results: limitedRows,
+        ...diagnosticsResponse,
         meta: {
           count: limitedRows.length,
           search_method: 'memory_v2',
-          threshold: threshold || 'adaptive',
+          threshold: normalizedSearchOptions.threshold,
           recency_boost: disableRecency
             ? null
             : {
@@ -1803,6 +1878,36 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
                 decay: recencyDecay,
               },
           graph_expansion: summarizeGraphExpansion(limitedRows),
+          ranker: rankerMeta,
+        },
+      };
+    }
+
+    if (memoryV2QualityContractRequested) {
+      const emptyRows: Array<{ id: string; source_type?: string; graph_source?: string | null }> =
+        [];
+      const { meta: rankerMeta } = applyLearnedRanker(emptyRows);
+
+      if (format === 'markdown') {
+        return '🔍 Search method: memory_v2\n';
+      }
+
+      return {
+        query: userQuestion,
+        results: emptyRows,
+        ...diagnosticsResponse,
+        meta: {
+          count: 0,
+          search_method: 'memory_v2',
+          threshold: normalizedSearchOptions.threshold,
+          recency_boost: disableRecency
+            ? null
+            : {
+                weight: recencyWeight,
+                scale: recencyScale,
+                decay: recencyDecay,
+              },
+          graph_expansion: summarizeGraphExpansion(emptyRows),
           ranker: rankerMeta,
         },
       };

@@ -75,7 +75,7 @@ Any MCP-compatible client can use MAMA with:
 npx -y @jungjaehoon/mama-server
 ```
 
-## Available Tools (v1.13)
+## Available Tools
 
 The MCP server exposes 13 tools:
 
@@ -83,7 +83,7 @@ The MCP server exposes 13 tools:
 | -------------------------------- | ----------------------------------------------------------------------- |
 | `save_decision`                  | Save decision with optional scopes and event_date for temporal tracking |
 | `recall_decision`                | Recall decision history by topic, scope-filtered via recallMemory v2    |
-| `suggest_decision`               | Semantic search for relevant past decisions, scope-aware                |
+| `suggest_decision`               | Semantic search with scopes, strictness controls, and diagnostics       |
 | `list_decisions`                 | List recent decisions, scope-filterable                                 |
 | `update_outcome`                 | Update decision outcome (case-insensitive: success/failed/partial)      |
 | `search_narrative`               | Narrative search with link expansion (depth 0-2)                        |
@@ -105,6 +105,25 @@ Decisions connect through relationships. Include patterns in your reasoning:
 | `builds_on`   | `builds_on: decision_xxx`  | Extends prior work         |
 | `debates`     | `debates: decision_xxx`    | Alternative view           |
 | `synthesizes` | `synthesizes: [id1, id2]`  | Merges multiple approaches |
+
+### Search Quality Controls
+
+`suggest_decision` accepts optional search-quality parameters for agents and operators:
+
+| Parameter           | Use                                                           |
+| ------------------- | ------------------------------------------------------------- |
+| `strictness`        | `'recall'`, `'balanced'`, or `'strict'` retrieval mode        |
+| `strict`            | Shortcut for strict mode                                      |
+| `threshold`         | Override the mode's minimum candidate threshold               |
+| `disableRecency`    | Remove recency boosting when relevance matters more than time |
+| `includeRelated`    | Include or suppress graph-expanded related hits               |
+| `topicPrefix`       | Limit search to a topic namespace                             |
+| `minLexicalSupport` | Require independent relevance confirmation                    |
+| `diagnostics`       | Return why each result was included or rejected               |
+| `scopes`            | Limit search to project/channel/user/global memory scopes     |
+
+Use `strictness: "balanced"` for normal agent work and `strictness: "strict"` when a result will
+drive a code change, user-facing answer, or provenance claim.
 
 ## Usage Example
 

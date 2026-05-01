@@ -166,9 +166,15 @@ type TraceCapableMAMAApi = MAMAApiInterface & {
 const managedAgentMutationTails = new Map<string, Promise<void>>();
 const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
+  'mama_search',
+  'mama_recall',
   'mama_update',
   'mama_add',
   'mama_ingest',
+]);
+const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
+  'mama_search',
+  'mama_recall',
 ]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'model_tool',
@@ -933,14 +939,15 @@ export class GatewayToolExecutor {
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
-    const scopeAudit = this.computeScopeAuditFields(toolName, input, ctx);
+    const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
+    const scopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
     const activeCtx = traceState ? { ...ctx, modelRunId: traceState.modelRunId } : ctx;
 
     let result!: GatewayToolResult;
     try {
       result = await this.executionContextStorage.run(activeCtx, () =>
-        this.executeWithEnvelopeAndPermissions(toolName, input, gatewayCallId)
+        this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
     } catch (error) {
       await this.appendToolTraceIfNeeded(
@@ -1196,6 +1203,10 @@ export class GatewayToolExecutor {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
+    if (toolName === 'mama_search' || toolName === 'mama_recall') {
+      return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+    }
+
     if (toolName === 'mama_update') {
       return null;
     }
@@ -1229,6 +1240,32 @@ export class GatewayToolExecutor {
       userId: context.session.userId,
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
+  }
+
+  private applyEnvelopeScopedReadDefaults(
+    toolName: string,
+    input: GatewayToolInput,
+    ctx: ActiveGatewayExecutionContext | undefined
+  ): GatewayToolInput {
+    // Memory read tools must inherit envelope scopes consistently when the
+    // caller omits scopes. Otherwise recall can fall back to active-context
+    // scopes outside the envelope.
+    if (!MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS.has(toolName) || !ctx?.envelope) {
+      return input;
+    }
+
+    const scopedInput = input as SearchInput | RecallInput;
+    const hasCallerScopes = Array.isArray(scopedInput.scopes)
+      ? scopedInput.scopes.length > 0
+      : scopedInput.scopes !== undefined;
+    if (hasCallerScopes) {
+      return input;
+    }
+
+    return {
+      ...scopedInput,
+      scopes: ctx.envelope.scope.memory_scopes,
+    };
   }
 
   private buildTrustedMemoryWriteOptions(
@@ -1397,11 +1434,6 @@ export class GatewayToolExecutor {
       );
     }
 
-    const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
-    if (envelopeDenied) {
-      return envelopeDenied;
-    }
-
     // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
     if (this.disallowedGatewayTools.has(toolName)) {
       return {
@@ -1410,13 +1442,33 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    // Check tool permission
-    const toolPermission = this.checkToolPermission(toolName);
-    if (!toolPermission.allowed) {
-      return {
-        success: false,
-        error: toolPermission.error,
-      } as GatewayToolResult;
+    const shouldCheckPermissionBeforeEnvelope =
+      MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS.has(toolName) &&
+      Boolean(this.executionContextStorage.getStore()?.envelope);
+
+    if (shouldCheckPermissionBeforeEnvelope) {
+      const toolPermission = this.checkToolPermission(toolName);
+      if (!toolPermission.allowed) {
+        return {
+          success: false,
+          error: toolPermission.error,
+        } as GatewayToolResult;
+      }
+    }
+
+    const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
+    if (envelopeDenied) {
+      return envelopeDenied;
+    }
+
+    if (!shouldCheckPermissionBeforeEnvelope) {
+      const toolPermission = this.checkToolPermission(toolName);
+      if (!toolPermission.allowed) {
+        return {
+          success: false,
+          error: toolPermission.error,
+        } as GatewayToolResult;
+      }
     }
 
     try {
@@ -3475,15 +3527,8 @@ export class GatewayToolExecutor {
           projectId: process.env.MAMA_WORKSPACE || process.cwd(),
         })
       : [];
-    let scopes = fallbackScopes;
-    if (Array.isArray(input.scopes) && input.scopes.length > 0) {
-      const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
-      const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
-      if (allInDerived)
-        scopes = fallbackScopes.filter((s) =>
-          input.scopes!.some((is) => is.kind === s.kind && is.id === s.id)
-        );
-    }
+    const inputScopes = Array.isArray(input.scopes) ? input.scopes : [];
+    const scopes = inputScopes.length > 0 ? inputScopes : fallbackScopes;
 
     if (scopes.length === 0) {
       return {

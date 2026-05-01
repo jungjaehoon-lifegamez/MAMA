@@ -323,8 +323,8 @@ export class AgentProcessManager extends EventEmitter {
     }
 
     // Claude backend
-    const process = await this.processPool.getProcess(channelKey, options);
-    if (process.listenerCount('idle') === 0) {
+    const { process, created } = await this.processPool.getProcessWithStatus(channelKey, options);
+    if (created) {
       this.emit('process-created', { agentId, process });
     }
     if (agentId.toLowerCase() === 'conductor' && this.tracePromptMs) {

@@ -1,4 +1,4 @@
-import type { Envelope } from './types.js';
+import type { Envelope, MemoryScope } from './types.js';
 import { parseEnvelopeExpiresAt } from './expiry.js';
 
 export class EnvelopeViolation extends Error {
@@ -39,6 +39,8 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'human.correction',
 ]);
 
+const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall']);
+
 export class EnvelopeEnforcer {
   check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
     if (!envelope) {
@@ -48,6 +50,7 @@ export class EnvelopeEnforcer {
     this.checkExpiry(envelope);
     this.checkDestination(envelope, toolName, args);
     this.checkRawConnectors(envelope, toolName, args);
+    this.checkMemoryScopes(envelope, toolName, args);
     this.checkTier(envelope, toolName);
   }
 
@@ -113,6 +116,41 @@ export class EnvelopeEnforcer {
     }
   }
 
+  private checkMemoryScopes(envelope: Envelope, toolName: string, args: unknown): void {
+    if (toolName === 'mama_load_checkpoint') {
+      throw new EnvelopeViolation(
+        'Checkpoint reads are not scoped yet; use scoped search for checkpoint queries.',
+        'scoped_checkpoint_unsupported'
+      );
+    }
+
+    if (!MEMORY_READ_TOOLS.has(toolName)) {
+      return;
+    }
+
+    const requestedScopes = requestedMemoryScopesForTool(toolName, args);
+    if (requestedScopes.length === 0) {
+      throw new EnvelopeViolation(
+        'Memory read tools must execute with an explicit envelope memory scope',
+        'memory_scope_out_of_scope',
+        { allowed: envelope.scope.memory_scopes }
+      );
+    }
+
+    const allowedScopeKeys = new Set(
+      envelope.scope.memory_scopes.map((scope) => `${scope.kind}:${scope.id}`)
+    );
+    const outOfScope = requestedScopes.some(
+      (scope) => !allowedScopeKeys.has(`${scope.kind}:${scope.id}`)
+    );
+    if (outOfScope) {
+      throw new EnvelopeViolation(
+        'Requested memory scope is outside envelope.scope.memory_scopes',
+        'memory_scope_out_of_scope'
+      );
+    }
+  }
+
   private checkTier(envelope: Envelope, toolName: string): void {
     if (envelope.tier === 3 && WRITE_OR_SEND_TOOLS.has(toolName)) {
       throw new EnvelopeViolation(
@@ -146,6 +184,30 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
   return connector ? [connector] : [];
 }
 
+function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
+  if (!['mama_search', 'mama_recall'].includes(toolName)) {
+    return [];
+  }
+  if (!isRecord(args) || args.scopes === undefined) {
+    return [];
+  }
+  if (!Array.isArray(args.scopes)) {
+    throw new EnvelopeViolation('Tool scopes must be an array', 'invalid_memory_scope');
+  }
+
+  const scopes: MemoryScope[] = [];
+  for (const item of args.scopes) {
+    if (!isMemoryScope(item)) {
+      throw new EnvelopeViolation(
+        'Tool scopes must contain memory scope objects',
+        'invalid_memory_scope'
+      );
+    }
+    scopes.push({ kind: item.kind, id: item.id });
+  }
+  return scopes;
+}
+
 function getStringArg(args: unknown, key: string): string | undefined {
   if (!isRecord(args)) {
     return undefined;
@@ -166,4 +228,15 @@ function getStringArrayArg(args: unknown, key: string): string[] | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object';
+}
+
+function isMemoryScope(value: unknown): value is MemoryScope {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    ['global', 'user', 'channel', 'project'].includes(String(value.kind)) &&
+    typeof value.id === 'string' &&
+    value.id.length > 0
+  );
 }

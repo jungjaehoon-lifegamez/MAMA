@@ -319,6 +319,56 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
+  it('audits envelope-defaulted mama_recall scopes without reporting a mismatch', async () => {
+    const { db, executor, mamaApi, metricsStore } = createExecutorHarness();
+    const envelope = makeSignedEnvelope({
+      source: 'telegram',
+      channel_id: 'abc',
+      scope: {
+        project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'channel', id: 'telegram:abc' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'abc' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'mama_recall',
+      { query: 'scoped recall' },
+      {
+        agentId: 'chat_bot',
+        source: 'telegram',
+        channelId: 'abc',
+        agentContext: createTelegramContext(),
+        envelope,
+        executionSurface: 'model_tool',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(mamaApi.recallMemory).toHaveBeenCalledWith(
+      'scoped recall',
+      expect.objectContaining({
+        scopes: [{ kind: 'channel', id: 'telegram:abc' }],
+      })
+    );
+    const [row] = readGatewayToolRows(db);
+    expect(row).toMatchObject({
+      input_summary: 'mama_recall',
+      envelope_hash: envelope.envelope_hash,
+      scope_mismatch: 0,
+      execution_status: 'completed',
+    });
+    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'channel', id: 'telegram:abc' }]);
+    expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
+      { kind: 'channel', id: 'telegram:abc' },
+    ]);
+    expect(metricsStore.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'envelope_scope_mismatch' })
+    );
+    db.close();
+  });
+
   it('covers each memory-mutating tool and uses effective scopes for derived ingest paths', async () => {
     const cases: Array<{
       toolName: 'mama_save' | 'mama_update' | 'mama_add' | 'mama_ingest';

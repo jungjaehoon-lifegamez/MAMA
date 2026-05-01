@@ -34,6 +34,7 @@ vi.mock('../../src/db-manager.js', () => ({
 describe('memory v2 recall ranking', () => {
   beforeEach(() => {
     vi.resetModules();
+    vi.clearAllMocks();
     decisionRows = [
       {
         id: 'answer-memory',
@@ -87,5 +88,40 @@ describe('memory v2 recall ranking', () => {
     const ids = bundle.memories.map((m) => m.id);
     expect(ids).toContain('answer-memory');
     expect(ids).toContain('distractor-memory');
+  });
+
+  it('records vector-only diagnostics for memory_v2 hits', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    const bundle = await recallMemory('context compile', {
+      limit: 5,
+      diagnostics: true,
+    });
+
+    expect(bundle.search_meta.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
+    expect(bundle.memories[0].retrieval_diagnostics).toMatchObject({
+      is_vector_only: true,
+      candidate_threshold_used: expect.any(Number),
+      confirmation_signals: [],
+      metadata_signals: expect.arrayContaining(['graph_primary']),
+    });
+  });
+
+  it('excludes vector-only hits from strict primary memories', async () => {
+    const { recallMemory } = await import('../../src/memory/api.js');
+
+    const bundle = await recallMemory('cc', {
+      limit: 5,
+      strictness: 'strict',
+      diagnostics: true,
+    });
+
+    expect(vectorSearchMock).toHaveBeenCalledWith(expect.any(Float32Array), 20, 0.6, undefined);
+    expect(bundle.memories).toEqual([]);
+    expect((bundle as { fused_hits?: unknown[] }).fused_hits).toEqual([]);
+    expect(bundle.search_meta.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
+    expect(bundle.search_meta.diagnostics?.candidate_counts.rejected_by_strictness).toBeGreaterThan(
+      0
+    );
   });
 });

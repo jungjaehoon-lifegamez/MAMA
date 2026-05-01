@@ -9,11 +9,18 @@ vi.mock('../../src/embeddings.js', async () => {
   };
 });
 
-import { fts5Search, getAdapter, vectorSearch } from '../../src/db-manager.js';
+import {
+  bindMemoryToScope,
+  ensureMemoryScope,
+  fts5Search,
+  getAdapter,
+  vectorSearch,
+} from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import { rollUpSearchHits, type SearchRollupLeafHit } from '../../src/cases/search-rollup.js';
 import { upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
-import { suggest } from '../../src/mama-api.js';
+import mamaApi, { suggest } from '../../src/mama-api.js';
+import type { SearchHitDiagnostics } from '../../src/search/search-quality.js';
 import { handleSearch } from '../../../standalone/src/agent/mama-tool-handlers.js';
 import type { MAMAApiInterface } from '../../../standalone/src/agent/types.js';
 
@@ -39,6 +46,8 @@ function nowIso(): string {
 
 function cleanupRows(): void {
   const adapter = getAdapter();
+  adapter.prepare('DELETE FROM memory_scope_bindings').run();
+  adapter.prepare('DELETE FROM memory_scopes').run();
   adapter.prepare('DELETE FROM case_memberships').run();
   adapter.prepare('DELETE FROM wiki_page_index').run();
   adapter
@@ -139,15 +148,26 @@ function insertDecision(input: {
   adapter.prepare("INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild')").run();
 }
 
+async function bindDecisionScope(
+  memoryId: string,
+  scope: { kind: 'global' | 'user' | 'channel' | 'project'; id: string },
+  isPrimary = true
+): Promise<void> {
+  const scopeId = await ensureMemoryScope(scope.kind, scope.id);
+  await bindMemoryToScope(memoryId, scopeId, isPrimary);
+}
+
 function leaf(
   sourceId: string,
   score: number,
-  record: Record<string, unknown> = {}
+  record: Record<string, unknown> = {},
+  retrievalDiagnostics?: SearchHitDiagnostics
 ): SearchRollupLeafHit {
   return {
     source_type: 'decision',
     source_id: sourceId,
     fused_rank_score: score,
+    retrieval_diagnostics: retrievalDiagnostics,
     record: {
       id: sourceId,
       topic: sourceId,
@@ -155,6 +175,32 @@ function leaf(
       details: '',
       ...record,
     },
+  };
+}
+
+function diagnostics(input: {
+  source?: string;
+  vectorSimilarity?: number | null;
+  lexical?: boolean;
+  entity?: boolean;
+  scope?: boolean;
+  graphSource?: 'primary' | 'expanded' | null;
+  vectorOnly?: boolean;
+  confirmations?: string[];
+  metadata?: string[];
+  threshold?: number;
+}): SearchHitDiagnostics {
+  return {
+    retrieval_source: input.source ?? 'hybrid_rrf',
+    vector_similarity: input.vectorSimilarity ?? null,
+    lexical_support: input.lexical ?? false,
+    entity_support: input.entity ?? false,
+    scope_support: input.scope ?? true,
+    graph_source: input.graphSource ?? 'primary',
+    is_vector_only: input.vectorOnly ?? false,
+    confirmation_signals: input.confirmations ?? (input.lexical ? ['lexical'] : []),
+    metadata_signals: input.metadata ?? ['graph_primary'],
+    candidate_threshold_used: input.threshold ?? 0.45,
   };
 }
 
@@ -377,6 +423,95 @@ describe('Task 11: mama_search case membership roll-up', () => {
     ]);
   });
 
+  it('preserves strongest retrieval diagnostics and all contributing leaf diagnostics', () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-diagnostics' });
+    insertMembership('case-diagnostics', 'D-vector');
+    insertMembership('case-diagnostics', 'D-lexical');
+
+    const vectorOnlyDiagnostics = diagnostics({
+      source: 'vector_search',
+      vectorSimilarity: 0.88,
+      graphSource: 'expanded',
+      vectorOnly: true,
+      confirmations: [],
+      metadata: ['graph_expanded'],
+    });
+    const confirmedDiagnostics = diagnostics({
+      source: 'hybrid_rrf',
+      vectorSimilarity: 0.93,
+      lexical: true,
+      graphSource: 'primary',
+      vectorOnly: false,
+      confirmations: ['lexical'],
+      metadata: ['graph_primary'],
+    });
+
+    const results = rollUpSearchHits({
+      adapter,
+      fusedHits: [
+        leaf('D-vector', 10, {}, vectorOnlyDiagnostics),
+        leaf('D-lexical', 8, {}, confirmedDiagnostics),
+      ],
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].retrieval_diagnostics).toMatchObject({
+      retrieval_source: 'hybrid_rrf',
+      graph_source: 'primary',
+      is_vector_only: false,
+      confirmation_signals: ['lexical'],
+    });
+    expect(results[0].contributing_leaf_diagnostics).toMatchObject({
+      'D-vector': expect.objectContaining({
+        retrieval_source: 'vector_search',
+        is_vector_only: true,
+      }),
+      'D-lexical': expect.objectContaining({
+        retrieval_source: 'hybrid_rrf',
+        lexical_support: true,
+      }),
+    });
+  });
+
+  it('prefers confirmed diagnostics before metadata-only graph/source signals', () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-diagnostics-rank' });
+    insertMembership('case-diagnostics-rank', 'D-primary-vector');
+    insertMembership('case-diagnostics-rank', 'D-expanded-unconfirmed');
+
+    const vectorOnlyPrimary = diagnostics({
+      source: 'vector_search',
+      vectorSimilarity: 0.88,
+      graphSource: 'primary',
+      vectorOnly: true,
+      confirmations: [],
+      metadata: ['graph_primary'],
+    });
+    const unconfirmedExpanded = diagnostics({
+      source: 'graph_expansion',
+      vectorSimilarity: null,
+      graphSource: 'expanded',
+      vectorOnly: false,
+      confirmations: [],
+      metadata: ['graph_expanded'],
+    });
+
+    const results = rollUpSearchHits({
+      adapter,
+      fusedHits: [
+        leaf('D-primary-vector', 10, {}, vectorOnlyPrimary),
+        leaf('D-expanded-unconfirmed', 8, {}, unconfirmedExpanded),
+      ],
+    });
+
+    expect(results[0].retrieval_diagnostics).toMatchObject({
+      retrieval_source: 'vector_search',
+      graph_source: 'primary',
+      confirmation_signals: [],
+    });
+  });
+
   it.each([
     {
       name: 'suggest',
@@ -421,6 +556,45 @@ describe('Task 11: mama_search case membership roll-up', () => {
     expect(rows[0]).toHaveProperty('retrieval_score');
   });
 
+  it('surfaces memory_v2 diagnostics through suggest case roll-up', async () => {
+    insertCase({ case_id: 'case-diagnostic-path', title: 'Diagnostic Path Case' });
+    insertMembership('case-diagnostic-path', 'decision_diagnostic_path');
+    insertDecision({
+      id: 'decision_diagnostic_path',
+      topic: 'diagnostic path topic',
+      decision: 'diagnosticpathtoken decision body',
+      reasoning: 'diagnostic path reasoning',
+      embedding: unitVector(1),
+    });
+
+    const result = await suggest('diagnosticpathtoken', {
+      limit: 5,
+      diagnostics: true,
+      strictness: 'balanced',
+    });
+    const rows = (result.results ?? []) as Array<Record<string, unknown>>;
+
+    expect(result.diagnostics?.candidate_counts.lexical).toBeGreaterThan(0);
+    expect(rows[0]).toMatchObject({
+      id: 'case-diagnostic-path',
+      source_type: 'case',
+      case_id: 'case-diagnostic-path',
+      graph_source: 'primary',
+      retrieval_diagnostics: expect.objectContaining({
+        lexical_support: true,
+        graph_source: 'primary',
+        is_vector_only: false,
+        confirmation_signals: ['lexical'],
+      }),
+      contributing_leaf_diagnostics: {
+        decision_diagnostic_path: expect.objectContaining({
+          lexical_support: true,
+          is_vector_only: false,
+        }),
+      },
+    });
+  });
+
   it('returns a case result when the query matches only wiki_page_index content', async () => {
     const adapter = getAdapter();
     insertCase({ case_id: 'case-wiki-only', title: 'Wiki Only Case' });
@@ -446,6 +620,196 @@ describe('Task 11: mama_search case membership roll-up', () => {
       case_id: 'case-wiki-only',
       id: 'case-wiki-only',
     });
+  });
+
+  it('does not return wiki vector-only hits in strict search', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-vector-only', title: 'Wiki Vector Only Case' });
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-vector-only.md',
+      page_type: 'case',
+      title: 'Wiki Vector Only',
+      content: 'Compiled case body without the requested strict token',
+      case_id: 'case-wiki-vector-only',
+      source_ids: [],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+      embedding: unitVector(1),
+    });
+
+    const result = await suggest('strictwikivectornoise', {
+      limit: 5,
+      strictness: 'strict',
+      diagnostics: true,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
+    expect(result.diagnostics?.candidate_counts.rejected_by_strictness).toBeGreaterThan(0);
+  });
+
+  it('does not return unconfirmed graph-expanded hits in balanced search', async () => {
+    const now = Date.now();
+    insertDecision({
+      id: 'decision_graph_primary',
+      topic: 'graph primary topic',
+      decision: 'graphprimarytoken confirmed primary decision',
+      reasoning: 'primary lexical support',
+      embedding: unitVector(1),
+    });
+    insertDecision({
+      id: 'decision_graph_expanded_noise',
+      topic: 'unrelated expanded topic',
+      decision: 'expanded graph neighbor without query support',
+      reasoning: 'graph-only neighbor',
+      embedding: unitVector(0.1),
+    });
+
+    const graphSpy = vi.spyOn(mamaApi, 'expandWithGraph').mockResolvedValueOnce([
+      {
+        id: 'decision_graph_primary',
+        topic: 'graph primary topic',
+        decision: 'graphprimarytoken confirmed primary decision',
+        confidence: 0.9,
+        created_at: now,
+        graph_source: 'primary',
+        graph_rank: 1,
+      },
+      {
+        id: 'decision_graph_expanded_noise',
+        topic: 'unrelated expanded topic',
+        decision: 'expanded graph neighbor without query support',
+        confidence: 0.95,
+        created_at: now,
+        graph_source: 'expanded',
+        graph_rank: 0.95,
+      },
+    ]);
+
+    try {
+      const result = await suggest('graphprimarytoken', {
+        limit: 10,
+        strictness: 'balanced',
+        includeRelated: true,
+        diagnostics: true,
+      });
+      const ids = (result.results ?? []).map((row: Record<string, unknown>) => row.id);
+
+      expect(ids).toContain('decision_graph_primary');
+      expect(ids).not.toContain('decision_graph_expanded_noise');
+      expect(result.diagnostics?.candidate_counts.graph_expanded).toBe(0);
+    } finally {
+      graphSpy.mockRestore();
+    }
+  });
+
+  it('does not return wiki hits outside requested memory scopes', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-outside-scope', title: 'Wiki Outside Scope' });
+    insertDecision({
+      id: 'decision_wiki_outside_scope_source',
+      topic: 'outside scope source',
+      decision: 'outside source decision',
+      reasoning: 'source is bound to beta',
+    });
+    await bindDecisionScope('decision_wiki_outside_scope_source', {
+      kind: 'project',
+      id: 'beta',
+    });
+    insertMembership('case-wiki-outside-scope', 'decision_wiki_outside_scope_source');
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-outside-scope.md',
+      page_type: 'case',
+      title: 'Wiki Outside Scope',
+      content: 'scopedwikitoken appears only in compiled markdown',
+      case_id: 'case-wiki-outside-scope',
+      source_ids: ['decision_wiki_outside_scope_source'],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+    });
+
+    const result = await suggest('scopedwikitoken', {
+      limit: 5,
+      strictness: 'balanced',
+      diagnostics: true,
+      scopes: [{ kind: 'project', id: 'alpha' }],
+    });
+
+    expect(result.results).toEqual([]);
+  });
+
+  it('does not return wiki hits outside topicPrefix source evidence', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-topic-prefix', title: 'Wiki Topic Prefix' });
+    insertDecision({
+      id: 'decision_wiki_topic_prefix_source',
+      topic: 'beta/wiki/source',
+      decision: 'topic prefix source decision',
+      reasoning: 'source topic is outside alpha prefix',
+    });
+    insertMembership('case-wiki-topic-prefix', 'decision_wiki_topic_prefix_source');
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-topic-prefix.md',
+      page_type: 'case',
+      title: 'Wiki Topic Prefix',
+      content: 'prefixedwikitoken appears only in compiled markdown',
+      case_id: 'case-wiki-topic-prefix',
+      source_ids: ['decision_wiki_topic_prefix_source'],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+    });
+
+    const result = await suggest('prefixedwikitoken', {
+      limit: 5,
+      strictness: 'balanced',
+      topicPrefix: 'alpha/',
+    });
+
+    expect(result.results).toEqual([]);
+  });
+
+  it('normalizes decision-prefixed wiki source IDs for scoped topicPrefix filtering', async () => {
+    const adapter = getAdapter();
+    insertCase({ case_id: 'case-wiki-prefixed-source', title: 'Wiki Prefixed Source' });
+    insertDecision({
+      id: 'decision_wiki_prefixed_source',
+      topic: 'alpha/wiki/source',
+      decision: 'prefixed wiki source decision',
+      reasoning: 'source is bound to alpha and uses decision-prefixed refs',
+    });
+    await bindDecisionScope('decision_wiki_prefixed_source', {
+      kind: 'project',
+      id: 'alpha',
+    });
+
+    upsertWikiPageIndexEntry(adapter, {
+      source_locator: 'cases/wiki-prefixed-source.md',
+      page_type: 'case',
+      title: 'Wiki Prefixed Source',
+      content: 'prefixedsourcewikitoken appears only in compiled markdown',
+      case_id: 'case-wiki-prefixed-source',
+      source_ids: ['decision:decision_wiki_prefixed_source', 'checkpoint:checkpoint_ignored'],
+      entity_refs: [],
+      confidence: 'high',
+      compiled_at: nowIso(),
+    });
+
+    const result = await suggest('prefixedsourcewikitoken', {
+      limit: 5,
+      strictness: 'balanced',
+      topicPrefix: 'alpha/',
+      scopes: [{ kind: 'project', id: 'alpha' }],
+    });
+
+    expect(result.results.map((row: Record<string, unknown>) => row.id)).toContain(
+      'case-wiki-prefixed-source'
+    );
   });
 
   it('feeds fused RRF scores into roll-up before case scoring in the production search path', async () => {

@@ -106,7 +106,9 @@ describe('EnvelopeEnforcer', () => {
   it('allows read tools at tier 3', () => {
     const env = makeEnvelope({ tier: 3 });
 
-    expect(() => enforcer.check(env, 'mama_search', { query: 'x' })).not.toThrow();
+    expect(() =>
+      enforcer.check(env, 'mama_search', { query: 'x', scopes: env.scope.memory_scopes })
+    ).not.toThrow();
   });
 
   it('rejects null envelope', () => {

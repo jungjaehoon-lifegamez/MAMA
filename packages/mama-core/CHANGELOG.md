@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Memory provenance substrate**: Added provenance columns, trusted provenance normalization,
+  scoped provenance reads, backfill helpers, and audit coverage for source refs and scope bindings
+- **Model run and tool trace stores**: Added adapter-scoped model run persistence, tool trace
+  persistence, replay compatibility helpers, duplicate insert protection, and lifecycle tests
+- **Twin edge ledger**: Added first-class twin edge storage, ref validation, visibility filtering,
+  and graph provenance tests across memory/raw/entity/case references
+- **Unified raw query APIs**: Added raw connector query helpers and provenance-aware raw index
+  plumbing so raw evidence can be retrieved as a first-class context source
+- **Agent situation packets**: Added the core packet builder, append-only packet store, ranking
+  policy, cache key, singleflight behavior, and source readers for worker-ready situation context
+- **Agent graph/entity APIs**: Added graph query, entity resolution, alias write, and visibility
+  helpers used by worker graph/entity surfaces
+- **Search quality options**: Added reusable strict search normalization for `threshold`,
+  `strictness`, `disableRecency`, `includeRelated`, `topicPrefix`, `minLexicalSupport`, and
+  diagnostics
+- **Retrieval diagnostics**: `recallMemory()` and `mama.suggest()` can now return per-hit
+  confirmation metadata plus candidate counts for vector, lexical, entity, graph-expanded,
+  vector-only, and strictness-rejected candidates
+
+### Changed
+
+- **Memory writes are provenance-aware**: Trusted runtime provenance is compacted into
+  `provenance_json` and `source_refs_json`, while public caller-supplied provenance stays outside
+  the trusted path
+- **Migration chain extended**: Migrations now cover memory provenance, model/tool traces,
+  connector scope columns, twin edges, and agent situation packets
+- **memory_v2 recall filtering**: Balanced and strict search modes now require lexical, entity,
+  raw-id, or seed confirmation instead of accepting metadata-only signals such as scope support or
+  graph position
+- **Search rollup provenance**: Rolled-up results preserve primary and contributing-leaf retrieval
+  diagnostics so downstream callers can audit why a case result matched
+
+### Fixed
+
+- **Replay and visibility hardening**: Model-run replay lifecycle, canonical replay refs, duplicate
+  insert races, situation packet visibility, graph provenance visibility, and alias replay behavior
+  now have regression coverage
+- **Strict fallback bypass**: `mama.suggest()` no longer falls back to unfiltered legacy search when
+  a strict or balanced memory_v2 search returns no confirmed rows
+- **Wiki vector strictness**: Wiki vector hits now receive the same strictness and diagnostics
+  treatment as decision hits
+
 ## [1.1.5] - 2026-02-22
 
 ### Added

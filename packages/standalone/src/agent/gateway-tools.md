@@ -5,10 +5,11 @@ Call tools via JSON block:
 ```tool_call
 {"name": "tool_name", "input": {"param1": "value1"}}
 ```
+
 ## MAMA Memory
 
 - **mama_save**() — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)
-- **mama_search**(query?, type?, limit?) — Search decisions
+- **mama_search**(query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?) — Search decisions
 - **mama_recall**(query, scopes?, includeProfile?) — Recall memory bundle with profile, memories, and graph context
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
@@ -88,6 +89,7 @@ Call tools via JSON block:
 ## System
 
 - **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.
+
 ## Sending Media to Webchat
 
 To display images in webchat, you MUST include the full file path in your response text.
