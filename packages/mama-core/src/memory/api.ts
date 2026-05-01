@@ -1364,11 +1364,13 @@ export async function recallMemory(
     if (!normalizedQuery || !normalizedTopic) {
       return false;
     }
-    return (
-      normalizedQuery === normalizedTopic ||
-      normalizedQuery.includes(normalizedTopic) ||
-      normalizedTopic.includes(normalizedQuery)
-    );
+    // Only count exact-topic confirmation when the topic is at least as
+    // specific as the query: equal, or the query fully contains the topic
+    // (i.e., the topic itself appears as a substring of the request).
+    // The reverse direction (`normalizedTopic.includes(normalizedQuery)`)
+    // would let any short query promote unrelated topics into `exact_topic`,
+    // which lets vector-only hits survive strict/balanced rejection.
+    return normalizedQuery === normalizedTopic || normalizedQuery.includes(normalizedTopic);
   };
   const hasExactWikiSupport = (record: WikiPageIndexRecord): boolean => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -1766,7 +1768,12 @@ export async function recallMemory(
         })),
       ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
 
-      const allIds = [...matched.map((m) => m.id), ...expandedOnly.map((e) => e.id)];
+      // bundle.graph_context.expanded is the strictness-filtered set of
+      // expanded nodes that will actually be returned. Use those IDs (not
+      // expandedOnly, which still contains rejected candidates) so edges
+      // never point at nodes that never made it into the graph payload.
+      const acceptedExpandedIds = bundle.graph_context.expanded.map((record) => record.id);
+      const allIds = [...matched.map((m) => m.id), ...acceptedExpandedIds];
       const allEdges = await loadEdgesForIds(allIds);
 
       // Filter out edges pointing to decisions with excluded statuses

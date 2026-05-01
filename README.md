@@ -102,7 +102,7 @@ separate chat tab.
 - **Organize actionable knowledge** — Raw conversations become structured wiki pages and situation summaries with priorities, gaps, and next steps
 - **Prepare briefings** — Dashboard, wiki, and situation agents can summarize visible context for humans and workers
 
-```
+```text
 Without MAMA:  The agent sees fragments. You still reconstruct the board.
 
 With MAMA:     The agent gets bounded evidence surfaces. You get the

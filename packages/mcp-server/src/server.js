@@ -591,8 +591,22 @@ After failure → save a NEW decision with same topic to create evolution histor
           ...(minLexicalSupport !== undefined && { minLexicalSupport }),
           ...(diagnostics !== undefined && { diagnostics }),
         });
-        searchDiagnostics = suggestResult?.diagnostics;
-        decisions = suggestResult?.results || [];
+        // Preserve the failure signal — collapsing a null/invalid suggest
+        // response to [] would make callers unable to distinguish "no matches"
+        // from "search pipeline failed". Mirror the standalone handler's
+        // suggest_returned_null code so behavior stays consistent across
+        // transports.
+        if (!suggestResult || typeof suggestResult !== 'object') {
+          return {
+            success: false,
+            code: 'suggest_returned_null',
+            count: 0,
+            results: [],
+            message: 'Search failed: suggest() returned no result for query',
+          };
+        }
+        searchDiagnostics = suggestResult.diagnostics;
+        decisions = Array.isArray(suggestResult.results) ? suggestResult.results : [];
       } else {
         decisions = await mama.list({ limit, ...(scopes && { scopes }) });
       }

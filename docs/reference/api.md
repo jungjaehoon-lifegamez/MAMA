@@ -182,7 +182,7 @@ diagnostics explaining which signals confirmed each hit.
 | `disableRecency`    | boolean | No       | Disable recency boosting for a pure relevance-oriented search        |
 | `includeRelated`    | boolean | No       | Include graph-related results. Defaults to false in strict mode      |
 | `topicPrefix`       | string  | No       | Limit recall to topics with this prefix                              |
-| `minLexicalSupport` | boolean | No       | Require lexical/entity/raw-id/seed confirmation for non-recall modes |
+| `minLexicalSupport` | boolean | No       | Require lexical/entity/exact-topic confirmation for non-recall modes |
 | `diagnostics`       | boolean | No       | Return top-level and per-hit retrieval diagnostics when available    |
 
 Default thresholds are `0.3` for `recall`, `0.45` for `balanced`, and `0.6` for `strict`.
@@ -196,6 +196,7 @@ hit.
   "query": "authentication approach",
   "limit": 5,
   "strictness": "balanced",
+  "scopes": [{ "kind": "project", "id": "/workspace/demo" }],
   "diagnostics": true
 }
 ```
