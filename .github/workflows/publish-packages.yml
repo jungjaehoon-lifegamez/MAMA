@@ -14,6 +14,7 @@ on:
           - all
           - mcp-server
           - mama-core
+          - mama-os
 
 jobs:
   publish:
@@ -38,9 +39,10 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build packages
-        run: pnpm build || true
+        run: pnpm build
 
       - name: Prepare mcp-server for publishing
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mcp-server'
         working-directory: packages/mcp-server
         run: |
           # Replace workspace:* with actual version from mama-core
@@ -49,18 +51,33 @@ jobs:
           echo "=== mcp-server package.json ==="
           cat package.json
 
+      - name: Prepare mama-os for publishing
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-os'
+        working-directory: packages/standalone
+        run: |
+          # Replace workspace:* with actual version from mama-core
+          CORE_VERSION=$(node -p "require('../mama-core/package.json').version")
+          sed -i "s/\"workspace:\\*\"/\"^${CORE_VERSION}\"/g" package.json
+          echo "=== mama-os package.json ==="
+          cat package.json
+
       - name: Publish mama-core first (dependency)
         if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-core'
         working-directory: packages/mama-core
-        run: |
-          npm publish --access public 2>&1 || echo "mama-core: Already published or failed"
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish mcp-server
         if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mcp-server'
         working-directory: packages/mcp-server
-        run: |
-          npm publish --access public 2>&1 || echo "mcp-server: Already published or failed"
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish mama-os
+        if: github.event_name == 'release' || inputs.package == 'all' || inputs.package == 'mama-os'
+        working-directory: packages/standalone
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -42,7 +42,7 @@ jobs:
         run: pnpm build
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "Already published on npmjs, skipping"
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -86,7 +86,7 @@ jobs:
           sed -i "s/\"workspace:\*\"/\"^$CORE_VERSION\"/" package.json
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "Already published on npmjs, skipping"
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -135,7 +135,7 @@ jobs:
           sed -i "s/\"workspace:\\*\"/\"^$CORE_VERSION\"/" package.json
 
       - name: Publish to npmjs.org
-        run: npm publish --access public || echo "Already published on npmjs, skipping"
+        run: bash ${{ github.workspace }}/scripts/ci-publish-npm.sh
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
