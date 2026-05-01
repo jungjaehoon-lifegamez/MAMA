@@ -1358,28 +1358,48 @@ export async function recallMemory(
     }
     return record.scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
   };
+  // exact_topic confirmation is intentionally narrow: short substring matches
+  // would let two-letter queries like "ai" trip on words like "email" and
+  // promote vector-only hits past strict/balanced rejection. Require either
+  // exact equality or whole-token containment, and ignore tiny queries.
+  const EXACT_TOPIC_MIN_QUERY_LENGTH = 3;
+  const tokenizeForExactTopic = (input: string): string[] =>
+    input.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
   const hasExactTopicSupport = (record: MemoryRecord): boolean => {
     const normalizedQuery = query.trim().toLowerCase();
     const normalizedTopic = record.topic.trim().toLowerCase();
     if (!normalizedQuery || !normalizedTopic) {
       return false;
     }
-    // Only count exact-topic confirmation when the topic is at least as
-    // specific as the query: equal, or the query fully contains the topic
-    // (i.e., the topic itself appears as a substring of the request).
-    // The reverse direction (`normalizedTopic.includes(normalizedQuery)`)
-    // would let any short query promote unrelated topics into `exact_topic`,
-    // which lets vector-only hits survive strict/balanced rejection.
-    return normalizedQuery === normalizedTopic || normalizedQuery.includes(normalizedTopic);
+    if (normalizedQuery.length < EXACT_TOPIC_MIN_QUERY_LENGTH) {
+      return false;
+    }
+    if (normalizedQuery === normalizedTopic) {
+      return true;
+    }
+    const queryTokens = tokenizeForExactTopic(normalizedQuery);
+    const topicTokens = tokenizeForExactTopic(normalizedTopic);
+    // Whole-token match: a topic word equals the entire query, OR the topic
+    // (when itself a single token) appears as a complete word in the query.
+    return topicTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTopic);
   };
   const hasExactWikiSupport = (record: WikiPageIndexRecord): boolean => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) {
+    if (!normalizedQuery || normalizedQuery.length < EXACT_TOPIC_MIN_QUERY_LENGTH) {
       return false;
     }
     const normalizedTitle = record.title.trim().toLowerCase();
-    const normalizedContent = record.content.trim().toLowerCase();
-    return normalizedTitle.includes(normalizedQuery) || normalizedContent.includes(normalizedQuery);
+    if (!normalizedTitle) {
+      return false;
+    }
+    if (normalizedQuery === normalizedTitle) {
+      return true;
+    }
+    const queryTokens = tokenizeForExactTopic(normalizedQuery);
+    const titleTokens = tokenizeForExactTopic(normalizedTitle);
+    // Wiki exact_topic uses TITLE only — page body matches are too lenient
+    // for an "exact" signal and remain available through other diagnostics.
+    return titleTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTitle);
   };
   const wikiDecisionIdCache = new Map<number, string[]>();
   const loadWikiDecisionIds = (record: WikiPageIndexRecord): string[] => {
@@ -1435,40 +1455,61 @@ export async function recallMemory(
     wikiScopeSupportCache.set(record.id, supported);
     return supported;
   };
-  const wikiTopicPrefixSupportCache = new Map<number, boolean>();
-  const hasWikiTopicPrefixSupport = (record: WikiPageIndexRecord): boolean => {
-    if (!searchOptions.topicPrefix) {
+  // Combined check used for the wiki *filter* path: a wiki entry must have at
+  // least one linked decision that matches BOTH the requested scope AND the
+  // requested topicPrefix. Without this, the page passes when scope matches
+  // decision A and topic matches decision B — i.e., neither single decision
+  // satisfies the caller's filter. Diagnostics reporting (which only signals
+  // scope confirmation) keeps using hasRequestedWikiScopeSupport.
+  const wikiCombinedSupportCache = new Map<number, boolean>();
+  const hasWikiDecisionWithScopeAndTopic = (record: WikiPageIndexRecord): boolean => {
+    const requiresScope = requestedScopeKeys.size > 0;
+    const requiresTopic = !!searchOptions.topicPrefix;
+    if (!requiresScope && !requiresTopic) {
       return true;
     }
-    const cached = wikiTopicPrefixSupportCache.get(record.id);
+    const cached = wikiCombinedSupportCache.get(record.id);
     if (cached !== undefined) {
       return cached;
     }
-
     const decisionIds = loadWikiDecisionIds(record);
     if (decisionIds.length === 0) {
-      wikiTopicPrefixSupportCache.set(record.id, false);
+      wikiCombinedSupportCache.set(record.id, false);
       return false;
     }
-
-    // SQLite caps host parameters at 999 by default and large argument arrays
-    // can blow the stack when spread into prepared.all(...). Chunk the lookup
-    // so a wiki page with many linked decisions never trips that limit.
-    const IN_CHUNK_SIZE = 900;
-    let supported = false;
     const adapter = getAdapter();
-    for (let i = 0; i < decisionIds.length; i += IN_CHUNK_SIZE) {
-      const chunk = decisionIds.slice(i, i + IN_CHUNK_SIZE);
-      const placeholders = chunk.map(() => '?').join(', ');
-      const rows = adapter
-        .prepare(`SELECT topic FROM decisions WHERE id IN (${placeholders})`)
-        .all(...chunk) as Array<{ topic?: string }>;
-      if (rows.some((row) => String(row.topic ?? '').startsWith(searchOptions.topicPrefix!))) {
-        supported = true;
-        break;
+    const scopeMap = requiresScope ? batchLoadScopes(adapter, decisionIds) : null;
+    const topicByDecisionId = new Map<string, string>();
+    if (requiresTopic) {
+      const IN_CHUNK_SIZE = 900;
+      for (let i = 0; i < decisionIds.length; i += IN_CHUNK_SIZE) {
+        const chunk = decisionIds.slice(i, i + IN_CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(', ');
+        const rows = adapter
+          .prepare(`SELECT id, topic FROM decisions WHERE id IN (${placeholders})`)
+          .all(...chunk) as Array<{ id: string; topic?: string }>;
+        for (const row of rows) {
+          topicByDecisionId.set(row.id, String(row.topic ?? ''));
+        }
       }
     }
-    wikiTopicPrefixSupportCache.set(record.id, supported);
+    const supported = decisionIds.some((id) => {
+      if (requiresScope) {
+        const scopes = scopeMap?.get(id) ?? [];
+        const scopeOk = scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
+        if (!scopeOk) {
+          return false;
+        }
+      }
+      if (requiresTopic) {
+        const topic = topicByDecisionId.get(id) ?? '';
+        if (!topic.startsWith(searchOptions.topicPrefix!)) {
+          return false;
+        }
+      }
+      return true;
+    });
+    wikiCombinedSupportCache.set(record.id, supported);
     return supported;
   };
   const buildDiagnostics = (
@@ -1589,7 +1630,7 @@ export async function recallMemory(
   const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
     .sort((a, b) => b.score - a.score)
     .flatMap((entry) => {
-      if (!hasWikiTopicPrefixSupport(entry.record) || !hasRequestedWikiScopeSupport(entry.record)) {
+      if (!hasWikiDecisionWithScopeAndTopic(entry.record)) {
         return [];
       }
 

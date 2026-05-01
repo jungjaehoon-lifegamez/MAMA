@@ -96,7 +96,7 @@ separate chat tab.
 - **Build the relationship graph** — Link people, projects, customers, channels, documents, PRs, and decisions across sources
 - **Surface risk signals** — Highlight stale coverage, blocked cases, low-confidence memories, open questions, and conflicting evidence candidates
 - **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
-- **Operate inside envelopes** — Gateway and worker calls carry signed scope boundaries, destination limits, and audit rows
+- **Operate inside envelopes** — Gateway and worker calls carry a signed envelope hash, scope boundaries, and destination limits enforced before each tool call
 - **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
 - **Search with evidence** — Strict and balanced modes reject vector-only noise unless lexical/entity/raw/seed evidence confirms the result
 - **Organize actionable knowledge** — Raw conversations become structured wiki pages and situation summaries with priorities, gaps, and next steps
@@ -268,7 +268,7 @@ dedicated tab. Connects to Discord, Slack, Telegram.
 - **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
 - **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
 - **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion, with strict modes and diagnostics for vector-noise debugging
-- **Runtime boundary:** Signed reactive envelopes with scope snapshots, expiry, and mismatch audit rows
+- **Runtime boundary:** Signed reactive envelopes (HMAC over scope, expiry, actor) checked by an enforcer that rejects out-of-scope destinations, connectors, or tier mismatches
 - **Provenance:** Compact source refs, model runs, tool traces, twin edges, and worker situation packets
 - **Context compiler:** Planned v0.21 layer that turns broad search candidates into selected/rejected/missing evidence packets with `context_packet_id` provenance
 - **Extraction:** Sonnet for structured fact extraction from conversations

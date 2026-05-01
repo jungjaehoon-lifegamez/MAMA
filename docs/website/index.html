@@ -132,9 +132,70 @@
         text-transform: uppercase;
         color: var(--muted);
       }
+      .nav-toggle {
+        display: none;
+        width: 40px;
+        height: 40px;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        padding: 0;
+        margin-left: 4px;
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .nav-toggle span {
+        display: block;
+        width: 18px;
+        height: 2px;
+        background: var(--ink);
+        border-radius: 999px;
+        transition:
+          transform 0.18s ease,
+          opacity 0.18s ease;
+      }
+      .nav-toggle.is-open span:nth-child(1) {
+        transform: translateY(7px) rotate(45deg);
+      }
+      .nav-toggle.is-open span:nth-child(2) {
+        opacity: 0;
+      }
+      .nav-toggle.is-open span:nth-child(3) {
+        transform: translateY(-7px) rotate(-45deg);
+      }
+
       @media (max-width: 860px) {
+        .nav-toggle {
+          display: inline-flex;
+        }
         .nav-links {
           display: none;
+          position: absolute;
+          top: 72px;
+          left: 0;
+          right: 0;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0;
+          padding: 8px 24px 16px;
+          background: rgba(255, 255, 255, 0.98);
+          backdrop-filter: blur(10px);
+          border-bottom: 1px solid var(--hairline);
+          box-shadow: 0 12px 28px rgba(23, 21, 31, 0.06);
+        }
+        .nav-links.is-open {
+          display: flex;
+        }
+        .nav-links a {
+          padding: 12px 0;
+          border-bottom: 1px solid var(--hairline);
+          font-size: 1rem;
+        }
+        .nav-links a:last-child {
+          border-bottom: 0;
         }
       }
 
@@ -779,6 +840,24 @@
         font-size: 0.84rem;
       }
 
+      /* Install isolation warning */
+      .install-warning {
+        max-width: 760px;
+        margin: 0 auto 28px;
+        padding: 18px 22px;
+        background: rgba(255, 206, 0, 0.12);
+        border: 1px solid var(--yellow-dark);
+        border-left: 4px solid var(--yellow-dark);
+        border-radius: 6px;
+        color: var(--ink);
+        font-size: 0.95rem;
+        line-height: 1.55;
+      }
+      .install-warning strong {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
       /* Not-this callout */
       .not-this {
         max-width: 760px;
@@ -884,13 +963,22 @@
           <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
         </a>
-        <div class="nav-links">
+        <div class="nav-links" id="nav-links">
           <a href="#actors">How</a>
           <a href="#different">Different</a>
           <a href="#local">Local</a>
           <a href="#install">Install</a>
         </div>
         <span class="nav-cta">v0.20</span>
+        <button
+          class="nav-toggle"
+          type="button"
+          aria-label="Toggle navigation menu"
+          aria-controls="nav-links"
+          aria-expanded="false"
+        >
+          <span></span><span></span><span></span>
+        </button>
       </div>
     </nav>
 
@@ -1069,10 +1157,12 @@
       <div class="container">
         <div class="section-head">
           <span class="eyebrow">Why local</span>
-          <h2>Your records never leave the machine.</h2>
+          <h2>Your records stay on your machine by default.</h2>
           <p>
-            MAMA runs on the laptop or server you choose. The substrate sits next to your terminal —
-            not in someone else's cloud. Your team's chats, decisions, and work logs stay yours.
+            MAMA's substrate (SQLite + 1024-dim embeddings) lives on the laptop or server you
+            choose, not in someone else's cloud. Provider-backed agent runs (Claude or Codex CLI
+            subprocess) still transmit selected prompts and compiled context to the chosen model API
+            — but the persistent record stays local.
           </p>
         </div>
         <div class="local-grid">
@@ -1191,10 +1281,17 @@ context.compile(task, scope, range,
           <span class="eyebrow">Install</span>
           <h2>Start local. Keep the record yours.</h2>
           <p>
-            Runs through your existing Claude Code or Codex CLI auth — no API keys to manage, no
-            cloud to send your data to.
+            Runs through your existing Claude Code or Codex CLI auth — no API keys to manage and no
+            third-party cloud holding your substrate. Agent runs still send the selected prompt and
+            compiled context to whichever model you point at (Claude or Codex).
           </p>
         </div>
+        <p class="install-warning">
+          <strong>⚠ Run inside an isolated environment.</strong> The Claude / Codex CLI MAMA spawns
+          has the same filesystem and network access as the shell that started it. For shared or
+          production setups, run MAMA OS inside Docker, a dedicated VM, or a non-privileged user
+          account so its agents cannot reach files or services you don't intend to expose.
+        </p>
         <div class="install-grid">
           <div class="step">
             <span class="num">1</span>
@@ -1233,5 +1330,25 @@ context.compile(task, scope, range,
         </p>
       </div>
     </footer>
+    <script>
+      (function () {
+        var toggle = document.querySelector('.nav-toggle');
+        var links = document.getElementById('nav-links');
+        if (!toggle || !links) return;
+        function setOpen(open) {
+          toggle.classList.toggle('is-open', open);
+          links.classList.toggle('is-open', open);
+          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        toggle.addEventListener('click', function () {
+          setOpen(!links.classList.contains('is-open'));
+        });
+        links.querySelectorAll('a').forEach(function (a) {
+          a.addEventListener('click', function () {
+            setOpen(false);
+          });
+        });
+      })();
+    </script>
   </body>
 </html>
