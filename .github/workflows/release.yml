@@ -50,7 +50,7 @@ jobs:
           node-version: '22'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Configure git
         run: |
@@ -135,7 +135,6 @@ jobs:
           echo "| mama-os | $OS_CURRENT | $OS_NEW |" >> $GITHUB_STEP_SUMMARY
           echo "| mama-plugin | $PLUGIN_CURRENT | $PLUGIN_NEW |" >> $GITHUB_STEP_SUMMARY
 
-
       - name: Extract changelog
         id: changelog
         run: |
@@ -185,7 +184,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -217,7 +216,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -251,7 +250,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
 
       - name: Install dependencies (workspace-level)
         run: pnpm install --ignore-scripts
@@ -346,7 +345,15 @@ jobs:
 
   # Step 7: Create GitHub Release
   create-release:
-    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages]
+    needs:
+      [
+        prepare-release,
+        publish-mama-core,
+        publish-mama-server,
+        publish-mama-os,
+        sync-plugin,
+        deploy-pages,
+      ]
     if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
@@ -397,7 +404,16 @@ jobs:
 
   # Summary job
   summary:
-    needs: [prepare-release, publish-mama-core, publish-mama-server, publish-mama-os, sync-plugin, deploy-pages, create-release]
+    needs:
+      [
+        prepare-release,
+        publish-mama-core,
+        publish-mama-server,
+        publish-mama-os,
+        sync-plugin,
+        deploy-pages,
+        create-release,
+      ]
     if: always()
     runs-on: ubuntu-latest
     steps:
