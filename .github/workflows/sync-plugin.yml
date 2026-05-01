@@ -21,7 +21,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: jungjaehoon-lifegamez/claude-plugins
-          token: ${{ secrets.GIT || secrets.PLUGIN_DEPLOY_TOKEN }}
+          token: ${{ secrets.PLUGIN_DEPLOY_TOKEN }}
           path: claude-plugins
 
       - name: Sync plugin files
