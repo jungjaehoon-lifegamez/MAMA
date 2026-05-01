@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Search quality parameters** — `suggest_decision` now accepts `strict`, `strictness`,
+  `threshold`, `disableRecency`, `includeRelated`, `topicPrefix`, `minLexicalSupport`,
+  `diagnostics`, and `scopes`
+- **Search diagnostics output** — MCP search responses preserve top-level diagnostics from
+  `mama-core` when callers opt in with `diagnostics: true`
+- **Provenance regression coverage** — MCP save and conversation ingest paths now have tests that
+  pin trusted provenance behavior against the newer mama-core memory substrate
+
+### Changed
+
+- **MCP search wiring** — Search options now pass through the MCP handler into `mama.suggest()`
+  instead of stopping at the protocol boundary
+- **Release surface alignment** — MCP docs now describe `suggest_decision` as a strictness-capable
+  search tool while keeping default recall behavior unchanged for existing clients
+
 ## [1.13.0] - 2026-04-20
 
 ### Added

@@ -21,20 +21,143 @@ const { DebugLogger } = debugLogger as unknown as {
 const logger = new DebugLogger('Stop');
 
 export function isStandaloneDaemonCommand(command: string): boolean {
+  const args = splitCommand(command);
+  const first = args[0];
+  const second = args[1];
+  const third = args[2];
+
   return (
-    command.includes('mama daemon') ||
-    command.includes('/packages/standalone/dist/cli/index.js daemon') ||
-    command.includes('\\packages\\standalone\\dist\\cli\\index.js daemon')
+    (isMamaExecutable(first) && second === 'daemon') ||
+    (isNodeExecutable(first) &&
+      (isMamaExecutable(second) || isStandaloneCliPath(second)) &&
+      third === 'daemon')
   );
 }
 
 export function isStandaloneWatchdogCommand(command: string): boolean {
+  const args = splitCommand(command);
+  const first = args[0];
+
   return (
-    command.includes('mama-watchdog') ||
-    (command.includes('DAEMON_CMD = "') &&
+    (isNodeExecutable(first) &&
+      args.some((arg) => arg === 'mama-watchdog' || arg === '--mama-watchdog')) ||
+    (isNodeExecutable(first) &&
+      command.includes('DAEMON_CMD = "') &&
       command.includes('/packages/standalone/dist/cli/index.js') &&
       command.includes('function checkHealth()'))
   );
+}
+
+/**
+ * Quote-aware argv split. Naive `split(/\s+/)` mangles quoted paths like
+ * `node "C:\Program Files\…\index.js" daemon` and inlined `node -e "<script>"`
+ * source text, which can cause stop-path checks to miss real daemons or
+ * false-positive unrelated scripts. This walks the string as a small state
+ * machine respecting single/double quotes and backslash escapes.
+ */
+function splitCommand(command: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escaped = false;
+  let hasContent = false;
+
+  for (const ch of command) {
+    if (escaped) {
+      current += ch;
+      escaped = false;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '\\' && !inSingle && !inDouble) {
+      escaped = true;
+      continue;
+    }
+    if (inSingle) {
+      if (ch === "'") {
+        inSingle = false;
+      } else {
+        current += ch;
+      }
+      hasContent = true;
+      continue;
+    }
+    if (inDouble) {
+      if (ch === '"') {
+        inDouble = false;
+      } else {
+        current += ch;
+      }
+      hasContent = true;
+      continue;
+    }
+    if (ch === "'") {
+      inSingle = true;
+      hasContent = true;
+      continue;
+    }
+    if (ch === '"') {
+      inDouble = true;
+      hasContent = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (hasContent) {
+        result.push(current);
+        current = '';
+        hasContent = false;
+      }
+      continue;
+    }
+    current += ch;
+    hasContent = true;
+  }
+  if (hasContent) {
+    result.push(current);
+  }
+  return result;
+}
+
+function isMamaExecutable(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  return (
+    arg === 'mama' ||
+    arg === 'mama-os' ||
+    arg.endsWith('/mama') ||
+    arg.endsWith('\\mama') ||
+    arg.endsWith('/mama-os') ||
+    arg.endsWith('\\mama-os')
+  );
+}
+
+function isNodeExecutable(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  return arg === 'node' || arg.endsWith('/node') || arg.endsWith('\\node');
+}
+
+function isStandaloneCliPath(arg: string | undefined): boolean {
+  if (!arg) {
+    return false;
+  }
+  const normalized = arg.replace(/\\/g, '/');
+  return (
+    normalized.endsWith('/packages/standalone/dist/cli/index.js') ||
+    normalized.endsWith('/@jungjaehoon/mama-os/dist/cli/index.js') ||
+    normalized.endsWith('/mama-os/dist/cli/index.js')
+  );
+}
+
+export function findStandaloneDaemonCommandForPid(pid: number): string | undefined {
+  const processInfo = listProcesses().find((proc) => proc.pid === pid);
+  if (!processInfo || !isStandaloneDaemonCommand(processInfo.command)) {
+    return undefined;
+  }
+  return processInfo.command;
 }
 
 /**
@@ -44,8 +167,16 @@ export async function stopCommand(): Promise<void> {
   console.log('\n🛑 MAMA Standalone Shutdown\n');
 
   // Stop watchdog first to prevent auto-restart during shutdown
-  await stopWatchdog();
-  await killAllMamaWatchdogs();
+  try {
+    await stopWatchdog();
+    await killAllMamaWatchdogs();
+  } catch (error) {
+    logger.warn(
+      `Skipping watchdog cleanup because process listing failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
 
   // Check if running
   const runningInfo = await isDaemonRunning();
@@ -53,8 +184,12 @@ export async function stopCommand(): Promise<void> {
     // PID file missing — but a daemon process may still be holding the port.
     // Attempt port-based cleanup before giving up.
     console.log('⚠️  PID file not found. Checking for orphaned processes...');
-    const cleaned = await killProcessesOnPorts([3847, 3849]);
-    const orphans = await killAllMamaDaemons();
+    const cleanupResult = await cleanupOrphanedProcessesSafely();
+    if (cleanupResult === null) {
+      console.error('Could not inspect running processes. No cleanup was attempted.\n');
+      process.exit(1);
+    }
+    const { cleaned, orphans } = cleanupResult;
     if (cleaned || orphans) {
       console.log('✓ Orphaned MAMA processes cleaned up.\n');
       process.exit(0);
@@ -64,6 +199,35 @@ export async function stopCommand(): Promise<void> {
   }
 
   const { pid } = runningInfo;
+  let daemonCommand: string | undefined;
+  try {
+    daemonCommand = findStandaloneDaemonCommandForPid(pid);
+  } catch (error) {
+    console.error(
+      `Unable to verify PID ${pid}: ${error instanceof Error ? error.message : String(error)}`
+    );
+    console.error('Leaving PID file in place and skipping daemon cleanup.\n');
+    process.exit(1);
+  }
+  if (!daemonCommand) {
+    await deletePid();
+    console.log(
+      `⚠️  PID file pointed at PID ${pid}, but that process is not a verified MAMA daemon.`
+    );
+    console.log('PID file cleaned up. Checking for orphaned MAMA processes...');
+    const cleanupResult = await cleanupOrphanedProcessesSafely();
+    if (cleanupResult === null) {
+      console.error('Could not inspect running processes. No daemon cleanup was attempted.\n');
+      process.exit(1);
+    }
+    const { cleaned, orphans } = cleanupResult;
+    if (cleaned || orphans) {
+      console.log('✓ Orphaned MAMA processes cleaned up.\n');
+      process.exit(0);
+    }
+    console.log('⚠️  MAMA is not running.\n');
+    process.exit(1);
+  }
 
   // Send SIGTERM to gracefully stop the process
   process.stdout.write('Stopping process... ');
@@ -120,6 +284,24 @@ export async function stopCommand(): Promise<void> {
     );
     console.error(`Please stop manually: kill ${pid}\n`);
     process.exit(1);
+  }
+}
+
+async function cleanupOrphanedProcessesSafely(): Promise<{
+  cleaned: boolean;
+  orphans: boolean;
+} | null> {
+  try {
+    const cleaned = await killProcessesOnPorts([3847, 3849]);
+    const orphans = await killAllMamaDaemons();
+    return { cleaned, orphans };
+  } catch (error) {
+    logger.warn(
+      `Skipping orphan cleanup because process listing failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return null;
   }
 }
 
@@ -212,6 +394,7 @@ function isPortInUse(port: number): boolean {
  */
 export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
   let killed = false;
+  const processesByPid = new Map(listProcesses().map((proc) => [proc.pid, proc.command]));
   for (const port of ports) {
     try {
       const output = execSync(`lsof -ti :${port} 2>/dev/null`, { encoding: 'utf-8' }).trim();
@@ -221,18 +404,31 @@ export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
         .split('\n')
         .map((p) => parseInt(p.trim(), 10))
         .filter((p) => Number.isFinite(p) && p !== process.pid);
+      let killedOnPort = 0;
       for (const pid of pids) {
+        const command = processesByPid.get(pid);
+        if (!command || !isMamaPortProcess(command)) {
+          logger.warn(
+            `Skipping unverified process on port ${port} (PID ${pid}) during MAMA cleanup`
+          );
+          continue;
+        }
         try {
           process.kill(pid, 'SIGTERM');
+          killed = true;
+          killedOnPort++;
         } catch {
           /* already dead */
         }
       }
 
       if (pids.length > 0) {
-        killed = true;
         await sleep(1000);
         for (const pid of pids) {
+          const command = processesByPid.get(pid);
+          if (!command || !isMamaPortProcess(command)) {
+            continue;
+          }
           if (isProcessRunning(pid)) {
             try {
               process.kill(pid, 'SIGKILL');
@@ -241,13 +437,19 @@ export async function killProcessesOnPorts(ports: number[]): Promise<boolean> {
             }
           }
         }
-        console.log(`✓ Cleaned up ${pids.length} process(es) on port ${port}`);
+        if (killedOnPort > 0) {
+          console.log(`✓ Cleaned up ${killedOnPort} verified MAMA process(es) on port ${port}`);
+        }
       }
     } catch {
       /* lsof not available or no processes */
     }
   }
   return killed;
+}
+
+function isMamaPortProcess(command: string): boolean {
+  return isStandaloneDaemonCommand(command) || isStandaloneWatchdogCommand(command);
 }
 
 /**
@@ -320,20 +522,36 @@ async function waitForPortsReleased(ports: number[], maxWaitMs: number = 3000): 
 async function stopWatchdog(): Promise<void> {
   const watchdogPidPath = `${homedir()}/.mama/watchdog.pid`;
   if (!existsSync(watchdogPidPath)) return;
+  let removePidFile = true;
 
   try {
     const content = readFileSync(watchdogPidPath, 'utf-8');
     const { pid } = JSON.parse(content);
     if (typeof pid === 'number' && isProcessRunning(pid)) {
-      process.kill(pid, 'SIGTERM');
-      await sleep(500);
-      if (isProcessRunning(pid)) {
-        process.kill(pid, 'SIGKILL');
+      let command: string | undefined;
+      try {
+        command = listProcesses().find((proc) => proc.pid === pid)?.command;
+      } catch (error) {
+        removePidFile = false;
+        throw error;
       }
-      console.log(`✓ Watchdog stopped (PID ${pid})`);
+      if (!command || !isStandaloneWatchdogCommand(command)) {
+        logger.warn(`Skipping unverified watchdog PID ${pid}; removing stale watchdog pid file`);
+      } else {
+        process.kill(pid, 'SIGTERM');
+        await sleep(500);
+        if (isProcessRunning(pid)) {
+          process.kill(pid, 'SIGKILL');
+        }
+        console.log(`✓ Watchdog stopped (PID ${pid})`);
+      }
     }
   } catch {
     // ignore
+  }
+
+  if (!removePidFile) {
+    return;
   }
 
   try {
@@ -377,9 +595,17 @@ export async function killAllMamaWatchdogs(): Promise<boolean> {
   return true;
 }
 
-function listProcesses(): Array<{ pid: number; command: string }> {
+const PROCESS_LIST_MAX_BUFFER_BYTES = 64 * 1024 * 1024;
+
+export function listProcesses(): Array<{ pid: number; command: string }> {
   try {
-    const output = execSync('ps -eo pid=,command=', { encoding: 'utf-8' });
+    // -ww disables ps's command-column truncation. maxBuffer only governs how much
+    // Node reads from stdout, not how much ps writes — without -ww long argv lists
+    // (e.g., inlined `node -e <long script>`) get cut and break daemon detection.
+    const output = execSync('ps -ww -eo pid=,command=', {
+      encoding: 'utf-8',
+      maxBuffer: PROCESS_LIST_MAX_BUFFER_BYTES,
+    });
     return output
       .split('\n')
       .map((line) => line.trim())
@@ -400,7 +626,7 @@ function listProcesses(): Array<{ pid: number; command: string }> {
       .filter((p): p is { pid: number; command: string } => p !== null);
   } catch (err) {
     throw new Error(
-      `Failed to list processes: ${err instanceof Error ? err.message : String(err)}`
+      `Failed to list processes with ps: ${err instanceof Error ? err.message : String(err)}`
     );
   }
 }

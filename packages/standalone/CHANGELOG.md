@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Reactive envelope runtime** — Standalone now issues and stores signed gateway envelopes, exposes
+  public health separately from authenticated envelope status, and audits scope mismatches through
+  `agent_activity`
+- **Worker evidence APIs** — Added authenticated memory provenance, raw search, agent situation,
+  and agent graph/entity API handlers so workers can retrieve bounded evidence without direct DB
+  access
+- **Envelope-aware gateway tooling** — Code-Act, gateway execution, internal agent-loop calls, and
+  model/tool trace paths now propagate envelope context for trusted provenance
+- **Strict `mama_search` controls** — Gateway, MCP, Code-Act, ToolRegistry, and generated tool docs
+  now expose `scopes`, `strict`, `strictness`, `threshold`, `disableRecency`, `includeRelated`,
+  `topicPrefix`, `minLexicalSupport`, and `diagnostics`
+- **Persistent process cleanup settings** — `timeouts.persistent_process_idle_ms`,
+  `timeouts.persistent_process_cleanup_ms`, and `timeouts.persistent_process_pending_tool_ms`
+  let operators tune how aggressively idle CLI processes are reclaimed
+
+### Changed
+
+- **Gateway executor architecture** — Delegation execution and gateway tool execution were split
+  into clearer modules, with ToolRegistry kept as the valid-tool source of truth for generated
+  prompts and executor validation
+- **Connector raw stores** — Raw connector persistence now writes provenance and unified indexes so
+  worker APIs can query raw evidence consistently
+- **Envelope-aware memory search** — `mama_search` now defaults to effective envelope scopes and
+  rejects caller scopes outside the active envelope before searching
+- **Search diagnostics preservation** — Standalone search result types and handler responses now
+  keep `diagnostics`, `retrieval_diagnostics`, and `contributing_leaf_diagnostics` instead of
+  dropping them at API boundaries
+
+### Fixed
+
+- **Envelope hardening** — Reactive envelope startup, internal tool contexts, scope mismatch
+  logging, authenticated status reporting, worker graph/entity visibility, and graph API internal
+  error responses now have review-driven regression coverage
+- **Scoped recent-list search** — No-query `mama_search` now passes scopes into recent decision
+  listing instead of returning global recent decisions
+- **Long-lived Claude process buildup** — Persistent CLI processes are now reclaimed after idle
+  timeouts while active tool-result loops keep a bounded lease; `mama stop` also avoids unsafe
+  broad kills and handles large `ps` output safely
+
 ## [0.19.1] - 2026-04-20
 
 ### Fixed

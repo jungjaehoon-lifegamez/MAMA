@@ -4,11 +4,20 @@ This document details the Model Context Protocol (MCP) tools provided by the MAM
 
 ## Overview
 
-MAMA (Memory-Augmented MCP Assistant) provides **13 tools** for decision tracking, scoped memory, semantic search, conversation ingestion, contracts lookup, bounded case timelines, and session continuity.
+MAMA (Memory-Augmented MCP Assistant) ships **5 advertised MCP tools** plus a backward-compatible
+fallback for legacy callers. The advertised surface covers decision tracking, scoped memory,
+semantic search, search-quality diagnostics, conversation ingestion (via `save`), contracts lookup,
+bounded case timelines, and session continuity.
 
-The current MCP server ships both the consolidated memory tools (`save`, `search`, `update`, `load_checkpoint`) and compatibility / operational helpers such as `search_decisions_and_contracts` and `case_timeline_range`.
+The current MCP server advertises the consolidated memory tools (`save`, `search`, `update`)
+along with two operational helpers (`search_decisions_and_contracts`,
+`case_timeline_range`). The pre-consolidation tool names (`save_decision`, `suggest_decision`,
+`recall_decision`, `update_outcome`, `list_decisions`, `save_checkpoint`, `ingest_conversation`,
+`search_narrative`, `generate_quality_report`, `get_restart_metrics`) remain callable as
+backward-compatible aliases but are not advertised in `ListTools`. `load_checkpoint` is also
+callable for backward compatibility but is intentionally not discoverable through `ListTools`.
 
-**Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. All tools support `scopes` for project/channel isolation and `event_date` for temporal tracking. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
+**Design Principle (v1.3.3):** LLM can infer decision relationships from time-ordered search results. Decision and ingest paths support `scopes` for project/channel isolation, and decision/ingest save paths support temporal fields where documented. Operational helper tools expose their own bounded schemas. Decisions connect through explicit edge types. Fewer tools = more LLM flexibility.
 
 - **Transport**: Stdio
 - **Server Name**: `mama-server`
@@ -22,16 +31,16 @@ The current MCP server ships both the consolidated memory tools (`save`, `search
 
 ### OpenClaw Plugin
 
-OpenClaw uses key tools with `mama_` prefix:
+OpenClaw uses MAMA's consolidated MCP tools with a `mama_` prefix:
 
-| MCP Server            | OpenClaw Plugin        |
-| --------------------- | ---------------------- |
-| `save_decision`       | `mama_save`            |
-| `suggest_decision`    | `mama_search`          |
-| `recall_decision`     | `mama_recall`          |
-| `update_outcome`      | `mama_update`          |
-| `ingest_conversation` | `mama_ingest`          |
-| `load_checkpoint`     | `mama_load_checkpoint` |
+| MCP Server                       | OpenClaw Plugin                   |
+| -------------------------------- | --------------------------------- |
+| `save` (`type: 'decision'`)      | `mama_save`                       |
+| `save` (`type: 'ingest'`)        | `mama_ingest`                     |
+| `search`                         | `mama_search`                     |
+| `update`                         | `mama_update`                     |
+| `load_checkpoint`                | `mama_load_checkpoint`            |
+| `search_decisions_and_contracts` | `mama_search_decisions_contracts` |
 
 OpenClaw also provides **auto-recall**: relevant decisions are automatically injected on agent start based on user prompt.
 
@@ -72,44 +81,59 @@ All tools return a standard MCP response structure.
 
 ### Current MCP Tool Surface
 
-The current `@jungjaehoon/mama-server` package exposes these 13 tools:
+The current `@jungjaehoon/mama-server` package advertises these tools via `ListTools`:
 
-| Tool                             | Purpose                                               |
-| -------------------------------- | ----------------------------------------------------- |
-| `save_decision`                  | Save a decision with optional scopes and `event_date` |
-| `recall_decision`                | Recall history for a topic or scoped memory           |
-| `suggest_decision`               | Semantic search for related decisions                 |
-| `list_decisions`                 | List recent decisions/checkpoints                     |
-| `update_outcome`                 | Update a decision outcome                             |
-| `search_narrative`               | Narrative search with link expansion                  |
-| `ingest_conversation`            | Ingest message history into memory                    |
-| `save_checkpoint`                | Save a session checkpoint                             |
-| `load_checkpoint`                | Resume the latest checkpoint                          |
-| `generate_quality_report`        | Emit quality/coverage metrics                         |
-| `get_restart_metrics`            | Read restart health metrics                           |
-| `search_decisions_and_contracts` | Joint decision + contract lookup                      |
-| `case_timeline_range`            | Read bounded case-first timeline windows              |
+| Tool                             | Purpose                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `save`                           | Save decisions, checkpoints, or ingest conversations (`type: 'decision' \| 'checkpoint' \| 'ingest'`)            |
+| `search`                         | Unified semantic search across decisions and checkpoints with strictness/diagnostics; latest-checkpoint fallback |
+| `update`                         | Update a decision outcome (`success` / `failed` / `partial`)                                                     |
+| `search_decisions_and_contracts` | Joint decision + contract lookup used by hook flows                                                              |
+| `case_timeline_range`            | Read bounded case-first timeline windows                                                                         |
+
+`load_checkpoint` is also callable directly (as is invoked by some plugins) and is documented in
+section 4 below; it is the same code path that `search` enters when called with
+`type: 'checkpoint'` and no `query`.
+
+**Backward-compatible aliases.** The pre-consolidation names below remain callable for legacy
+clients but are not advertised in `ListTools`. New integrations should use the consolidated tools.
+
+| Legacy alias              | Consolidated equivalent          |
+| ------------------------- | -------------------------------- |
+| `save_decision`           | `save` with `type: 'decision'`   |
+| `save_checkpoint`         | `save` with `type: 'checkpoint'` |
+| `ingest_conversation`     | `save` with `type: 'ingest'`     |
+| `suggest_decision`        | `search` (with `query`)          |
+| `recall_decision`         | `search` (with `query`)          |
+| `list_decisions`          | `search` (without `query`)       |
+| `search_narrative`        | `search` (with link expansion)   |
+| `update_outcome`          | `update`                         |
+| `generate_quality_report` | (callable as legacy alias)       |
+| `get_restart_metrics`     | (callable as legacy alias)       |
 
 ### 1. `save`
 
-Save a decision or checkpoint to MAMA's memory.
+Save a decision, checkpoint, or ingested conversation to MAMA's memory.
 
 **Key Concept:** Same topic = new decision **supersedes** previous, creating an evolution chain.
 
 #### Input Schema
 
-| Field        | Type   | Required       | Description                                                                                                    |
-| ------------ | ------ | -------------- | -------------------------------------------------------------------------------------------------------------- |
-| `type`       | string | Yes            | `'decision'` or `'checkpoint'`                                                                                 |
-| `topic`      | string | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                    |
-| `decision`   | string | For decision   | The decision made                                                                                              |
-| `reasoning`  | string | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                    |
-| `confidence` | number | No             | 0.0-1.0, default 0.5                                                                                           |
-| `scopes`     | array  | No             | Memory scope refs for isolation, e.g. `[{kind:"project",id:"/path"}]`. Supported in MCP server and standalone. |
-| `event_date` | string | No             | ISO 8601 date when the event occurred (e.g. "2024-01-15"). Defaults to current time if omitted.                |
-| `summary`    | string | For checkpoint | Session state: what was done, what's pending                                                                   |
-| `next_steps` | string | No             | Instructions for next session                                                                                  |
-| `open_files` | array  | No             | List of relevant file paths                                                                                    |
+| Field          | Type    | Required       | Description                                                                                                    |
+| -------------- | ------- | -------------- | -------------------------------------------------------------------------------------------------------------- |
+| `type`         | string  | Yes            | `'decision'`, `'checkpoint'`, or `'ingest'`                                                                    |
+| `topic`        | string  | For decision   | Topic identifier (e.g., 'auth_strategy'). Same topic = supersedes previous.                                    |
+| `decision`     | string  | For decision   | The decision made                                                                                              |
+| `reasoning`    | string  | For decision   | Why this decision was made. Include edge patterns for relationships (v1.3).                                    |
+| `confidence`   | number  | No             | 0.0-1.0, default 0.5                                                                                           |
+| `scopes`       | array   | No             | Memory scope refs for isolation, e.g. `[{kind:"project",id:"/path"}]`. Supported in MCP server and standalone. |
+| `event_date`   | string  | No             | ISO 8601 date when the event occurred (e.g. "2024-01-15"). Defaults to current time if omitted.                |
+| `summary`      | string  | For checkpoint | Session state: what was done, what's pending                                                                   |
+| `next_steps`   | string  | No             | Instructions for next session                                                                                  |
+| `open_files`   | array   | No             | List of relevant file paths                                                                                    |
+| `messages`     | array   | For ingest     | Conversation messages as `{role, content}` objects                                                             |
+| `session_date` | string  | No             | For ingest: ISO 8601 date when the conversation occurred                                                       |
+| `extract`      | boolean | No             | For ingest: extract structured memories through LLM. Defaults to `false`                                       |
 
 #### Example: Save Decision
 
@@ -156,26 +180,70 @@ Save a decision or checkpoint to MAMA's memory.
 }
 ```
 
+#### Example: Ingest Conversation
+
+```json
+{
+  "type": "ingest",
+  "messages": [
+    { "role": "user", "content": "We decided to keep auth local-first." },
+    { "role": "assistant", "content": "I will remember that as an architecture constraint." }
+  ],
+  "scopes": [{ "kind": "project", "id": "/workspace/demo" }],
+  "session_date": "2026-05-01T09:30:00Z",
+  "extract": false
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "raw_id": "memory_raw_abc",
+  "extracted_memories": [],
+  "message": "✅ Conversation ingested (ID: memory_raw_abc)"
+}
+```
+
 ---
 
 ### 2. `search`
 
 Search decisions and checkpoints. Semantic search with query, or list recent items without query.
+For operator and agent workflows, search can run in recall, balanced, or strict mode and can return
+diagnostics explaining which signals confirmed each hit.
 
 #### Input Schema
 
-| Field   | Type   | Required | Description                                           |
-| ------- | ------ | -------- | ----------------------------------------------------- |
-| `query` | string | No       | Search query. If empty, returns recent items by time. |
-| `type`  | string | No       | `'all'` (default), `'decision'`, or `'checkpoint'`    |
-| `limit` | number | No       | Maximum results, default 10                           |
+| Field               | Type    | Required | Description                                                          |
+| ------------------- | ------- | -------- | -------------------------------------------------------------------- |
+| `query`             | string  | No       | Search query. If empty, returns recent items by time.                |
+| `type`              | string  | No       | `'all'` (default), `'decision'`, or `'checkpoint'`                   |
+| `limit`             | number  | No       | Maximum results, default 10                                          |
+| `scopes`            | array   | No       | Memory scope refs for project/channel/user/global isolation          |
+| `strict`            | boolean | No       | Shortcut for `strictness: "strict"`                                  |
+| `strictness`        | string  | No       | `'recall'` (default), `'balanced'`, or `'strict'`                    |
+| `threshold`         | number  | No       | Minimum candidate threshold. Defaults by strictness mode             |
+| `disableRecency`    | boolean | No       | Disable recency boosting for a pure relevance-oriented search        |
+| `includeRelated`    | boolean | No       | Include graph-related results. Defaults to false in strict mode      |
+| `topicPrefix`       | string  | No       | Limit recall to topics with this prefix                              |
+| `minLexicalSupport` | boolean | No       | Require lexical/entity/exact-topic confirmation for non-recall modes |
+| `diagnostics`       | boolean | No       | Return top-level and per-hit retrieval diagnostics when available    |
+
+Default thresholds are `0.3` for `recall`, `0.45` for `balanced`, and `0.6` for `strict`.
+Balanced and strict modes reject vector-only matches unless another relevance signal confirms the
+hit.
 
 #### Example: Semantic Search
 
 ```json
 {
   "query": "authentication approach",
-  "limit": 5
+  "limit": 5,
+  "strictness": "balanced",
+  "scopes": [{ "kind": "project", "id": "/workspace/demo" }],
+  "diagnostics": true
 }
 ```
 
@@ -194,12 +262,43 @@ Search decisions and checkpoints. Semantic search with query, or list recent ite
       "confidence": 0.85,
       "created_at": 1732530000,
       "_type": "decision",
-      "similarity": 0.87
+      "similarity": 0.87,
+      "retrieval_diagnostics": {
+        "retrieval_source": "hybrid_rrf",
+        "vector_similarity": 0.87,
+        "lexical_support": true,
+        "entity_support": false,
+        "scope_support": true,
+        "graph_source": "primary",
+        "is_vector_only": false,
+        "confirmation_signals": ["lexical"],
+        "metadata_signals": ["scope"],
+        "candidate_threshold_used": 0.45
+      }
+    }
+  ],
+  "diagnostics": {
+    "candidate_counts": {
+      "vector": 6,
+      "lexical": 3,
+      "entity": 0,
+      "graph_expanded": 1,
+      "vector_only": 2,
+      "rejected_by_strictness": 2
     },
-    ...
-  ]
+    "threshold": 0.45,
+    "strictness": "balanced"
+  }
 }
 ```
+
+#### Search Quality Modes
+
+| Mode       | Use When                                            | Behavior                                                                 |
+| ---------- | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| `recall`   | You want broad memory recall and can tolerate noise | Lowest threshold, related results on, lexical confirmation not required  |
+| `balanced` | You want normal agent search with less vector noise | Medium threshold and independent relevance confirmation required         |
+| `strict`   | You are about to act on a result or cite provenance | Highest threshold, related expansion off by default, confirmation needed |
 
 #### Example: List Recent Items
 
@@ -293,13 +392,14 @@ Search prior decisions together with related contract metadata used by hook/tool
 
 #### Input Schema
 
-| Field           | Type   | Required | Description                              |
-| --------------- | ------ | -------- | ---------------------------------------- |
-| `query`         | string | No       | Semantic search query                    |
-| `decisionLimit` | number | No       | Max decision hits to return              |
-| `contractLimit` | number | No       | Max contract hits to return              |
-| `filePath`      | string | No       | Narrow contract search to a file path    |
-| `toolName`      | string | No       | Narrow contract search to a tool context |
+| Field                 | Type   | Required | Description                               |
+| --------------------- | ------ | -------- | ----------------------------------------- |
+| `query`               | string | No       | Semantic search query                     |
+| `decisionLimit`       | number | No       | Max decision hits to return               |
+| `contractLimit`       | number | No       | Max contract hits to return               |
+| `filePath`            | string | No       | Narrow contract search to a file path     |
+| `toolName`            | string | No       | Narrow contract search to a tool context  |
+| `similarityThreshold` | number | No       | Vector similarity threshold. Default: 0.7 |
 
 #### Response Notes
 
@@ -315,12 +415,14 @@ Read a bounded timeline window for a case-first workflow.
 
 #### Input Schema
 
-| Field     | Type   | Required | Description                                             |
-| --------- | ------ | -------- | ------------------------------------------------------- |
-| `case_id` | string | Yes      | Requested case id (may resolve through canonical chain) |
-| `from`    | string | No       | Inclusive lower timestamp/date bound                    |
-| `to`      | string | No       | Inclusive upper timestamp/date bound                    |
-| `limit`   | number | No       | Maximum timeline items to return                        |
+| Field                           | Type          | Required | Description                                                  |
+| ------------------------------- | ------------- | -------- | ------------------------------------------------------------ |
+| `case_id`                       | string        | Yes      | Requested case id (may resolve through canonical chain)      |
+| `from`                          | string/number | No       | Inclusive lower timestamp/date bound (ISO 8601 or epoch ms)  |
+| `to`                            | string/number | No       | Inclusive upper timestamp/date bound (ISO 8601 or epoch ms)  |
+| `order`                         | string        | No       | `'asc'` or `'desc'`. Default: `'asc'`                        |
+| `limit`                         | number        | No       | Maximum timeline items to return. Default: 100, maximum: 500 |
+| `include_connector_enrichments` | boolean       | No       | Include connector event snapshots when available             |
 
 #### Response Notes
 
@@ -1033,5 +1135,5 @@ If upgrading from v1.1 (11 tools) to v1.2+ (4 tools):
 
 ---
 
-**Last Updated:** 2026-04-20
-**Version:** 1.13.0
+**Last Updated:** 2026-04-30
+**Version:** unreleased search-quality candidate

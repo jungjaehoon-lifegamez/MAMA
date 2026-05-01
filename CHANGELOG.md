@@ -4,6 +4,55 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Reactive runtime envelopes** — Gateway and worker tool calls now carry signed runtime
+  envelopes, scope snapshots, and mismatch audit rows so agents operate inside an explicit
+  permission boundary instead of relying on prompt-only intent
+- **Memory provenance foundation** — Memory writes can preserve trusted origin metadata including
+  agent id, envelope hash, gateway call id, model run id, source refs, scope bindings, and
+  provenance audit/backfill helpers
+- **Model run and tool trace ledger** — Added adapter-scoped model run stores, tool trace stores,
+  replay compatibility helpers, and lifecycle hardening for reconstructing what an agent did
+- **Worker context APIs** — Added unified raw search, agent situation packets, and worker graph/entity
+  APIs so subordinate agents can read bounded evidence without manually stitching DB internals
+- **Twin edge ledger** — Added first-class twin edges with ref validation, visibility rules, and
+  graph provenance tests for durable relationships between memory, raw, entity, and case refs
+- **Strict memory search controls** — `mama_search`, MCP search, and `mama.suggest()` now accept
+  `strict`, `strictness`, `threshold`, `disableRecency`, `includeRelated`, `topicPrefix`,
+  `minLexicalSupport`, `diagnostics`, and `scopes` so agents can choose recall-friendly,
+  balanced, or strict retrieval per request
+- **Retrieval diagnostics** — Search results can now expose lexical/entity/scope/graph support,
+  vector-only status, strictness rejection counts, and contributing-leaf diagnostics so operators
+  can see why a result was included instead of trusting a broad vector match
+
+### Changed
+
+- **North Star shifted toward bounded context** — MAMA now treats memory as one substrate inside a
+  larger local runtime for permission-scoped, provenance-backed agent context
+- **Standalone gateway execution** — Gateway tool execution and delegation were split into clearer
+  pipeline modules, with envelope context propagated through internal calls and Code-Act paths
+- **Raw connector indexing** — Connector raw stores now keep unified indexes and provenance so raw
+  rows can be queried and traced as evidence, not just treated as ingest byproducts
+- **Search quality pipeline** — Strict search options now flow through MCP and standalone handlers
+  into `mama.suggest()` and `recallMemory()`, including the memory_v2 fusion/rollup path, wiki
+  hits, graph-expanded hits, and learned-ranker metadata
+- **Standalone search scope handling** — `mama_search` now defaults to the active envelope scopes
+  and rejects out-of-envelope caller scopes before they reach core memory search
+
+### Fixed
+
+- **Envelope and provenance review gaps** — Hardened reactive envelope issuance, public health vs
+  authenticated status separation, gateway scope mismatch logging, model-run replay contracts,
+  situation packet visibility, graph visibility, alias replay, and graph API internal error
+  sanitization
+- **Vector-noise leaks in strict search** — Strict and balanced modes no longer allow vector-only
+  fallback, wiki vector hits, or graph-expanded rows through without independent relevance
+  confirmation
+- **Persistent CLI process buildup** — Standalone now reclaims idle persistent Claude processes,
+  preserves active tool-result leases, and makes `mama stop` process discovery safer under large
+  process tables
+
 ## [0.19.1] / mama-core [1.5.0] / mcp-server [1.13.0] - 2026-04-20
 
 ### Added
@@ -532,7 +581,6 @@ All notable changes to this project will be documented in this file.
   - 3 built-in playgrounds: Skill Lab, Cron Workflow Lab, Wave Visualizer
   - Skill Registry API (`/api/skills/list`) for playground consumption
   - "Open in new tab" support for full-screen playground editing
-  - ![Skill Lab Playground](docs/website/assets/screenshot-skill-lab.png)
 - **Built-in Skill Templates**: 4 new skill templates (frontend-design, multi-agent-collab, playground, scheduling)
 - **Tool Status Tracker**: In-place tool execution status updates in Viewer chat
   - Real-time tool progress display (running → completed/failed)

@@ -327,6 +327,41 @@ class MAMAServer {
               description: "Filter by type. Default: 'all'",
             },
             limit: { type: 'number', description: 'Max results. Default: 10' },
+            threshold: {
+              type: 'number',
+              minimum: 0,
+              maximum: 1,
+              description: 'Minimum retrieval threshold. Omit for mode default.',
+            },
+            strict: {
+              type: 'boolean',
+              description: 'Shortcut for strict search mode.',
+            },
+            strictness: {
+              type: 'string',
+              enum: ['recall', 'balanced', 'strict'],
+              description: "Search quality mode. Default: 'recall'.",
+            },
+            disableRecency: {
+              type: 'boolean',
+              description: 'Disable recency weighting in search.',
+            },
+            includeRelated: {
+              type: 'boolean',
+              description: 'Include related graph-expanded results.',
+            },
+            topicPrefix: {
+              type: 'string',
+              description: 'Restrict search to topics with this prefix.',
+            },
+            minLexicalSupport: {
+              type: 'boolean',
+              description: 'Require lexical/entity/exact-topic confirmation.',
+            },
+            diagnostics: {
+              type: 'boolean',
+              description: 'Return retrieval diagnostics for search quality inspection.',
+            },
             scopes: {
               type: 'array',
               items: {
@@ -506,14 +541,39 @@ After failure → save a NEW decision with same topic to create evolution histor
    * Handle unified search (decisions + checkpoints)
    */
   async handleSearch(args) {
-    const { query, type = 'all', limit = 10, scopes } = args;
+    const {
+      query,
+      type = 'all',
+      limit = 10,
+      scopes,
+      threshold,
+      strict,
+      strictness,
+      disableRecency,
+      includeRelated,
+      topicPrefix,
+      minLexicalSupport,
+      diagnostics,
+    } = args;
 
-    // type='checkpoint' without query → load latest checkpoint (resume session)
+    // type='checkpoint' without query → load latest checkpoint (resume session).
+    // load_checkpoint does not yet honor scopes, so reject scoped checkpoint reads
+    // explicitly rather than silently bypass scope isolation.
     if (type === 'checkpoint' && !query) {
+      if (Array.isArray(scopes) && scopes.length > 0) {
+        return {
+          success: false,
+          code: 'scoped_checkpoint_unsupported',
+          count: 0,
+          results: [],
+          message: 'Scoped checkpoint reads are not supported yet',
+        };
+      }
       return await memoryTools.load_checkpoint.handler(args);
     }
 
     const results = [];
+    let searchDiagnostics;
 
     // Search decisions
     if (type === 'all' || type === 'decision') {
@@ -522,8 +582,52 @@ After failure → save a NEW decision with same topic to create evolution histor
         const suggestResult = await mama.suggest(query, {
           limit,
           ...(scopes && { scopes }),
+          ...(threshold !== undefined && { threshold }),
+          ...(strict !== undefined && { strict }),
+          ...(strictness !== undefined && { strictness }),
+          ...(disableRecency !== undefined && { disableRecency }),
+          ...(includeRelated !== undefined && { includeRelated }),
+          ...(topicPrefix !== undefined && { topicPrefix }),
+          ...(minLexicalSupport !== undefined && { minLexicalSupport }),
+          ...(diagnostics !== undefined && { diagnostics }),
         });
-        decisions = suggestResult?.results || [];
+        // Preserve the failure signal — collapsing a null/invalid suggest
+        // response to [] would make callers unable to distinguish "no matches"
+        // from "search pipeline failed". Mirror the standalone handler's
+        // suggest_returned_null code so behavior stays consistent across
+        // transports.
+        if (!suggestResult || typeof suggestResult !== 'object') {
+          return {
+            success: false,
+            code: 'suggest_returned_null',
+            count: 0,
+            results: [],
+            message: 'Search failed: suggest() returned no result for query',
+          };
+        }
+        // Forward explicit { success: false, code, error } failures from
+        // mama.suggest() unchanged so callers see the real cause instead of
+        // a synthetic empty success.
+        if (suggestResult.success === false) {
+          const hasOwn = Object.prototype.hasOwnProperty;
+          const forwarded = {
+            ...suggestResult,
+            success: false,
+            code: suggestResult.code || 'suggest_failed',
+          };
+          if (!hasOwn.call(forwarded, 'count')) {
+            forwarded.count = 0;
+          }
+          if (!hasOwn.call(forwarded, 'results')) {
+            forwarded.results = [];
+          }
+          if (!hasOwn.call(forwarded, 'message')) {
+            forwarded.message = suggestResult.error || 'Search pipeline failed';
+          }
+          return forwarded;
+        }
+        searchDiagnostics = suggestResult.diagnostics;
+        decisions = Array.isArray(suggestResult.results) ? suggestResult.results : [];
       } else {
         decisions = await mama.list({ limit, ...(scopes && { scopes }) });
       }
@@ -537,8 +641,25 @@ After failure → save a NEW decision with same topic to create evolution histor
       }
     }
 
+    // mama.listCheckpoints() does not yet honor the scopes filter, so any
+    // checkpoint read with scopes provided would silently bypass scope
+    // isolation. Reject explicitly when the caller requested scopes — for
+    // type='checkpoint' this fails the whole search; for type='all' we let
+    // decisions (which DO honor scopes via mama.suggest/list) return alone
+    // and skip the checkpoint blocks below.
+    const checkpointReadsBlockedByScope = Array.isArray(scopes) && scopes.length > 0;
+    if (checkpointReadsBlockedByScope && type === 'checkpoint') {
+      return {
+        success: false,
+        code: 'scoped_checkpoint_unsupported',
+        count: 0,
+        results: [],
+        message: 'Scoped checkpoint reads are not supported yet',
+      };
+    }
+
     // Search checkpoints (with query = search, without = handled above as load)
-    if ((type === 'all' || type === 'checkpoint') && query) {
+    if ((type === 'all' || type === 'checkpoint') && query && !checkpointReadsBlockedByScope) {
       const checkpoints = await mama.listCheckpoints(limit);
       results.push(
         ...checkpoints
@@ -554,7 +675,7 @@ After failure → save a NEW decision with same topic to create evolution histor
     }
 
     // type='all' without query — include recent checkpoints
-    if (type === 'all' && !query) {
+    if (type === 'all' && !query && !checkpointReadsBlockedByScope) {
       const checkpoints = await mama.listCheckpoints(limit);
       results.push(
         ...checkpoints.map((c) => ({
@@ -577,8 +698,10 @@ After failure → save a NEW decision with same topic to create evolution histor
 
     return {
       success: true,
+      ...(query ? { query } : {}),
       count: limited.length,
       results: limited,
+      ...(searchDiagnostics !== undefined ? { diagnostics: searchDiagnostics } : {}),
     };
   }
 
