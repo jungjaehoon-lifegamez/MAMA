@@ -626,6 +626,10 @@ export class AgentLoop {
     }
   }
 
+  setContextCompileService(service: GatewayToolExecutorOptions['contextCompileService']): void {
+    this.mcpExecutor.setContextCompileService(service);
+  }
+
   /**
    * Set session key for lane-based concurrency
    * Use format: "{source}:{channelId}:{userId}"

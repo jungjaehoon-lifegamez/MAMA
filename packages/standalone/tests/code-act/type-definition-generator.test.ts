@@ -29,6 +29,7 @@ describe('TypeDefinitionGenerator', () => {
         '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
       );
       expect(dts).toContain('declare function mama_search');
+      expect(dts).toContain('declare function context_compile');
       expect(dts).not.toContain('/**');
     });
 
@@ -51,6 +52,13 @@ describe('TypeDefinitionGenerator', () => {
       );
     });
 
+    it('advertises context_compile scope, connector, seed refs, and packet return fields', () => {
+      const dts = TypeDefinitionGenerator.generate(1);
+      expect(dts).toMatch(
+        /declare function context_compile[\s\S]*task: string[\s\S]*scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>[\s\S]*connectors\?: string\[\][\s\S]*seed_refs\?: Array<Record<string, unknown>>[\s\S]*packet_id: string/
+      );
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/path: string/);
@@ -59,6 +67,7 @@ describe('TypeDefinitionGenerator', () => {
     it('filters to read-only for Tier 2', () => {
       const dts = TypeDefinitionGenerator.generate(2);
       expect(dts).toContain('mama_search');
+      expect(dts).toContain('context_compile');
       expect(dts).toContain('Read');
       expect(dts).not.toContain('declare function Write');
       expect(dts).not.toContain('declare function Bash');

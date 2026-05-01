@@ -96,6 +96,7 @@ describe('ToolRegistry', () => {
         'mama_save',
         'mama_search',
         'mama_recall',
+        'context_compile',
         'mama_update',
         'mama_load_checkpoint',
         'mama_add',
