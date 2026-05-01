@@ -1,0 +1,242 @@
+import crypto from 'node:crypto';
+
+import type { DatabaseAdapter } from '../db-manager.js';
+import type { ContextBoundary, ContextCompileInput, ContextPacket, ContextRef } from './types.js';
+import { normalizeSeedRefs } from './visibility.js';
+import { canonicalizeContextScopes, assertContextBoundaryAllowsInput } from './visibility.js';
+import {
+  readMemoryCandidates as defaultReadMemoryCandidates,
+  readRawCandidates as defaultReadRawCandidates,
+  readGraphCandidates as defaultReadGraphCandidates,
+  type ContextCandidate,
+  type ContextSourceReadInput,
+  type ContextSourceReadResult,
+  type HiddenCandidateAggregate,
+} from './source-readers.js';
+import { applyContextCompilerPolicy } from './compiler-policy.js';
+
+type ContextCompilerAdapter = Pick<DatabaseAdapter, 'prepare'>;
+
+export interface ContextCompilerDeps {
+  adapter?: ContextCompilerAdapter;
+  boundary?: ContextBoundary;
+  signal?: AbortSignal;
+  deadlineMs?: number;
+  now?: () => number;
+  packetId?: () => string;
+  readMemoryCandidates?: (
+    input: ContextSourceReadInput
+  ) => Promise<ContextSourceReadResult> | ContextSourceReadResult;
+  readRawCandidates?: (
+    input: ContextSourceReadInput
+  ) => Promise<ContextSourceReadResult> | ContextSourceReadResult;
+  readGraphCandidates?: (
+    input: ContextSourceReadInput,
+    visibleRefs: readonly ContextRef[]
+  ) => Promise<ContextSourceReadResult> | ContextSourceReadResult;
+}
+
+interface SourceReadState {
+  candidates: ContextCandidate[];
+  sourceRefs: ContextRef[];
+  hidden: HiddenCandidateAggregate;
+  expansionTrace: unknown[];
+  usedToolCalls: number;
+}
+
+function packetId(): string {
+  return `ctxp_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function emptyResult(): ContextSourceReadResult {
+  return {
+    candidates: [],
+    hidden: { total: 0, by_kind: {}, by_reason: {} },
+    source_refs: [],
+  };
+}
+
+function mergeHidden(left: HiddenCandidateAggregate, right: HiddenCandidateAggregate): void {
+  left.total += right.total;
+  for (const [kind, count] of Object.entries(right.by_kind)) {
+    const key = kind as keyof HiddenCandidateAggregate['by_kind'];
+    left.by_kind[key] = (left.by_kind[key] ?? 0) + count;
+  }
+  for (const [reason, count] of Object.entries(right.by_reason)) {
+    left.by_reason[reason] = (left.by_reason[reason] ?? 0) + count;
+  }
+}
+
+function checkCooperativeStop(deps: ContextCompilerDeps, now: () => number): void {
+  if (deps.signal?.aborted) {
+    throw new Error('Context compile aborted');
+  }
+  if (typeof deps.deadlineMs === 'number' && now() >= deps.deadlineMs) {
+    throw new Error('Context compile deadline exceeded');
+  }
+}
+
+function maxToolCalls(input: ContextCompileInput): number {
+  if (typeof input.max_tool_calls !== 'number' || !Number.isFinite(input.max_tool_calls)) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Math.max(0, Math.floor(input.max_tool_calls));
+}
+
+function canReadMore(state: SourceReadState, input: ContextCompileInput): boolean {
+  return state.usedToolCalls < maxToolCalls(input);
+}
+
+function sourceInput(
+  input: ContextCompileInput,
+  boundary: ContextBoundary | undefined
+): ContextSourceReadInput {
+  return {
+    task: input.task,
+    scopes: input.scopes,
+    connectors: input.connectors,
+    project_refs: input.project_refs,
+    tenant_id: input.tenant_id ?? null,
+    boundary,
+    range: input.range,
+    as_of: input.as_of,
+    limit: input.limit,
+    threshold: undefined,
+    strictness:
+      input.strictness === 'high'
+        ? 'strict'
+        : input.strictness === 'medium'
+          ? 'balanced'
+          : 'recall',
+  };
+}
+
+async function appendResult(
+  state: SourceReadState,
+  step: string,
+  result: ContextSourceReadResult
+): Promise<void> {
+  state.candidates.push(...result.candidates);
+  state.sourceRefs.push(...result.source_refs);
+  mergeHidden(state.hidden, result.hidden);
+  state.expansionTrace.push({
+    step,
+    candidates: result.candidates.length,
+    source_refs: result.source_refs.length,
+    hidden: result.hidden.total,
+  });
+}
+
+function uniqueRefs(refs: readonly ContextRef[]): ContextRef[] {
+  const seen = new Set<string>();
+  const unique: ContextRef[] = [];
+  for (const ref of refs) {
+    const key = JSON.stringify(ref);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(ref);
+  }
+  return unique;
+}
+
+export async function compileContext(
+  input: ContextCompileInput,
+  deps: ContextCompilerDeps = {}
+): Promise<ContextPacket> {
+  const now = deps.now ?? Date.now;
+  const startedAt = now();
+  const effectiveDeadline =
+    typeof input.max_ms === 'number' && Number.isFinite(input.max_ms)
+      ? Math.min(deps.deadlineMs ?? Number.POSITIVE_INFINITY, startedAt + Math.max(0, input.max_ms))
+      : deps.deadlineMs;
+  const effectiveDeps = { ...deps, deadlineMs: effectiveDeadline };
+  checkCooperativeStop(effectiveDeps, now);
+
+  const boundary = deps.boundary;
+  const seedRefs = normalizeSeedRefs(input.seed_refs);
+  if (boundary) {
+    assertContextBoundaryAllowsInput({
+      boundary,
+      requestedScopes: input.scopes,
+      requestedConnectors: input.connectors,
+      seedRefs,
+    });
+  }
+
+  const canonicalScopes = canonicalizeContextScopes(input.scopes);
+  const readInput = sourceInput(input, boundary);
+  const state: SourceReadState = {
+    candidates: [],
+    sourceRefs: [...seedRefs],
+    hidden: { total: 0, by_kind: {}, by_reason: {} },
+    expansionTrace: [{ step: 'seed_refs', source_refs: seedRefs.length }],
+    usedToolCalls: 0,
+  };
+
+  if (canReadMore(state, input)) {
+    checkCooperativeStop(effectiveDeps, now);
+    state.usedToolCalls += 1;
+    const memoryResult = await (deps.readMemoryCandidates?.(readInput) ??
+      defaultReadMemoryCandidates(readInput));
+    await appendResult(state, 'memory_recall', memoryResult);
+  }
+
+  const shouldReadRaw = (input.connectors?.length ?? 0) > 0;
+  if (shouldReadRaw && canReadMore(state, input)) {
+    checkCooperativeStop(effectiveDeps, now);
+    state.usedToolCalls += 1;
+    const rawResult = await (deps.readRawCandidates?.(readInput) ??
+      (deps.adapter ? defaultReadRawCandidates(deps.adapter, readInput) : emptyResult()));
+    await appendResult(state, 'raw_window', rawResult);
+  }
+
+  const visibleRefsForGraph = uniqueRefs([...state.sourceRefs]);
+  if (visibleRefsForGraph.length > 0 && canReadMore(state, input)) {
+    checkCooperativeStop(effectiveDeps, now);
+    state.usedToolCalls += 1;
+    const graphResult = await (deps.readGraphCandidates?.(readInput, visibleRefsForGraph) ??
+      (deps.adapter
+        ? defaultReadGraphCandidates(deps.adapter, readInput, visibleRefsForGraph)
+        : emptyResult()));
+    await appendResult(state, 'graph_neighborhood', graphResult);
+  }
+
+  checkCooperativeStop(effectiveDeps, now);
+  const policy = applyContextCompilerPolicy({
+    task: input.task,
+    candidates: state.candidates,
+    hidden: state.hidden,
+    limit: input.limit,
+    strictness: input.strictness,
+    max_tokens: input.max_tokens,
+  });
+
+  const completedAt = now();
+  return {
+    packet_id: deps.packetId?.() ?? packetId(),
+    task: input.task,
+    scopes: canonicalScopes.scopes,
+    scope_hash: canonicalScopes.scopeHash,
+    generated_at: new Date(completedAt).toISOString(),
+    source_refs: uniqueRefs([...seedRefs, ...policy.source_refs]),
+    selected_evidence: policy.selected_evidence,
+    evidence_clusters: policy.evidence_clusters,
+    related_decisions: policy.related_decisions,
+    rejected_refs: policy.rejected_refs,
+    rejected_summary: policy.rejected_summary,
+    missing_context: policy.missing_context,
+    caveats: policy.caveats,
+    expansion_trace: state.expansionTrace,
+    retrieval_diagnostics: policy.retrieval_diagnostics,
+    budget: {
+      max_tool_calls: input.max_tool_calls,
+      used_tool_calls: state.usedToolCalls,
+      max_ms: input.max_ms,
+      elapsed_ms: Math.max(0, completedAt - startedAt),
+      max_tokens: input.max_tokens,
+      estimated_tokens: policy.estimated_tokens,
+    },
+  };
+}
