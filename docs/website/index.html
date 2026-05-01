@@ -3,478 +3,1235 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MAMA OS — Local operating memory for AI agents</title>
     <meta
       name="description"
-      content="MAMA OS - Your AI's Long-Term Memory. 24/7 AI assistant across Discord, Slack, and Telegram."
+      content="MAMA holds a living record of your team — preserved like a game record. Agents read it, simulate past positions, infer the tacit, predict the next, and act within explicit bounds."
     />
-    <title>MAMA OS - Your AI's Long-Term Memory</title>
-
-    <!-- Fonts: Playful + Refined -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
-
-    <link rel="stylesheet" href="styles.css" />
     <link rel="icon" type="image/svg+xml" href="assets/mama-icon.svg" />
+    <style>
+      :root {
+        --yellow: #ffce00;
+        --yellow-dark: #b98a00;
+        --lavender: #eddbf7;
+        --lavender-soft: #f7f0fb;
+        --ink: #17151f;
+        --ink-soft: #2b2733;
+        --ink-line: #3f3a48;
+        --muted: #5d5a68;
+        --muted-soft: #9994a3;
+        --line: #ded8e8;
+        --hairline: #e6e3ec;
+        --white: #ffffff;
+        --blue: #315c9b;
+        --green: #1d7d62;
+        --coral: #c85f55;
+        --teal: #1f7a8c;
+        --max-width: 1200px;
+        --font-display: 'Fredoka', system-ui, sans-serif;
+        --font-body: 'Inter', system-ui, sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        font-family: var(--font-body);
+        font-size: 16px;
+        line-height: 1.6;
+        color: var(--ink);
+        background: var(--white);
+        -webkit-font-smoothing: antialiased;
+        overflow-x: hidden;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      h1,
+      h2,
+      h3,
+      h4 {
+        font-family: var(--font-display);
+        margin: 0;
+        font-weight: 700;
+        line-height: 1.05;
+      }
+      .container {
+        width: min(var(--max-width), calc(100% - 48px));
+        margin: 0 auto;
+      }
+      .eyebrow {
+        display: inline-block;
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* Nav */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(255, 255, 255, 0.94);
+        border-bottom: 1px solid var(--hairline);
+        backdrop-filter: blur(12px);
+      }
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 72px;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: 1.3rem;
+      }
+      .brand img {
+        width: 38px;
+        height: 38px;
+      }
+      .nav-links {
+        display: flex;
+        gap: 26px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .nav-links a:hover {
+        color: var(--ink);
+      }
+      .nav-cta {
+        display: inline-flex;
+        align-items: center;
+        padding: 6px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      @media (max-width: 860px) {
+        .nav-links {
+          display: none;
+        }
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 13px 22px;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 0.96rem;
+        border: 1px solid transparent;
+        transition: transform 0.12s ease;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+      .btn-primary {
+        background: var(--ink);
+        color: #fff;
+      }
+      .btn-ghost {
+        background: var(--white);
+        border-color: var(--line);
+        color: var(--ink);
+      }
+      .btn-ghost:hover {
+        background: var(--lavender-soft);
+      }
+
+      /* Hero */
+      .hero {
+        padding: 56px 0 88px;
+        background:
+          radial-gradient(ellipse 60% 60% at 88% 30%, rgba(237, 219, 247, 0.5), transparent 70%),
+          radial-gradient(ellipse 50% 50% at 8% 110%, rgba(255, 206, 0, 0.16), transparent 70%),
+          var(--white);
+        border-bottom: 1px solid var(--hairline);
+      }
+      .hero-copy {
+        max-width: 880px;
+        margin: 0 auto 36px;
+        text-align: center;
+      }
+      .hero-copy h1 {
+        font-size: clamp(1.8rem, 5.5vw, 4rem);
+        margin: 14px 0 18px;
+        letter-spacing: -0.01em;
+      }
+      .hero-copy h1 em {
+        font-style: normal;
+        background: linear-gradient(180deg, transparent 60%, var(--yellow) 60%);
+        padding: 0 4px;
+        font-weight: 700;
+      }
+      .hero-copy p {
+        margin: 0 auto;
+        max-width: 56ch;
+        font-size: 1.1rem;
+        color: var(--muted);
+      }
+      .hero-image {
+        position: relative;
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      .hero-image img {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 16px;
+        box-shadow:
+          0 28px 70px rgba(23, 21, 31, 0.12),
+          0 6px 14px rgba(23, 21, 31, 0.06);
+      }
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 12px;
+        margin-top: 36px;
+      }
+
+      /* MANIFESTO STRIP */
+      .manifesto-strip {
+        background: var(--ink);
+        color: #fff;
+        padding: 88px 0;
+      }
+      .manifesto-inner {
+        max-width: 920px;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .manifesto-strip .eyebrow {
+        color: var(--yellow);
+        margin-bottom: 28px;
+      }
+      .manifesto-line {
+        font-family: var(--font-display);
+        font-size: clamp(1.5rem, 4.6vw, 3.4rem);
+        font-weight: 700;
+        line-height: 1.2;
+        letter-spacing: -0.01em;
+        margin: 0 0 32px;
+        color: #fff;
+      }
+      .manifesto-line em {
+        display: inline-block;
+        font-style: normal;
+        background: var(--yellow);
+        color: var(--ink);
+        padding: 6px 16px 10px;
+        border-radius: 6px;
+        margin-top: 14px;
+        -webkit-box-decoration-break: clone;
+        box-decoration-break: clone;
+      }
+      .manifesto-elab {
+        margin: 0 auto;
+        max-width: 64ch;
+        font-size: 1.04rem;
+        color: #c5c1ce;
+      }
+      .manifesto-elab strong {
+        color: var(--yellow);
+        font-weight: 700;
+      }
+
+      /* Sections */
+      .section {
+        padding: 88px 0;
+      }
+      .section-tint {
+        background: var(--lavender-soft);
+      }
+      .section-ink {
+        background: var(--ink);
+        color: #fff;
+      }
+      .section-ink .eyebrow {
+        color: var(--yellow);
+      }
+      .section-head {
+        max-width: 760px;
+        margin: 0 auto 48px;
+        text-align: center;
+      }
+      .section-head h2 {
+        font-size: clamp(1.8rem, 3.4vw, 2.6rem);
+        margin: 12px 0 14px;
+      }
+      .section-head p {
+        margin: 0;
+        font-size: 1.04rem;
+        color: var(--muted);
+      }
+      .section-ink .section-head p {
+        color: #c5c1ce;
+      }
+
+      /* Two actors */
+      .actors {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: stretch;
+      }
+      @media (max-width: 900px) {
+        .actors {
+          grid-template-columns: 1fr;
+          gap: 24px;
+        }
+      }
+      .actor {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .actor.substrate {
+        border-top: 4px solid var(--yellow);
+      }
+      .actor.agent {
+        border-top: 4px solid var(--teal);
+      }
+      .actor .role {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+      .actor.substrate .role {
+        color: var(--yellow-dark);
+      }
+      .actor.agent .role {
+        color: var(--teal);
+      }
+      .actor h3 {
+        font-family: var(--font-display);
+        font-size: 1.6rem;
+        font-weight: 700;
+      }
+      .actor .lede {
+        color: var(--muted);
+        font-size: 1rem;
+        margin: 0;
+      }
+      .actor ul {
+        list-style: none;
+        margin: 16px 0 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      .actor ul li {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        font-size: 0.94rem;
+      }
+      .actor ul li::before {
+        content: '·';
+        color: var(--yellow-dark);
+        font-weight: 800;
+        font-family: var(--mono);
+        font-size: 1.2rem;
+        line-height: 1;
+        margin-top: 2px;
+      }
+      .actor.agent ul li::before {
+        color: var(--teal);
+      }
+      .actors-meta {
+        margin: 36px auto 0;
+        text-align: center;
+        font-family: var(--mono);
+        font-size: 0.84rem;
+        color: var(--muted);
+        max-width: 720px;
+      }
+      .actors-meta strong {
+        color: var(--ink);
+      }
+
+      /* Honesty cards */
+      .honesty-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 1024px) {
+        .honesty-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 600px) {
+        .honesty-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .honesty-card {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .honesty-card .num {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: var(--yellow-dark);
+      }
+      .honesty-card h3 {
+        font-family: var(--font-display);
+        font-size: 1.2rem;
+        font-weight: 600;
+      }
+      .honesty-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+      .honesty-card .highlight {
+        margin-top: 8px;
+        padding: 10px 12px;
+        background: var(--lavender-soft);
+        border-left: 3px solid var(--yellow);
+        border-radius: 4px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--ink);
+      }
+
+      /* Why local */
+      .local-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+      }
+      @media (max-width: 1024px) {
+        .local-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+      @media (max-width: 600px) {
+        .local-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .local-card {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 24px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .local-card .num {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        color: var(--teal);
+      }
+      .local-card h3 {
+        font-family: var(--font-display);
+        font-size: 1.15rem;
+        font-weight: 600;
+      }
+      .local-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .local-card code {
+        font-family: var(--mono);
+        font-size: 0.84em;
+        background: var(--lavender-soft);
+        padding: 1px 5px;
+        border-radius: 3px;
+      }
+
+      /* Benchmark */
+      .bench-honesty {
+        max-width: 720px;
+        margin: 0 auto 24px;
+        font-family: var(--mono);
+        font-size: 0.86rem;
+        color: var(--muted-soft);
+        text-align: center;
+      }
+      .bench-honesty strong {
+        color: #fff;
+      }
+      .bench-num {
+        font-size: clamp(5rem, 12vw, 9rem);
+        font-weight: 700;
+        letter-spacing: -0.045em;
+        line-height: 1;
+        margin: 0 0 12px;
+        color: #fff;
+        font-family: var(--font-display);
+        text-align: center;
+      }
+      .bench-sub {
+        font-size: 1.05rem;
+        color: #c5c1ce;
+        margin: 0 0 56px;
+        text-align: center;
+      }
+      .bench-list {
+        max-width: 880px;
+        margin: 0 auto;
+      }
+      .bench-row {
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr) 90px;
+        gap: 24px;
+        align-items: center;
+        padding: 16px 0;
+        border-bottom: 1px solid var(--ink-line);
+      }
+      .bench-row:last-child {
+        border-bottom: 0;
+      }
+      .bench-row .name {
+        color: #fff;
+        font-weight: 600;
+        font-size: 1rem;
+      }
+      .bench-row .model {
+        display: block;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--muted-soft);
+        margin-top: 3px;
+        letter-spacing: 0.04em;
+      }
+      .bench-track {
+        height: 28px;
+        background: var(--ink-soft);
+        border-radius: 4px;
+        overflow: hidden;
+        position: relative;
+      }
+      .bench-fill {
+        height: 100%;
+        background: #c5c1ce;
+        border-radius: 4px;
+      }
+      .bench-fill.is-mama {
+        background: var(--yellow);
+        position: relative;
+      }
+      .bench-fill.is-low {
+        background: #6a6573;
+      }
+      .bench-fill.is-lower {
+        background: #4a4452;
+      }
+      .bench-tag {
+        position: absolute;
+        right: 10px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        color: var(--ink);
+      }
+      .bench-pct {
+        font-size: 1.05rem;
+        font-weight: 700;
+        color: #fff;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .bench-foot {
+        max-width: 880px;
+        margin: 32px auto 0;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--muted-soft);
+        line-height: 1.6;
+      }
+      @media (max-width: 700px) {
+        .bench-row {
+          grid-template-columns: 1fr;
+          gap: 8px;
+        }
+        .bench-pct {
+          text-align: left;
+        }
+      }
+
+      /* Today / Next */
+      .today-next {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 32px;
+      }
+      @media (max-width: 900px) {
+        .today-next {
+          grid-template-columns: 1fr;
+        }
+      }
+      .tn-col {
+        background: var(--white);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 32px;
+      }
+      .tn-col.shipped {
+        border-top: 4px solid var(--green);
+      }
+      .tn-col.planned {
+        border-top: 4px solid var(--yellow);
+        background:
+          linear-gradient(to bottom right, rgba(255, 206, 0, 0.06), transparent 60%), var(--white);
+      }
+      .tn-col .badge {
+        display: inline-block;
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        padding: 4px 10px;
+        border-radius: 4px;
+      }
+      .tn-col.shipped .badge {
+        background: rgba(29, 125, 98, 0.12);
+        color: var(--green);
+      }
+      .tn-col.planned .badge {
+        background: var(--yellow);
+        color: var(--ink);
+      }
+      .tn-col h3 {
+        font-family: var(--font-display);
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin: 14px 0 10px;
+      }
+      .tn-col > p {
+        color: var(--muted);
+        margin: 0 0 18px;
+        font-size: 0.96rem;
+      }
+      .tn-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 8px;
+      }
+      .tn-list li {
+        position: relative;
+        padding: 10px 12px 10px 32px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fbfafc;
+        font-size: 0.92rem;
+      }
+      .tn-list li::before {
+        position: absolute;
+        left: 12px;
+        top: 12px;
+        font-family: var(--mono);
+        font-weight: 800;
+        font-size: 0.92rem;
+      }
+      .tn-col.shipped .tn-list li::before {
+        content: '✓';
+        color: var(--green);
+      }
+      .tn-col.planned .tn-list li::before {
+        content: '→';
+        color: var(--yellow-dark);
+      }
+      .cc-cells {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 14px;
+      }
+      .cc-cell {
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--white);
+      }
+      .cc-cell .label {
+        font-family: var(--mono);
+        font-size: 0.66rem;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }
+      .cc-cell.selected .label {
+        color: var(--green);
+      }
+      .cc-cell.rejected .label {
+        color: var(--coral);
+      }
+      .cc-cell.missing .label {
+        color: var(--yellow-dark);
+      }
+      .cc-cell.caveats .label {
+        color: var(--blue);
+      }
+      .cc-cell .desc {
+        font-size: 0.78rem;
+        color: var(--muted);
+        margin-top: 4px;
+        line-height: 1.45;
+      }
+      .cc-code {
+        background: var(--ink);
+        color: #fff;
+        padding: 12px 14px;
+        border-radius: 6px;
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        line-height: 1.6;
+        margin: 0;
+        overflow-x: auto;
+      }
+
+      /* Install */
+      .install-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+      }
+      @media (max-width: 900px) {
+        .install-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .step {
+        padding: 24px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--white);
+      }
+      .step .num {
+        display: inline-flex;
+        width: 32px;
+        height: 32px;
+        align-items: center;
+        justify-content: center;
+        background: var(--yellow);
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-weight: 700;
+        border-radius: 999px;
+      }
+      .step h3 {
+        font-family: var(--font-display);
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 14px 0 10px;
+      }
+      .step code {
+        display: block;
+        background: var(--lavender-soft);
+        padding: 10px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--line);
+        font-family: var(--mono);
+        font-size: 0.84rem;
+      }
+
+      /* Not-this callout */
+      .not-this {
+        max-width: 760px;
+        margin: 36px auto 0;
+        padding: 18px 22px;
+        border: 1px solid var(--line);
+        border-left: 4px solid var(--ink);
+        border-radius: 6px;
+        background: var(--white);
+        font-size: 0.94rem;
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .not-this strong {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      /* Narrow-viewport overrides */
+      @media (max-width: 480px) {
+        .hero-copy h1 {
+          font-size: 1.55rem;
+          line-height: 1.18;
+        }
+        .hero-copy p {
+          font-size: 0.96rem;
+        }
+        .manifesto-line {
+          font-size: 1.25rem;
+          line-height: 1.3;
+        }
+        .manifesto-line em {
+          padding: 4px 10px 6px;
+        }
+        .section-head h2 {
+          font-size: 1.5rem;
+          line-height: 1.2;
+        }
+        .actor h3 {
+          font-size: 1.2rem;
+        }
+        .section {
+          padding: 56px 0;
+        }
+        .manifesto-strip {
+          padding: 56px 0;
+        }
+      }
+
+      /* Footer */
+      .footer {
+        background: var(--ink);
+        color: #c5c1ce;
+        padding: 40px 0;
+      }
+      .footer-inner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+      .footer-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #fff;
+        font-family: var(--font-display);
+        font-weight: 700;
+      }
+      .footer-brand img {
+        width: 30px;
+        height: 30px;
+      }
+      .footer-version {
+        font-family: var(--mono);
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        border: 1px solid var(--ink-line);
+        border-radius: 4px;
+        color: var(--yellow);
+        letter-spacing: 0.04em;
+      }
+      .footer-links {
+        display: flex;
+        gap: 24px;
+        font-size: 0.88rem;
+      }
+      .footer-legal {
+        flex-basis: 100%;
+        margin-top: 12px;
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--muted-soft);
+      }
+    </style>
   </head>
   <body>
-    <!-- Floating decorative elements -->
-    <div class="bg-decor">
-      <div class="blob blob-1"></div>
-      <div class="blob blob-2"></div>
-      <div class="blob blob-3"></div>
-    </div>
-
-    <!-- Navigation -->
+    <!-- NAV -->
     <nav class="nav">
-      <div class="nav-inner">
-        <a href="#" class="nav-logo">
-          <img src="assets/mama-icon.svg" alt="MAMA" class="logo-icon" />
+      <div class="container nav-inner">
+        <a href="#top" class="brand">
+          <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
         </a>
-        <div class="nav-links" id="nav-links">
-          <a href="#features">Features</a>
-          <a href="#multiagent">Multi-Agent</a>
-          <a href="#packages">Packages</a>
-          <a href="#docs">Docs</a>
+        <div class="nav-links">
+          <a href="#actors">How</a>
+          <a href="#different">Different</a>
+          <a href="#local">Local</a>
           <a href="#install">Install</a>
-          <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
         </div>
-        <button
-          class="nav-toggle"
-          aria-label="Toggle menu"
-          aria-controls="nav-links"
-          aria-expanded="false"
-        >
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
+        <span class="nav-cta">v0.20</span>
       </div>
     </nav>
 
-    <!-- Hero Section -->
-    <header class="hero">
-      <div class="hero-content">
-        <div class="hero-mascot">
-          <img src="assets/mama-icon.svg" alt="MAMA Mascot" class="mascot-img" />
-          <div class="speech-bubble">
-            <span>I remember everything for you!</span>
-          </div>
+    <!-- HERO -->
+    <section class="hero" id="top">
+      <div class="container">
+        <div class="hero-copy">
+          <span class="eyebrow">Local-first operating memory</span>
+          <h1>This is what an agent does <em>with the record.</em></h1>
+          <p>
+            MAMA holds a living, append-only record of your team's <em>work</em> — chats about
+            projects, decisions made, files shipped, work logs. Preserved like a game record so
+            stronger models tomorrow can re-read the same history. Agents read it, simulate past
+            positions, infer what's missing, predict project risk, and act inside explicit
+            boundaries.
+          </p>
         </div>
-        <h1 class="hero-title">
-          <span class="title-line">Your AI's</span>
-          <span class="title-accent">Long-Term Memory</span>
-        </h1>
-        <p class="hero-tagline">
-          24/7 AI assistant. <strong>Multi-Agent System</strong> for Discord, Slack, and Telegram.
-        </p>
-        <div class="hero-cta">
-          <a href="#install" class="btn btn-primary">Get Started</a>
+        <div class="hero-image">
+          <img
+            src="assets/mama-os-hero-evidence-board.png"
+            alt="A bright daylight scene: on the left, a corkboard holds the project_a investigation — four people portraits, multiple event cards on a timeline, channel icons, sticky notes with open questions, an empty pin labeled missing demo_scope, all connected by red yarn, framed as an envelope with green allow seals and red deny seals. On the right, a wooden desk with the agent's open notebook showing a structured cited report — judgment, evidence, inference, missing, next, boundary — plus a stack of cited reference cards, a magnifying glass, and a MAMA OS coffee mug. Thin teal threads connect notebook lines back to specific board pins as visible provenance."
+          />
+        </div>
+        <div class="hero-actions">
+          <a href="#install" class="btn btn-primary">Install locally</a>
           <a
             href="https://github.com/jungjaehoon-lifegamez/MAMA"
-            class="btn btn-outline"
+            class="btn btn-ghost"
             target="_blank"
+            rel="noreferrer"
+            >GitHub</a
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path
-                d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"
-              />
-            </svg>
-            GitHub
-          </a>
-        </div>
-      </div>
-    </header>
-
-    <!-- What is MAMA Section -->
-    <section class="section section-about" id="about">
-      <div class="section-inner">
-        <h2 class="section-title">What is MAMA?</h2>
-        <div class="comparison-cards">
-          <div class="comparison-card comparison-old">
-            <div class="comparison-icon">😵</div>
-            <h3>Traditional AI</h3>
-            <p>Forgets everything when session ends</p>
-            <ul>
-              <li>No conversation history</li>
-              <li>Decisions forgotten</li>
-              <li>Explain from scratch every time</li>
-            </ul>
-          </div>
-          <div class="comparison-card comparison-new">
-            <div class="comparison-icon">🧠</div>
-            <h3>MAMA</h3>
-            <p>Remembers decisions, tracks evolution, works 24/7</p>
-            <ul>
-              <li>Discord/Slack/Telegram integration</li>
-              <li>Decision graph visualization</li>
-              <li>Semantic search support</li>
-            </ul>
-          </div>
         </div>
       </div>
     </section>
 
-    <!-- Screenshots Section -->
-    <section class="section section-screenshots" id="screenshots">
-      <div class="section-inner">
-        <h2 class="section-title">See MAMA in Action</h2>
-        <p class="section-subtitle">Beautiful, intuitive interface across all your devices</p>
-        <div class="screenshots-grid">
-          <div class="screenshot-card">
-            <div class="phone-frame">
-              <img src="assets/screenshot-chat.png" alt="MAMA Chat Interface" loading="lazy" />
-            </div>
-            <h3>💬 AI Chat</h3>
-            <p>Natural conversations with context-aware responses</p>
-          </div>
-          <div class="screenshot-card">
-            <div class="phone-frame">
-              <img src="assets/screenshot-dashboard.png" alt="MAMA Dashboard" loading="lazy" />
-            </div>
-            <h3>📊 Dashboard</h3>
-            <p>Monitor memory stats, gateways, and tools at a glance</p>
-          </div>
-          <div class="screenshot-card">
-            <div class="phone-frame">
-              <img src="assets/screenshot-memory.png" alt="MAMA Memory Graph" loading="lazy" />
-            </div>
-            <h3>🧠 Memory Graph</h3>
-            <p>Visualize decision evolution and connections</p>
-          </div>
-          <div class="screenshot-card">
-            <div class="phone-frame">
-              <img src="assets/screenshot-settings.png" alt="MAMA Settings" loading="lazy" />
-            </div>
-            <h3>⚙️ Settings</h3>
-            <p>Easy gateway and agent configuration</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Multi-Agent Swarm Section -->
-    <section class="section section-about" id="multiagent">
-      <div class="section-inner">
-        <h2 class="section-title">Multi-Agent System</h2>
-        <p class="section-subtitle">
-          os-agent fronts the live viewer while conductor handles audit and background review across
-          connected channels
+    <!-- MANIFESTO STRIP -->
+    <section class="manifesto-strip">
+      <div class="container manifesto-inner">
+        <span class="eyebrow">North Star</span>
+        <p class="manifesto-line">
+          Do not over-model the company.<br />Build the twin.<br /><em
+            >Let stronger models simulate it.</em
+          >
         </p>
-        <div class="comparison-cards">
-          <div class="comparison-card comparison-old">
-            <div class="comparison-icon">🤖</div>
-            <h3>Single Agent</h3>
-            <p>One AI handles everything alone</p>
-            <ul>
-              <li>One persona, one skill set</li>
-              <li>No task specialization</li>
-              <li>Limited autonomy</li>
-            </ul>
-          </div>
-          <div class="comparison-card comparison-new">
-            <div class="comparison-icon">🎼</div>
-            <h3>Multi-Agent</h3>
-            <p>os-agent coordinates the user-facing workflow and calls specialists directly</p>
-            <ul>
-              <li>Same-view navigation plus specialist delegation</li>
-              <li>Dedicated audit/background path for conductor</li>
-              <li>Mixed backends (Claude + Codex)</li>
-            </ul>
-          </div>
-        </div>
-        <div style="max-width: 640px; margin: 2rem auto 0; text-align: left">
-          <pre
-            style="
-              background: #1e1e2e;
-              color: #cdd6f4;
-              border-radius: 12px;
-              padding: 1.2rem;
-              font-size: 0.85rem;
-              overflow-x: auto;
-              line-height: 1.5;
-            "
-          >
-User message → Orchestrator → Routing
-                                │
-                ┌───────────────┼───────────────┐
-                ▼               ▼               ▼
-         🖥️ os-agent      🎛️ Auditor      🔧 Developer
-          (frontdoor)      (background)      (worker)
-        Same-view ops      Audits / compare   Implements
-
-Coordination Modes:
-  Viewer flow  → os-agent navigates the same page the user sees
-  Delegation   → direct gateway-tool delegation to specialists
-  Audit        → conductor runs periodic or manual review jobs
-  Workflows    → specialist workers handle execution slices</pre
-          >
-        </div>
+        <p class="manifesto-elab">
+          Most agents never see the board — they see a prompt, a few files, one search result.
+          MAMA's job is to make that board <strong>visible</strong>, and to keep it readable as the
+          models keep getting stronger.
+        </p>
       </div>
     </section>
 
-    <!-- Packages Section -->
-    <section class="section section-packages" id="packages">
-      <div class="section-inner">
-        <h2 class="section-title">Choose Your Package</h2>
-        <div class="packages-grid">
-          <article class="package-card package-featured">
-            <div class="package-badge">Recommended</div>
-            <div class="package-icon">🚀</div>
-            <h3>mama-os</h3>
-            <p class="package-desc">Standalone Agent</p>
-            <ul class="package-features">
-              <li>Discord, Slack, Telegram bots</li>
-              <li>Web dashboard</li>
-              <li>Mobile voice chat</li>
-              <li>Agent activity + validation</li>
-              <li>Cron scheduler</li>
+    <!-- TWO ACTORS -->
+    <section class="section section-tint" id="actors">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Two actors, one frame</span>
+          <h2>MAMA holds the record. The agent simulates it.</h2>
+          <p>
+            One is the substrate — a local, append-only record of what your team did and said,
+            preserved so stronger models can re-read it tomorrow. The other is the worker — the
+            agent that reads, simulates, infers, predicts, and acts within explicit bounds.
+          </p>
+        </div>
+
+        <div class="actors">
+          <article class="actor substrate">
+            <span class="role">Substrate · MAMA</span>
+            <h3>A game record of your team. Re-readable by stronger models tomorrow.</h3>
+            <p class="lede">
+              Local SQLite. Append-only. Edges instead of overwrites. Every record carries time,
+              source refs, model run, and envelope hash — so an agent today and a stronger model
+              next year can both re-simulate the same history.
+            </p>
+            <ul>
+              <li>15 connectors poll chats, docs, sheets, repos, and work logs</li>
+              <li>Raw layer: cross-source unified search, windowing, and as-of time travel</li>
+              <li>
+                Graph: entities, cases, decisions linked by typed edges (supersedes · builds_on ·
+                debates · synthesizes)
+              </li>
+              <li>Provenance ledger: source refs · model runs · tool traces</li>
+              <li>Envelopes: scope · expiry · allowed destinations · signed</li>
             </ul>
-            <div class="code-block">
-              <code>npm i -g @jungjaehoon/mama-os<br />mama init && mama start</code>
-            </div>
           </article>
 
-          <article class="package-card">
-            <div class="package-icon">🔌</div>
-            <h3>mama-server</h3>
-            <p class="package-desc">MCP Server</p>
-            <ul class="package-features">
-              <li>4 MCP tools</li>
-              <li>Semantic search</li>
-              <li>Decision graph</li>
-              <li>Claude Desktop support</li>
+          <article class="actor agent">
+            <span class="role">Worker · Agent</span>
+            <h3>Reads. Simulates. Infers. Predicts. Acts — within the envelope.</h3>
+            <p class="lede">
+              The same model the operator already uses — not a babysat function. Three modes:
+              Reactive (your turn) · Delegated (background investigation) · Autonomous (overnight
+              twin prep). Outputs are simulations, inferences, decisions, drafts, and cited reports
+              — all bounded by what the envelope allows.
+            </p>
+            <ul>
+              <li>Reads cross-source raw with time and provenance intact</li>
+              <li>Simulates past positions: <em>"what was visible at moment T?"</em></li>
+              <li>
+                Infers the tacit: patterns and contradictions in the work record the team did not
+                catch
+              </li>
+              <li>Predicts accumulating <em>project</em> risk before it breaks</li>
+              <li>Writes decisions, cases, alias edges — directly, within envelope</li>
+              <li>Composes cited reports as one of many deliverables</li>
             </ul>
-            <div class="code-block">
-              <code>npx @jungjaehoon/mama-server</code>
-            </div>
-          </article>
-
-          <article class="package-card">
-            <div class="package-icon">⚡</div>
-            <h3>Claude Code Plugin</h3>
-            <p class="package-desc">Auto-Context</p>
-            <ul class="package-features">
-              <li>/mama-* slash commands</li>
-              <li>Auto context injection</li>
-              <li>Hook system</li>
-            </ul>
-            <div class="code-block">
-              <code>/plugin install mama</code>
-            </div>
           </article>
         </div>
+
+        <p class="actors-meta">
+          The substrate is what <strong>does not change</strong> as models improve. The agent is
+          what <strong>gets stronger</strong> as models improve. Build the substrate; let the agents
+          catch up.
+        </p>
       </div>
     </section>
 
-    <!-- Features Section -->
-    <section class="section section-features" id="features">
-      <div class="section-inner">
-        <h2 class="section-title">Key Features</h2>
-        <div class="features-grid">
-          <article class="feature-card">
-            <div class="feature-icon">💬</div>
-            <h3>Gateway Integrations</h3>
-            <p>Chat with AI anywhere via Discord, Slack, Telegram bots</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">📱</div>
-            <h3>Mobile Chat</h3>
-            <p>Voice input with Web Speech API. Hands-free mode supported.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">🌳</div>
-            <h3>Decision Evolution</h3>
-            <p>Track how decisions evolve. See what succeeded and failed.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">🔍</div>
-            <h3>Semantic Search</h3>
-            <p>Search related decisions in natural language. Multi-lingual support.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">🛠️</div>
-            <h3>Agent Workspace</h3>
-            <p>Inspect config, activity, validation, and history for managed agents.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">📚</div>
-            <h3>Wiki & Logs</h3>
-            <p>Browse wiki documents and live daemon logs inside the same viewer shell.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">⏰</div>
-            <h3>Cron Scheduler</h3>
-            <p>Automated task scheduling. Daily briefings, weekly reports.</p>
-          </article>
-          <article class="feature-card">
-            <div class="feature-icon">🎼</div>
-            <h3>Multi-Agent System</h3>
+    <!-- WHAT'S DIFFERENT — 4 honesty cards -->
+    <section class="section" id="different">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">What's different</span>
+          <h2>Most AI gives you a black box. MAMA can't.</h2>
+          <p>
+            Every output the agent ships — report, decision, draft, prediction — carries the same
+            four properties by form, not by policy. The substrate refuses to let the agent hide
+            them.
+          </p>
+        </div>
+        <div class="honesty-grid">
+          <article class="honesty-card">
+            <span class="num">01</span>
+            <h3>Cited, not asserted.</h3>
             <p>
-              os-agent handles the frontdoor while conductor focuses on audit, comparison, and
-              background review.
+              Every claim points back to a specific raw ref. Not "according to recent activity" —
+              the actual messages, with timestamps and authors.
+            </p>
+            <div class="highlight">EVIDENCE: 9 cited refs ▸ click to expand</div>
+          </article>
+          <article class="honesty-card">
+            <span class="num">02</span>
+            <h3>Evolved, not stale.</h3>
+            <p>
+              Decisions are linked by typed edges. A new decision <em>supersedes</em> the old one
+              with a reason — and the old one is still readable.
+            </p>
+            <div class="highlight">JWT → JWT + refresh (reason: frequent logouts)</div>
+          </article>
+          <article class="honesty-card">
+            <span class="num">03</span>
+            <h3>Missing, not silent.</h3>
+            <p>
+              Each output names the context it could not find. Empty pin on the board. The silence
+              is labeled, not pretended away.
+            </p>
+            <div class="highlight">MISSING: demo_scope confirmation</div>
+          </article>
+          <article class="honesty-card">
+            <span class="num">04</span>
+            <h3>Bounded, not unleashed.</h3>
+            <p>
+              The agent can draft a customer message — but cannot send it unless the envelope allows
+              that destination. Boundary is a frame, not a hope.
+            </p>
+            <div class="highlight">
+              ✓ draft &nbsp; ✓ log &nbsp; ✗ external_email &nbsp; ✗ webhook
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- WHY LOCAL -->
+    <section class="section section-tint" id="local">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Why local</span>
+          <h2>Your records never leave the machine.</h2>
+          <p>
+            MAMA runs on the laptop or server you choose. The substrate sits next to your terminal —
+            not in someone else's cloud. Your team's chats, decisions, and work logs stay yours.
+          </p>
+        </div>
+        <div class="local-grid">
+          <article class="local-card">
+            <span class="num">01 · STORAGE</span>
+            <h3>Local SQLite</h3>
+            <p>
+              The whole substrate is one file on disk you already trust. Open it with any SQLite
+              client. Read it forever, with or without MAMA running.
+            </p>
+          </article>
+          <article class="local-card">
+            <span class="num">02 · EXECUTION</span>
+            <h3>Official CLI subprocess</h3>
+            <p>
+              The agent runs as <code>claude</code> or <code>codex</code> under your existing
+              authenticated CLI. No API keys to manage. No header spoofing. ToS-compliant.
+            </p>
+          </article>
+          <article class="local-card">
+            <span class="num">03 · OWNERSHIP</span>
+            <h3>You own the record</h3>
+            <p>
+              Append-only with provenance on every write. If you stop using MAMA, the substrate is
+              still readable and yours to keep. The record you keep is the record you control.
+            </p>
+          </article>
+          <article class="local-card">
+            <span class="num">04 · COST</span>
+            <h3>No cloud bill for memory</h3>
+            <p>
+              No per-query billing for the substrate. Your existing Claude Code or Codex
+              subscription covers the model. Embeddings run locally on a 560 MB model.
             </p>
           </article>
         </div>
+        <p class="not-this">
+          <strong>What MAMA is not.</strong> Not employee monitoring. Not productivity scoring. Not
+          emotion or turnover prediction. The subject is the work, not the worker — by design. The
+          substrate forbids people-scoring at the schema level.
+        </p>
       </div>
     </section>
 
-    <!-- Documentation Section -->
-    <section class="section section-docs" id="docs">
-      <div class="section-inner">
-        <h2 class="section-title">Documentation</h2>
-        <div class="docs-grid">
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA#quick-start"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">🚀</div>
-            <h3>Quick Start</h3>
-            <p>Get up and running in minutes</p>
-          </a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/installation.md"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">📦</div>
-            <h3>Installation Guide</h3>
-            <p>Detailed setup instructions</p>
-          </a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/mcp-tools.md"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">🔧</div>
-            <h3>MCP Tools Reference</h3>
-            <p>Complete API documentation</p>
-          </a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/guides/discord-setup.md"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">💬</div>
-            <h3>Discord Bot Setup</h3>
-            <p>Connect your Discord server</p>
-          </a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/docs/reference/architecture.md"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">🏗️</div>
-            <h3>Architecture</h3>
-            <p>System design overview</p>
-          </a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA/blob/main/CHANGELOG.md"
-            class="doc-card"
-            target="_blank"
-          >
-            <div class="doc-icon">📋</div>
-            <h3>Changelog</h3>
-            <p>What's new in each release</p>
-          </a>
+    <!-- TODAY / NEXT -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Today and next</span>
+          <h2>v0.20 ships the foundation. v0.21 brings Context Compile.</h2>
+          <p>
+            Substrate, agent surfaces, envelopes, decision evolution — all working today. The next
+            layer (<code style="font-family: var(--mono)">context_compile</code>) makes the agent's
+            evidence-picking a first-class auditable step.
+          </p>
         </div>
-      </div>
-    </section>
-
-    <!-- Install Section -->
-    <section class="section section-install" id="install">
-      <div class="section-inner">
-        <h2 class="section-title">Quick Install</h2>
-        <div class="install-steps">
-          <div class="install-step">
-            <div class="step-number">1</div>
-            <div class="step-content">
-              <h3>Authenticate Claude CLI</h3>
-              <div class="code-block"><code>claude</code></div>
+        <div class="today-next">
+          <article class="tn-col shipped">
+            <span class="badge">v0.20 · SHIPPED</span>
+            <h3>The runtime foundation.</h3>
+            <p>
+              Local ingestion, worker evidence surfaces, provenance, graph APIs, situation packets,
+              runtime envelopes, decision evolution.
+            </p>
+            <ul class="tn-list">
+              <li>15 connectors and local ingestion</li>
+              <li>Viewer · Dashboard / Memory / Feed / Wiki / Agents / Logs</li>
+              <li>Raw search and raw window APIs</li>
+              <li>Graph, entity, and timeline APIs</li>
+              <li>Worker situation packets</li>
+              <li>Strict search diagnostics for vector noise</li>
+              <li>Runtime envelopes and destination limits</li>
+              <li>Trusted provenance ledger</li>
+              <li>Decision evolution (supersedes / builds_on / debates / synthesizes)</li>
+              <li>93% retrieval on 100Q LongMemEval sample</li>
+            </ul>
+          </article>
+          <article class="tn-col planned">
+            <span class="badge">v0.21 · NEXT</span>
+            <h3>Context Compile.</h3>
+            <p>
+              The agent's "what evidence did I read for this question?" becomes a first-class,
+              auditable artifact. Every report carries a context packet ID.
+            </p>
+            <pre class="cc-code">
+context.compile(task, scope, range,
+                as_of, budget) → ContextPacket</pre
+            >
+            <div class="cc-cells">
+              <div class="cc-cell selected">
+                <div class="label">Selected</div>
+                <div class="desc">refs the agent will read</div>
+              </div>
+              <div class="cc-cell rejected">
+                <div class="label">Rejected</div>
+                <div class="desc">noisy / duplicate refs (and why)</div>
+              </div>
+              <div class="cc-cell missing">
+                <div class="label">Missing</div>
+                <div class="desc">context the agent could not reach</div>
+              </div>
+              <div class="cc-cell caveats">
+                <div class="label">Caveats</div>
+                <div class="desc">conflicting · stale · single-source</div>
+              </div>
             </div>
-          </div>
-          <div class="install-step">
-            <div class="step-number">2</div>
-            <div class="step-content">
-              <h3>Install MAMA</h3>
-              <div class="code-block"><code>npm install -g @jungjaehoon/mama-os</code></div>
-            </div>
-          </div>
-          <div class="install-step">
-            <div class="step-number">3</div>
-            <div class="step-content">
-              <h3>Start!</h3>
-              <div class="code-block"><code>mama init && mama start</code></div>
-            </div>
-          </div>
-        </div>
-        <p class="install-note">Dashboard: <strong>http://localhost:3847</strong></p>
-      </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="section section-cta">
-      <div class="section-inner">
-        <div class="cta-mascot">
-          <img src="assets/mama-icon.svg" alt="MAMA" class="cta-mascot-img" />
-        </div>
-        <h2>Ready to run your AI 24/7?</h2>
-        <p>Get started in under 10 minutes!</p>
-        <div class="cta-buttons">
-          <a href="#install" class="btn btn-primary btn-large">Install Now</a>
-          <a
-            href="https://github.com/jungjaehoon-lifegamez/MAMA"
-            class="btn btn-outline btn-large"
-            target="_blank"
-            >Star on GitHub</a
-          >
+          </article>
         </div>
       </div>
     </section>
 
-    <!-- Footer -->
+    <!-- INSTALL -->
+    <section class="section section-tint" id="install">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Install</span>
+          <h2>Start local. Keep the record yours.</h2>
+          <p>
+            Runs through your existing Claude Code or Codex CLI auth — no API keys to manage, no
+            cloud to send your data to.
+          </p>
+        </div>
+        <div class="install-grid">
+          <div class="step">
+            <span class="num">1</span>
+            <h3>Authenticate a CLI</h3>
+            <code>claude auth status</code>
+          </div>
+          <div class="step">
+            <span class="num">2</span>
+            <h3>Install MAMA OS</h3>
+            <code>npm install -g @jungjaehoon/mama-os</code>
+          </div>
+          <div class="step">
+            <span class="num">3</span>
+            <h3>Start the daemon</h3>
+            <code>mama init && mama start</code>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
     <footer class="footer">
-      <div class="footer-inner">
+      <div class="container footer-inner">
         <div class="footer-brand">
-          <img src="assets/mama-icon.svg" alt="MAMA" class="footer-logo" />
+          <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
-          <span class="footer-version">v0.14.0</span>
+          <span class="footer-version">v0.20</span>
         </div>
         <div class="footer-links">
-          <a href="https://github.com/jungjaehoon-lifegamez/MAMA" target="_blank">GitHub</a>
-          <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os" target="_blank">npm</a>
-          <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues" target="_blank">Issues</a>
+          <a href="https://github.com/jungjaehoon-lifegamez/MAMA">GitHub</a>
+          <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os">npm</a>
+          <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues">Issues</a>
         </div>
-        <div class="footer-meta">
-          <p>MIT License · SpineLift Team</p>
-        </div>
+        <p class="footer-legal">
+          MIT · Context Compile planned for v0.21 · Local-first · AI provider independent.
+        </p>
       </div>
     </footer>
-
-    <script>
-      // Mobile navigation toggle
-      const navToggle = document.querySelector('.nav-toggle');
-      const navLinks = document.querySelector('.nav-links');
-
-      navToggle.addEventListener('click', () => {
-        const isOpen = navLinks.classList.toggle('nav-open');
-        navToggle.classList.toggle('nav-toggle-open');
-        navToggle.setAttribute('aria-expanded', isOpen);
-      });
-
-      // Close menu when clicking a link
-      navLinks.querySelectorAll('a').forEach((link) => {
-        link.addEventListener('click', () => {
-          navLinks.classList.remove('nav-open');
-          navToggle.classList.remove('nav-toggle-open');
-          navToggle.setAttribute('aria-expanded', 'false');
-        });
-      });
-    </script>
   </body>
 </html>
