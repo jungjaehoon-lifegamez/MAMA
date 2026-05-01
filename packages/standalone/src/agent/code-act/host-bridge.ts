@@ -75,6 +75,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'decision', type: 'string', required: false },
       { name: 'reasoning', type: 'string', required: false },
       { name: 'confidence', type: 'number', required: false },
+      { name: 'context_packet_id', type: 'string', required: false },
       { name: 'summary', type: 'string', required: false },
       { name: 'next_steps', type: 'string', required: false },
     ],

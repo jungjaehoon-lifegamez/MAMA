@@ -2,16 +2,11 @@ import crypto from 'node:crypto';
 
 import type { DatabaseAdapter } from '../db-manager.js';
 import { assertTwinRefsVisible } from '../edges/ref-validation.js';
-import type {
-  ContextBoundary,
-  ContextCompileInput,
-  ContextPacket,
-  ContextRange,
-  ContextRef,
-} from './types.js';
+import type { ContextBoundary, ContextCompileInput, ContextPacket, ContextRef } from './types.js';
 import { toTwinRef } from './ref.js';
 import { normalizeSeedRefs } from './visibility.js';
 import { canonicalizeContextScopes, assertContextBoundaryAllowsInput } from './visibility.js';
+import { applyContextBoundaryReadDefaults } from './boundary-defaults.js';
 import {
   readMemoryCandidates as defaultReadMemoryCandidates,
   readRawCandidates as defaultReadRawCandidates,
@@ -89,56 +84,6 @@ function maxToolCalls(input: ContextCompileInput): number {
     return Number.POSITIVE_INFINITY;
   }
   return Math.max(0, Math.floor(input.max_tool_calls));
-}
-
-function applyRangeDefaults(
-  range: ContextRange | undefined,
-  boundaryRange: ContextRange | undefined
-): ContextRange | undefined {
-  if (!boundaryRange) {
-    return range;
-  }
-  const requestedStartMs = rangeBoundaryMs(range?.start_ms, 'range.start_ms');
-  const requestedEndMs = rangeBoundaryMs(range?.end_ms, 'range.end_ms');
-  const boundaryStartMs = rangeBoundaryMs(boundaryRange.start_ms, 'boundary.range.start_ms');
-  const boundaryEndMs = rangeBoundaryMs(boundaryRange.end_ms, 'boundary.range.end_ms');
-  const startMs =
-    requestedStartMs === null
-      ? boundaryStartMs
-      : boundaryStartMs === null
-        ? requestedStartMs
-        : Math.max(requestedStartMs, boundaryStartMs);
-  const endMs =
-    requestedEndMs === null
-      ? boundaryEndMs
-      : boundaryEndMs === null
-        ? requestedEndMs
-        : Math.min(requestedEndMs, boundaryEndMs);
-  if (startMs === null && endMs === null) {
-    return undefined;
-  }
-  return {
-    ...(startMs !== null ? { start_ms: startMs } : {}),
-    ...(endMs !== null ? { end_ms: endMs } : {}),
-  };
-}
-
-function applyBoundaryReadDefaults(
-  input: ContextCompileInput,
-  boundary: ContextBoundary | undefined
-): ContextCompileInput {
-  if (!boundary) {
-    return input;
-  }
-  return {
-    ...input,
-    scopes: input.scopes === undefined ? boundary.scopes : input.scopes,
-    connectors: input.connectors === undefined ? boundary.connectors : input.connectors,
-    project_refs: input.project_refs === undefined ? boundary.project_refs : input.project_refs,
-    tenant_id: input.tenant_id ?? boundary.tenant_id ?? null,
-    range: applyRangeDefaults(input.range, boundary.range),
-    as_of: input.as_of ?? boundary.as_of ?? null,
-  };
 }
 
 function parseTimeMs(value: string | number | null | undefined, field: string): number | null {
@@ -322,7 +267,7 @@ export async function compileContext(
 
   const boundary = deps.boundary;
   const seedRefs = normalizeSeedRefs(input.seed_refs);
-  const effectiveInput = applyBoundaryReadDefaults(input, boundary);
+  const effectiveInput = applyContextBoundaryReadDefaults(input, boundary);
   if (boundary) {
     assertContextBoundaryAllowsInput({
       boundary,

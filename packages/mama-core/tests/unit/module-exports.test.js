@@ -6,6 +6,8 @@
  * mcp-server consumers rely on.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect } from 'vitest';
 
 describe('Story M1.1: Core Module Exports', () => {
@@ -129,6 +131,14 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof core.derivePrimaryContextScope).toBe('function');
       expect(typeof core.assertContextBoundaryAllowsInput).toBe('function');
       expect(typeof core.sanitizeContextPacketForVisibility).toBe('function');
+    });
+
+    it('should expose the context-compile subpath in the package export map', () => {
+      const packageJson = JSON.parse(
+        readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
+      );
+
+      expect(packageJson.exports['./context-compile']).toBe('./dist/context-compile/index.js');
     });
   });
 

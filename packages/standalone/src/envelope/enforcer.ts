@@ -23,6 +23,7 @@ const SEND_TOOLS_TO_DESTINATION_KIND: Record<string, string> = {
 const WRITE_OR_SEND_TOOLS = new Set<string>([
   'mama_save',
   'mama_update',
+  'context_compile',
   'memory.write',
   'case.create',
   'case.link',

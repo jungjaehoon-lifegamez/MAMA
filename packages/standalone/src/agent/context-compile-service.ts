@@ -112,11 +112,19 @@ function parseAsOfMs(value: string | number | null | undefined, field: string): 
     return Math.floor(value);
   }
   if (typeof value === 'string') {
-    const numeric = Number(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new ContextCompileServiceError(
+        400,
+        'context_compile_input_invalid',
+        `Invalid context_compile ${field}.`
+      );
+    }
+    const numeric = Number(trimmed);
     if (Number.isFinite(numeric)) {
       return Math.floor(numeric);
     }
-    const parsed = Date.parse(value);
+    const parsed = Date.parse(trimmed);
     if (Number.isFinite(parsed)) {
       return parsed;
     }

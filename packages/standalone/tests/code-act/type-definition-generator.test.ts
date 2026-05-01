@@ -59,6 +59,11 @@ describe('TypeDefinitionGenerator', () => {
       );
     });
 
+    it('advertises context_packet_id on mama_save decisions', () => {
+      const dts = TypeDefinitionGenerator.generate(1);
+      expect(dts).toMatch(/declare function mama_save[\s\S]*context_packet_id\?: string/);
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/path: string/);

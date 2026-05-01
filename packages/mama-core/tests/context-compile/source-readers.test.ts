@@ -259,6 +259,33 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       expect(JSON.stringify(result)).not.toContain(hiddenExcerpt);
     });
 
+    it('clamps direct memory reads to the boundary as_of snapshot', async () => {
+      const result = await readMemoryCandidates(
+        input({
+          as_of: 5_000,
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+            as_of: 1_500,
+          },
+        }),
+        {
+          recallMemory: async () =>
+            recallBundle([
+              memory({ id: 'mem-visible', created_at: 1_200, updated_at: 1_200 }),
+              memory({ id: 'mem-future', created_at: 2_500, updated_at: 2_500 }),
+            ]),
+        }
+      );
+
+      expect(result.candidates.map((candidate) => candidate.ref)).toEqual([
+        { kind: 'memory', id: 'mem-visible' },
+      ]);
+      expect(result.hidden.by_reason.time_boundary).toBe(1);
+    });
+
     it('rejects malformed range boundaries instead of widening memory reads', async () => {
       await expect(
         readMemoryCandidates(input({ range: { start_ms: '1000' as unknown as number } }), {
@@ -568,6 +595,101 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
           connector: 'slack',
           source_id: 'm-projectless',
         }),
+      ]);
+    });
+
+    it('defaults explicit null tenant to the non-null boundary tenant', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-default-tenant',
+        title: 'Default tenant raw event',
+        content: 'This event is inside the tenant boundary.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-other-tenant',
+        title: 'Other tenant raw event',
+        content: 'This event must stay outside the tenant boundary.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'other',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          tenant_id: null,
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+          },
+        })
+      );
+
+      expect(result.candidates.map((candidate) => candidate.title)).toEqual([
+        'Default tenant raw event',
+      ]);
+    });
+
+    it('intersects direct raw reads with the boundary time range', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-visible-range',
+        title: 'Visible range raw event',
+        content: 'This event is inside the boundary range.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-future-range',
+        title: 'Future range raw event',
+        content: 'This event is outside the boundary range.',
+        event_datetime: 2_500,
+        source_timestamp_ms: 2_500,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          range: { start_ms: 0, end_ms: 3_000 },
+          boundary: {
+            scopes: [{ kind: 'project', id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+            range: { start_ms: 1_000, end_ms: 1_500 },
+          },
+        })
+      );
+
+      expect(result.candidates.map((candidate) => candidate.title)).toEqual([
+        'Visible range raw event',
       ]);
     });
 
