@@ -1,0 +1,390 @@
+import crypto from 'node:crypto';
+
+import {
+  assertContextBoundaryAllowsInput,
+  beginModelRunInAdapter,
+  canonicalizeContextScopes,
+  commitModelRunInAdapter,
+  compileContext as defaultCompileContext,
+  derivePrimaryContextScope,
+  failModelRunInAdapter,
+  getModelRunInAdapter,
+  insertContextPacket,
+  sanitizeContextPacketForVisibility,
+  type ContextBoundary,
+  type ContextCompileInput,
+  type ContextPacket,
+  type ContextPacketRecord,
+} from '@jungjaehoon/mama-core';
+import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
+
+import type { Envelope } from '../envelope/types.js';
+import { deriveWorkerEnvelopeVisibility, WorkerEnvelopeError } from '../api/worker-envelope.js';
+
+type CoreAdapter = Pick<DatabaseAdapter, 'prepare'>;
+
+export interface ContextCompileStatement {
+  run: (...args: unknown[]) => unknown;
+  get: (...args: unknown[]) => unknown;
+  all: (...args: unknown[]) => unknown[];
+}
+
+export interface ContextCompileServiceAdapter {
+  prepare: (sql: string) => ContextCompileStatement;
+  transaction?: <T>(fn: () => T) => T;
+}
+
+export type ContextCompileCaller = 'http' | 'gateway' | string;
+
+export interface CompileAndPersistContextRequest {
+  caller: ContextCompileCaller;
+  envelope: Envelope;
+  input: ContextCompileInput;
+  modelRunId?: string | null;
+  parentModelRunId?: string | null;
+  deadlineMs?: number;
+  signal?: AbortSignal;
+}
+
+export interface CompileAndPersistContextResult {
+  packet: ContextPacket;
+  record: ContextPacketRecord;
+  modelRunId: string;
+  parentModelRunId: string | null;
+}
+
+export interface ContextCompileService {
+  compileAndPersistContext(
+    request: CompileAndPersistContextRequest
+  ): Promise<CompileAndPersistContextResult>;
+}
+
+export interface ContextCompileServiceOptions {
+  memoryAdapter: ContextCompileServiceAdapter;
+  compileContext?: typeof defaultCompileContext;
+  now?: () => number;
+  childModelRunId?: (request: CompileAndPersistContextRequest) => string;
+  packetId?: (request: CompileAndPersistContextRequest) => string;
+  logger?: {
+    error: (...args: unknown[]) => void;
+  };
+}
+
+export class ContextCompileServiceError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function generatedId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function asCoreAdapter(adapter: ContextCompileServiceAdapter): CoreAdapter {
+  return adapter as unknown as CoreAdapter;
+}
+
+function trimOptional(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function requiredTask(input: ContextCompileInput): string {
+  if (typeof input.task !== 'string' || input.task.trim().length === 0) {
+    throw new ContextCompileServiceError(400, 'context_compile_input_invalid', 'task is required.');
+  }
+  return input.task.trim();
+}
+
+function validateParentModelRun(
+  adapter: CoreAdapter,
+  modelRunId: string,
+  envelope: Envelope
+): void {
+  const modelRun = getModelRunInAdapter(adapter, modelRunId);
+  if (!modelRun) {
+    throw new ContextCompileServiceError(
+      404,
+      'context_compile_parent_model_run_not_found',
+      'The supplied parent model run was not found.'
+    );
+  }
+  if (
+    modelRun.envelope_hash !== envelope.envelope_hash ||
+    modelRun.agent_id !== envelope.agent_id ||
+    modelRun.instance_id !== envelope.instance_id
+  ) {
+    throw new ContextCompileServiceError(
+      403,
+      'context_compile_parent_model_run_denied',
+      'The supplied parent model run is outside the worker envelope.'
+    );
+  }
+  if (modelRun.status !== 'running') {
+    throw new ContextCompileServiceError(
+      409,
+      'context_compile_parent_model_run_not_running',
+      'The supplied parent model run is no longer running.'
+    );
+  }
+}
+
+function validateProjectRefs(input: {
+  requested: NonNullable<ContextCompileInput['project_refs']>;
+  allowed: NonNullable<ContextBoundary['project_refs']>;
+}): void {
+  if (input.allowed.length === 0) {
+    if (input.requested.length === 0) {
+      return;
+    }
+    throw new ContextCompileServiceError(
+      403,
+      'context_compile_project_ref_denied',
+      'Requested project refs are outside the worker envelope.'
+    );
+  }
+
+  const allowed = new Set(input.allowed.map((project) => `${project.kind}:${project.id}`));
+  for (const project of input.requested) {
+    if (!allowed.has(`${project.kind}:${project.id}`)) {
+      throw new ContextCompileServiceError(
+        403,
+        'context_compile_project_ref_denied',
+        `Project ${project.kind}:${project.id} is outside the worker envelope.`
+      );
+    }
+  }
+}
+
+function validateTenant(input: { requested: string | null; allowed: string }): void {
+  if (input.requested !== null && input.requested !== input.allowed) {
+    throw new ContextCompileServiceError(
+      403,
+      'context_compile_tenant_denied',
+      'Requested tenant is outside the worker envelope.'
+    );
+  }
+}
+
+function coerceCompileInput(
+  request: CompileAndPersistContextRequest,
+  boundary: ContextBoundary
+): ContextCompileInput {
+  try {
+    assertContextBoundaryAllowsInput({
+      boundary,
+      requestedScopes: request.input.scopes,
+      requestedConnectors: request.input.connectors,
+      seedRefs: request.input.seed_refs,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new ContextCompileServiceError(400, 'context_compile_input_invalid', message);
+  }
+
+  const task = requiredTask(request.input);
+  return {
+    ...request.input,
+    task,
+    scopes: request.input.scopes ?? boundary.scopes,
+    connectors: request.input.connectors ?? boundary.connectors,
+    project_refs: request.input.project_refs ?? boundary.project_refs,
+    tenant_id: request.input.tenant_id ?? boundary.tenant_id ?? 'default',
+    as_of: request.input.as_of ?? boundary.as_of ?? null,
+  };
+}
+
+function packetWithServiceIdentity(packet: ContextPacket, packetId: string): ContextPacket {
+  const canonicalScopes = canonicalizeContextScopes(packet.scopes);
+  return {
+    ...packet,
+    packet_id: packetId,
+    scopes: canonicalScopes.scopes,
+    scope_hash: canonicalScopes.scopeHash,
+  };
+}
+
+function buildPacketRecord(input: {
+  packet: ContextPacket;
+  envelope: Envelope;
+  modelRunId: string;
+  createdAt: number;
+  tenantId: string;
+  projectId: string;
+  inputSnapshotRef: string;
+}): ContextPacketRecord {
+  const canonicalScopes = canonicalizeContextScopes(input.packet.scopes);
+  const primaryScope = derivePrimaryContextScope(canonicalScopes.scopes);
+  const packetJson = JSON.stringify(input.packet);
+  const sourceRefsJson = JSON.stringify(input.packet.source_refs);
+  return {
+    packet_id: input.packet.packet_id,
+    task: input.packet.task,
+    packet_json: packetJson,
+    packet: input.packet,
+    scope_json: canonicalScopes.scopeJson,
+    scopes: canonicalScopes.scopes,
+    scope_hash: canonicalScopes.scopeHash,
+    envelope_hash: input.envelope.envelope_hash,
+    model_run_id: input.modelRunId,
+    agent_id: input.envelope.agent_id,
+    input_snapshot_ref: input.inputSnapshotRef,
+    source_refs_json: sourceRefsJson,
+    source_refs: input.packet.source_refs,
+    tenant_id: input.tenantId,
+    project_id: input.projectId,
+    memory_scope_kind: primaryScope.kind,
+    memory_scope_id: primaryScope.id,
+    created_at: input.createdAt,
+  };
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function failRunningChild(
+  adapter: CoreAdapter,
+  modelRunId: string,
+  reason: string,
+  logger?: ContextCompileServiceOptions['logger']
+): void {
+  try {
+    const current = getModelRunInAdapter(adapter, modelRunId);
+    if (!current || current.status !== 'running') {
+      return;
+    }
+    failModelRunInAdapter(adapter, modelRunId, reason);
+  } catch (error) {
+    logger?.error('Failed to mark context_compile model run as failed:', error);
+  }
+}
+
+export function createContextCompileService(
+  options: ContextCompileServiceOptions
+): ContextCompileService {
+  const adapter = asCoreAdapter(options.memoryAdapter);
+  const compileContext = options.compileContext ?? defaultCompileContext;
+  const now = options.now ?? Date.now;
+
+  return {
+    async compileAndPersistContext(
+      request: CompileAndPersistContextRequest
+    ): Promise<CompileAndPersistContextResult> {
+      const parentModelRunId =
+        trimOptional(request.modelRunId) ?? trimOptional(request.parentModelRunId);
+      if (parentModelRunId) {
+        validateParentModelRun(adapter, parentModelRunId, request.envelope);
+      }
+
+      const visibility = deriveWorkerEnvelopeVisibility(request.envelope, {
+        scopes: request.input.scopes,
+        connectors: request.input.connectors,
+      });
+      const requestedProjectRefs = request.input.project_refs ?? visibility.projectRefs;
+      validateProjectRefs({
+        requested: requestedProjectRefs,
+        allowed: visibility.projectRefs,
+      });
+      validateTenant({
+        requested: request.input.tenant_id ?? null,
+        allowed: visibility.tenantId,
+      });
+
+      const boundary: ContextBoundary = {
+        scopes: visibility.scopes,
+        connectors: visibility.connectors,
+        project_refs: visibility.projectRefs,
+        tenant_id: visibility.tenantId,
+        as_of: request.envelope.scope.as_of ?? null,
+      };
+      const compileInput = coerceCompileInput(request, boundary);
+      const packetId = options.packetId?.(request) ?? generatedId('ctxp');
+      const modelRunId = options.childModelRunId?.(request) ?? generatedId('mr');
+      const inputSnapshotRef = `context_compile:${packetId}`;
+
+      beginModelRunInAdapter(adapter, {
+        model_run_id: modelRunId,
+        agent_id: request.envelope.agent_id,
+        instance_id: request.envelope.instance_id,
+        envelope_hash: request.envelope.envelope_hash,
+        parent_model_run_id: parentModelRunId ?? undefined,
+        input_snapshot_ref: inputSnapshotRef,
+        input_refs: {
+          tool: 'context_compile',
+          caller: request.caller,
+          packet_id: packetId,
+          parent_model_run_id: parentModelRunId,
+          task: compileInput.task,
+          scopes: compileInput.scopes,
+          connectors: compileInput.connectors,
+          project_refs: compileInput.project_refs,
+          tenant_id: compileInput.tenant_id,
+          seed_refs: compileInput.seed_refs ?? [],
+          range: compileInput.range ?? null,
+          as_of: compileInput.as_of ?? null,
+        },
+        created_at: now(),
+      });
+
+      let inserted = false;
+      try {
+        const compiled = await compileContext(compileInput, {
+          adapter,
+          boundary,
+          deadlineMs: request.deadlineMs,
+          signal: request.signal,
+          now,
+          packetId: () => packetId,
+        });
+        const packet = sanitizeContextPacketForVisibility(
+          packetWithServiceIdentity(compiled, packetId)
+        );
+        const projectId =
+          requestedProjectRefs.find((project) => project.kind === 'project')?.id ??
+          derivePrimaryContextScope(packet.scopes).id;
+        const record = insertContextPacket(
+          adapter,
+          buildPacketRecord({
+            packet,
+            envelope: request.envelope,
+            modelRunId,
+            createdAt: now(),
+            tenantId: visibility.tenantId,
+            projectId,
+            inputSnapshotRef,
+          })
+        );
+        inserted = true;
+        try {
+          commitModelRunInAdapter(adapter, modelRunId, `context_compile packet ${packetId}`);
+        } catch (error) {
+          failRunningChild(adapter, modelRunId, getErrorMessage(error), options.logger);
+          throw error;
+        }
+        return {
+          packet: record.packet,
+          record,
+          modelRunId,
+          parentModelRunId: parentModelRunId ?? null,
+        };
+      } catch (error) {
+        if (!inserted) {
+          failRunningChild(adapter, modelRunId, getErrorMessage(error), options.logger);
+        }
+        if (error instanceof WorkerEnvelopeError || error instanceof ContextCompileServiceError) {
+          throw error;
+        }
+        throw error;
+      }
+    },
+  };
+}
