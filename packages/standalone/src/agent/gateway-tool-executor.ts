@@ -27,6 +27,10 @@ import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import {
+  getContextPacketForTrustedUse,
+  serializeContextRefForProvenance,
+} from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
@@ -120,6 +124,7 @@ type TrustedProvenanceRuntime = {
   createTrustedProvenanceCapability: () => TrustedMemoryWriteOptions['capability'];
 };
 let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
+type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
 const AGENT_DETAIL_TABS = new Set([
   'config',
   'persona',
@@ -184,6 +189,8 @@ const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'reactive_internal',
   'code_act',
 ]);
+
+class ContextPacketProvenanceError extends Error {}
 
 async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
   const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
@@ -1281,12 +1288,45 @@ export class GatewayToolExecutor {
     };
   }
 
-  private buildTrustedMemoryWriteOptions(
+  private async buildTrustedMemoryWriteOptions(
     toolName: string,
-    gatewayCallId: string
-  ): TrustedMemoryWriteOptions {
+    gatewayCallId: string,
+    input?: SaveInput | { context_packet_id?: unknown }
+  ): Promise<TrustedMemoryWriteOptions> {
     const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     const capability = getTrustedProvenanceRuntime().createTrustedProvenanceCapability();
+    const contextPacketId = getContextPacketIdForTrustedProvenance(input);
+    const packetSourceRefs: string[] = [];
+
+    if (contextPacketId) {
+      if (!ctx?.envelope) {
+        throw new ContextPacketProvenanceError(
+          'context_packet_id requires an active worker envelope.'
+        );
+      }
+      if (!ctx.modelRunId) {
+        throw new ContextPacketProvenanceError(
+          'context_packet_id requires an active caller model run.'
+        );
+      }
+      let packet: ReturnType<typeof getContextPacketForTrustedUse>;
+      try {
+        packet = getContextPacketForTrustedUse(await getContextPacketLookupAdapter(), {
+          packetId: contextPacketId,
+          envelopeHash: ctx.envelope.envelope_hash,
+          callerModelRunId: ctx.modelRunId,
+        });
+      } catch (error) {
+        throw new ContextPacketProvenanceError(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+      if (!packet) {
+        throw new ContextPacketProvenanceError(`Context packet not found: ${contextPacketId}`);
+      }
+      packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
+    }
+
     return {
       capability,
       provenance: {
@@ -1296,12 +1336,14 @@ export class GatewayToolExecutor {
         envelope_hash: ctx?.envelope?.envelope_hash,
         tool_name: toolName,
         gateway_call_id: gatewayCallId,
+        ...(contextPacketId ? { context_packet_id: contextPacketId } : {}),
         source_turn_id: ctx?.sourceTurnId,
         source_message_ref: ctx?.sourceMessageRef,
-        source_refs: [
+        source_refs: dedupeSourceRefs([
           ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
           ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
-        ],
+          ...packetSourceRefs,
+        ]),
       },
     };
   }
@@ -1815,15 +1857,32 @@ export class GatewayToolExecutor {
         case 'mama_save': {
           const saveInput = input as SaveInput;
           const api = await getApi();
+          let trustedOptions: TrustedMemoryWriteOptions | undefined;
+          if (this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)) {
+            try {
+              trustedOptions = await this.buildTrustedMemoryWriteOptions(
+                'mama_save',
+                gatewayCallId,
+                saveInput
+              );
+            } catch (error) {
+              if (error instanceof ContextPacketProvenanceError) {
+                return {
+                  success: false,
+                  code: 'context_packet_denied',
+                  error: error.message,
+                };
+              }
+              throw error;
+            }
+          }
           return await handleSave(
             api,
             saveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
               : undefined,
-            this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId)
-              : undefined
+            trustedOptions
           );
         }
         case 'mama_search':
@@ -1841,7 +1900,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaAdd(
             input as { content: string },
             this.supportsTrustedIngest(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)
+              ? await this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)
               : undefined
           );
         }
@@ -1850,7 +1909,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaIngest(
             input as { content: string; scopes?: unknown },
             this.supportsTrustedIngest(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)
+              ? await this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)
               : undefined
           );
         }
@@ -3674,6 +3733,43 @@ function getTrustedProvenanceRuntime(): TrustedProvenanceRuntime {
     lastError instanceof Error ? lastError : undefined,
     false
   );
+}
+
+async function getContextPacketLookupAdapter(): Promise<ContextPacketLookupAdapter> {
+  try {
+    const dbManager = (await import('@jungjaehoon/mama-core/db-manager')) as {
+      getAdapter: () => ContextPacketLookupAdapter;
+      initDB?: () => Promise<unknown>;
+    };
+    try {
+      return dbManager.getAdapter();
+    } catch (error) {
+      if (typeof dbManager.initDB !== 'function') {
+        throw error;
+      }
+      await dbManager.initDB();
+      return dbManager.getAdapter();
+    }
+  } catch (error) {
+    throw new ContextPacketProvenanceError(
+      `Context packet store unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function getContextPacketIdForTrustedProvenance(
+  input: SaveInput | { context_packet_id?: unknown } | undefined
+): string | null {
+  const value = input && 'context_packet_id' in input ? input.context_packet_id : undefined;
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function dedupeSourceRefs(refs: string[]): string[] {
+  return [...new Set(refs)];
 }
 
 function normalizeMemoryScopes(value: unknown): MemoryScope[] | null {

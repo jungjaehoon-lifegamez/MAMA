@@ -135,5 +135,6 @@ export interface TrustedContextPacketLookupInput {
   packetId: string;
   envelopeHash: string;
   modelRunId?: string;
+  callerModelRunId?: string;
   includeFailed?: boolean;
 }
