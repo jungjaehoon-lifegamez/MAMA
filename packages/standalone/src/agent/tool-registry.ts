@@ -54,7 +54,8 @@ register({
   name: 'mama_search',
   description: 'Search decisions',
   category: 'memory',
-  params: 'query?, type?, limit?',
+  params:
+    'query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?',
 });
 register({
   name: 'mama_recall',

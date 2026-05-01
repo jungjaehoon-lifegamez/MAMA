@@ -11,13 +11,14 @@ import { makeEnvelope } from './fixtures.js';
  * Current execute() phase order:
  * 1. optional executionContext wrapper through withExecutionContext(...)
  * 2. VALID_TOOLS unknown-tool rejection
- * 3. enforceEnvelopeForToolCall(...)
- * 4. disallowedGatewayTools rejection
- * 5. checkToolPermission(...)
- * 6. non-MAMA tool switch
- * 7. lazy MAMA API initialization
- * 8. MAMA/report/wiki/kagemusha/notice switch
- * 9. AgentError passthrough and generic TOOL_ERROR wrapping
+ * 3. disallowedGatewayTools rejection
+ * 4. checkToolPermission(...) before envelope only for envelope-scoped memory reads
+ * 5. enforceEnvelopeForToolCall(...)
+ * 6. checkToolPermission(...) for the remaining tools
+ * 7. non-MAMA tool switch
+ * 8. lazy MAMA API initialization
+ * 9. MAMA/report/wiki/kagemusha/notice switch
+ * 10. AgentError passthrough and generic TOOL_ERROR wrapping
  *
  * Current execute call-site classification:
  * - agent/agent-loop.ts model-visible calls: M1R Reactive Main

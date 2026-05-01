@@ -87,9 +87,32 @@ export async function handleSearch(
   api: MAMAApiInterface,
   input: SearchInput
 ): Promise<SearchResult> {
-  const { query, type, limit = 10 } = input;
+  const {
+    query,
+    type,
+    limit = 10,
+    scopes,
+    threshold,
+    strict,
+    strictness,
+    disableRecency,
+    includeRelated,
+    topicPrefix,
+    minLexicalSupport,
+    diagnostics,
+  } = input;
 
   if (type === 'checkpoint') {
+    if (Array.isArray(scopes) && scopes.length > 0) {
+      return {
+        success: false,
+        results: [],
+        count: 0,
+        error: 'Scoped checkpoint search is not supported until checkpoints have scoped reads.',
+        code: 'scoped_checkpoint_unsupported',
+      };
+    }
+
     const checkpoint = await api.loadCheckpoint();
     if (checkpoint && typeof checkpoint === 'object' && 'summary' in checkpoint) {
       const cp = checkpoint as {
@@ -110,8 +133,10 @@ export async function handleSearch(
     return { success: true, results: [], count: 0 };
   }
 
+  const hasScopes = Array.isArray(scopes) && scopes.length > 0;
+
   if (!query) {
-    const decisions = await api.listDecisions({ limit });
+    const decisions = await api.listDecisions({ limit, ...(hasScopes ? { scopes } : {}) });
     const raw = Array.isArray(decisions) ? decisions : [];
     let results = raw.filter(isSearchResultItem);
 
@@ -122,13 +147,41 @@ export async function handleSearch(
     return { success: true, results, count: results.length };
   }
 
-  const result = await api.suggest(query, { limit });
+  const result = await api.suggest(query, {
+    limit,
+    ...(hasScopes ? { scopes } : {}),
+    ...(threshold !== undefined && { threshold }),
+    ...(strict !== undefined && { strict }),
+    ...(strictness !== undefined && { strictness }),
+    ...(disableRecency !== undefined && { disableRecency }),
+    ...(includeRelated !== undefined && { includeRelated }),
+    ...(topicPrefix !== undefined && { topicPrefix }),
+    ...(minLexicalSupport !== undefined && { minLexicalSupport }),
+    ...(diagnostics !== undefined && { diagnostics }),
+  });
   if (!result || typeof result !== 'object') {
-    // suggest() can return null on vector search failure — fallback to list
-    const decisions = await api.listDecisions({ limit });
-    const raw = Array.isArray(decisions) ? decisions : [];
-    const filtered = raw.filter(isSearchResultItem);
-    return { success: true, results: filtered, count: filtered.length };
+    // suggest() returned no result for the supplied query. Do NOT fall back to
+    // listDecisions(): that drops the query entirely and returns unrelated
+    // records while still reporting success: true, which would undermine the
+    // strict-search guarantees the rest of this path provides.
+    return {
+      success: false,
+      results: [],
+      count: 0,
+      code: 'suggest_returned_null',
+      error: 'Search failed: suggest() returned no result for query',
+    };
+  }
+  if (result.success === false) {
+    return {
+      success: false,
+      results: [],
+      count: result.count ?? 0,
+      error: result.error ?? 'Search failed: suggest() reported failure',
+      ...(result.code !== undefined ? { code: result.code } : {}),
+      ...(result.diagnostics !== undefined ? { diagnostics: result.diagnostics } : {}),
+      ...(result.meta !== undefined ? { meta: result.meta } : {}),
+    };
   }
   let filteredResults: SearchResultItem[] = (result.results ?? []).filter(isSearchResultItem);
 
@@ -137,7 +190,13 @@ export async function handleSearch(
     filteredResults = filteredResults.filter((item) => item.id.startsWith('decision_'));
   }
 
-  return { success: true, results: filteredResults, count: filteredResults.length };
+  return {
+    success: true,
+    results: filteredResults,
+    count: filteredResults.length,
+    ...(result.diagnostics !== undefined ? { diagnostics: result.diagnostics } : {}),
+    ...(result.meta !== undefined ? { meta: result.meta } : {}),
+  };
 }
 
 export async function handleUpdate(

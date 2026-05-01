@@ -24,6 +24,10 @@ import { createEmptyRecallBundle, createMemoryAuditAck } from './types.js';
 import { getChannelSummary, upsertChannelSummary } from './channel-summary-store.js';
 import { queryCanonicalEntities } from '../entities/recall-bridge.js';
 import { loadDecisionReadIdentityIndex, resolveReadIdentity } from '../entities/read-identity.js';
+import {
+  normalizeSearchQualityOptions,
+  type SearchHitDiagnostics,
+} from '../search/search-quality.js';
 import type {
   MemoryKind,
   MemoryAgentBootstrap,
@@ -41,6 +45,8 @@ import type {
   IngestConversationInput,
   ExtractedMemoryUnit,
   IngestConversationResult,
+  RecallMemoryOptions,
+  RecallSearchDiagnostics,
 } from './types.js';
 import { insertMemoryEventInTransaction } from './event-store.js';
 import {
@@ -55,20 +61,21 @@ import {
 type SaveMemoryInput = PublicSaveMemoryInput;
 type IngestMemoryInput = PublicIngestMemoryInput;
 
-interface RecallMemoryOptions {
-  scopes?: MemoryScopeRef[];
-  includeProfile?: boolean;
-  includeHistory?: boolean;
-  skipGraphExpansion?: boolean;
-  topicPrefix?: string;
-  limit?: number;
-}
-
 export interface FusedHit {
   source_type: 'decision' | 'wiki_page';
   source_id: string;
   record: MemoryRecord | WikiPageIndexRecord;
   fused_rank_score: number;
+  page_type?: WikiPageIndexRecord['page_type'];
+  case_id?: string | null;
+  retrieval_diagnostics?: SearchHitDiagnostics;
+}
+
+interface WikiScoreEntry {
+  record: WikiPageIndexRecord;
+  score: number;
+  lexicalSupport: boolean;
+  vectorSimilarity: number | null;
 }
 
 interface SaveMemoryRollbackError extends Error {
@@ -470,6 +477,22 @@ export function getLexicalQueryTokens(query: string): string[] {
     .toLowerCase()
     .split(/[\s,.!?;:()[\]{}"']+/)
     .filter((token) => token.length > 2 && !LEXICAL_STOPWORDS.has(token));
+}
+
+function queryTokenCount(query: string): number {
+  const lexicalTokens = getLexicalQueryTokens(query);
+  if (lexicalTokens.length > 0) {
+    return lexicalTokens.length;
+  }
+  return query.trim().split(/\s+/).filter(Boolean).length;
+}
+
+function looksMixedKoreanEnglish(query: string): boolean {
+  return /[\uac00-\ud7a3]/.test(query) && /[a-z]/i.test(query);
+}
+
+function looksEntityLike(query: string): boolean {
+  return /\b[A-Z][A-Za-z0-9_-]{2,}\b/.test(query) || /[#/][A-Za-z0-9_-]{2,}/.test(query);
 }
 
 function buildLexicalCandidates(
@@ -892,11 +915,27 @@ export async function recallMemory(
   options: RecallMemoryOptions = {}
 ): Promise<RecallBundle> {
   const bundle = createEmptyRecallBundle(query);
+  const searchOptions = normalizeSearchQualityOptions(options);
+  const diagnostics: RecallSearchDiagnostics = {
+    candidate_counts: {
+      vector: 0,
+      lexical: 0,
+      entity: 0,
+      graph_expanded: 0,
+      vector_only: 0,
+      rejected_by_strictness: 0,
+    },
+    threshold: searchOptions.threshold,
+    strictness: searchOptions.strictness,
+  };
 
   let matched: MemoryRecord[] = [];
   let fusedHits: FusedHit[] = [];
   let retrievalSource = 'none';
   const projectionMode = process.env.MAMA_ENTITY_PROJECTION_MODE ?? 'shadow';
+  const vectorSimilarityById = new Map<string, number>();
+  const lexicalScoreById = new Map<string, number>();
+  const entitySupportIds = new Set<string>();
   let _lexicalRecords: MemoryRecord[] | null = null;
   const loadLexical = async () => {
     if (_lexicalRecords === null) {
@@ -942,17 +981,18 @@ export async function recallMemory(
       const vectorResults = await vectorSearch(
         queryEmbedding,
         vectorLimit,
-        0.3,
-        options.topicPrefix
+        searchOptions.threshold,
+        searchOptions.topicPrefix
       );
 
       let filtered = vectorResults;
+      let vectorScopeMap = new Map<string, MemoryScopeRef[]>();
       if (options.scopes && options.scopes.length > 0) {
         const vectorIds = vectorResults.map((r) => String(r.id));
-        const scopeMap = batchLoadScopes(getAdapter(), vectorIds);
+        vectorScopeMap = batchLoadScopes(getAdapter(), vectorIds);
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
         filtered = vectorResults.filter((r) => {
-          const scopes = scopeMap.get(String(r.id)) ?? [];
+          const scopes = vectorScopeMap.get(String(r.id)) ?? [];
           // When scopes are requested, zero-binding results must NOT pass through
           if (scopes.length === 0) return false;
           return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
@@ -974,13 +1014,17 @@ export async function recallMemory(
           details: String(result.reasoning || ''),
           confidence: (result as { similarity?: number }).similarity ?? 0.5,
           status: (effectiveStatus as MemoryStatus) || 'active',
-          scopes: [],
+          scopes: vectorScopeMap.get(String(result.id)) ?? [],
           source: { package: 'mama-core', source_type: 'vector_search' },
           created_at: result.created_at ?? Date.now(),
           updated_at: result.created_at ?? Date.now(),
           event_date: result.event_date ?? null,
           event_datetime: result.event_datetime ?? null,
         });
+        diagnostics.candidate_counts.vector += 1;
+        if (typeof result.similarity === 'number' && Number.isFinite(result.similarity)) {
+          vectorSimilarityById.set(String(result.id), result.similarity);
+        }
       }
     } // end sub-query loop
   } catch (vectorErr) {
@@ -1005,7 +1049,16 @@ export async function recallMemory(
   // Lazy lexical: skip expensive FTS5/lexical when vector already returned enough results,
   // unless this is an aggregation query that benefits from broader coverage.
   const VECTOR_SUFFICIENT_THRESHOLD = 5;
-  const needsLexical = isAggregation || vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD;
+  const shouldForceLexicalConfirmation =
+    searchOptions.strictness !== 'recall' ||
+    searchOptions.minLexicalSupport ||
+    queryTokenCount(query) <= 3 ||
+    looksMixedKoreanEnglish(query) ||
+    looksEntityLike(query);
+  const needsLexical =
+    isAggregation ||
+    vectorMatched.length < VECTOR_SUFFICIENT_THRESHOLD ||
+    shouldForceLexicalConfirmation;
   let lexicalCandidates: Array<{ memory: MemoryRecord; score: number }> = [];
   const lexicalLimit = isAggregation ? 100 : 50;
 
@@ -1086,7 +1139,8 @@ export async function recallMemory(
           const record = toMemoryRecord(row, scopeMap.get(String(row.id)) ?? [], fallbackSource);
 
           // Topic prefix filtering (matches vectorSearch behavior)
-          if (options.topicPrefix && !record.topic.startsWith(options.topicPrefix)) continue;
+          if (searchOptions.topicPrefix && !record.topic.startsWith(searchOptions.topicPrefix))
+            continue;
 
           // Scope filtering
           if (options.scopes && options.scopes.length > 0) {
@@ -1120,8 +1174,10 @@ export async function recallMemory(
       }
 
       // Topic prefix filtering for in-memory lexical (matches vectorSearch behavior)
-      if (options.topicPrefix) {
-        lexicalRecords = lexicalRecords.filter((r) => r.topic.startsWith(options.topicPrefix!));
+      if (searchOptions.topicPrefix) {
+        lexicalRecords = lexicalRecords.filter((r) =>
+          r.topic.startsWith(searchOptions.topicPrefix!)
+        );
       }
 
       lexicalCandidates = buildLexicalCandidates(lexicalRecords, query);
@@ -1138,6 +1194,11 @@ export async function recallMemory(
       }
     }
   } // end needsLexical
+
+  diagnostics.candidate_counts.lexical = lexicalCandidates.length;
+  for (const candidate of lexicalCandidates) {
+    lexicalScoreById.set(candidate.memory.id, candidate.score);
+  }
 
   // RRF Fusion: combine vector and lexical/FTS5 results by reciprocal rank
   // FTS5 BM25 gets 2x weight — it naturally demotes records where query terms
@@ -1184,8 +1245,9 @@ export async function recallMemory(
   }));
 
   let hasWikiHits = false;
-  const wikiScores = new Map<number, { record: WikiPageIndexRecord; score: number }>();
+  const wikiScores = new Map<number, WikiScoreEntry>();
   const wikiVectorRankMap = new Map<number, number>();
+  const wikiVectorScoreById = new Map<number, number>();
 
   try {
     const adapter = getAdapter();
@@ -1204,7 +1266,10 @@ export async function recallMemory(
 
     for (let i = 0; i < wikiVectorHits.length; i++) {
       wikiVectorRankMap.set(wikiVectorHits[i].record.id, i);
+      wikiVectorScoreById.set(wikiVectorHits[i].record.id, wikiVectorHits[i].raw_score);
     }
+    diagnostics.candidate_counts.lexical += wikiFtsHits.length;
+    diagnostics.candidate_counts.vector += wikiVectorHits.length;
 
     for (let i = 0; i < wikiFtsHits.length; i++) {
       const hit = wikiFtsHits[i];
@@ -1214,6 +1279,8 @@ export async function recallMemory(
       wikiScores.set(hit.record.id, {
         record: hit.record,
         score: lexScore + vecBoost,
+        lexicalSupport: true,
+        vectorSimilarity: wikiVectorScoreById.get(hit.record.id) ?? null,
       });
     }
 
@@ -1225,30 +1292,16 @@ export async function recallMemory(
       wikiScores.set(hit.record.id, {
         record: hit.record,
         score: 0.15 * (1 / (RRF_K + i + 1)),
+        lexicalSupport: false,
+        vectorSimilarity: hit.raw_score,
       });
     }
-
-    hasWikiHits = wikiScores.size > 0;
   } catch (wikiFtsErr) {
     warn(
       `[recallMemory] Wiki FTS search failed: ${wikiFtsErr instanceof Error ? wikiFtsErr.message : String(wikiFtsErr)}`
     );
   }
-
-  const wikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => ({
-      source_type: 'wiki_page',
-      source_id: entry.record.source_locator,
-      record: entry.record,
-      fused_rank_score: entry.score,
-      ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
-      ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
-    }));
-
-  fusedHits = [...decisionFusedHits, ...wikiFusedHits].sort(
-    (left, right) => right.fused_rank_score - left.fused_rank_score
-  );
+  fusedHits = decisionFusedHits;
 
   // Normalize RRF scores to 0-1 range so downstream consumers (threshold filters,
   // similarity displays) get meaningful values.  The raw RRF score for K=60 tops out
@@ -1267,14 +1320,14 @@ export async function recallMemory(
     retrievalSource = 'lexical_search';
   }
 
-  if (hasWikiHits) {
-    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
-  }
-
   let canonicalMatched: MemoryRecord[] = [];
   if (projectionMode !== 'off') {
     try {
       canonicalMatched = await queryCanonicalEntities(query, options.scopes ?? [], { limit: 10 });
+      diagnostics.candidate_counts.entity = canonicalMatched.length;
+      for (const canonical of canonicalMatched) {
+        entitySupportIds.add(canonical.id);
+      }
       if (projectionMode === 'dual-write' && canonicalMatched.length > 0) {
         const seenIds = new Set(matched.map((item) => item.id));
         for (const canonical of canonicalMatched) {
@@ -1294,6 +1347,347 @@ export async function recallMemory(
         `[recallMemory] Canonical entity recall failed: ${canonicalErr instanceof Error ? canonicalErr.message : String(canonicalErr)}`
       );
     }
+  }
+
+  const requestedScopeKeys = new Set(
+    (options.scopes ?? []).map((scope) => `${scope.kind}:${scope.id}`)
+  );
+  const hasRequestedScopeSupport = (record: MemoryRecord): boolean => {
+    if (requestedScopeKeys.size === 0) {
+      return true;
+    }
+    return record.scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
+  };
+  // exact_topic confirmation is intentionally narrow: short substring matches
+  // would let two-letter queries like "ai" trip on words like "email" and
+  // promote vector-only hits past strict/balanced rejection. Require either
+  // exact equality or whole-token containment, and ignore tiny queries.
+  const EXACT_TOPIC_MIN_QUERY_LENGTH = 3;
+  const tokenizeForExactTopic = (input: string): string[] =>
+    input.split(/[^a-z0-9]+/).filter((token) => token.length > 0);
+  const hasExactTopicSupport = (record: MemoryRecord): boolean => {
+    const normalizedQuery = query.trim().toLowerCase();
+    const normalizedTopic = record.topic.trim().toLowerCase();
+    if (!normalizedQuery || !normalizedTopic) {
+      return false;
+    }
+    if (normalizedQuery.length < EXACT_TOPIC_MIN_QUERY_LENGTH) {
+      return false;
+    }
+    if (normalizedQuery === normalizedTopic) {
+      return true;
+    }
+    const queryTokens = tokenizeForExactTopic(normalizedQuery);
+    const topicTokens = tokenizeForExactTopic(normalizedTopic);
+    // Whole-token match: a topic word equals the entire query, OR the topic
+    // (when itself a single token) appears as a complete word in the query.
+    return topicTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTopic);
+  };
+  const hasExactWikiSupport = (record: WikiPageIndexRecord): boolean => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery || normalizedQuery.length < EXACT_TOPIC_MIN_QUERY_LENGTH) {
+      return false;
+    }
+    const normalizedTitle = record.title.trim().toLowerCase();
+    if (!normalizedTitle) {
+      return false;
+    }
+    if (normalizedQuery === normalizedTitle) {
+      return true;
+    }
+    const queryTokens = tokenizeForExactTopic(normalizedQuery);
+    const titleTokens = tokenizeForExactTopic(normalizedTitle);
+    // Wiki exact_topic uses TITLE only — page body matches are too lenient
+    // for an "exact" signal and remain available through other diagnostics.
+    return titleTokens.includes(normalizedQuery) || queryTokens.includes(normalizedTitle);
+  };
+  const wikiDecisionIdCache = new Map<number, string[]>();
+  const normalizeWikiDecisionSourceId = (sourceId: string): string | null => {
+    const trimmed = sourceId.trim();
+    if (!trimmed) {
+      return null;
+    }
+    if (trimmed.startsWith('decision://')) {
+      const id = trimmed.slice('decision://'.length).trim();
+      return id || null;
+    }
+    if (trimmed.startsWith('decision:')) {
+      const id = trimmed.slice('decision:'.length).trim();
+      return id || null;
+    }
+    if (/^[A-Za-z][A-Za-z0-9_-]*:/.test(trimmed)) {
+      return null;
+    }
+    return trimmed;
+  };
+  const loadWikiDecisionIds = (record: WikiPageIndexRecord): string[] => {
+    const cached = wikiDecisionIdCache.get(record.id);
+    if (cached) {
+      return cached;
+    }
+
+    const ids = new Set<string>();
+    for (const sourceId of record.source_ids) {
+      const decisionId = normalizeWikiDecisionSourceId(sourceId);
+      if (decisionId) {
+        ids.add(decisionId);
+      }
+    }
+    if (record.case_id) {
+      const rows = getAdapter()
+        .prepare(
+          `
+            SELECT source_id
+            FROM case_memberships
+            WHERE case_id = ?
+              AND source_type = 'decision'
+              AND status = 'active'
+          `
+        )
+        .all(record.case_id) as Array<{ source_id?: string }>;
+      for (const row of rows) {
+        if (row.source_id) {
+          ids.add(row.source_id);
+        }
+      }
+    }
+
+    const decisionIds = Array.from(ids);
+    wikiDecisionIdCache.set(record.id, decisionIds);
+    return decisionIds;
+  };
+  const wikiScopeSupportCache = new Map<number, boolean>();
+  const hasRequestedWikiScopeSupport = (record: WikiPageIndexRecord): boolean => {
+    if (requestedScopeKeys.size === 0) {
+      return true;
+    }
+    const cached = wikiScopeSupportCache.get(record.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const decisionIds = loadWikiDecisionIds(record);
+    if (decisionIds.length === 0) {
+      wikiScopeSupportCache.set(record.id, false);
+      return false;
+    }
+
+    const scopeMap = batchLoadScopes(getAdapter(), decisionIds);
+    const supported = decisionIds.some((id) =>
+      (scopeMap.get(id) ?? []).some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`))
+    );
+    wikiScopeSupportCache.set(record.id, supported);
+    return supported;
+  };
+  // Combined check used for the wiki *filter* path: a wiki entry must have at
+  // least one linked decision that matches BOTH the requested scope AND the
+  // requested topicPrefix. Without this, the page passes when scope matches
+  // decision A and topic matches decision B — i.e., neither single decision
+  // satisfies the caller's filter. Diagnostics reporting (which only signals
+  // scope confirmation) keeps using hasRequestedWikiScopeSupport.
+  const wikiCombinedSupportCache = new Map<number, boolean>();
+  const hasWikiDecisionWithScopeAndTopic = (record: WikiPageIndexRecord): boolean => {
+    const requiresScope = requestedScopeKeys.size > 0;
+    const requiresTopic = !!searchOptions.topicPrefix;
+    if (!requiresScope && !requiresTopic) {
+      return true;
+    }
+    const cached = wikiCombinedSupportCache.get(record.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const decisionIds = loadWikiDecisionIds(record);
+    if (decisionIds.length === 0) {
+      wikiCombinedSupportCache.set(record.id, false);
+      return false;
+    }
+    const adapter = getAdapter();
+    const scopeMap = requiresScope ? batchLoadScopes(adapter, decisionIds) : null;
+    const topicByDecisionId = new Map<string, string>();
+    if (requiresTopic) {
+      const IN_CHUNK_SIZE = 900;
+      for (let i = 0; i < decisionIds.length; i += IN_CHUNK_SIZE) {
+        const chunk = decisionIds.slice(i, i + IN_CHUNK_SIZE);
+        const placeholders = chunk.map(() => '?').join(', ');
+        const rows = adapter
+          .prepare(`SELECT id, topic FROM decisions WHERE id IN (${placeholders})`)
+          .all(...chunk) as Array<{ id: string; topic?: string }>;
+        for (const row of rows) {
+          topicByDecisionId.set(row.id, String(row.topic ?? ''));
+        }
+      }
+    }
+    const supported = decisionIds.some((id) => {
+      if (requiresScope) {
+        const scopes = scopeMap?.get(id) ?? [];
+        const scopeOk = scopes.some((scope) => requestedScopeKeys.has(`${scope.kind}:${scope.id}`));
+        if (!scopeOk) {
+          return false;
+        }
+      }
+      if (requiresTopic) {
+        const topic = topicByDecisionId.get(id) ?? '';
+        if (!topic.startsWith(searchOptions.topicPrefix!)) {
+          return false;
+        }
+      }
+      return true;
+    });
+    wikiCombinedSupportCache.set(record.id, supported);
+    return supported;
+  };
+  const buildDiagnostics = (
+    record: MemoryRecord,
+    graphSource: SearchHitDiagnostics['graph_source']
+  ): SearchHitDiagnostics => {
+    const vectorSimilarity = vectorSimilarityById.get(record.id) ?? null;
+    const lexicalSupport = lexicalScoreById.has(record.id);
+    const entitySupport = entitySupportIds.has(record.id);
+    const exactTopicSupport = hasExactTopicSupport(record);
+    const scopeSupport = hasRequestedScopeSupport(record);
+    const confirmationSignals = [
+      lexicalSupport ? 'lexical' : null,
+      entitySupport ? 'entity' : null,
+      exactTopicSupport ? 'exact_topic' : null,
+    ].filter((signal): signal is string => signal !== null);
+    const metadataSignals = [
+      requestedScopeKeys.size > 0 && scopeSupport ? 'scope' : null,
+      graphSource === 'primary' ? 'graph_primary' : null,
+      graphSource === 'expanded' ? 'graph_expanded' : null,
+    ].filter((signal): signal is string => signal !== null);
+    const retrievalSourceForRecord =
+      vectorSimilarity !== null && lexicalSupport
+        ? 'hybrid_rrf'
+        : vectorSimilarity !== null
+          ? 'vector_search'
+          : lexicalSupport
+            ? 'lexical_search'
+            : entitySupport
+              ? 'entity_canonical'
+              : String(record.source.source_type || 'unknown');
+
+    return {
+      retrieval_source: retrievalSourceForRecord,
+      vector_similarity: vectorSimilarity,
+      lexical_support: lexicalSupport,
+      entity_support: entitySupport,
+      scope_support: scopeSupport,
+      graph_source: graphSource,
+      is_vector_only: vectorSimilarity !== null && confirmationSignals.length === 0,
+      confirmation_signals: confirmationSignals,
+      metadata_signals: metadataSignals,
+      candidate_threshold_used: searchOptions.threshold,
+    };
+  };
+  const buildWikiDiagnostics = (entry: WikiScoreEntry): SearchHitDiagnostics => {
+    const lexicalSupport = entry.lexicalSupport;
+    const exactTopicSupport = hasExactWikiSupport(entry.record);
+    const scopeSupport = hasRequestedWikiScopeSupport(entry.record);
+    const confirmationSignals = [
+      lexicalSupport ? 'lexical' : null,
+      exactTopicSupport ? 'exact_topic' : null,
+    ].filter((signal): signal is string => signal !== null);
+    // Only attribute 'scope' when the caller actually requested a scope filter.
+    // hasRequestedWikiScopeSupport() returns true by default for unscoped searches,
+    // so without this guard the diagnostics would overstate why the wiki hit passed.
+    const metadataSignals = [
+      requestedScopeKeys.size > 0 && scopeSupport ? 'scope' : null,
+      'graph_primary',
+    ].filter((signal): signal is string => signal !== null);
+    const retrievalSourceForRecord =
+      entry.vectorSimilarity !== null && lexicalSupport
+        ? 'wiki_hybrid_rrf'
+        : entry.vectorSimilarity !== null
+          ? 'wiki_vector_search'
+          : lexicalSupport
+            ? 'wiki_lexical_search'
+            : 'wiki_page';
+
+    return {
+      retrieval_source: retrievalSourceForRecord,
+      vector_similarity: entry.vectorSimilarity,
+      lexical_support: lexicalSupport,
+      entity_support: false,
+      scope_support: scopeSupport,
+      graph_source: 'primary',
+      is_vector_only: entry.vectorSimilarity !== null && confirmationSignals.length === 0,
+      confirmation_signals: confirmationSignals,
+      metadata_signals: metadataSignals,
+      candidate_threshold_used: searchOptions.threshold,
+    };
+  };
+  const passesStrictness = (hitDiagnostics: SearchHitDiagnostics): boolean => {
+    if (searchOptions.strictness === 'recall') {
+      return true;
+    }
+    if (hitDiagnostics.confirmation_signals.length === 0) {
+      return false;
+    }
+    if (!searchOptions.minLexicalSupport) {
+      return true;
+    }
+    return (
+      hitDiagnostics.lexical_support ||
+      hitDiagnostics.entity_support ||
+      hitDiagnostics.confirmation_signals.includes('exact_topic')
+    );
+  };
+
+  const acceptedPrimaryIds = new Set<string>();
+  matched = matched.flatMap((record) => {
+    const recordDiagnostics = buildDiagnostics(record, 'primary');
+    if (recordDiagnostics.is_vector_only) {
+      diagnostics.candidate_counts.vector_only += 1;
+    }
+    if (!passesStrictness(recordDiagnostics)) {
+      diagnostics.candidate_counts.rejected_by_strictness += 1;
+      return [];
+    }
+    acceptedPrimaryIds.add(record.id);
+    return [
+      searchOptions.diagnostics ? { ...record, retrieval_diagnostics: recordDiagnostics } : record,
+    ];
+  });
+  fusedHits = fusedHits.filter(
+    (hit) => hit.source_type !== 'decision' || acceptedPrimaryIds.has(hit.source_id)
+  );
+  const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
+    .sort((a, b) => b.score - a.score)
+    .flatMap((entry) => {
+      if (!hasWikiDecisionWithScopeAndTopic(entry.record)) {
+        return [];
+      }
+
+      const wikiDiagnostics = buildWikiDiagnostics(entry);
+      if (wikiDiagnostics.is_vector_only) {
+        diagnostics.candidate_counts.vector_only += 1;
+      }
+      if (!passesStrictness(wikiDiagnostics)) {
+        diagnostics.candidate_counts.rejected_by_strictness += 1;
+        return [];
+      }
+
+      return [
+        {
+          source_type: 'wiki_page' as const,
+          source_id: entry.record.source_locator,
+          record: searchOptions.diagnostics
+            ? { ...entry.record, retrieval_diagnostics: wikiDiagnostics }
+            : entry.record,
+          fused_rank_score: entry.score,
+          ...(searchOptions.diagnostics ? { retrieval_diagnostics: wikiDiagnostics } : {}),
+          ...(entry.record.page_type === 'case' ? { page_type: 'case' as const } : {}),
+          ...(entry.record.case_id ? { case_id: entry.record.case_id } : {}),
+        },
+      ];
+    });
+  hasWikiHits = acceptedWikiFusedHits.length > 0;
+  fusedHits = [...fusedHits, ...acceptedWikiFusedHits].sort(
+    (left, right) => right.fused_rank_score - left.fused_rank_score
+  );
+
+  if (hasWikiHits) {
+    retrievalSource = retrievalSource === 'none' ? 'wiki_page' : `${retrievalSource}+wiki_page`;
   }
 
   if (matched.length > 0) {
@@ -1342,7 +1736,7 @@ export async function recallMemory(
   bundle.graph_context.expanded = [];
   bundle.graph_context.edges = [];
 
-  if (matched.length > 0 && !options.skipGraphExpansion) {
+  if (matched.length > 0 && !options.skipGraphExpansion && searchOptions.includeRelated) {
     try {
       const candidates = matched.map((m) => ({
         id: m.id,
@@ -1372,6 +1766,7 @@ export async function recallMemory(
       const expanded = await mamaDefault.expandWithGraph(candidates);
       const primaryIds = new Set(matched.map((m) => m.id));
       let expandedOnly = expanded.filter((e) => !primaryIds.has(e.id));
+      let expandedScopeMap = new Map<string, MemoryScopeRef[]>();
 
       // Re-filter expanded results: apply status and scope checks
       if (!options.includeHistory) {
@@ -1386,33 +1781,64 @@ export async function recallMemory(
       }
       if (options.scopes && options.scopes.length > 0) {
         const expandedIds = expandedOnly.map((e) => e.id);
-        const scopeMap = batchLoadScopes(getAdapter(), expandedIds);
+        expandedScopeMap = batchLoadScopes(getAdapter(), expandedIds);
         const requestedScopes = new Set(options.scopes.map((s) => `${s.kind}:${s.id}`));
         expandedOnly = expandedOnly.filter((e) => {
-          const scopes = scopeMap.get(e.id) ?? [];
+          const scopes = expandedScopeMap.get(e.id) ?? [];
           if (scopes.length === 0) return false;
           return scopes.some((s) => requestedScopes.has(`${s.kind}:${s.id}`));
         });
       }
 
-      bundle.graph_context.expanded = expandedOnly.map((e) => ({
-        id: String(e.id),
-        topic: String(e.topic || ''),
-        kind: 'decision' as const,
-        summary: String(e.decision || ''),
-        details: '',
-        confidence: (e.graph_rank as number) ?? 0.5,
-        status: 'active' as const,
-        scopes: [],
-        source: {
-          package: 'mama-core' as const,
-          source_type: String(e.graph_source || 'graph_expansion'),
-        },
-        created_at: (e.created_at as number) ?? Date.now(),
-        updated_at: (e.created_at as number) ?? Date.now(),
-      }));
+      bundle.graph_context.expanded = expandedOnly.flatMap((e) => {
+        const expandedRecord: MemoryRecord = {
+          id: String(e.id),
+          topic: String(e.topic || ''),
+          kind: 'decision' as const,
+          summary: String(e.decision || ''),
+          details: '',
+          confidence: (e.graph_rank as number) ?? 0.5,
+          status: 'active' as const,
+          scopes: expandedScopeMap.get(e.id) ?? [],
+          source: {
+            package: 'mama-core' as const,
+            source_type: String(e.graph_source || 'graph_expansion'),
+          },
+          created_at: (e.created_at as number) ?? Date.now(),
+          updated_at: (e.created_at as number) ?? Date.now(),
+        };
+        const expandedDiagnostics = buildDiagnostics(expandedRecord, 'expanded');
+        if (!passesStrictness(expandedDiagnostics)) {
+          diagnostics.candidate_counts.rejected_by_strictness += 1;
+          return [];
+        }
+        return [
+          searchOptions.diagnostics
+            ? {
+                ...expandedRecord,
+                retrieval_diagnostics: expandedDiagnostics,
+              }
+            : expandedRecord,
+        ];
+      });
+      diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
+      fusedHits = [
+        ...fusedHits,
+        ...bundle.graph_context.expanded.map((record) => ({
+          source_type: 'decision' as const,
+          source_id: record.id,
+          record,
+          fused_rank_score: (record.confidence ?? 0.5) * 0.1,
+          retrieval_diagnostics: record.retrieval_diagnostics,
+        })),
+      ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
 
-      const allIds = [...matched.map((m) => m.id), ...expandedOnly.map((e) => e.id)];
+      // bundle.graph_context.expanded is the strictness-filtered set of
+      // expanded nodes that will actually be returned. Use those IDs (not
+      // expandedOnly, which still contains rejected candidates) so edges
+      // never point at nodes that never made it into the graph payload.
+      const acceptedExpandedIds = bundle.graph_context.expanded.map((record) => record.id);
+      const allIds = [...matched.map((m) => m.id), ...acceptedExpandedIds];
       const allEdges = await loadEdgesForIds(allIds);
 
       // Filter out edges pointing to decisions with excluded statuses
@@ -1448,6 +1874,9 @@ export async function recallMemory(
   (bundle as RecallBundle & { fused_hits?: FusedHit[] }).fused_hits = fusedHits;
   bundle.search_meta.scope_order = (options.scopes ?? []).map((scope) => scope.kind);
   bundle.search_meta.retrieval_sources = [retrievalSource];
+  if (searchOptions.diagnostics) {
+    bundle.search_meta.diagnostics = diagnostics;
+  }
 
   if (options.includeProfile) {
     bundle.profile = await buildProfile(options.scopes ?? []);

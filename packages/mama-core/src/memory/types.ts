@@ -1,5 +1,10 @@
 import type { ConnectorEventSearchHit } from '../connectors/types.js';
 import type { ReadIdentity } from '../entities/read-identity.js';
+import type {
+  SearchHitDiagnostics,
+  SearchQualityOptions,
+  SearchStrictness,
+} from '../search/search-quality.js';
 
 export const MEMORY_SCOPE_KINDS = ['global', 'user', 'channel', 'project'] as const;
 export type MemoryScopeKind = (typeof MEMORY_SCOPE_KINDS)[number];
@@ -83,6 +88,28 @@ export interface MemoryRecord {
   /** Source event timestamp in milliseconds when known. Null if not set. */
   event_datetime?: number | null;
   read_identity?: ReadIdentity;
+  retrieval_diagnostics?: SearchHitDiagnostics;
+}
+
+export type RecallMemoryOptions = SearchQualityOptions & {
+  scopes?: MemoryScopeRef[];
+  includeProfile?: boolean;
+  includeHistory?: boolean;
+  skipGraphExpansion?: boolean;
+  limit?: number;
+};
+
+export interface RecallSearchDiagnostics {
+  candidate_counts: {
+    vector: number;
+    lexical: number;
+    entity: number;
+    graph_expanded: number;
+    vector_only: number;
+    rejected_by_strictness: number;
+  };
+  threshold: number;
+  strictness: SearchStrictness;
 }
 
 export interface MemoryEdge {
@@ -116,6 +143,7 @@ export interface RecallBundle {
     query: string;
     scope_order: MemoryScopeKind[];
     retrieval_sources: string[];
+    diagnostics?: RecallSearchDiagnostics;
   };
 }
 

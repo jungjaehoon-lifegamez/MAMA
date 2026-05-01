@@ -125,6 +125,66 @@ describe('legacy shims', () => {
     expect(result.results[0]?.event_date).toBe('2026-04-15');
   });
 
+  it('does not use legacy keyword fallback after strict memory_v2 rejects all candidates', async () => {
+    recallMemoryMock.mockResolvedValueOnce({
+      profile: { static: [], dynamic: [], evidence: [] },
+      memories: [],
+      fused_hits: [],
+      graph_context: { primary: [], expanded: [], edges: [] },
+      search_meta: {
+        query: 'context compile',
+        scope_order: ['project'],
+        retrieval_sources: ['vector_search'],
+        diagnostics: {
+          candidate_counts: {
+            vector: 1,
+            lexical: 0,
+            entity: 0,
+            graph_expanded: 0,
+            vector_only: 1,
+            rejected_by_strictness: 1,
+          },
+          threshold: 0.6,
+          strictness: 'strict',
+        },
+      },
+    });
+    const { initDB, getAdapter } = await import('../../src/db-manager.js');
+    await initDB();
+    getAdapter().prepare('DELETE FROM decisions WHERE id = ?').run('legacy_keyword_noise');
+    getAdapter()
+      .prepare(
+        `
+          INSERT INTO decisions (
+            id, topic, decision, reasoning, confidence, created_at, updated_at,
+            kind, status, summary, event_datetime
+          )
+          VALUES (?, ?, ?, ?, 0.8, ?, ?, 'decision', 'active', ?, ?)
+        `
+      )
+      .run(
+        'legacy_keyword_noise',
+        'context compile',
+        'Legacy keyword fallback would otherwise return this row',
+        'Strict memory_v2 rejected the candidate set.',
+        Date.now(),
+        Date.now(),
+        'Legacy keyword fallback would otherwise return this row',
+        Date.now()
+      );
+
+    const mama = (await import('../../src/mama-api.js')).default;
+    const result = await mama.suggest('context compile', {
+      limit: 5,
+      strictness: 'strict',
+      diagnostics: true,
+    });
+
+    expect(result.results).toEqual([]);
+    expect(result.diagnostics?.candidate_counts.rejected_by_strictness).toBe(1);
+    expect(result.meta?.search_method).toBe('memory_v2');
+  });
+
   it('should preserve memory source_type when mapping recallMemory fallback rows', async () => {
     recallMemoryMock.mockResolvedValueOnce({
       profile: { static: [], dynamic: [], evidence: [] },

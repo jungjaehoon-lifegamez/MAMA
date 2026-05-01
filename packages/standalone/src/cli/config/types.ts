@@ -519,6 +519,12 @@ export interface TimeoutsConfig {
   session_ms: number;
   /** Session cleanup interval @default 300000 */
   session_cleanup_ms: number;
+  /** Persistent Claude process idle timeout @default session_ms */
+  persistent_process_idle_ms?: number;
+  /** Persistent Claude process cleanup interval @default session_cleanup_ms */
+  persistent_process_cleanup_ms?: number;
+  /** Maximum host-side tool result wait before reclaiming a persistent process @default max(4 * idle, 1800000) */
+  persistent_process_pending_tool_ms?: number;
   /** Agent execution timeout @default 300000 */
   agent_ms: number;
   /** UltraWork execution timeout @default 300000 */

@@ -24,8 +24,22 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'query', type: 'string', required: false, description: 'Search query' },
       { name: 'type', type: "'decision' | 'checkpoint' | 'all'", required: false },
       { name: 'limit', type: 'number', required: false },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+      { name: 'strict', type: 'boolean', required: false },
+      { name: 'strictness', type: "'recall' | 'balanced' | 'strict'", required: false },
+      { name: 'threshold', type: 'number', required: false },
+      { name: 'disableRecency', type: 'boolean', required: false },
+      { name: 'includeRelated', type: 'boolean', required: false },
+      { name: 'topicPrefix', type: 'string', required: false },
+      { name: 'minLexicalSupport', type: 'boolean', required: false },
+      { name: 'diagnostics', type: 'boolean', required: false },
     ],
-    returnType: '{ results: SearchResult[]; count: number }',
+    returnType:
+      '{ results: Array<Record<string, unknown>>; count: number; diagnostics?: Record<string, unknown> | null; meta?: Record<string, unknown> }',
     category: 'memory',
   },
   {
