@@ -238,7 +238,7 @@ export class ClaudeCLIWrapper {
       }
       args.push('--add-dir', mamaWorkspace);
 
-      console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
+      console.log(`[ClaudeCLI] Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`);
       console.log(`[ClaudeCLI] Args count: ${args.length}`);
 
       const claude = spawn('claude', args, {
@@ -407,6 +407,20 @@ export class ClaudeCLIWrapper {
   getOptions(): ClaudeCLIWrapperOptions {
     return { ...this.options };
   }
+}
+
+function formatClaudeArgsForLog(args: string[]): string[] {
+  const redacted: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    redacted.push(arg);
+    if ((arg === '--system-prompt' || arg === '--append-system-prompt') && i + 1 < args.length) {
+      const value = args[i + 1] ?? '';
+      redacted.push(`[redacted ${value.length} chars]`);
+      i++;
+    }
+  }
+  return redacted;
 }
 
 /**

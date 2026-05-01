@@ -487,6 +487,29 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   }
 
   private repairSkippedFeatureMigrations(migrationsDir: string): void {
+    if (this.tableExists('decisions')) {
+      const decisionColumns = this.tableColumns('decisions');
+      const hasMissingMemoryProvenanceColumn = [
+        'agent_id',
+        'model_run_id',
+        'envelope_hash',
+        'gateway_call_id',
+        'source_refs_json',
+        'provenance_json',
+      ].some((column) => !decisionColumns.has(column));
+      const hasMissingMemoryProvenanceIndex = [
+        'idx_decisions_envelope_hash',
+        'idx_decisions_model_run_id',
+        'idx_decisions_gateway_call_id',
+        'idx_memory_events_memory_created',
+      ].some((indexName) => !this.indexExists(indexName));
+
+      if (hasMissingMemoryProvenanceColumn || hasMissingMemoryProvenanceIndex) {
+        this.recoverMemoryProvenanceMigration032();
+        info('[node-sqlite-adapter] Repaired skipped memory provenance migration');
+      }
+    }
+
     if (!this.tableExists('model_runs') || !this.tableExists('tool_traces')) {
       this.applyRepairMigration(
         migrationsDir,

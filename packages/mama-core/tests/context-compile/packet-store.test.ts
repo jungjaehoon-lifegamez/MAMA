@@ -265,5 +265,66 @@ describe('STORY-CC-B2: Context packet append-only store - AC1, AC2, AC3', () => 
         })
       ).toThrow(/committed/i);
     });
+
+    it('allows trusted packet reuse by descendants and siblings in the same model-run lineage', () => {
+      const adapter = createAdapter();
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_parent',
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        input_snapshot_ref: 'snapshot:parent',
+      });
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_context_child',
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        parent_model_run_id: 'mr_parent',
+        input_snapshot_ref: 'context_compile:ctxp_a',
+      });
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_grandchild',
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        parent_model_run_id: 'mr_context_child',
+        input_snapshot_ref: 'snapshot:grandchild',
+      });
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_sibling',
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        parent_model_run_id: 'mr_parent',
+        input_snapshot_ref: 'snapshot:sibling',
+      });
+      beginModelRunInAdapter(adapter, {
+        model_run_id: 'mr_other_root',
+        envelope_hash: 'env-a',
+        agent_id: 'agent-a',
+        input_snapshot_ref: 'snapshot:other-root',
+      });
+      commitModelRunInAdapter(adapter, 'mr_context_child', 'context packet created');
+      insertContextPacket(adapter, record({ model_run_id: 'mr_context_child' }));
+
+      expect(
+        getContextPacketForTrustedUse(adapter, {
+          packetId: 'ctxp_a',
+          envelopeHash: 'env-a',
+          callerModelRunId: 'mr_grandchild',
+        })?.packet_id
+      ).toBe('ctxp_a');
+      expect(
+        getContextPacketForTrustedUse(adapter, {
+          packetId: 'ctxp_a',
+          envelopeHash: 'env-a',
+          callerModelRunId: 'mr_sibling',
+        })?.packet_id
+      ).toBe('ctxp_a');
+      expect(() =>
+        getContextPacketForTrustedUse(adapter, {
+          packetId: 'ctxp_a',
+          envelopeHash: 'env-a',
+          callerModelRunId: 'mr_other_root',
+        })
+      ).toThrow(/lineage/i);
+    });
   });
 });

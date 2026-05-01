@@ -86,6 +86,21 @@ describe('TypeDefinitionGenerator', () => {
       expect(t3).not.toContain('context_compile');
     });
 
+    it('filters declarations to an explicit agent allowed-tool list', () => {
+      const dts = TypeDefinitionGenerator.generate(2, [
+        'mama_search',
+        'agent_notices',
+        'report_publish',
+        'code_act',
+      ]);
+      expect(dts).toContain('declare function mama_search');
+      expect(dts).toContain('declare function agent_notices');
+      expect(dts).toContain('declare function report_publish');
+      expect(dts).not.toContain('declare function mama_save');
+      expect(dts).not.toContain('declare function wiki_publish');
+      expect(dts).not.toContain('declare function Read');
+    });
+
     it('stays within token budget for Tier 1', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts.length).toBeLessThan(7200);

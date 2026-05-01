@@ -2,6 +2,24 @@ import { describe, it, expect } from 'vitest';
 import type { AgentPersonaConfig } from '../../src/multi-agent/types.js';
 
 describe('system agent unification', () => {
+  describe('process manager defaults', () => {
+    it('enables skip-permissions for headless system-run agents by default', async () => {
+      const { buildSystemAgentProcessDefaults } = await import('../../src/cli/commands/start.js');
+
+      expect(buildSystemAgentProcessDefaults({}).dangerouslySkipPermissions).toBe(true);
+    });
+
+    it('honors explicit skip-permissions disablement', async () => {
+      const { buildSystemAgentProcessDefaults } = await import('../../src/cli/commands/start.js');
+
+      expect(
+        buildSystemAgentProcessDefaults({
+          multi_agent: { dangerouslySkipPermissions: false },
+        }).dangerouslySkipPermissions
+      ).toBe(false);
+    });
+  });
+
   describe('code-act MCP merging', () => {
     it('adds code-act entry to mama-mcp-config.json', () => {
       const existing = {
@@ -84,7 +102,7 @@ describe('system agent unification', () => {
         useCodeAct: true,
         model: 'claude-sonnet-4-6',
         tool_permissions: {
-          allowed: ['mama_search', 'wiki_publish', 'code_act'],
+          allowed: ['mama_search', 'agent_notices', 'wiki_publish', 'code_act'],
           blocked: [
             'Bash',
             'Read',

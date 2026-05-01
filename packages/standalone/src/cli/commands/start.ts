@@ -175,6 +175,14 @@ export interface StartOptions {
   foreground?: boolean;
 }
 
+export function buildSystemAgentProcessDefaults(config: {
+  multi_agent?: { dangerouslySkipPermissions?: boolean };
+}): { dangerouslySkipPermissions: boolean } {
+  return {
+    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
+  };
+}
+
 /**
  * Execute start command
  */
@@ -689,6 +697,7 @@ export async function runAgentLoop(
         tool_permissions: {
           allowed: [
             'mama_search',
+            'agent_notices',
             'case_list',
             'case_assemble',
             'obsidian',
@@ -804,7 +813,7 @@ export async function runAgentLoop(
     const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
     const pm = new AgentProcessManager(
       config.multi_agent,
-      {},
+      buildSystemAgentProcessDefaults(config),
       {
         backend: runtimeBackend,
         model: config.agent.model,

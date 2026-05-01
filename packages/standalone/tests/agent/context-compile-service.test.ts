@@ -154,6 +154,98 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
   });
 
+  it('AC: normalizes compile filters before validation, compilation, and provenance storage', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_normalized_filters',
+          task: input.task,
+          scopes: input.scopes,
+          source_refs: input.seed_refs ?? [],
+        })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      now: () => FIXED_NOW_MS,
+      childModelRunId: () => 'mr_context_normalized_filters',
+      packetId: () => 'ctxp_normalized_filters',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: {
+        task: ' compile branch context ',
+        scopes: [{ kind: 'project', id: ' /workspace/project-a ' }],
+        connectors: [' telegram '],
+        project_refs: [{ kind: 'project', id: ' /workspace/project-a ' }],
+        tenant_id: ' default ',
+        seed_refs: [{ kind: 'memory', id: ' mem-alpha ' }],
+      },
+    });
+
+    expect(compileContext.mock.calls[0][0]).toMatchObject({
+      task: 'compile branch context',
+      scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+      connectors: ['telegram'],
+      project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+      tenant_id: 'default',
+      seed_refs: [{ kind: 'memory', id: 'mem-alpha' }],
+    });
+    expect(
+      getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
+    ).toMatchObject({
+      connectors: ['telegram'],
+      project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+      tenant_id: 'default',
+      seed_refs: [{ kind: 'memory', id: 'mem-alpha' }],
+    });
+  });
+
+  it('AC: does not store non-project scope ids in context packet project_id', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope({
+      scope: {
+        project_refs: [],
+        raw_connectors: ['telegram'],
+        memory_scopes: [{ kind: 'channel', id: 'tg:1' }],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+      },
+    });
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_channel_scope',
+          task: input.task,
+          scopes: input.scopes,
+        })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      now: () => FIXED_NOW_MS,
+      childModelRunId: () => 'mr_context_channel_scope',
+      packetId: () => 'ctxp_channel_scope',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: {
+        task: 'compile channel context',
+      },
+    });
+
+    expect(getContextPacket(adapter, 'ctxp_channel_scope')).toMatchObject({
+      project_id: '',
+      memory_scope_kind: 'channel',
+      memory_scope_id: 'tg:1',
+    });
+  });
+
   it('AC: clamps request as_of to the worker envelope snapshot', async () => {
     const adapter = getAdapter();
     const envelope = makeSignedEnvelope({

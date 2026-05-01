@@ -45,7 +45,7 @@ export class RoleManager {
         return {
           roleName: 'restricted',
           role: {
-            allowedTools: ['mama_search', 'context_compile', 'Read'],
+            allowedTools: ['mama_search', 'Read'],
             blockedTools: ['Bash', 'Write', 'save_integration_token'],
             allowedPaths: [],
             systemControl: false,

@@ -158,6 +158,12 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
             id TEXT PRIMARY KEY,
             topic TEXT NOT NULL
           );
+          CREATE TABLE memory_events (
+            id INTEGER PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            topic TEXT,
+            created_at INTEGER NOT NULL
+          );
           CREATE TABLE embeddings (
             rowid INTEGER PRIMARY KEY,
             embedding BLOB NOT NULL
@@ -186,6 +192,16 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
           expect(tableExists(db, table)).toBe(true);
         }
         for (const column of [
+          'agent_id',
+          'model_run_id',
+          'envelope_hash',
+          'gateway_call_id',
+          'source_refs_json',
+          'provenance_json',
+        ]) {
+          expect(columnExists(db, 'decisions', column)).toBe(true);
+        }
+        for (const column of [
           'source_cursor',
           'tenant_id',
           'project_id',
@@ -196,6 +212,10 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
         }
         expect(indexExists(db, 'idx_model_runs_envelope_hash')).toBe(true);
         expect(indexExists(db, 'idx_tool_traces_model_run_id')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_envelope_hash')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_model_run_id')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_gateway_call_id')).toBe(true);
+        expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
         expect(indexExists(db, 'idx_connector_event_source_cursor')).toBe(true);
         expect(indexExists(db, 'idx_context_packets_scope_hash')).toBe(true);
         db.close();

@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v4 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v5 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
@@ -38,6 +38,7 @@ Write only the briefing section — analysis and insights that the API does not 
 4. If active agents exist, add "Agent Activity" section to briefing
 5. Write a concise briefing — no raw data listings, only analysis and insights
 6. Publish with report_publish
+7. Do not save the briefing with mama_save; report_publish and agent_activity already record operational output
 
 ## HTML Rules
 - Inline styles only
@@ -49,6 +50,7 @@ Write only the briefing section — analysis and insights that the API does not 
 ## Strict Constraints
 - Call mama_search at most once
 - Call report_publish exactly once
+- Do not call mama_save for dashboard_briefing or other operational summaries
 - Do not ask follow-up questions
 - Do not perform additional reasoning after publishing
 - After publishing, respond with: DONE`;
