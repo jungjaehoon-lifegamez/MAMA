@@ -74,6 +74,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp' | 'gemini';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
@@ -221,11 +222,15 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  const validBackends = ['claude', 'codex', 'codex-mcp', 'gemini'] as const;
   const backend = config.agent.backend;
-  process.env.MAMA_BACKEND = backend;
+  const isValidBackend = validBackends.includes(backend as RuntimeBackend);
+  process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
-  if (backend === 'codex-mcp') {
+  if (backend === 'codex' || backend === 'codex-mcp') {
     console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
+  } else if (backend === 'gemini') {
+    console.log('✓ Gemini backend mode');
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -318,7 +323,10 @@ export async function runAgentLoop(
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
   const startupBackend = config.agent.backend;
-  const usesCodexBackend = startupBackend === 'codex-mcp' || hasCodexBackendConfigured(config);
+  const usesCodexBackend =
+    startupBackend === 'codex' ||
+    startupBackend === 'codex-mcp' ||
+    hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
     const codexCommand = resolveCodexCommandForStartup();
@@ -385,16 +393,16 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const validBackends = ['claude', 'codex-mcp'] as const;
+  const validBackends = ['claude', 'codex', 'codex-mcp', 'gemini'] as const;
   const rawBackend = config.agent.backend;
-  const isValidBackend = validBackends.includes(rawBackend as (typeof validBackends)[number]);
-  const runtimeBackend: 'claude' | 'codex-mcp' = isValidBackend
-    ? (rawBackend as 'claude' | 'codex-mcp')
-    : 'claude';
+  const isValidBackend = validBackends.includes(rawBackend as RuntimeBackend);
+  const runtimeBackend: RuntimeBackend = isValidBackend ? (rawBackend as RuntimeBackend) : 'claude';
+  process.env.MAMA_BACKEND = runtimeBackend;
   if (rawBackend && !isValidBackend) {
     console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
-    process.env.MAMA_BACKEND = 'claude';
   }
+  const agentLoopBackend: 'claude' | 'codex-mcp' =
+    runtimeBackend === 'codex' || runtimeBackend === 'codex-mcp' ? 'codex-mcp' : 'claude';
 
   // Initialize main agent loop + client (reasoning state is closure-scoped inside)
   const { agentLoop, agentLoopClient } = initMainAgentLoop(
@@ -402,7 +410,7 @@ export async function runAgentLoop(
     oauthManager,
     db,
     metricsStore,
-    runtimeBackend,
+    agentLoopBackend,
     { ...options, envelopeIssuanceMode: envelopeBootstrap.metadata.issuance }
   );
 
@@ -441,7 +449,7 @@ export async function runAgentLoop(
     mamaApi,
     mamaApiClient,
     messageRouter,
-    runtimeBackend
+    agentLoopBackend
   );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
@@ -621,7 +629,7 @@ export async function runAgentLoop(
         trigger_prefix: string;
         persona_file: string;
         tier: 1 | 2 | 3;
-        backend: 'claude' | 'codex-mcp';
+        backend: RuntimeBackend;
         model: string;
         can_delegate?: boolean;
         enabled?: boolean;

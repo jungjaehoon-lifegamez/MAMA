@@ -108,7 +108,7 @@ export interface AgentContext {
    * Backend type for this agent context
    * Used for backend-specific AGENTS.md injection
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
 }
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
@@ -917,7 +917,7 @@ export interface AgentLoopOptions {
    * - 'codex-mcp': Codex via MCP protocol
    * Required at construction time (validated by config-manager)
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** User identifier for the frontdoor message source */

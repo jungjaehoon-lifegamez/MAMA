@@ -152,6 +152,40 @@ describe('ConfigManager', () => {
       expect(loaded.multi_agent?.agents?.developer?.tool_permissions?.allowed).toContain('*');
       expect(loaded.multi_agent?.agents?.developer?.tool_permissions?.blocked).toEqual([]);
     });
+
+    it('should merge missing built-in agents into existing multi-agent configs on load', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const existingConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        logging: { level: 'info', file: '~/.test/logs/test.log' },
+        multi_agent: {
+          enabled: true,
+          agents: {
+            custom: {
+              name: 'Custom',
+              display_name: 'Custom',
+              trigger_prefix: '!custom',
+              persona_file: '~/.mama/personas/custom.md',
+              tier: 2,
+              tool_permissions: { allowed: ['Read'], blocked: [] },
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(existingConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.multi_agent?.agents?.custom?.tool_permissions?.allowed).toEqual(['Read']);
+      expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
+      expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeDefined();
+    });
   });
 
   describe('createDefaultConfig()', () => {
@@ -255,6 +289,21 @@ describe('ConfigManager', () => {
       };
       const errors = validateConfig(config);
       expect(errors.some((e) => e.includes('timeout'))).toBe(true);
+    });
+
+    it('should accept codex and gemini backends', () => {
+      expect(
+        validateConfig({
+          ...DEFAULT_CONFIG,
+          agent: { ...DEFAULT_CONFIG.agent, backend: 'codex' },
+        })
+      ).toHaveLength(0);
+      expect(
+        validateConfig({
+          ...DEFAULT_CONFIG,
+          agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' },
+        })
+      ).toHaveLength(0);
     });
 
     it('should detect invalid log level', () => {

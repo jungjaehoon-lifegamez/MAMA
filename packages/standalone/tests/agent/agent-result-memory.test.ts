@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 
-describe('Agent result publication', () => {
+describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational outputs stay out of long-term memory', () => {
   const createMockApi = (): MAMAApiInterface => ({
     save: vi.fn().mockResolvedValue({
       success: true,
@@ -224,6 +224,22 @@ describe('Agent result publication', () => {
         decision: 'Daemon launches must set MAMA_SECURITY_ALERT_CHANNELS when public tunnels run.',
         reasoning:
           'Repeated audits found the same exposure risk; the durable policy is useful beyond a single audit run.',
+      });
+
+      expect(result).toMatchObject({ success: true });
+      expect(mockApi.save).toHaveBeenCalledOnce();
+    });
+
+    it('still saves legitimate long-term audit topics', async () => {
+      const mockApi = createMockApi();
+      const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext(createAgentContext());
+
+      const result = await executor.execute('mama_save', {
+        type: 'decision',
+        topic: 'audit-log-retention',
+        decision: 'Audit completed records should be retained for 30 days.',
+        reasoning: 'This is a durable retention policy, not an operational run summary.',
       });
 
       expect(result).toMatchObject({ success: true });

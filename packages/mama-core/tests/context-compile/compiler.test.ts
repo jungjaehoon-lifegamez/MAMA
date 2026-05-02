@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,7 +16,8 @@ import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter } from '../../src/db-manager.js';
 
-const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
+const TEST_DIR = fileURLToPath(new URL('.', import.meta.url));
+const MIGRATIONS_DIR = join(TEST_DIR, '..', '..', 'db', 'migrations');
 const tempPaths = new Set<string>();
 
 const EMPTY_RESULT: ContextSourceReadResult = {
@@ -397,6 +399,31 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
         range: { start_ms: 2_000, end_ms: 3_000 },
       })
     );
+  });
+
+  it('rejects requested ranges that do not overlap the active boundary range', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          range: { start_ms: 4_000, end_ms: 5_000 },
+          max_tool_calls: 1,
+        },
+        compilerDeps({
+          boundary: {
+            scopes: [{ kind: 'project' as const, id: 'repo-a' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project' as const, id: 'repo-a' }],
+            tenant_id: 'default',
+            range: { start_ms: 1_000, end_ms: 2_000 },
+          },
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/start_ms 4000 > end_ms 2000/);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
   });
 
   it('clamps requested as_of to the active boundary snapshot', async () => {

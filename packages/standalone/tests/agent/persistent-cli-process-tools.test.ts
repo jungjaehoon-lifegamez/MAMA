@@ -77,11 +77,15 @@ describe('PersistentClaudeProcess buildArgs() tool flags', () => {
     expect(args).not.toContain('--add-dir');
   });
 
-  it('redacts system prompts in spawn logs', () => {
-    const args = getBuildArgs({ systemPrompt: 'secret prompt with skill catalog' });
-    const logged = formatClaudeArgsForLog(args).join(' ');
-    expect(logged).toContain('--system-prompt [redacted ');
-    expect(logged).not.toContain('secret prompt');
-    expect(logged).not.toContain('skill catalog');
+  describe('STORY-CLI-SPAWN-LOGS: spawn log redaction', () => {
+    describe('Acceptance Criteria', () => {
+      it('redacts system prompts in spawn logs', () => {
+        const args = getBuildArgs({ systemPrompt: 'secret prompt with skill catalog' });
+        const logged = formatClaudeArgsForLog(args).join(' ');
+        expect(logged).toContain('--system-prompt [redacted ');
+        expect(logged).not.toContain('secret prompt');
+        expect(logged).not.toContain('skill catalog');
+      });
+    });
   });
 });

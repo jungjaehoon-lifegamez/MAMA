@@ -53,8 +53,11 @@ export class TypeDefinitionGenerator {
 }
 
 function isAllowedTool(toolName: string, allowedTools?: string[]): boolean {
-  if (!allowedTools || allowedTools.length === 0 || allowedTools.includes('*')) {
+  if (!allowedTools || allowedTools.includes('*')) {
     return true;
+  }
+  if (allowedTools.length === 0) {
+    return false;
   }
   return allowedTools.some((pattern) => matchToolPattern(pattern, toolName));
 }

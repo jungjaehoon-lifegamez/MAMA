@@ -5,6 +5,7 @@ import Database from '../../src/sqlite.js';
 import {
   buildAlertsFromDecisions,
   buildActivityFeed,
+  buildAgentActivityNotices,
   buildProjectsSummary,
   createIntelligenceRouter,
   type DecisionForAlerts,
@@ -269,6 +270,21 @@ describe('buildActivityFeed', () => {
 // ---------------------------------------------------------------------------
 
 describe('STORY-V019: Intelligence agent notices - AC durable activity visibility', () => {
+  it('AC: sorts malformed durable activity timestamps as oldest instead of current', () => {
+    const notices = buildAgentActivityNotices([
+      {
+        agent_id: 'conductor',
+        type: 'task_error',
+        input_summary: null,
+        output_summary: null,
+        error_message: 'bad timestamp',
+        created_at: 'not-a-timestamp',
+      },
+    ]);
+
+    expect(notices[0].timestamp).toBe(0);
+  });
+
   it('AC: falls back to durable agent_activity rows when in-memory notices are empty', async () => {
     const memoryDb = new Database(':memory:');
     const sessionsDb = new Database(':memory:');
