@@ -209,7 +209,7 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
   const errors: string[] = [];
 
   if (!config.agent.backend) {
-    errors.push("agent.backend is required. Valid: 'claude' | 'codex-mcp'");
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'codex-mcp' | 'gemini'");
   }
   if (!config.agent.model) {
     errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
@@ -466,6 +466,24 @@ function normalizeLegacyMultiAgentConfig(
     };
   }
 
+  const defaultAgents = getDefaultMultiAgentConfig().agents;
+  const mergedAgents = {
+    ...multiAgentConfig.agents,
+  } as Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  let addedBuiltinAgent = false;
+  for (const [agentId, defaultAgent] of Object.entries(defaultAgents)) {
+    if (!mergedAgents[agentId]) {
+      mergedAgents[agentId] = defaultAgent;
+      addedBuiltinAgent = true;
+    }
+  }
+  if (addedBuiltinAgent) {
+    multiAgentConfig = {
+      ...multiAgentConfig,
+      agents: mergedAgents as typeof multiAgentConfig.agents,
+    };
+  }
+
   const developer = multiAgentConfig.agents.developer;
   if (!developer) {
     return multiAgentConfig;
@@ -528,8 +546,11 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex-mcp'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude" or "codex-mcp"');
+  if (
+    config.agent.backend &&
+    !['claude', 'codex', 'codex-mcp', 'gemini'].includes(config.agent.backend)
+  ) {
+    errors.push('agent.backend must be "claude", "codex", "codex-mcp", or "gemini"');
   }
 
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {

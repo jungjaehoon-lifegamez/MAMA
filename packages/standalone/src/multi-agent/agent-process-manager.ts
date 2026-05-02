@@ -27,6 +27,7 @@ import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
 import { TypeDefinitionGenerator, getCodeActInstructions } from '../agent/code-act/index.js';
+import { HostBridge } from '../agent/code-act/host-bridge.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -46,6 +47,16 @@ function resolvePath(path: string): string {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
+}
+
+function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
+  if (pattern === '*') {
+    return true;
+  }
+  if (pattern.endsWith('*')) {
+    return toolName.startsWith(pattern.slice(0, -1));
+  }
+  return pattern === toolName;
 }
 
 /**
@@ -154,12 +165,12 @@ export class AgentProcessManager extends EventEmitter {
   private getAgentBackend(
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     agentId?: string
-  ): 'claude' | 'codex-mcp' | 'gemini' {
+  ): 'claude' | 'codex' | 'codex-mcp' | 'gemini' {
     const backend = agentConfig.backend ?? this.runtimeOptions.backend;
     if (!backend) {
       throw new Error(
         `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
-          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex-mcp'`
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'codex-mcp' | 'gemini'`
       );
     }
     return backend;
@@ -310,7 +321,7 @@ export class AgentProcessManager extends EventEmitter {
 
     // Code-Act: available as optional tool alongside direct tools (no forced disallowedTools)
 
-    if (agentBackend === 'codex-mcp') {
+    if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
@@ -590,10 +601,11 @@ ${skillsPrompt}## Guidelines
     const tier = agentConfig.tier ?? 1;
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
-      const allowedTools = agentConfig.tool_permissions?.allowed;
+      const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
       const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3, allowedTools);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
-      const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+      const codeActBackend =
+        backend === 'codex' || backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
       return (
         getCodeActInstructions(codeActBackend, allowedTools) +
         '\n```typescript\n' +
@@ -610,6 +622,31 @@ ${skillsPrompt}## Guidelines
 
     // Default: full gateway tools from gateway-tools.md
     return getGatewayToolsPrompt();
+  }
+
+  private deriveCodeActAllowedTools(
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): string[] | undefined {
+    const explicitGatewayAllowed = agentConfig.gateway_tool_permissions?.allowed;
+    if (explicitGatewayAllowed) {
+      return this.filterCodeActAllowedTools(explicitGatewayAllowed);
+    }
+
+    const cliAllowed = agentConfig.tool_permissions?.allowed;
+    if (!cliAllowed) {
+      return undefined;
+    }
+    return this.filterCodeActAllowedTools(cliAllowed);
+  }
+
+  private filterCodeActAllowedTools(allowedTools: string[]): string[] {
+    if (allowedTools.includes('*')) {
+      return ['*'];
+    }
+    const registry = HostBridge.getToolRegistry();
+    return allowedTools.filter((pattern) =>
+      registry.some((meta) => matchCodeActToolPattern(pattern, meta.name))
+    );
   }
 
   private shouldTracePrompt(agentId: string): boolean {
@@ -885,7 +922,7 @@ Respond to messages in a helpful and professional manner.
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
       persona_file: '', // inline system prompt, no file
-      backend: agentDef.backend as 'claude' | 'codex-mcp' | 'gemini',
+      backend: agentDef.backend as 'claude' | 'codex' | 'codex-mcp' | 'gemini',
       model: agentDef.model,
       tier: agentDef.tier ?? 1,
       tool_permissions: agentDef.tool_permissions,

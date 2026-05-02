@@ -159,18 +159,19 @@ async function loadModel(): Promise<PipelineFunction> {
  * @throws Error if text is empty or embedding fails
  */
 export async function generateEmbedding(text: string): Promise<Float32Array> {
-  if (!text || text.trim().length === 0) {
+  if (typeof text !== 'string' || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
 
   assertEmbeddingsEnabled();
 
+  const preparedText = prepareEmbeddingText(text);
+
   // Task 2: Check cache first (AC #3)
-  const cached = embeddingCache.get(text);
+  const cached = embeddingCache.get(preparedText);
   if (cached) {
     return cached;
   }
-  const preparedText = prepareEmbeddingText(text);
 
   const startTime = Date.now();
 
@@ -198,7 +199,7 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     const _latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
-    embeddingCache.set(text, embedding);
+    embeddingCache.set(preparedText, embedding);
 
     return embedding;
   } catch (error) {
@@ -269,18 +270,23 @@ export async function generateEnhancedEmbedding(
  * @returns Array of embeddings
  */
 export async function generateBatchEmbeddings(texts: string[]): Promise<Float32Array[]> {
-  assertEmbeddingsEnabled();
-
   if (!Array.isArray(texts) || texts.length === 0) {
     throw new Error('Texts must be a non-empty array');
   }
 
-  // Validate all texts
+  for (const text of texts) {
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error('All texts must be non-empty strings');
+    }
+  }
+
+  assertEmbeddingsEnabled();
+
   const preparedTexts = texts.map((text) => prepareEmbeddingText(text));
 
   for (const text of preparedTexts) {
     if (!text || text.length === 0) {
-      throw new Error('All texts must be non-empty');
+      throw new Error('All texts must be non-empty strings');
     }
   }
 

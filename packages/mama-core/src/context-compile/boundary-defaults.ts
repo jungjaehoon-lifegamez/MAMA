@@ -73,6 +73,11 @@ function intersectRange(
   if (startMs === null && endMs === null) {
     return undefined;
   }
+  if (startMs !== null && endMs !== null && startMs > endMs) {
+    throw new RangeError(
+      `Context boundary range is empty after intersection: start_ms ${startMs} > end_ms ${endMs}`
+    );
+  }
   return {
     ...(startMs !== null ? { start_ms: startMs } : {}),
     ...(endMs !== null ? { end_ms: endMs } : {}),

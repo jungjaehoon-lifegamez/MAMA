@@ -103,12 +103,15 @@ function isOperationalRunSummaryDecision(input: SaveDecisionInput): boolean {
   const topic = normalizeOperationalText(input.topic);
   const decision = normalizeOperationalText(input.decision);
   const reasoning = normalizeOperationalText(input.reasoning);
+  const hasOperationalAutosaveMarker =
+    reasoning.includes('auto-saved-by-dashboard-agent-after-report-publish') ||
+    reasoning.includes('auto-saved-by-wiki-agent-after-wiki-publish');
 
   const operationalTopic =
     /^dashboard-briefing(?:-|$|\d)/.test(topic) ||
     /^wiki-compilation(?:-|$|\d)/.test(topic) ||
     /^system-audit(?:-|$|\d)/.test(topic) ||
-    /^audit[-_]/.test(input.topic.toLowerCase()) ||
+    /^audit-summary(?:-|$|\d)/.test(topic) ||
     /^test-audit(?:-|$|\d)/.test(topic);
 
   if (operationalTopic) {
@@ -118,11 +121,10 @@ function isOperationalRunSummaryDecision(input: SaveDecisionInput): boolean {
   return (
     decision.startsWith('dashboard-briefing-(') ||
     decision.startsWith('wiki-compilation-(') ||
-    decision.startsWith('audit-complete') ||
-    decision.startsWith('audit-completed') ||
     decision.startsWith('system-audit-') ||
-    reasoning.includes('auto-saved-by-dashboard-agent-after-report-publish') ||
-    reasoning.includes('auto-saved-by-wiki-agent-after-wiki-publish')
+    ((decision.startsWith('audit-complete') || decision.startsWith('audit-completed')) &&
+      hasOperationalAutosaveMarker) ||
+    hasOperationalAutosaveMarker
   );
 }
 
