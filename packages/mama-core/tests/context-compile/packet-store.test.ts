@@ -202,6 +202,35 @@ describe('STORY-CC-B2: Context packet append-only store - AC1, AC2, AC3', () => 
   });
 
   describe('AC2: storage failures are explicit', () => {
+    it('validates packet JSON before inserting a context packet row', () => {
+      const adapter = createAdapter();
+
+      expect(() => insertContextPacket(adapter, record({ packet_json: '{not-json' }))).toThrow(
+        /packet_json/
+      );
+
+      const row = adapter.prepare('SELECT COUNT(*) AS count FROM context_packets').get() as {
+        count: number;
+      };
+      expect(row.count).toBe(0);
+    });
+
+    it('validates created_at before inserting a context packet row', () => {
+      const adapter = createAdapter();
+
+      expect(() =>
+        insertContextPacket(
+          adapter,
+          record({ created_at: 'not-a-date' as unknown as ContextPacketRecord['created_at'] })
+        )
+      ).toThrow(/created_at/);
+
+      const row = adapter.prepare('SELECT COUNT(*) AS count FROM context_packets').get() as {
+        count: number;
+      };
+      expect(row.count).toBe(0);
+    });
+
     it('throws instead of returning fallback fields when stored packet JSON is corrupt', () => {
       const adapter = createAdapter();
       insertContextPacket(adapter, record());

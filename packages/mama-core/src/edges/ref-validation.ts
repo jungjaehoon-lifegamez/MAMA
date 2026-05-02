@@ -248,7 +248,12 @@ function isRawVisible(
     return false;
   }
 
-  if (!isWithinVisibilityTime(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
+  const rawTs = row.event_datetime ?? row.source_timestamp_ms;
+  if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
+    return false;
+  }
+  const asOfMs = Number(rawTs);
+  if (!Number.isFinite(asOfMs) || asOfMs < 0 || !isWithinVisibilityTime(asOfMs, visibility)) {
     return false;
   }
 

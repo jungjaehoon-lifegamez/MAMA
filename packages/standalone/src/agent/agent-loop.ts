@@ -141,6 +141,7 @@ export function loadBackendAgentsMd(backend?: string, verbose = false): string {
   }
   const keyMap: Record<string, string> = {
     claude: 'claude',
+    codex: 'codex',
     'codex-mcp': 'codex',
   };
   const key = keyMap[backend];
@@ -352,7 +353,7 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly useCodeAct: boolean;
-  private readonly backend: 'claude' | 'codex-mcp';
+  private readonly backend: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
@@ -483,7 +484,8 @@ export class AgentLoop {
             : 1;
         const allowedGatewayTools = options.agentContext?.role.allowedTools;
         const typeDefs = TypeDefinitionGenerator.generate(tierForTypeDefs, allowedGatewayTools);
-        const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+        const codeActBackend =
+          backend === 'codex' || backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
         const codeActPrompt =
           getCodeActInstructions(codeActBackend, allowedGatewayTools) +
           '\n```typescript\n' +
@@ -522,7 +524,7 @@ export class AgentLoop {
     // Choose backend (default: claude)
     this.backend = backend;
 
-    if (this.backend === 'codex-mcp') {
+    if (this.backend === 'codex' || this.backend === 'codex-mcp') {
       // Codex MCP mode: standard MCP protocol
       const workspaceDir = join(homedir(), '.mama', 'workspace');
       // Ensure workspace directory exists
@@ -907,7 +909,7 @@ export class AgentLoop {
     // Set session ID on the agent
     // Claude PersistentCLI: process alive → CONTINUE (stdin message), process dead → NEW (spawn with --session-id)
     // Codex: threadId alive → CONTINUE (codex-reply), threadId null → NEW (codex tool)
-    const isCodex = this.backend === 'codex-mcp';
+    const isCodex = this.backend === 'codex' || this.backend === 'codex-mcp';
     let resolvedCliSessionId: string | null = options?.cliSessionId ?? null;
 
     const sessionLabel = (isNew: boolean): string => {
@@ -968,7 +970,10 @@ export class AgentLoop {
               this.currentTier,
               allowedGatewayTools
             );
-            const codeActBackend = this.backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+            const codeActBackend =
+              this.backend === 'codex' || this.backend === 'codex-mcp'
+                ? 'codex-mcp'
+                : ('claude' as const);
             gatewayToolsPrompt =
               getCodeActInstructions(codeActBackend, allowedGatewayTools) +
               '\n```typescript\n' +
@@ -1231,10 +1236,12 @@ export class AgentLoop {
         }
 
         // Track tokens in session pool for auto-reset at 80% context
+        const tokenBackend =
+          this.backend === 'codex' || this.backend === 'codex-mcp' ? 'codex-mcp' : 'claude';
         const tokenStatus = this.sessionPool.updateTokens(
           channelKey,
           response.usage.input_tokens,
-          this.backend
+          tokenBackend
         );
 
         // PreCompact: inject compaction summary when approaching context limit

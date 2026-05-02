@@ -71,8 +71,11 @@ code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = res
 }
 
 function formatAllowedToolsSummary(allowedTools?: string[]): string {
-  if (!allowedTools || allowedTools.length === 0 || allowedTools.includes('*')) {
+  if (!allowedTools || allowedTools.includes('*')) {
     return '';
+  }
+  if (allowedTools.length === 0) {
+    return '- No gateway tools are currently allowed.';
   }
 
   const visibleTools = allowedTools.filter(

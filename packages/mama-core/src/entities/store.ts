@@ -35,6 +35,7 @@ const OBSERVATION_CONTEXT_KEY_COLUMNS = [
   'thread_context_key',
   'actor_context_key',
 ] as const;
+const tableColumnCache = new WeakMap<EntityStoreAdapter, Map<string, Set<string>>>();
 
 type CreateEntityNodeInput = Omit<EntityNode, 'created_at' | 'updated_at'>;
 type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
@@ -107,8 +108,23 @@ function observationContextKeys(
 }
 
 function tableColumnNames(adapter: EntityStoreAdapter, tableName: string): Set<string> {
+  let adapterCache = tableColumnCache.get(adapter);
+  if (!adapterCache) {
+    adapterCache = new Map<string, Set<string>>();
+    tableColumnCache.set(adapter, adapterCache);
+  }
+  const cached = adapterCache.get(tableName);
+  if (cached) {
+    return cached;
+  }
   const rows = adapter.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  return new Set(rows.map((row) => row.name));
+  const columns = new Set(rows.map((row) => row.name));
+  adapterCache.set(tableName, columns);
+  return columns;
+}
+
+export function clearEntityTableColumnCache(adapter: EntityStoreAdapter): void {
+  tableColumnCache.delete(adapter);
 }
 
 function requireStringField(row: Record<string, unknown>, field: string): string {

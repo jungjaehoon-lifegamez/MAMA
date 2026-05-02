@@ -193,7 +193,7 @@ function parseSqliteTimestamp(value: string): number {
     ? `${value.replace(' ', 'T')}Z`
     : value;
   const parsed = Date.parse(normalized);
-  return Number.isFinite(parsed) ? parsed : Date.now();
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function actionForActivityType(type: string): string {

@@ -102,6 +102,9 @@ function makeConfig(
       can_delegate?: boolean;
       is_planning_agent?: boolean;
       isPlanningAgent?: boolean;
+      useCodeAct?: boolean;
+      tool_permissions?: { allowed?: string[]; blocked?: string[] };
+      gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
     }
   >
 ): MultiAgentConfig {
@@ -119,6 +122,9 @@ function makeConfig(
       can_delegate: opts.can_delegate,
       is_planning_agent: opts.is_planning_agent,
       isPlanningAgent: opts.isPlanningAgent,
+      useCodeAct: opts.useCodeAct,
+      tool_permissions: opts.tool_permissions,
+      gateway_tool_permissions: opts.gateway_tool_permissions,
       auto_respond_keywords: [],
     };
   }
@@ -264,6 +270,30 @@ describe('AgentProcessManager env vars by tier', () => {
       const reusedProcess = await manager.getProcess('discord', 'channel-1', 'developer');
       expect(reusedProcess).toBe(process);
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('STORY-CODE-ACT-GATEWAY-PERMISSIONS: Code-Act gateway allowlist separation', () => {
+    it('filters CLI-only allowed tools out of generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          tool_permissions: {
+            allowed: ['code_act', 'mama_search', 'report_publish', 'mcp__brave-search__*'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).toContain('declare function report_publish');
+      expect(systemPrompt).not.toContain('declare function code_act');
+      expect(systemPrompt).not.toContain('declare function mcp__brave-search__');
     });
   });
 

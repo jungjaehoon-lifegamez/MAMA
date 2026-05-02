@@ -5,7 +5,7 @@
  * by Conductor based on user intent analysis.
  */
 
-export type AgentBackend = 'claude' | 'codex-mcp' | 'gemini';
+export type AgentBackend = 'claude' | 'codex' | 'codex-mcp' | 'gemini';
 
 /**
  * Ephemeral agent definition dynamically created by Conductor

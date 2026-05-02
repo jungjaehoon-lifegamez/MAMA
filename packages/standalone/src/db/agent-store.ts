@@ -32,7 +32,10 @@ const TERMINAL_OUTCOME_ACTIVITY_SQL = [
 ].join(', ');
 const SUMMARY_HEALTH_ACTIVITY_SQL = `
   type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL})
-  AND (error_message IS NULL OR error_message NOT LIKE '%Process stopped by user%')
+  AND (
+    error_message IS NULL
+    OR NOT (type = 'audit_failed' AND error_message LIKE '%Process stopped by user%')
+  )
 `;
 
 // ── Table Init ──────────────────────────────────────────────────────────────

@@ -238,8 +238,8 @@ export class ClaudeCLIWrapper {
       }
       args.push('--add-dir', mamaWorkspace);
 
-      console.log(`[ClaudeCLI] Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`);
-      console.log(`[ClaudeCLI] Args count: ${args.length}`);
+      logger.debug(`Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`);
+      logger.debug(`Args count: ${args.length}`);
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],

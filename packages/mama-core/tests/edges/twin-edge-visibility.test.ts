@@ -313,6 +313,38 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       ).toThrow(/not visible/i);
     });
 
+    it('fails closed for raw endpoints with blank timestamps', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const blankTimestampRaw = insertScopedRaw('raw-blank-timestamp', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      getAdapter()
+        .prepare('UPDATE connector_event_index SET event_datetime = ? WHERE event_index_id = ?')
+        .run('', blankTimestampRaw);
+      insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: blankTimestampRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        }
+      );
+
+      expect(scoped).toEqual([]);
+    });
+
     it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
       insertEntityNode('entity-1', 'project', 'alpha');

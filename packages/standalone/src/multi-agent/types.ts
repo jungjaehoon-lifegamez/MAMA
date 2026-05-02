@@ -90,7 +90,7 @@ export interface AgentPersonaConfig {
    * - 'codex-mcp': Codex via MCP protocol
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex-mcp' | 'gemini';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
 
   /**
    * Maximum turns for this agent
@@ -146,6 +146,17 @@ export interface AgentPersonaConfig {
     /** Allowed tools (supports wildcards like "mama_*") */
     allowed?: string[];
     /** Blocked tools (takes precedence over allowed) */
+    blocked?: string[];
+  };
+
+  /**
+   * Explicit Code-Act gateway function permissions.
+   * When omitted, Code-Act derives a gateway-only allowlist from tool_permissions.allowed.
+   */
+  gateway_tool_permissions?: {
+    /** Allowed Code-Act gateway functions (supports wildcards like "mama_*") */
+    allowed?: string[];
+    /** Blocked Code-Act gateway functions */
     blocked?: string[];
   };
 
@@ -317,9 +328,10 @@ export interface MultiAgentRuntimeOptions {
   /**
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex-mcp': Codex via MCP protocol
+   * - 'codex'/'codex-mcp': Codex via MCP protocol
+   * - 'gemini': Gemini-compatible managed agents
    */
-  backend?: 'claude' | 'codex-mcp' | 'gemini';
+  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
   model?: string;
   /** Effort level for Claude 4.6 adaptive thinking */
   effort?: 'low' | 'medium' | 'high' | 'max';

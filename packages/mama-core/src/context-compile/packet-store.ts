@@ -61,6 +61,47 @@ function mapPacketRow(row: Record<string, unknown>): ContextPacketRecord {
   };
 }
 
+function normalizeJsonInput(value: unknown, field: string): string {
+  try {
+    if (typeof value === 'string') {
+      return JSON.stringify(JSON.parse(value));
+    }
+    const serialized = JSON.stringify(value);
+    if (typeof serialized !== 'string') {
+      throw new Error('value is not JSON serializable');
+    }
+    return serialized;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid context packet JSON field ${field}: ${message}`);
+  }
+}
+
+function normalizePacketCreatedAt(value: unknown): number {
+  let createdAt: number;
+  if (typeof value === 'number') {
+    createdAt = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      throw new Error('Invalid context packet field created_at: expected valid timestamp');
+    }
+    const numeric = Number(trimmed);
+    createdAt = Number.isFinite(numeric) ? numeric : Date.parse(trimmed);
+  } else {
+    throw new Error('Invalid context packet field created_at: expected valid timestamp');
+  }
+
+  if (
+    !Number.isFinite(createdAt) ||
+    createdAt < 0 ||
+    !Number.isFinite(new Date(createdAt).getTime())
+  ) {
+    throw new Error('Invalid context packet field created_at: expected valid timestamp');
+  }
+  return Math.floor(createdAt);
+}
+
 function modelRunsTableExists(adapter: ContextPacketAdapter): boolean {
   const row = adapter
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'model_runs'")
@@ -204,6 +245,14 @@ export function insertContextPacket(
   adapter: ContextPacketAdapter,
   packet: ContextPacketRecord
 ): ContextPacketRecord {
+  const packetToInsert = {
+    ...packet,
+    packet_json: normalizeJsonInput(packet.packet_json, 'packet_json'),
+    scope_json: normalizeJsonInput(packet.scope_json, 'scope_json'),
+    source_refs_json: normalizeJsonInput(packet.source_refs_json, 'source_refs_json'),
+    created_at: normalizePacketCreatedAt(packet.created_at),
+  };
+
   adapter
     .prepare(
       `
@@ -216,28 +265,28 @@ export function insertContextPacket(
       `
     )
     .run(
-      packet.packet_id,
-      packet.task,
-      packet.packet_json,
-      packet.scope_json,
-      packet.scope_hash,
-      packet.envelope_hash,
-      packet.model_run_id,
-      packet.agent_id,
-      packet.input_snapshot_ref,
-      packet.source_refs_json,
-      packet.tenant_id,
-      packet.project_id,
-      packet.memory_scope_kind,
-      packet.memory_scope_id,
-      packet.created_at
+      packetToInsert.packet_id,
+      packetToInsert.task,
+      packetToInsert.packet_json,
+      packetToInsert.scope_json,
+      packetToInsert.scope_hash,
+      packetToInsert.envelope_hash,
+      packetToInsert.model_run_id,
+      packetToInsert.agent_id,
+      packetToInsert.input_snapshot_ref,
+      packetToInsert.source_refs_json,
+      packetToInsert.tenant_id,
+      packetToInsert.project_id,
+      packetToInsert.memory_scope_kind,
+      packetToInsert.memory_scope_id,
+      packetToInsert.created_at
     );
 
   const inserted = adapter
     .prepare('SELECT * FROM context_packets WHERE packet_id = ?')
-    .get(packet.packet_id) as Record<string, unknown> | undefined;
+    .get(packetToInsert.packet_id) as Record<string, unknown> | undefined;
   if (!inserted) {
-    throw new Error(`Context packet insert failed: ${packet.packet_id}`);
+    throw new Error(`Context packet insert failed: ${packetToInsert.packet_id}`);
   }
   return mapPacketRow(inserted);
 }
