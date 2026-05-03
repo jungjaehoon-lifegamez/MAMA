@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       release_type:
-        description: 'Release type'
+        description: 'Release type used only when bump_versions is true'
         required: true
         type: choice
         options:
@@ -21,6 +21,11 @@ on:
         required: false
         type: boolean
         default: false
+      bump_versions:
+        description: 'Bump package versions in this workflow. Leave false when versions were prepared by PR.'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -28,7 +33,7 @@ permissions:
   id-token: write
 
 jobs:
-  # Step 1: Version bump and create tags
+  # Step 1: Resolve versions and create the release tag
   prepare-release:
     runs-on: ubuntu-latest
     outputs:
@@ -57,11 +62,12 @@ jobs:
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
 
-      - name: Bump versions
+      - name: Resolve release versions
         id: versions
         run: |
           RELEASE_TYPE="${{ inputs.release_type }}"
           PACKAGES="${{ inputs.packages }}"
+          BUMP_VERSIONS="${{ inputs.bump_versions }}"
 
           # Validate all package.json files exist
           for pkg in packages/mama-core packages/mcp-server packages/standalone packages/claude-code-plugin; do
@@ -87,35 +93,33 @@ jobs:
           SERVER_CURRENT=$(jq -r '.version' packages/mcp-server/package.json)
           OS_CURRENT=$(jq -r '.version' packages/standalone/package.json)
           PLUGIN_CURRENT=$(jq -r '.version' packages/claude-code-plugin/package.json)
-          # Calculate new versions
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-core"* ]]; then
+          # Calculate release versions. The protected-main release path expects versions to be
+          # prepared in a PR before this workflow runs, so bump_versions defaults to false.
+          CORE_NEW=$CORE_CURRENT
+          SERVER_NEW=$SERVER_CURRENT
+          OS_NEW=$OS_CURRENT
+          PLUGIN_NEW=$PLUGIN_CURRENT
+
+          if [[ "$BUMP_VERSIONS" == "true" && ("$PACKAGES" == "all" || "$PACKAGES" == *"mama-core"*) ]]; then
             CORE_NEW=$(bump_version "$CORE_CURRENT" "$RELEASE_TYPE")
             jq --arg v "$CORE_NEW" '.version = $v' packages/mama-core/package.json > tmp.json && mv tmp.json packages/mama-core/package.json
-          else
-            CORE_NEW=$CORE_CURRENT
           fi
 
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-server"* ]]; then
+          if [[ "$BUMP_VERSIONS" == "true" && ("$PACKAGES" == "all" || "$PACKAGES" == *"mama-server"*) ]]; then
             SERVER_NEW=$(bump_version "$SERVER_CURRENT" "$RELEASE_TYPE")
             jq --arg v "$SERVER_NEW" '.version = $v' packages/mcp-server/package.json > tmp.json && mv tmp.json packages/mcp-server/package.json
-          else
-            SERVER_NEW=$SERVER_CURRENT
           fi
 
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-os"* ]]; then
+          if [[ "$BUMP_VERSIONS" == "true" && ("$PACKAGES" == "all" || "$PACKAGES" == *"mama-os"*) ]]; then
             OS_NEW=$(bump_version "$OS_CURRENT" "$RELEASE_TYPE")
             jq --arg v "$OS_NEW" '.version = $v' packages/standalone/package.json > tmp.json && mv tmp.json packages/standalone/package.json
-          else
-            OS_NEW=$OS_CURRENT
           fi
 
-          if [[ "$PACKAGES" == "all" || "$PACKAGES" == *"mama-plugin"* ]]; then
+          if [[ "$BUMP_VERSIONS" == "true" && ("$PACKAGES" == "all" || "$PACKAGES" == *"mama-plugin"*) ]]; then
             PLUGIN_NEW=$(bump_version "$PLUGIN_CURRENT" "$RELEASE_TYPE")
             jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/package.json > tmp.json && mv tmp.json packages/claude-code-plugin/package.json
             # Also update plugin.json
             jq --arg v "$PLUGIN_NEW" '.version = $v' packages/claude-code-plugin/.claude-plugin/plugin.json > tmp.json && mv tmp.json packages/claude-code-plugin/.claude-plugin/plugin.json
-          else
-            PLUGIN_NEW=$PLUGIN_CURRENT
           fi
 
           # Determine release tag (use mama-os version as primary)
@@ -134,6 +138,8 @@ jobs:
           echo "| mama-server | $SERVER_CURRENT | $SERVER_NEW |" >> $GITHUB_STEP_SUMMARY
           echo "| mama-os | $OS_CURRENT | $OS_NEW |" >> $GITHUB_STEP_SUMMARY
           echo "| mama-plugin | $PLUGIN_CURRENT | $PLUGIN_NEW |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "bump_versions: $BUMP_VERSIONS" >> $GITHUB_STEP_SUMMARY
 
       - name: Extract changelog
         id: changelog
@@ -151,19 +157,24 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Commit version bumps
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && inputs.bump_versions }}
         run: |
           git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
           git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
-          git push
+          echo "::error::Inline version bumps are disabled for protected main. Prepare version bumps in a PR, merge it, then rerun this workflow with bump_versions=false."
+          exit 1
 
       - name: Create release tag
         if: ${{ !inputs.dry_run }}
         run: |
-          # Delete existing tag if it exists (allows re-runs)
-          git tag -d ${{ steps.versions.outputs.release_tag }} 2>/dev/null || true
-          git push origin :refs/tags/${{ steps.versions.outputs.release_tag }} 2>/dev/null || true
-          # Create and push new tag
+          if git rev-parse "${{ steps.versions.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag already exists locally: ${{ steps.versions.outputs.release_tag }}"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/${{ steps.versions.outputs.release_tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag already exists on origin: ${{ steps.versions.outputs.release_tag }}"
+            exit 1
+          fi
           git tag ${{ steps.versions.outputs.release_tag }}
           git push origin ${{ steps.versions.outputs.release_tag }}
 
