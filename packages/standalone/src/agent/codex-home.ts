@@ -31,6 +31,9 @@ function mcpServersToml(mcpConfigPath: string | undefined): string[] {
   const servers = parsed.mcpServers ?? {};
   const lines: string[] = [];
   for (const [name, server] of Object.entries(servers)) {
+    if (name === 'mama') {
+      continue;
+    }
     if (typeof server.command !== 'string') {
       continue;
     }

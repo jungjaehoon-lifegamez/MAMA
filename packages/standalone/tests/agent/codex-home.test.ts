@@ -44,6 +44,35 @@ describe('Story: Codex home config generation', () => {
         fs.unlinkSync(mcpConfigPath);
       }
     });
+
+    it('skips mama MCP entries when translating external MCP config', () => {
+      const mcpConfigPath = path.join(os.tmpdir(), `mama-code-act-${Date.now()}-mixed.json`);
+      fs.writeFileSync(
+        mcpConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            mama: {
+              command: 'node',
+              args: ['packages/mcp-server/src/server.js'],
+            },
+            'code-act': {
+              command: 'node',
+              args: ['code-act-server.js'],
+            },
+          },
+        })
+      );
+
+      try {
+        const config = buildMAMACodexConfig(mcpConfigPath);
+
+        expect(config).toContain('[mcp_servers."code-act"]');
+        expect(config).not.toContain('[mcp_servers."mama"]');
+        expect(config).not.toContain('packages/mcp-server/src/server.js');
+      } finally {
+        fs.unlinkSync(mcpConfigPath);
+      }
+    });
   });
 
   describe('AC #2: resolve local MCP entry path', () => {

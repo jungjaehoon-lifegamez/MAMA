@@ -107,7 +107,16 @@ function resolveAllowedCodeActTools(
   blockedTools: readonly string[] | undefined
 ): string[] | undefined {
   if (!allowedTools) {
-    return undefined;
+    if (!blockedTools?.length) {
+      return undefined;
+    }
+    if (blockedTools.includes('*')) {
+      return [];
+    }
+    const registryNames = HostBridge.getToolRegistry().map((meta) => meta.name);
+    return registryNames.filter(
+      (toolName) => !blockedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
+    );
   }
   if (!blockedTools?.length) {
     return [...allowedTools];
@@ -578,6 +587,7 @@ export class AgentLoop {
         sandbox: 'workspace-write',
         systemPrompt: defaultSystemPrompt,
         requestTimeout: options.timeoutMs,
+        mcpConfigPath: options.mcpConfigPath ?? (useMCPMode ? mcpConfigPath : undefined),
       });
       logger.debug('Codex MCP backend enabled');
     } else {

@@ -301,6 +301,59 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       ).rejects.toThrow(/range\.start_ms/);
     });
 
+    it('rejects malformed time filters before invoking custom memory recall', async () => {
+      const recallMemory = vi.fn(async () => recallBundle([]));
+
+      await expect(
+        readMemoryCandidates(
+          input({
+            boundary: undefined,
+            as_of: 'not-a-date',
+          }),
+          { recallMemory }
+        )
+      ).rejects.toThrow(/as_of/);
+
+      expect(recallMemory).not.toHaveBeenCalled();
+    });
+
+    it('rejects empty time ranges before invoking custom memory recall', async () => {
+      const recallMemory = vi.fn(async () => recallBundle([]));
+
+      await expect(
+        readMemoryCandidates(
+          input({
+            boundary: undefined,
+            range: { start_ms: 2_000, end_ms: 1_000 },
+          }),
+          { recallMemory }
+        )
+      ).rejects.toThrow(/range/);
+
+      expect(recallMemory).not.toHaveBeenCalled();
+    });
+
+    it('passes normalized time filters into custom memory recall options', async () => {
+      const recallMemory = vi.fn(async () => recallBundle([]));
+
+      await readMemoryCandidates(
+        input({
+          boundary: undefined,
+          as_of: '2026-01-01T00:00:00.000Z',
+          range: { start_ms: 1_000, end_ms: 2_000 },
+        }),
+        { recallMemory }
+      );
+
+      expect(recallMemory).toHaveBeenCalledWith(
+        'compile branch context',
+        expect.objectContaining({
+          as_of: Date.parse('2026-01-01T00:00:00.000Z'),
+          range: { start_ms: 1_000, end_ms: 2_000 },
+        })
+      );
+    });
+
     it('ignores wiki-derived fused hits without concrete visible V0 source refs', async () => {
       const result = await readMemoryCandidates(input(), {
         recallMemory: async () =>
@@ -698,6 +751,36 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       expect(result.candidates.map((candidate) => candidate.title)).toEqual([
         'Visible range raw event',
       ]);
+    });
+
+    it('omits raw source_id when connector_event_index has no concrete source id', () => {
+      const adapter = createAdapter();
+      const rawId = upsertConnectorEventIndex(adapter, {
+        source_connector: 'slack',
+        source_type: 'message',
+        source_id: 'm-will-be-empty',
+        title: 'Raw event without source id',
+        content: 'This event should not stringify an empty source id.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+        tenant_id: 'default',
+        project_id: 'repo-a',
+        memory_scope_kind: 'project',
+        memory_scope_id: 'repo-a',
+      }).event_index_id;
+      adapter
+        .prepare("UPDATE connector_event_index SET source_id = '' WHERE event_index_id = ?")
+        .run(rawId);
+
+      const result = readRawCandidates(adapter, input());
+
+      expect(result.source_refs).toHaveLength(1);
+      expect(result.source_refs[0]).toMatchObject({
+        kind: 'raw',
+        connector: 'slack',
+        raw_id: rawId,
+      });
+      expect(result.source_refs[0]).not.toHaveProperty('source_id');
     });
 
     it('graph reader maps only visible twin-edge neighbors returned by the visibility API', () => {
