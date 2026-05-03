@@ -218,7 +218,7 @@ describe('agent-handler', () => {
       expect(res._status).toBe(400);
     });
 
-    it('accepts supported gemini backend values', async () => {
+    it('rejects unsupported gemini backend values', async () => {
       const config = makeConfig({});
       const res = mockRes();
       await handleCreateAgent(
@@ -231,7 +231,7 @@ describe('agent-handler', () => {
           writePersonaFile: vi.fn(),
         }
       );
-      expect(res._status).toBe(201);
+      expect(res._status).toBe(400);
     });
   });
 

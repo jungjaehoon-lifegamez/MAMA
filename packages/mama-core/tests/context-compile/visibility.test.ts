@@ -6,6 +6,7 @@ import {
   derivePrimaryContextScope,
   sanitizeContextPacketForVisibility,
 } from '../../src/context-compile/visibility.js';
+import { applyContextBoundaryReadDefaults } from '../../src/context-compile/boundary-defaults.js';
 
 describe('Story V0.21: Context compile visibility - AC2', () => {
   it('AC: canonicalizes scope order and produces a stable scope hash', () => {
@@ -105,6 +106,20 @@ describe('Story V0.21: Context compile visibility - AC2', () => {
         seedRefs: [{ kind: 'raw', raw_id: 'event-1', connector: 'discord' }],
       })
     ).toThrow(/connector/i);
+  });
+
+  it('AC: preserves omitted tenant ids while retaining explicit null tenant ids', () => {
+    const omittedTenant = applyContextBoundaryReadDefaults(
+      { task: 'compile' },
+      { scopes: [{ kind: 'project', id: 'alpha' }] }
+    );
+    const explicitNullTenant = applyContextBoundaryReadDefaults(
+      { task: 'compile', tenant_id: null },
+      { scopes: [{ kind: 'project', id: 'alpha' }] }
+    );
+
+    expect(omittedTenant).not.toHaveProperty('tenant_id');
+    expect(explicitNullTenant).toHaveProperty('tenant_id', null);
   });
 
   it('AC: removes hidden candidate identifiers from every public packet field shape', () => {

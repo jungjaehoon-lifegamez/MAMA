@@ -295,6 +295,27 @@ describe('AgentProcessManager env vars by tier', () => {
       expect(systemPrompt).not.toContain('declare function code_act');
       expect(systemPrompt).not.toContain('declare function mcp__brave-search__');
     });
+
+    it('removes blocked gateway tools from generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['*'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function mama_save');
+    });
   });
 
   // Story: BMAD-SEL-001 — BMAD prompt block injection selection logic
