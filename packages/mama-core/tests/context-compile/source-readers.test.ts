@@ -101,12 +101,11 @@ function insertScopedDecision(
     topic: string;
     summary: string;
     details: string;
-    scopeId?: string;
+    scopeId?: string | null;
     timestampMs?: number;
   }
 ): void {
-  const scopeId = input.scopeId ?? 'repo-a';
-  const memoryScopeId = `scope_project_${scopeId}`;
+  const scopeId = input.scopeId === undefined ? 'repo-a' : input.scopeId;
   const timestampMs = input.timestampMs ?? 1_200;
   adapter
     .prepare(
@@ -131,6 +130,10 @@ function insertScopedDecision(
       input.summary,
       timestampMs
     );
+  if (scopeId === null) {
+    return;
+  }
+  const memoryScopeId = `scope_project_${scopeId}`;
   adapter
     .prepare(
       `
@@ -204,6 +207,57 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         hidden: { total: 0, by_kind: {}, by_reason: {} },
         source_refs: [],
       });
+    });
+
+    it('hides operational memory summaries from substantive context tasks', async () => {
+      const result = await readMemoryCandidates(
+        input({ task: 'recent substantive project decisions' }),
+        {
+          recallMemory: async () =>
+            recallBundle([
+              memory({
+                id: 'mem-dashboard',
+                topic: 'dashboard_briefing',
+                summary: 'Dashboard briefing with repeated operational rollup text.',
+              }),
+              memory({
+                id: 'mem-policy',
+                topic: 'security-alert-channels-policy',
+                summary: 'MAMA_SECURITY_ALERT_CHANNELS must be set for public exposure.',
+              }),
+            ]),
+        }
+      );
+
+      expect(result.source_refs).toEqual([{ kind: 'memory', id: 'mem-policy' }]);
+      expect(result.hidden.by_reason).toMatchObject({ operational_summary: 1 });
+    });
+
+    it('treats legacy unscoped decisions as global system memory', async () => {
+      const adapter = createAdapter();
+      insertScopedDecision(adapter, {
+        id: 'legacy-security-policy',
+        topic: 'security-alert-channels-policy',
+        summary: 'MAMA_SECURITY_ALERT_CHANNELS must be set before public exposure.',
+        details: 'Legacy decisions without memory_scope_bindings are global system memory.',
+        scopeId: null,
+      });
+
+      const result = await readMemoryCandidates(
+        input({
+          task: 'security alert channels policy',
+          scopes: [{ kind: 'global', id: 'system' }],
+          boundary: {
+            scopes: [{ kind: 'global', id: 'system' }],
+            connectors: ['slack'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+          },
+        }),
+        { adapter }
+      );
+
+      expect(result.source_refs).toEqual([{ kind: 'memory', id: 'legacy-security-policy' }]);
     });
 
     it('uses boundary scopes as defaults for direct exported memory reader calls', async () => {

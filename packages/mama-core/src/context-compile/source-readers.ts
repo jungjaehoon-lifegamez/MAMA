@@ -398,6 +398,36 @@ function memoryTimestampSql(): string {
   return 'COALESCE(d.event_datetime, d.updated_at, d.created_at)';
 }
 
+const OPERATIONAL_MEMORY_LABELS = [
+  'dashboard_briefing',
+  'dashboard-briefing',
+  'wiki_compilation',
+  'wiki-compilation',
+  'system-audit',
+  'system_audit',
+] as const;
+
+function isOperationalMemoryTopic(topic: string): boolean {
+  const normalized = topic.trim().toLowerCase();
+  return (
+    OPERATIONAL_MEMORY_LABELS.some(
+      (label) => normalized === label || normalized.startsWith(`${label}_`)
+    ) ||
+    normalized.startsWith('audit_') ||
+    normalized.startsWith('audit-')
+  );
+}
+
+function taskRequestsOperationalMemory(task: string): boolean {
+  const normalized = task.toLowerCase();
+  return (
+    OPERATIONAL_MEMORY_LABELS.some((label) => normalized.includes(label)) ||
+    normalized.includes('audit log') ||
+    normalized.includes('audit-log') ||
+    normalized.includes('raw audit')
+  );
+}
+
 function adapterScopedRecallMemory(
   adapter: ContextSourceAdapter,
   input: ContextSourceReadInput
@@ -418,9 +448,25 @@ function adapterScopedRecallMemory(
   params.push(...EXCLUDED_MEMORY_STATUSES);
 
   if (scopes.length > 0) {
-    joins.push('JOIN memory_scope_bindings msb ON msb.memory_id = d.id');
-    joins.push('JOIN memory_scopes ms ON ms.id = msb.scope_id');
-    where.push(`(${scopes.map(() => '(ms.kind = ? AND ms.external_id = ?)').join(' OR ')})`);
+    const includesLegacyGlobalSystem = scopes.some(
+      (scope) => scope.kind === 'global' && scope.id === 'system'
+    );
+    joins.push(
+      includesLegacyGlobalSystem
+        ? 'LEFT JOIN memory_scope_bindings msb ON msb.memory_id = d.id'
+        : 'JOIN memory_scope_bindings msb ON msb.memory_id = d.id'
+    );
+    joins.push(
+      includesLegacyGlobalSystem
+        ? 'LEFT JOIN memory_scopes ms ON ms.id = msb.scope_id'
+        : 'JOIN memory_scopes ms ON ms.id = msb.scope_id'
+    );
+    const scopeMatch = scopes.map(() => '(ms.kind = ? AND ms.external_id = ?)').join(' OR ');
+    where.push(
+      includesLegacyGlobalSystem
+        ? `((${scopeMatch}) OR NOT EXISTS (SELECT 1 FROM memory_scope_bindings legacy_msb WHERE legacy_msb.memory_id = d.id))`
+        : `(${scopeMatch})`
+    );
     for (const scope of scopes) {
       params.push(scope.kind, scope.id);
     }
@@ -569,8 +615,13 @@ export async function readMemoryCandidates(
   const candidates: ContextCandidate[] = [];
   const hidden = hiddenAggregate();
   const requiresTime = timeFilterRequired(effectiveInput);
+  const allowOperationalMemory = taskRequestsOperationalMemory(effectiveInput.task);
   for (const memory of bundle.memories) {
     const ref: ContextRef = { kind: 'memory', id: memory.id };
+    if (!allowOperationalMemory && isOperationalMemoryTopic(memory.topic)) {
+      candidates.push(hiddenCandidate(ref, 'memory', 'operational_summary'));
+      continue;
+    }
     const timestampMs = memoryTimestampMs(memory);
     if (timestampMs === null && requiresTime) {
       candidates.push(hiddenCandidate(ref, 'memory', 'timestamp_missing'));
