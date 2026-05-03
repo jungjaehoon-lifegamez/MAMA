@@ -149,7 +149,8 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - **Gateway Integrations:** Discord, Slack, Telegram bot support
 - **Multi-Agent Swarm:** 3-tier agent hierarchy with delegation and UltraWork mode
 - **Memory Writer Agent:** Candidate-driven memory pipeline with `SaveCandidateExtractor` (rule-based), `AuditTaskQueue` (serial), memory-agent-ack (candidate-aware), and dashboard API (`/api/memory-agent/stats`, `/api/memory-agent/dashboard`)
-- **Code-Act Sandbox:** QuickJS-based sandboxed code execution for agents (Tier 3 safe)
+- **Code-Act Sandbox:** QuickJS-based sandboxed code execution for opted-in agents with
+  per-agent allowlists
 - **Onboarding Wizard:** 10-phase autonomous discovery
 - **Cron Scheduler:** Scheduled task execution with heartbeat
 - **MAMA OS Viewer:** Graph viewer, mobile chat, and Log Viewer v2
@@ -163,7 +164,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 - `@anthropic-ai/sdk` - Claude API integration
 - `discord.js`, `@slack/bolt`, `node-telegram-bot-api` - Gateway integrations
 - `express`, `ws` - HTTP/WebSocket server
-- `quickjs-emscripten`, `@jitl/quickjs-wasmfile-release-asyncify` - QuickJS sandbox for Code-Act
+- `quickjs-emscripten` - QuickJS sandbox for Code-Act
 
 **Distribution:** npm package (`@jungjaehoon/mama-os`)
 
@@ -255,10 +256,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.6.0 (stable API)
+- **mama-core:** 1.6.1 (stable API)
 - **mama-server:** 1.14.0 (follows MAMA version)
 - **claude-code-plugin:** 1.10.0 (follows MAMA version)
-- **mama-os:** 0.20.0 (standalone agent)
+- **mama-os:** 0.20.1 (standalone agent)
 
 ## Distribution Strategy
 

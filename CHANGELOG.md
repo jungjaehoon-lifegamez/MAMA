@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.1] / mama-core [1.6.1] / mama-os [0.20.1] - 2026-05-03
+
+### Added
+
+- **Context Compile V0 release surface** — Added append-only `context_packets`,
+  deterministic source readers/policy, `context_compile` gateway/API surfaces, and the
+  `@jungjaehoon/mama-core/context-compile` package export so workers can compile
+  selected/rejected/missing evidence for a task
+- **Trusted context-packet saves** — `mama_save` can now attach a trusted `context_packet_id`
+  from the active envelope/model run, preserving source refs from compiled context through memory
+  provenance
+
+### Fixed
+
+- **Code-Act policy hardening** — `/api/code-act` now fails closed unless the resolved agent exists
+  and explicitly opts into Code-Act, and request allow/deny lists can only narrow the configured
+  per-agent gateway policy
+- **Context boundary hardening** — Direct compiler/source-reader calls now clamp `as_of` and
+  range to active boundaries, preserve tenant boundaries, reject blank `as_of` values, and block
+  Tier 3 `context_compile` writes
+
 ## [0.20.0] / mama-core [1.6.0] / mcp-server [1.14.0] / plugin [1.10.0] - 2026-05-01
 
 ### Added
@@ -18,13 +39,6 @@ All notable changes to this project will be documented in this file.
   replay compatibility helpers, and lifecycle hardening for reconstructing what an agent did
 - **Worker context APIs** — Added unified raw search, agent situation packets, and worker graph/entity
   APIs so subordinate agents can read bounded evidence without manually stitching DB internals
-- **Context Compile V0** — Added append-only `context_packets`, deterministic source
-  readers/policy, `context_compile` gateway/API surfaces, and the
-  `@jungjaehoon/mama-core/context-compile` package export so workers can compile
-  selected/rejected/missing evidence for a task
-- **Trusted context-packet saves** — `mama_save` can now attach a trusted `context_packet_id`
-  from the active envelope/model run, preserving source refs from compiled context through memory
-  provenance
 - **Twin edge ledger** — Added first-class twin edges with ref validation, visibility rules, and
   graph provenance tests for durable relationships between memory, raw, entity, and case refs
 - **Strict memory search controls** — `mama_search`, MCP search, and `mama.suggest()` now accept
@@ -61,9 +75,6 @@ All notable changes to this project will be documented in this file.
 - **Persistent CLI process buildup** — Standalone now reclaims idle persistent Claude processes,
   preserves active tool-result leases, and makes `mama stop` process discovery safer under large
   process tables
-- **Context boundary hardening** — Direct compiler/source-reader calls now clamp `as_of` and
-  range to active boundaries, preserve tenant boundaries, reject blank `as_of` values, and block
-  Tier 3 `context_compile` writes
 
 ## [0.19.1] / mama-core [1.5.0] / mcp-server [1.13.0] - 2026-04-20
 

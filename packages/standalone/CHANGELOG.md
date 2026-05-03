@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-05-03
+
+### Added
+
+- **Context Compile runtime path** — Added the standalone service, gateway tool, HTTP integration,
+  model-run lineage, and trusted `context_packet_id` save provenance for compiled evidence packets
+
+### Fixed
+
+- **Code-Act policy hardening** — `/api/code-act` now requires an existing `useCodeAct: true`
+  agent, intersects request allowlists with configured gateway policy, handles blocked-only policy
+  safely, and avoids falling back to full MCP configs for Code-Act-only agents
+- **Trusted provenance fail-closed paths** — Packet-backed `mama_save` calls now reject invalid or
+  unavailable trusted provenance instead of widening scopes or silently dropping `context_packet_id`
+
 ## [0.20.0] - 2026-05-01
 
 ### Added
