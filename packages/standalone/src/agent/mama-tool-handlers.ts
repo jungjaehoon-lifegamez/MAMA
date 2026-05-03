@@ -61,7 +61,13 @@ export async function handleSave(
     };
     if (options) {
       if (!api.saveWithTrustedProvenance) {
-        return await api.save(payload);
+        if (!options.provenance.context_packet_id) {
+          return await api.save(payload);
+        }
+        return {
+          success: false,
+          message: 'Trusted provenance save is unavailable.',
+        };
       }
       return await api.saveWithTrustedProvenance(payload, options);
     }

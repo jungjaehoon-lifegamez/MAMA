@@ -313,6 +313,49 @@ describe('graph api helpers', () => {
     }
   });
 
+  it('passes Code-Act caller identity and gateway allowlist to the executor', async () => {
+    const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+    process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+    const executeCodeAct = vi.fn().mockResolvedValue({
+      success: true,
+      value: 1,
+      logs: [],
+      metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+    });
+    try {
+      const handler = createGraphHandler({ executeCodeAct });
+      const req = createBodyReq(
+        '/api/code-act',
+        JSON.stringify({
+          code: 'mama_search({query:"ctx"})',
+          agent_id: 'dashboard-agent',
+          allowed_tools: ['mama_search', 'report_publish'],
+          blocked_tools: ['mama_save'],
+        }),
+        {
+          remoteAddress: '127.0.0.88',
+          headers: { authorization: 'Bearer test-code-act-token' },
+        }
+      );
+      const res = createMockRes();
+
+      expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+
+      expect(res._status).toBe(200);
+      expect(executeCodeAct).toHaveBeenCalledWith('mama_search({query:"ctx"})', {
+        agentId: 'dashboard-agent',
+        allowedTools: ['mama_search', 'report_publish'],
+        blockedTools: ['mama_save'],
+      });
+    } finally {
+      if (previousAuthToken === undefined) {
+        delete process.env.MAMA_AUTH_TOKEN;
+      } else {
+        process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+      }
+    }
+  });
+
   it('ignores spoofed x-forwarded-for for Code-Act rate limits from untrusted peers', async () => {
     const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
     const previousAuthToken = process.env.MAMA_AUTH_TOKEN;

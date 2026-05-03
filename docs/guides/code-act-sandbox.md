@@ -46,23 +46,23 @@ Tools are accessed through HostBridge via the gateway. Available tools vary by T
 
 ### Tier 1 (Full Access)
 
-| Category      | Tools                                                             |
-| ------------- | ----------------------------------------------------------------- |
-| **Memory**    | `mama_search`, `mama_save`, `mama_update`, `mama_load_checkpoint` |
-| **File**      | `Read`, `Write`, `Grep`, `Glob`                                   |
-| **Execution** | `Bash`                                                            |
-| **Messaging** | `discord_send`, `slack_send`, `telegram_send`                     |
-| **Browser**   | `browser_get_text`, `browser_screenshot`                          |
-| **PR**        | `pr_review_threads`                                               |
-| **MCP**       | All dynamically registered MCP tools                              |
+| Category      | Tools                                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| **Memory**    | `mama_search`, `mama_recall`, `mama_save`, `context_compile`, `mama_update`, `mama_load_checkpoint`, `mama_add`, `mama_ingest` |
+| **File**      | `Read`, `Write`, `Grep`, `Glob`                                                                                                |
+| **Execution** | `Bash`                                                                                                                         |
+| **Messaging** | `discord_send`, `slack_send`, `telegram_send`                                                                                  |
+| **Browser**   | `browser_get_text`, `browser_screenshot`                                                                                       |
+| **PR**        | `pr_review_threads`                                                                                                            |
+| **MCP**       | All dynamically registered MCP tools                                                                                           |
 
-### Tier 2 (Read-Only)
+### Tier 2 (Scoped Read + Memory Write)
 
-`mama_search`, `mama_load_checkpoint`, `Read`, `Grep`, `Glob`, `browser_get_text`, `browser_screenshot`, `pr_review_threads`
+`mama_search`, `mama_recall`, `mama_save`, `context_compile`, `mama_update`, `mama_load_checkpoint`, `mama_add`, `mama_ingest`, `report_publish`, `wiki_publish`, `Read`, `Grep`, `Glob`, `browser_get_text`, `browser_screenshot`, `pr_review_threads`
 
-### HTTP API (Tier 3 Restricted)
+### HTTP API
 
-Only Tier 3 tools are available when accessed externally via `POST /api/code-act`.
+`POST /api/code-act` defaults to Tier 2 and enforces the caller agent's gateway allowlist when called through the MCP proxy. Set `MAMA_CODE_ACT_READ_ONLY=true` to force Tier 3 read-only injection.
 
 ---
 
@@ -73,14 +73,17 @@ Only Tier 3 tools are available when accessed externally via `POST /api/code-act
 ```bash
 curl -X POST http://localhost:3847/api/code-act \
   -H "Content-Type: application/json" \
-  -d '{"code": "const results = await mama_search({query: \"auth\"}); return results;"}'
+  -d '{"code": "var results = mama_search({query: \"auth\"}); results"}'
 ```
 
 **Request:**
 
 ```json
 {
-  "code": "const results = await mama_search({query: 'auth'}); return results;"
+  "code": "var results = mama_search({query: 'auth'}); results",
+  "agent_id": "dashboard-agent",
+  "allowed_tools": ["mama_search", "report_publish"],
+  "blocked_tools": ["mama_save"]
 }
 ```
 
@@ -134,13 +137,13 @@ The QuickJS WASM engine provides a fully isolated environment.
 ### Tier-Based Access Control
 
 - **Tier 1 + `useCodeAct: true`**: All functions injected
-- **Tier 2 + `useCodeAct: true`**: Read-only functions only injected
+- **Tier 2 + `useCodeAct: true`**: scoped read, memory-write, dashboard, and wiki functions are injected according to the caller allowlist
 - **Tier 3**: Code-Act disabled (falls back to tool_call mode)
 - **HTTP API** (`/api/code-act`): Only Tier 3 tools available
 
 ### MCP Registration
 
-Code-Act is also registered as a separate MCP server (`code-act-server.ts`), allowing LLMs to invoke it directly as a `code_act` tool. Actual execution is proxied to `POST /api/code-act`.
+Code-Act is also registered as a separate MCP server (`code-act-server.ts`), allowing LLMs to invoke it directly as a `code_act` tool. Actual execution is proxied to `POST /api/code-act` with `MAMA_CODE_ACT_AGENT_ID`, `MAMA_CODE_ACT_ALLOWED_TOOLS`, and `MAMA_CODE_ACT_BLOCKED_TOOLS` propagated from the per-agent MCP config.
 
 ---
 

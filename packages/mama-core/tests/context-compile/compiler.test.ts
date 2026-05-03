@@ -194,7 +194,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     expect(packet.budget.used_tool_calls).toBe(1);
   });
 
-  it('cooperatively fails on deadline or abort signal before reading sources', async () => {
+  it('cooperatively aborts on signal but returns a partial packet on budget deadline', async () => {
     const aborted = new AbortController();
     aborted.abort();
 
@@ -208,15 +208,45 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       )
     ).rejects.toThrow(/aborted/i);
 
-    await expect(
-      compileContext(
-        {
-          task: 'compile branch context',
-          scopes: [{ kind: 'project', id: 'repo-a' }],
-        },
-        compilerDeps({ now: () => 2_000, deadlineMs: 1_000 })
-      )
-    ).rejects.toThrow(/deadline/i);
+    const packet = await compileContext(
+      {
+        task: 'compile branch context',
+        scopes: [{ kind: 'project', id: 'repo-a' }],
+      },
+      compilerDeps({ now: () => 2_000, deadlineMs: 1_000 })
+    );
+
+    expect(packet.caveats).toContain('budget_exhausted');
+    expect(packet.budget).toMatchObject({
+      budget_exhausted: true,
+      used_tool_calls: 0,
+    });
+  });
+
+  it('includes the audit envelope fields required by the ContextPacket contract', async () => {
+    const packet = await compileContext(
+      {
+        task: 'compile branch context',
+        scopes: [{ kind: 'project', id: 'repo-a' }],
+        range: { start_ms: 1_000, end_ms: 2_000 },
+        as_of: 2_000,
+        strictness: 'strict',
+        max_tool_calls: 0,
+      },
+      compilerDeps()
+    );
+
+    expect(packet).toMatchObject({
+      mode: 'general',
+      range: { start_ms: 1_000, end_ms: 2_000 },
+      as_of: 2_000,
+      compiler_version: expect.any(String),
+      rejected_refs_truncated: false,
+      budget_manifest: {
+        budget_exhausted: false,
+        skipped_operators: expect.any(Array),
+      },
+    });
   });
 
   it('records token budget estimates and rejects over-budget evidence', async () => {
@@ -835,6 +865,60 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       kind: 'raw',
       connector: 'slack',
       raw_id: visibleRawId,
+      source_id: 'm-visible-seed',
+      channel_id: 'C-eng',
     });
+  });
+
+  it('canonicalizes raw seed source/channel metadata from connector_event_index', async () => {
+    const adapter = createAdapter();
+    const rawId = upsertConnectorEventIndex(adapter, {
+      source_connector: 'slack',
+      source_type: 'message',
+      source_id: 'm-canonical',
+      channel: 'C-canonical',
+      title: 'Canonical seed',
+      content: 'Canonical raw seed context.',
+      event_datetime: 1_200,
+      source_timestamp_ms: 1_200,
+      tenant_id: 'default',
+      project_id: 'repo-a',
+      memory_scope_kind: 'project',
+      memory_scope_id: 'repo-a',
+    }).event_index_id;
+
+    const packet = await compileContext(
+      {
+        task: 'compile branch context',
+        seed_refs: [
+          {
+            kind: 'raw',
+            connector: 'slack',
+            raw_id: rawId,
+            source_id: 'm-forged',
+            channel_id: 'C-forged',
+          },
+        ],
+        max_tool_calls: 0,
+      },
+      compilerDeps({
+        adapter,
+        boundary: {
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+          connectors: ['slack'],
+          project_refs: [{ kind: 'project', id: 'repo-a' }],
+          tenant_id: 'default',
+        },
+      })
+    );
+
+    expect(packet.source_refs).toContainEqual({
+      kind: 'raw',
+      connector: 'slack',
+      raw_id: rawId,
+      source_id: 'm-canonical',
+      channel_id: 'C-canonical',
+    });
+    expect(JSON.stringify(packet.source_refs)).not.toContain('forged');
   });
 });

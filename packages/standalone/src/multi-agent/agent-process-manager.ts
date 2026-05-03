@@ -59,6 +59,43 @@ function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
   return pattern === toolName;
 }
 
+function safeConfigId(agentId: string): string {
+  return agentId.replace(/[^a-zA-Z0-9_.-]/g, '_');
+}
+
+function codeActBlockedTools(agentConfig: Omit<AgentPersonaConfig, 'id'>): string[] | undefined {
+  return agentConfig.gateway_tool_permissions?.blocked ?? agentConfig.tool_permissions?.blocked;
+}
+
+function withCodeActPolicyEnv(
+  entry: unknown,
+  agentId: string,
+  allowedTools: string[] | undefined,
+  blockedTools: string[] | undefined
+): unknown {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return entry;
+  }
+  const current = entry as Record<string, unknown>;
+  const currentEnv =
+    current.env && typeof current.env === 'object' && !Array.isArray(current.env)
+      ? (current.env as Record<string, unknown>)
+      : {};
+  return {
+    ...current,
+    env: {
+      ...currentEnv,
+      MAMA_CODE_ACT_AGENT_ID: agentId,
+      ...(allowedTools !== undefined
+        ? { MAMA_CODE_ACT_ALLOWED_TOOLS: JSON.stringify(allowedTools) }
+        : {}),
+      ...(blockedTools !== undefined
+        ? { MAMA_CODE_ACT_BLOCKED_TOOLS: JSON.stringify(blockedTools) }
+        : {}),
+    },
+  };
+}
+
 /**
  * Convert model ID to human-readable display name
  */
@@ -276,16 +313,35 @@ export class AgentProcessManager extends EventEmitter {
     if (existsSync(mcpConfigPath)) {
       if (agentConfig.useCodeAct) {
         // Code-Act agents: only provide code-act MCP server
-        const codeActOnlyConfig = resolve(homedir(), '.mama', 'code-act-only-mcp-config.json');
+        const codeActOnlyConfig = resolve(
+          homedir(),
+          '.mama',
+          `code-act-only-mcp-config-${safeConfigId(agentId)}.json`
+        );
         try {
           const fullConfig = JSON.parse(readFileSync(mcpConfigPath, 'utf-8')) as {
             mcpServers?: Record<string, unknown>;
           };
           const codeActEntry = fullConfig.mcpServers?.['code-act'];
           if (codeActEntry) {
+            const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
+            const blockedTools = codeActBlockedTools(agentConfig);
             writeFileSync(
               codeActOnlyConfig,
-              JSON.stringify({ mcpServers: { 'code-act': codeActEntry } }, null, 2),
+              JSON.stringify(
+                {
+                  mcpServers: {
+                    'code-act': withCodeActPolicyEnv(
+                      codeActEntry,
+                      agentId,
+                      allowedTools,
+                      blockedTools
+                    ),
+                  },
+                },
+                null,
+                2
+              ),
               'utf-8'
             );
             options.mcpConfigPath = codeActOnlyConfig;

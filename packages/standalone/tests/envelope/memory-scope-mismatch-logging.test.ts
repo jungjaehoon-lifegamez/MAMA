@@ -215,7 +215,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
-  it('logs out-of-scope mama_save writes but still allows the write to proceed', async () => {
+  it('denies out-of-scope mama_save writes and records the mismatch without leaking payloads', async () => {
     const { db, executor, mamaApi, metricsStore } = createExecutorHarness();
     const envelope = makeSignedEnvelope({
       source: 'telegram',
@@ -247,8 +247,11 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       }
     );
 
-    expect(result).toMatchObject({ success: true });
-    expect(mamaApi.save).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      success: false,
+      code: 'memory_scope_out_of_scope',
+    });
+    expect(mamaApi.save).not.toHaveBeenCalled();
     const [row] = readGatewayToolRows(db);
     expect(row.scope_mismatch).toBe(1);
     expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'global', id: 'system' }]);
@@ -273,8 +276,8 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
-  it('treats omitted memory scopes as forensic mismatch without injecting synthetic scopes', async () => {
-    const { db, executor, mamaApi } = createExecutorHarness();
+  it('defaults omitted mama_save scopes to the active envelope scopes', async () => {
+    const { db, executor, mamaApi, metricsStore } = createExecutorHarness();
     const envelope = makeSignedEnvelope({
       source: 'telegram',
       channel_id: 'abc',
@@ -292,7 +295,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
         type: 'decision',
         topic: 'scope',
         decision: 'omitted scopes',
-        reasoning: 'keeps existing save semantics',
+        reasoning: 'inherits the active envelope scope',
       },
       {
         agentId: 'chat_bot',
@@ -306,16 +309,19 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
 
     expect(result).toMatchObject({ success: true });
     expect(mamaApi.save).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        scopes: expect.any(Array),
+      expect.objectContaining({
+        scopes: [{ kind: 'channel', id: 'telegram:abc' }],
       })
     );
     const [row] = readGatewayToolRows(db);
-    expect(row.scope_mismatch).toBe(1);
-    expect(parseScopes(row.requested_scopes)).toEqual([]);
+    expect(row.scope_mismatch).toBe(0);
+    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'channel', id: 'telegram:abc' }]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       { kind: 'channel', id: 'telegram:abc' },
     ]);
+    expect(metricsStore.record).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'envelope_scope_mismatch' })
+    );
     db.close();
   });
 
@@ -375,6 +381,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       input: GatewayToolInput;
       assertWrite: (api: MAMAApiInterface) => void;
       expectedRequestedScope?: { kind: string; id: string };
+      expectedSuccess?: boolean;
     }> = [
       {
         toolName: 'mama_save',
@@ -385,8 +392,9 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
           reasoning: 'global scope request',
           scopes: [{ kind: 'global', id: 'system' }],
         },
-        assertWrite: (api) => expect(api.save).toHaveBeenCalledOnce(),
+        assertWrite: (api) => expect(api.save).not.toHaveBeenCalled(),
         expectedRequestedScope: { kind: 'global', id: 'system' },
+        expectedSuccess: false,
       },
       {
         toolName: 'mama_update',
@@ -435,7 +443,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
         executionSurface: 'model_tool',
       });
 
-      expect(result).toMatchObject({ success: true });
+      expect(result).toMatchObject({ success: item.expectedSuccess ?? true });
       item.assertWrite(mamaApi);
       const [row] = readGatewayToolRows(db);
       expect(row).toMatchObject({

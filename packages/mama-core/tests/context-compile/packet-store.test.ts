@@ -67,10 +67,14 @@ function packet(overrides: Partial<ContextPacket> = {}): ContextPacket {
   const scopeInfo = canonicalizeContextScopes(SCOPES);
   return {
     packet_id: 'ctxp_a',
+    mode: 'general',
     task: 'compile branch context',
     scopes: scopeInfo.scopes,
     scope_hash: scopeInfo.scopeHash,
     generated_at: '2026-05-01T00:00:00.000Z',
+    range: null,
+    as_of: null,
+    compiler_version: 'context-compile-v0',
     source_refs: SOURCE_REFS,
     selected_evidence: [
       {
@@ -85,11 +89,12 @@ function packet(overrides: Partial<ContextPacket> = {}): ContextPacket {
     evidence_clusters: [{ id: 'cluster-a', refs: ['memory:mem-a'] }],
     related_decisions: [],
     rejected_refs: [],
+    rejected_refs_truncated: false,
     rejected_summary: [],
     missing_context: [],
     caveats: [],
     expansion_trace: [{ step: 'seed', refs: SOURCE_REFS.length }],
-    retrieval_diagnostics: { strictness: 'medium' },
+    retrieval_diagnostics: { strictness: 'balanced' },
     budget: {
       max_tool_calls: 6,
       used_tool_calls: 2,
@@ -97,6 +102,11 @@ function packet(overrides: Partial<ContextPacket> = {}): ContextPacket {
       elapsed_ms: 300,
       max_tokens: 8_000,
       estimated_tokens: 600,
+      budget_exhausted: false,
+    },
+    budget_manifest: {
+      budget_exhausted: false,
+      skipped_operators: [],
     },
     ...overrides,
   };

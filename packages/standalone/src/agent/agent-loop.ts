@@ -1516,10 +1516,11 @@ export class AgentLoop {
       model_id: options?.model ?? this.model ?? null,
       model_provider: this.backend,
       agent_id:
-        agentContext?.source === 'viewer'
+        options?.envelope?.agent_id ??
+        (agentContext?.source === 'viewer'
           ? 'os-agent'
-          : (agentContext?.roleName ?? options?.source ?? 'agent'),
-      instance_id: agentContext?.session?.sessionId ?? null,
+          : (agentContext?.roleName ?? options?.source ?? 'agent')),
+      instance_id: options?.envelope?.instance_id ?? agentContext?.session?.sessionId ?? null,
       envelope_hash: options?.envelope?.envelope_hash ?? null,
       parent_model_run_id: options?.parentModelRunId ?? null,
       status: 'running',

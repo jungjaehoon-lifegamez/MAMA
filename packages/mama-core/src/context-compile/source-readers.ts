@@ -364,16 +364,9 @@ function adapterScopedRecallMemory(
   input: ContextSourceReadInput
 ): RecallBundle {
   if (!tableExists(adapter, 'decisions')) {
-    return {
-      profile: { static: [], dynamic: [], evidence: [] },
-      memories: [],
-      graph_context: { primary: [], expanded: [], edges: [] },
-      search_meta: {
-        query: input.task,
-        scope_order: [],
-        retrieval_sources: ['context_compile_adapter'],
-      },
-    };
+    throw new Error(
+      'Context compile memory reader requires a migrated memory database with a decisions table.'
+    );
   }
 
   const scopes = input.scopes ?? [];

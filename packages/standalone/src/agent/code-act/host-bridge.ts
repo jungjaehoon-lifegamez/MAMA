@@ -60,7 +60,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'max_tool_calls', type: 'number', required: false },
       { name: 'max_ms', type: 'number', required: false },
       { name: 'max_tokens', type: 'number', required: false },
-      { name: 'strictness', type: "'low' | 'medium' | 'high'", required: false },
+      { name: 'strictness', type: "'recall' | 'balanced' | 'strict'", required: false },
     ],
     returnType:
       '{ packet_id: string; packet: Record<string, unknown>; model_run_id?: string; parent_model_run_id?: string | null }',
