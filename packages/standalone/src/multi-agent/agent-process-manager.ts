@@ -429,6 +429,7 @@ export class AgentProcessManager extends EventEmitter {
       sandbox: this.runtimeOptions.codexSandbox,
       command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
+      mcpConfigPath: options.mcpConfigPath,
     });
   }
 

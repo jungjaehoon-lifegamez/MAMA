@@ -139,6 +139,16 @@ export class EnvelopeEnforcer {
 
     const requestedScopes = requestedMemoryScopesForTool(toolName, args);
     if (requestedScopes.length === 0) {
+      if (toolName === 'mama_save' && isRecord(args)) {
+        const hasContextPacketId =
+          typeof args.context_packet_id === 'string' && args.context_packet_id.trim().length > 0;
+        const packetBackedScopeDelegatesToTrustedValidation =
+          hasContextPacketId &&
+          (args.scopes === undefined || (Array.isArray(args.scopes) && args.scopes.length === 0));
+        if (packetBackedScopeDelegatesToTrustedValidation) {
+          return;
+        }
+      }
       if (toolName === 'context_compile' && isRecord(args) && Array.isArray(args.scopes)) {
         return;
       }

@@ -139,7 +139,7 @@ The QuickJS WASM engine provides a fully isolated environment.
 - **Tier 1 + `useCodeAct: true`**: All functions injected
 - **Tier 2 + `useCodeAct: true`**: scoped read, memory-write, dashboard, and wiki functions are injected according to the caller allowlist
 - **Tier 3**: Code-Act disabled (falls back to tool_call mode)
-- **HTTP API** (`/api/code-act`): Only Tier 3 tools available
+- **HTTP API** (`/api/code-act`): defaults to Tier 2, applies the resolved caller allowlist, and can be forced to Tier 3 read-only with `MAMA_CODE_ACT_READ_ONLY=true`
 
 ### MCP Registration
 
