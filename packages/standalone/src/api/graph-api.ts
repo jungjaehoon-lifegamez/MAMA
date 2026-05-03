@@ -129,6 +129,71 @@ const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
+function normalizeLegacyManagedBackend(backend: unknown, configPath: string): unknown {
+  if (typeof backend === 'string' && backend.toLowerCase() === 'gemini') {
+    console.warn(
+      `[GraphAPI] Deprecated backend "gemini" at ${configPath}; using "claude" for compatibility.`
+    );
+    return 'claude';
+  }
+  return backend;
+}
+
+function normalizeLegacyManagedModel(agent: Record<string, unknown>, configPath: string): boolean {
+  if (typeof agent.model === 'string' && !isClaudeModel(agent.model)) {
+    console.warn(
+      `[GraphAPI] Deprecated Gemini model at ${configPath}; using "claude-sonnet-4-6" for compatibility.`
+    );
+    agent.model = 'claude-sonnet-4-6';
+    return true;
+  }
+  return false;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function migrateLegacyManagedBackends(config: Record<string, any>): Record<string, any> {
+  let migrated = false;
+  const next = { ...config };
+
+  if (next.agent && typeof next.agent === 'object') {
+    const agent = { ...next.agent };
+    const backend = normalizeLegacyManagedBackend(agent.backend, 'agent.backend');
+    if (backend !== agent.backend) {
+      agent.backend = backend;
+      normalizeLegacyManagedModel(agent, 'agent.model');
+      next.agent = agent;
+      migrated = true;
+    }
+  }
+
+  if (next.multi_agent?.agents && typeof next.multi_agent.agents === 'object') {
+    const multiAgent = { ...next.multi_agent };
+    const agents = { ...multiAgent.agents };
+    for (const [agentId, agentConfig] of Object.entries(agents)) {
+      if (!agentConfig || typeof agentConfig !== 'object') {
+        continue;
+      }
+      const agent = { ...(agentConfig as Record<string, unknown>) };
+      const backend = normalizeLegacyManagedBackend(
+        agent.backend,
+        `multi_agent.agents.${agentId}.backend`
+      );
+      if (backend !== agent.backend) {
+        agent.backend = backend;
+        normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+        agents[agentId] = agent;
+        migrated = true;
+      }
+    }
+    if (migrated) {
+      multiAgent.agents = agents;
+      next.multi_agent = multiAgent;
+    }
+  }
+
+  return migrated ? next : config;
+}
+
 function getCodeActRateLimitMax(): number {
   const raw = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
   if (!raw) {
@@ -2477,7 +2542,8 @@ function loadMAMAConfig(): Record<string, any> {
       return {};
     }
     const content = fs.readFileSync(MAMA_CONFIG_PATH, 'utf8');
-    return (yaml.load(content) as Record<string, unknown>) || {};
+    const config = (yaml.load(content) as Record<string, unknown>) || {};
+    return migrateLegacyManagedBackends(config);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[GraphAPI] Config load error:', message);
@@ -4027,6 +4093,7 @@ export {
   parseGraphLimit,
   buildGraphMeta,
   validateConfigUpdate,
+  migrateLegacyManagedBackends,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,

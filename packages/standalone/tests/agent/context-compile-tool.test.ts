@@ -232,6 +232,34 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     );
   });
 
+  it('preserves machine-readable context_compile service error codes', async () => {
+    const serviceError = new Error('invalid compile input') as Error & {
+      code: string;
+      details: Record<string, unknown>;
+    };
+    serviceError.code = 'context_compile_input_invalid';
+    serviceError.details = { field: 'as_of' };
+    const service: ContextCompileService = {
+      compileAndPersistContext: vi.fn().mockRejectedValue(serviceError),
+    };
+    const executor = new GatewayToolExecutor({
+      contextCompileService: service,
+    });
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile context' } as GatewayToolInput,
+      makeContext()
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'context_compile_input_invalid',
+      error: expect.stringContaining('invalid compile input'),
+      details: { field: 'as_of' },
+    });
+  });
+
   it('preserves explicit empty scopes for context_compile boundary narrowing', async () => {
     const service = makeService();
     const executor = new GatewayToolExecutor({

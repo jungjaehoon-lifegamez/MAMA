@@ -10,6 +10,7 @@ import {
   buildGraphMeta,
   filterEdgesByNodes,
   mapDecisionRowToGraphNode,
+  migrateLegacyManagedBackends,
   parseGraphLimit,
   validateConfigUpdate,
   createGraphHandler,
@@ -484,6 +485,29 @@ describe('graph api helpers', () => {
         },
       })
     ).toContain('multi_agent.agents.resolver.backend must be "claude", "codex", or "codex-mcp"');
+  });
+
+  it('migrates persisted legacy Gemini managed-agent backends before validation', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const migrated = migrateLegacyManagedBackends({
+      agent: { backend: 'gemini', model: 'gemini-2.5-pro' },
+      multi_agent: {
+        agents: {
+          resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
+          coder: { backend: 'codex', model: 'gpt-5.4-mini' },
+        },
+      },
+    });
+
+    expect(migrated.agent.backend).toBe('claude');
+    expect(migrated.agent.model).toBe('claude-sonnet-4-6');
+    expect(migrated.multi_agent.agents.resolver.backend).toBe('claude');
+    expect(migrated.multi_agent.agents.resolver.model).toBe('claude-sonnet-4-6');
+    expect(migrated.multi_agent.agents.coder.backend).toBe('codex');
+    expect(validateConfigUpdate(migrated)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Deprecated backend "gemini"'));
+    warn.mockRestore();
   });
 });
 

@@ -47,6 +47,41 @@ describe('managed-agent-runtime-sync', () => {
     expect(Object.keys(agents).sort()).toEqual(['alpha', 'beta']);
   });
 
+  it('preserves codex and codex-mcp backend variants when creating agents', async () => {
+    const persistedConfig: Record<string, unknown> = {
+      multi_agent: { enabled: true, agents: {} },
+    };
+    const saveConfig = vi.fn(async (config: Record<string, unknown>) => {
+      Object.assign(persistedConfig, config);
+    });
+
+    const codex = await createManagedAgentRuntime(
+      { id: 'codex', name: 'Codex', model: 'gpt-5.4-mini', tier: 1, backend: 'codex' },
+      {
+        loadConfig: vi.fn().mockResolvedValue(persistedConfig),
+        saveConfig,
+        writePersonaFile: vi.fn(),
+      }
+    );
+    const codexMcp = await createManagedAgentRuntime(
+      {
+        id: 'codex-mcp',
+        name: 'Codex MCP',
+        model: 'gpt-5.3-codex',
+        tier: 1,
+        backend: 'codex-mcp',
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(persistedConfig),
+        saveConfig,
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(codex.snapshot.backend).toBe('codex');
+    expect(codexMcp.snapshot.backend).toBe('codex-mcp');
+  });
+
   it('uses a default persona path when updating system text without persona_file', async () => {
     const config = {
       multi_agent: {
