@@ -56,6 +56,12 @@ describe('system agent unification', () => {
       });
 
       expect(source).toContain('Use context_compile first');
+      expect(source).toContain(
+        'Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes"'
+      );
+      expect(source).toContain(
+        'Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text'
+      );
       expect(source).toContain('fall back to mama_search');
       expect(source).not.toContain('Use mama_search to find recent substantive decisions');
     });

@@ -19,6 +19,7 @@ describe('standalone memory scope context', () => {
     });
 
     expect(scopes.map((item) => item.kind)).toEqual(['global']);
+    expect(scopes).toEqual([{ kind: 'global', id: 'system' }]);
   });
 
   it('should derive user and global scopes when no channel or project exists', () => {
@@ -28,5 +29,6 @@ describe('standalone memory scope context', () => {
     });
 
     expect(scopes.map((item) => item.kind)).toEqual(['user', 'global']);
+    expect(scopes.at(-1)).toEqual({ kind: 'global', id: 'system' });
   });
 });

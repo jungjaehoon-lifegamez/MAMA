@@ -3675,15 +3675,20 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
-      const context = this.getActiveContext();
-      const fallbackScopes = context
-        ? deriveMemoryScopes({
-            source: context.source,
-            channelId: context.session.channelId,
-            userId: context.session.userId,
-            projectId: process.env.MAMA_WORKSPACE || process.cwd(),
-          })
-        : [];
+      const activeState = this.getExecutionState();
+      const context = activeState.agentContext;
+      const envelopeScopes = activeState.envelope?.scope.memory_scopes ?? null;
+      const fallbackScopes =
+        envelopeScopes && envelopeScopes.length > 0
+          ? envelopeScopes
+          : context
+            ? deriveMemoryScopes({
+                source: context.source,
+                channelId: context.session.channelId,
+                userId: context.session.userId,
+                projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+              })
+            : [];
 
       let scopes = fallbackScopes;
       if (Array.isArray(input.scopes) && input.scopes.length > 0) {

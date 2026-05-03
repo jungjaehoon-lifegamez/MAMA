@@ -313,7 +313,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
 1. Use agent_notices({limit: 50}) to find the most recent dashboard-agent publish/task_complete notice. Treat that as the last briefing boundary.
-2. Use context_compile first to find recent substantive decisions (limit 20, max_tool_calls 2, strictness "balanced"). Ignore operational run summaries such as dashboard_briefing, wiki_compilation, system-audit, and raw audit logs.
+2. Use context_compile first to find recent substantive decisions (limit 20, max_tool_calls 2, strictness "balanced").
+   Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
+   Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 20).
 3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
 4. If new substantive information exists → analyze it, write a new briefing, and publish via report_publish in the "briefing" slot.
@@ -409,7 +411,9 @@ This saves resources. Only publish when there is genuinely new information to re
           const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
 1. Use agent_notices({limit: 100}) to find the most recent wiki-agent compiled/publish/task_complete notice. Treat that as the last compilation boundary.
-2. Use context_compile first to find recent substantive decisions (limit 30, max_tool_calls 3, strictness "balanced"). Ignore operational run summaries such as wiki_compilation, dashboard_briefing, system-audit, and raw audit logs.
+2. Use context_compile first to find recent substantive decisions (limit 30, max_tool_calls 3, strictness "balanced").
+   Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
+   Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 30).
 3. If NO substantive decisions exist since the last wiki compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
 4. If new substantive decisions exist → use obsidian("search") to check existing pages, then update or create pages as needed. Clean up duplicates.
