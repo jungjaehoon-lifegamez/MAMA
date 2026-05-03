@@ -71,18 +71,12 @@ describe('system agent unification', () => {
         useCodeAct: true,
         model: 'claude-sonnet-4-6',
         tool_permissions: {
-          allowed: ['mama_search', 'report_publish', 'code_act'],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
-          ],
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: ['mama_search', 'agent_notices', 'report_publish'],
+          blocked: [],
         },
       };
       expect(dashboardAgent.tier).toBe(2);
@@ -102,18 +96,19 @@ describe('system agent unification', () => {
         useCodeAct: true,
         model: 'claude-sonnet-4-6',
         tool_permissions: {
-          allowed: ['mama_search', 'agent_notices', 'wiki_publish', 'code_act'],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: [
+            'mama_search',
+            'agent_notices',
+            'case_list',
+            'case_assemble',
+            'obsidian',
+            'wiki_publish',
           ],
+          blocked: [],
         },
       };
       expect(wikiAgent.tier).toBe(2);

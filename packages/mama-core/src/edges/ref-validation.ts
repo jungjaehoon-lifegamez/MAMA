@@ -65,7 +65,15 @@ function parseTimestamp(value: unknown): number | null {
     return Math.floor(value);
   }
   if (typeof value === 'string') {
-    const parsed = Date.parse(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return Math.floor(numeric);
+    }
+    const parsed = Date.parse(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
@@ -252,8 +260,8 @@ function isRawVisible(
   if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
     return false;
   }
-  const asOfMs = Number(rawTs);
-  if (!Number.isFinite(asOfMs) || asOfMs < 0 || !isWithinVisibilityTime(asOfMs, visibility)) {
+  const asOfMs = parseTimestamp(rawTs);
+  if (asOfMs === null || asOfMs < 0 || !isWithinVisibilityTime(asOfMs, visibility)) {
     return false;
   }
 

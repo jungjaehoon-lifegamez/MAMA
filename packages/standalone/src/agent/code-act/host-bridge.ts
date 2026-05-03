@@ -420,7 +420,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'model', type: 'string', required: true },
       { name: 'tier', type: 'number', required: true },
       { name: 'system', type: 'string', required: false },
-      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp' | 'gemini'", required: false },
+      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp'", required: false },
     ],
     returnType: '{ id: string; version: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',

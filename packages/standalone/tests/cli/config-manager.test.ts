@@ -64,7 +64,7 @@ describe('ConfigManager', () => {
     });
   });
 
-  describe('saveConfig() and loadConfig()', () => {
+  describe('STORY-CONFIG-BUILTIN-AGENTS: saveConfig/loadConfig normalization - AC1, AC2', () => {
     it('should save and load config', async () => {
       const config: MAMAConfig = {
         version: 1,
@@ -154,6 +154,7 @@ describe('ConfigManager', () => {
     });
 
     it('should merge missing built-in agents into existing multi-agent configs on load', async () => {
+      // AC: Existing configs keep custom agents while receiving newly introduced built-ins.
       const mamaDir = join(testDir, '.mama');
       await mkdir(mamaDir, { recursive: true });
       const configPath = join(mamaDir, 'config.yaml');
@@ -185,6 +186,50 @@ describe('ConfigManager', () => {
       expect(loaded.multi_agent?.agents?.custom?.tool_permissions?.allowed).toEqual(['Read']);
       expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
       expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeDefined();
+    });
+
+    it('should migrate legacy Code-Act system agent permissions on load', async () => {
+      // AC: Existing dashboard/wiki agents separate CLI permissions from gateway permissions.
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const existingConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        logging: { level: 'info', file: '~/.test/logs/test.log' },
+        multi_agent: {
+          enabled: true,
+          agents: {
+            'dashboard-agent': {
+              name: 'Dashboard Agent',
+              display_name: 'Dashboard',
+              trigger_prefix: '!dashboard',
+              persona_file: '~/.mama/personas/dashboard.md',
+              tier: 2,
+              useCodeAct: true,
+              tool_permissions: {
+                allowed: ['mama_search', 'agent_notices', 'report_publish', 'code_act'],
+                blocked: ['Bash', 'Read', 'Write', 'Edit', 'Grep', 'Glob'],
+              },
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(existingConfig));
+
+      const loaded = await loadConfig();
+      const dashboard = loaded.multi_agent?.agents?.['dashboard-agent'];
+
+      expect(dashboard?.tool_permissions?.allowed).toEqual(['Read', 'Grep', 'Glob', 'code_act']);
+      expect(dashboard?.tool_permissions?.blocked).not.toContain('Read');
+      expect(dashboard?.gateway_tool_permissions?.allowed).toEqual([
+        'mama_search',
+        'agent_notices',
+        'report_publish',
+      ]);
     });
   });
 
@@ -223,6 +268,7 @@ describe('ConfigManager', () => {
 
   describe('getDefaultMultiAgentConfig()', () => {
     it('should include os-agent in the default system agent set', () => {
+      // AC: System agents expose CLI read tools separately from Code-Act gateway tools.
       const multiAgentConfig = getDefaultMultiAgentConfig();
 
       expect(multiAgentConfig.agents['os-agent']).toBeDefined();
@@ -233,8 +279,17 @@ describe('ConfigManager', () => {
         enabled: true,
         persona_file: '~/.mama/personas/dashboard.md',
       });
+      expect(
+        multiAgentConfig.agents['dashboard-agent']?.gateway_tool_permissions?.allowed
+      ).toContain('report_publish');
       expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
-        'report_publish'
+        'Read'
+      );
+      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
+        'code_act'
+      );
+      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.blocked).not.toContain(
+        'Read'
       );
       expect(multiAgentConfig.agents['wiki-agent']).toMatchObject({
         tier: 2,
@@ -242,11 +297,15 @@ describe('ConfigManager', () => {
         enabled: true,
         persona_file: '~/.mama/personas/wiki.md',
       });
-      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain(
+      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
         'wiki_publish'
       );
-      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain(
+      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
         'agent_notices'
+      );
+      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain('Read');
+      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.blocked).not.toContain(
+        'Read'
       );
     });
 
@@ -291,7 +350,7 @@ describe('ConfigManager', () => {
       expect(errors.some((e) => e.includes('timeout'))).toBe(true);
     });
 
-    it('should accept codex and gemini backends', () => {
+    it('should accept Codex backends and reject unsupported Gemini backend values', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
@@ -301,9 +360,15 @@ describe('ConfigManager', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
-          agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' },
+          agent: { ...DEFAULT_CONFIG.agent, backend: 'codex-mcp' },
         })
       ).toHaveLength(0);
+      expect(
+        validateConfig({
+          ...DEFAULT_CONFIG,
+          agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' as 'claude' },
+        })
+      ).toContain('agent.backend must be "claude", "codex", or "codex-mcp"');
     });
 
     it('should detect invalid log level', () => {

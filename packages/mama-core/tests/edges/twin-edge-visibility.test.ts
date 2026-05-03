@@ -345,6 +345,42 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       expect(scoped).toEqual([]);
     });
 
+    it('accepts ISO timestamp strings for raw endpoint visibility checks', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const isoTimestampRaw = insertScopedRaw('raw-iso-timestamp', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      getAdapter()
+        .prepare('UPDATE connector_event_index SET event_datetime = ? WHERE event_index_id = ?')
+        .run('2026-04-29T04:00:00.000Z', isoTimestampRaw);
+      const visible = insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: isoTimestampRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(Date.parse('2026-04-29T04:30:00.000Z'), visible.edge_id);
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+          asOfMs: Date.parse('2026-04-29T05:00:00.000Z'),
+        }
+      );
+
+      expect(scoped.map((edge) => edge.edge_id)).toEqual([visible.edge_id]);
+    });
+
     it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
       insertEntityNode('entity-1', 'project', 'alpha');

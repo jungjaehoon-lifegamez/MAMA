@@ -74,7 +74,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
-type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
@@ -222,15 +222,13 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const validBackends = ['claude', 'codex', 'codex-mcp', 'gemini'] as const;
+  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const backend = config.agent.backend;
   const isValidBackend = validBackends.includes(backend as RuntimeBackend);
   process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
   if (backend === 'codex' || backend === 'codex-mcp') {
     console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
-  } else if (backend === 'gemini') {
-    console.log('✓ Gemini backend mode');
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -393,7 +391,7 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const validBackends = ['claude', 'codex', 'codex-mcp', 'gemini'] as const;
+  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const rawBackend = config.agent.backend;
   const isValidBackend = validBackends.includes(rawBackend as RuntimeBackend);
   const runtimeBackend: RuntimeBackend = isValidBackend ? (rawBackend as RuntimeBackend) : 'claude';
