@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Context Compile runtime path** — Added the standalone service, gateway tool, HTTP integration,
   model-run lineage, and trusted `context_packet_id` save provenance for compiled evidence packets
+- **Dashboard/wiki Context Compile adoption** — Managed system-agent defaults, legacy config
+  migration, personas, and scheduled prompts now route evidence gathering through
+  `context_compile` before falling back to `mama_search`
 
 ### Fixed
 

@@ -8,7 +8,9 @@ import type {
   MAMAApiInterface,
 } from '../../src/agent/types.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
+import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { EnvelopeEnforcer } from '../../src/envelope/enforcer.js';
+import { RoleManager } from '../../src/agent/role-manager.js';
 import {
   createContextCompileService,
   type ContextCompileService,
@@ -299,6 +301,77 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
         envelope_hash: envelope.envelope_hash,
       }),
     ]);
+  });
+
+  it('supports a real Code-Act workflow from context_compile to packet-backed mama_save', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    beginModelRunInAdapter(adapter, {
+      model_run_id: 'mr_code_act_parent',
+      agent_id: envelope.agent_id,
+      instance_id: envelope.instance_id,
+      envelope_hash: envelope.envelope_hash,
+      input_snapshot_ref: 'code-act:workflow',
+      input_refs: { tool: 'code_act', test: 'context_compile_workflow' },
+    });
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_code_act_context_child',
+      packetId: () => 'ctxp_code_act_workflow',
+    });
+    const api = makeTraceApi();
+    api.appendToolTrace = appendToolTrace;
+    const executor = new GatewayToolExecutor({
+      mamaApi: api,
+      contextCompileService: service,
+    });
+    const sandbox = new CodeActSandbox();
+    const bridge = new HostBridge(
+      executor,
+      new RoleManager(),
+      makeContext({ envelope, modelRunId: 'mr_code_act_parent', executionSurface: 'code_act' })
+    );
+    bridge.injectInto(sandbox, 2, {
+      allowedTools: ['context_compile', 'mama_save'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    });
+
+    const result = await sandbox.execute(`
+      var packet = context_compile({
+        task: "Compile evidence before saving the decision",
+        limit: 2,
+        max_tool_calls: 1,
+        strictness: "recall"
+      });
+      var saved = mama_save({
+        type: "decision",
+        topic: "context_compile_code_act_workflow",
+        decision: "Use context packets as the evidence bundle before durable saves.",
+        reasoning: "The Code-Act agent compiled a packet first and saved with context_packet_id.",
+        context_packet_id: packet.packet_id
+      });
+      ({ packet_id: packet.packet_id, saved_id: saved.id });
+    `);
+
+    expect(result.success).toBe(true);
+    expect(result.value).toEqual({
+      packet_id: 'ctxp_code_act_workflow',
+      saved_id: 'decision_context_packet',
+    });
+    expect(getContextPacket(adapter, 'ctxp_code_act_workflow')).toMatchObject({
+      packet_id: 'ctxp_code_act_workflow',
+      envelope_hash: envelope.envelope_hash,
+      model_run_id: 'mr_code_act_context_child',
+    });
+    expect(api.saveWithTrustedProvenance).toHaveBeenCalledOnce();
+    expect(vi.mocked(api.saveWithTrustedProvenance).mock.calls[0][1].provenance).toMatchObject({
+      context_packet_id: 'ctxp_code_act_workflow',
+      envelope_hash: envelope.envelope_hash,
+      model_run_id: 'mr_code_act_parent',
+      tool_name: 'mama_save',
+    });
   });
 
   it('preserves machine-readable context_compile service error codes', async () => {

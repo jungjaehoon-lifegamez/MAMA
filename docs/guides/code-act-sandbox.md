@@ -23,6 +23,9 @@ Code-Act: Message → LLM → JavaScript code → Multiple tools + Data processi
 - **Tier 1/2 agents**: Enable with `useCodeAct: true` in configuration
 - **Tier 3 agents**: Code-Act unavailable (automatically forced to `useCodeAct: false`)
 - **HTTP API**: `POST /api/code-act` defaults to Tier 2 and enforces the caller's request/gateway allowlist. Set `MAMA_CODE_ACT_READ_ONLY=true` to force read-only Code-Act injection.
+- **Managed system agents**: `dashboard-agent` and `wiki-agent` are Code-Act agents. Their
+  default gateway allowlists include `context_compile` so scheduled briefings/wiki compiles gather
+  packet-backed evidence before falling back to `mama_search`.
 
 ### Agent Configuration
 
@@ -118,6 +121,22 @@ curl -X POST http://localhost:3847/api/code-act \
 ```
 
 **Authentication:** Required if the `MAMA_AUTH_TOKEN` environment variable is set.
+
+### Context Compile Example
+
+`context_compile` creates a trusted, append-only context packet. It requires an active worker
+envelope, so start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` when you want packet
+provenance instead of plain search fallback.
+
+```bash
+curl -X POST http://localhost:3847/api/code-act \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent_id": "dashboard-agent",
+    "allowed_tools": ["context_compile"],
+    "code": "var p = context_compile({task: \"Brief current project risks\", limit: 20, max_tool_calls: 2, strictness: \"balanced\"}); ({packet_id: p.packet_id})"
+  }'
+```
 
 ---
 
