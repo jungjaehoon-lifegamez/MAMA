@@ -124,13 +124,20 @@ describe('Code-Act Integration', () => {
     expect(CODE_ACT_INSTRUCTIONS).toContain('console.log');
   });
 
-  it('does not describe all gateway tools when an explicit allowlist filters to none', () => {
-    const instructions = getCodeActInstructions('codex-mcp', ['code_act', 'mcp__brave-search__*']);
+  describe('Story: codex-mcp Code-Act prompt filtering', () => {
+    describe('AC: explicit allowlists that contain no gateway tools stay empty', () => {
+      it('does not describe all gateway tools when an explicit allowlist filters to none', () => {
+        const instructions = getCodeActInstructions('codex-mcp', [
+          'code_act',
+          'mcp__brave-search__*',
+        ]);
 
-    expect(instructions).toContain('USE code_act only for these allowed gateway tools');
-    expect(instructions).toContain('No gateway tools are currently allowed');
-    expect(instructions).not.toContain('USE code_act for ALL gateway tools');
-    expect(instructions).not.toContain('- Memory: mama_search');
+        expect(instructions).toContain('USE code_act only for these allowed gateway tools');
+        expect(instructions).toContain('No gateway tools are currently allowed');
+        expect(instructions).not.toContain('USE code_act for ALL gateway tools');
+        expect(instructions).not.toContain('- Memory: mama_search');
+      });
+    });
   });
 
   it('system prompt combines instructions + type definitions', () => {

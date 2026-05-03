@@ -158,6 +158,45 @@ function rangeBoundaryMs(value: unknown, field: string): number | null {
   throw new Error(`Invalid context source ${field}: ${String(value)}`);
 }
 
+function normalizeContextSourceRange(range: ContextRange | undefined): ContextRange | undefined {
+  if (!range) {
+    return undefined;
+  }
+  const startMs = rangeBoundaryMs(range.start_ms, 'range.start_ms');
+  const endMs = rangeBoundaryMs(range.end_ms, 'range.end_ms');
+  if (startMs !== null && endMs !== null && startMs > endMs) {
+    throw new RangeError(`Invalid context source range: start_ms ${startMs} > end_ms ${endMs}`);
+  }
+  if (startMs === null && endMs === null) {
+    return undefined;
+  }
+  return {
+    ...(startMs !== null ? { start_ms: startMs } : {}),
+    ...(endMs !== null ? { end_ms: endMs } : {}),
+  };
+}
+
+function normalizeContextSourceAsOf(
+  asOf: ContextSourceReadInput['as_of']
+): ContextSourceReadInput['as_of'] {
+  if (asOf === null || asOf === undefined) {
+    return asOf;
+  }
+  const parsed = parseTimestampMs(asOf);
+  if (parsed === null) {
+    throw new Error(`Invalid context source as_of: ${String(asOf)}`);
+  }
+  return parsed;
+}
+
+function normalizeTimeFilters(input: ContextSourceReadInput): ContextSourceReadInput {
+  return {
+    ...input,
+    range: normalizeContextSourceRange(input.range),
+    as_of: normalizeContextSourceAsOf(input.as_of),
+  };
+}
+
 function maxVisibleTimeMs(input: ContextSourceReadInput): number | null {
   const ends = [rangeBoundaryMs(input.range?.end_ms, 'range.end_ms'), asOfMs(input)].filter(
     (value): value is number => typeof value === 'number' && Number.isFinite(value)
@@ -497,7 +536,7 @@ export async function readMemoryCandidates(
   input: ContextSourceReadInput,
   deps: ContextSourceReaderDeps = {}
 ): Promise<ContextSourceReadResult> {
-  const effectiveInput = applyBoundaryDefaults(input);
+  const effectiveInput = normalizeTimeFilters(applyBoundaryDefaults(input));
   if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
       boundary: effectiveInput.boundary,
@@ -511,23 +550,21 @@ export async function readMemoryCandidates(
     return resultFromCandidates([], hiddenAggregate());
   }
 
+  const recallOptions = {
+    scopes: effectiveInput.scopes,
+    limit: normalizeLimit(effectiveInput.limit),
+    diagnostics: true,
+    strictness: effectiveInput.strictness,
+    threshold: effectiveInput.threshold,
+    ...(effectiveInput.range ? { range: effectiveInput.range } : {}),
+    ...(effectiveInput.as_of !== undefined ? { as_of: effectiveInput.as_of } : {}),
+  };
+
   const bundle = deps.recallMemory
-    ? await deps.recallMemory(effectiveInput.task, {
-        scopes: effectiveInput.scopes,
-        limit: normalizeLimit(effectiveInput.limit),
-        diagnostics: true,
-        strictness: effectiveInput.strictness,
-        threshold: effectiveInput.threshold,
-      })
+    ? await deps.recallMemory(effectiveInput.task, recallOptions)
     : deps.adapter
       ? adapterScopedRecallMemory(deps.adapter, effectiveInput)
-      : await defaultRecallMemory(effectiveInput.task, {
-          scopes: effectiveInput.scopes,
-          limit: normalizeLimit(effectiveInput.limit),
-          diagnostics: true,
-          strictness: effectiveInput.strictness,
-          threshold: effectiveInput.threshold,
-        });
+      : await defaultRecallMemory(effectiveInput.task, recallOptions);
 
   const candidates: ContextCandidate[] = [];
   const hidden = hiddenAggregate();
@@ -651,11 +688,15 @@ export function readRawCandidates(
     .all(...params) as Array<Record<string, unknown>>;
 
   const candidates = rows.map((row): ContextCandidate => {
+    const sourceId =
+      typeof row.source_id === 'string' && row.source_id.trim().length > 0
+        ? row.source_id
+        : undefined;
     const ref: ContextRef = {
       kind: 'raw',
       connector: String(row.source_connector),
       raw_id: String(row.event_index_id),
-      source_id: String(row.source_id),
+      ...(sourceId ? { source_id: sourceId } : {}),
       channel_id: typeof row.channel === 'string' ? row.channel : null,
     };
     return {

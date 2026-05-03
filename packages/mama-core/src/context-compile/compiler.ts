@@ -375,12 +375,17 @@ export async function compileContext(
   };
   let budgetExhausted = isBudgetDeadlineExceeded(effectiveDeps, now);
   const skippedOperators: string[] = [];
+  const markBudgetSkipped = (operator: string): void => {
+    budgetExhausted = true;
+    skippedOperators.push(operator);
+  };
 
-  if (canReadMore(state, effectiveInput)) {
+  if (!canReadMore(state, effectiveInput)) {
+    markBudgetSkipped('memory_recall');
+  } else {
     assertNotAborted(effectiveDeps);
     if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
-      budgetExhausted = true;
-      skippedOperators.push('memory_recall');
+      markBudgetSkipped('memory_recall');
     } else {
       state.usedToolCalls += 1;
       const memoryResult = await (deps.readMemoryCandidates?.(readInput) ??
@@ -390,32 +395,38 @@ export async function compileContext(
   }
 
   const shouldReadRaw = (effectiveInput.connectors?.length ?? 0) > 0;
-  if (shouldReadRaw && canReadMore(state, effectiveInput)) {
-    assertNotAborted(effectiveDeps);
-    if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
-      budgetExhausted = true;
-      skippedOperators.push('raw_window');
+  if (shouldReadRaw) {
+    if (!canReadMore(state, effectiveInput)) {
+      markBudgetSkipped('raw_window');
     } else {
-      state.usedToolCalls += 1;
-      const rawResult = await (deps.readRawCandidates?.(readInput) ??
-        (deps.adapter ? defaultReadRawCandidates(deps.adapter, readInput) : emptyResult()));
-      await appendResult(state, 'raw_window', rawResult);
+      assertNotAborted(effectiveDeps);
+      if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+        markBudgetSkipped('raw_window');
+      } else {
+        state.usedToolCalls += 1;
+        const rawResult = await (deps.readRawCandidates?.(readInput) ??
+          (deps.adapter ? defaultReadRawCandidates(deps.adapter, readInput) : emptyResult()));
+        await appendResult(state, 'raw_window', rawResult);
+      }
     }
   }
 
   const visibleRefsForGraph = uniqueRefs([...state.sourceRefs]);
-  if (visibleRefsForGraph.length > 0 && canReadMore(state, effectiveInput)) {
-    assertNotAborted(effectiveDeps);
-    if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
-      budgetExhausted = true;
-      skippedOperators.push('graph_neighborhood');
+  if (visibleRefsForGraph.length > 0) {
+    if (!canReadMore(state, effectiveInput)) {
+      markBudgetSkipped('graph_neighborhood');
     } else {
-      state.usedToolCalls += 1;
-      const graphResult = await (deps.readGraphCandidates?.(readInput, visibleRefsForGraph) ??
-        (deps.adapter
-          ? defaultReadGraphCandidates(deps.adapter, readInput, visibleRefsForGraph)
-          : emptyResult()));
-      await appendResult(state, 'graph_neighborhood', graphResult);
+      assertNotAborted(effectiveDeps);
+      if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+        markBudgetSkipped('graph_neighborhood');
+      } else {
+        state.usedToolCalls += 1;
+        const graphResult = await (deps.readGraphCandidates?.(readInput, visibleRefsForGraph) ??
+          (deps.adapter
+            ? defaultReadGraphCandidates(deps.adapter, readInput, visibleRefsForGraph)
+            : emptyResult()));
+        await appendResult(state, 'graph_neighborhood', graphResult);
+      }
     }
   }
 

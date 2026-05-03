@@ -22,7 +22,7 @@ Code-Act: Message → LLM → JavaScript code → Multiple tools + Data processi
 
 - **Tier 1/2 agents**: Enable with `useCodeAct: true` in configuration
 - **Tier 3 agents**: Code-Act unavailable (automatically forced to `useCodeAct: false`)
-- **HTTP API**: `POST /api/code-act` endpoint (only Tier 3 tools available)
+- **HTTP API**: `POST /api/code-act` defaults to Tier 2 and enforces the caller's request/gateway allowlist. Set `MAMA_CODE_ACT_READ_ONLY=true` to force read-only Code-Act injection.
 
 ### Agent Configuration
 
@@ -62,7 +62,9 @@ Tools are accessed through HostBridge via the gateway. Available tools vary by T
 
 ### HTTP API
 
-`POST /api/code-act` defaults to Tier 2 and enforces the caller agent's gateway allowlist when called through the MCP proxy. Set `MAMA_CODE_ACT_READ_ONLY=true` to force Tier 3 read-only injection.
+`POST /api/code-act` defaults to Tier 2. The handler reads `allowed_tools` and `blocked_tools` from the request body, normalizes them, and passes them into `executeCodeAct`; MCP proxy calls may also apply the caller agent's gateway allowlist before those values reach the endpoint. Set `MAMA_CODE_ACT_READ_ONLY=true` to force read-only Code-Act injection rather than fully disabling the HTTP API.
+
+Runtime reference: `packages/standalone/src/cli/commands/start.ts` computes `codeActTier` from `MAMA_CODE_ACT_READ_ONLY`.
 
 ---
 
@@ -138,8 +140,8 @@ The QuickJS WASM engine provides a fully isolated environment.
 
 - **Tier 1 + `useCodeAct: true`**: All functions injected
 - **Tier 2 + `useCodeAct: true`**: scoped read, memory-write, dashboard, and wiki functions are injected according to the caller allowlist
-- **Tier 3**: Code-Act disabled (falls back to tool_call mode)
-- **HTTP API** (`/api/code-act`): defaults to Tier 2, applies the resolved caller allowlist, and can be forced to Tier 3 read-only with `MAMA_CODE_ACT_READ_ONLY=true`
+- **Tier 3 agents**: Code-Act disabled (falls back to tool_call mode)
+- **HTTP API** (`/api/code-act`): defaults to Tier 2, applies request-provided `allowed_tools`/`blocked_tools` plus gateway allowlists when applicable, and can be forced into read-only Code-Act mode with `MAMA_CODE_ACT_READ_ONLY=true`
 
 ### MCP Registration
 

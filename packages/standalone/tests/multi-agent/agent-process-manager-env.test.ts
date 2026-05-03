@@ -17,6 +17,18 @@ let spawnCalls: Array<{ command: string; args: string[]; options: Record<string,
 let readFileSyncValue = '';
 let writeFileSyncCalls: Array<{ path: string; data: string }> = [];
 
+function codeActMcpConfig(): string {
+  return JSON.stringify({
+    mcpServers: {
+      'code-act': {
+        command: 'node',
+        args: ['code-act-server.js'],
+        env: { MAMA_SERVER_PORT: '3847' },
+      },
+    },
+  });
+}
+
 // Mock child_process.spawn BEFORE importing modules that use it
 vi.mock('child_process', () => {
   return {
@@ -172,7 +184,7 @@ describe('AgentProcessManager env vars by tier', () => {
 
   beforeEach(() => {
     spawnCalls = [];
-    readFileSyncValue = '';
+    readFileSyncValue = codeActMcpConfig();
     writeFileSyncCalls = [];
   });
 
@@ -345,16 +357,28 @@ describe('AgentProcessManager env vars by tier', () => {
       expect(systemPrompt).not.toContain('declare function mama_save');
     });
 
-    it('writes per-agent Code-Act MCP policy env for runtime enforcement', async () => {
-      readFileSyncValue = JSON.stringify({
-        mcpServers: {
-          'code-act': {
-            command: 'node',
-            args: ['code-act-server.js'],
-            env: { MAMA_SERVER_PORT: '3847' },
+    it('honors deny-only CLI tool permissions for generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          tool_permissions: {
+            blocked: ['mama_save'],
           },
         },
       });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('writes per-agent Code-Act MCP policy env for runtime enforcement', async () => {
+      readFileSyncValue = codeActMcpConfig();
       const config = makeConfig({
         dashboard: {
           tier: 2,
@@ -393,15 +417,7 @@ describe('AgentProcessManager env vars by tier', () => {
     });
 
     it('passes per-agent Code-Act MCP config through the Codex runtime path', async () => {
-      readFileSyncValue = JSON.stringify({
-        mcpServers: {
-          'code-act': {
-            command: 'node',
-            args: ['code-act-server.js'],
-            env: { MAMA_SERVER_PORT: '3847' },
-          },
-        },
-      });
+      readFileSyncValue = codeActMcpConfig();
       const config = makeConfig({
         dashboard: {
           backend: 'codex-mcp',
@@ -421,6 +437,45 @@ describe('AgentProcessManager env vars by tier', () => {
       ).wrapper.options;
 
       expect(runtimeOptions.mcpConfigPath).toContain('code-act-only-mcp-config-dashboard.json');
+    });
+
+    it('fails closed for Code-Act-only agents when the MCP config is invalid', async () => {
+      readFileSyncValue = '{bad-json';
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await expect(manager.getProcess('discord', 'channel-1', 'dashboard')).rejects.toThrow(
+        /Code-Act MCP config/
+      );
+      expect(writeFileSyncCalls).toHaveLength(0);
+    });
+
+    it('fails closed for Code-Act-only agents when the code-act MCP server is missing', async () => {
+      readFileSyncValue = JSON.stringify({
+        mcpServers: {
+          mama: {
+            command: 'node',
+            args: ['mama-server.js'],
+          },
+        },
+      });
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await expect(manager.getProcess('discord', 'channel-1', 'dashboard')).rejects.toThrow(
+        /code-act/
+      );
+      expect(writeFileSyncCalls).toHaveLength(0);
     });
   });
 

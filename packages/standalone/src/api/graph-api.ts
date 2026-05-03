@@ -150,12 +150,18 @@ function normalizeLegacyManagedModel(agent: Record<string, unknown>, configPath:
   return false;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function migrateLegacyManagedBackends(config: Record<string, any>): Record<string, any> {
-  let migrated = false;
-  const next = { ...config };
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
-  if (next.agent && typeof next.agent === 'object') {
+function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config: T): T {
+  let migrated = false;
+  const next: Record<string, unknown> = { ...config };
+
+  const originalAgent = isRecord(config.agent) ? config.agent : undefined;
+  const originalAgentBackend = originalAgent?.backend;
+
+  if (isRecord(next.agent)) {
     const agent = { ...next.agent };
     const backend = normalizeLegacyManagedBackend(agent.backend, 'agent.backend');
     if (backend !== agent.backend) {
@@ -166,32 +172,59 @@ function migrateLegacyManagedBackends(config: Record<string, any>): Record<strin
     }
   }
 
-  if (next.multi_agent?.agents && typeof next.multi_agent.agents === 'object') {
+  if (isRecord(next.multi_agent)) {
     const multiAgent = { ...next.multi_agent };
-    const agents = { ...multiAgent.agents };
-    for (const [agentId, agentConfig] of Object.entries(agents)) {
-      if (!agentConfig || typeof agentConfig !== 'object') {
-        continue;
+    const originalMultiAgent = isRecord(config.multi_agent) ? config.multi_agent : {};
+    const originalMultiAgentBackend = originalMultiAgent.backend;
+    const normalizedMultiAgentBackend = normalizeLegacyManagedBackend(
+      originalMultiAgentBackend,
+      'multi_agent.backend'
+    );
+    if (normalizedMultiAgentBackend !== originalMultiAgentBackend) {
+      multiAgent.backend = normalizedMultiAgentBackend;
+      migrated = true;
+    }
+
+    const inheritedBackend = originalMultiAgentBackend ?? originalAgentBackend;
+    const normalizedInheritedBackend = normalizeLegacyManagedBackend(
+      inheritedBackend,
+      originalMultiAgentBackend !== undefined ? 'multi_agent.backend' : 'agent.backend'
+    );
+
+    if (isRecord(multiAgent.agents)) {
+      const agents = { ...multiAgent.agents };
+      let agentsMigrated = false;
+      for (const [agentId, agentConfig] of Object.entries(agents)) {
+        if (!isRecord(agentConfig)) {
+          continue;
+        }
+        const agent = { ...agentConfig };
+        const hasExplicitBackend = Object.prototype.hasOwnProperty.call(agent, 'backend');
+        const priorEffectiveBackend = hasExplicitBackend ? agent.backend : inheritedBackend;
+        const normalizedBackend = normalizeLegacyManagedBackend(
+          priorEffectiveBackend,
+          `multi_agent.agents.${agentId}.backend`
+        );
+        const inheritedBackendWasNormalized =
+          !hasExplicitBackend && normalizedInheritedBackend !== inheritedBackend;
+        if (normalizedBackend !== priorEffectiveBackend || inheritedBackendWasNormalized) {
+          agent.backend = normalizedBackend;
+          normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          agents[agentId] = agent;
+          agentsMigrated = true;
+          migrated = true;
+        }
       }
-      const agent = { ...(agentConfig as Record<string, unknown>) };
-      const backend = normalizeLegacyManagedBackend(
-        agent.backend,
-        `multi_agent.agents.${agentId}.backend`
-      );
-      if (backend !== agent.backend) {
-        agent.backend = backend;
-        normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
-        agents[agentId] = agent;
-        migrated = true;
+      if (agentsMigrated) {
+        multiAgent.agents = agents;
       }
     }
     if (migrated) {
-      multiAgent.agents = agents;
       next.multi_agent = multiAgent;
     }
   }
 
-  return migrated ? next : config;
+  return (migrated ? next : config) as T;
 }
 
 function getCodeActRateLimitMax(): number {
