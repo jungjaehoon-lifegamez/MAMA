@@ -185,8 +185,11 @@ export function resolveCodeActAgentPolicy(
 } {
   const agentId = requestContext?.agentId || defaultAgentId;
   const agentConfig = agents?.[agentId];
-  if (requestContext?.agentId && !agentConfig) {
+  if (!agentConfig) {
     return { agentId, error: `Unknown Code-Act agent: ${agentId}` };
+  }
+  if (agentConfig.useCodeAct !== true) {
+    return { agentId, error: `Agent is not configured for Code-Act: ${agentId}` };
   }
   return {
     agentId,

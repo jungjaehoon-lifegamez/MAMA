@@ -74,4 +74,46 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       error: 'Unknown Code-Act agent: unknown',
     });
   });
+
+  it('rejects a missing default Code-Act agent', () => {
+    const resolved = resolveCodeActAgentPolicy(
+      undefined,
+      {
+        dashboard: {
+          name: 'dashboard',
+          display_name: 'Dashboard',
+          trigger_prefix: '!dashboard',
+          tier: 2,
+          useCodeAct: true,
+        },
+      },
+      'conductor'
+    );
+
+    expect(resolved).toMatchObject({
+      error: 'Unknown Code-Act agent: conductor',
+    });
+  });
+
+  it('rejects existing agents that have not opted into Code-Act', () => {
+    const resolved = resolveCodeActAgentPolicy(
+      {
+        agentId: 'memory',
+        allowedTools: ['*'],
+      },
+      {
+        memory: {
+          name: 'memory',
+          display_name: 'Memory',
+          trigger_prefix: '!memory',
+          tier: 3,
+        },
+      },
+      'memory'
+    );
+
+    expect(resolved).toMatchObject({
+      error: 'Agent is not configured for Code-Act: memory',
+    });
+  });
 });
