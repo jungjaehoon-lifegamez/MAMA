@@ -2,7 +2,13 @@ import crypto from 'node:crypto';
 
 import type { DatabaseAdapter } from '../db-manager.js';
 import { assertTwinRefsVisible } from '../edges/ref-validation.js';
-import type { ContextBoundary, ContextCompileInput, ContextPacket, ContextRef } from './types.js';
+import type {
+  ContextBoundary,
+  ContextCompileInput,
+  ContextPacket,
+  ContextRange,
+  ContextRef,
+} from './types.js';
 import { serializeContextRefForProvenance, toTwinRef } from './ref.js';
 import { normalizeSeedRefs } from './visibility.js';
 import { canonicalizeContextScopes, assertContextBoundaryAllowsInput } from './visibility.js';
@@ -135,6 +141,24 @@ function maxVisibleMs(input: ContextCompileInput): number | null {
     parseTimeMs(input.as_of, 'as_of'),
   ].filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
   return ends.length > 0 ? Math.min(...ends.map((value) => Math.floor(value))) : null;
+}
+
+function normalizeContextRange(range: ContextCompileInput['range']): ContextRange | undefined {
+  if (range === undefined) {
+    return undefined;
+  }
+  if (range === null || typeof range !== 'object') {
+    throw new Error(`Invalid context compile range: ${String(range)}`);
+  }
+  const startMs = rangeBoundaryMs(range.start_ms, 'range.start_ms');
+  const endMs = rangeBoundaryMs(range.end_ms, 'range.end_ms');
+  if (startMs !== null && endMs !== null && startMs > endMs) {
+    throw new Error('Invalid context compile range: range.start_ms must be <= range.end_ms');
+  }
+  return {
+    ...(startMs !== null ? { start_ms: startMs } : {}),
+    ...(endMs !== null ? { end_ms: endMs } : {}),
+  };
 }
 
 function rawCanonicalRefForRef(adapter: ContextCompilerAdapter, rawId: string): ContextRef | null {
@@ -320,6 +344,8 @@ export async function compileContext(
   const seedRefs = normalizeSeedRefs(input.seed_refs);
   let canonicalSeedRefs = canonicalizeRawSeedRefs(deps.adapter, seedRefs);
   const effectiveInput = applyContextBoundaryReadDefaults(input, boundary);
+  const effectiveRange = normalizeContextRange(effectiveInput.range);
+  effectiveInput.range = effectiveRange;
   parseTimeMs(effectiveInput.as_of, 'as_of');
   if (boundary) {
     assertContextBoundaryAllowsInput({
@@ -415,7 +441,7 @@ export async function compileContext(
     scopes: canonicalScopes.scopes,
     scope_hash: canonicalScopes.scopeHash,
     generated_at: new Date(completedAt).toISOString(),
-    range: effectiveInput.range ?? null,
+    range: effectiveRange ?? null,
     as_of: effectiveInput.as_of ?? null,
     compiler_version: COMPILER_VERSION,
     source_refs: uniqueRefs([...canonicalSeedRefs, ...policy.source_refs]),

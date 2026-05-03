@@ -27,6 +27,7 @@ import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { minimatch } from 'minimatch';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -91,19 +92,107 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
 }
 
-function deriveCodeActToolPolicy(
+function uniqueToolList(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isWildcardToolList(values: readonly string[] | undefined): boolean {
+  return Boolean(values?.includes('*'));
+}
+
+function isGlobToolPattern(value: string): boolean {
+  return /[*?[{]/.test(value);
+}
+
+function toolPatternAllows(pattern: string, toolName: string): boolean {
+  return minimatch(toolName, pattern);
+}
+
+function intersectAllowedToolPolicies(
+  configuredAllowed: string[] | undefined,
+  requestedAllowed: string[] | undefined
+): string[] | undefined {
+  const configured = configuredAllowed ? uniqueToolList(configuredAllowed) : undefined;
+  const requested = requestedAllowed ? uniqueToolList(requestedAllowed) : undefined;
+
+  if (!configured || configured.length === 0) {
+    return requested;
+  }
+  if (!requested || requested.length === 0) {
+    return configured;
+  }
+  if (isWildcardToolList(configured)) {
+    return requested;
+  }
+  if (isWildcardToolList(requested)) {
+    return configured;
+  }
+
+  const narrowed: string[] = [];
+  for (const requestedPattern of requested) {
+    for (const configuredPattern of configured) {
+      if (requestedPattern === configuredPattern) {
+        narrowed.push(requestedPattern);
+      } else if (
+        !isGlobToolPattern(requestedPattern) &&
+        toolPatternAllows(configuredPattern, requestedPattern)
+      ) {
+        narrowed.push(requestedPattern);
+      } else if (
+        !isGlobToolPattern(configuredPattern) &&
+        toolPatternAllows(requestedPattern, configuredPattern)
+      ) {
+        narrowed.push(configuredPattern);
+      }
+    }
+  }
+  return uniqueToolList(narrowed);
+}
+
+function mergeBlockedToolPolicies(
+  configuredBlocked: string[] | undefined,
+  requestedBlocked: string[] | undefined
+): string[] | undefined {
+  const merged = uniqueToolList([...(configuredBlocked ?? []), ...(requestedBlocked ?? [])]);
+  return merged.length > 0 ? merged : undefined;
+}
+
+export function deriveCodeActToolPolicy(
   requestContext: CodeActExecutionContext | undefined,
   agentConfig: Omit<AgentPersonaConfig, 'id'> | undefined
 ): { allowedTools?: string[]; blockedTools?: string[] } {
-  const allowedTools =
-    requestContext?.allowedTools ??
-    agentConfig?.gateway_tool_permissions?.allowed ??
-    agentConfig?.tool_permissions?.allowed;
-  const blockedTools =
-    requestContext?.blockedTools ??
-    agentConfig?.gateway_tool_permissions?.blocked ??
-    agentConfig?.tool_permissions?.blocked;
+  const configuredAllowed =
+    agentConfig?.gateway_tool_permissions?.allowed ?? agentConfig?.tool_permissions?.allowed;
+  const configuredBlocked =
+    agentConfig?.gateway_tool_permissions?.blocked ?? agentConfig?.tool_permissions?.blocked;
+  const allowedTools = intersectAllowedToolPolicies(
+    configuredAllowed,
+    requestContext?.allowedTools
+  );
+  const blockedTools = mergeBlockedToolPolicies(configuredBlocked, requestContext?.blockedTools);
   return { allowedTools, blockedTools };
+}
+
+export function resolveCodeActAgentPolicy(
+  requestContext: CodeActExecutionContext | undefined,
+  agents: Record<string, Omit<AgentPersonaConfig, 'id'>> | undefined,
+  defaultAgentId: string
+): {
+  agentId: string;
+  agentConfig?: Omit<AgentPersonaConfig, 'id'>;
+  policy?: { allowedTools?: string[]; blockedTools?: string[] };
+  error?: string;
+} {
+  const agentId = requestContext?.agentId || defaultAgentId;
+  const agentConfig = agents?.[agentId];
+  if (requestContext?.agentId && !agentConfig) {
+    return { agentId, error: `Unknown Code-Act agent: ${agentId}` };
+  }
+  return {
+    agentId,
+    agentConfig,
+    policy: deriveCodeActToolPolicy(requestContext, agentConfig),
+  };
 }
 
 function buildCodeActRole(policy: {
@@ -511,10 +600,16 @@ export async function runAgentLoop(
     ) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
-      const codeActAgentId =
-        codeActContext?.agentId || config.multi_agent?.default_agent || 'conductor';
-      const codeActAgentConfig = config.multi_agent?.agents?.[codeActAgentId];
-      const codeActPolicy = deriveCodeActToolPolicy(codeActContext, codeActAgentConfig);
+      const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
+        codeActContext,
+        config.multi_agent?.agents,
+        config.multi_agent?.default_agent || 'conductor'
+      );
+      if (resolvedCodeActPolicy.error) {
+        return { success: false, error: resolvedCodeActPolicy.error };
+      }
+      const codeActAgentId = resolvedCodeActPolicy.agentId;
+      const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
       const codeActRole = buildCodeActRole(codeActPolicy);
       const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const codeActTier = codeActReadOnly ? 3 : 2;

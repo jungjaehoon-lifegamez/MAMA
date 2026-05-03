@@ -1285,6 +1285,12 @@ export class GatewayToolExecutor {
     }
 
     const scopedInput = input as GatewayToolInput & { scopes?: unknown };
+    if (
+      toolName === 'mama_save' &&
+      getContextPacketIdForTrustedProvenance(scopedInput as SaveInput) !== null
+    ) {
+      return input;
+    }
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
       ? toolName === 'context_compile' || scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
@@ -1337,7 +1343,13 @@ export class GatewayToolExecutor {
       }
       packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
       contextPacketScopes = packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id }));
-      const requestedScopes = normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+      const requestedScopeValue = (input as { scopes?: unknown }).scopes;
+      if (Array.isArray(requestedScopeValue) && requestedScopeValue.length === 0) {
+        throw new ContextPacketProvenanceError(
+          'Requested save scope is outside the trusted context packet scope.'
+        );
+      }
+      const requestedScopes = normalizeMemoryScopes(requestedScopeValue);
       if (
         requestedScopes &&
         !requestedScopes.every((scope) =>
@@ -1863,6 +1875,13 @@ export class GatewayToolExecutor {
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
           const hasContextPacketId = getContextPacketIdForTrustedProvenance(saveInput) !== null;
+          if (hasContextPacketId && !this.isMemoryDecisionSaveInput(saveInput)) {
+            return {
+              success: false,
+              code: 'context_packet_denied',
+              error: 'context_packet_id is only supported for trusted decision saves.',
+            };
+          }
           if (this.isMemoryDecisionSaveInput(saveInput) && hasContextPacketId) {
             if (!this.supportsTrustedSave(api)) {
               return {
