@@ -200,7 +200,7 @@ describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational o
 
       const result = await executor.execute('mama_save', {
         type: 'decision',
-        topic: 'system-audit-2026-05-02',
+        topic: 'system-audit-20260502',
         decision: 'Audit complete. 2 MINOR fixes applied.',
         reasoning: 'Full audit run on 2026-05-02',
       });

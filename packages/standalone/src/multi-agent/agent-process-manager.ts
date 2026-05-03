@@ -311,7 +311,7 @@ export class AgentProcessManager extends EventEmitter {
     // (report_publish, wiki_publish) which are ONLY available inside code_act.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      if (agentConfig.useCodeAct) {
+      if (agentConfig?.useCodeAct) {
         // Code-Act agents: only provide code-act MCP server
         const codeActOnlyConfig = resolve(
           homedir(),
@@ -346,10 +346,13 @@ export class AgentProcessManager extends EventEmitter {
             );
             options.mcpConfigPath = codeActOnlyConfig;
           } else {
-            options.mcpConfigPath = mcpConfigPath;
+            throw new Error(`Missing mcpServers["code-act"] in ${mcpConfigPath}`);
           }
-        } catch {
-          options.mcpConfigPath = mcpConfigPath;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Code-Act MCP config unavailable for agent "${agentId}" at ${mcpConfigPath}: ${message}`
+          );
         }
       } else {
         options.mcpConfigPath = mcpConfigPath;
@@ -699,10 +702,17 @@ ${skillsPrompt}## Guidelines
     }
 
     const cliAllowed = agentConfig.tool_permissions?.allowed;
-    if (!cliAllowed) {
-      return undefined;
+    if (cliAllowed) {
+      return this.filterCodeActAllowedTools(cliAllowed, agentConfig.tool_permissions?.blocked);
     }
-    return this.filterCodeActAllowedTools(cliAllowed, agentConfig.tool_permissions?.blocked);
+
+    const cliBlocked = agentConfig.tool_permissions?.blocked;
+    if (cliBlocked) {
+      const allGatewayTools = HostBridge.getToolRegistry().map((meta) => meta.name);
+      return this.filterCodeActAllowedTools(allGatewayTools, cliBlocked);
+    }
+
+    return undefined;
   }
 
   private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {

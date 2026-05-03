@@ -961,6 +961,8 @@ export interface AgentLoopOptions {
     /** Path to MCP config file */
     mcp_config?: string;
   };
+  /** Explicit MCP config path for runtimes that consume an external MCP config directly. */
+  mcpConfigPath?: string;
   /**
    * Resume existing CLI session instead of starting new one
    * When true, uses --resume flag and skips system prompt injection

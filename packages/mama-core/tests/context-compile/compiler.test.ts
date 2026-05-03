@@ -183,6 +183,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       {
         task: 'compile branch context',
         scopes: [{ kind: 'project', id: 'repo-a' }],
+        connectors: ['slack'],
         max_tool_calls: 1,
       },
       compilerDeps({ readMemoryCandidates, readRawCandidates, readGraphCandidates })
@@ -192,6 +193,32 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     expect(readRawCandidates).not.toHaveBeenCalled();
     expect(readGraphCandidates).not.toHaveBeenCalled();
     expect(packet.budget.used_tool_calls).toBe(1);
+    expect(packet.budget_manifest).toMatchObject({
+      budget_exhausted: true,
+      skipped_operators: ['raw_window', 'graph_neighborhood'],
+    });
+    expect(packet.caveats).toContain('budget_exhausted');
+  });
+
+  it('records memory_recall as skipped when the tool-call budget is already exhausted', async () => {
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    const packet = await compileContext(
+      {
+        task: 'compile branch context',
+        scopes: [{ kind: 'project', id: 'repo-a' }],
+        max_tool_calls: 0,
+      },
+      compilerDeps({ readMemoryCandidates })
+    );
+
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
+    expect(packet.budget.used_tool_calls).toBe(0);
+    expect(packet.budget_manifest).toMatchObject({
+      budget_exhausted: true,
+      skipped_operators: ['memory_recall'],
+    });
+    expect(packet.caveats).toContain('budget_exhausted');
   });
 
   it('cooperatively aborts on signal but returns a partial packet on budget deadline', async () => {
@@ -243,7 +270,7 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       compiler_version: expect.any(String),
       rejected_refs_truncated: false,
       budget_manifest: {
-        budget_exhausted: false,
+        budget_exhausted: true,
         skipped_operators: expect.any(Array),
       },
     });

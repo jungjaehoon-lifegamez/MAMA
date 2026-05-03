@@ -61,9 +61,6 @@ export async function handleSave(
     };
     if (options) {
       if (!api.saveWithTrustedProvenance) {
-        if (!options.provenance.context_packet_id) {
-          return await api.save(payload);
-        }
         return {
           success: false,
           message: 'Trusted provenance save is unavailable.',
@@ -114,11 +111,9 @@ function isOperationalRunSummaryDecision(input: SaveDecisionInput): boolean {
     reasoning.includes('auto-saved-by-wiki-agent-after-wiki-publish');
 
   const operationalTopic =
-    /^dashboard-briefing(?:-|$|\d)/.test(topic) ||
-    /^wiki-compilation(?:-|$|\d)/.test(topic) ||
-    /^system-audit(?:-|$|\d)/.test(topic) ||
-    /^audit-summary(?:-|$|\d)/.test(topic) ||
-    /^test-audit(?:-|$|\d)/.test(topic);
+    /^(?:dashboard-briefing|wiki-compilation|system-audit)(?:-\d+)?$/.test(topic) ||
+    (hasOperationalAutosaveMarker &&
+      /^(?:dashboard-briefing|wiki-compilation|system-audit)(?:-.+)?$/.test(topic));
 
   if (operationalTopic) {
     return true;
