@@ -90,7 +90,7 @@ export interface AgentPersonaConfig {
    * - 'codex-mcp': Codex via MCP protocol
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
 
   /**
    * Maximum turns for this agent
@@ -329,9 +329,8 @@ export interface MultiAgentRuntimeOptions {
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
    * - 'codex'/'codex-mcp': Codex via MCP protocol
-   * - 'gemini': Gemini-compatible managed agents
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   model?: string;
   /** Effort level for Claude 4.6 adaptive thinking */
   effort?: 'low' | 'medium' | 'high' | 'max';

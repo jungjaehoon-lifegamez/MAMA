@@ -18,6 +18,7 @@ const persistentPromptMock = vi.fn().mockResolvedValue({
   usage: { input_tokens: 10, output_tokens: 5 },
   session_id: 'test-session',
 });
+const persistentSetSystemPromptMock = vi.fn();
 const gatewayExecutorSetAgentContextMock = vi.fn();
 const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
 const gatewayExecutorClearCurrentAgentContextMock = vi.fn();
@@ -59,6 +60,7 @@ vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
   return {
     PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
       prompt: persistentPromptMock,
+      setSystemPrompt: persistentSetSystemPromptMock,
       setSessionId: vi.fn(),
       close: vi.fn(),
     })),
@@ -177,6 +179,7 @@ describe('AgentLoop', () => {
     gatewayExecutorCommitRuntimeModelRunMock.mockClear();
     gatewayExecutorFailRuntimeModelRunMock.mockClear();
     laneManagerEnqueueWithSessionMock.mockClear();
+    persistentSetSystemPromptMock.mockClear();
   });
 
   describe('run()', () => {
@@ -373,6 +376,46 @@ describe('AgentLoop', () => {
     it('should expose the full gateway tools prompt', () => {
       expect(getGatewayToolsPrompt()).toContain('# Gateway Tools');
       expect(getGatewayToolsPrompt()).toContain('mama_search');
+    });
+
+    it('filters role-blocked gateway tools out of Code-Act declarations', async () => {
+      const { PersistentCLIAdapter } = await import('../../src/agent/persistent-cli-adapter.js');
+      new AgentLoop(
+        createMockOAuthManager(),
+        {
+          useCodeAct: true,
+          agentContext: {
+            ...createChatBotContext(),
+            role: {
+              ...createChatBotContext().role,
+              allowedTools: ['*'],
+              blockedTools: ['mama_save'],
+            },
+          },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const callOptions = (PersistentCLIAdapter as unknown as ReturnType<typeof vi.fn>).mock
+        .calls[0]?.[0] as { systemPrompt?: string };
+      expect(callOptions.systemPrompt).toContain('declare function mama_search');
+      expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('restores the default system prompt when a message override is cleared', () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { systemPrompt: 'default prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSystemPrompt('override prompt');
+      agentLoop.setSystemPrompt(undefined);
+
+      expect(persistentSetSystemPromptMock).toHaveBeenNthCalledWith(1, 'override prompt');
+      expect(persistentSetSystemPromptMock.mock.calls[1]?.[0]).toContain('default prompt');
     });
   });
 

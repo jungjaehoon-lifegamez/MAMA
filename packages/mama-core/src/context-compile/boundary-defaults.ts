@@ -106,22 +106,31 @@ export function applyContextBoundaryReadDefaults<T extends ContextBoundaryReadab
   if (!boundary) {
     return input;
   }
-  const requestedTenantId = input.tenant_id ?? null;
-  const boundaryTenantId = boundary.tenant_id ?? null;
+  const requestedTenantId = input.tenant_id;
+  const boundaryTenantId = boundary.tenant_id;
   if (
+    requestedTenantId !== undefined &&
     requestedTenantId !== null &&
+    boundaryTenantId !== undefined &&
     boundaryTenantId !== null &&
     requestedTenantId !== boundaryTenantId
   ) {
     throw new Error('Requested tenant is outside the context boundary');
   }
-  return {
+  const scopedInput = {
     ...input,
     scopes: input.scopes === undefined ? boundary.scopes : input.scopes,
     connectors: input.connectors === undefined ? boundary.connectors : input.connectors,
     project_refs: input.project_refs === undefined ? boundary.project_refs : input.project_refs,
-    tenant_id: boundary.tenant_id !== undefined ? boundaryTenantId : requestedTenantId,
     range: intersectRange(input.range, boundary.range),
     as_of: clampAsOf(input.as_of, boundary.as_of),
-  };
+  } as T;
+
+  if (boundaryTenantId !== undefined || requestedTenantId !== undefined) {
+    return {
+      ...scopedInput,
+      tenant_id: boundaryTenantId !== undefined ? boundaryTenantId : requestedTenantId,
+    };
+  }
+  return scopedInput;
 }

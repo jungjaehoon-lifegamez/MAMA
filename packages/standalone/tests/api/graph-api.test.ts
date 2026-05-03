@@ -464,18 +464,26 @@ describe('graph api helpers', () => {
     expect(historyRes._body).not.toContain('vs-agent-test');
   });
 
-  it('accepts codex and gemini backends in legacy config validation', () => {
+  it('accepts Codex backends and rejects unsupported Gemini backends in legacy config validation', () => {
     expect(
       validateConfigUpdate({
         agent: { backend: 'codex', model: 'gpt-5.4-mini' },
         multi_agent: {
           agents: {
-            resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
             coder: { backend: 'codex-mcp', model: 'gpt-5.3-codex' },
           },
         },
       })
     ).toEqual([]);
+    expect(
+      validateConfigUpdate({
+        multi_agent: {
+          agents: {
+            resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
+          },
+        },
+      })
+    ).toContain('multi_agent.agents.resolver.backend must be "claude", "codex", or "codex-mcp"');
   });
 });
 

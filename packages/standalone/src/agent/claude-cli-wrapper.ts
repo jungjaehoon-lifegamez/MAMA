@@ -28,6 +28,7 @@ import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import type { PromptCallbacks, ToolUseBlock } from './types.js';
+import { formatCliArgsForLog } from './cli-arg-redaction.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -410,17 +411,7 @@ export class ClaudeCLIWrapper {
 }
 
 function formatClaudeArgsForLog(args: string[]): string[] {
-  const redacted: string[] = [];
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    redacted.push(arg);
-    if ((arg === '--system-prompt' || arg === '--append-system-prompt') && i + 1 < args.length) {
-      const value = args[i + 1] ?? '';
-      redacted.push(`[redacted ${value.length} chars]`);
-      i++;
-    }
-  }
-  return redacted;
+  return formatCliArgsForLog(args);
 }
 
 /**

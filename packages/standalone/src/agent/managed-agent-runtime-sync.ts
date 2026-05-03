@@ -84,9 +84,6 @@ function normalizeCreateBackend(
   if (candidate === 'codex') {
     return 'codex-mcp';
   }
-  if (candidate === 'gemini') {
-    return 'gemini';
-  }
   if (candidate === 'codex-mcp') {
     return 'codex-mcp';
   }
@@ -222,6 +219,7 @@ export async function updateManagedAgentRuntime(
       'auto_continue',
       'effort',
       'tool_permissions',
+      'gateway_tool_permissions',
       'persona_file',
     ]) {
       if (key in input.changes) {

@@ -1712,7 +1712,7 @@ export class GatewayToolExecutor {
             model: string;
             tier: number;
             system?: string;
-            backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+            backend?: 'claude' | 'codex' | 'codex-mcp';
           };
           const createError = validateManagedAgentCreateInput(
             createArgs as unknown as Record<string, unknown>

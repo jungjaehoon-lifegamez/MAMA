@@ -3,6 +3,7 @@
  * Acceptance Criteria:
  * - Concurrent config writes are serialized.
  * - Updating persona text without persona_file uses a safe default persona path.
+ * - Gateway tool permission updates are preserved in runtime config.
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
@@ -78,5 +79,45 @@ describe('managed-agent-runtime-sync', () => {
       persona_file: '~/.mama/personas/alpha.md',
     });
     expect(writePersonaFile).toHaveBeenCalledWith('~/.mama/personas/alpha.md', 'Updated persona');
+  });
+
+  it('preserves gateway tool permission changes in agent config updates', async () => {
+    const config = {
+      multi_agent: {
+        enabled: true,
+        agents: {
+          alpha: {
+            name: 'Alpha',
+            display_name: 'Alpha',
+            trigger_prefix: '!alpha',
+            tier: 2,
+          },
+        },
+      },
+    };
+
+    const result = await updateManagedAgentRuntime(
+      {
+        agentId: 'alpha',
+        changes: {
+          gateway_tool_permissions: {
+            allowed: ['mama_search'],
+            blocked: ['mama_save'],
+          },
+        },
+      },
+      {
+        loadConfig: vi.fn().mockResolvedValue(config),
+        saveConfig: vi.fn().mockResolvedValue(undefined),
+        writePersonaFile: vi.fn(),
+      }
+    );
+
+    expect(result.snapshot).toMatchObject({
+      gateway_tool_permissions: {
+        allowed: ['mama_search'],
+        blocked: ['mama_save'],
+      },
+    });
   });
 });

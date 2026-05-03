@@ -165,12 +165,12 @@ export class AgentProcessManager extends EventEmitter {
   private getAgentBackend(
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     agentId?: string
-  ): 'claude' | 'codex' | 'codex-mcp' | 'gemini' {
+  ): 'claude' | 'codex' | 'codex-mcp' {
     const backend = agentConfig.backend ?? this.runtimeOptions.backend;
     if (!backend) {
       throw new Error(
         `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
-          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'codex-mcp' | 'gemini'`
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'codex-mcp'`
       );
     }
     return backend;
@@ -629,23 +629,40 @@ ${skillsPrompt}## Guidelines
   ): string[] | undefined {
     const explicitGatewayAllowed = agentConfig.gateway_tool_permissions?.allowed;
     if (explicitGatewayAllowed) {
-      return this.filterCodeActAllowedTools(explicitGatewayAllowed);
+      return this.filterCodeActAllowedTools(
+        explicitGatewayAllowed,
+        agentConfig.gateway_tool_permissions?.blocked
+      );
     }
 
     const cliAllowed = agentConfig.tool_permissions?.allowed;
     if (!cliAllowed) {
       return undefined;
     }
-    return this.filterCodeActAllowedTools(cliAllowed);
+    return this.filterCodeActAllowedTools(cliAllowed, agentConfig.tool_permissions?.blocked);
   }
 
-  private filterCodeActAllowedTools(allowedTools: string[]): string[] {
-    if (allowedTools.includes('*')) {
+  private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {
+    if (blockedTools?.includes('*')) {
+      return [];
+    }
+    if (allowedTools.includes('*') && !blockedTools?.length) {
       return ['*'];
     }
     const registry = HostBridge.getToolRegistry();
-    return allowedTools.filter((pattern) =>
-      registry.some((meta) => matchCodeActToolPattern(pattern, meta.name))
+    const allowedNames = allowedTools.includes('*')
+      ? registry.map((meta) => meta.name)
+      : registry
+          .filter((meta) =>
+            allowedTools.some((pattern) => matchCodeActToolPattern(pattern, meta.name))
+          )
+          .map((meta) => meta.name);
+
+    if (!blockedTools?.length) {
+      return allowedNames;
+    }
+    return allowedNames.filter(
+      (toolName) => !blockedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
     );
   }
 
@@ -922,7 +939,7 @@ Respond to messages in a helpful and professional manner.
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
       persona_file: '', // inline system prompt, no file
-      backend: agentDef.backend as 'claude' | 'codex' | 'codex-mcp' | 'gemini',
+      backend: agentDef.backend as 'claude' | 'codex' | 'codex-mcp',
       model: agentDef.model,
       tier: agentDef.tier ?? 1,
       tool_permissions: agentDef.tool_permissions,

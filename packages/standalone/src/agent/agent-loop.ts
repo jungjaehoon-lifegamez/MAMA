@@ -92,6 +92,42 @@ const SOURCE_GLOBAL_LANES: Record<string, string> = {
   system: 'system',
 };
 
+function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
+  if (pattern === '*') {
+    return true;
+  }
+  if (pattern.endsWith('*')) {
+    return toolName.startsWith(pattern.slice(0, -1));
+  }
+  return pattern === toolName;
+}
+
+function resolveAllowedCodeActTools(
+  allowedTools: readonly string[] | undefined,
+  blockedTools: readonly string[] | undefined
+): string[] | undefined {
+  if (!allowedTools) {
+    return undefined;
+  }
+  if (!blockedTools?.length) {
+    return [...allowedTools];
+  }
+  if (blockedTools.includes('*')) {
+    return [];
+  }
+
+  const registryNames = HostBridge.getToolRegistry().map((meta) => meta.name);
+  const expandedAllowed = allowedTools.includes('*')
+    ? registryNames
+    : registryNames.filter((toolName) =>
+        allowedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
+      );
+
+  return expandedAllowed.filter(
+    (toolName) => !blockedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
+  );
+}
+
 /**
  * Load CLAUDE.md system prompt
  * Tries multiple paths: project root, ~/.mama, /etc/mama
@@ -353,7 +389,8 @@ export class AgentLoop {
   private readonly toolsConfig: typeof DEFAULT_TOOLS_CONFIG;
   private readonly isGatewayMode: boolean;
   private readonly useCodeAct: boolean;
-  private readonly backend: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+  private readonly backend: 'claude' | 'codex' | 'codex-mcp';
+  private readonly defaultSystemPrompt: string;
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
@@ -482,7 +519,10 @@ export class AgentLoop {
           options.agentContext?.tier === 3
             ? options.agentContext.tier
             : 1;
-        const allowedGatewayTools = options.agentContext?.role.allowedTools;
+        const allowedGatewayTools = resolveAllowedCodeActTools(
+          options.agentContext?.role.allowedTools,
+          options.agentContext?.role.blockedTools
+        );
         const typeDefs = TypeDefinitionGenerator.generate(tierForTypeDefs, allowedGatewayTools);
         const codeActBackend =
           backend === 'codex' || backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
@@ -520,6 +560,7 @@ export class AgentLoop {
       .filter((l) => l.content.length > 0)
       .map((l) => l.content)
       .join('\n\n---\n\n');
+    this.defaultSystemPrompt = defaultSystemPrompt;
 
     // Choose backend (default: claude)
     this.backend = backend;
@@ -661,9 +702,7 @@ export class AgentLoop {
    * Set system prompt override (for per-message context injection)
    */
   setSystemPrompt(prompt: string | undefined): void {
-    if (prompt !== undefined) {
-      this.agent.setSystemPrompt(prompt);
-    }
+    this.agent.setSystemPrompt(prompt ?? this.defaultSystemPrompt);
   }
 
   /**
@@ -965,7 +1004,10 @@ export class AgentLoop {
         const isResumingSession = options?.resumeSession === true;
         if (this.isGatewayMode && !alreadyHasTools && !isResumingSession) {
           if (this.useCodeAct) {
-            const allowedGatewayTools = options.agentContext?.role.allowedTools;
+            const allowedGatewayTools = resolveAllowedCodeActTools(
+              options.agentContext?.role.allowedTools,
+              options.agentContext?.role.blockedTools
+            );
             const typeDefs = TypeDefinitionGenerator.generate(
               this.currentTier,
               allowedGatewayTools
