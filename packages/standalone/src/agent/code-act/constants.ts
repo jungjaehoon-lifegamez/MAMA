@@ -3,6 +3,7 @@ export type CodeActBackend = 'claude' | 'codex-mcp';
 export function getCodeActInstructions(backend: CodeActBackend, allowedTools?: string[]): string {
   const isCodex = backend === 'codex-mcp';
   const allowedSummary = formatAllowedToolsSummary(allowedTools);
+  const hasExplicitGatewayAllowlist = allowedSummary !== null;
 
   const blockedToolsSection = isCodex
     ? `**DO NOT use these built-in tools** (they bypass MAMA's pipeline):
@@ -15,7 +16,7 @@ export function getCodeActInstructions(backend: CodeActBackend, allowedTools?: s
     : '';
 
   const gatewayToolsList = isCodex
-    ? allowedSummary
+    ? hasExplicitGatewayAllowlist
       ? `**USE code_act only for these allowed gateway tools:**
 ${allowedSummary}`
       : `**USE code_act for ALL gateway tools:**
@@ -26,7 +27,7 @@ ${allowedSummary}`
 - System: os_list_bots, os_get_config, os_set_model
 - Dashboard: report_publish
 - Wiki: wiki_publish`
-    : allowedSummary
+    : hasExplicitGatewayAllowlist
       ? `**USE code_act only for these allowed gateway tools** (NOT available as direct tools):
 ${allowedSummary}`
       : `**USE code_act for these gateway tools** (NOT available as direct tools):
@@ -70,9 +71,9 @@ code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = res
 `;
 }
 
-function formatAllowedToolsSummary(allowedTools?: string[]): string {
+function formatAllowedToolsSummary(allowedTools?: string[]): string | null {
   if (!allowedTools || allowedTools.includes('*')) {
-    return '';
+    return null;
   }
   if (allowedTools.length === 0) {
     return '- No gateway tools are currently allowed.';
@@ -82,7 +83,7 @@ function formatAllowedToolsSummary(allowedTools?: string[]): string {
     (tool) => tool !== 'code_act' && !tool.startsWith('mcp__')
   );
   if (visibleTools.length === 0) {
-    return '';
+    return '- No gateway tools are currently allowed.';
   }
 
   return visibleTools.map((tool) => `- ${tool}`).join('\n');

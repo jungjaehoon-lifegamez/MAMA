@@ -380,6 +380,9 @@ describe('AgentLoop', () => {
 
     it('filters role-blocked gateway tools out of Code-Act declarations', async () => {
       const { PersistentCLIAdapter } = await import('../../src/agent/persistent-cli-adapter.js');
+      const adapterMock = PersistentCLIAdapter as unknown as ReturnType<typeof vi.fn>;
+      adapterMock.mockClear();
+
       new AgentLoop(
         createMockOAuthManager(),
         {
@@ -397,8 +400,7 @@ describe('AgentLoop', () => {
         { mamaApi: createMockApi() }
       );
 
-      const callOptions = (PersistentCLIAdapter as unknown as ReturnType<typeof vi.fn>).mock
-        .calls[0]?.[0] as { systemPrompt?: string };
+      const callOptions = adapterMock.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
       expect(callOptions.systemPrompt).toContain('declare function mama_search');
       expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
     });
