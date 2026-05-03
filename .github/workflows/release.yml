@@ -159,10 +159,12 @@ jobs:
       - name: Commit version bumps
         if: ${{ !inputs.dry_run && inputs.bump_versions }}
         run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "::error::Inline version bumps are disabled for protected main. Prepare version bumps in a PR, merge it, then rerun this workflow with bump_versions=false."
+            exit 1
+          fi
           git add packages/*/package.json packages/claude-code-plugin/.claude-plugin/plugin.json
           git commit -m "chore: bump versions for ${{ steps.versions.outputs.release_tag }}" || echo "No changes to commit"
-          echo "::error::Inline version bumps are disabled for protected main. Prepare version bumps in a PR, merge it, then rerun this workflow with bump_versions=false."
-          exit 1
 
       - name: Create release tag
         if: ${{ !inputs.dry_run }}

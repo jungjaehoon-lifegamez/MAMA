@@ -42,6 +42,7 @@ import type {
   SearchInput,
   RecallInput,
   ContextCompileInput,
+  CodeActInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -196,6 +197,16 @@ const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'reactive_internal',
   'code_act',
 ]);
+
+type CodeActToolPatternResolution = {
+  patterns?: string[];
+  error?: string;
+};
+
+type CodeActSandboxRoleResolution = {
+  role?: RoleConfig;
+  error?: string;
+};
 
 class ContextPacketProvenanceError extends Error {}
 
@@ -1614,7 +1625,7 @@ export class GatewayToolExecutor {
           );
         // Code-Act sandbox execution
         case 'code_act':
-          return await this.executeCodeAct(input as { code: string });
+          return await this.executeCodeAct(input as CodeActInput);
         // Obsidian vault management via CLI
         case 'obsidian':
           return await this.executeObsidian(
@@ -3463,13 +3474,134 @@ export class GatewayToolExecutor {
     }
   }
 
-  private async executeCodeAct(input: { code: string }): Promise<GatewayToolResult> {
+  private resolveCodeActSandboxRole(
+    input: CodeActInput,
+    activeRole: RoleConfig | undefined,
+    registryNames: string[]
+  ): CodeActSandboxRoleResolution {
+    const allowedResolution = this.normalizeCodeActToolPatterns(
+      input.allowedTools,
+      'allowedTools',
+      registryNames
+    );
+    if (allowedResolution.error) {
+      return { error: allowedResolution.error };
+    }
+
+    const blockedResolution = this.normalizeCodeActToolPatterns(
+      input.blockedTools,
+      'blockedTools',
+      registryNames
+    );
+    if (blockedResolution.error) {
+      return { error: blockedResolution.error };
+    }
+
+    if (!activeRole && !allowedResolution.patterns && !blockedResolution.patterns) {
+      return {};
+    }
+
+    let effectiveToolNames = activeRole
+      ? registryNames.filter((toolName) => this.roleManager.isToolAllowed(activeRole, toolName))
+      : [...registryNames];
+
+    const allowedPatterns = allowedResolution.patterns;
+    if (allowedPatterns) {
+      effectiveToolNames = effectiveToolNames.filter((toolName) =>
+        this.matchesAnyCodeActToolPattern(toolName, allowedPatterns)
+      );
+    }
+
+    const blockedPatterns = blockedResolution.patterns;
+    if (blockedPatterns) {
+      effectiveToolNames = effectiveToolNames.filter(
+        (toolName) => !this.matchesAnyCodeActToolPattern(toolName, blockedPatterns)
+      );
+    }
+
+    return {
+      role: {
+        ...activeRole,
+        allowedTools: effectiveToolNames,
+        blockedTools: undefined,
+        allowedPaths: activeRole?.allowedPaths ?? [],
+        systemControl: activeRole?.systemControl ?? false,
+        sensitiveAccess: activeRole?.sensitiveAccess ?? false,
+      },
+    };
+  }
+
+  private normalizeCodeActToolPatterns(
+    value: unknown,
+    fieldName: 'allowedTools' | 'blockedTools',
+    registryNames: string[]
+  ): CodeActToolPatternResolution {
+    if (value === undefined) {
+      return {};
+    }
+    if (!Array.isArray(value)) {
+      return { error: `${fieldName} must be an array of gateway tool names.` };
+    }
+
+    const patterns: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+      if (typeof item !== 'string' || item.trim().length === 0) {
+        return { error: `${fieldName} must contain non-empty gateway tool names.` };
+      }
+      const pattern = item.trim();
+      if (seen.has(pattern)) {
+        continue;
+      }
+      if (!this.isKnownCodeActToolPattern(pattern, registryNames)) {
+        return { error: `Unknown Code-Act tool pattern in ${fieldName}: ${pattern}` };
+      }
+      seen.add(pattern);
+      patterns.push(pattern);
+    }
+
+    return { patterns };
+  }
+
+  private isKnownCodeActToolPattern(pattern: string, registryNames: string[]): boolean {
+    return (
+      pattern === '*' ||
+      registryNames.some((toolName) => this.matchesCodeActToolPattern(toolName, pattern))
+    );
+  }
+
+  private matchesAnyCodeActToolPattern(toolName: string, patterns: string[]): boolean {
+    return patterns.some((pattern) => this.matchesCodeActToolPattern(toolName, pattern));
+  }
+
+  private matchesCodeActToolPattern(toolName: string, pattern: string): boolean {
+    return this.roleManager.isToolAllowed(
+      {
+        allowedTools: [pattern],
+        allowedPaths: [],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      toolName
+    );
+  }
+
+  private async executeCodeAct(input: CodeActInput): Promise<GatewayToolResult> {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
-    const bridge = new HostBridge(this);
     const context = this.getActiveContext();
     const tier = (context?.tier ?? 1) as 1 | 2 | 3;
-    bridge.injectInto(sandbox, tier, context?.role);
+    const registryNames = HostBridge.getToolRegistry().map((meta) => meta.name);
+    const sandboxRole = this.resolveCodeActSandboxRole(input, context?.role, registryNames);
+    if (sandboxRole.error) {
+      return {
+        success: false,
+        error: sandboxRole.error,
+      } as GatewayToolResult;
+    }
+
+    const bridge = new HostBridge(this, this.roleManager);
+    bridge.injectInto(sandbox, tier, sandboxRole.role);
 
     const result = await sandbox.execute(input.code);
 

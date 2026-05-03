@@ -17,6 +17,8 @@ const TABLE_COLUMN_PRAGMAS: Record<string, string> = {
   case_truth: 'PRAGMA table_info(case_truth)',
 };
 const tableColumnCache = new WeakMap<TwinRefVisibilityAdapter, Map<string, Set<string>>>();
+// Keep memory-truth quarantine semantics excluded for legacy/backcompat rows even though the
+// current decisions.status CHECK only admits superseded/contradicted/stale terminal states.
 const EXCLUDED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
 
 function scopeKey(scope: TwinScopeRef): string {
@@ -279,8 +281,8 @@ function isRawVisible(
   if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
     return false;
   }
-  const asOfMs = parseTimestamp(rawTs);
-  if (asOfMs === null || asOfMs < 0 || !isWithinVisibilityTime(asOfMs, visibility)) {
+  const eventTsMs = parseTimestamp(rawTs);
+  if (eventTsMs === null || eventTsMs < 0 || !isWithinVisibilityTime(eventTsMs, visibility)) {
     return false;
   }
 

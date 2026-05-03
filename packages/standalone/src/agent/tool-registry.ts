@@ -271,6 +271,7 @@ register({
   name: 'code_act',
   description: 'Execute JavaScript in sandboxed QuickJS',
   category: 'code_act',
+  params: 'code, allowedTools?, blockedTools?',
 });
 
 // Multi-Agent delegation

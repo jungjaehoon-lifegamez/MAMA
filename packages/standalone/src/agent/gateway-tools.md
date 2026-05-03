@@ -81,7 +81,7 @@ Call tools via JSON block:
 
 ## Code-Act Sandbox
 
-- **code_act**() — Execute JavaScript in sandboxed QuickJS
+- **code_act**(code, allowedTools?, blockedTools?) — Execute JavaScript in sandboxed QuickJS
 
 ## Multi-Agent Delegation
 
