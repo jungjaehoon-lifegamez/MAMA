@@ -19,6 +19,7 @@ import {
 import { applyContextCompilerPolicy } from './compiler-policy.js';
 
 type ContextCompilerAdapter = Pick<DatabaseAdapter, 'prepare'>;
+const COMPILER_VERSION = 'context-compile-v0';
 
 export interface ContextCompilerDeps {
   adapter?: ContextCompilerAdapter;
@@ -70,13 +71,17 @@ function mergeHidden(left: HiddenCandidateAggregate, right: HiddenCandidateAggre
   }
 }
 
-function checkCooperativeStop(deps: ContextCompilerDeps, now: () => number): void {
+function assertNotAborted(deps: ContextCompilerDeps): void {
   if (deps.signal?.aborted) {
     throw new Error('Context compile aborted');
   }
+}
+
+function isBudgetDeadlineExceeded(deps: ContextCompilerDeps, now: () => number): boolean {
   if (typeof deps.deadlineMs === 'number' && now() >= deps.deadlineMs) {
-    throw new Error('Context compile deadline exceeded');
+    return true;
   }
+  return false;
 }
 
 function maxToolCalls(input: ContextCompileInput): number {
@@ -132,18 +137,45 @@ function maxVisibleMs(input: ContextCompileInput): number | null {
   return ends.length > 0 ? Math.min(...ends.map((value) => Math.floor(value))) : null;
 }
 
-function rawConnectorForRef(adapter: ContextCompilerAdapter, rawId: string): string | null {
+function rawCanonicalRefForRef(adapter: ContextCompilerAdapter, rawId: string): ContextRef | null {
   const row = adapter
     .prepare(
       `
-        SELECT source_connector
+        SELECT source_connector, source_id, channel
         FROM connector_event_index
         WHERE event_index_id = ?
         LIMIT 1
       `
     )
-    .get(rawId) as { source_connector: unknown } | undefined;
-  return typeof row?.source_connector === 'string' ? row.source_connector : null;
+    .get(rawId) as { source_connector: unknown; source_id: unknown; channel: unknown } | undefined;
+  if (typeof row?.source_connector !== 'string') {
+    return null;
+  }
+  const ref: ContextRef = {
+    kind: 'raw',
+    connector: row.source_connector,
+    raw_id: rawId,
+  };
+  if (typeof row.source_id === 'string' && row.source_id.length > 0) {
+    ref.source_id = row.source_id;
+  }
+  ref.channel_id = typeof row.channel === 'string' ? row.channel : null;
+  return ref;
+}
+
+function canonicalizeRawSeedRefs(
+  adapter: ContextCompilerAdapter | undefined,
+  seedRefs: readonly ContextRef[]
+): ContextRef[] {
+  if (!adapter) {
+    return [...seedRefs];
+  }
+  return seedRefs.map((ref) => {
+    if (ref.kind !== 'raw') {
+      return ref;
+    }
+    return rawCanonicalRefForRef(adapter, ref.raw_id) ?? ref;
+  });
 }
 
 function assertSeedRefsVisibleToBoundary(
@@ -151,9 +183,9 @@ function assertSeedRefsVisibleToBoundary(
   input: ContextCompileInput,
   seedRefs: readonly ContextRef[],
   boundary: ContextBoundary
-): void {
+): ContextRef[] {
   if (seedRefs.length === 0) {
-    return;
+    return [];
   }
   if (Array.isArray(input.scopes) && input.scopes.length === 0) {
     throw new Error('Seed refs are outside the empty requested context scope set');
@@ -191,11 +223,12 @@ function assertSeedRefsVisibleToBoundary(
     if (ref.kind !== 'raw') {
       continue;
     }
-    const actualConnector = rawConnectorForRef(adapter, ref.raw_id);
-    if (actualConnector !== ref.connector) {
+    const actualRef = rawCanonicalRefForRef(adapter, ref.raw_id);
+    if (actualRef?.kind !== 'raw' || actualRef.connector !== ref.connector) {
       throw new Error(`Seed raw ref connector does not match visible raw record: ${ref.raw_id}`);
     }
   }
+  return canonicalizeRawSeedRefs(adapter, seedRefs);
 }
 
 function canReadMore(state: SourceReadState, input: ContextCompileInput): boolean {
@@ -206,6 +239,7 @@ function sourceInput(
   input: ContextCompileInput,
   boundary: ContextBoundary | undefined
 ): ContextSourceReadInput {
+  const strictness = normalizeStrictness(input.strictness);
   return {
     task: input.task,
     scopes: input.scopes,
@@ -217,13 +251,26 @@ function sourceInput(
     as_of: input.as_of,
     limit: input.limit,
     threshold: undefined,
-    strictness:
-      input.strictness === 'high'
-        ? 'strict'
-        : input.strictness === 'medium'
-          ? 'balanced'
-          : 'recall',
+    strictness,
   };
+}
+
+function normalizeStrictness(
+  strictness: ContextCompileInput['strictness']
+): 'recall' | 'balanced' | 'strict' {
+  switch (strictness) {
+    case 'low':
+    case 'recall':
+      return 'recall';
+    case 'high':
+    case 'strict':
+      return 'strict';
+    case 'medium':
+    case 'balanced':
+    case undefined:
+      return 'balanced';
+  }
+  return 'balanced';
 }
 
 async function appendResult(
@@ -267,10 +314,11 @@ export async function compileContext(
       ? Math.min(deps.deadlineMs ?? Number.POSITIVE_INFINITY, startedAt + Math.max(0, input.max_ms))
       : deps.deadlineMs;
   const effectiveDeps = { ...deps, deadlineMs: effectiveDeadline };
-  checkCooperativeStop(effectiveDeps, now);
+  assertNotAborted(effectiveDeps);
 
   const boundary = deps.boundary;
   const seedRefs = normalizeSeedRefs(input.seed_refs);
+  let canonicalSeedRefs = canonicalizeRawSeedRefs(deps.adapter, seedRefs);
   const effectiveInput = applyContextBoundaryReadDefaults(input, boundary);
   parseTimeMs(effectiveInput.as_of, 'as_of');
   if (boundary) {
@@ -282,72 +330,103 @@ export async function compileContext(
       requestedTenantId: effectiveInput.tenant_id,
       seedRefs,
     });
-    assertSeedRefsVisibleToBoundary(deps.adapter, effectiveInput, seedRefs, boundary);
+    canonicalSeedRefs = assertSeedRefsVisibleToBoundary(
+      deps.adapter,
+      effectiveInput,
+      seedRefs,
+      boundary
+    );
   }
 
   const canonicalScopes = canonicalizeContextScopes(effectiveInput.scopes);
   const readInput = sourceInput(effectiveInput, boundary);
   const state: SourceReadState = {
     candidates: [],
-    sourceRefs: [...seedRefs],
+    sourceRefs: [...canonicalSeedRefs],
     hidden: { total: 0, by_kind: {}, by_reason: {} },
-    expansionTrace: [{ step: 'seed_refs', source_refs: seedRefs.length }],
+    expansionTrace: [{ step: 'seed_refs', source_refs: canonicalSeedRefs.length }],
     usedToolCalls: 0,
   };
+  let budgetExhausted = isBudgetDeadlineExceeded(effectiveDeps, now);
+  const skippedOperators: string[] = [];
 
   if (canReadMore(state, effectiveInput)) {
-    checkCooperativeStop(effectiveDeps, now);
-    state.usedToolCalls += 1;
-    const memoryResult = await (deps.readMemoryCandidates?.(readInput) ??
-      defaultReadMemoryCandidates(readInput, deps.adapter ? { adapter: deps.adapter } : {}));
-    await appendResult(state, 'memory_recall', memoryResult);
+    assertNotAborted(effectiveDeps);
+    if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+      budgetExhausted = true;
+      skippedOperators.push('memory_recall');
+    } else {
+      state.usedToolCalls += 1;
+      const memoryResult = await (deps.readMemoryCandidates?.(readInput) ??
+        defaultReadMemoryCandidates(readInput, deps.adapter ? { adapter: deps.adapter } : {}));
+      await appendResult(state, 'memory_recall', memoryResult);
+    }
   }
 
   const shouldReadRaw = (effectiveInput.connectors?.length ?? 0) > 0;
   if (shouldReadRaw && canReadMore(state, effectiveInput)) {
-    checkCooperativeStop(effectiveDeps, now);
-    state.usedToolCalls += 1;
-    const rawResult = await (deps.readRawCandidates?.(readInput) ??
-      (deps.adapter ? defaultReadRawCandidates(deps.adapter, readInput) : emptyResult()));
-    await appendResult(state, 'raw_window', rawResult);
+    assertNotAborted(effectiveDeps);
+    if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+      budgetExhausted = true;
+      skippedOperators.push('raw_window');
+    } else {
+      state.usedToolCalls += 1;
+      const rawResult = await (deps.readRawCandidates?.(readInput) ??
+        (deps.adapter ? defaultReadRawCandidates(deps.adapter, readInput) : emptyResult()));
+      await appendResult(state, 'raw_window', rawResult);
+    }
   }
 
   const visibleRefsForGraph = uniqueRefs([...state.sourceRefs]);
   if (visibleRefsForGraph.length > 0 && canReadMore(state, effectiveInput)) {
-    checkCooperativeStop(effectiveDeps, now);
-    state.usedToolCalls += 1;
-    const graphResult = await (deps.readGraphCandidates?.(readInput, visibleRefsForGraph) ??
-      (deps.adapter
-        ? defaultReadGraphCandidates(deps.adapter, readInput, visibleRefsForGraph)
-        : emptyResult()));
-    await appendResult(state, 'graph_neighborhood', graphResult);
+    assertNotAborted(effectiveDeps);
+    if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+      budgetExhausted = true;
+      skippedOperators.push('graph_neighborhood');
+    } else {
+      state.usedToolCalls += 1;
+      const graphResult = await (deps.readGraphCandidates?.(readInput, visibleRefsForGraph) ??
+        (deps.adapter
+          ? defaultReadGraphCandidates(deps.adapter, readInput, visibleRefsForGraph)
+          : emptyResult()));
+      await appendResult(state, 'graph_neighborhood', graphResult);
+    }
   }
 
-  checkCooperativeStop(effectiveDeps, now);
+  assertNotAborted(effectiveDeps);
+  if (isBudgetDeadlineExceeded(effectiveDeps, now)) {
+    budgetExhausted = true;
+  }
   const policy = applyContextCompilerPolicy({
     task: effectiveInput.task,
     candidates: state.candidates,
     hidden: state.hidden,
     limit: effectiveInput.limit,
-    strictness: effectiveInput.strictness,
+    strictness: normalizeStrictness(effectiveInput.strictness),
     max_tokens: effectiveInput.max_tokens,
   });
+  const caveats = budgetExhausted ? [...policy.caveats, 'budget_exhausted'] : policy.caveats;
 
   const completedAt = now();
   return {
     packet_id: deps.packetId?.() ?? packetId(),
+    mode: 'general',
     task: effectiveInput.task,
     scopes: canonicalScopes.scopes,
     scope_hash: canonicalScopes.scopeHash,
     generated_at: new Date(completedAt).toISOString(),
-    source_refs: uniqueRefs([...seedRefs, ...policy.source_refs]),
+    range: effectiveInput.range ?? null,
+    as_of: effectiveInput.as_of ?? null,
+    compiler_version: COMPILER_VERSION,
+    source_refs: uniqueRefs([...canonicalSeedRefs, ...policy.source_refs]),
     selected_evidence: policy.selected_evidence,
     evidence_clusters: policy.evidence_clusters,
     related_decisions: policy.related_decisions,
     rejected_refs: policy.rejected_refs,
+    rejected_refs_truncated: false,
     rejected_summary: policy.rejected_summary,
     missing_context: policy.missing_context,
-    caveats: policy.caveats,
+    caveats,
     expansion_trace: state.expansionTrace,
     retrieval_diagnostics: policy.retrieval_diagnostics,
     budget: {
@@ -357,6 +436,11 @@ export async function compileContext(
       elapsed_ms: Math.max(0, completedAt - startedAt),
       max_tokens: effectiveInput.max_tokens,
       estimated_tokens: policy.estimated_tokens,
+      budget_exhausted: budgetExhausted,
+    },
+    budget_manifest: {
+      budget_exhausted: budgetExhausted,
+      skipped_operators: skippedOperators,
     },
   };
 }

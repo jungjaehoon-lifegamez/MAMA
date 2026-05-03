@@ -62,7 +62,12 @@ function makePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
       used_tool_calls: 0,
       elapsed_ms: 1,
       estimated_tokens: 0,
+      budget_exhausted: false,
     },
+    mode: 'general',
+    compiler_version: 'context-compile-v0',
+    rejected_refs_truncated: false,
+    budget_manifest: { budget_exhausted: false, skipped_operators: [] },
     ...overrides,
   };
 }
@@ -250,7 +255,7 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
       { task: 'compile API context', project_refs: 'repo-a' },
       { task: 'compile API context', seed_refs: { kind: 'memory', id: 'mem-api' } },
       { task: 'compile API context', range: { start_ms: '1000' } },
-      { task: 'compile API context', strictness: 'strict' },
+      { task: 'compile API context', strictness: 'maximum' },
       { task: 'compile API context', limit: 'abc' },
       { task: 'compile API context', max_tool_calls: '0' },
       { task: 'compile API context', max_ms: null },

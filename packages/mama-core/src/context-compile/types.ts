@@ -46,7 +46,7 @@ export interface ContextCompileInput {
   max_tool_calls?: number;
   max_ms?: number;
   max_tokens?: number;
-  strictness?: 'low' | 'medium' | 'high';
+  strictness?: 'recall' | 'balanced' | 'strict' | 'low' | 'medium' | 'high';
 }
 
 export interface ContextBoundary {
@@ -86,15 +86,20 @@ export interface ContextEvidence {
 
 export interface ContextPacket {
   packet_id: string;
+  mode: 'general';
   task: string;
   scopes: MemoryScopeRef[];
   scope_hash: string;
   generated_at: string;
+  range: ContextRange | null;
+  as_of: string | number | null;
+  compiler_version: string;
   source_refs: ContextRef[];
   selected_evidence: ContextEvidence[];
   evidence_clusters: unknown[];
   related_decisions: unknown[];
   rejected_refs: ContextRef[];
+  rejected_refs_truncated: boolean;
   rejected_summary: string[];
   missing_context: string[];
   caveats: string[];
@@ -107,6 +112,11 @@ export interface ContextPacket {
     elapsed_ms: number;
     max_tokens?: number;
     estimated_tokens: number;
+    budget_exhausted: boolean;
+  };
+  budget_manifest: {
+    budget_exhausted: boolean;
+    skipped_operators: string[];
   };
 }
 

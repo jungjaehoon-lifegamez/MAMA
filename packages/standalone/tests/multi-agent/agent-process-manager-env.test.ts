@@ -14,6 +14,8 @@ import type { AgentPersonaConfig, MultiAgentConfig } from '../../src/multi-agent
 
 // Track all spawn calls
 let spawnCalls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
+let readFileSyncValue = '';
+let writeFileSyncCalls: Array<{ path: string; data: string }> = [];
 
 // Mock child_process.spawn BEFORE importing modules that use it
 vi.mock('child_process', () => {
@@ -83,7 +85,10 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', () => ({
   existsSync: vi.fn().mockReturnValue(true),
-  readFileSync: vi.fn().mockReturnValue(''),
+  readFileSync: vi.fn(() => readFileSyncValue),
+  writeFileSync: vi.fn((path: string, data: string) => {
+    writeFileSyncCalls.push({ path, data });
+  }),
 }));
 
 // Now import modules that depend on mocked child_process
@@ -166,6 +171,8 @@ describe('AgentProcessManager env vars by tier', () => {
 
   beforeEach(() => {
     spawnCalls = [];
+    readFileSyncValue = '';
+    writeFileSyncCalls = [];
   });
 
   afterEach(() => {
@@ -335,6 +342,53 @@ describe('AgentProcessManager env vars by tier', () => {
       const systemPrompt = args[args.indexOf('--system-prompt') + 1];
       expect(systemPrompt).toContain('declare function mama_search');
       expect(systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('writes per-agent Code-Act MCP policy env for runtime enforcement', async () => {
+      readFileSyncValue = JSON.stringify({
+        mcpServers: {
+          'code-act': {
+            command: 'node',
+            args: ['code-act-server.js'],
+            env: { MAMA_SERVER_PORT: '3847' },
+          },
+        },
+      });
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish', 'mcp__brave-search__*'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      expect(writeFileSyncCalls).toHaveLength(1);
+      expect(writeFileSyncCalls[0].path).toContain('code-act-only-mcp-config-dashboard.json');
+      const written = JSON.parse(writeFileSyncCalls[0].data) as {
+        mcpServers: {
+          'code-act': {
+            env: Record<string, string>;
+          };
+        };
+      };
+      expect(written.mcpServers['code-act'].env).toMatchObject({
+        MAMA_SERVER_PORT: '3847',
+        MAMA_CODE_ACT_AGENT_ID: 'dashboard',
+        MAMA_CODE_ACT_ALLOWED_TOOLS: JSON.stringify(['mama_search', 'report_publish']),
+        MAMA_CODE_ACT_BLOCKED_TOOLS: JSON.stringify(['mama_save']),
+      });
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      expect(args).toContain('--mcp-config');
+      expect(args[args.indexOf('--mcp-config') + 1]).toContain(
+        'code-act-only-mcp-config-dashboard.json'
+      );
     });
   });
 

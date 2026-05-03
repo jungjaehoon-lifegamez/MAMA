@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentLoop, getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
 import type { OAuthManager } from '../../src/auth/index.js';
 import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 const { laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
   laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
@@ -255,6 +256,34 @@ describe('AgentLoop', () => {
       });
 
       expect(gatewayExecutorSetCurrentAgentContextMock).not.toHaveBeenCalled();
+    });
+
+    it('binds envelope agent and instance ids to parent model runs', async () => {
+      const envelope = makeSignedEnvelope({
+        agent_id: 'worker',
+        instance_id: 'inst_context_compile_parent',
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Compile context', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: createChatBotContext(),
+        envelope,
+      });
+
+      expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_id: 'worker',
+          instance_id: 'inst_context_compile_parent',
+          envelope_hash: envelope.envelope_hash,
+        })
+      );
     });
 
     it('should not clear shared gateway executor routing state when agentContext is absent', async () => {

@@ -44,7 +44,12 @@ function makePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
       used_tool_calls: 1,
       elapsed_ms: 5,
       estimated_tokens: 32,
+      budget_exhausted: false,
     },
+    mode: 'general',
+    compiler_version: 'context-compile-v0',
+    rejected_refs_truncated: false,
+    budget_manifest: { budget_exhausted: false, skipped_operators: [] },
     ...overrides,
   };
 }
@@ -327,6 +332,39 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
   });
 
+  it('AC: accepts public strictness names and normalizes them before compiling', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(
+      async (input: ContextCompileInput, deps: { packetId?: () => string }) =>
+        makePacket({
+          packet_id: deps.packetId?.() ?? 'ctxp_public_strictness',
+          task: input.task,
+          scopes: input.scopes,
+        })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      now: () => FIXED_NOW_MS,
+      childModelRunId: () => 'mr_context_public_strictness',
+      packetId: () => 'ctxp_public_strictness',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'http',
+      envelope,
+      input: {
+        task: 'compile strict context',
+        strictness: 'strict',
+      },
+    });
+
+    expect(compileContext.mock.calls[0][0]).toMatchObject({
+      strictness: 'strict',
+    });
+  });
+
   it('AC: rejects unknown strictness values before compiling', async () => {
     const adapter = getAdapter();
     const envelope = makeSignedEnvelope();
@@ -344,7 +382,7 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
         envelope,
         input: {
           task: 'compile branch context',
-          strictness: 'strict' as unknown as ContextCompileInput['strictness'],
+          strictness: 'maximum' as unknown as ContextCompileInput['strictness'],
         },
       })
     ).rejects.toMatchObject({
