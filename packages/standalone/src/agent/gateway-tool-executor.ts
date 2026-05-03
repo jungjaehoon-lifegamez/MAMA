@@ -3624,10 +3624,15 @@ export class GatewayToolExecutor {
         parent_model_run_id: result.parentModelRunId,
       } as GatewayToolResult;
     } catch (err) {
+      const errorRecord =
+        err && typeof err === 'object' ? (err as { code?: unknown; details?: unknown }) : undefined;
+      const code =
+        typeof errorRecord?.code === 'string' ? errorRecord.code : 'context_compile_failed';
       return {
         success: false,
-        code: 'context_compile_failed',
+        code,
         error: `context_compile failed: ${err instanceof Error ? err.message : String(err)}`,
+        ...(errorRecord && 'details' in errorRecord ? { details: errorRecord.details } : {}),
       } as GatewayToolResult;
     }
   }
