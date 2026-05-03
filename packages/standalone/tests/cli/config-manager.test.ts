@@ -227,9 +227,79 @@ describe('ConfigManager', () => {
       expect(dashboard?.tool_permissions?.blocked).not.toContain('Read');
       expect(dashboard?.gateway_tool_permissions?.allowed).toEqual([
         'mama_search',
+        'context_compile',
         'agent_notices',
         'report_publish',
       ]);
+    });
+
+    it('should upgrade old built-in Code-Act gateway allowlists with context_compile on load', async () => {
+      // AC: Existing built-in system agents should receive newly required context_compile access.
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const existingConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        logging: { level: 'info', file: '~/.test/logs/test.log' },
+        multi_agent: {
+          enabled: true,
+          agents: {
+            'dashboard-agent': {
+              name: 'Dashboard Agent',
+              display_name: 'Dashboard',
+              trigger_prefix: '!dashboard',
+              persona_file: '~/.mama/personas/dashboard.md',
+              tier: 2,
+              useCodeAct: true,
+              tool_permissions: {
+                allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+                blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+              },
+              gateway_tool_permissions: {
+                allowed: ['mama_search', 'agent_notices', 'report_publish'],
+                blocked: [],
+              },
+            },
+            'wiki-agent': {
+              name: 'Wiki Agent',
+              display_name: 'Wiki',
+              trigger_prefix: '!wiki',
+              persona_file: '~/.mama/personas/wiki.md',
+              tier: 2,
+              useCodeAct: true,
+              tool_permissions: {
+                allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+                blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+              },
+              gateway_tool_permissions: {
+                allowed: [
+                  'mama_search',
+                  'agent_notices',
+                  'case_list',
+                  'case_assemble',
+                  'obsidian',
+                  'wiki_publish',
+                ],
+                blocked: [],
+              },
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(existingConfig));
+
+      const loaded = await loadConfig();
+
+      expect(
+        loaded.multi_agent?.agents?.['dashboard-agent']?.gateway_tool_permissions?.allowed
+      ).toContain('context_compile');
+      expect(
+        loaded.multi_agent?.agents?.['wiki-agent']?.gateway_tool_permissions?.allowed
+      ).toContain('context_compile');
     });
   });
 
@@ -282,6 +352,9 @@ describe('ConfigManager', () => {
       expect(
         multiAgentConfig.agents['dashboard-agent']?.gateway_tool_permissions?.allowed
       ).toContain('report_publish');
+      expect(
+        multiAgentConfig.agents['dashboard-agent']?.gateway_tool_permissions?.allowed
+      ).toContain('context_compile');
       expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
         'Read'
       );
@@ -302,6 +375,9 @@ describe('ConfigManager', () => {
       );
       expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
         'agent_notices'
+      );
+      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
+        'context_compile'
       );
       expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain('Read');
       expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.blocked).not.toContain(

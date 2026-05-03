@@ -1135,6 +1135,9 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 `POST /api/code-act` injects Tier 2 tools:
 
 - `mama_search`, `mama_load_checkpoint` — Memory read
+- `context_compile` — Trusted context-packet creation. Requires an active
+  worker envelope and persists an append-only packet for downstream
+  `context_packet_id` provenance.
 - `mama_save`, `mama_update`, `mama_add`, `mama_ingest` — Memory write, audited
   through gateway envelope context when envelope issuance is enabled. Automated
   coverage verifies Code-Act context propagation and memory-scope mismatch rows

@@ -541,6 +541,17 @@ function normalizeLegacyMultiAgentConfig(
 }
 
 const SYSTEM_CODE_ACT_AGENT_IDS = new Set(['dashboard-agent', 'wiki-agent']);
+const LEGACY_SYSTEM_CODE_ACT_GATEWAY_ALLOWED: Record<string, string[]> = {
+  'dashboard-agent': ['mama_search', 'agent_notices', 'report_publish'],
+  'wiki-agent': [
+    'mama_search',
+    'agent_notices',
+    'case_list',
+    'case_assemble',
+    'obsidian',
+    'wiki_publish',
+  ],
+};
 
 function normalizeBuiltinCodeActAgentPermissions(
   agentId: string,
@@ -560,8 +571,11 @@ function normalizeBuiltinCodeActAgentPermissions(
     agent.useCodeAct === true &&
     allowed.includes('code_act') &&
     (hasGatewayToolsInCliAllowed || blocksReadOnlyCliTools);
-  const gatewayToolPermissions =
-    agent.gateway_tool_permissions ?? defaultAgent.gateway_tool_permissions;
+  const gatewayToolPermissions = normalizeBuiltinGatewayToolPermissions(
+    agentId,
+    agent.gateway_tool_permissions ?? defaultAgent.gateway_tool_permissions,
+    defaultAgent.gateway_tool_permissions
+  );
 
   if (
     !shouldMigrateLegacyPermissions &&
@@ -574,6 +588,31 @@ function normalizeBuiltinCodeActAgentPermissions(
     ...agent,
     ...(shouldMigrateLegacyPermissions ? { tool_permissions: defaultAgent.tool_permissions } : {}),
     gateway_tool_permissions: gatewayToolPermissions,
+  };
+}
+
+function normalizeBuiltinGatewayToolPermissions(
+  agentId: string,
+  permissions: Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions'],
+  defaultPermissions: Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions']
+): Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions'] {
+  const allowed = permissions?.allowed;
+  const defaultAllowed = defaultPermissions?.allowed ?? [];
+  const legacyAllowed = LEGACY_SYSTEM_CODE_ACT_GATEWAY_ALLOWED[agentId];
+  if (!allowed || !legacyAllowed || defaultAllowed.length === 0) {
+    return permissions;
+  }
+
+  const allowedSet = new Set(allowed);
+  const isLegacyDefault =
+    allowed.length === legacyAllowed.length && legacyAllowed.every((tool) => allowedSet.has(tool));
+  if (!isLegacyDefault) {
+    return permissions;
+  }
+
+  return {
+    ...permissions,
+    allowed: defaultAllowed,
   };
 }
 
@@ -667,7 +706,7 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
           blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
         },
         gateway_tool_permissions: {
-          allowed: ['mama_search', 'agent_notices', 'report_publish'],
+          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
           blocked: [],
         },
       },
@@ -687,6 +726,7 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         gateway_tool_permissions: {
           allowed: [
             'mama_search',
+            'context_compile',
             'agent_notices',
             'case_list',
             'case_assemble',

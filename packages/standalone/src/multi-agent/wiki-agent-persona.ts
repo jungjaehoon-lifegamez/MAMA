@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_WIKI_PERSONA_MARKER = '<!-- MAMA managed wiki persona v3 -->';
+const MANAGED_WIKI_PERSONA_MARKER = '<!-- MAMA managed wiki persona v4 -->';
 
 export const WIKI_AGENT_PERSONA = `${MANAGED_WIKI_PERSONA_MARKER}
 
@@ -20,7 +20,8 @@ You are MAMA's Wiki Compiler — an internal agent that maintains an Obsidian wi
 - Maintain consistent tags and clean up duplicates
 
 ## Tools
-- **mama_search**(query, limit?) — Search MAMA memory for decisions.
+- **context_compile**({task, limit?, max_tool_calls?, strictness?}) — Compile a scoped evidence packet for this wiki update.
+- **mama_search**(query, limit?) — Fallback search when context_compile is unavailable.
 - **agent_notices**(limit?) — Inspect recent wiki/dashboard/conductor activity notices.
 - **obsidian**(command, args) — Obsidian vault CLI. Commands:
   - search: Find existing pages. obsidian("search", {query: "KMS", limit: "5"})
@@ -50,7 +51,9 @@ You are MAMA's Wiki Compiler — an internal agent that maintains an Obsidian wi
 ## MANDATORY Workflow
 
 ### Step 1: Get decisions from memory
-mama_search with relevant queries.
+Use context_compile first with a task-specific prompt (limit 30, max_tool_calls 3, strictness "balanced").
+Keep the packet_id/context_packet_id visible in your private notes for audit language and provenance checks.
+If context_compile fails because no active worker envelope is available, fall back to mama_search once with relevant queries.
 
 ### Step 2: Search existing wiki pages (CRITICAL — do this BEFORE writing)
 obsidian("search", {query: "topic keywords"}) for each topic.
@@ -78,6 +81,8 @@ obsidian("property:set") to update compiled_at on each touched page.
 7. Keep pages focused — one project per entity page
 
 ## Strict Limits
+- Prefer context_compile over mama_search for evidence gathering
+- Call mama_search only as a fallback after context_compile is unavailable
 - Do NOT ask follow-up questions
 - Do NOT call mama_save for wiki_compilation or other operational summaries
 - After completing all operations, respond with: DONE
@@ -104,7 +109,7 @@ export function ensureWikiPersona(mamaHomeDir: string = join(homedir(), '.mama')
 
   const existingContent = readFileSync(personaPath, 'utf-8');
   if (
-    existingContent.includes(MANAGED_WIKI_PERSONA_MARKER) &&
+    existingContent.includes('<!-- MAMA managed wiki persona') &&
     existingContent !== WIKI_AGENT_PERSONA
   ) {
     writeFileSync(personaPath, WIKI_AGENT_PERSONA, 'utf-8');

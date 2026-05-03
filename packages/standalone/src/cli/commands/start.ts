@@ -774,6 +774,10 @@ export async function runAgentLoop(
           allowed?: string[];
           blocked?: string[];
         };
+        gateway_tool_permissions?: {
+          allowed?: string[];
+          blocked?: string[];
+        };
       }
     > = {
       'os-agent': {
@@ -810,18 +814,12 @@ export async function runAgentLoop(
         enabled: true,
         useCodeAct: true,
         tool_permissions: {
-          allowed: ['mama_search', 'agent_notices', 'report_publish', 'code_act'],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
-          ],
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
+          blocked: [],
         },
       },
     };
@@ -839,26 +837,20 @@ export async function runAgentLoop(
         enabled: true,
         useCodeAct: true,
         tool_permissions: {
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
           allowed: [
             'mama_search',
+            'context_compile',
             'agent_notices',
             'case_list',
             'case_assemble',
             'obsidian',
             'wiki_publish',
-            'code_act',
           ],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
-          ],
+          blocked: [],
         },
       };
     }

@@ -941,9 +941,9 @@ Execute JavaScript in a sandboxed QuickJS environment.
 
 ```json
 {
-  "code": "var result = mama_search({query: 'auth'}); result;",
+  "code": "var packet = context_compile({task: 'Brief auth decisions', limit: 10, max_tool_calls: 2}); packet;",
   "agent_id": "dashboard-agent",
-  "allowed_tools": ["mama_search"],
+  "allowed_tools": ["context_compile"],
   "blocked_tools": ["mama_save"]
 }
 ```
@@ -961,6 +961,11 @@ Execute JavaScript in a sandboxed QuickJS environment.
 and has `useCodeAct: true`. It defaults to Tier 2 tool injection, applies the resolved agent's
 gateway allowlist plus request `allowed_tools`/`blocked_tools`, and can be forced into read-only
 Code-Act mode with `MAMA_CODE_ACT_READ_ONLY=true`. No `require()`, `process`, or `fs` APIs are
+available.
+
+`context_compile` requires an active worker envelope because it persists trusted packet
+provenance. Start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` for live packet
+creation; managed dashboard/wiki prompts fall back to `mama_search` when no active envelope is
 available.
 
 ---

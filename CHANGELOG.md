@@ -12,6 +12,9 @@ All notable changes to this project will be documented in this file.
   deterministic source readers/policy, `context_compile` gateway/API surfaces, and the
   `@jungjaehoon/mama-core/context-compile` package export so workers can compile
   selected/rejected/missing evidence for a task
+- **Managed agent context packets** — Default `dashboard-agent` and `wiki-agent` Code-Act
+  allowlists, personas, and scheduled prompts now prefer `context_compile` before `mama_search`
+  fallback for packet-backed briefings and wiki compiles
 - **Trusted context-packet saves** — `mama_save` can now attach a trusted `context_packet_id`
   from the active envelope/model run, preserving source refs from compiled context through memory
   provenance
