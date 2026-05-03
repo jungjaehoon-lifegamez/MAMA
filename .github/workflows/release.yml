@@ -14,7 +14,7 @@ on:
       packages:
         description: 'Packages to release (comma-separated or "all")'
         required: true
-        default: 'all'
+        default: 'mama-core,mama-os'
         type: string
       dry_run:
         description: 'Dry run (no actual publish)'
@@ -365,7 +365,17 @@ jobs:
         sync-plugin,
         deploy-pages,
       ]
-    if: ${{ !inputs.dry_run && always() && needs.prepare-release.result == 'success' }}
+    if: >-
+      ${{
+        !inputs.dry_run &&
+        always() &&
+        needs.prepare-release.result == 'success' &&
+        (needs.publish-mama-core.result == 'success' || needs.publish-mama-core.result == 'skipped') &&
+        (needs.publish-mama-server.result == 'success' || needs.publish-mama-server.result == 'skipped') &&
+        (needs.publish-mama-os.result == 'success' || needs.publish-mama-os.result == 'skipped') &&
+        (needs.sync-plugin.result == 'success' || needs.sync-plugin.result == 'skipped') &&
+        needs.deploy-pages.result == 'success'
+      }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
