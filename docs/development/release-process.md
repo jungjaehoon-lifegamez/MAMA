@@ -96,7 +96,15 @@ git commit -m "chore: prepare release notes and docs"
 git push origin <branch>
 
 # 5. Publish/tag according to the package release plan
+#    After the release-prep PR is merged, run the Release workflow on main with:
+#    - packages: mama-core,mama-os (or the exact package set being shipped)
+#    - bump_versions: false
+#    - dry_run: false
 ```
+
+The release workflow expects package versions to be prepared through a PR before publishing. Do not
+use the workflow to push version bumps directly to `main`; branch protection requires those changes
+to land through review first.
 
 ---
 
