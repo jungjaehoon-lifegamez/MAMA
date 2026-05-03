@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-## [0.20.1] / mama-core [1.6.1] / mama-os [0.20.1] - 2026-05-03
+## [0.20.1] / mama-core [1.7.0] / mama-os [0.20.1] - 2026-05-03
 
 ### Added
 

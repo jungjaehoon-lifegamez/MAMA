@@ -1343,6 +1343,9 @@ export class GatewayToolExecutor {
       }
       packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
       contextPacketScopes = packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id }));
+      if (contextPacketScopes.length === 0) {
+        throw new ContextPacketProvenanceError('Trusted context packet has no memory scopes.');
+      }
       const requestedScopeValue = (input as { scopes?: unknown }).scopes;
       if (Array.isArray(requestedScopeValue) && requestedScopeValue.length === 0) {
         throw new ContextPacketProvenanceError(

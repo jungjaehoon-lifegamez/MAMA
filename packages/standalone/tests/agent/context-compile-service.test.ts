@@ -419,7 +419,7 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     expect(getModelRunInAdapter(adapter, 'mr_context_blank_asof')).toBeNull();
   });
 
-  it('AC: keeps the envelope as the upper-bound boundary when explicit empty filters narrow reads', async () => {
+  it('AC: rejects persisted context packets with empty memory scopes', async () => {
     const adapter = getAdapter();
     const envelope = makeSignedEnvelope();
     const compileContext = vi.fn(
@@ -459,20 +459,22 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
       packetId: () => 'ctxp_empty_filters',
     });
 
-    await service.compileAndPersistContext({
-      caller: 'gateway',
-      envelope,
-      input: {
-        task: 'compile branch context',
-        scopes: [],
-        connectors: [],
-      },
-    });
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          scopes: [],
+          connectors: [],
+        },
+      })
+    ).rejects.toThrow(/at least one trusted memory scope/i);
 
     expect(compileContext).toHaveBeenCalledTimes(1);
-    expect(getContextPacket(adapter, 'ctxp_empty_filters')).toMatchObject({
-      packet_id: 'ctxp_empty_filters',
-      model_run_id: 'mr_context_empty_filters',
+    expect(getContextPacket(adapter, 'ctxp_empty_filters')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_empty_filters')).toMatchObject({
+      status: 'failed',
     });
   });
 

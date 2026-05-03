@@ -202,11 +202,25 @@ function canonicalizeRawSeedRefs(
   });
 }
 
-function assertSeedRefsVisibleToBoundary(
+function hasSeedRefVisibilityConstraints(
+  input: ContextCompileInput,
+  boundary: ContextBoundary | undefined
+): boolean {
+  return (
+    boundary !== undefined ||
+    input.scopes !== undefined ||
+    input.connectors !== undefined ||
+    input.project_refs !== undefined ||
+    (input.tenant_id !== undefined && input.tenant_id !== null) ||
+    input.range !== undefined ||
+    (input.as_of !== undefined && input.as_of !== null)
+  );
+}
+
+function assertSeedRefsVisibleToInput(
   adapter: ContextCompilerAdapter | undefined,
   input: ContextCompileInput,
-  seedRefs: readonly ContextRef[],
-  boundary: ContextBoundary
+  seedRefs: readonly ContextRef[]
 ): ContextRef[] {
   if (seedRefs.length === 0) {
     return [];
@@ -217,7 +231,6 @@ function assertSeedRefsVisibleToBoundary(
   if (
     Array.isArray(input.connectors) &&
     input.connectors.length === 0 &&
-    (boundary.connectors?.length ?? 0) > 0 &&
     seedRefs.some((ref) => ref.kind === 'raw')
   ) {
     throw new Error('Seed raw refs are outside the empty requested connector set');
@@ -225,7 +238,6 @@ function assertSeedRefsVisibleToBoundary(
   if (
     Array.isArray(input.project_refs) &&
     input.project_refs.length === 0 &&
-    (boundary.project_refs?.length ?? 0) > 0 &&
     seedRefs.some((ref) => ref.kind === 'raw')
   ) {
     throw new Error('Seed raw refs are outside the empty requested project ref set');
@@ -293,8 +305,11 @@ function normalizeStrictness(
     case 'balanced':
     case undefined:
       return 'balanced';
+    default: {
+      const _exhaustive: never = strictness;
+      throw new Error(`Unsupported context compile strictness: ${String(_exhaustive)}`);
+    }
   }
-  return 'balanced';
 }
 
 async function appendResult(
@@ -356,12 +371,9 @@ export async function compileContext(
       requestedTenantId: effectiveInput.tenant_id,
       seedRefs,
     });
-    canonicalSeedRefs = assertSeedRefsVisibleToBoundary(
-      deps.adapter,
-      effectiveInput,
-      seedRefs,
-      boundary
-    );
+  }
+  if (deps.adapter || hasSeedRefVisibilityConstraints(effectiveInput, boundary)) {
+    canonicalSeedRefs = assertSeedRefsVisibleToInput(deps.adapter, effectiveInput, seedRefs);
   }
 
   const canonicalScopes = canonicalizeContextScopes(effectiveInput.scopes);

@@ -245,6 +245,24 @@ describe('STORY-B5: /api/agent/context compile API - AC1-AC4', () => {
     });
   });
 
+  it('AC: rejects Tier 3 envelopes before calling the shared service', async () => {
+    const tier3Envelope = makeSignedEnvelope({ tier: 3 });
+    authority.persist(tier3Envelope);
+    const service = makeServiceMock();
+    const apiServer = makeRouterServer({ contextCompileService: service });
+
+    const response = await request(apiServer.app)
+      .post('/api/agent/context/compile')
+      .set(TUNNEL_HEADERS)
+      .set('Authorization', 'Bearer agent-context-token')
+      .set('x-mama-envelope-hash', tier3Envelope.envelope_hash)
+      .send({ task: 'compile API context' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('context_compile_tier_denied');
+    expect(service.compileAndPersistContext).not.toHaveBeenCalled();
+  });
+
   it('AC: rejects malformed compile filter fields before calling the shared service', async () => {
     const service = makeServiceMock();
     const apiServer = makeRouterServer({ contextCompileService: service });

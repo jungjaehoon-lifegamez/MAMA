@@ -54,6 +54,13 @@ async function handleContextCompileRequest(
 ): Promise<void> {
   try {
     const envelope = loadWorkerEnvelope(req, options.envelopeAuthority);
+    if (envelope.tier === 3) {
+      throw new ContextCompileServiceError(
+        403,
+        'context_compile_tier_denied',
+        'context_compile is not allowed for Tier 3 agents.'
+      );
+    }
     const input = parseContextCompileInput(req.body);
     const modelRunId = firstString(req.header('x-mama-model-run-id'))?.trim();
     const result = await service.compileAndPersistContext({

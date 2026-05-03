@@ -4107,7 +4107,15 @@ async function handleCodeActRequest(
       return;
     }
 
-    const agentId = typeof body.agent_id === 'string' ? body.agent_id.trim() : undefined;
+    let agentId: string | undefined;
+    if (body.agent_id !== undefined) {
+      if (typeof body.agent_id !== 'string' || body.agent_id.trim().length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message: 'agent_id must be a non-empty string.' }));
+        return;
+      }
+      agentId = body.agent_id.trim();
+    }
     const allowedTools = normalizeCodeActToolList(body.allowed_tools, 'allowed_tools', res);
     if (allowedTools === false) {
       return;

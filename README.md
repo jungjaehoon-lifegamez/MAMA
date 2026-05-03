@@ -222,7 +222,7 @@ open-source components.
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
 | [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.1  | Always-on runtime, envelopes, connectors, worker APIs |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code                    |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.6.1   | Core memory, provenance, raw refs, graph, embeddings  |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.7.0   | Core memory, provenance, raw refs, graph, embeddings  |
 | [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
