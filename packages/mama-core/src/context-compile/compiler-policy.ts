@@ -7,7 +7,7 @@ export interface ContextCompilerPolicyInput {
   candidates: ContextCandidate[];
   hidden: HiddenCandidateAggregate;
   limit?: number;
-  strictness?: 'low' | 'medium' | 'high';
+  strictness?: 'recall' | 'balanced' | 'strict' | 'low' | 'medium' | 'high';
   max_tokens?: number;
 }
 
@@ -65,10 +65,10 @@ function sortedCandidates(candidates: readonly ContextCandidate[]): ContextCandi
 
 function shouldRejectVectorOnly(
   candidate: ContextCandidate,
-  strictness: 'low' | 'medium' | 'high'
+  strictness: 'recall' | 'balanced' | 'strict'
 ): boolean {
   return (
-    strictness === 'high' &&
+    strictness === 'strict' &&
     candidate.support.is_vector_only === true &&
     candidate.support.confirmation_signals.length === 0
   );
@@ -96,11 +96,29 @@ function addCountSummary(parts: string[], label: string, count: number): void {
   }
 }
 
+function normalizeStrictness(
+  strictness: ContextCompilerPolicyInput['strictness']
+): 'recall' | 'balanced' | 'strict' {
+  switch (strictness) {
+    case 'low':
+    case 'recall':
+      return 'recall';
+    case 'high':
+    case 'strict':
+      return 'strict';
+    case 'medium':
+    case 'balanced':
+    case undefined:
+      return 'balanced';
+  }
+  return 'balanced';
+}
+
 export function applyContextCompilerPolicy(
   input: ContextCompilerPolicyInput
 ): ContextCompilerPolicyResult {
   const limit = normalizeLimit(input.limit);
-  const strictness = input.strictness ?? 'medium';
+  const strictness = normalizeStrictness(input.strictness);
   const maxTokens =
     typeof input.max_tokens === 'number' && Number.isFinite(input.max_tokens)
       ? Math.max(0, Math.floor(input.max_tokens))

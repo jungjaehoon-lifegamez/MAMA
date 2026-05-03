@@ -24,7 +24,7 @@ import { createContextCompileService } from '../../agent/context-compile-service
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
-import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
+import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
@@ -58,7 +58,8 @@ import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes } from '../../memory/scope-context.js';
-import { DEFAULT_ROLES } from '../config/types.js';
+import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
+import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
@@ -88,6 +89,34 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
 
 function isTruthyEnvValue(value: string | undefined): boolean {
   return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+function deriveCodeActToolPolicy(
+  requestContext: CodeActExecutionContext | undefined,
+  agentConfig: Omit<AgentPersonaConfig, 'id'> | undefined
+): { allowedTools?: string[]; blockedTools?: string[] } {
+  const allowedTools =
+    requestContext?.allowedTools ??
+    agentConfig?.gateway_tool_permissions?.allowed ??
+    agentConfig?.tool_permissions?.allowed;
+  const blockedTools =
+    requestContext?.blockedTools ??
+    agentConfig?.gateway_tool_permissions?.blocked ??
+    agentConfig?.tool_permissions?.blocked;
+  return { allowedTools, blockedTools };
+}
+
+function buildCodeActRole(policy: {
+  allowedTools?: string[];
+  blockedTools?: string[];
+}): RoleConfig {
+  return {
+    allowedTools: policy.allowedTools ?? ['*'],
+    blockedTools: policy.blockedTools,
+    allowedPaths: [],
+    systemControl: false,
+    sensitiveAccess: false,
+  };
 }
 
 type CodeActModelRunAdapter = Pick<DatabaseAdapter, 'prepare'>;
@@ -476,10 +505,17 @@ export async function runAgentLoop(
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
   {
-    graphHandlerOptions.executeCodeAct = async (code: string) => {
+    graphHandlerOptions.executeCodeAct = async (
+      code: string,
+      codeActContext?: CodeActExecutionContext
+    ) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
-      const codeActAgentId = config.multi_agent?.default_agent || 'conductor';
+      const codeActAgentId =
+        codeActContext?.agentId || config.multi_agent?.default_agent || 'conductor';
+      const codeActAgentConfig = config.multi_agent?.agents?.[codeActAgentId];
+      const codeActPolicy = deriveCodeActToolPolicy(codeActContext, codeActAgentConfig);
+      const codeActRole = buildCodeActRole(codeActPolicy);
       const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const codeActTier = codeActReadOnly ? 3 : 2;
       const instanceId = randomUUID();
@@ -513,8 +549,8 @@ export async function runAgentLoop(
           budget: { wall_seconds: wallSeconds },
           expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
         });
-        const roleName = config.roles?.sourceMapping?.watch ?? 'os_agent';
-        const role = config.roles?.definitions?.[roleName] ?? DEFAULT_ROLES.definitions.os_agent;
+        const roleName = `code_act_${codeActAgentId}`;
+        const role = codeActRole;
         const agentContext: AgentContext = {
           source: 'watch',
           platform: 'cli',
@@ -549,7 +585,11 @@ export async function runAgentLoop(
         },
       });
       executionContext = parentRun.executionContext;
-      const bridge = new HostBridge(toolExecutor, undefined, executionContext);
+      const bridge = new HostBridge(
+        toolExecutor,
+        new RoleManager({ rolesConfig: config.roles ?? DEFAULT_ROLES }),
+        executionContext
+      );
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
         if (result !== undefined) {
@@ -569,7 +609,7 @@ export async function runAgentLoop(
         // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
         // Per-request executionContext carries envelope data; this routing context is legacy fallback.
         toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-        bridge.injectInto(sandbox, codeActTier);
+        bridge.injectInto(sandbox, codeActTier, codeActRole);
         const result = await sandbox.execute(code);
         finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
         return {

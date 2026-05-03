@@ -176,8 +176,15 @@ function validateStrictnessField(input: Record<string, unknown>): void {
   if (value === undefined) {
     return;
   }
-  if (value !== 'low' && value !== 'medium' && value !== 'high') {
-    throwInvalidInput('strictness must be one of low, medium, or high.');
+  if (
+    value !== 'recall' &&
+    value !== 'balanced' &&
+    value !== 'strict' &&
+    value !== 'low' &&
+    value !== 'medium' &&
+    value !== 'high'
+  ) {
+    throwInvalidInput('strictness must be one of recall, balanced, or strict.');
   }
 }
 

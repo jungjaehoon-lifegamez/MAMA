@@ -49,7 +49,12 @@ function makePacket(overrides: Partial<ContextPacket> = {}): ContextPacket {
       used_tool_calls: 1,
       elapsed_ms: 5,
       estimated_tokens: 16,
+      budget_exhausted: false,
     },
+    mode: 'general',
+    compiler_version: 'context-compile-v0',
+    rejected_refs_truncated: false,
+    budget_manifest: { budget_exhausted: false, skipped_operators: [] },
     ...overrides,
   };
 }
@@ -457,6 +462,71 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
       ])
     );
     expect(trustedOptions.provenance.source_refs).not.toContain('raw:attacker:spoofed');
+    expect(vi.mocked(traceApi.saveWithTrustedProvenance).mock.calls[0][0]).toMatchObject({
+      scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+    });
+  });
+
+  it('rejects context packet saves when trusted save support is unavailable', async () => {
+    const envelope = makeSignedEnvelope();
+    seedContextPacket({ envelope });
+    const api = makeTraceApi();
+    delete api.saveWithTrustedProvenance;
+    const executor = new GatewayToolExecutor({ mamaApi: api });
+
+    const result = await executor.execute(
+      'mama_save',
+      {
+        type: 'decision',
+        topic: 'context_packet_unavailable',
+        decision: 'Trusted save support is required',
+        reasoning: 'context_packet_id must not be silently dropped',
+        context_packet_id: 'ctxp_gateway_tool',
+      } as unknown as GatewayToolInput,
+      makeContext({ envelope, modelRunId: 'mr_parent_agent_loop' })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'context_packet_denied',
+    });
+    expect(api.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects context packet saves to scopes outside the packet scope', async () => {
+    const envelope = makeSignedEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['telegram'],
+        memory_scopes: [
+          { kind: 'project', id: '/workspace/project-a' },
+          { kind: 'global', id: 'system' },
+        ],
+        allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+      },
+    });
+    seedContextPacket({ envelope });
+    const api = makeTraceApi();
+    const executor = new GatewayToolExecutor({ mamaApi: api });
+
+    const result = await executor.execute(
+      'mama_save',
+      {
+        type: 'decision',
+        topic: 'context_packet_scope_escape',
+        decision: 'Do not save packet-backed memories elsewhere',
+        reasoning: 'save scopes must stay within the packet scope',
+        context_packet_id: 'ctxp_gateway_tool',
+        scopes: [{ kind: 'global', id: 'system' }],
+      } as unknown as GatewayToolInput,
+      makeContext({ envelope, modelRunId: 'mr_parent_agent_loop' })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'context_packet_denied',
+    });
+    expect(api.saveWithTrustedProvenance).not.toHaveBeenCalled();
   });
 
   it('rejects context packet save provenance unless the packet is committed and in the caller lineage', async () => {

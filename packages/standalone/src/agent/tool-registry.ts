@@ -69,7 +69,7 @@ register({
 register({
   name: 'context_compile',
   description:
-    'Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. Unavailable to Tier 3/read-only agents.',
+    'Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3/read-only agents.',
   category: 'memory',
   params:
     'task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?',

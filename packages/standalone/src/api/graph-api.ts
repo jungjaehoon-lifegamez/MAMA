@@ -4074,7 +4074,21 @@ async function handleCodeActRequest(
       return;
     }
 
-    const result = await options.executeCodeAct(code);
+    const agentId = typeof body.agent_id === 'string' ? body.agent_id.trim() : undefined;
+    const allowedTools = normalizeCodeActToolList(body.allowed_tools, 'allowed_tools', res);
+    if (allowedTools === false) {
+      return;
+    }
+    const blockedTools = normalizeCodeActToolList(body.blocked_tools, 'blocked_tools', res);
+    if (blockedTools === false) {
+      return;
+    }
+
+    const result = await options.executeCodeAct(code, {
+      ...(agentId ? { agentId } : {}),
+      ...(allowedTools ? { allowedTools } : {}),
+      ...(blockedTools ? { blockedTools } : {}),
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
@@ -4084,6 +4098,22 @@ async function handleCodeActRequest(
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: true, message }));
   }
+}
+
+function normalizeCodeActToolList(
+  value: unknown,
+  field: string,
+  res: ServerResponse
+): string[] | undefined | false {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, message: `${field} must be an array of strings.` }));
+    return false;
+  }
+  return value.map((item) => item.trim()).filter((item) => item.length > 0);
 }
 
 export {

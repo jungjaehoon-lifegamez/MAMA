@@ -22,6 +22,47 @@ log(`Starting... PID=${process.pid} NODE=${process.execPath}`);
 const MAMA_API_PORT = parseInt(process.env.MAMA_SERVER_PORT || '3847', 10);
 log(`API port: ${MAMA_API_PORT}`);
 
+const CALLER_AGENT_ID = normalizeEnvString(process.env.MAMA_CODE_ACT_AGENT_ID);
+const CALLER_ALLOWED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_ALLOWED_TOOLS);
+const CALLER_BLOCKED_TOOLS = parseToolListEnv(process.env.MAMA_CODE_ACT_BLOCKED_TOOLS);
+const MAMA_AUTH_TOKEN = normalizeEnvString(process.env.MAMA_AUTH_TOKEN);
+log(
+  `Policy: agent=${CALLER_AGENT_ID ?? 'default'} allowed=${formatToolListForLog(
+    CALLER_ALLOWED_TOOLS
+  )} blocked=${formatToolListForLog(CALLER_BLOCKED_TOOLS)}`
+);
+
+function normalizeEnvString(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseToolListEnv(value: string | undefined): string[] | undefined {
+  const trimmed = normalizeEnvString(value);
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+      return parsed.map((item) => item.trim()).filter((item) => item.length > 0);
+    }
+  } catch {
+    // Fall through to comma-separated compatibility.
+  }
+  return trimmed
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function formatToolListForLog(value: string[] | undefined): string {
+  if (!value) {
+    return 'default';
+  }
+  return value.length > 0 ? value.join(',') : '<none>';
+}
+
 function callCodeActAPI(code: string): Promise<{
   success: boolean;
   value?: unknown;
@@ -30,17 +71,26 @@ function callCodeActAPI(code: string): Promise<{
   toolCalls?: { name: string; input: Record<string, unknown> }[];
 }> {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ code });
+    const body = JSON.stringify({
+      code,
+      ...(CALLER_AGENT_ID ? { agent_id: CALLER_AGENT_ID } : {}),
+      ...(CALLER_ALLOWED_TOOLS ? { allowed_tools: CALLER_ALLOWED_TOOLS } : {}),
+      ...(CALLER_BLOCKED_TOOLS ? { blocked_tools: CALLER_BLOCKED_TOOLS } : {}),
+    });
+    const headers: Record<string, string | number> = {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(body),
+    };
+    if (MAMA_AUTH_TOKEN) {
+      headers.Authorization = `Bearer ${MAMA_AUTH_TOKEN}`;
+    }
     const req = http.request(
       {
         hostname: '127.0.0.1',
         port: MAMA_API_PORT,
         path: '/api/code-act',
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
+        headers,
         timeout: 30_000,
       },
       (res) => {
@@ -85,8 +135,10 @@ function replyError(id: string | number, code: number, message: string): void {
 const CODE_ACT_TOOL = {
   name: 'code_act',
   description:
-    'Execute JavaScript code in a sandboxed environment with all MAMA gateway tools. ' +
-    'Available: mama_search, mama_save, mama_update, mama_load_checkpoint, Read, Write, Grep, Glob, Bash, etc. ' +
+    'Execute JavaScript code in a sandboxed environment with the caller agent gateway allowlist enforced by MAMA OS. ' +
+    `Policy: allowed=${formatToolListForLog(CALLER_ALLOWED_TOOLS)}, blocked=${formatToolListForLog(
+      CALLER_BLOCKED_TOOLS
+    )}. ` +
     'Use var for variables. Last expression is the return value. No async/await.',
   inputSchema: {
     type: 'object',

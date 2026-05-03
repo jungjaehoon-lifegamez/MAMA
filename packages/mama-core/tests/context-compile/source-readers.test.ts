@@ -227,6 +227,13 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       );
     });
 
+    it('fails loudly when the adapter is not a migrated memory database', async () => {
+      const adapter = new NodeSQLiteAdapter({ dbPath: tempDbPath() }) as unknown as DatabaseAdapter;
+      adapter.connect();
+
+      await expect(readMemoryCandidates(input(), { adapter })).rejects.toThrow(/decisions/i);
+    });
+
     it('filters by range and as_of, dropping timestamp-missing candidates into aggregates only', async () => {
       const hiddenId = 'mem-hidden-missing-time';
       const hiddenExcerpt = 'this hidden excerpt must not leak';

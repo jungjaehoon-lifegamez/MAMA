@@ -40,7 +40,12 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'human.correction',
 ]);
 
-const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall', 'context_compile']);
+const MEMORY_SCOPED_TOOLS = new Set<string>([
+  'mama_save',
+  'mama_search',
+  'mama_recall',
+  'context_compile',
+]);
 
 export class EnvelopeEnforcer {
   check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
@@ -125,7 +130,10 @@ export class EnvelopeEnforcer {
       );
     }
 
-    if (!MEMORY_READ_TOOLS.has(toolName)) {
+    if (!MEMORY_SCOPED_TOOLS.has(toolName)) {
+      return;
+    }
+    if (envelope.tier === 3 && WRITE_OR_SEND_TOOLS.has(toolName)) {
       return;
     }
 
@@ -135,7 +143,7 @@ export class EnvelopeEnforcer {
         return;
       }
       throw new EnvelopeViolation(
-        'Memory read tools must execute with an explicit envelope memory scope',
+        'Memory tools must execute with an explicit envelope memory scope',
         'memory_scope_out_of_scope',
         { allowed: envelope.scope.memory_scopes }
       );
@@ -196,7 +204,7 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
 }
 
 function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
-  if (!['mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
+  if (!['mama_save', 'mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
     return [];
   }
   if (!isRecord(args) || args.scopes === undefined) {

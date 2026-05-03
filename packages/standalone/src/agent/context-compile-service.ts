@@ -274,9 +274,12 @@ function validateRange(range: ContextCompileInput['range']): void {
   }
 }
 
-function validateStrictness(strictness: ContextCompileInput['strictness']): void {
+function validateStrictness(strictness: unknown): void {
   if (
     strictness !== undefined &&
+    strictness !== 'recall' &&
+    strictness !== 'balanced' &&
+    strictness !== 'strict' &&
     strictness !== 'low' &&
     strictness !== 'medium' &&
     strictness !== 'high'

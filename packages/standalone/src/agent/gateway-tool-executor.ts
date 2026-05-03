@@ -38,6 +38,7 @@ import type {
   GatewayToolInput,
   GatewayToolResult,
   SaveInput,
+  SaveDecisionInput,
   SearchInput,
   RecallInput,
   ContextCompileInput,
@@ -162,6 +163,11 @@ type ScopeAuditFields = {
   mismatch: 0 | 1;
 };
 
+type TrustedMemoryWriteBuildResult = {
+  options: TrustedMemoryWriteOptions;
+  contextPacketScopes?: MemoryScope[];
+};
+
 type TraceCapableMAMAApi = MAMAApiInterface & {
   beginModelRun: (input: BeginModelRunInput) => Promise<ModelRunRecord>;
   commitModelRun: (modelRunId: string, summary?: string) => Promise<ModelRunRecord>;
@@ -180,6 +186,7 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_ingest',
 ]);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
+  'mama_save',
   'mama_search',
   'mama_recall',
   'context_compile',
@@ -1277,7 +1284,7 @@ export class GatewayToolExecutor {
       return input;
     }
 
-    const scopedInput = input as SearchInput | RecallInput | ContextCompileInput;
+    const scopedInput = input as GatewayToolInput & { scopes?: unknown };
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
       ? toolName === 'context_compile' || scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
@@ -1295,11 +1302,12 @@ export class GatewayToolExecutor {
     toolName: string,
     gatewayCallId: string,
     input?: SaveInput | { context_packet_id?: unknown }
-  ): Promise<TrustedMemoryWriteOptions> {
+  ): Promise<TrustedMemoryWriteBuildResult> {
     const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     const capability = getTrustedProvenanceRuntime().createTrustedProvenanceCapability();
     const contextPacketId = getContextPacketIdForTrustedProvenance(input);
     const packetSourceRefs: string[] = [];
+    let contextPacketScopes: MemoryScope[] | undefined;
 
     if (contextPacketId) {
       if (!ctx?.envelope) {
@@ -1328,26 +1336,41 @@ export class GatewayToolExecutor {
         throw new ContextPacketProvenanceError(`Context packet not found: ${contextPacketId}`);
       }
       packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
+      contextPacketScopes = packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id }));
+      const requestedScopes = normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
+      if (
+        requestedScopes &&
+        !requestedScopes.every((scope) =>
+          contextPacketScopes?.some((allowed) => memoryScopeKey(allowed) === memoryScopeKey(scope))
+        )
+      ) {
+        throw new ContextPacketProvenanceError(
+          'Requested save scope is outside the trusted context packet scope.'
+        );
+      }
     }
 
     return {
-      capability,
-      provenance: {
-        actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
-        agent_id: ctx?.agentId,
-        model_run_id: ctx?.modelRunId ?? undefined,
-        envelope_hash: ctx?.envelope?.envelope_hash,
-        tool_name: toolName,
-        gateway_call_id: gatewayCallId,
-        ...(contextPacketId ? { context_packet_id: contextPacketId } : {}),
-        source_turn_id: ctx?.sourceTurnId,
-        source_message_ref: ctx?.sourceMessageRef,
-        source_refs: dedupeSourceRefs([
-          ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
-          ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
-          ...packetSourceRefs,
-        ]),
+      options: {
+        capability,
+        provenance: {
+          actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
+          agent_id: ctx?.agentId,
+          model_run_id: ctx?.modelRunId ?? undefined,
+          envelope_hash: ctx?.envelope?.envelope_hash,
+          tool_name: toolName,
+          gateway_call_id: gatewayCallId,
+          ...(contextPacketId ? { context_packet_id: contextPacketId } : {}),
+          source_turn_id: ctx?.sourceTurnId,
+          source_message_ref: ctx?.sourceMessageRef,
+          source_refs: dedupeSourceRefs([
+            ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
+            ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
+            ...packetSourceRefs,
+          ]),
+        },
       },
+      contextPacketScopes,
     };
   }
 
@@ -1359,7 +1382,7 @@ export class GatewayToolExecutor {
     return Boolean(api.saveWithTrustedProvenance);
   }
 
-  private isMemoryDecisionSaveInput(input: SaveInput): boolean {
+  private isMemoryDecisionSaveInput(input: SaveInput): input is SaveDecisionInput {
     const candidate = input as {
       type?: unknown;
       topic?: unknown;
@@ -1838,13 +1861,29 @@ export class GatewayToolExecutor {
           const saveInput = input as SaveInput;
           const api = await getApi();
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
-          if (this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)) {
+          let effectiveSaveInput = saveInput;
+          const hasContextPacketId = getContextPacketIdForTrustedProvenance(saveInput) !== null;
+          if (this.isMemoryDecisionSaveInput(saveInput) && hasContextPacketId) {
+            if (!this.supportsTrustedSave(api)) {
+              return {
+                success: false,
+                code: 'context_packet_denied',
+                error: 'context_packet_id requires trusted save support.',
+              };
+            }
             try {
-              trustedOptions = await this.buildTrustedMemoryWriteOptions(
+              const trustedBuild = await this.buildTrustedMemoryWriteOptions(
                 'mama_save',
                 gatewayCallId,
                 saveInput
               );
+              trustedOptions = trustedBuild.options;
+              if (!Array.isArray(saveInput.scopes) && trustedBuild.contextPacketScopes) {
+                effectiveSaveInput = {
+                  ...saveInput,
+                  scopes: trustedBuild.contextPacketScopes,
+                };
+              }
             } catch (error) {
               if (error instanceof ContextPacketProvenanceError) {
                 return {
@@ -1855,10 +1894,13 @@ export class GatewayToolExecutor {
               }
               throw error;
             }
+          } else if (this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)) {
+            trustedOptions = (await this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId))
+              .options;
           }
           return await handleSave(
             api,
-            saveInput,
+            effectiveSaveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
               : undefined,
@@ -1880,7 +1922,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaAdd(
             input as { content: string },
             this.supportsTrustedIngest(api)
-              ? await this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)
+              ? (await this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)).options
               : undefined
           );
         }
@@ -1889,7 +1931,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaIngest(
             input as { content: string; scopes?: unknown },
             this.supportsTrustedIngest(api)
-              ? await this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)
+              ? (await this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)).options
               : undefined
           );
         }
