@@ -220,9 +220,9 @@ open-source components.
 
 | Package                                          | Version | Description                                           |
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.0  | Always-on runtime, envelopes, connectors, worker APIs |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.1  | Always-on runtime, envelopes, connectors, worker APIs |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code                    |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.6.0   | Core memory, provenance, raw refs, graph, embeddings  |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.6.1   | Core memory, provenance, raw refs, graph, embeddings  |
 | [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
@@ -307,7 +307,7 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 | **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                |
 | **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                               |
 | **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                       |
-| **Now**  | v0.20   | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance |
+| **Now**  | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance |
 | **Next** | v0.21   | Report composer, packet retention policy, search-quality feedback loops, browser onboarding for non-developers, and domain extraction templates                                                                                                   |
 |          | Later   | Domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                              |
 |          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                       |
