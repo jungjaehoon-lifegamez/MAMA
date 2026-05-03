@@ -453,6 +453,16 @@ function packetWithServiceIdentity(packet: ContextPacket, packetId: string): Con
   };
 }
 
+function assertPacketHasMemoryScopes(packet: ContextPacket): void {
+  if (canonicalizeContextScopes(packet.scopes).scopes.length === 0) {
+    throw new ContextCompileServiceError(
+      403,
+      'context_compile_scope_denied',
+      'context_compile requires at least one trusted memory scope.'
+    );
+  }
+}
+
 function buildPacketRecord(input: {
   packet: ContextPacket;
   envelope: Envelope;
@@ -591,6 +601,7 @@ export function createContextCompileService(
         const packet = sanitizeContextPacketForVisibility(
           packetWithServiceIdentity(compiled, packetId)
         );
+        assertPacketHasMemoryScopes(packet);
         const projectId =
           requestedProjectRefs.find((project) => project.kind === 'project')?.id ?? null;
         const record = insertContextPacket(

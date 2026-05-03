@@ -12,17 +12,24 @@ import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 
 type ScopeKind = 'project' | 'user' | 'channel' | 'global';
 
-function insertScopedMemory(id: string, kind: ScopeKind, externalId: string): void {
+function insertScopedMemory(
+  id: string,
+  kind: ScopeKind,
+  externalId: string,
+  status = 'active'
+): void {
   const adapter = getAdapter();
   const scopeId = `scope_${kind}_${externalId}`;
   adapter
     .prepare(
       `
-        INSERT INTO decisions (id, topic, decision, reasoning, confidence, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decisions (
+          id, topic, decision, reasoning, confidence, created_at, updated_at, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
-    .run(id, `topic-${id}`, `decision-${id}`, `reasoning-${id}`, 0.8, 1_000, 1_000);
+    .run(id, `topic-${id}`, `decision-${id}`, `reasoning-${id}`, 0.8, 1_000, 1_000, status);
   adapter
     .prepare(
       `
@@ -125,6 +132,16 @@ describe('Story M3.1: Twin Edge Visibility', () => {
           ],
           [{ kind: 'project', id: 'alpha' }]
         )
+      ).toThrow(/not visible/i);
+    });
+
+    it('rejects memory refs with statuses excluded from normal context recall', () => {
+      insertScopedMemory('mem-stale', 'project', 'alpha', 'stale');
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'memory', id: 'mem-stale' }], {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+        })
       ).toThrow(/not visible/i);
     });
 

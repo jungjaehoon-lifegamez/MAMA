@@ -17,6 +17,7 @@ const TABLE_COLUMN_PRAGMAS: Record<string, string> = {
   case_truth: 'PRAGMA table_info(case_truth)',
 };
 const tableColumnCache = new WeakMap<TwinRefVisibilityAdapter, Map<string, Set<string>>>();
+const EXCLUDED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
 
 function scopeKey(scope: TwinScopeRef): string {
   return `${scope.kind}\0${scope.id}`;
@@ -107,17 +108,36 @@ function isMemoryVisible(
   id: string,
   visibility: TwinVisibility
 ): boolean {
+  const columns = tableColumns(adapter, 'decisions');
+  const statusSelect = columns.has('status') ? 'status' : 'NULL AS status';
+  const supersededBySelect = columns.has('superseded_by')
+    ? 'superseded_by'
+    : 'NULL AS superseded_by';
   const row = adapter
     .prepare(
       `
-        SELECT created_at, event_datetime
+        SELECT created_at, event_datetime, ${statusSelect}, ${supersededBySelect}
         FROM decisions
         WHERE id = ?
         LIMIT 1
       `
     )
-    .get(id) as { created_at: number; event_datetime: number | null } | undefined;
+    .get(id) as
+    | {
+        created_at: number;
+        event_datetime: number | null;
+        status: string | null;
+        superseded_by: string | null;
+      }
+    | undefined;
   if (!row) {
+    return false;
+  }
+  const status = typeof row.status === 'string' ? row.status : 'active';
+  if (
+    EXCLUDED_MEMORY_STATUSES.has(status) ||
+    (typeof row.superseded_by === 'string' && row.superseded_by.length > 0)
+  ) {
     return false;
   }
   if (!isWithinVisibilityTime(row.event_datetime ?? row.created_at, visibility)) {
@@ -146,7 +166,6 @@ function isMemoryVisible(
     return true;
   }
 
-  const columns = tableColumns(adapter, 'decisions');
   if (columns.has('memory_scope_kind') && columns.has('memory_scope_id')) {
     const row = adapter
       .prepare(

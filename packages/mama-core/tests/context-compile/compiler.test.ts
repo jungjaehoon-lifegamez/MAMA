@@ -57,6 +57,7 @@ function insertScopedDecision(
     summary: string;
     details: string;
     scopeId?: string;
+    status?: string;
   }
 ): void {
   const scopeId = input.scopeId ?? 'repo-a';
@@ -80,7 +81,7 @@ function insertScopedDecision(
       1_200,
       1_200,
       'decision',
-      'active',
+      input.status ?? 'active',
       input.summary,
       1_200
     );
@@ -909,6 +910,59 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
       source_id: 'm-visible-seed',
       channel_id: 'C-eng',
     });
+  });
+
+  it('validates scoped seed refs even when no envelope boundary is supplied', async () => {
+    const adapter = createAdapter();
+    insertScopedDecision(adapter, {
+      id: 'mem-seed-beta',
+      topic: 'beta-only context',
+      summary: 'This memory belongs to repo beta.',
+      details: 'A scoped compile for repo alpha must not trust this seed.',
+      scopeId: 'repo-b',
+    });
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+          seed_refs: [{ kind: 'memory', id: 'mem-seed-beta' }],
+        },
+        compilerDeps({
+          adapter,
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/not visible/i);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
+  });
+
+  it('validates bare memory seed refs when an adapter is available', async () => {
+    const adapter = createAdapter();
+    insertScopedDecision(adapter, {
+      id: 'mem-seed-stale',
+      topic: 'stale seed context',
+      summary: 'This stale memory must not become trusted provenance.',
+      details: 'Normal context recall excludes stale memory.',
+      status: 'stale',
+    });
+    const readMemoryCandidates = vi.fn(async () => EMPTY_RESULT);
+
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          seed_refs: [{ kind: 'memory', id: 'mem-seed-stale' }],
+        },
+        compilerDeps({
+          adapter,
+          readMemoryCandidates,
+        })
+      )
+    ).rejects.toThrow(/not visible/i);
+    expect(readMemoryCandidates).not.toHaveBeenCalled();
   });
 
   it('canonicalizes raw seed source/channel metadata from connector_event_index', async () => {

@@ -9,12 +9,19 @@ import type {
 } from '../../src/agent/types.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { EnvelopeEnforcer } from '../../src/envelope/enforcer.js';
-import type { ContextCompileService } from '../../src/agent/context-compile-service.js';
+import {
+  createContextCompileService,
+  type ContextCompileService,
+} from '../../src/agent/context-compile-service.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import {
+  appendToolTrace,
   beginModelRunInAdapter,
   commitModelRunInAdapter,
+  getContextPacket,
+  getModelRunInAdapter,
   insertContextPacket,
+  listToolTracesForRun,
   type ContextPacket,
   type ContextPacketRecord,
 } from '../../../mama-core/src/index.js';
@@ -93,6 +100,7 @@ function seedContextPacket(
     parentModelRunId?: string;
     childModelRunId?: string;
     packetId?: string;
+    packet?: ContextPacket;
     commitChild?: boolean;
   } = {}
 ): void {
@@ -122,13 +130,14 @@ function seedContextPacket(
   if (input.commitChild !== false) {
     commitModelRunInAdapter(adapter, childModelRunId, `context_compile packet ${packetId}`);
   }
+  const packet = input.packet ?? makePacket({ packet_id: packetId });
   insertContextPacket(
     adapter,
     makePacketRecord(envelope, {
       packet_id: packetId,
       model_run_id: childModelRunId,
       input_snapshot_ref: `context_compile:${packetId}`,
-      packet: makePacket({ packet_id: packetId }),
+      packet,
     })
   );
 }
@@ -189,6 +198,7 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
   beforeEach(() => {
     const adapter = getAdapter();
     adapter.prepare('DELETE FROM context_packets').run();
+    adapter.prepare('DELETE FROM tool_traces').run();
     adapter.prepare('DELETE FROM model_runs').run();
   });
 
@@ -235,6 +245,60 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
         tool_name: 'context_compile',
       })
     );
+  });
+
+  it('integrates gateway context_compile with the real service and trace persistence', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    beginModelRunInAdapter(adapter, {
+      model_run_id: 'mr_real_parent',
+      agent_id: envelope.agent_id,
+      instance_id: envelope.instance_id,
+      envelope_hash: envelope.envelope_hash,
+      input_snapshot_ref: 'agent-loop:real-gateway',
+      input_refs: { tool: 'agent.loop', test: true },
+    });
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      childModelRunId: () => 'mr_real_child',
+      packetId: () => 'ctxp_real_gateway',
+    });
+    const traceApi = makeTraceApi();
+    traceApi.appendToolTrace = appendToolTrace;
+    const executor = new GatewayToolExecutor({
+      mamaApi: traceApi,
+      contextCompileService: service,
+    });
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile context', max_tool_calls: 1 } as GatewayToolInput,
+      makeContext({ envelope, modelRunId: 'mr_real_parent' })
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      packet_id: 'ctxp_real_gateway',
+      model_run_id: 'mr_real_child',
+      parent_model_run_id: 'mr_real_parent',
+    });
+    expect(getContextPacket(adapter, 'ctxp_real_gateway')).toMatchObject({
+      packet_id: 'ctxp_real_gateway',
+      envelope_hash: envelope.envelope_hash,
+      model_run_id: 'mr_real_child',
+    });
+    expect(getModelRunInAdapter(adapter, 'mr_real_child')).toMatchObject({
+      status: 'committed',
+      parent_model_run_id: 'mr_real_parent',
+    });
+    await expect(listToolTracesForRun('mr_real_parent')).resolves.toEqual([
+      expect.objectContaining({
+        model_run_id: 'mr_real_parent',
+        tool_name: 'context_compile',
+        execution_status: 'completed',
+        envelope_hash: envelope.envelope_hash,
+      }),
+    ]);
   });
 
   it('preserves machine-readable context_compile service error codes', async () => {
@@ -525,6 +589,32 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
       success: false,
       code: 'context_packet_denied',
     });
+    expect(traceApi.saveWithTrustedProvenance).not.toHaveBeenCalled();
+  });
+
+  it('rejects packet-backed mama_save calls when the stored packet has no scopes', async () => {
+    const envelope = makeSignedEnvelope();
+    seedContextPacket({ envelope, packet: makePacket({ scopes: [] }) });
+    const traceApi = makeTraceApi();
+    const executor = new GatewayToolExecutor({ mamaApi: traceApi });
+
+    const result = await executor.execute(
+      'mama_save',
+      {
+        type: 'decision',
+        topic: 'context_packet_unscoped_packet',
+        decision: 'Unscoped packets must not back trusted saves',
+        reasoning: 'Trusted packet provenance requires packet-contained scopes',
+        context_packet_id: 'ctxp_gateway_tool',
+      } as unknown as GatewayToolInput,
+      makeContext({ envelope, modelRunId: 'mr_parent_agent_loop' })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'context_packet_denied',
+    });
+    expect(String(result.error)).toContain('no memory scopes');
     expect(traceApi.saveWithTrustedProvenance).not.toHaveBeenCalled();
   });
 

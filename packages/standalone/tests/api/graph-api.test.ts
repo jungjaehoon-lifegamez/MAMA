@@ -359,6 +359,44 @@ describe('graph api helpers', () => {
           }
         }
       });
+
+      it('rejects malformed Code-Act agent identity before execution', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({
+          success: true,
+          value: 1,
+          logs: [],
+          metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+        });
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq(
+            '/api/code-act',
+            JSON.stringify({
+              code: 'mama_search({query:"ctx"})',
+              agent_id: 42,
+            }),
+            {
+              remoteAddress: '127.0.0.89',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            }
+          );
+          const res = createMockRes();
+
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+
+          expect(res._status).toBe(400);
+          expect(res._body).toContain('agent_id must be a non-empty string');
+          expect(executeCodeAct).not.toHaveBeenCalled();
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
     });
 
     describe('AC: rate limit identity ignores untrusted forwarded headers', () => {
