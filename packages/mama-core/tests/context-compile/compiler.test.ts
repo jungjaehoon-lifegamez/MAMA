@@ -249,6 +249,20 @@ describe('STORY-CC-B4: compileContext core assembly - AC1, AC2, AC3', () => {
     });
   });
 
+  it('rejects malformed packet ranges before copying them into the contract', async () => {
+    await expect(
+      compileContext(
+        {
+          task: 'compile branch context',
+          scopes: [{ kind: 'project', id: 'repo-a' }],
+          range: { start_ms: 'bad' as unknown as number },
+          max_tool_calls: 0,
+        },
+        compilerDeps()
+      )
+    ).rejects.toThrow(/range\.start_ms/);
+  });
+
   it('records token budget estimates and rejects over-budget evidence', async () => {
     const packet = await compileContext(
       {

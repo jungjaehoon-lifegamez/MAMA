@@ -108,6 +108,7 @@ function makeConfig(
       is_planning_agent?: boolean;
       isPlanningAgent?: boolean;
       useCodeAct?: boolean;
+      backend?: 'claude' | 'codex' | 'codex-mcp';
       tool_permissions?: { allowed?: string[]; blocked?: string[] };
       gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
     }
@@ -122,7 +123,7 @@ function makeConfig(
       trigger_prefix: `!${id}`,
       persona_file: `~/.mama/personas/${id}.md`,
       tier: opts.tier ?? 1,
-      backend: 'claude',
+      backend: opts.backend ?? 'claude',
       model: opts.model ?? 'claude-sonnet-4-6',
       can_delegate: opts.can_delegate,
       is_planning_agent: opts.is_planning_agent,
@@ -389,6 +390,37 @@ describe('AgentProcessManager env vars by tier', () => {
       expect(args[args.indexOf('--mcp-config') + 1]).toContain(
         'code-act-only-mcp-config-dashboard.json'
       );
+    });
+
+    it('passes per-agent Code-Act MCP config through the Codex runtime path', async () => {
+      readFileSyncValue = JSON.stringify({
+        mcpServers: {
+          'code-act': {
+            command: 'node',
+            args: ['code-act-server.js'],
+            env: { MAMA_SERVER_PORT: '3847' },
+          },
+        },
+      });
+      const config = makeConfig({
+        dashboard: {
+          backend: 'codex-mcp',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'claude-sonnet-4-6' });
+
+      const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
+      const runtimeOptions = (
+        runner as unknown as { wrapper: { options: { mcpConfigPath?: string } } }
+      ).wrapper.options;
+
+      expect(runtimeOptions.mcpConfigPath).toContain('code-act-only-mcp-config-dashboard.json');
     });
   });
 
