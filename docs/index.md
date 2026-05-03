@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.20.0 — Runtime Envelopes, Context Compile V0, Worker Context APIs
-**Last Updated:** 2026-05-01
+**Status:** MAMA OS v0.20.1 — Runtime Envelopes, Context Compile V0, Worker Context APIs
+**Last Updated:** 2026-05-03

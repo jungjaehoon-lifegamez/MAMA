@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-05-03
+
+### Added
+
+- **Context Compile V0**: Added append-only `context_packets`, deterministic source readers,
+  visibility policy, budget manifests, source ref normalization, and the
+  `@jungjaehoon/mama-core/context-compile` package export
+
+### Fixed
+
+- **Context source trust boundaries**: Raw refs now canonicalize source metadata, memory/raw/graph
+  readers reject invalid time filters early, missing schema paths fail explicitly, and exhausted
+  read budgets report skipped operators instead of silently omitting work
+
 ## [1.6.0] - 2026-05-01
 
 ### Added

@@ -180,5 +180,5 @@ Code-Act and traditional `tool_call` can be used simultaneously. The LLM can mix
 
 - MCP server: `packages/standalone/src/mcp/code-act-server.ts`
 - Sandbox implementation: `packages/standalone/src/agent/code-act/`
-- Architecture document: `docs/architecture-code-act-sandbox-2026-02-20.md`
+- Architecture overview: `docs/architecture/package-structure.md`
 - Security guide: `docs/guides/security.md`
