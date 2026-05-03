@@ -1207,6 +1207,90 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('Story GT-CODE-ACT: request-scoped sandbox tools', () => {
+      describe('AC #1: request allowlists narrow injected Code-Act functions', () => {
+        it('only exposes request-allowed gateway tools inside code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '({ search: typeof mama_search, bash: typeof Bash })',
+            allowedTools: ['mama_search'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            search: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #2: request blocklists subtract from injected Code-Act functions', () => {
+        it('removes request-blocked gateway tools inside code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '({ read: typeof Read, bash: typeof Bash })',
+            blockedTools: ['Bash'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            read: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #3: active role permissions remain an upper bound', () => {
+        it('does not let request allowlists widen the active role', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'limited_code_act',
+            role: {
+              allowedTools: ['code_act', 'mama_search'],
+              systemControl: false,
+              sensitiveAccess: false,
+            },
+          });
+
+          const result = await executor.execute('code_act', {
+            code: '({ search: typeof mama_search, bash: typeof Bash })',
+            allowedTools: ['*'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            search: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #4: request tool filters are validated', () => {
+        it('rejects unknown request tool names before executing code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '1 + 1',
+            allowedTools: ['not_a_gateway_tool'],
+          });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Unknown Code-Act tool pattern'),
+          });
+        });
+      });
+    });
+
     describe('OS Management tools - permission checks', () => {
       it('should deny os_add_bot from non-viewer source', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });

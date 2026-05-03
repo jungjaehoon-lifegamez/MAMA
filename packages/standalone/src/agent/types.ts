@@ -667,6 +667,18 @@ export interface StopBotInput {
 }
 
 /**
+ * Input for code_act sandbox execution
+ */
+export interface CodeActInput {
+  /** JavaScript source to execute in the sandbox */
+  code: string;
+  /** Optional request-local include filter for gateway tools exposed inside the sandbox */
+  allowedTools?: string[];
+  /** Optional request-local exclude filter applied after active role permissions */
+  blockedTools?: string[];
+}
+
+/**
  * Union type for all MCP tool inputs
  */
 export type GatewayToolInput =
@@ -695,7 +707,8 @@ export type GatewayToolInput =
   // OS Monitoring tools
   | ListBotsInput
   | RestartBotInput
-  | StopBotInput;
+  | StopBotInput
+  | CodeActInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
