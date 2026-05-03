@@ -635,6 +635,12 @@ ${skillsPrompt}## Guidelines
       );
     }
 
+    const explicitGatewayBlocked = agentConfig.gateway_tool_permissions?.blocked;
+    if (explicitGatewayBlocked) {
+      const allGatewayTools = HostBridge.getToolRegistry().map((meta) => meta.name);
+      return this.filterCodeActAllowedTools(allGatewayTools, explicitGatewayBlocked);
+    }
+
     const cliAllowed = agentConfig.tool_permissions?.allowed;
     if (!cliAllowed) {
       return undefined;

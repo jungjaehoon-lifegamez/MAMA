@@ -908,7 +908,7 @@ export class PersistentClaudeProcess extends EventEmitter {
   }
 }
 
-export function formatClaudeArgsForLog(args: string[]): string[] {
+export function formatClaudeArgsForLog(args: readonly string[]): string[] {
   return formatCliArgsForLog(args);
 }
 

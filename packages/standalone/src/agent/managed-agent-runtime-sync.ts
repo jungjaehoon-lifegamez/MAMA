@@ -82,7 +82,7 @@ function normalizeCreateBackend(
 ): ManagedAgentConfig['backend'] {
   const candidate = String(backend ?? fallback ?? 'claude').toLowerCase();
   if (candidate === 'codex') {
-    return 'codex-mcp';
+    return 'codex';
   }
   if (candidate === 'codex-mcp') {
     return 'codex-mcp';
