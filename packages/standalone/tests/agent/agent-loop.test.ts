@@ -386,6 +386,7 @@ describe('AgentLoop', () => {
       new AgentLoop(
         createMockOAuthManager(),
         {
+          systemPrompt: 'base prompt',
           useCodeAct: true,
           agentContext: {
             ...createChatBotContext(),
