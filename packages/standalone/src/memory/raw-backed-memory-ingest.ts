@@ -14,9 +14,14 @@ export interface RawBackedMemoryBuildOptions {
   entityObservationIdsBySourceId?: Map<string, string[]>;
 }
 
+export interface RawBackedMemorySaveResult {
+  success: boolean;
+  id: string;
+}
+
 export interface RawBackedMemoryIngestOptions extends RawBackedMemoryBuildOptions {
   memoryExists?: (topic: string) => boolean;
-  saveMemory?: (input: RawBackedMemorySaveInput) => Promise<{ success?: boolean; id?: string }>;
+  saveMemory?: (input: RawBackedMemorySaveInput) => Promise<RawBackedMemorySaveResult>;
 }
 
 export interface RawBackedMemoryIngestResult {
@@ -273,7 +278,10 @@ export async function ingestRawBackedMemoryCandidates(
 
     const { rawSourceId: _rawSourceId, ...input } = candidate;
     const result = await save(input);
-    if (result.success === false) {
+    // Fail closed: only an explicit success === true with an id counts as
+    // saved, so a malformed result object cannot be silently treated as
+    // success.
+    if (result.success !== true || typeof result.id !== 'string' || result.id.length === 0) {
       throw new Error(`[raw-backed-memory] save failed for ${candidate.topic}`);
     }
     saved += 1;

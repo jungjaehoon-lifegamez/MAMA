@@ -112,13 +112,17 @@ function intersectAllowedToolPolicies(
   configuredAllowed: string[] | undefined,
   requestedAllowed: string[] | undefined
 ): string[] | undefined {
-  const configured = configuredAllowed ? uniqueToolList(configuredAllowed) : undefined;
-  const requested = requestedAllowed ? uniqueToolList(requestedAllowed) : undefined;
+  const configured =
+    configuredAllowed !== undefined ? uniqueToolList(configuredAllowed) : undefined;
+  const requested = requestedAllowed !== undefined ? uniqueToolList(requestedAllowed) : undefined;
 
-  if (!configured || configured.length === 0) {
+  // Treat explicit empty arrays as deny-all so a caller cannot widen a fully
+  // restricted policy by sending a wildcard. Only an undefined (truly absent)
+  // policy falls back to the other side.
+  if (configured === undefined) {
     return requested;
   }
-  if (!requested || requested.length === 0) {
+  if (requested === undefined) {
     return configured;
   }
   if (isWildcardToolList(configured)) {

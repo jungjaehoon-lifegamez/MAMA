@@ -26,7 +26,7 @@ function makeItem(overrides: Partial<NormalizedItem> = {}): NormalizedItem {
 }
 
 describe('Story M1R: Raw-backed connector memory ingest', () => {
-  describe('AC: Connector evidence becomes scoped memory without LLM extraction', () => {
+  describe('AC #1: Connector evidence becomes scoped memory without LLM extraction', () => {
     it('builds project-scoped memory candidates with source observation links', () => {
       const channelConfig = {
         role: 'hub',

@@ -83,29 +83,33 @@ describe('Story M0: Raw ingest isolation contract', () => {
 });
 
 describe('Story M0: Connector extraction kill switch', () => {
-  it('audited connector extraction entrypoint has no direct memory or dead prompt calls', () => {
-    const source = readFileSync(
-      new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
-      'utf8'
-    );
+  describe('AC #1: connector entrypoint avoids direct memory and dead prompt calls', () => {
+    it('audited connector extraction entrypoint has no direct memory or dead prompt calls', () => {
+      const source = readFileSync(
+        new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
+        'utf8'
+      );
 
-    expect(findCallExpressions(source, 'saveMemory')).toEqual([]);
-    expect(findCallExpressions(source, 'buildActivityExtractionPrompt')).toEqual([]);
-    expect(findCallExpressions(source, 'buildSpokeExtractionPrompt')).toEqual([]);
+      expect(findCallExpressions(source, 'saveMemory')).toEqual([]);
+      expect(findCallExpressions(source, 'buildActivityExtractionPrompt')).toEqual([]);
+      expect(findCallExpressions(source, 'buildSpokeExtractionPrompt')).toEqual([]);
+    });
   });
 
-  it('connector observation and raw-backed memory indexing failures are surfaced instead of swallowed', () => {
-    const source = readFileSync(
-      new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
-      'utf8'
-    );
-    const extractAndSaveBody = findVariableFunctionBody(source, 'extractAndSave');
+  describe('AC #2: observation and raw-backed memory failures surface instead of being swallowed', () => {
+    it('connector observation and raw-backed memory indexing failures are surfaced instead of swallowed', () => {
+      const source = readFileSync(
+        new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
+        'utf8'
+      );
+      const extractAndSaveBody = findVariableFunctionBody(source, 'extractAndSave');
 
-    expect(extractAndSaveBody).toContain('buildEntityObservations');
-    expect(extractAndSaveBody).toContain('entityObservationStore.upsertEntityObservations');
-    expect(extractAndSaveBody).toContain('ingestRawBackedMemoryCandidates');
-    expect(extractAndSaveBody).not.toContain('console.error');
-    expect(extractAndSaveBody).toContain('throw new Error');
+      expect(extractAndSaveBody).toContain('buildEntityObservations');
+      expect(extractAndSaveBody).toContain('entityObservationStore.upsertEntityObservations');
+      expect(extractAndSaveBody).toContain('ingestRawBackedMemoryCandidates');
+      expect(extractAndSaveBody).not.toContain('console.error');
+      expect(extractAndSaveBody).toContain('throw new Error');
+    });
   });
 });
 

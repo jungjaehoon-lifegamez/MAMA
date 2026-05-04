@@ -671,7 +671,7 @@ export function readRawCandidates(
   adapter: ContextSourceAdapter,
   input: ContextSourceReadInput
 ): ContextSourceReadResult {
-  const effectiveInput = applyBoundaryDefaults(input);
+  const effectiveInput = normalizeTimeFilters(applyBoundaryDefaults(input));
   if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
       boundary: effectiveInput.boundary,
@@ -787,7 +787,7 @@ export function readGraphCandidates(
   visibleRefs: readonly ContextRef[],
   deps: ContextSourceReaderDeps = {}
 ): ContextSourceReadResult {
-  const effectiveInput = applyBoundaryDefaults(input);
+  const effectiveInput = normalizeTimeFilters(applyBoundaryDefaults(input));
   if (effectiveInput.boundary) {
     assertContextBoundaryAllowsInput({
       boundary: effectiveInput.boundary,
@@ -798,6 +798,11 @@ export function readGraphCandidates(
     });
   }
   if (Array.isArray(effectiveInput.scopes) && effectiveInput.scopes.length === 0) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
+  if (Array.isArray(effectiveInput.connectors) && effectiveInput.connectors.length === 0) {
+    // Fail closed when caller explicitly narrowed connectors to none, so an
+    // injectable listEdges cannot leak edges back into the result.
     return resultFromCandidates([], hiddenAggregate());
   }
   if (hasExplicitEmptyProjectWindow(effectiveInput)) {
@@ -895,7 +900,7 @@ function contextRefFromTwinRef(adapter: ContextSourceAdapter, ref: TwinRef): Con
         connector: row.source_connector,
         raw_id: ref.id,
       };
-      if (typeof row.source_id === 'string' && row.source_id.length > 0) {
+      if (typeof row.source_id === 'string' && row.source_id.trim().length > 0) {
         contextRef.source_id = row.source_id;
       }
       contextRef.channel_id = typeof row.channel === 'string' ? row.channel : null;

@@ -52,19 +52,23 @@ function bindConfiguredScope(
   }
 
   const channelConfig = findChannelConfig(item, channelConfigs);
-  const projectEntityId =
+  // channelConfig.project_entity_id is the authoritative configured mapping;
+  // fall back to metadata then item.projectId only when no config exists. The
+  // resolved id is then used for both projectId and memoryScopeId so the
+  // stored record carries one consistent tenant reference.
+  const canonicalProjectId =
     stringField(channelConfig?.project_entity_id) ??
     stringField(item.metadata?.project_entity_id) ??
     stringField(item.projectId);
-  if (!projectEntityId) {
+  if (!canonicalProjectId) {
     return item;
   }
 
   return {
     ...item,
-    projectId: item.projectId ?? projectEntityId,
+    projectId: canonicalProjectId,
     memoryScopeKind: 'project',
-    memoryScopeId: projectEntityId,
+    memoryScopeId: canonicalProjectId,
   };
 }
 
