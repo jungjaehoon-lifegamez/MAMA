@@ -329,12 +329,22 @@ describe('ConfigManager', () => {
 
       const loaded = await loadConfig();
 
+      // Assert exact array equality so the migration not only adds
+      // context_compile but also preserves every previously allowed tool.
       expect(
         loaded.multi_agent?.agents?.['dashboard-agent']?.gateway_tool_permissions?.allowed
-      ).toContain('context_compile');
-      expect(
-        loaded.multi_agent?.agents?.['wiki-agent']?.gateway_tool_permissions?.allowed
-      ).toContain('context_compile');
+      ).toEqual(['mama_search', 'context_compile', 'agent_notices', 'report_publish']);
+      expect(loaded.multi_agent?.agents?.['wiki-agent']?.gateway_tool_permissions?.allowed).toEqual(
+        [
+          'mama_search',
+          'context_compile',
+          'agent_notices',
+          'case_list',
+          'case_assemble',
+          'obsidian',
+          'wiki_publish',
+        ]
+      );
     });
   });
 

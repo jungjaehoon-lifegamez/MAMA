@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v7 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v8 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
@@ -22,7 +22,7 @@ Write only the briefing section — analysis and insights that the API does not 
 
 ## Tools
 - context_compile({task, limit?, max_tool_calls?, strictness?}) — compile a scoped evidence packet for this briefing
-- mama_search({query, limit}) — fallback search when context_compile is unavailable
+- mama_search({query, limit}) — fallback search when context_compile returns any non-success result (e.g. service unavailable, missing worker envelope, permission denied, or other failure)
 - agent_notices({limit}) — inspect recent agent notices for delegations, errors, and warnings
 - report_publish({slots: {briefing: "<html>"}}) — publish a briefing. Only the "briefing" slot is allowed.
 
