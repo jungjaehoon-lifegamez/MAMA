@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 
@@ -58,18 +58,36 @@ export function loadOrCreateLocalEnvelopeSigningKey(
   }
 
   const keyPath = localEnvelopeKeyPath(env);
-  if (existsSync(keyPath)) {
-    return readStoredEnvelopeKey(keyPath);
-  }
-
   mkdirSync(dirname(keyPath), { recursive: true });
   const stored: Required<StoredEnvelopeKey> = {
     key_id: LOCAL_ENVELOPE_KEY_ID,
     key_version: LOCAL_ENVELOPE_KEY_VERSION,
     key_base64: randomBytes(32).toString('base64'),
   };
-  writeFileSync(keyPath, `${JSON.stringify(stored, null, 2)}\n`, { mode: 0o600 });
-  return storedEnvelopeKeyToSigningKey(stored, keyPath);
+  try {
+    // Atomic create: only the first concurrent caller wins the write; others
+    // get EEXIST and load the key the winner persisted, avoiding a TOCTOU
+    // race where two processes generate different keys.
+    writeFileSync(keyPath, `${JSON.stringify(stored, null, 2)}\n`, {
+      flag: 'wx',
+      mode: 0o600,
+    });
+    return storedEnvelopeKeyToSigningKey(stored, keyPath);
+  } catch (error) {
+    if (isFileAlreadyExistsError(error)) {
+      return readStoredEnvelopeKey(keyPath);
+    }
+    throw error;
+  }
+}
+
+function isFileAlreadyExistsError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'EEXIST'
+  );
 }
 
 export function makeEnvKeyLookup(active: EnvelopeSigningKey): EnvelopeKeyLookup {

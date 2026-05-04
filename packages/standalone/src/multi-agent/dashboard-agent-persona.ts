@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v6 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v7 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
@@ -34,7 +34,7 @@ Write only the briefing section — analysis and insights that the API does not 
 
 ## How to Write
 1. Compile briefing evidence with context_compile using this exact task text: "recent substantive project decisions, task progress, agent alerts, and major changes" (limit 20, max_tool_calls 2, strictness "balanced")
-2. If context_compile fails because no active worker envelope is available, fall back to mama_search once (limit 20)
+2. If context_compile returns any non-success result (e.g. service unavailable, missing worker envelope, permission denied, or other error), fall back to mama_search once (limit 20)
 3. Analyze content and identify patterns
 4. Check agent_notices for recent agent activity (delegations, errors)
 5. If active agents exist, add "Agent Activity" section to briefing
@@ -53,7 +53,7 @@ Write only the briefing section — analysis and insights that the API does not 
 ## Strict Constraints
 - Prefer context_compile over mama_search for evidence gathering
 - Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text
-- Call mama_search at most once, and only as a fallback after context_compile is unavailable
+- Call mama_search at most once, and only as a fallback after context_compile returns a non-success result
 - Call report_publish exactly once
 - Do not call mama_save for dashboard_briefing or other operational summaries
 - Do not ask follow-up questions
