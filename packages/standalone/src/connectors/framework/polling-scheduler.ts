@@ -66,6 +66,10 @@ function bindConfiguredScope(
 
   return {
     ...item,
+    // context_compile envelopes default tenant_id to 'default' and raw reads
+    // filter on it; without an explicit tenant on the saved row, project-
+    // scoped connector evidence would be filtered out of context packets.
+    tenantId: stringField(item.tenantId) ?? 'default',
     projectId: canonicalProjectId,
     memoryScopeKind: 'project',
     memoryScopeId: canonicalProjectId,

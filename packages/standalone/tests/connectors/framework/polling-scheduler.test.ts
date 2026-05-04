@@ -156,6 +156,7 @@ describe('PollingScheduler', () => {
         projectId: 'project_tinklestar',
         memoryScopeKind: 'project',
         memoryScopeId: 'project_tinklestar',
+        tenantId: 'default',
       });
       expect(rawIndexSink).toHaveBeenCalledWith(
         'slack',
@@ -165,6 +166,7 @@ describe('PollingScheduler', () => {
             projectId: 'project_tinklestar',
             memoryScopeKind: 'project',
             memoryScopeId: 'project_tinklestar',
+            tenantId: 'default',
           }),
         ])
       );
