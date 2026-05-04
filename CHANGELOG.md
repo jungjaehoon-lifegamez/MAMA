@@ -4,6 +4,61 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.20.1] / mama-core [1.7.0] / mama-os [0.20.1] - 2026-05-04
+
+### Added
+
+- **Context Compile V0 release surface** — Added append-only `context_packets`,
+  deterministic source readers/policy, `context_compile` gateway/API surfaces, and the
+  `@jungjaehoon/mama-core/context-compile` package export so workers can compile
+  selected/rejected/missing evidence for a task
+- **Managed agent context packets** — Default `dashboard-agent` and `wiki-agent` Code-Act
+  allowlists, personas, and scheduled prompts now prefer `context_compile` before `mama_search`
+  fallback for packet-backed briefings and wiki compiles
+- **Trusted context-packet saves** — `mama_save` can now attach a trusted `context_packet_id`
+  from the active envelope/model run, preserving source refs from compiled context through memory
+  provenance
+- **Raw-backed connector memory ingest** — Added deterministic raw-backed memory candidate
+  builder and ingest path so connector evidence becomes scope-bound memory without LLM
+  extraction, with isolation tests against the case and decision stores
+
+### Fixed
+
+- **Code-Act policy hardening** — `/api/code-act` now fails closed unless the resolved agent exists
+  and explicitly opts into Code-Act, and request allow/deny lists can only narrow the configured
+  per-agent gateway policy
+- **Code-Act allowlist deny-by-default** — Agents that resolve to no allowed tools are rejected
+  instead of being widened to wildcard, and `intersectAllowedToolPolicies` distinguishes undefined
+  (fallback) from explicit empty arrays (deny-all) so a wildcard request cannot unblock a fully
+  restricted policy
+- **Context boundary hardening** — Direct compiler/source-reader calls now clamp `as_of` and
+  range to active boundaries, preserve tenant boundaries, reject blank `as_of` values, and block
+  Tier 3 `context_compile` writes
+- **Trusted provenance fail-closed paths** — `mama_save` rejects present-but-invalid
+  `context_packet_id` values (non-string, empty, or whitespace) with `context_packet_denied`
+  instead of silently dropping provenance, and `context_compile` Tier-3 detection now checks the
+  envelope and agent context independently so a non-Tier-3 fallback cannot mask a Tier-3 envelope
+- **Source reader consistency** — `readGraphCandidates` fails closed when connectors is an
+  explicit empty array, both raw and graph readers run `normalizeTimeFilters` for parity with
+  memory reads, and the graph reader trims whitespace-only `source_id` values
+- **Global scope id migration** — Memory and raw context readers now match legacy
+  `('global', 'global')` bindings alongside the canonical `('global', 'system')` sentinel so
+  records written before the alignment remain visible through `context_compile`
+- **Wiki-agent feature gating** — `normalizeLegacyMultiAgentConfig` only backfills the built-in
+  `wiki-agent` when `config.wiki.enabled` is true, matching runtime provisioning by `runAgentLoop`
+  and api-routes-init
+- **Connector tenant visibility** — `bindConfiguredScope` now stamps a default tenant alongside
+  the project scope so configured-channel raw evidence is no longer filtered out of context
+  packets by the default tenant boundary
+- **Envelope key TOCTOU** — `loadOrCreateLocalEnvelopeSigningKey` uses an atomic `wx`-flag write
+  with EEXIST handling instead of a non-atomic `existsSync`+write, so concurrent processes
+  converge on the first key written instead of overwriting each other
+- **Raw-backed save validation** — Raw-backed memory ingest now requires an explicit
+  `success: true` and non-empty `id` from `saveMemory` before counting a row as saved
+- **Managed dashboard persona broader fallback** — Dashboard persona v8 now falls back to
+  `mama_search` on any non-success `context_compile` result, not only when the worker envelope is
+  missing
+
 ## [0.20.0] / mama-core [1.6.0] / mcp-server [1.14.0] / plugin [1.10.0] - 2026-05-01
 
 ### Added

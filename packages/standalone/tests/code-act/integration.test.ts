@@ -2,7 +2,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
-import { CODE_ACT_INSTRUCTIONS, CODE_ACT_MARKER } from '../../src/agent/code-act/constants.js';
+import {
+  CODE_ACT_INSTRUCTIONS,
+  CODE_ACT_MARKER,
+  getCodeActInstructions,
+} from '../../src/agent/code-act/constants.js';
 import { vi } from 'vitest';
 import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 
@@ -118,6 +122,22 @@ describe('Code-Act Integration', () => {
     expect(CODE_ACT_INSTRUCTIONS).toContain('## Code-Act');
     expect(CODE_ACT_INSTRUCTIONS).toContain('code_act');
     expect(CODE_ACT_INSTRUCTIONS).toContain('console.log');
+  });
+
+  describe('Story: codex-mcp Code-Act prompt filtering', () => {
+    describe('AC: explicit allowlists that contain no gateway tools stay empty', () => {
+      it('does not describe all gateway tools when an explicit allowlist filters to none', () => {
+        const instructions = getCodeActInstructions('codex-mcp', [
+          'code_act',
+          'mcp__brave-search__*',
+        ]);
+
+        expect(instructions).toContain('USE code_act only for these allowed gateway tools');
+        expect(instructions).toContain('No gateway tools are currently allowed');
+        expect(instructions).not.toContain('USE code_act for ALL gateway tools');
+        expect(instructions).not.toContain('- Memory: mama_search');
+      });
+    });
   });
 
   it('system prompt combines instructions + type definitions', () => {

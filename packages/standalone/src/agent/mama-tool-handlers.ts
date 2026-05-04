@@ -40,6 +40,15 @@ export async function handleSave(
     if (!d.topic || !d.decision || !d.reasoning) {
       return { success: false, message: 'Decision requires: topic, decision, reasoning' };
     }
+    if (isOperationalRunSummaryDecision(d)) {
+      return {
+        success: true,
+        skipped: true,
+        code: 'operational_memory_skipped',
+        message:
+          'Operational audit, dashboard, and wiki run summaries are kept in agent activity/notices, not saved as long-term decisions.',
+      };
+    }
     const payload: SaveDecisionPayload = {
       topic: d.topic,
       decision: d.decision,
@@ -52,7 +61,10 @@ export async function handleSave(
     };
     if (options) {
       if (!api.saveWithTrustedProvenance) {
-        return await api.save(payload);
+        return {
+          success: false,
+          message: 'Trusted provenance save is unavailable.',
+        };
       }
       return await api.saveWithTrustedProvenance(payload, options);
     }
@@ -81,6 +93,40 @@ export async function handleSave(
     success: false,
     message: `Invalid save type: ${(input as { type?: string }).type}. Must be 'decision' or 'checkpoint'`,
   };
+}
+
+function normalizeOperationalText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-');
+}
+
+function isOperationalRunSummaryDecision(input: SaveDecisionInput): boolean {
+  const topic = normalizeOperationalText(input.topic);
+  const decision = normalizeOperationalText(input.decision);
+  const reasoning = normalizeOperationalText(input.reasoning);
+  const hasOperationalAutosaveMarker =
+    reasoning.includes('auto-saved-by-dashboard-agent-after-report-publish') ||
+    reasoning.includes('auto-saved-by-wiki-agent-after-wiki-publish');
+
+  const operationalTopic =
+    /^(?:dashboard-briefing|wiki-compilation|system-audit)(?:-\d+)?$/.test(topic) ||
+    (hasOperationalAutosaveMarker &&
+      /^(?:dashboard-briefing|wiki-compilation|system-audit)(?:-.+)?$/.test(topic));
+
+  if (operationalTopic) {
+    return true;
+  }
+
+  return (
+    decision.startsWith('dashboard-briefing-(') ||
+    decision.startsWith('wiki-compilation-(') ||
+    decision.startsWith('system-audit-') ||
+    ((decision.startsWith('audit-complete') || decision.startsWith('audit-completed')) &&
+      hasOperationalAutosaveMarker) ||
+    hasOperationalAutosaveMarker
+  );
 }
 
 export async function handleSearch(

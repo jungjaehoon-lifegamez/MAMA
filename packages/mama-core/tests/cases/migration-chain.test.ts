@@ -426,4 +426,45 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 037 context packet table and indexes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(tableExists(db, 'context_packets')).toBe(true);
+
+    for (const column of [
+      'packet_id',
+      'task',
+      'packet_json',
+      'scope_json',
+      'scope_hash',
+      'envelope_hash',
+      'model_run_id',
+      'agent_id',
+      'input_snapshot_ref',
+      'source_refs_json',
+      'tenant_id',
+      'project_id',
+      'memory_scope_kind',
+      'memory_scope_id',
+      'created_at',
+    ]) {
+      expect(columnExists(db, 'context_packets', column)).toBe(true);
+    }
+
+    expect(indexExists(db, 'idx_context_packets_model_run')).toBe(true);
+    expect(indexExists(db, 'idx_context_packets_envelope')).toBe(true);
+    expect(indexExists(db, 'idx_context_packets_scope')).toBe(true);
+    expect(indexExists(db, 'idx_context_packets_scope_hash')).toBe(true);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 37')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(37);
+    expect(row?.description).toContain('context packet');
+
+    db.close();
+  });
 });

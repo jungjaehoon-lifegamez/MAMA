@@ -29,6 +29,7 @@ describe('TypeDefinitionGenerator', () => {
         '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
       );
       expect(dts).toContain('declare function mama_search');
+      expect(dts).toContain('declare function context_compile');
       expect(dts).not.toContain('/**');
     });
 
@@ -51,29 +52,58 @@ describe('TypeDefinitionGenerator', () => {
       );
     });
 
+    it('advertises context_compile scope, connector, temporal, seed refs, and packet return fields', () => {
+      const dts = TypeDefinitionGenerator.generate(1);
+      expect(dts).toMatch(
+        /declare function context_compile[\s\S]*task: string[\s\S]*scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>[\s\S]*connectors\?: string\[\][\s\S]*seed_refs\?: Array<Record<string, unknown>>[\s\S]*range\?: \{ start_ms\?: number; end_ms\?: number \}[\s\S]*as_of\?: string \| number \| null[\s\S]*packet_id: string/
+      );
+    });
+
+    it('advertises context_packet_id on mama_save decisions', () => {
+      const dts = TypeDefinitionGenerator.generate(1);
+      expect(dts).toMatch(/declare function mama_save[\s\S]*context_packet_id\?: string/);
+    });
+
     it('marks required params without ?', () => {
       const dts = TypeDefinitionGenerator.generate(1);
       expect(dts).toMatch(/path: string/);
     });
 
-    it('filters to read-only for Tier 2', () => {
+    it('filters Tier 2 to read and memory-write tools', () => {
       const dts = TypeDefinitionGenerator.generate(2);
       expect(dts).toContain('mama_search');
+      expect(dts).toContain('context_compile');
       expect(dts).toContain('Read');
       expect(dts).not.toContain('declare function Write');
       expect(dts).not.toContain('declare function Bash');
       expect(dts).not.toContain('declare function discord_send');
     });
 
-    it('Tier 3 matches Tier 2', () => {
+    it('Tier 3 excludes durable mutation tools', () => {
       const t2 = TypeDefinitionGenerator.generate(2);
       const t3 = TypeDefinitionGenerator.generate(3);
-      expect(t3).toBe(t2);
+      expect(t2).toContain('context_compile');
+      expect(t3).not.toContain('context_compile');
     });
 
-    it('stays within token budget (~2000 chars for Tier 1)', () => {
+    it('filters declarations to an explicit agent allowed-tool list', () => {
+      const dts = TypeDefinitionGenerator.generate(2, [
+        'mama_search',
+        'agent_notices',
+        'report_publish',
+        'code_act',
+      ]);
+      expect(dts).toContain('declare function mama_search');
+      expect(dts).toContain('declare function agent_notices');
+      expect(dts).toContain('declare function report_publish');
+      expect(dts).not.toContain('declare function mama_save');
+      expect(dts).not.toContain('declare function wiki_publish');
+      expect(dts).not.toContain('declare function Read');
+    });
+
+    it('stays within token budget for Tier 1', () => {
       const dts = TypeDefinitionGenerator.generate(1);
-      expect(dts.length).toBeLessThan(7000);
+      expect(dts.length).toBeLessThan(7200);
     });
   });
 

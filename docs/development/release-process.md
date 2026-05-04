@@ -25,6 +25,7 @@ Run this checklist in order for every release candidate.
 3. Verify versions
    - Check package versions in workspace `package.json` files
    - Ensure docs and landing-page copy reflect the same versions
+   - Run `pnpm sync-versions --check` after manual edits
 
 4. Run verification
    - `pnpm test`
@@ -79,23 +80,32 @@ A release is not ready until these are true:
 ## Suggested Release Flow
 
 ```bash
-# 1. Verify
+# 1. Align versions and generated doc references
+pnpm sync-versions
+pnpm sync-versions --check
+
+# 2. Verify
 pnpm test
 pnpm build
 
-# 2. Commit release-prep changes
-git add .
+# 3. Commit release-prep changes
+git add <changed-release-files>
 git commit -m "chore: prepare release notes and docs"
 
-# 3. Push branch
+# 4. Push branch
 git push origin <branch>
 
-# 4. Bump versions intentionally
-pnpm -r exec npm version <patch|minor|major>
-
 # 5. Publish/tag according to the package release plan
+#    After the release-prep PR is merged, run the Release workflow on main with:
+#    - packages: mama-core,mama-os (or the exact package set being shipped)
+#    - bump_versions: false
+#    - dry_run: false
 ```
+
+The release workflow expects package versions to be prepared through a PR before publishing. Do not
+use the workflow to push version bumps directly to `main`; branch protection requires those changes
+to land through review first.
 
 ---
 
-**Last Updated:** 2026-04-20
+**Last Updated:** 2026-05-03

@@ -941,19 +941,32 @@ Execute JavaScript in a sandboxed QuickJS environment.
 
 ```json
 {
-  "code": "const result = await Read('/path/to/file');\nresult;",
-  "timeout": 30000
+  "code": "var packet = context_compile({task: 'Brief auth decisions', limit: 10, max_tool_calls: 2}); packet;",
+  "agent_id": "dashboard-agent",
+  "allowed_tools": ["context_compile"],
+  "blocked_tools": ["mama_save"]
 }
 ```
 
-| Field     | Type   | Required | Description                                                                                                            |
-| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `code`    | string | Yes      | JavaScript code to execute (evaluated as a script, not wrapped in a function — use expression at end for return value) |
-| `timeout` | number | No       | Execution timeout in ms (default: 30000, max: 60000)                                                                   |
+| Field           | Type     | Required | Description                                                                                                            |
+| --------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `code`          | string   | Yes      | JavaScript code to execute (evaluated as a script, not wrapped in a function — use expression at end for return value) |
+| `agent_id`      | string   | No       | Code-Act-enabled agent to bind policy and routing to. Defaults to the configured multi-agent default agent             |
+| `allowed_tools` | string[] | No       | Request allowlist. This can only narrow the resolved agent's configured gateway allowlist                              |
+| `blocked_tools` | string[] | No       | Request denylist. This is merged with the resolved agent's configured blocked tools                                    |
 
-**Response:** `{ "success": true, "result": { ... }, "duration": 245 }`
+**Response:** `{ "success": true, "value": { ... }, "logs": [], "metrics": { ... }, "toolCalls": [] }`
 
-**Security:** QuickJS WASM sandbox. Only Tier 3 (read-only) tools available. No `require()`, `process`, `fs`.
+**Security:** QuickJS WASM sandbox. The endpoint fails closed unless the resolved `agent_id` exists
+and has `useCodeAct: true`. It defaults to Tier 2 tool injection, applies the resolved agent's
+gateway allowlist plus request `allowed_tools`/`blocked_tools`, and can be forced into read-only
+Code-Act mode with `MAMA_CODE_ACT_READ_ONLY=true`. No `require()`, `process`, or `fs` APIs are
+available.
+
+`context_compile` requires an active worker envelope because it persists trusted packet
+provenance. Start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` for live packet
+creation; managed dashboard/wiki prompts fall back to `mama_search` when no active envelope is
+available.
 
 ---
 

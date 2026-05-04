@@ -6,6 +6,8 @@
  * mcp-server consumers rely on.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { describe, it, expect } from 'vitest';
 
 describe('Story M1.1: Core Module Exports', () => {
@@ -115,6 +117,28 @@ describe('Story M1.1: Core Module Exports', () => {
       expect(typeof core.buildAgentSituationPacketRecord).toBe('function');
       expect(typeof core.getFreshAgentSituationPacket).toBe('function');
       expect(typeof core.getOrRefreshAgentSituationPacket).toBe('function');
+    });
+  });
+
+  describe('package root context-compile exports', () => {
+    it('should export context compile ref and visibility helpers', async () => {
+      const core = await import('../../src/index.js');
+
+      expect(typeof core.normalizeContextRef).toBe('function');
+      expect(typeof core.serializeContextRefForProvenance).toBe('function');
+      expect(typeof core.toTwinRef).toBe('function');
+      expect(typeof core.canonicalizeContextScopes).toBe('function');
+      expect(typeof core.derivePrimaryContextScope).toBe('function');
+      expect(typeof core.assertContextBoundaryAllowsInput).toBe('function');
+      expect(typeof core.sanitizeContextPacketForVisibility).toBe('function');
+    });
+
+    it('should expose the context-compile subpath in the package export map', () => {
+      const packageJson = JSON.parse(
+        readFileSync(new URL('../../package.json', import.meta.url), 'utf8')
+      );
+
+      expect(packageJson.exports['./context-compile']).toBe('./dist/context-compile/index.js');
     });
   });
 

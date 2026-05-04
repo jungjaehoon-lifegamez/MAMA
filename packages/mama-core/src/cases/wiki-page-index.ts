@@ -263,7 +263,7 @@ function buildFtsQuery(query: string): string {
     ?.filter((token) => token.length > 0);
 
   if (!tokens || tokens.length === 0) {
-    return query;
+    return '';
   }
 
   return tokens.map((token) => `"${token.replace(/"/g, '""')}"`).join(' OR ');
@@ -436,6 +436,11 @@ export function ftsSearchWikiPages(
     return [];
   }
 
+  const ftsQuery = buildFtsQuery(query);
+  if (!ftsQuery) {
+    return [];
+  }
+
   const schema = readSchema(adapter);
   const rows = adapter
     .prepare(
@@ -447,7 +452,7 @@ export function ftsSearchWikiPages(
         LIMIT ?
       `
     )
-    .all(buildFtsQuery(query), boundedLimit) as Array<{ page_id: unknown; raw: unknown }>;
+    .all(ftsQuery, boundedLimit) as Array<{ page_id: unknown; raw: unknown }>;
 
   const hits: WikiPageSearchHit[] = [];
   for (const row of rows) {

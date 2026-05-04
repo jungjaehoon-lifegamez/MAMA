@@ -165,7 +165,7 @@ describe('Story M2.2: AgentLoop Model Run Context', () => {
         expect(api.failModelRun).not.toHaveBeenCalled();
       });
 
-      it('waits for audited autosaves before committing the parent model run', async () => {
+      it('does not autosave report_publish operational summaries before committing', async () => {
         promptSpy
           .mockResolvedValueOnce({
             response:
@@ -186,15 +186,8 @@ describe('Story M2.2: AgentLoop Model Run Context', () => {
             usage: { input_tokens: 3, output_tokens: 2 },
           });
 
-        let saveResolved = false;
         const api = createApi();
-        api.saveWithTrustedProvenance.mockImplementation(async () => {
-          await new Promise((resolve) => setTimeout(resolve, 20));
-          saveResolved = true;
-          return { success: true, id: 'autosave_1', type: 'decision' };
-        });
         api.commitModelRun.mockImplementation(async () => {
-          expect(saveResolved).toBe(true);
           return { model_run_id: 'mr_agent_loop', status: 'committed' };
         });
         const agentLoop = new AgentLoop(
@@ -213,7 +206,7 @@ describe('Story M2.2: AgentLoop Model Run Context', () => {
           resumeSession: true,
         });
 
-        expect(api.saveWithTrustedProvenance).toHaveBeenCalled();
+        expect(api.saveWithTrustedProvenance).not.toHaveBeenCalled();
         expect(api.commitModelRun).toHaveBeenCalledWith('mr_agent_loop', 'agent_loop completed');
       });
 

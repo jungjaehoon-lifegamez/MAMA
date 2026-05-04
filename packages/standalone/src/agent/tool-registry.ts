@@ -47,8 +47,11 @@ function register(meta: ToolDefinitionMeta): void {
 // Memory tools
 register({
   name: 'mama_save',
-  description: 'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?)',
+  description:
+    'Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context.',
   category: 'memory',
+  params:
+    'type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?',
 });
 register({
   name: 'mama_search',
@@ -62,6 +65,14 @@ register({
   description: 'Recall memory bundle with profile, memories, and graph context',
   category: 'memory',
   params: 'query, scopes?, includeProfile?',
+});
+register({
+  name: 'context_compile',
+  description:
+    'Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3/read-only agents.',
+  category: 'memory',
+  params:
+    'task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?',
 });
 register({
   name: 'mama_update',
@@ -260,6 +271,7 @@ register({
   name: 'code_act',
   description: 'Execute JavaScript in sandboxed QuickJS',
   category: 'code_act',
+  params: 'code, allowedTools?, blockedTools?',
 });
 
 // Multi-Agent delegation

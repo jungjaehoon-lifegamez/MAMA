@@ -21,7 +21,11 @@ import { join } from 'node:path';
 import type { MAMAConfig } from '../config/types.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
-import type { AgentLoopOptions, ContentBlock as AgentContentBlock } from '../../agent/types.js';
+import type {
+  AgentLoopOptions,
+  ContentBlock as AgentContentBlock,
+  GatewayToolExecutorOptions,
+} from '../../agent/types.js';
 import type { ContentBlock as GatewayContentBlock } from '../../gateways/types.js';
 import type { AgentLoopClient } from './types.js';
 import type { EnvelopeIssuanceMode } from './envelope-bootstrap.js';
@@ -57,7 +61,11 @@ export function initMainAgentLoop(
   db: SQLiteDatabase,
   metricsStore: MetricsStore | null,
   runtimeBackend: 'claude' | 'codex-mcp',
-  options?: { osAgentMode?: boolean; envelopeIssuanceMode?: EnvelopeIssuanceMode }
+  options?: {
+    osAgentMode?: boolean;
+    envelopeIssuanceMode?: EnvelopeIssuanceMode;
+    contextCompileService?: GatewayToolExecutorOptions['contextCompileService'];
+  }
 ): AgentLoopInitResult {
   // Reasoning collector for Discord display
   let reasoningLog: string[] = [];
@@ -194,6 +202,7 @@ export function initMainAgentLoop(
       mamaDbPath: config.database.path.replace(/^~/, homedir()),
       envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'off',
       metricsStore,
+      contextCompileService: options?.contextCompileService,
     }
   );
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');

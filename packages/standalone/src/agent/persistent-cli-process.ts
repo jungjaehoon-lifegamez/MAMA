@@ -33,6 +33,7 @@ import { EventEmitter } from 'events';
 import type { TokenUsageRecord, PromptCallbacks, ToolUseBlock } from './types.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import { getConfig } from '../cli/config/config-manager.js';
+import { formatCliArgsForLog } from './cli-arg-redaction.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -262,7 +263,9 @@ export class PersistentClaudeProcess extends EventEmitter {
     );
 
     const args = this.buildArgs();
-    persistentLogger.info(`[PersistentCLI] Spawning: claude ${args.join(' ')}`);
+    persistentLogger.info(
+      `[PersistentCLI] Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`
+    );
 
     // Clean environment: Remove conflicting MAMA_* variables before merging
     const cleanEnv = { ...process.env };
@@ -903,6 +906,10 @@ export class PersistentClaudeProcess extends EventEmitter {
   getSessionId(): string {
     return this.options.sessionId;
   }
+}
+
+export function formatClaudeArgsForLog(args: readonly string[]): string[] {
+  return formatCliArgsForLog(args);
 }
 
 /**

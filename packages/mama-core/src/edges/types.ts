@@ -44,6 +44,7 @@ export interface TwinVisibility {
   connectors?: string[];
   projectRefs?: TwinProjectRef[];
   tenantId?: string | null;
+  startMs?: number | null;
   asOfMs?: number | null;
 }
 
@@ -106,6 +107,7 @@ export interface ListVisibleTwinEdgesOptions {
   projectRefs?: TwinProjectRef[];
   tenantId?: string | null;
   edgeTypes?: TwinEdgeType[];
+  startMs?: number | null;
   asOfMs?: number | null;
   limit?: number;
 }

@@ -13,6 +13,8 @@
 
 - **Contract-first coding:** PreToolUse searches contracts before edits and blocks guessing when none exist.
 - **Grounded reasoning:** Reasoning Summary is derived from actual matches (unknowns are explicit).
+- **Task-scoped context:** Context Compile turns broad evidence into selected/rejected/missing
+  packets with trusted `context_packet_id` provenance.
 - **Persistence across sessions:** Contracts saved in MCP prevent schema drift over time.
 - **Low-noise guidance:** Per-session long/short output reduces repetition.
 - **Safer outputs:** Prompt-sanitized contract injection reduces prompt-injection risk.
@@ -149,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.16.0 — Scoped Memory, event_date Temporal Tracking, MCP v2 API Integration
-**Last Updated:** 2026-04-06
+**Status:** MAMA OS v0.20.1 — Runtime Envelopes, Context Compile V0, Worker Context APIs
+**Last Updated:** 2026-05-03
