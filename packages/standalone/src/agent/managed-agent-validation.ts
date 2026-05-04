@@ -25,7 +25,7 @@ function isValidToolPermissions(value: unknown): boolean {
   return true;
 }
 
-const SUPPORTED_BACKENDS = new Set(['claude', 'codex', 'codex-mcp', 'gemini']);
+const SUPPORTED_BACKENDS = new Set(['claude', 'codex', 'codex-mcp']);
 
 function isSupportedBackend(value: unknown): boolean {
   return typeof value === 'string' && SUPPORTED_BACKENDS.has(value.trim());
@@ -71,6 +71,7 @@ export function validateManagedAgentChanges(changes: unknown): string | null {
     auto_continue: (value) => typeof value === 'boolean',
     effort: (value) => typeof value === 'string' && value.trim().length > 0,
     tool_permissions: isValidToolPermissions,
+    gateway_tool_permissions: isValidToolPermissions,
     persona_file: (value) => typeof value === 'string' && value.trim().length > 0,
     system: (value) => typeof value === 'string',
   };

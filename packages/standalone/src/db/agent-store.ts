@@ -30,6 +30,13 @@ const TERMINAL_OUTCOME_ACTIVITY_SQL = [
   "'audit_complete'",
   "'audit_failed'",
 ].join(', ');
+const SUMMARY_HEALTH_ACTIVITY_SQL = `
+  type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL})
+  AND (
+    error_message IS NULL
+    OR NOT (type = 'audit_failed' AND error_message LIKE '%Process stopped by user%')
+  )
+`;
 
 // ── Table Init ──────────────────────────────────────────────────────────────
 
@@ -498,14 +505,14 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
             ) as error_rate,
             AVG(CASE WHEN type IN (${TERMINAL_OUTCOME_ACTIVITY_SQL}) AND duration_ms > 0 THEN duration_ms END) as avg_duration_ms
           FROM agent_activity
-          WHERE created_at >= ?
+          WHERE created_at >= ? AND ${SUMMARY_HEALTH_ACTIVITY_SQL}
           GROUP BY agent_id
         ),
         latest AS (
           SELECT agent_id, type as last_type, created_at as last_at,
             ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
           FROM agent_activity
-          WHERE created_at >= ?
+          WHERE created_at >= ? AND ${SUMMARY_HEALTH_ACTIVITY_SQL}
         ),
         recent AS (
           SELECT agent_id, type, rn
@@ -515,7 +522,7 @@ export function getActivitySummary(db: DB, since: string): ActivitySummaryRow[] 
               type,
               ROW_NUMBER() OVER (PARTITION BY agent_id ORDER BY created_at DESC, id DESC) as rn
             FROM agent_activity
-            WHERE created_at >= ?
+            WHERE created_at >= ? AND ${SUMMARY_HEALTH_ACTIVITY_SQL}
           )
           WHERE rn <= 10
         ),

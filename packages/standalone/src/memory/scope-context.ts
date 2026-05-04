@@ -23,6 +23,6 @@ export function deriveMemoryScopes(input: ScopeContextInput): MemoryScopeRef[] {
     scopes.push({ kind: 'user', id: input.userId });
   }
 
-  scopes.push({ kind: 'global', id: 'global' });
+  scopes.push({ kind: 'global', id: 'system' });
   return scopes;
 }

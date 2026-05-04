@@ -29,10 +29,19 @@ export class EntityMergeError extends Error {
 }
 
 const MAX_MERGE_CHAIN_DEPTH = 8;
+const OBSERVATION_CONTEXT_KEY_COLUMNS = [
+  'workspace_context_key',
+  'channel_context_key',
+  'thread_context_key',
+  'actor_context_key',
+] as const;
+const tableColumnCache = new WeakMap<EntityStoreAdapter, Map<string, Set<string>>>();
 
 type CreateEntityNodeInput = Omit<EntityNode, 'created_at' | 'updated_at'>;
 type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
-type UpsertEntityObservationInput = Omit<EntityObservation, 'created_at'>;
+type ObservationContextKeyColumn = (typeof OBSERVATION_CONTEXT_KEY_COLUMNS)[number];
+type UpsertEntityObservationInput = Omit<EntityObservation, 'created_at'> &
+  Partial<Record<ObservationContextKeyColumn, string | null>>;
 type AppendEntityTimelineEventInput = {
   event: Omit<EntityTimelineEvent, 'id' | 'created_at'> & {
     id?: string;
@@ -53,6 +62,69 @@ function now(): number {
 function normalizeSourceLocator(value: string | null | undefined): string {
   // Write empty-string as the null sentinel so SQLite UNIQUE can collapse null-like locators; parseObservationRow maps it back to null on read.
   return value ?? '';
+}
+
+function normalizeContextKey(value: string | null | undefined): string {
+  return value ?? '';
+}
+
+function sourceLocatorForInput(input: UpsertEntityObservationInput): string {
+  return normalizeSourceLocator(input.source_locator);
+}
+
+function channelContextKey(input: UpsertEntityObservationInput): string {
+  if (input.channel_context_key !== undefined) {
+    return normalizeContextKey(input.channel_context_key);
+  }
+  if (input.scope_kind !== 'channel' || !input.scope_id) {
+    return '';
+  }
+  return input.scope_id.startsWith(`${input.source_connector}:`)
+    ? input.scope_id
+    : `${input.source_connector}:${input.scope_id}`;
+}
+
+function actorContextKey(input: UpsertEntityObservationInput): string {
+  if (input.actor_context_key !== undefined) {
+    return normalizeContextKey(input.actor_context_key);
+  }
+  if (input.observation_type === 'author') {
+    return input.surface_form;
+  }
+  return input.related_surface_forms.find((value) => value.trim().length > 0) ?? '';
+}
+
+function observationContextKeys(
+  input: UpsertEntityObservationInput
+): Record<ObservationContextKeyColumn, string> {
+  return {
+    workspace_context_key: normalizeContextKey(
+      input.workspace_context_key ?? input.source_connector
+    ),
+    channel_context_key: channelContextKey(input),
+    thread_context_key: normalizeContextKey(input.thread_context_key),
+    actor_context_key: actorContextKey(input),
+  };
+}
+
+function tableColumnNames(adapter: EntityStoreAdapter, tableName: string): Set<string> {
+  let adapterCache = tableColumnCache.get(adapter);
+  if (!adapterCache) {
+    adapterCache = new Map<string, Set<string>>();
+    tableColumnCache.set(adapter, adapterCache);
+  }
+  const cached = adapterCache.get(tableName);
+  if (cached) {
+    return cached;
+  }
+  const rows = adapter.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  const columns = new Set(rows.map((row) => row.name));
+  adapterCache.set(tableName, columns);
+  return columns;
+}
+
+export function clearEntityTableColumnCache(adapter: EntityStoreAdapter): void {
+  tableColumnCache.delete(adapter);
 }
 
 function requireStringField(row: Record<string, unknown>, field: string): string {
@@ -173,6 +245,10 @@ export function parseObservationRow(row: Record<string, unknown>): EntityObserva
     source_connector: requireStringField(row, 'source_connector'),
     source_locator: sourceLocator && sourceLocator.length > 0 ? sourceLocator : null,
     source_raw_record_id: requireStringField(row, 'source_raw_record_id'),
+    workspace_context_key: optionalStringFieldIfPresent(row, 'workspace_context_key'),
+    channel_context_key: optionalStringFieldIfPresent(row, 'channel_context_key'),
+    thread_context_key: optionalStringFieldIfPresent(row, 'thread_context_key'),
+    actor_context_key: optionalStringFieldIfPresent(row, 'actor_context_key'),
     created_at: createdAt,
   };
 }
@@ -315,75 +391,213 @@ export function listEntityAliases(
   }));
 }
 
+function observationContextColumns(columns: Set<string>): ObservationContextKeyColumn[] {
+  return OBSERVATION_CONTEXT_KEY_COLUMNS.filter((column) => columns.has(column));
+}
+
+function observationInsertValues(
+  input: UpsertEntityObservationInput,
+  normalizedSourceLocator: string,
+  contextColumns: ObservationContextKeyColumn[],
+  contextKeys: Record<ObservationContextKeyColumn, string>,
+  createdAt: number
+): { columns: string[]; values: unknown[] } {
+  const columns = [
+    'id',
+    'observation_type',
+    'entity_kind_hint',
+    'surface_form',
+    'normalized_form',
+    'lang',
+    'script',
+    'context_summary',
+    'related_surface_forms',
+    'timestamp_observed',
+    'scope_kind',
+    'scope_id',
+    'extractor_version',
+    'embedding_model_version',
+    'source_connector',
+    'source_locator',
+    'source_raw_record_id',
+    ...contextColumns,
+    'created_at',
+  ];
+  const values = [
+    input.id,
+    input.observation_type,
+    input.entity_kind_hint,
+    input.surface_form,
+    input.normalized_form,
+    input.lang,
+    input.script,
+    input.context_summary,
+    JSON.stringify(input.related_surface_forms),
+    input.timestamp_observed,
+    input.scope_kind,
+    input.scope_id,
+    input.extractor_version,
+    input.embedding_model_version,
+    input.source_connector,
+    normalizedSourceLocator,
+    input.source_raw_record_id,
+    ...contextColumns.map((column) => contextKeys[column]),
+    createdAt,
+  ];
+
+  return { columns, values };
+}
+
+function findExistingObservation(
+  adapter: EntityStoreAdapter,
+  input: UpsertEntityObservationInput,
+  normalizedSourceLocator: string,
+  contextColumns: ObservationContextKeyColumn[],
+  contextKeys: Record<ObservationContextKeyColumn, string>
+): Record<string, unknown> | undefined {
+  const conditions = [
+    'source_connector = ?',
+    'source_locator = ?',
+    'source_raw_record_id = ?',
+    'observation_type = ?',
+    ...contextColumns.map((column) => `COALESCE(${column}, '') = ?`),
+  ];
+  const params = [
+    input.source_connector,
+    normalizedSourceLocator,
+    input.source_raw_record_id,
+    input.observation_type,
+    ...contextColumns.map((column) => contextKeys[column]),
+  ];
+
+  return adapter
+    .prepare(
+      `
+        SELECT id FROM entity_observations
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+      `
+    )
+    .get(...params) as Record<string, unknown> | undefined;
+}
+
+function insertObservation(
+  adapter: EntityStoreAdapter,
+  input: UpsertEntityObservationInput,
+  normalizedSourceLocator: string,
+  contextColumns: ObservationContextKeyColumn[],
+  contextKeys: Record<ObservationContextKeyColumn, string>,
+  createdAt: number
+): void {
+  const insert = observationInsertValues(
+    input,
+    normalizedSourceLocator,
+    contextColumns,
+    contextKeys,
+    createdAt
+  );
+  const placeholders = insert.columns.map(() => '?').join(', ');
+  adapter
+    .prepare(
+      `
+        INSERT INTO entity_observations (${insert.columns.join(', ')})
+        VALUES (${placeholders})
+      `
+    )
+    .run(...insert.values);
+}
+
+function updateObservation(
+  adapter: EntityStoreAdapter,
+  id: string,
+  input: UpsertEntityObservationInput,
+  normalizedSourceLocator: string,
+  contextColumns: ObservationContextKeyColumn[],
+  contextKeys: Record<ObservationContextKeyColumn, string>
+): void {
+  const assignments = [
+    'entity_kind_hint = ?',
+    'surface_form = ?',
+    'normalized_form = ?',
+    'lang = ?',
+    'script = ?',
+    'context_summary = ?',
+    'related_surface_forms = ?',
+    'timestamp_observed = ?',
+    'scope_kind = ?',
+    'scope_id = ?',
+    'extractor_version = ?',
+    'embedding_model_version = ?',
+    'source_locator = ?',
+    ...contextColumns.map((column) => `${column} = ?`),
+  ];
+  const values = [
+    input.entity_kind_hint,
+    input.surface_form,
+    input.normalized_form,
+    input.lang,
+    input.script,
+    input.context_summary,
+    JSON.stringify(input.related_surface_forms),
+    input.timestamp_observed,
+    input.scope_kind,
+    input.scope_id,
+    input.extractor_version,
+    input.embedding_model_version,
+    normalizedSourceLocator,
+    ...contextColumns.map((column) => contextKeys[column]),
+    id,
+  ];
+
+  adapter
+    .prepare(
+      `
+        UPDATE entity_observations
+        SET ${assignments.join(', ')}
+        WHERE id = ?
+      `
+    )
+    .run(...values);
+}
+
+function saveObservation(
+  adapter: EntityStoreAdapter,
+  input: UpsertEntityObservationInput
+): UpsertEntityObservationResult {
+  const columns = tableColumnNames(adapter, 'entity_observations');
+  const contextColumns = observationContextColumns(columns);
+  const contextKeys = observationContextKeys(input);
+  const normalizedSourceLocator = sourceLocatorForInput(input);
+  const existing = findExistingObservation(
+    adapter,
+    input,
+    normalizedSourceLocator,
+    contextColumns,
+    contextKeys
+  );
+  if (existing) {
+    const id = requireStringField(existing, 'id');
+    updateObservation(adapter, id, input, normalizedSourceLocator, contextColumns, contextKeys);
+    return { id, created: false };
+  }
+
+  insertObservation(adapter, input, normalizedSourceLocator, contextColumns, contextKeys, now());
+  return { id: input.id, created: true };
+}
+
 export async function upsertEntityObservation(
   input: UpsertEntityObservationInput
 ): Promise<EntityObservation> {
   await initDB();
   const adapter = getAdapter();
-  const createdAt = now();
-  const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_observations (
-          id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
-          context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
-          extractor_version, embedding_model_version, source_connector, source_locator,
-          source_raw_record_id, created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
-        DO UPDATE SET
-          entity_kind_hint = excluded.entity_kind_hint,
-          surface_form = excluded.surface_form,
-          normalized_form = excluded.normalized_form,
-          lang = excluded.lang,
-          script = excluded.script,
-          context_summary = excluded.context_summary,
-          related_surface_forms = excluded.related_surface_forms,
-          timestamp_observed = excluded.timestamp_observed,
-          scope_kind = excluded.scope_kind,
-          scope_id = excluded.scope_id,
-          extractor_version = excluded.extractor_version,
-          embedding_model_version = excluded.embedding_model_version,
-          source_locator = excluded.source_locator,
-          created_at = entity_observations.created_at
-      `
-    )
-    .run(
-      input.id,
-      input.observation_type,
-      input.entity_kind_hint,
-      input.surface_form,
-      input.normalized_form,
-      input.lang,
-      input.script,
-      input.context_summary,
-      JSON.stringify(input.related_surface_forms),
-      input.timestamp_observed,
-      input.scope_kind,
-      input.scope_id,
-      input.extractor_version,
-      input.embedding_model_version,
-      input.source_connector,
-      normalizedSourceLocator,
-      input.source_raw_record_id,
-      createdAt
-    );
-
-  const saved = adapter
-    .prepare(
-      `
-        SELECT * FROM entity_observations
-        WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
-      `
-    )
-    .get(
-      input.source_connector,
-      normalizedSourceLocator,
-      input.source_raw_record_id,
-      input.observation_type
-    ) as Record<string, unknown>;
+  const result = saveObservation(adapter, input);
+  const saved = adapter.prepare('SELECT * FROM entity_observations WHERE id = ?').get(result.id) as
+    | Record<string, unknown>
+    | undefined;
+  if (!saved) {
+    throw new Error(`Failed to load saved entity observation ${result.id}`);
+  }
 
   return parseObservationRow(saved);
 }
@@ -395,87 +609,7 @@ export async function upsertEntityObservations(
   const adapter = getAdapter();
   const observations: UpsertEntityObservationResult[] = [];
   const upsertOne = (input: UpsertEntityObservationInput): void => {
-    const normalizedSourceLocator = normalizeSourceLocator(input.source_locator);
-    const existing = adapter
-      .prepare(
-        `
-          SELECT id FROM entity_observations
-          WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
-        `
-      )
-      .get(
-        input.source_connector,
-        normalizedSourceLocator,
-        input.source_raw_record_id,
-        input.observation_type
-      ) as Record<string, unknown> | undefined;
-    const createdAt = now();
-    adapter
-      .prepare(
-        `
-          INSERT INTO entity_observations (
-            id, observation_type, entity_kind_hint, surface_form, normalized_form, lang, script,
-            context_summary, related_surface_forms, timestamp_observed, scope_kind, scope_id,
-            extractor_version, embedding_model_version, source_connector, source_locator,
-            source_raw_record_id, created_at
-          )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(source_connector, source_locator, source_raw_record_id, observation_type)
-          DO UPDATE SET
-            entity_kind_hint = excluded.entity_kind_hint,
-            surface_form = excluded.surface_form,
-            normalized_form = excluded.normalized_form,
-            lang = excluded.lang,
-            script = excluded.script,
-            context_summary = excluded.context_summary,
-            related_surface_forms = excluded.related_surface_forms,
-            timestamp_observed = excluded.timestamp_observed,
-            scope_kind = excluded.scope_kind,
-            scope_id = excluded.scope_id,
-            extractor_version = excluded.extractor_version,
-            embedding_model_version = excluded.embedding_model_version,
-            source_locator = excluded.source_locator,
-            created_at = entity_observations.created_at
-        `
-      )
-      .run(
-        input.id,
-        input.observation_type,
-        input.entity_kind_hint,
-        input.surface_form,
-        input.normalized_form,
-        input.lang,
-        input.script,
-        input.context_summary,
-        JSON.stringify(input.related_surface_forms),
-        input.timestamp_observed,
-        input.scope_kind,
-        input.scope_id,
-        input.extractor_version,
-        input.embedding_model_version,
-        input.source_connector,
-        normalizedSourceLocator,
-        input.source_raw_record_id,
-        createdAt
-      );
-
-    const saved = adapter
-      .prepare(
-        `
-          SELECT * FROM entity_observations
-          WHERE source_connector = ? AND source_locator = ? AND source_raw_record_id = ? AND observation_type = ?
-        `
-      )
-      .get(
-        input.source_connector,
-        normalizedSourceLocator,
-        input.source_raw_record_id,
-        input.observation_type
-      ) as Record<string, unknown>;
-    observations.push({
-      id: requireStringField(saved, 'id'),
-      created: !existing,
-    });
+    observations.push(saveObservation(adapter, input));
   };
 
   if ('transaction' in adapter && typeof adapter.transaction === 'function') {

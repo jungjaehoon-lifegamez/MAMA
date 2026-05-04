@@ -55,6 +55,8 @@ export interface CodexMCPOptions {
   command?: string;
   /** Codex home directory (overrides CODEX_HOME env). Forces MAMA-internal config. */
   codexHome?: string;
+  /** Optional MCP config JSON to translate into the controlled Codex config.toml. */
+  mcpConfigPath?: string;
 }
 
 export type { PromptCallbacks };
@@ -741,7 +743,7 @@ export class CodexMCPProcess extends EventEmitter {
     chmodSync(codexHome, 0o700);
 
     const configPath = join(codexHome, 'config.toml');
-    const configToml = buildMAMACodexConfig();
+    const configToml = buildMAMACodexConfig(this.options.mcpConfigPath);
     writeFileSync(configPath, configToml, 'utf-8');
     chmodSync(configPath, 0o600);
 

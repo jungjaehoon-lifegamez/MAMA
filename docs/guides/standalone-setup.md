@@ -94,7 +94,7 @@ npm install -g @jungjaehoon/mama-os
 
 ```bash
 mama --version
-# Should output: @jungjaehoon/mama-os v0.14.x
+# Should output: @jungjaehoon/mama-os v0.20.x
 
 mama --help
 # Should show available commands
@@ -242,6 +242,10 @@ curl -H "Authorization: Bearer $MAMA_AUTH_TOKEN" \
 `/health` intentionally returns only `{ "status": "ok", "timestamp": ... }`.
 Envelope metadata lives behind `/api/envelope/status`, which reports `issuance`,
 `key_id`, `key_version`, and `recent_mismatch_count_24h`.
+
+`context_compile` uses this envelope context to persist trusted context packets. Managed
+`dashboard-agent` and `wiki-agent` runs prefer `context_compile` when issuance is enabled, then
+fall back to `mama_search` if no active worker envelope is available.
 
 Production notes:
 

@@ -34,6 +34,10 @@ import {
   createAgentSituationRouter,
   type AgentSituationRouterOptions,
 } from './agent-situation-handler.js';
+import {
+  createAgentContextRouter,
+  type AgentContextRouterOptions,
+} from './agent-context-handler.js';
 import { createAgentGraphRouter, type AgentGraphRouterOptions } from './agent-graph-handler.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -72,7 +76,8 @@ export interface ApiServerOptions {
   memoryDb?: SQLiteDatabase;
   /** Transaction-capable mama-core adapter for worker situation packets */
   memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'] &
-    AgentGraphRouterOptions['memoryAdapter'];
+    AgentGraphRouterOptions['memoryAdapter'] &
+    AgentContextRouterOptions['memoryAdapter'];
   /** Wiki directory path (for wiki API) */
   wikiPath?: string;
   /** Skill registry instance */
@@ -103,6 +108,8 @@ export interface ApiServerOptions {
   situationBuilder?: AgentSituationRouterOptions['buildPacket'];
   /** Test seam for agent situation timestamps */
   situationNow?: AgentSituationRouterOptions['now'];
+  /** Shared context compile service for HTTP/gateway packet compilation */
+  contextCompileService?: AgentContextRouterOptions['contextCompileService'];
 }
 
 export type ApiEnvelopeMetadata = {
@@ -156,6 +163,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     rawQuery,
     situationBuilder,
     situationNow,
+    contextCompileService,
   } = options;
 
   const app = express();
@@ -246,6 +254,14 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       })
     );
     app.use(
+      '/api/agent/context',
+      createAgentContextRouter({
+        memoryAdapter,
+        envelopeAuthority,
+        contextCompileService,
+      })
+    );
+    app.use(
       '/api/agent',
       createAgentGraphRouter({
         memoryAdapter,
@@ -270,6 +286,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     const intelligenceRouter = createIntelligenceRouter(intelligenceDb, {
       reportStore,
       eventBus,
+      sessionsDb: db,
     });
     app.use('/api/intelligence', intelligenceRouter);
   }

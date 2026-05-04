@@ -17,6 +17,9 @@ const TABLE_COLUMN_PRAGMAS: Record<string, string> = {
   case_truth: 'PRAGMA table_info(case_truth)',
 };
 const tableColumnCache = new WeakMap<TwinRefVisibilityAdapter, Map<string, Set<string>>>();
+// Keep memory-truth quarantine semantics excluded for legacy/backcompat rows even though the
+// current decisions.status CHECK only admits superseded/contradicted/stale terminal states.
+const EXCLUDED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
 
 function scopeKey(scope: TwinScopeRef): string {
   return `${scope.kind}\0${scope.id}`;
@@ -24,10 +27,6 @@ function scopeKey(scope: TwinScopeRef): string {
 
 function hasScopes(scopes: readonly TwinScopeRef[] | undefined): scopes is TwinScopeRef[] {
   return Array.isArray(scopes) && scopes.length > 0;
-}
-
-function hasConnectors(connectors: readonly string[] | undefined): connectors is string[] {
-  return Array.isArray(connectors) && connectors.length > 0;
 }
 
 function hasProjectRefs(
@@ -44,9 +43,24 @@ function asOfMs(visibility: TwinVisibility): number | null {
   return typeof visibility.asOfMs === 'number' ? visibility.asOfMs : null;
 }
 
-function isAtOrBeforeAsOf(value: number | null | undefined, visibility: TwinVisibility): boolean {
+function startMs(visibility: TwinVisibility): number | null {
+  return typeof visibility.startMs === 'number' ? visibility.startMs : null;
+}
+
+function isWithinVisibilityTime(
+  value: number | null | undefined,
+  visibility: TwinVisibility
+): boolean {
+  const start = startMs(visibility);
   const asOf = asOfMs(visibility);
-  return asOf === null || (typeof value === 'number' && value <= asOf);
+  if (start === null && asOf === null) {
+    return true;
+  }
+  return (
+    typeof value === 'number' &&
+    (start === null || value >= start) &&
+    (asOf === null || value <= asOf)
+  );
 }
 
 function parseTimestamp(value: unknown): number | null {
@@ -54,7 +68,15 @@ function parseTimestamp(value: unknown): number | null {
     return Math.floor(value);
   }
   if (typeof value === 'string') {
-    const parsed = Date.parse(value);
+    const trimmed = value.trim();
+    if (trimmed.length === 0) {
+      return null;
+    }
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return Math.floor(numeric);
+    }
+    const parsed = Date.parse(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
@@ -88,20 +110,39 @@ function isMemoryVisible(
   id: string,
   visibility: TwinVisibility
 ): boolean {
+  const columns = tableColumns(adapter, 'decisions');
+  const statusSelect = columns.has('status') ? 'status' : 'NULL AS status';
+  const supersededBySelect = columns.has('superseded_by')
+    ? 'superseded_by'
+    : 'NULL AS superseded_by';
   const row = adapter
     .prepare(
       `
-        SELECT created_at, event_datetime
+        SELECT created_at, event_datetime, ${statusSelect}, ${supersededBySelect}
         FROM decisions
         WHERE id = ?
         LIMIT 1
       `
     )
-    .get(id) as { created_at: number; event_datetime: number | null } | undefined;
+    .get(id) as
+    | {
+        created_at: number;
+        event_datetime: number | null;
+        status: string | null;
+        superseded_by: string | null;
+      }
+    | undefined;
   if (!row) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(row.event_datetime ?? row.created_at, visibility)) {
+  const status = typeof row.status === 'string' ? row.status : 'active';
+  if (
+    EXCLUDED_MEMORY_STATUSES.has(status) ||
+    (typeof row.superseded_by === 'string' && row.superseded_by.length > 0)
+  ) {
+    return false;
+  }
+  if (!isWithinVisibilityTime(row.event_datetime ?? row.created_at, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -127,7 +168,6 @@ function isMemoryVisible(
     return true;
   }
 
-  const columns = tableColumns(adapter, 'decisions');
   if (columns.has('memory_scope_kind') && columns.has('memory_scope_id')) {
     const row = adapter
       .prepare(
@@ -179,7 +219,7 @@ function isCaseVisible(
     return false;
   }
   const timestamp = parseTimestamp(row.last_activity_at) ?? parseTimestamp(row.updated_at);
-  if (!isAtOrBeforeAsOf(timestamp, visibility)) {
+  if (!isWithinVisibilityTime(timestamp, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -216,7 +256,7 @@ function isRawVisible(
   }
 
   if (
-    hasConnectors(visibility.connectors) &&
+    Array.isArray(visibility.connectors) &&
     !visibility.connectors.includes(String(row.source_connector))
   ) {
     return false;
@@ -237,7 +277,12 @@ function isRawVisible(
     return false;
   }
 
-  if (!isAtOrBeforeAsOf(Number(row.event_datetime ?? row.source_timestamp_ms), visibility)) {
+  const rawTs = row.event_datetime ?? row.source_timestamp_ms;
+  if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
+    return false;
+  }
+  const eventTsMs = parseTimestamp(rawTs);
+  if (eventTsMs === null || eventTsMs < 0 || !isWithinVisibilityTime(eventTsMs, visibility)) {
     return false;
   }
 
@@ -268,7 +313,7 @@ function isEntityVisible(
   if (!row) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(row.created_at, visibility)) {
+  if (!isWithinVisibilityTime(row.created_at, visibility)) {
     return false;
   }
   const scopes = visibility.scopes;
@@ -312,7 +357,7 @@ function isTwinRefVisible(
   if (!edge) {
     return false;
   }
-  if (!isAtOrBeforeAsOf(edge.created_at, visibility)) {
+  if (!isWithinVisibilityTime(edge.created_at, visibility)) {
     return false;
   }
   const pathWithCurrent = new Set(visitedEdges);
@@ -354,6 +399,7 @@ export function listVisibleTwinEdgesForRefs(
   const edges = listTwinEdgesForRefs(adapter, refs).filter(
     (edge) =>
       (edgeTypes.size === 0 || edgeTypes.has(edge.edge_type)) &&
+      (typeof options.startMs !== 'number' || edge.created_at >= options.startMs) &&
       (typeof options.asOfMs !== 'number' || edge.created_at <= options.asOfMs) &&
       isTwinRefVisible(adapter, edge.subject_ref, options, new Set(), edgeCache) &&
       isTwinRefVisible(adapter, edge.object_ref, options, new Set(), edgeCache)
@@ -361,8 +407,15 @@ export function listVisibleTwinEdgesForRefs(
   const limit =
     typeof options.limit === 'number' && Number.isFinite(options.limit)
       ? Math.max(0, Math.floor(options.limit))
-      : edges.length;
-  return edges.slice(0, limit);
+      : null;
+  const sortedEdges = [...edges].sort((left, right) => {
+    const createdDiff = right.created_at - left.created_at;
+    return createdDiff !== 0 ? createdDiff : left.edge_id.localeCompare(right.edge_id);
+  });
+  if (limit === null) {
+    return sortedEdges;
+  }
+  return sortedEdges.slice(0, limit);
 }
 
 function normalizeEdgeTypes(edgeTypes: readonly TwinEdgeType[] | undefined): Set<TwinEdgeType> {

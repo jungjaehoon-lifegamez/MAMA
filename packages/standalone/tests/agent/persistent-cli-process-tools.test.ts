@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { PersistentClaudeProcess } from '../../src/agent/persistent-cli-process.js';
+import {
+  PersistentClaudeProcess,
+  formatClaudeArgsForLog,
+} from '../../src/agent/persistent-cli-process.js';
 
 // Access private buildArgs via prototype trick: construct instance, then call
 function getBuildArgs(options: Record<string, unknown>): string[] {
@@ -72,5 +75,23 @@ describe('PersistentClaudeProcess buildArgs() tool flags', () => {
   it('should not include --add-dir (agents run from $HOME)', () => {
     const args = getBuildArgs({ disallowedTools: ['Write'] });
     expect(args).not.toContain('--add-dir');
+  });
+
+  describe('STORY-CLI-SPAWN-LOGS: spawn log redaction', () => {
+    describe('Acceptance Criteria', () => {
+      it('redacts system prompts in spawn logs', () => {
+        const args = [
+          ...getBuildArgs({ systemPrompt: 'secret prompt with skill catalog' }),
+          '--append-system-prompt',
+          'additional secret policy',
+        ];
+        const logged = formatClaudeArgsForLog(args).join(' ');
+        expect(logged).toContain('--system-prompt [redacted ');
+        expect(logged).toContain('--append-system-prompt [redacted ');
+        expect(logged).not.toContain('secret prompt');
+        expect(logged).not.toContain('skill catalog');
+        expect(logged).not.toContain('additional secret policy');
+      });
+    });
   });
 });

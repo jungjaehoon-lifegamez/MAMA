@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-05-04
+
+### Added
+
+- **Context Compile V0**: Added append-only `context_packets`, deterministic source readers,
+  visibility policy, budget manifests, source ref normalization, and the
+  `@jungjaehoon/mama-core/context-compile` package export
+
+### Fixed
+
+- **Context source trust boundaries**: Raw refs now canonicalize source metadata, memory/raw/graph
+  readers reject invalid time filters early, missing schema paths fail explicitly, and exhausted
+  read budgets report skipped operators instead of silently omitting work
+- **Source reader consistency**: `readGraphCandidates` fails closed when `connectors` is an
+  explicit empty array (mirroring the existing scope/project-window guards), both
+  `readRawCandidates` and `readGraphCandidates` now run `normalizeTimeFilters` for parity with
+  `readMemoryCandidates`, and `contextRefFromTwinRef` filters whitespace-only `source_id`
+  values
+- **Global scope id migration**: Memory and raw context readers now match legacy
+  `('global', 'global')` bindings alongside the canonical `('global', 'system')` sentinel so
+  records written before the alignment remain visible through `context_compile`
+
 ## [1.6.0] - 2026-05-01
 
 ### Added

@@ -471,6 +471,8 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
+    this.repairSkippedFeatureMigrations(migrationsDir);
+
     const embeddingsTables = this.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name='embeddings'`
     ).all() as Array<{ name: string }>;
@@ -482,6 +484,97 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
 
     this.migrateFromVssMemories();
+  }
+
+  private repairSkippedFeatureMigrations(migrationsDir: string): void {
+    if (this.tableExists('decisions')) {
+      const decisionColumns = this.tableColumns('decisions');
+      const hasMissingMemoryProvenanceColumn = [
+        'agent_id',
+        'model_run_id',
+        'envelope_hash',
+        'gateway_call_id',
+        'source_refs_json',
+        'provenance_json',
+      ].some((column) => !decisionColumns.has(column));
+      const hasMissingMemoryProvenanceIndex = [
+        'idx_decisions_envelope_hash',
+        'idx_decisions_model_run_id',
+        'idx_decisions_gateway_call_id',
+        'idx_memory_events_memory_created',
+      ].some((indexName) => !this.indexExists(indexName));
+
+      if (hasMissingMemoryProvenanceColumn || hasMissingMemoryProvenanceIndex) {
+        this.recoverMemoryProvenanceMigration032();
+        info('[node-sqlite-adapter] Repaired skipped memory provenance migration');
+      }
+    }
+
+    if (!this.tableExists('model_runs') || !this.tableExists('tool_traces')) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '033-create-model-runs-and-tool-traces.sql',
+        'model run provenance'
+      );
+    }
+
+    if (this.tableExists('connector_event_index')) {
+      const connectorColumns = this.tableColumns('connector_event_index');
+      const hasMissingConnectorScopeColumn = [
+        'source_cursor',
+        'tenant_id',
+        'project_id',
+        'memory_scope_kind',
+        'memory_scope_id',
+      ].some((column) => !connectorColumns.has(column));
+
+      if (hasMissingConnectorScopeColumn) {
+        this.recoverConnectorEventScopeMigration034();
+        info('[node-sqlite-adapter] Repaired skipped connector event scope migration');
+      }
+    }
+
+    if (!this.tableExists('twin_edges')) {
+      this.applyRepairMigration(migrationsDir, '035-create-twin-edges.sql', 'twin edge ledger');
+    }
+
+    if (
+      !this.tableExists('agent_situation_packets') ||
+      !this.tableExists('agent_situation_refresh_leases')
+    ) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '036-create-agent-situation-packets.sql',
+        'agent situation packet cache'
+      );
+    }
+
+    if (!this.tableExists('context_packets')) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '037-create-context-packets.sql',
+        'context packet store'
+      );
+    }
+  }
+
+  private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
+    const migrationPath = path.join(migrationsDir, fileName);
+    if (!fs.existsSync(migrationPath)) {
+      throw new Error(`Missing repair migration ${fileName} for ${label}`);
+    }
+
+    const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+    info(`[node-sqlite-adapter] Repairing skipped ${label} migration: ${fileName}`);
+    try {
+      this.transaction(() => {
+        this.exec(migrationSQL);
+      });
+      info(`[node-sqlite-adapter] Repair migration ${fileName} applied successfully`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Repair migration ${fileName} failed: ${message}`);
+    }
   }
 
   private recoverMemoryProvenanceMigration032(): void {
@@ -616,6 +709,17 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     const rows = this.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
     return new Set(rows.map((row) => row.name));
+  }
+
+  private tableExists(tableName: string): boolean {
+    if (!SQLITE_IDENTIFIER_PATTERN.test(tableName)) {
+      throw new Error('Invalid SQLite table identifier');
+    }
+
+    const row = this.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?").get(
+      tableName
+    ) as { name?: string } | undefined;
+    return row?.name === tableName;
   }
 
   private indexExists(indexName: string): boolean {

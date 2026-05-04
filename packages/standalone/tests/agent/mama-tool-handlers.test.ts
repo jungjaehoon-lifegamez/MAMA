@@ -24,7 +24,27 @@ function createLegacyApi(): MAMAApiInterface {
 
 describe('Story M2.1: MAMA save handler compatibility', () => {
   describe('AC: legacy injected APIs remain writable', () => {
-    it('falls back to public save when trusted provenance save is unavailable', async () => {
+    it('uses public save when no trusted provenance options are supplied', async () => {
+      const api = createLegacyApi();
+
+      const result = await handleSave(api, {
+        type: 'decision',
+        topic: 'legacy_save_fallback',
+        decision: 'Legacy API should still save',
+        reasoning: 'Plain saves remain compatible with injected APIs',
+      });
+
+      expect(result).toMatchObject({ success: true, id: 'legacy_save' });
+      expect(api.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          topic: 'legacy_save_fallback',
+          decision: 'Legacy API should still save',
+          reasoning: 'Plain saves remain compatible with injected APIs',
+        })
+      );
+    });
+
+    it('fails closed when trusted provenance options cannot be honored', async () => {
       const api = createLegacyApi();
       const options: TrustedMemoryWriteOptions = {
         capability: Object.freeze({}),
@@ -46,14 +66,47 @@ describe('Story M2.1: MAMA save handler compatibility', () => {
         options
       );
 
+      expect(result).toMatchObject({
+        success: false,
+        message: 'Trusted provenance save is unavailable.',
+      });
+      expect(api.save).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe('Story M2.2: operational run summary filtering', () => {
+  describe('AC: only narrow operational summary topics are auto-skipped', () => {
+    it('skips exact operational summary tokens and a numeric instance suffix', async () => {
+      const api = createLegacyApi();
+
+      const result = await handleSave(api, {
+        type: 'decision',
+        topic: 'system-audit-42',
+        decision: 'Audit complete. 2 MINOR fixes applied.',
+        reasoning: 'Full audit run summary.',
+      });
+
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        code: 'operational_memory_skipped',
+      });
+      expect(api.save).not.toHaveBeenCalled();
+    });
+
+    it('saves broad audit-looking topics unless an autosave marker is present', async () => {
+      const api = createLegacyApi();
+
+      const result = await handleSave(api, {
+        type: 'decision',
+        topic: 'audit-summary-2026-05-02',
+        decision: 'Audit completed records should be retained for 30 days.',
+        reasoning: 'This is a durable retention policy, not an operational autosave.',
+      });
+
       expect(result).toMatchObject({ success: true, id: 'legacy_save' });
-      expect(api.save).toHaveBeenCalledWith(
-        expect.objectContaining({
-          topic: 'legacy_save_fallback',
-          decision: 'Legacy API should still save',
-          reasoning: 'Trusted provenance support is optional on injected APIs',
-        })
-      );
+      expect(api.save).toHaveBeenCalledOnce();
     });
   });
 });

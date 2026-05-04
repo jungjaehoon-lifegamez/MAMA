@@ -13,9 +13,10 @@ it to search raw evidence, follow relationships, inspect timelines, and produce 
 instead of guessing from a short prompt.
 
 This release ships the foundation: raw search/window APIs, graph/entity/timeline APIs, situation
-packets, trusted provenance, model/tool traces, strict search diagnostics, and runtime envelopes.
-`context_compile`, the layer that turns those pieces into one selected/rejected/missing evidence
-packet for a task, is planned next.
+packets, trusted provenance, model/tool traces, strict search diagnostics, runtime envelopes, and
+Context Compile V0. `context_compile` turns those pieces into one selected/rejected/missing
+evidence packet for a task, and `mama_save` can attach that packet through trusted
+`context_packet_id` provenance.
 
 ## Target Workflow
 
@@ -72,13 +73,13 @@ That North Star has three parts:
 - **Twin substrate** — preserve raw evidence, time, scope, provenance, and edges so future
   models can reinterpret the same company history.
 - **Agent ergonomics** — give workers bounded tools, runtime envelopes, fan-out search,
-  situation packets, and eventually query-conditioned context compilation.
+  situation packets, and query-conditioned context compilation.
 - **Reports as deliverables** — turn evidence into cited reports and briefings for humans;
   memory rows are infrastructure, not the final product.
 
 This release is the runtime foundation for that direction. It ships envelope, provenance,
-worker-context, and strict-search building blocks. The `context_compile` primitive itself is
-planned for the next branch.
+worker-context, strict-search, and Context Compile building blocks, including append-only
+context packets and downstream `context_packet_id` save provenance.
 
 ## What MAMA OS Does
 
@@ -169,7 +170,7 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
              SQLite + 1024-dim embeddings
              memory, raw refs, model runs,
              tool traces, twin edges,
-             worker packets; context packets planned
+             worker packets, context packets
                     |
              +------+------+
              |             |
@@ -193,7 +194,8 @@ MAMA OS has full system access via the backend CLI — so security is foundation
   missing-context caveats before a human or downstream worker acts on them.
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode, bulk extraction limits. Built from a [real incident](docs/guides/security.md), not theory.
 - **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
-- **Agent permission tiers** — Tier 1 (full), Tier 2 (read-only), Tier 3 (scoped). Each agent gets only the tools it needs.
+- **Agent permission tiers** — Tier 1 gets full runtime tools, Tier 2 can write scoped
+  memory, and Tier 3 stays strictly read-only. Each agent gets only the tools it needs.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts down gracefully rather than operating compromised.
 
 See the full [Security Guide](docs/guides/security.md) for Cloudflare Zero Trust setup, token authentication, threat scenarios, and Code-Act sandbox isolation.
@@ -218,9 +220,9 @@ open-source components.
 
 | Package                                          | Version | Description                                           |
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.0  | Always-on runtime, envelopes, connectors, worker APIs |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.1  | Always-on runtime, envelopes, connectors, worker APIs |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code                    |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.6.0   | Core memory, provenance, raw refs, graph, embeddings  |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.7.0   | Core memory, provenance, raw refs, graph, embeddings  |
 | [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
@@ -269,8 +271,10 @@ dedicated tab. Connects to Discord, Slack, Telegram.
 - **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
 - **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion, with strict modes and diagnostics for vector-noise debugging
 - **Runtime boundary:** Signed reactive envelopes (HMAC over scope, expiry, actor) checked by an enforcer that rejects out-of-scope destinations, connectors, or tier mismatches
-- **Provenance:** Compact source refs, model runs, tool traces, twin edges, and worker situation packets
-- **Context compiler:** Planned v0.21 layer that turns broad search candidates into selected/rejected/missing evidence packets with `context_packet_id` provenance
+- **Provenance:** Compact source refs, model runs, tool traces, twin edges, worker situation
+  packets, and context packets
+- **Context compiler:** Context Compile V0 turns broad search candidates into
+  selected/rejected/missing evidence packets with trusted `context_packet_id` provenance
 - **Extraction:** Sonnet for structured fact extraction from conversations
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
@@ -284,28 +288,29 @@ Anyone who installs MAMA OS and connects their apps gets:
 - **Bounded agent calls** — Gateway and worker calls can be tied to runtime envelopes and audited for scope or destination mismatches
 - **Evidence provenance** — Memory rows can be traced to raw refs, model runs, tool traces, and trusted runtime context
 - **Worker context APIs** — Raw search, situation packets, graph/entity APIs, and twin edges give sub-agents structured evidence surfaces
+- **Task-scoped context packets** — `context_compile` selects, rejects, and explains evidence
+  for a specific task before a worker saves memory or composes a report
 - **Decision evolution tracking** — Not just what was decided, but what it replaced, contradicted, and depended on
 - **Situation briefings** — Dashboard and situation agents summarize what changed, what is stale, and what needs attention
 - **Wiki organization** — Knowledge agents organize raw conversations into structured Obsidian pages
 - **93% retrieval accuracy** — 100-question LongMemEval tool-use sample against long conversation histories
 
-`mama_search` remains the broad candidate retriever. Context Compile is the next layer that will
-select, reject, and explain evidence for a specific task before a worker writes memory or composes a
-report.
+`mama_search` remains the broad candidate retriever. `context_compile` is now the task-shaped layer
+that selects, rejects, and explains evidence before a worker writes memory or composes a report.
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                |
-| -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                         |
-| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                      |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                   |
-| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                  |
-| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                          |
-| **Now**  | v0.20   | M1-M6 runtime foundation: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, process cleanup            |
-| **Next** | v0.21   | Context Compile V0: append-only `context_packets`, deterministic compiler, `context_compile` tool/API, and downstream `context_packet_id` provenance |
-|          | Later   | Report composer, packet retention policy, search-quality feedback loops, browser onboarding for non-developers, and domain extraction templates      |
-|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                          |
+| Phase    | Version | Focus                                                                                                                                                                                                                                             |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                      |
+| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                   |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                |
+| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                               |
+| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                       |
+| **Now**  | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance |
+| **Next** | v0.21   | Report composer, packet retention policy, search-quality feedback loops, browser onboarding for non-developers, and domain extraction templates                                                                                                   |
+|          | Later   | Domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                              |
+|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                       |
 
 ## Development
 
@@ -317,7 +322,7 @@ pnpm test     # 3000+ tests across all packages
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-_Last updated: 2026-04-30_
+_Last updated: 2026-05-01_
 
 ## License
 

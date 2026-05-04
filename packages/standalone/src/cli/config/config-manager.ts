@@ -209,7 +209,7 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
   const errors: string[] = [];
 
   if (!config.agent.backend) {
-    errors.push("agent.backend is required. Valid: 'claude' | 'codex-mcp'");
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'codex-mcp'");
   }
   if (!config.agent.model) {
     errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
@@ -382,7 +382,8 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  * SECURITY: Type guards ensure safe defaults for optional fields
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
-  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent);
+  const wikiEnabled = (config as { wiki?: { enabled?: boolean } }).wiki?.enabled === true;
+  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent, { wikiEnabled });
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
@@ -435,7 +436,8 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
  * delegate work, so we gently upgrade missing permission metadata.
  */
 function normalizeLegacyMultiAgentConfig(
-  multiAgentConfig?: MultiAgentConfig
+  multiAgentConfig?: MultiAgentConfig,
+  options: { wikiEnabled?: boolean } = {}
 ): MultiAgentConfig | undefined {
   if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
@@ -463,6 +465,42 @@ function normalizeLegacyMultiAgentConfig(
       ...multiAgentConfig,
       default_agent: migratedDefaultAgent,
       agents: migratedAgents as typeof multiAgentConfig.agents,
+    };
+  }
+
+  const defaultAgents = getDefaultMultiAgentConfig().agents;
+  const mergedAgents = {
+    ...multiAgentConfig.agents,
+  } as Record<string, Omit<AgentPersonaConfig, 'id'>>;
+  let addedBuiltinAgent = false;
+  let changedBuiltinAgent = false;
+  for (const [agentId, defaultAgent] of Object.entries(defaultAgents)) {
+    // wiki-agent's runtime provisioning (persona, vault wiring) only runs when
+    // config.wiki.enabled is true. Skip the static backfill here unless the
+    // flag is on so we don't advertise an agent the runtime treats as
+    // optional. A user-defined wiki-agent entry is preserved as-is.
+    if (agentId === 'wiki-agent' && !options.wikiEnabled && !mergedAgents[agentId]) {
+      continue;
+    }
+    if (!mergedAgents[agentId]) {
+      mergedAgents[agentId] = defaultAgent;
+      addedBuiltinAgent = true;
+    } else {
+      const normalizedAgent = normalizeBuiltinCodeActAgentPermissions(
+        agentId,
+        mergedAgents[agentId],
+        defaultAgent
+      );
+      if (normalizedAgent !== mergedAgents[agentId]) {
+        changedBuiltinAgent = true;
+        mergedAgents[agentId] = normalizedAgent;
+      }
+    }
+  }
+  if (addedBuiltinAgent || changedBuiltinAgent) {
+    multiAgentConfig = {
+      ...multiAgentConfig,
+      agents: mergedAgents as typeof multiAgentConfig.agents,
     };
   }
 
@@ -511,6 +549,82 @@ function normalizeLegacyMultiAgentConfig(
   return multiAgentConfig;
 }
 
+const SYSTEM_CODE_ACT_AGENT_IDS = new Set(['dashboard-agent', 'wiki-agent']);
+const LEGACY_SYSTEM_CODE_ACT_GATEWAY_ALLOWED: Record<string, string[]> = {
+  'dashboard-agent': ['mama_search', 'agent_notices', 'report_publish'],
+  'wiki-agent': [
+    'mama_search',
+    'agent_notices',
+    'case_list',
+    'case_assemble',
+    'obsidian',
+    'wiki_publish',
+  ],
+};
+
+function normalizeBuiltinCodeActAgentPermissions(
+  agentId: string,
+  agent: Omit<AgentPersonaConfig, 'id'>,
+  defaultAgent: Omit<AgentPersonaConfig, 'id'>
+): Omit<AgentPersonaConfig, 'id'> {
+  if (!SYSTEM_CODE_ACT_AGENT_IDS.has(agentId)) {
+    return agent;
+  }
+
+  const defaultGatewayAllowed = defaultAgent.gateway_tool_permissions?.allowed ?? [];
+  const allowed = agent.tool_permissions?.allowed ?? [];
+  const blocked = agent.tool_permissions?.blocked ?? [];
+  const hasGatewayToolsInCliAllowed = allowed.some((tool) => defaultGatewayAllowed.includes(tool));
+  const blocksReadOnlyCliTools = ['Read', 'Grep', 'Glob'].some((tool) => blocked.includes(tool));
+  const shouldMigrateLegacyPermissions =
+    agent.useCodeAct === true &&
+    allowed.includes('code_act') &&
+    (hasGatewayToolsInCliAllowed || blocksReadOnlyCliTools);
+  const gatewayToolPermissions = normalizeBuiltinGatewayToolPermissions(
+    agentId,
+    agent.gateway_tool_permissions ?? defaultAgent.gateway_tool_permissions,
+    defaultAgent.gateway_tool_permissions
+  );
+
+  if (
+    !shouldMigrateLegacyPermissions &&
+    gatewayToolPermissions === agent.gateway_tool_permissions
+  ) {
+    return agent;
+  }
+
+  return {
+    ...agent,
+    ...(shouldMigrateLegacyPermissions ? { tool_permissions: defaultAgent.tool_permissions } : {}),
+    gateway_tool_permissions: gatewayToolPermissions,
+  };
+}
+
+function normalizeBuiltinGatewayToolPermissions(
+  agentId: string,
+  permissions: Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions'],
+  defaultPermissions: Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions']
+): Omit<AgentPersonaConfig, 'id'>['gateway_tool_permissions'] {
+  const allowed = permissions?.allowed;
+  const defaultAllowed = defaultPermissions?.allowed ?? [];
+  const legacyAllowed = LEGACY_SYSTEM_CODE_ACT_GATEWAY_ALLOWED[agentId];
+  if (!allowed || !legacyAllowed || defaultAllowed.length === 0) {
+    return permissions;
+  }
+
+  const allowedSet = new Set(allowed);
+  const isLegacyDefault =
+    allowed.length === legacyAllowed.length && legacyAllowed.every((tool) => allowedSet.has(tool));
+  if (!isLegacyDefault) {
+    return permissions;
+  }
+
+  return {
+    ...permissions,
+    allowed: defaultAllowed,
+  };
+}
+
 /**
  * Validate configuration
  *
@@ -528,8 +642,8 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex-mcp'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude" or "codex-mcp"');
+  if (config.agent.backend && !['claude', 'codex', 'codex-mcp'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
   }
 
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {
@@ -586,6 +700,50 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         tier: 3,
         can_delegate: false,
         enabled: true,
+      },
+      'dashboard-agent': {
+        name: 'Dashboard Agent',
+        display_name: '📊 Dashboard',
+        trigger_prefix: '!dashboard',
+        persona_file: '~/.mama/personas/dashboard.md',
+        tier: 2,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
+          blocked: [],
+        },
+      },
+      'wiki-agent': {
+        name: 'Wiki Agent',
+        display_name: '📚 Wiki',
+        trigger_prefix: '!wiki',
+        persona_file: '~/.mama/personas/wiki.md',
+        tier: 2,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: [
+            'mama_search',
+            'context_compile',
+            'agent_notices',
+            'case_list',
+            'case_assemble',
+            'obsidian',
+            'wiki_publish',
+          ],
+          blocked: [],
+        },
       },
     },
     loop_prevention: {

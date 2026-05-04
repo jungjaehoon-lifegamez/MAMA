@@ -11,9 +11,11 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type { ContextCompileService } from './context-compile-service.js';
 import type {
   AppendToolTraceInput,
   BeginModelRunInput,
+  ContextCompileInput as CoreContextCompileInput,
   ModelRunRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
@@ -24,6 +26,8 @@ export type {
   ModelRunRecord,
   ToolTraceRecord,
 } from '@jungjaehoon/mama-core';
+
+export type ContextCompileInput = CoreContextCompileInput;
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -104,7 +108,7 @@ export interface AgentContext {
    * Backend type for this agent context
    * Used for backend-specific AGENTS.md injection
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
 }
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
@@ -364,6 +368,7 @@ export interface SaveDecisionInput {
   confidence?: number;
   is_static?: number; // 1 = long-term preference, 0 = project-specific (default)
   scopes?: ScopeRef[];
+  context_packet_id?: string;
   /** ISO 8601 date when the event actually occurred (e.g. "2024-01-15") */
   event_date?: string;
 }
@@ -662,12 +667,25 @@ export interface StopBotInput {
 }
 
 /**
+ * Input for code_act sandbox execution
+ */
+export interface CodeActInput {
+  /** JavaScript source to execute in the sandbox */
+  code: string;
+  /** Optional request-local include filter for gateway tools exposed inside the sandbox */
+  allowedTools?: string[];
+  /** Optional request-local exclude filter applied after active role permissions */
+  blockedTools?: string[];
+}
+
+/**
  * Union type for all MCP tool inputs
  */
 export type GatewayToolInput =
   | SaveInput
   | SearchInput
   | RecallInput
+  | CoreContextCompileInput
   | AddInput
   | IngestInput
   | UpdateInput
@@ -689,7 +707,8 @@ export type GatewayToolInput =
   // OS Monitoring tools
   | ListBotsInput
   | RestartBotInput
-  | StopBotInput;
+  | StopBotInput
+  | CodeActInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -698,6 +717,7 @@ export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
   | 'mama_recall'
+  | 'context_compile'
   | 'mama_update'
   | 'mama_load_checkpoint'
   | 'mama_add'
@@ -775,6 +795,8 @@ export interface SaveResult {
   id?: string;
   type?: 'decision' | 'checkpoint';
   message?: string;
+  code?: string;
+  skipped?: boolean;
   similar_decisions?: Array<{
     id: string;
     topic: string;
@@ -908,7 +930,7 @@ export interface AgentLoopOptions {
    * - 'codex-mcp': Codex via MCP protocol
    * Required at construction time (validated by config-manager)
    */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** User identifier for the frontdoor message source */
@@ -952,6 +974,8 @@ export interface AgentLoopOptions {
     /** Path to MCP config file */
     mcp_config?: string;
   };
+  /** Explicit MCP config path for runtimes that consume an external MCP config directly. */
+  mcpConfigPath?: string;
   /**
    * Resume existing CLI session instead of starting new one
    * When true, uses --resume flag and skips system prompt injection
@@ -1180,6 +1204,8 @@ export interface GatewayToolExecutorOptions {
   envelopeIssuanceMode?: 'off' | 'enabled' | 'required';
   /** Optional metrics store for envelope/audit counters. */
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
+  /** Shared context compile service for gateway context_compile calls. */
+  contextCompileService?: ContextCompileService;
 }
 
 export interface MemoryWriteProvenance {
@@ -1189,6 +1215,7 @@ export interface MemoryWriteProvenance {
   envelope_hash?: string;
   tool_name?: string;
   gateway_call_id?: string;
+  context_packet_id?: string;
   source_turn_id?: string;
   source_message_ref?: string;
   source_refs?: string[];

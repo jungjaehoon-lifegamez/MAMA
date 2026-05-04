@@ -26,6 +26,7 @@ MAMA (Memory-Augmented MCP Assistant) is an always-on AI companion that remember
 /guides/standalone-troubleshooting.md - Standalone issues
 /guides/configuration.md - Configuration options
 /guides/security.md - Security best practices
+/guides/code-act-sandbox.md - Code-Act sandbox and HTTP policy
 
 ### Reference
 /reference/commands.md - Slash commands

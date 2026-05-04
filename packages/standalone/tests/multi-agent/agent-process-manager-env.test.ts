@@ -14,6 +14,20 @@ import type { AgentPersonaConfig, MultiAgentConfig } from '../../src/multi-agent
 
 // Track all spawn calls
 let spawnCalls: Array<{ command: string; args: string[]; options: Record<string, unknown> }> = [];
+let readFileSyncValue = '';
+let writeFileSyncCalls: Array<{ path: string; data: string }> = [];
+
+function codeActMcpConfig(): string {
+  return JSON.stringify({
+    mcpServers: {
+      'code-act': {
+        command: 'node',
+        args: ['code-act-server.js'],
+        env: { MAMA_SERVER_PORT: '3847' },
+      },
+    },
+  });
+}
 
 // Mock child_process.spawn BEFORE importing modules that use it
 vi.mock('child_process', () => {
@@ -83,7 +97,10 @@ vi.mock('fs/promises', () => ({
 
 vi.mock('fs', () => ({
   existsSync: vi.fn().mockReturnValue(true),
-  readFileSync: vi.fn().mockReturnValue(''),
+  readFileSync: vi.fn(() => readFileSyncValue),
+  writeFileSync: vi.fn((path: string, data: string) => {
+    writeFileSyncCalls.push({ path, data });
+  }),
 }));
 
 // Now import modules that depend on mocked child_process
@@ -102,6 +119,10 @@ function makeConfig(
       can_delegate?: boolean;
       is_planning_agent?: boolean;
       isPlanningAgent?: boolean;
+      useCodeAct?: boolean;
+      backend?: 'claude' | 'codex' | 'codex-mcp';
+      tool_permissions?: { allowed?: string[]; blocked?: string[] };
+      gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
     }
   >
 ): MultiAgentConfig {
@@ -114,11 +135,14 @@ function makeConfig(
       trigger_prefix: `!${id}`,
       persona_file: `~/.mama/personas/${id}.md`,
       tier: opts.tier ?? 1,
-      backend: 'claude',
+      backend: opts.backend ?? 'claude',
       model: opts.model ?? 'claude-sonnet-4-6',
       can_delegate: opts.can_delegate,
       is_planning_agent: opts.is_planning_agent,
       isPlanningAgent: opts.isPlanningAgent,
+      useCodeAct: opts.useCodeAct,
+      tool_permissions: opts.tool_permissions,
+      gateway_tool_permissions: opts.gateway_tool_permissions,
       auto_respond_keywords: [],
     };
   }
@@ -160,6 +184,8 @@ describe('AgentProcessManager env vars by tier', () => {
 
   beforeEach(() => {
     spawnCalls = [];
+    readFileSyncValue = codeActMcpConfig();
+    writeFileSyncCalls = [];
   });
 
   afterEach(() => {
@@ -264,6 +290,192 @@ describe('AgentProcessManager env vars by tier', () => {
       const reusedProcess = await manager.getProcess('discord', 'channel-1', 'developer');
       expect(reusedProcess).toBe(process);
       expect(listener).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('STORY-CODE-ACT-GATEWAY-PERMISSIONS: Code-Act gateway allowlist separation', () => {
+    it('filters CLI-only allowed tools out of generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          tool_permissions: {
+            allowed: ['code_act', 'mama_search', 'report_publish', 'mcp__brave-search__*'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).toContain('declare function report_publish');
+      expect(systemPrompt).not.toContain('declare function code_act');
+      expect(systemPrompt).not.toContain('declare function mcp__brave-search__');
+    });
+
+    it('removes blocked gateway tools from generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['*'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('honors deny-only gateway tool permissions for generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('honors deny-only CLI tool permissions for generated Code-Act declarations', async () => {
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          tool_permissions: {
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      const systemPrompt = args[args.indexOf('--system-prompt') + 1];
+      expect(systemPrompt).toContain('declare function mama_search');
+      expect(systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('writes per-agent Code-Act MCP policy env for runtime enforcement', async () => {
+      readFileSyncValue = codeActMcpConfig();
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish', 'mcp__brave-search__*'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await manager.getProcess('discord', 'channel-1', 'dashboard');
+
+      expect(writeFileSyncCalls).toHaveLength(1);
+      expect(writeFileSyncCalls[0].path).toContain('code-act-only-mcp-config-dashboard.json');
+      const written = JSON.parse(writeFileSyncCalls[0].data) as {
+        mcpServers: {
+          'code-act': {
+            env: Record<string, string>;
+          };
+        };
+      };
+      expect(written.mcpServers['code-act'].env).toMatchObject({
+        MAMA_SERVER_PORT: '3847',
+        MAMA_CODE_ACT_AGENT_ID: 'dashboard',
+        MAMA_CODE_ACT_ALLOWED_TOOLS: JSON.stringify(['mama_search', 'report_publish']),
+        MAMA_CODE_ACT_BLOCKED_TOOLS: JSON.stringify(['mama_save']),
+      });
+
+      const args = spawnCalls[spawnCalls.length - 1]?.args ?? [];
+      expect(args).toContain('--mcp-config');
+      expect(args[args.indexOf('--mcp-config') + 1]).toContain(
+        'code-act-only-mcp-config-dashboard.json'
+      );
+    });
+
+    it('passes per-agent Code-Act MCP config through the Codex runtime path', async () => {
+      readFileSyncValue = codeActMcpConfig();
+      const config = makeConfig({
+        dashboard: {
+          backend: 'codex-mcp',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'claude-sonnet-4-6' });
+
+      const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
+      const runtimeOptions = (
+        runner as unknown as { wrapper: { options: { mcpConfigPath?: string } } }
+      ).wrapper.options;
+
+      expect(runtimeOptions.mcpConfigPath).toContain('code-act-only-mcp-config-dashboard.json');
+    });
+
+    it('fails closed for Code-Act-only agents when the MCP config is invalid', async () => {
+      readFileSyncValue = '{bad-json';
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await expect(manager.getProcess('discord', 'channel-1', 'dashboard')).rejects.toThrow(
+        /Code-Act MCP config/
+      );
+      expect(writeFileSyncCalls).toHaveLength(0);
+    });
+
+    it('fails closed for Code-Act-only agents when the code-act MCP server is missing', async () => {
+      readFileSyncValue = JSON.stringify({
+        mcpServers: {
+          mama: {
+            command: 'node',
+            args: ['mama-server.js'],
+          },
+        },
+      });
+      const config = makeConfig({
+        dashboard: {
+          tier: 2,
+          useCodeAct: true,
+        },
+      });
+      manager = new AgentProcessManager(config);
+
+      await expect(manager.getProcess('discord', 'channel-1', 'dashboard')).rejects.toThrow(
+        /code-act/
+      );
+      expect(writeFileSyncCalls).toHaveLength(0);
     });
   });
 

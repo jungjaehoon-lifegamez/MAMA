@@ -23,6 +23,7 @@ const SEND_TOOLS_TO_DESTINATION_KIND: Record<string, string> = {
 const WRITE_OR_SEND_TOOLS = new Set<string>([
   'mama_save',
   'mama_update',
+  'context_compile',
   'memory.write',
   'case.create',
   'case.link',
@@ -39,7 +40,12 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'human.correction',
 ]);
 
-const MEMORY_READ_TOOLS = new Set<string>(['mama_search', 'mama_recall']);
+const MEMORY_SCOPED_TOOLS = new Set<string>([
+  'mama_save',
+  'mama_search',
+  'mama_recall',
+  'context_compile',
+]);
 
 export class EnvelopeEnforcer {
   check(envelope: Envelope | null | undefined, toolName: string, args: unknown): void {
@@ -124,14 +130,30 @@ export class EnvelopeEnforcer {
       );
     }
 
-    if (!MEMORY_READ_TOOLS.has(toolName)) {
+    if (!MEMORY_SCOPED_TOOLS.has(toolName)) {
+      return;
+    }
+    if (envelope.tier === 3 && WRITE_OR_SEND_TOOLS.has(toolName)) {
       return;
     }
 
     const requestedScopes = requestedMemoryScopesForTool(toolName, args);
     if (requestedScopes.length === 0) {
+      if (toolName === 'mama_save' && isRecord(args)) {
+        const hasContextPacketId =
+          typeof args.context_packet_id === 'string' && args.context_packet_id.trim().length > 0;
+        const packetBackedScopeDelegatesToTrustedValidation =
+          hasContextPacketId &&
+          (args.scopes === undefined || (Array.isArray(args.scopes) && args.scopes.length === 0));
+        if (packetBackedScopeDelegatesToTrustedValidation) {
+          return;
+        }
+      }
+      if (toolName === 'context_compile' && isRecord(args) && Array.isArray(args.scopes)) {
+        return;
+      }
       throw new EnvelopeViolation(
-        'Memory read tools must execute with an explicit envelope memory scope',
+        'Memory tools must execute with an explicit envelope memory scope',
         'memory_scope_out_of_scope',
         { allowed: envelope.scope.memory_scopes }
       );
@@ -163,6 +185,13 @@ export class EnvelopeEnforcer {
 }
 
 function requestedRawConnectorsForTool(toolName: string, args: unknown): string[] {
+  if (toolName === 'context_compile') {
+    return uniqueStrings([
+      ...(getStringArrayArg(args, 'connectors') ?? []),
+      ...rawSeedRefConnectors(args),
+    ]);
+  }
+
   if (toolName === 'kagemusha_messages') {
     const channelId = getStringArg(args, 'channelId');
     if (!channelId) {
@@ -185,7 +214,7 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
 }
 
 function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
-  if (!['mama_search', 'mama_recall'].includes(toolName)) {
+  if (!['mama_save', 'mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
     return [];
   }
   if (!isRecord(args) || args.scopes === undefined) {
@@ -206,6 +235,26 @@ function requestedMemoryScopesForTool(toolName: string, args: unknown): MemorySc
     scopes.push({ kind: item.kind, id: item.id });
   }
   return scopes;
+}
+
+function rawSeedRefConnectors(args: unknown): string[] {
+  if (!isRecord(args) || !Array.isArray(args.seed_refs)) {
+    return [];
+  }
+  const connectors: string[] = [];
+  for (const ref of args.seed_refs) {
+    if (!isRecord(ref) || ref.kind !== 'raw') {
+      continue;
+    }
+    if (typeof ref.connector === 'string') {
+      connectors.push(ref.connector);
+    }
+  }
+  return connectors;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function getStringArg(args: unknown, key: string): string | undefined {

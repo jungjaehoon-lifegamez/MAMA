@@ -15,6 +15,7 @@ const ALLOWED_PROVENANCE_FIELDS = new Set<keyof MemoryWriteProvenance>([
   'envelope_hash',
   'tool_name',
   'gateway_call_id',
+  'context_packet_id',
   'source_turn_id',
   'source_message_ref',
   'source_refs',

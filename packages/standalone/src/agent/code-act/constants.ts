@@ -1,7 +1,9 @@
 export type CodeActBackend = 'claude' | 'codex-mcp';
 
-export function getCodeActInstructions(backend: CodeActBackend): string {
+export function getCodeActInstructions(backend: CodeActBackend, allowedTools?: string[]): string {
   const isCodex = backend === 'codex-mcp';
+  const allowedSummary = formatAllowedToolsSummary(allowedTools);
+  const hasExplicitGatewayAllowlist = allowedSummary !== null;
 
   const blockedToolsSection = isCodex
     ? `**DO NOT use these built-in tools** (they bypass MAMA's pipeline):
@@ -14,7 +16,10 @@ export function getCodeActInstructions(backend: CodeActBackend): string {
     : '';
 
   const gatewayToolsList = isCodex
-    ? `**USE code_act for ALL gateway tools:**
+    ? hasExplicitGatewayAllowlist
+      ? `**USE code_act only for these allowed gateway tools:**
+${allowedSummary}`
+      : `**USE code_act for ALL gateway tools:**
 - File ops: Read, Write, Edit, Bash
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
@@ -22,7 +27,10 @@ export function getCodeActInstructions(backend: CodeActBackend): string {
 - System: os_list_bots, os_get_config, os_set_model
 - Dashboard: report_publish
 - Wiki: wiki_publish`
-    : `**USE code_act for these gateway tools** (NOT available as direct tools):
+    : hasExplicitGatewayAllowlist
+      ? `**USE code_act only for these allowed gateway tools** (NOT available as direct tools):
+${allowedSummary}`
+      : `**USE code_act for these gateway tools** (NOT available as direct tools):
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
 - Browser: browser_navigate, browser_click, browser_screenshot
@@ -61,6 +69,24 @@ code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = res
 
 ### Gateway Functions (ONLY inside code_act)
 `;
+}
+
+function formatAllowedToolsSummary(allowedTools?: string[]): string | null {
+  if (!allowedTools || allowedTools.includes('*')) {
+    return null;
+  }
+  if (allowedTools.length === 0) {
+    return '- No gateway tools are currently allowed.';
+  }
+
+  const visibleTools = allowedTools.filter(
+    (tool) => tool !== 'code_act' && !tool.startsWith('mcp__')
+  );
+  if (visibleTools.length === 0) {
+    return '- No gateway tools are currently allowed.';
+  }
+
+  return visibleTools.map((tool) => `- ${tool}`).join('\n');
 }
 
 /**

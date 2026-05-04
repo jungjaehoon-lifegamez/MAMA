@@ -49,6 +49,20 @@ describe('RoleManager', () => {
       expect(role.systemControl).toBe(false);
     });
 
+    it('should keep the restricted fallback read-only when chat_bot is missing', () => {
+      const manager = new RoleManager({
+        rolesConfig: {
+          definitions: {},
+          sourceMapping: {},
+        },
+      });
+      const { roleName, role } = manager.getRoleForSource('unknown_platform');
+
+      expect(roleName).toBe('restricted');
+      expect(role.allowedTools).toEqual(['mama_search', 'Read']);
+      expect(role.allowedTools).not.toContain('context_compile');
+    });
+
     it('should be case-insensitive for source matching', () => {
       const manager = new RoleManager();
       const lower = manager.getRoleForSource('discord');
@@ -256,6 +270,7 @@ describe('RoleManager', () => {
 
       expect(manager.isToolAllowed(role, 'mama_search')).toBe(true);
       expect(manager.isToolAllowed(role, 'mama_recall')).toBe(true);
+      expect(manager.isToolAllowed(role, 'context_compile')).toBe(true);
       expect(manager.isToolAllowed(role, 'mama_save')).toBe(false);
     });
   });

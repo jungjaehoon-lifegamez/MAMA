@@ -339,6 +339,84 @@ describe('Story E1.3: Canonical entity persistence', () => {
         details: JSON.stringify({ from_status: 'in_progress', to_status: 'blocked' }),
       });
     });
+
+    it('should upsert observations when the source identity index includes context keys', async () => {
+      const adapter = getAdapter();
+      const existingColumns = adapter
+        .prepare('PRAGMA table_info(entity_observations)')
+        .all() as Array<{ name: string }>;
+      const columnNames = new Set(existingColumns.map((column) => column.name));
+      for (const column of [
+        'workspace_context_key',
+        'channel_context_key',
+        'thread_context_key',
+        'actor_context_key',
+      ]) {
+        if (!columnNames.has(column)) {
+          adapter.prepare(`ALTER TABLE entity_observations ADD COLUMN ${column} TEXT`).run();
+        }
+      }
+      adapter.prepare('DROP INDEX IF EXISTS idx_entity_observations_source_record').run();
+      adapter
+        .prepare(
+          `
+            CREATE UNIQUE INDEX idx_entity_observations_source_record
+              ON entity_observations(
+                source_connector,
+                source_locator,
+                source_raw_record_id,
+                observation_type,
+                workspace_context_key,
+                channel_context_key,
+                thread_context_key,
+                actor_context_key
+              )
+          `
+        )
+        .run();
+
+      const first = await upsertEntityObservation({
+        id: 'obs_context_keyed_1',
+        observation_type: 'author',
+        entity_kind_hint: 'person',
+        surface_form: 'Alice',
+        normalized_form: 'alice',
+        lang: 'en',
+        script: 'Latn',
+        context_summary: 'Slack author mention',
+        related_surface_forms: ['general'],
+        timestamp_observed: 1710000000000,
+        scope_kind: 'channel',
+        scope_id: 'C1234567890',
+        extractor_version: 'history-extractor@v1',
+        embedding_model_version: 'multilingual-e5-large',
+        source_connector: 'slack',
+        source_locator: null,
+        source_raw_record_id: 'raw_context_keyed_001',
+      });
+      const second = await upsertEntityObservation({
+        id: 'obs_context_keyed_1b',
+        observation_type: 'author',
+        entity_kind_hint: 'person',
+        surface_form: 'Alice',
+        normalized_form: 'alice',
+        lang: 'en',
+        script: 'Latn',
+        context_summary: 'Updated Slack author mention',
+        related_surface_forms: ['general'],
+        timestamp_observed: 1710000000001,
+        scope_kind: 'channel',
+        scope_id: 'C1234567890',
+        extractor_version: 'history-extractor@v1',
+        embedding_model_version: 'multilingual-e5-large',
+        source_connector: 'slack',
+        source_locator: null,
+        source_raw_record_id: 'raw_context_keyed_001',
+      });
+
+      expect(first.id).toBe(second.id);
+      expect(second.context_summary).toContain('Updated');
+    });
   });
 
   describe('AC #5: observation row parsing validates malformed DB values', () => {

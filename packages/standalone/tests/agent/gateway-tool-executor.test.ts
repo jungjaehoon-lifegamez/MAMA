@@ -16,7 +16,7 @@ import {
   createAgentVersion,
   logActivity,
 } from '../../src/db/agent-store.js';
-import { saveConfig } from '../../src/cli/config/config-manager.js';
+import { getDefaultMultiAgentConfig, saveConfig } from '../../src/cli/config/config-manager.js';
 import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 import { UICommandQueue } from '../../src/api/ui-command-handler.js';
@@ -539,15 +539,17 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         executor.setApplyMultiAgentConfig(applyMultiAgentConfig);
         executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
 
-        const createResult = await executor.execute('agent_create', {
-          id: 'wiki-agent',
-          name: 'Wiki Agent',
-          model: 'claude-sonnet-4-6',
-          tier: 2,
-          backend: 'claude',
-          system: 'Compile wiki updates.',
+        const multiAgentConfig = getDefaultMultiAgentConfig();
+        await saveConfig({ ...DEFAULT_CONFIG, multi_agent: multiAgentConfig });
+
+        const wikiAgentConfig = multiAgentConfig.agents['wiki-agent'];
+        expect(wikiAgentConfig).toBeDefined();
+        createAgentVersion(db, {
+          agent_id: 'wiki-agent',
+          snapshot: wikiAgentConfig as Record<string, unknown>,
+          persona_text: 'Compile wiki updates.',
+          change_note: 'Initial wiki agent version',
         });
-        expect(createResult).toMatchObject({ success: true, version: 1 });
 
         const updateResult = await executor.execute('agent_update', {
           agent_id: 'wiki',
@@ -1202,6 +1204,90 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         // Old names should be invalid
         expect(GatewayToolExecutor.isValidTool('save')).toBe(false);
         expect(GatewayToolExecutor.isValidTool('search')).toBe(false);
+      });
+    });
+
+    describe('Story GT-CODE-ACT: request-scoped sandbox tools', () => {
+      describe('AC #1: request allowlists narrow injected Code-Act functions', () => {
+        it('only exposes request-allowed gateway tools inside code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '({ search: typeof mama_search, bash: typeof Bash })',
+            allowedTools: ['mama_search'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            search: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #2: request blocklists subtract from injected Code-Act functions', () => {
+        it('removes request-blocked gateway tools inside code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '({ read: typeof Read, bash: typeof Bash })',
+            blockedTools: ['Bash'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            read: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #3: active role permissions remain an upper bound', () => {
+        it('does not let request allowlists widen the active role', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'limited_code_act',
+            role: {
+              allowedTools: ['code_act', 'mama_search'],
+              systemControl: false,
+              sensitiveAccess: false,
+            },
+          });
+
+          const result = await executor.execute('code_act', {
+            code: '({ search: typeof mama_search, bash: typeof Bash })',
+            allowedTools: ['*'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          expect(payload.value).toEqual({
+            search: 'function',
+            bash: 'undefined',
+          });
+        });
+      });
+
+      describe('AC #4: request tool filters are validated', () => {
+        it('rejects unknown request tool names before executing code_act', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: '1 + 1',
+            allowedTools: ['not_a_gateway_tool'],
+          });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Unknown Code-Act tool pattern'),
+          });
+        });
       });
     });
 

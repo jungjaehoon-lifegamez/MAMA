@@ -25,6 +25,7 @@ export interface CodexRuntimeProcessOptions {
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   requestTimeout?: number;
   codexHome?: string;
+  mcpConfigPath?: string;
   command?: string;
   // Legacy options (from old CLI approach - some may not be supported in MCP mode)
   profile?: string;
@@ -63,6 +64,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       sandbox: options.sandbox,
       codexHome: options.codexHome,
       command: options.command,
+      mcpConfigPath: options.mcpConfigPath,
       compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
       timeoutMs: options.requestTimeout,
     };

@@ -101,6 +101,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       allowedTools: [
         'mama_search',
         'mama_recall',
+        'context_compile',
         'mama_load_checkpoint',
         'Read',
         'discord_send',
@@ -163,9 +164,9 @@ export interface AgentConfig {
   /**
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex-mcp': Codex via MCP protocol
+   * - 'codex'/'codex-mcp': Codex via MCP protocol
    */
-  backend: 'claude' | 'codex-mcp';
+  backend: 'claude' | 'codex' | 'codex-mcp';
   /** Claude model to use */
   model: string;
   /**
@@ -353,7 +354,7 @@ export interface AgentPersonaConfig {
   /** Cooldown between responses in milliseconds */
   cooldown_ms?: number;
   /** Backend for this agent (inherits from agent.backend if not set) */
-  backend?: 'claude' | 'codex-mcp' | 'gemini';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
   /** Claude model to use for this agent */
   model?: string;
   /** Maximum turns for this agent */
@@ -368,6 +369,8 @@ export interface AgentPersonaConfig {
   auto_continue?: boolean;
   /** Explicit tool permissions (overrides tier defaults) */
   tool_permissions?: { allowed?: string[]; blocked?: string[] };
+  /** Explicit Code-Act gateway function permissions */
+  gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
   /** Git identity for commits made by this agent */
   git_identity?: { name: string; email: string };
   /** Enable Code-Act sandbox mode for this agent */

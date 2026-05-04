@@ -55,6 +55,22 @@ export interface ConnectorActivityItem {
   timestamp: string;
 }
 
+export interface AgentNotice {
+  agent: string;
+  action: string;
+  target: string;
+  timestamp: number;
+}
+
+export interface AgentActivityNoticeRow {
+  agent_id: string;
+  type: string;
+  input_summary: string | null;
+  output_summary: string | null;
+  error_message: string | null;
+  created_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Pure business-logic functions
 // ---------------------------------------------------------------------------
@@ -172,6 +188,66 @@ export function buildConnectorActivity(items: ConnectorActivityItem[]): Connecto
   );
 }
 
+function parseSqliteTimestamp(value: string): number {
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
+    ? `${value.replace(' ', 'T')}Z`
+    : value;
+  const parsed = Date.parse(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function actionForActivityType(type: string): string {
+  switch (type) {
+    case 'task_complete':
+      return 'completed';
+    case 'task_skipped':
+      return 'skipped';
+    case 'task_error':
+      return 'failed';
+    case 'task_start':
+      return 'started';
+    case 'audit_complete':
+      return 'audit completed';
+    case 'audit_failed':
+      return 'audit failed';
+    case 'audit_start':
+      return 'audit started';
+    default:
+      return type;
+  }
+}
+
+function summarizeActivityTarget(row: AgentActivityNoticeRow): string {
+  return (
+    row.error_message?.trim() ||
+    row.output_summary?.trim() ||
+    row.input_summary?.trim() ||
+    row.type
+  ).slice(0, 160);
+}
+
+export function buildAgentActivityNotices(rows: AgentActivityNoticeRow[]): AgentNotice[] {
+  return rows.map((row) => ({
+    agent: row.agent_id,
+    action: actionForActivityType(row.type),
+    target: summarizeActivityTarget(row),
+    timestamp: parseSqliteTimestamp(row.created_at),
+  }));
+}
+
+function getDurableAgentActivityNotices(db: SQLiteDatabase, limit: number): AgentNotice[] {
+  const rows = db
+    .prepare(
+      `SELECT agent_id, type, input_summary, output_summary, error_message, created_at
+       FROM agent_activity
+       WHERE type != 'gateway_tool_call'
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    )
+    .all(limit) as AgentActivityNoticeRow[];
+  return buildAgentActivityNotices(rows);
+}
+
 // ---------------------------------------------------------------------------
 // DB row types
 // ---------------------------------------------------------------------------
@@ -225,11 +301,8 @@ export function createIntelligenceRouter(
   db: SQLiteDatabase,
   deps?: {
     reportStore?: { get(slotId: string): { html: string; updatedAt: number } | undefined };
-    eventBus?: {
-      getRecentNotices(
-        limit: number
-      ): Array<{ agent: string; action: string; target: string; timestamp: number }>;
-    };
+    sessionsDb?: SQLiteDatabase;
+    eventBus?: { getRecentNotices(limit: number): AgentNotice[] };
   }
 ): Router {
   const router = Router();
@@ -409,7 +482,13 @@ export function createIntelligenceRouter(
       const rawLimit = parseInt((req.query.limit as string) || '10', 10);
       const limit = Math.min(isNaN(rawLimit) || rawLimit < 1 ? 10 : rawLimit, 50);
 
-      const notices = deps?.eventBus?.getRecentNotices(limit) ?? [];
+      const eventNotices = deps?.eventBus?.getRecentNotices(limit) ?? [];
+      const durableNotices = deps?.sessionsDb
+        ? getDurableAgentActivityNotices(deps.sessionsDb, limit)
+        : [];
+      const notices = [...eventNotices, ...durableNotices]
+        .sort((a, b) => b.timestamp - a.timestamp)
+        .slice(0, limit);
       res.json({ notices });
     })
   );

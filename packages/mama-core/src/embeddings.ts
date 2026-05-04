@@ -20,11 +20,15 @@ import { loadConfig, getModelName, getEmbeddingDim, getQuantized } from './confi
 // Shared cache directory (not in node_modules)
 const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'transformers');
 const TIER3_ENV_VALUES = new Set(['1', 'true', 'yes']);
+export const EMBEDDING_MODEL_MAX_LENGTH = 512;
+export const EMBEDDING_MAX_TOKENISH_SEGMENTS = 480;
+const TOKENISH_SEGMENT_PATTERN =
+  /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|\S+/gu;
 
 // Type for pipeline function from @huggingface/transformers
 type PipelineFunction = (
   text: string | string[],
-  options?: { pooling?: string; normalize?: boolean }
+  options?: { pooling?: string; normalize?: boolean; truncation?: boolean; max_length?: number }
 ) => Promise<{ data: Float32Array }>;
 
 // Singleton pattern for model loading
@@ -43,6 +47,22 @@ function assertEmbeddingsEnabled(): void {
         'Tier 3 test mode must use lexical/no-vector fallback instead of loading the embedding model.'
     );
   }
+}
+
+export function prepareEmbeddingText(text: string): string {
+  const trimmed = text.trim();
+  let count = 0;
+  let cutIndex = trimmed.length;
+
+  for (const match of trimmed.matchAll(TOKENISH_SEGMENT_PATTERN)) {
+    count++;
+    if (count > EMBEDDING_MAX_TOKENISH_SEGMENTS) {
+      cutIndex = match.index ?? trimmed.length;
+      break;
+    }
+  }
+
+  return cutIndex === trimmed.length ? trimmed : trimmed.slice(0, cutIndex).trimEnd();
 }
 
 /**
@@ -139,14 +159,16 @@ async function loadModel(): Promise<PipelineFunction> {
  * @throws Error if text is empty or embedding fails
  */
 export async function generateEmbedding(text: string): Promise<Float32Array> {
-  if (!text || text.trim().length === 0) {
+  if (typeof text !== 'string' || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
 
   assertEmbeddingsEnabled();
 
+  const preparedText = prepareEmbeddingText(text);
+
   // Task 2: Check cache first (AC #3)
-  const cached = embeddingCache.get(text);
+  const cached = embeddingCache.get(preparedText);
   if (cached) {
     return cached;
   }
@@ -158,9 +180,11 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     const expectedDim = getEmbeddingDim();
 
     // Generate embedding
-    const output = await model(text, {
+    const output = await model(preparedText, {
       pooling: 'mean', // Mean pooling over tokens
       normalize: true, // L2 normalization
+      truncation: true,
+      max_length: EMBEDDING_MODEL_MAX_LENGTH,
     });
 
     // Extract Float32Array
@@ -175,7 +199,7 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     const _latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
-    embeddingCache.set(text, embedding);
+    embeddingCache.set(preparedText, embedding);
 
     return embedding;
   } catch (error) {
@@ -246,16 +270,23 @@ export async function generateEnhancedEmbedding(
  * @returns Array of embeddings
  */
 export async function generateBatchEmbeddings(texts: string[]): Promise<Float32Array[]> {
-  assertEmbeddingsEnabled();
-
   if (!Array.isArray(texts) || texts.length === 0) {
     throw new Error('Texts must be a non-empty array');
   }
 
-  // Validate all texts
   for (const text of texts) {
-    if (!text || text.trim().length === 0) {
-      throw new Error('All texts must be non-empty');
+    if (typeof text !== 'string' || text.trim().length === 0) {
+      throw new Error('All texts must be non-empty strings');
+    }
+  }
+
+  assertEmbeddingsEnabled();
+
+  const preparedTexts = texts.map((text) => prepareEmbeddingText(text));
+
+  for (const text of preparedTexts) {
+    if (!text || text.length === 0) {
+      throw new Error('All texts must be non-empty strings');
     }
   }
 
@@ -267,9 +298,11 @@ export async function generateBatchEmbeddings(texts: string[]): Promise<Float32A
 
     // Native batch processing - single model forward pass
     // This is significantly faster than sequential calls
-    const outputs = await model(texts, {
+    const outputs = await model(preparedTexts, {
       pooling: 'mean',
       normalize: true,
+      truncation: true,
+      max_length: EMBEDDING_MODEL_MAX_LENGTH,
     });
 
     // Extract embeddings from batch output

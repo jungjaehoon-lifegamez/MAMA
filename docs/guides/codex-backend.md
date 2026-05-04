@@ -192,7 +192,7 @@ Codex agents call gateway tools using JSON blocks:
 
 **Gateway tools** (implemented in `gateway-tool-executor.ts`):
 
-- **Memory**: `mama_search`, `mama_save`, `mama_update`, `mama_load_checkpoint`
+- **Memory**: `mama_search`, `context_compile`, `mama_save`, `mama_update`, `mama_load_checkpoint`
 - **Messaging**: `discord_send`, `slack_send`
 - **Browser**: `browser_get_text`, `browser_screenshot`
 

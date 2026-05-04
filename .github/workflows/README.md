@@ -65,7 +65,8 @@ git push origin os-v0.1.1
 **Trigger:**
 
 - Push to `main` branch
-- Changes to `docs/website/**` or `.github/workflows/pages.yml`
+- Changes to `docs/website/**`, `docs/**/*.md`, or `.github/workflows/pages.yml`
+- Manual `workflow_dispatch`
 
 **What it does:**
 
@@ -75,6 +76,22 @@ git push origin os-v0.1.1
 4. Deploys to GitHub Pages
 
 **Deployment URL:** `https://jungjaehoon-lifegamez.github.io/MAMA/`
+
+---
+
+### `release.yml` - Publish Prepared Releases
+
+**Purpose:** Tag, publish selected packages, deploy GitHub Pages from the release tag, and create a GitHub Release.
+
+**Trigger:** Manual `workflow_dispatch`.
+
+**Recommended flow:**
+
+1. Prepare package versions and release notes in a PR.
+2. Merge the PR into `main`.
+3. Run `release.yml` on `main` with `bump_versions=false`.
+
+`bump_versions=true` is intentionally fail-closed for protected `main`; version bumps must be reviewed through a PR before publishing.
 
 ---
 

@@ -1,16 +1,15 @@
 /**
- * Tests for agent result memory persistence.
+ * Tests for agent result publication.
  *
- * Verifies that report_publish and wiki_publish tool executions
- * automatically save summaries to mama memory so Conductor can
- * query them via mama_search.
+ * Verifies that report_publish and wiki_publish publish operational output
+ * without polluting the long-term decision memory.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 
-describe('Agent result memory persistence', () => {
+describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational outputs stay out of long-term memory', () => {
   const createMockApi = (): MAMAApiInterface => ({
     save: vi.fn().mockResolvedValue({
       success: true,
@@ -49,8 +48,8 @@ describe('Agent result memory persistence', () => {
     limitations: [],
   });
 
-  describe('report_publish → memory save', () => {
-    it('should call handleSave with topic dashboard_briefing after publishing', async () => {
+  describe('report_publish', () => {
+    it('publishes dashboard output without saving dashboard_briefing as a decision', async () => {
       const mockApi = createMockApi();
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
       executor.setAgentContext(createAgentContext());
@@ -63,19 +62,7 @@ describe('Agent result memory persistence', () => {
 
       expect(result).toMatchObject({ success: true });
       expect(publisherFn).toHaveBeenCalledOnce();
-
-      // Allow fire-and-forget promise to settle
-      await vi.waitFor(() => {
-        expect(mockApi.save).toHaveBeenCalledOnce();
-      });
-
-      const saveCall = (mockApi.save as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(saveCall.topic).toBe('dashboard_briefing');
-      expect(saveCall.decision).toContain('Dashboard briefing');
-      expect(saveCall.decision).toContain('Revenue up 15%'); // HTML stripped
-      expect(saveCall.decision).not.toContain('<b>'); // HTML tags removed
-      expect(saveCall.reasoning).toBe('Auto-saved by dashboard agent after report_publish');
-      expect(saveCall.scopes).toEqual([{ kind: 'global', id: 'system' }]);
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
 
     it('should not crash when reportPublisher is not set', async () => {
@@ -94,7 +81,7 @@ describe('Agent result memory persistence', () => {
       expect(mockApi.save).not.toHaveBeenCalled();
     });
 
-    it('should truncate long report content to 1500 chars', async () => {
+    it('does not autosave long report content', async () => {
       const mockApi = createMockApi();
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
       executor.setAgentContext(createAgentContext());
@@ -105,17 +92,10 @@ describe('Agent result memory persistence', () => {
         slots: { summary: longContent },
       });
 
-      await vi.waitFor(() => {
-        expect(mockApi.save).toHaveBeenCalledOnce();
-      });
-
-      const saveCall = (mockApi.save as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      // 1500 chars + "..." suffix after the date prefix
-      expect(saveCall.decision.length).toBeLessThan(1600);
-      expect(saveCall.decision).toContain('...');
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
 
-    it('should not propagate handleSave failure', async () => {
+    it('does not call memory save when report publishing succeeds', async () => {
       const mockApi = createMockApi();
       (mockApi.save as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('DB write failed'));
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
@@ -128,15 +108,12 @@ describe('Agent result memory persistence', () => {
       });
 
       expect(result).toMatchObject({ success: true });
-
-      // Give the fire-and-forget promise time to settle
-      await new Promise((r) => setTimeout(r, 50));
-      // No unhandled rejection — the .catch() suppresses it
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
   });
 
-  describe('wiki_publish → memory save', () => {
-    it('should call handleSave with topic wiki_compilation after publishing', async () => {
+  describe('wiki_publish', () => {
+    it('publishes wiki pages without saving wiki_compilation as a decision', async () => {
       const mockApi = createMockApi();
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
       executor.setAgentContext(createAgentContext());
@@ -152,19 +129,7 @@ describe('Agent result memory persistence', () => {
 
       expect(result).toMatchObject({ success: true });
       expect(publisherFn).toHaveBeenCalledOnce();
-
-      await vi.waitFor(() => {
-        expect(mockApi.save).toHaveBeenCalledOnce();
-      });
-
-      const saveCall = (mockApi.save as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(saveCall.topic).toBe('wiki_compilation');
-      expect(saveCall.decision).toContain('Wiki compilation');
-      expect(saveCall.decision).toContain('2 pages');
-      expect(saveCall.decision).toContain('API Reference');
-      expect(saveCall.decision).toContain('Architecture');
-      expect(saveCall.reasoning).toBe('Auto-saved by wiki agent after wiki_publish');
-      expect(saveCall.scopes).toEqual([{ kind: 'global', id: 'system' }]);
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
 
     it('should handle empty pages array', async () => {
@@ -176,13 +141,7 @@ describe('Agent result memory persistence', () => {
       const result = await executor.execute('wiki_publish', { pages: [] });
 
       expect(result).toMatchObject({ success: true, message: 'Wiki published: 0 pages' });
-
-      await vi.waitFor(() => {
-        expect(mockApi.save).toHaveBeenCalledOnce();
-      });
-
-      const saveCall = (mockApi.save as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(saveCall.decision).toContain('0 pages');
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
 
     it('should not crash when wikiPublisher is not set', async () => {
@@ -211,13 +170,10 @@ describe('Agent result memory persistence', () => {
       });
 
       expect(result).toMatchObject({ success: true });
-
-      // Give the fire-and-forget promise time to settle
-      await new Promise((r) => setTimeout(r, 50));
-      // No unhandled rejection — the .catch() suppresses it
+      expect(mockApi.save).not.toHaveBeenCalled();
     });
 
-    it('should limit page summary to first 20 pages', async () => {
+    it('does not autosave page summaries for large compilations', async () => {
       const mockApi = createMockApi();
       const executor = new GatewayToolExecutor({ mamaApi: mockApi });
       executor.setAgentContext(createAgentContext());
@@ -232,16 +188,62 @@ describe('Agent result memory persistence', () => {
 
       await executor.execute('wiki_publish', { pages });
 
-      await vi.waitFor(() => {
-        expect(mockApi.save).toHaveBeenCalledOnce();
+      expect(mockApi.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('mama_save operational summary guard', () => {
+    it('skips operational audit summaries instead of saving them as decisions', async () => {
+      const mockApi = createMockApi();
+      const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext(createAgentContext());
+
+      const result = await executor.execute('mama_save', {
+        type: 'decision',
+        topic: 'system-audit-20260502',
+        decision: 'Audit complete. 2 MINOR fixes applied.',
+        reasoning: 'Full audit run on 2026-05-02',
       });
 
-      const saveCall = (mockApi.save as ReturnType<typeof vi.fn>).mock.calls[0][0];
-      expect(saveCall.decision).toContain('30 pages');
-      // Should list first 20 pages
-      expect(saveCall.decision).toContain('Page 19');
-      // Should NOT list page 20+
-      expect(saveCall.decision).not.toContain('Page 20');
+      expect(result).toMatchObject({
+        success: true,
+        skipped: true,
+        code: 'operational_memory_skipped',
+      });
+      expect(mockApi.save).not.toHaveBeenCalled();
+    });
+
+    it('still saves durable remediation lessons as decisions', async () => {
+      const mockApi = createMockApi();
+      const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext(createAgentContext());
+
+      const result = await executor.execute('mama_save', {
+        type: 'decision',
+        topic: 'security-alert-channel-policy',
+        decision: 'Daemon launches must set MAMA_SECURITY_ALERT_CHANNELS when public tunnels run.',
+        reasoning:
+          'Repeated audits found the same exposure risk; the durable policy is useful beyond a single audit run.',
+      });
+
+      expect(result).toMatchObject({ success: true });
+      expect(mockApi.save).toHaveBeenCalledOnce();
+    });
+
+    it('still saves legitimate long-term audit topics', async () => {
+      const mockApi = createMockApi();
+      const executor = new GatewayToolExecutor({ mamaApi: mockApi });
+      executor.setAgentContext(createAgentContext());
+
+      const result = await executor.execute('mama_save', {
+        type: 'decision',
+        topic: 'audit-log-retention',
+        decision: 'Audit completed records should be retained for 30 days.',
+        reasoning: 'This is a durable retention policy, not an operational run summary.',
+      });
+
+      expect(result).toMatchObject({ success: true });
+      expect(mockApi.save).toHaveBeenCalledOnce();
     });
   });
 });

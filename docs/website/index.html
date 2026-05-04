@@ -992,7 +992,7 @@
           <a href="#local">Local</a>
           <a href="#install">Install</a>
         </div>
-        <span class="nav-cta">v0.20</span>
+        <span class="nav-cta">v0.20.1</span>
         <button
           class="nav-toggle"
           type="button"
@@ -1235,11 +1235,11 @@
       <div class="container">
         <div class="section-head">
           <span class="eyebrow">Today and next</span>
-          <h2>v0.20 ships the foundation. v0.21 brings Context Compile.</h2>
+          <h2>v0.20 shipped the foundation. v0.20.1 hardens Context Compile.</h2>
           <p>
-            Substrate, agent surfaces, envelopes, decision evolution — all working today. The next
-            layer (<code style="font-family: var(--mono)">context_compile</code>) makes the agent's
-            evidence-picking a first-class auditable step.
+            Substrate, agent surfaces, envelopes, decision evolution, and
+            <code style="font-family: var(--mono)">context_compile</code> are working today. The
+            patch release tightens the evidence packet, provenance, and Code-Act policy boundaries.
           </p>
         </div>
         <div class="today-next">
@@ -1264,11 +1264,12 @@
             </ul>
           </article>
           <article class="tn-col planned">
-            <span class="badge">v0.21 · NEXT</span>
-            <h3>Context Compile.</h3>
+            <span class="badge">v0.20.1 · RELEASE CANDIDATE</span>
+            <h3>Context Compile hardening.</h3>
             <p>
               The agent's "what evidence did I read for this question?" becomes a first-class,
-              auditable artifact. Every report carries a context packet ID.
+              auditable artifact. Packet-backed saves preserve source refs, and Code-Act agents
+              cannot widen their configured tool policy at runtime.
             </p>
             <pre class="cc-code">
 context.compile(task, scope, range,
@@ -1342,7 +1343,7 @@ context.compile(task, scope, range,
         <div class="footer-brand">
           <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
-          <span class="footer-version">v0.20</span>
+          <span class="footer-version">v0.20.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA">GitHub</a>
@@ -1350,7 +1351,7 @@ context.compile(task, scope, range,
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues">Issues</a>
         </div>
         <p class="footer-legal">
-          MIT · Context Compile planned for v0.21 · Local-first · AI provider independent.
+          MIT · Context Compile V0 · Local-first · AI provider independent.
         </p>
       </div>
     </footer>

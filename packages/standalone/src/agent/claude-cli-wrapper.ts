@@ -28,6 +28,7 @@ import os from 'os';
 import path from 'path';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import type { PromptCallbacks, ToolUseBlock } from './types.js';
+import { formatCliArgsForLog } from './cli-arg-redaction.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -238,8 +239,8 @@ export class ClaudeCLIWrapper {
       }
       args.push('--add-dir', mamaWorkspace);
 
-      console.log(`[ClaudeCLI] Spawning: claude ${args.join(' ')}`);
-      console.log(`[ClaudeCLI] Args count: ${args.length}`);
+      logger.debug(`Spawning: claude ${formatClaudeArgsForLog(args).join(' ')}`);
+      logger.debug(`Args count: ${args.length}`);
 
       const claude = spawn('claude', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -407,6 +408,10 @@ export class ClaudeCLIWrapper {
   getOptions(): ClaudeCLIWrapperOptions {
     return { ...this.options };
   }
+}
+
+function formatClaudeArgsForLog(args: string[]): string[] {
+  return formatCliArgsForLog(args);
 }
 
 /**

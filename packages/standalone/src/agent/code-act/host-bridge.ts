@@ -43,6 +43,30 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'context_compile',
+    description: 'Compile a scoped context packet from visible evidence',
+    params: [
+      { name: 'task', type: 'string', required: true },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+      { name: 'connectors', type: 'string[]', required: false },
+      { name: 'seed_refs', type: 'Array<Record<string, unknown>>', required: false },
+      { name: 'range', type: '{ start_ms?: number; end_ms?: number }', required: false },
+      { name: 'as_of', type: 'string | number | null', required: false },
+      { name: 'limit', type: 'number', required: false },
+      { name: 'max_tool_calls', type: 'number', required: false },
+      { name: 'max_ms', type: 'number', required: false },
+      { name: 'max_tokens', type: 'number', required: false },
+      { name: 'strictness', type: "'recall' | 'balanced' | 'strict'", required: false },
+    ],
+    returnType:
+      '{ packet_id: string; packet: Record<string, unknown>; model_run_id?: string; parent_model_run_id?: string | null }',
+    category: 'memory',
+  },
+  {
     name: 'mama_save',
     description: 'Save a decision or checkpoint',
     params: [
@@ -51,6 +75,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'decision', type: 'string', required: false },
       { name: 'reasoning', type: 'string', required: false },
       { name: 'confidence', type: 'number', required: false },
+      { name: 'context_packet_id', type: 'string', required: false },
       { name: 'summary', type: 'string', required: false },
       { name: 'next_steps', type: 'string', required: false },
     ],
@@ -395,7 +420,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'model', type: 'string', required: true },
       { name: 'tier', type: 'number', required: true },
       { name: 'system', type: 'string', required: false },
-      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp' | 'gemini'", required: false },
+      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp'", required: false },
     ],
     returnType: '{ id: string; version: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
@@ -614,8 +639,9 @@ export const READ_ONLY_TOOLS = new Set([
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
-const MEMORY_WRITE_TOOLS = new Set([
+export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',

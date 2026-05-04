@@ -116,7 +116,7 @@ const codeActRateBuckets = new Map<
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
-const supportedManagedBackends = ['claude', 'codex', 'codex-mcp', 'gemini'];
+const supportedManagedBackends = ['claude', 'codex', 'codex-mcp'];
 const isCodexFamilyBackend = (backend: string): boolean =>
   backend === 'codex' || backend === 'codex-mcp';
 const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
@@ -128,6 +128,104 @@ const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
 const isOpus46Model = (model: string): boolean =>
   /^claude-opus-4-6(?:$|-)/i.test(model) || model.toLowerCase() === 'claude-opus-4-latest';
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
+
+function normalizeLegacyManagedBackend(backend: unknown, configPath: string): unknown {
+  if (typeof backend === 'string' && backend.toLowerCase() === 'gemini') {
+    console.warn(
+      `[GraphAPI] Deprecated backend "gemini" at ${configPath}; using "claude" for compatibility.`
+    );
+    return 'claude';
+  }
+  return backend;
+}
+
+function normalizeLegacyManagedModel(agent: Record<string, unknown>, configPath: string): boolean {
+  if (typeof agent.model === 'string' && !isClaudeModel(agent.model)) {
+    console.warn(
+      `[GraphAPI] Deprecated Gemini model at ${configPath}; using "claude-sonnet-4-6" for compatibility.`
+    );
+    agent.model = 'claude-sonnet-4-6';
+    return true;
+  }
+  return false;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config: T): T {
+  let migrated = false;
+  const next: Record<string, unknown> = { ...config };
+
+  const originalAgent = isRecord(config.agent) ? config.agent : undefined;
+  const originalAgentBackend = originalAgent?.backend;
+
+  if (isRecord(next.agent)) {
+    const agent = { ...next.agent };
+    const backend = normalizeLegacyManagedBackend(agent.backend, 'agent.backend');
+    if (backend !== agent.backend) {
+      agent.backend = backend;
+      normalizeLegacyManagedModel(agent, 'agent.model');
+      next.agent = agent;
+      migrated = true;
+    }
+  }
+
+  if (isRecord(next.multi_agent)) {
+    const multiAgent = { ...next.multi_agent };
+    const originalMultiAgent = isRecord(config.multi_agent) ? config.multi_agent : {};
+    const originalMultiAgentBackend = originalMultiAgent.backend;
+    const normalizedMultiAgentBackend = normalizeLegacyManagedBackend(
+      originalMultiAgentBackend,
+      'multi_agent.backend'
+    );
+    if (normalizedMultiAgentBackend !== originalMultiAgentBackend) {
+      multiAgent.backend = normalizedMultiAgentBackend;
+      migrated = true;
+    }
+
+    const inheritedBackend = originalMultiAgentBackend ?? originalAgentBackend;
+    const normalizedInheritedBackend = normalizeLegacyManagedBackend(
+      inheritedBackend,
+      originalMultiAgentBackend !== undefined ? 'multi_agent.backend' : 'agent.backend'
+    );
+
+    if (isRecord(multiAgent.agents)) {
+      const agents = { ...multiAgent.agents };
+      let agentsMigrated = false;
+      for (const [agentId, agentConfig] of Object.entries(agents)) {
+        if (!isRecord(agentConfig)) {
+          continue;
+        }
+        const agent = { ...agentConfig };
+        const hasExplicitBackend = Object.prototype.hasOwnProperty.call(agent, 'backend');
+        const priorEffectiveBackend = hasExplicitBackend ? agent.backend : inheritedBackend;
+        const normalizedBackend = normalizeLegacyManagedBackend(
+          priorEffectiveBackend,
+          `multi_agent.agents.${agentId}.backend`
+        );
+        const inheritedBackendWasNormalized =
+          !hasExplicitBackend && normalizedInheritedBackend !== inheritedBackend;
+        if (normalizedBackend !== priorEffectiveBackend || inheritedBackendWasNormalized) {
+          agent.backend = normalizedBackend;
+          normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          agents[agentId] = agent;
+          agentsMigrated = true;
+          migrated = true;
+        }
+      }
+      if (agentsMigrated) {
+        multiAgent.agents = agents;
+      }
+    }
+    if (migrated) {
+      next.multi_agent = multiAgent;
+    }
+  }
+
+  return (migrated ? next : config) as T;
+}
 
 function getCodeActRateLimitMax(): number {
   const raw = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
@@ -2477,7 +2575,8 @@ function loadMAMAConfig(): Record<string, any> {
       return {};
     }
     const content = fs.readFileSync(MAMA_CONFIG_PATH, 'utf8');
-    return (yaml.load(content) as Record<string, unknown>) || {};
+    const config = (yaml.load(content) as Record<string, unknown>) || {};
+    return migrateLegacyManagedBackends(config);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[GraphAPI] Config load error:', message);
@@ -2703,6 +2802,7 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
             allowedTools: [
               'mama_search',
               'mama_recall',
+              'context_compile',
               'mama_load_checkpoint',
               'Read',
               'discord_send',
@@ -3110,7 +3210,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       config.agent.backend &&
       !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude", "codex", "codex-mcp", or "gemini"');
+      errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -3150,7 +3250,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
         const backend = String(backendRaw).toLowerCase();
         if (!supportedManagedBackends.includes(backend)) {
           errors.push(
-            `multi_agent.agents.${agentId}.backend must be "claude", "codex", "codex-mcp", or "gemini"`
+            `multi_agent.agents.${agentId}.backend must be "claude", "codex", or "codex-mcp"`
           );
           continue;
         }
@@ -3555,7 +3655,7 @@ async function handleMultiAgentUpdateAgentRequest(
       (typeof body.backend !== 'string' ||
         !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude", "codex", "codex-mcp", or "gemini"');
+      validationErrors.push('backend must be "claude", "codex", or "codex-mcp"');
     }
 
     const nextBackend = (
@@ -4007,7 +4107,29 @@ async function handleCodeActRequest(
       return;
     }
 
-    const result = await options.executeCodeAct(code);
+    let agentId: string | undefined;
+    if (body.agent_id !== undefined) {
+      if (typeof body.agent_id !== 'string' || body.agent_id.trim().length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: true, message: 'agent_id must be a non-empty string.' }));
+        return;
+      }
+      agentId = body.agent_id.trim();
+    }
+    const allowedTools = normalizeCodeActToolList(body.allowed_tools, 'allowed_tools', res);
+    if (allowedTools === false) {
+      return;
+    }
+    const blockedTools = normalizeCodeActToolList(body.blocked_tools, 'blocked_tools', res);
+    if (blockedTools === false) {
+      return;
+    }
+
+    const result = await options.executeCodeAct(code, {
+      ...(agentId ? { agentId } : {}),
+      ...(allowedTools ? { allowedTools } : {}),
+      ...(blockedTools ? { blockedTools } : {}),
+    });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(result));
@@ -4019,6 +4141,22 @@ async function handleCodeActRequest(
   }
 }
 
+function normalizeCodeActToolList(
+  value: unknown,
+  field: string,
+  res: ServerResponse
+): string[] | undefined | false {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: true, message: `${field} must be an array of strings.` }));
+    return false;
+  }
+  return value.map((item) => item.trim()).filter((item) => item.length > 0);
+}
+
 export {
   createGraphHandler,
   DEFAULT_GRAPH_LIMIT,
@@ -4026,6 +4164,7 @@ export {
   parseGraphLimit,
   buildGraphMeta,
   validateConfigUpdate,
+  migrateLegacyManagedBackends,
   getAllNodes,
   getAllEdges,
   getAllCheckpoints,

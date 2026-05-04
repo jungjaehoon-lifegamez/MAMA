@@ -20,12 +20,14 @@ import { writePid, isDaemonRunning } from '../utils/pid-manager.js';
 import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from './stop.js';
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
-import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
+import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { minimatch } from 'minimatch';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -56,10 +58,17 @@ import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
-import { deriveMemoryScopes } from '../../memory/scope-context.js';
-import { DEFAULT_ROLES } from '../config/types.js';
+import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
+import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
+import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import {
+  beginModelRunInAdapter,
+  commitModelRunInAdapter,
+  failModelRunInAdapter,
+} from '@jungjaehoon/mama-core';
+import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -67,9 +76,11 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',
@@ -81,12 +92,303 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   return value !== undefined && TRUTHY_ENV_VALUES.has(value.trim().toLowerCase());
 }
 
+function uniqueToolList(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function isWildcardToolList(values: readonly string[] | undefined): boolean {
+  return Boolean(values?.includes('*'));
+}
+
+function isGlobToolPattern(value: string): boolean {
+  return /[*?[{]/.test(value);
+}
+
+function toolPatternAllows(pattern: string, toolName: string): boolean {
+  return minimatch(toolName, pattern);
+}
+
+function intersectAllowedToolPolicies(
+  configuredAllowed: string[] | undefined,
+  requestedAllowed: string[] | undefined
+): string[] | undefined {
+  const configured =
+    configuredAllowed !== undefined ? uniqueToolList(configuredAllowed) : undefined;
+  const requested = requestedAllowed !== undefined ? uniqueToolList(requestedAllowed) : undefined;
+
+  // Treat explicit empty arrays as deny-all so a caller cannot widen a fully
+  // restricted policy by sending a wildcard. Only an undefined (truly absent)
+  // policy falls back to the other side.
+  if (configured === undefined) {
+    return requested;
+  }
+  if (requested === undefined) {
+    return configured;
+  }
+  if (isWildcardToolList(configured)) {
+    return requested;
+  }
+  if (isWildcardToolList(requested)) {
+    return configured;
+  }
+
+  const narrowed: string[] = [];
+  for (const requestedPattern of requested) {
+    for (const configuredPattern of configured) {
+      if (requestedPattern === configuredPattern) {
+        narrowed.push(requestedPattern);
+      } else if (
+        !isGlobToolPattern(requestedPattern) &&
+        toolPatternAllows(configuredPattern, requestedPattern)
+      ) {
+        narrowed.push(requestedPattern);
+      } else if (
+        !isGlobToolPattern(configuredPattern) &&
+        toolPatternAllows(requestedPattern, configuredPattern)
+      ) {
+        narrowed.push(configuredPattern);
+      }
+    }
+  }
+  return uniqueToolList(narrowed);
+}
+
+function mergeBlockedToolPolicies(
+  configuredBlocked: string[] | undefined,
+  requestedBlocked: string[] | undefined
+): string[] | undefined {
+  const merged = uniqueToolList([...(configuredBlocked ?? []), ...(requestedBlocked ?? [])]);
+  return merged.length > 0 ? merged : undefined;
+}
+
+export function deriveCodeActToolPolicy(
+  requestContext: CodeActExecutionContext | undefined,
+  agentConfig: Omit<AgentPersonaConfig, 'id'> | undefined
+): { allowedTools?: string[]; blockedTools?: string[] } {
+  const configuredAllowed =
+    agentConfig?.gateway_tool_permissions?.allowed ?? agentConfig?.tool_permissions?.allowed;
+  const configuredBlocked =
+    agentConfig?.gateway_tool_permissions?.blocked ?? agentConfig?.tool_permissions?.blocked;
+  const allowedTools = intersectAllowedToolPolicies(
+    configuredAllowed,
+    requestContext?.allowedTools
+  );
+  const blockedTools = mergeBlockedToolPolicies(configuredBlocked, requestContext?.blockedTools);
+  return { allowedTools, blockedTools };
+}
+
+export function resolveCodeActAgentPolicy(
+  requestContext: CodeActExecutionContext | undefined,
+  agents: Record<string, Omit<AgentPersonaConfig, 'id'>> | undefined,
+  defaultAgentId: string
+): {
+  agentId: string;
+  agentConfig?: Omit<AgentPersonaConfig, 'id'>;
+  policy?: { allowedTools?: string[]; blockedTools?: string[] };
+  error?: string;
+} {
+  const agentId = requestContext?.agentId || defaultAgentId;
+  const agentConfig = agents?.[agentId];
+  if (!agentConfig) {
+    return { agentId, error: `Unknown Code-Act agent: ${agentId}` };
+  }
+  if (agentConfig.useCodeAct !== true) {
+    return { agentId, error: `Agent is not configured for Code-Act: ${agentId}` };
+  }
+  const policy = deriveCodeActToolPolicy(requestContext, agentConfig);
+  if (!policy.allowedTools || policy.allowedTools.length === 0) {
+    // Fail closed: an agent that resolves to no allowed tools must be rejected
+    // rather than silently widened to wildcard access.
+    return {
+      agentId,
+      agentConfig,
+      policy,
+      error: `Agent has no allowed Code-Act tools: ${agentId}`,
+    };
+  }
+  return {
+    agentId,
+    agentConfig,
+    policy,
+  };
+}
+
+export function resolveCodeActRawConnectors(
+  enabledConnectorNames: readonly string[] | undefined
+): string[] {
+  return [...new Set((enabledConnectorNames ?? []).map((name) => name.trim()).filter(Boolean))];
+}
+
+const CODE_ACT_RAW_MEMORY_SCOPE_LIMIT = 500;
+const MEMORY_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
+
+function isMemoryScopeKind(value: unknown): value is MemoryScopeRef['kind'] {
+  return typeof value === 'string' && MEMORY_SCOPE_KINDS.has(value);
+}
+
+function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[] {
+  const seen = new Set<string>();
+  const unique: MemoryScopeRef[] = [];
+  for (const scope of scopes) {
+    const id = scope.id.trim();
+    if (!id) {
+      continue;
+    }
+    const key = `${scope.kind}:${id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push({ kind: scope.kind, id });
+  }
+  return unique;
+}
+
+export function resolveCodeActMemoryScopes(
+  baseScopes: readonly MemoryScopeRef[],
+  adapter?: Pick<DatabaseAdapter, 'prepare'>
+): MemoryScopeRef[] {
+  const scopes = [...baseScopes];
+  if (!adapter) {
+    return uniqueMemoryScopes(scopes);
+  }
+
+  try {
+    const rows = adapter
+      .prepare(
+        `
+          SELECT DISTINCT ms.kind AS kind, ms.external_id AS id
+          FROM memory_scopes ms
+          JOIN memory_scope_bindings msb ON msb.scope_id = ms.id
+          JOIN decisions d ON d.id = msb.memory_id
+          WHERE d.topic LIKE 'raw/%'
+            AND (d.status = 'active' OR d.status IS NULL)
+            AND d.superseded_by IS NULL
+          ORDER BY ms.kind, ms.external_id
+          LIMIT ?
+        `
+      )
+      .all(CODE_ACT_RAW_MEMORY_SCOPE_LIMIT) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      if (!isMemoryScopeKind(row.kind) || typeof row.id !== 'string') {
+        continue;
+      }
+      scopes.push({ kind: row.kind, id: row.id });
+    }
+  } catch {
+    return uniqueMemoryScopes(scopes);
+  }
+
+  return uniqueMemoryScopes(scopes);
+}
+
+function buildCodeActRole(policy: {
+  allowedTools?: string[];
+  blockedTools?: string[];
+}): RoleConfig {
+  // Caller (resolveCodeActAgentPolicy) rejects empty/undefined allowedTools, so
+  // here we honor the resolved policy verbatim instead of widening to wildcard.
+  return {
+    allowedTools: policy.allowedTools ?? [],
+    blockedTools: policy.blockedTools,
+    allowedPaths: [],
+    systemControl: false,
+    sensitiveAccess: false,
+  };
+}
+
+type CodeActModelRunAdapter = Pick<DatabaseAdapter, 'prepare'>;
+
+type CodeActExecutionResultLike = {
+  success?: boolean;
+  error?: { message?: string } | string;
+};
+
+export interface CodeActParentModelRunOptions {
+  inputSnapshotRef: string;
+  inputRefs: Record<string, unknown>;
+}
+
+export function bindCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  executionContext: GatewayToolExecutionContext | null,
+  options: CodeActParentModelRunOptions
+): { executionContext: GatewayToolExecutionContext | null; modelRunId: string | null } {
+  if (!executionContext?.envelope) {
+    return { executionContext, modelRunId: null };
+  }
+
+  const run = beginModelRunInAdapter(adapter, {
+    agent_id: executionContext.agentId,
+    instance_id: executionContext.envelope.instance_id,
+    envelope_hash: executionContext.envelope.envelope_hash,
+    input_snapshot_ref: options.inputSnapshotRef,
+    input_refs: options.inputRefs,
+  });
+
+  return {
+    executionContext: {
+      ...executionContext,
+      modelRunId: run.model_run_id,
+    },
+    modelRunId: run.model_run_id,
+  };
+}
+
+function codeActErrorSummary(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function resultErrorSummary(result: CodeActExecutionResultLike): string {
+  if (typeof result.error === 'string') {
+    return result.error;
+  }
+  return result.error?.message ?? 'Code-Act execution failed';
+}
+
+export function finalizeCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  modelRunId: string | null,
+  result: CodeActExecutionResultLike
+): void {
+  if (!modelRunId) {
+    return;
+  }
+  if (result.success === false) {
+    failModelRunInAdapter(adapter, modelRunId, resultErrorSummary(result));
+    return;
+  }
+  commitModelRunInAdapter(adapter, modelRunId, 'code-act completed');
+}
+
+export function failCodeActParentModelRun(
+  adapter: CodeActModelRunAdapter,
+  modelRunId: string | null,
+  error: unknown
+): void {
+  if (!modelRunId) {
+    return;
+  }
+  failModelRunInAdapter(adapter, modelRunId, codeActErrorSummary(error));
+}
+
 /**
  * Options for start command
  */
 export interface StartOptions {
   /** Run in foreground (not as daemon) */
   foreground?: boolean;
+}
+
+export function buildSystemAgentProcessDefaults(config: {
+  multi_agent?: { dangerouslySkipPermissions?: boolean };
+}): { dangerouslySkipPermissions: boolean } {
+  return {
+    dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
+  };
 }
 
 /**
@@ -127,10 +429,12 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
+  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const backend = config.agent.backend;
-  process.env.MAMA_BACKEND = backend;
+  const isValidBackend = validBackends.includes(backend as RuntimeBackend);
+  process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
-  if (backend === 'codex-mcp') {
+  if (backend === 'codex' || backend === 'codex-mcp') {
     console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
@@ -224,7 +528,10 @@ export async function runAgentLoop(
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
   const startupBackend = config.agent.backend;
-  const usesCodexBackend = startupBackend === 'codex-mcp' || hasCodexBackendConfigured(config);
+  const usesCodexBackend =
+    startupBackend === 'codex' ||
+    startupBackend === 'codex-mcp' ||
+    hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
     const codexCommand = resolveCodexCommandForStartup();
@@ -291,16 +598,16 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const validBackends = ['claude', 'codex-mcp'] as const;
+  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const rawBackend = config.agent.backend;
-  const isValidBackend = validBackends.includes(rawBackend as (typeof validBackends)[number]);
-  const runtimeBackend: 'claude' | 'codex-mcp' = isValidBackend
-    ? (rawBackend as 'claude' | 'codex-mcp')
-    : 'claude';
+  const isValidBackend = validBackends.includes(rawBackend as RuntimeBackend);
+  const runtimeBackend: RuntimeBackend = isValidBackend ? (rawBackend as RuntimeBackend) : 'claude';
+  process.env.MAMA_BACKEND = runtimeBackend;
   if (rawBackend && !isValidBackend) {
     console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
-    process.env.MAMA_BACKEND = 'claude';
   }
+  const agentLoopBackend: 'claude' | 'codex-mcp' =
+    runtimeBackend === 'codex' || runtimeBackend === 'codex-mcp' ? 'codex-mcp' : 'claude';
 
   // Initialize main agent loop + client (reasoning state is closure-scoped inside)
   const { agentLoop, agentLoopClient } = initMainAgentLoop(
@@ -308,7 +615,7 @@ export async function runAgentLoop(
     oauthManager,
     db,
     metricsStore,
-    runtimeBackend,
+    agentLoopBackend,
     { ...options, envelopeIssuanceMode: envelopeBootstrap.metadata.issuance }
   );
 
@@ -319,6 +626,11 @@ export async function runAgentLoop(
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
+  const contextCompileService = createContextCompileService({
+    memoryAdapter: getAdapter(),
+  });
+  toolExecutor.setContextCompileService(contextCompileService);
+  agentLoop.setContextCompileService(contextCompileService);
 
   // ── Phase 4: Memory Agent + MessageRouter ─────────────────────────────────
 
@@ -342,7 +654,7 @@ export async function runAgentLoop(
     mamaApi,
     mamaApiClient,
     messageRouter,
-    runtimeBackend
+    agentLoopBackend
   );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
@@ -358,6 +670,7 @@ export async function runAgentLoop(
     sessionsDb: db,
     uiCommandQueue,
   };
+  let codeActRawConnectors: string[] = [];
 
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
@@ -371,23 +684,39 @@ export async function runAgentLoop(
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
   {
-    graphHandlerOptions.executeCodeAct = async (code: string) => {
+    graphHandlerOptions.executeCodeAct = async (
+      code: string,
+      codeActContext?: CodeActExecutionContext
+    ) => {
       const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
       const sandbox = new CodeActSandbox();
-      const codeActAgentId = config.multi_agent?.default_agent || 'conductor';
+      const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
+        codeActContext,
+        config.multi_agent?.agents,
+        config.multi_agent?.default_agent || 'conductor'
+      );
+      if (resolvedCodeActPolicy.error) {
+        return { success: false, error: resolvedCodeActPolicy.error };
+      }
+      const codeActAgentId = resolvedCodeActPolicy.agentId;
+      const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
+      const codeActRole = buildCodeActRole(codeActPolicy);
       const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
       const codeActTier = codeActReadOnly ? 3 : 2;
+      const instanceId = randomUUID();
       let executionContext: GatewayToolExecutionContext | null = null;
       if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
         const projectId = resolveReactiveProjectRoot(config, process.env);
         const projectRef = { kind: 'project' as const, id: projectId };
-        const memoryScopes = deriveMemoryScopes({
-          source: 'watch',
-          channelId: 'api:code-act',
-          userId: 'api',
-          projectId,
-        });
-        const instanceId = randomUUID();
+        const memoryScopes = resolveCodeActMemoryScopes(
+          deriveMemoryScopes({
+            source: 'watch',
+            channelId: 'api:code-act',
+            userId: 'api',
+            projectId,
+          }),
+          getAdapter()
+        );
         const wallSeconds = Math.min(
           Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
           300
@@ -400,7 +729,7 @@ export async function runAgentLoop(
           trigger_context: { user_text: '<api-code-act invocation>' },
           scope: {
             project_refs: [projectRef],
-            raw_connectors: [],
+            raw_connectors: codeActRawConnectors,
             memory_scopes: memoryScopes,
             allowed_destinations: [],
           },
@@ -408,8 +737,8 @@ export async function runAgentLoop(
           budget: { wall_seconds: wallSeconds },
           expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
         });
-        const roleName = config.roles?.sourceMapping?.watch ?? 'os_agent';
-        const role = config.roles?.definitions?.[roleName] ?? DEFAULT_ROLES.definitions.os_agent;
+        const roleName = `code_act_${codeActAgentId}`;
+        const role = codeActRole;
         const agentContext: AgentContext = {
           source: 'watch',
           platform: 'cli',
@@ -434,7 +763,21 @@ export async function runAgentLoop(
           executionSurface: 'code_act',
         };
       }
-      const bridge = new HostBridge(toolExecutor, undefined, executionContext);
+      const parentRun = bindCodeActParentModelRun(getAdapter(), executionContext, {
+        inputSnapshotRef: `code-act:${instanceId}`,
+        inputRefs: {
+          tool: 'code_act',
+          source: 'api',
+          channel_id: 'api:code-act',
+          read_only: codeActReadOnly,
+        },
+      });
+      executionContext = parentRun.executionContext;
+      const bridge = new HostBridge(
+        toolExecutor,
+        new RoleManager({ rolesConfig: config.roles ?? DEFAULT_ROLES }),
+        executionContext
+      );
       const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
       bridge.onToolUse = (toolName, input, result) => {
         if (result !== undefined) {
@@ -454,8 +797,9 @@ export async function runAgentLoop(
         // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
         // Per-request executionContext carries envelope data; this routing context is legacy fallback.
         toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-        bridge.injectInto(sandbox, codeActTier);
+        bridge.injectInto(sandbox, codeActTier, codeActRole);
         const result = await sandbox.execute(code);
+        finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
         return {
           success: result.success,
           value: result.value,
@@ -464,6 +808,9 @@ export async function runAgentLoop(
           metrics: result.metrics,
           toolCalls,
         };
+      } catch (error) {
+        failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
+        throw error;
       } finally {
         toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
       }
@@ -508,10 +855,19 @@ export async function runAgentLoop(
         trigger_prefix: string;
         persona_file: string;
         tier: 1 | 2 | 3;
-        backend: 'claude' | 'codex-mcp';
+        backend: RuntimeBackend;
         model: string;
         can_delegate?: boolean;
         enabled?: boolean;
+        useCodeAct?: boolean;
+        tool_permissions?: {
+          allowed?: string[];
+          blocked?: string[];
+        };
+        gateway_tool_permissions?: {
+          allowed?: string[];
+          blocked?: string[];
+        };
       }
     > = {
       'os-agent': {
@@ -536,7 +892,58 @@ export async function runAgentLoop(
         can_delegate: false,
         enabled: true,
       },
+      'dashboard-agent': {
+        name: 'Dashboard Agent',
+        display_name: '📊 Dashboard',
+        trigger_prefix: '!dashboard',
+        persona_file: '~/.mama/personas/dashboard.md',
+        tier: 2,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
+          blocked: [],
+        },
+      },
     };
+    const wikiConfig = config.wiki as { enabled?: boolean } | undefined;
+    if (wikiConfig?.enabled) {
+      osAgents['wiki-agent'] = {
+        name: 'Wiki Agent',
+        display_name: '📚 Wiki',
+        trigger_prefix: '!wiki',
+        persona_file: '~/.mama/personas/wiki.md',
+        tier: 2,
+        backend: runtimeBackend,
+        model: config.agent.model,
+        can_delegate: false,
+        enabled: true,
+        useCodeAct: true,
+        tool_permissions: {
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: [
+            'mama_search',
+            'context_compile',
+            'agent_notices',
+            'case_list',
+            'case_assemble',
+            'obsidian',
+            'wiki_publish',
+          ],
+          blocked: [],
+        },
+      };
+    }
     let osAgentsAdded = false;
     for (const [id, cfg] of Object.entries(osAgents)) {
       if (!config.multi_agent.agents[id]) {
@@ -622,30 +1029,28 @@ export async function runAgentLoop(
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
   // (Viewer, Telegram, iMessage, Terminal).
-  if (!toolExecutor.hasDelegateSupport() && config.multi_agent?.enabled) {
+  const hasSystemRunAgents = Boolean(
+    config.multi_agent?.agents?.['dashboard-agent'] || config.multi_agent?.agents?.['wiki-agent']
+  );
+  if (
+    !toolExecutor.getAgentProcessManager() &&
+    (config.multi_agent?.enabled || hasSystemRunAgents)
+  ) {
     const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
-    const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
-    const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
-      id,
-      ...cfg,
-    }));
     const pm = new AgentProcessManager(
       config.multi_agent,
-      {},
+      buildSystemAgentProcessDefaults(config),
       {
         backend: runtimeBackend,
         model: config.agent.model,
       }
     );
-    const dm = new DelegationManager(agentConfigs);
-    dm.setSessionsDb(db);
     toolExecutor.setAgentProcessManager(pm);
-    toolExecutor.setDelegationManager(dm);
+    agentLoop.setAgentProcessManager(pm);
 
     graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
       const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
       pm.updateConfig(nextConfig);
-      dm.updateAgents(Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg })));
     };
     graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
       pm.reloadPersona(agentId);
@@ -655,11 +1060,29 @@ export async function runAgentLoop(
     agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
     agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
-    // Also wire to the main AgentLoop's internal GatewayToolExecutor
-    // (MessageRouter uses agentLoop which has its own executor instance)
-    agentLoop.setAgentProcessManager(pm);
-    agentLoop.setDelegationManager(dm);
-    console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
+    if (config.multi_agent?.enabled && !toolExecutor.hasDelegateSupport()) {
+      const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
+      const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
+        id,
+        ...cfg,
+      }));
+      const dm = new DelegationManager(agentConfigs);
+      dm.setSessionsDb(db);
+      toolExecutor.setDelegationManager(dm);
+      agentLoop.setDelegationManager(dm);
+      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
+        const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
+        pm.updateConfig(nextConfig);
+        dm.updateAgents(
+          Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg }))
+        );
+      };
+      toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+      agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
+      console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
+    } else {
+      console.log('[start] ✓ System agent process manager wired');
+    }
   }
 
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
@@ -674,6 +1097,7 @@ export async function runAgentLoop(
 
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } =
     await initConnectors(connectorExtractionFn);
+  codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {
@@ -700,6 +1124,7 @@ export async function runAgentLoop(
     getAdapter,
     envelopeMetadata: envelopeBootstrap.metadata,
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
+    contextCompileService,
   });
 
   await registerApiRoutes({

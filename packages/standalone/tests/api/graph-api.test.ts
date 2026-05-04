@@ -10,6 +10,7 @@ import {
   buildGraphMeta,
   filterEdgesByNodes,
   mapDecisionRowToGraphNode,
+  migrateLegacyManagedBackends,
   parseGraphLimit,
   validateConfigUpdate,
   createGraphHandler,
@@ -262,103 +263,192 @@ describe('graph api helpers', () => {
     expect(res._body).toContain('Invalid JSON');
   });
 
-  it('rate-limits Code-Act execution requests per client', async () => {
-    const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
-    const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
-    process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '2';
-    process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
-    try {
-      const executeCodeAct = vi.fn().mockResolvedValue({
-        success: true,
-        value: 1,
-        logs: [],
-        metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
-      });
-      const handler = createGraphHandler({ executeCodeAct });
+  describe('Story CODE-ACT-HTTP: /api/code-act runtime contract', () => {
+    describe('AC: rate limits execution per client', () => {
+      it('rate-limits Code-Act execution requests per client', async () => {
+        const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '2';
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        try {
+          const executeCodeAct = vi.fn().mockResolvedValue({
+            success: true,
+            value: 1,
+            logs: [],
+            metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+          });
+          const handler = createGraphHandler({ executeCodeAct });
 
-      for (let i = 0; i < 2; i++) {
-        const req = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
-          remoteAddress: '127.0.0.77',
-          headers: { authorization: 'Bearer test-code-act-token' },
+          for (let i = 0; i < 2; i++) {
+            const req = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+              remoteAddress: '127.0.0.77',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            });
+            const res = createMockRes();
+            const handled = await handler(req, res as unknown as ServerResponse);
+            expect(handled).toBe(true);
+            expect(res._status).toBe(200);
+          }
+
+          const limitedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+            remoteAddress: '127.0.0.77',
+            headers: { authorization: 'Bearer test-code-act-token' },
+          });
+          const limitedRes = createMockRes();
+          const handled = await handler(limitedReq, limitedRes as unknown as ServerResponse);
+
+          expect(handled).toBe(true);
+          expect(limitedRes._status).toBe(429);
+          expect(limitedRes._body).toContain('rate limit exceeded');
+          expect(executeCodeAct).toHaveBeenCalledTimes(2);
+        } finally {
+          if (previousLimit === undefined) {
+            delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+          } else {
+            process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
+          }
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
+    });
+
+    describe('AC: forwards caller identity and request policy', () => {
+      it('passes Code-Act caller identity and gateway allowlist to the executor', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({
+          success: true,
+          value: 1,
+          logs: [],
+          metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
         });
-        const res = createMockRes();
-        const handled = await handler(req, res as unknown as ServerResponse);
-        expect(handled).toBe(true);
-        expect(res._status).toBe(200);
-      }
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq(
+            '/api/code-act',
+            JSON.stringify({
+              code: 'mama_search({query:"ctx"})',
+              agent_id: 'dashboard-agent',
+              allowed_tools: ['mama_search', 'report_publish'],
+              blocked_tools: ['mama_save'],
+            }),
+            {
+              remoteAddress: '127.0.0.88',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            }
+          );
+          const res = createMockRes();
 
-      const limitedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
-        remoteAddress: '127.0.0.77',
-        headers: { authorization: 'Bearer test-code-act-token' },
-      });
-      const limitedRes = createMockRes();
-      const handled = await handler(limitedReq, limitedRes as unknown as ServerResponse);
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
 
-      expect(handled).toBe(true);
-      expect(limitedRes._status).toBe(429);
-      expect(limitedRes._body).toContain('rate limit exceeded');
-      expect(executeCodeAct).toHaveBeenCalledTimes(2);
-    } finally {
-      if (previousLimit === undefined) {
-        delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
-      } else {
-        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
-      }
-      if (previousAuthToken === undefined) {
-        delete process.env.MAMA_AUTH_TOKEN;
-      } else {
-        process.env.MAMA_AUTH_TOKEN = previousAuthToken;
-      }
-    }
-  });
+          expect(res._status).toBe(200);
+          expect(executeCodeAct).toHaveBeenCalledWith('mama_search({query:"ctx"})', {
+            agentId: 'dashboard-agent',
+            allowedTools: ['mama_search', 'report_publish'],
+            blockedTools: ['mama_save'],
+          });
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
 
-  it('ignores spoofed x-forwarded-for for Code-Act rate limits from untrusted peers', async () => {
-    const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
-    const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
-    process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '1';
-    process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
-    try {
-      const executeCodeAct = vi.fn().mockResolvedValue({
-        success: true,
-        value: 1,
-        logs: [],
-        metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
-      });
-      const handler = createGraphHandler({ executeCodeAct });
-      const firstReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
-        remoteAddress: '198.51.100.77',
-        headers: {
-          authorization: 'Bearer test-code-act-token',
-          'x-forwarded-for': '203.0.113.1',
-        },
-      });
-      const firstRes = createMockRes();
-      expect(await handler(firstReq, firstRes as unknown as ServerResponse)).toBe(true);
-      expect(firstRes._status).toBe(200);
+      it('rejects malformed Code-Act agent identity before execution', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({
+          success: true,
+          value: 1,
+          logs: [],
+          metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+        });
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq(
+            '/api/code-act',
+            JSON.stringify({
+              code: 'mama_search({query:"ctx"})',
+              agent_id: 42,
+            }),
+            {
+              remoteAddress: '127.0.0.89',
+              headers: { authorization: 'Bearer test-code-act-token' },
+            }
+          );
+          const res = createMockRes();
 
-      const spoofedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
-        remoteAddress: '198.51.100.77',
-        headers: {
-          authorization: 'Bearer test-code-act-token',
-          'x-forwarded-for': '203.0.113.2',
-        },
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+
+          expect(res._status).toBe(400);
+          expect(res._body).toContain('agent_id must be a non-empty string');
+          expect(executeCodeAct).not.toHaveBeenCalled();
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
       });
-      const spoofedRes = createMockRes();
-      expect(await handler(spoofedReq, spoofedRes as unknown as ServerResponse)).toBe(true);
-      expect(spoofedRes._status).toBe(429);
-      expect(executeCodeAct).toHaveBeenCalledTimes(1);
-    } finally {
-      if (previousLimit === undefined) {
-        delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
-      } else {
-        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
-      }
-      if (previousAuthToken === undefined) {
-        delete process.env.MAMA_AUTH_TOKEN;
-      } else {
-        process.env.MAMA_AUTH_TOKEN = previousAuthToken;
-      }
-    }
+    });
+
+    describe('AC: rate limit identity ignores untrusted forwarded headers', () => {
+      it('ignores spoofed x-forwarded-for for Code-Act rate limits from untrusted peers', async () => {
+        const previousLimit = process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = '1';
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        try {
+          const executeCodeAct = vi.fn().mockResolvedValue({
+            success: true,
+            value: 1,
+            logs: [],
+            metrics: { durationMs: 1, hostCallCount: 0, memoryUsedBytes: 0 },
+          });
+          const handler = createGraphHandler({ executeCodeAct });
+          const firstReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+            remoteAddress: '198.51.100.77',
+            headers: {
+              authorization: 'Bearer test-code-act-token',
+              'x-forwarded-for': '203.0.113.1',
+            },
+          });
+          const firstRes = createMockRes();
+          expect(await handler(firstReq, firstRes as unknown as ServerResponse)).toBe(true);
+          expect(firstRes._status).toBe(200);
+
+          const spoofedReq = createBodyReq('/api/code-act', JSON.stringify({ code: '1 + 1' }), {
+            remoteAddress: '198.51.100.77',
+            headers: {
+              authorization: 'Bearer test-code-act-token',
+              'x-forwarded-for': '203.0.113.2',
+            },
+          });
+          const spoofedRes = createMockRes();
+          expect(await handler(spoofedReq, spoofedRes as unknown as ServerResponse)).toBe(true);
+          expect(spoofedRes._status).toBe(429);
+          expect(executeCodeAct).toHaveBeenCalledTimes(1);
+        } finally {
+          if (previousLimit === undefined) {
+            delete process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE;
+          } else {
+            process.env.MAMA_CODE_ACT_RATE_LIMIT_PER_MINUTE = previousLimit;
+          }
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
+    });
   });
 
   it('returns 400 for malformed JSON on managed-agent update POST', async () => {
@@ -464,18 +554,77 @@ describe('graph api helpers', () => {
     expect(historyRes._body).not.toContain('vs-agent-test');
   });
 
-  it('accepts codex and gemini backends in legacy config validation', () => {
-    expect(
-      validateConfigUpdate({
-        agent: { backend: 'codex', model: 'gpt-5.4-mini' },
-        multi_agent: {
-          agents: {
-            resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
-            coder: { backend: 'codex-mcp', model: 'gpt-5.3-codex' },
+  describe('Story LEGACY-MANAGED-BACKENDS: managed-agent backend migration', () => {
+    describe('AC: validates supported managed backend families', () => {
+      it('accepts Codex backends and rejects unsupported Gemini backends in legacy config validation', () => {
+        expect(
+          validateConfigUpdate({
+            agent: { backend: 'codex', model: 'gpt-5.4-mini' },
+            multi_agent: {
+              agents: {
+                coder: { backend: 'codex-mcp', model: 'gpt-5.3-codex' },
+              },
+            },
+          })
+        ).toEqual([]);
+        expect(
+          validateConfigUpdate({
+            multi_agent: {
+              agents: {
+                resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
+              },
+            },
+          })
+        ).toContain(
+          'multi_agent.agents.resolver.backend must be "claude", "codex", or "codex-mcp"'
+        );
+      });
+    });
+
+    describe('AC: migrates persisted legacy Gemini backend configs', () => {
+      it('migrates persisted legacy Gemini managed-agent backends before validation', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        const migrated = migrateLegacyManagedBackends({
+          agent: { backend: 'gemini', model: 'gemini-2.5-pro' },
+          multi_agent: {
+            agents: {
+              resolver: { backend: 'gemini', model: 'gemini-2.5-pro' },
+              coder: { backend: 'codex', model: 'gpt-5.4-mini' },
+            },
           },
-        },
-      })
-    ).toEqual([]);
+        });
+
+        expect(migrated.agent.backend).toBe('claude');
+        expect(migrated.agent.model).toBe('claude-sonnet-4-6');
+        expect(migrated.multi_agent.agents.resolver.backend).toBe('claude');
+        expect(migrated.multi_agent.agents.resolver.model).toBe('claude-sonnet-4-6');
+        expect(migrated.multi_agent.agents.coder.backend).toBe('codex');
+        expect(validateConfigUpdate(migrated)).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Deprecated backend "gemini"'));
+        warn.mockRestore();
+      });
+
+      it('migrates agents inheriting a legacy Gemini multi-agent backend before validation', () => {
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+        const migrated = migrateLegacyManagedBackends({
+          multi_agent: {
+            backend: 'gemini',
+            agents: {
+              resolver: { model: 'gemini-2.5-pro' },
+            },
+          },
+        });
+
+        expect(migrated.multi_agent.backend).toBe('claude');
+        expect(migrated.multi_agent.agents.resolver.backend).toBe('claude');
+        expect(migrated.multi_agent.agents.resolver.model).toBe('claude-sonnet-4-6');
+        expect(validateConfigUpdate(migrated)).toEqual([]);
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Deprecated backend "gemini"'));
+        warn.mockRestore();
+      });
+    });
   });
 });
 

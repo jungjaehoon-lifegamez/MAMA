@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-05-04
+
+### Added
+
+- **Context Compile runtime path** — Added the standalone service, gateway tool, HTTP integration,
+  model-run lineage, and trusted `context_packet_id` save provenance for compiled evidence packets
+- **Dashboard/wiki Context Compile adoption** — Managed system-agent defaults, legacy config
+  migration, personas, and scheduled prompts now route evidence gathering through
+  `context_compile` before falling back to `mama_search`
+- **Raw-backed connector memory ingest** — Deterministic memory candidate builder and ingest
+  path lift connector evidence into scope-bound memory without LLM extraction, with isolation
+  tests against the case and decision stores
+
+### Fixed
+
+- **Code-Act policy hardening** — `/api/code-act` now requires an existing `useCodeAct: true`
+  agent, intersects request allowlists with configured gateway policy, handles blocked-only policy
+  safely, and avoids falling back to full MCP configs for Code-Act-only agents
+- **Code-Act allowlist deny-by-default** — `resolveCodeActAgentPolicy` rejects agents whose
+  resolved allowed tools are undefined or empty, `buildCodeActRole` no longer falls back to
+  wildcard, and `intersectAllowedToolPolicies` distinguishes undefined (fallback) from explicit
+  empty arrays (deny-all)
+- **Trusted provenance fail-closed paths** — Packet-backed `mama_save` calls now reject invalid or
+  unavailable trusted provenance instead of widening scopes or silently dropping `context_packet_id`,
+  and `getContextPacketIdForTrustedProvenance` throws on present-but-invalid values so the
+  request fails with `context_packet_denied`
+- **Tier-3 context_compile fail-closed** — `handleContextCompile` checks `agentContext.tier` and
+  `envelope.tier` independently so a non-Tier-3 agent context cannot mask a Tier-3 envelope via
+  the previous `??` fallback
+- **bindConfiguredScope canonicalization** — Project-scoped connector items now derive a single
+  canonical project id from channel config, item metadata, and item.projectId for both
+  `projectId` and `memoryScopeId`, and stamp a default tenant alongside the scope so configured
+  channel raw evidence is no longer filtered out by the default `tenant_id` boundary
+- **Envelope key TOCTOU** — `loadOrCreateLocalEnvelopeSigningKey` uses an atomic `wx`-flag write
+  with EEXIST handling instead of a non-atomic `existsSync`+write, so concurrent processes
+  converge on the first key written instead of overwriting each other
+- **Raw-backed memory save validation** — `ingestRawBackedMemoryCandidates` now requires an
+  explicit `success: true` with a non-empty `id` from `saveMemory` before counting a row as saved
+- **Wiki-agent feature gating** — `normalizeLegacyMultiAgentConfig` only backfills the built-in
+  `wiki-agent` when `config.wiki.enabled` is true, matching runtime provisioning by `runAgentLoop`
+  and api-routes-init
+- **Managed dashboard persona broader fallback** — Dashboard persona v8 falls back to
+  `mama_search` on any non-success `context_compile` result, not only when the worker envelope is
+  missing, and the Tools section description matches the workflow step
+- **Code-Act gateway allowlist migration test** — `should upgrade old built-in Code-Act gateway
+allowlists with context_compile on load` now asserts exact array equality so the migration
+  cannot drop a previously allowed tool while adding `context_compile`
+
 ## [0.20.0] - 2026-05-01
 
 ### Added

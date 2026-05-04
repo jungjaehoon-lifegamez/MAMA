@@ -12,17 +12,24 @@ import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 
 type ScopeKind = 'project' | 'user' | 'channel' | 'global';
 
-function insertScopedMemory(id: string, kind: ScopeKind, externalId: string): void {
+function insertScopedMemory(
+  id: string,
+  kind: ScopeKind,
+  externalId: string,
+  status = 'active'
+): void {
   const adapter = getAdapter();
   const scopeId = `scope_${kind}_${externalId}`;
   adapter
     .prepare(
       `
-        INSERT INTO decisions (id, topic, decision, reasoning, confidence, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO decisions (
+          id, topic, decision, reasoning, confidence, created_at, updated_at, status
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
-    .run(id, `topic-${id}`, `decision-${id}`, `reasoning-${id}`, 0.8, 1_000, 1_000);
+    .run(id, `topic-${id}`, `decision-${id}`, `reasoning-${id}`, 0.8, 1_000, 1_000, status);
   adapter
     .prepare(
       `
@@ -128,6 +135,16 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       ).toThrow(/not visible/i);
     });
 
+    it('rejects memory refs with statuses excluded from normal context recall', () => {
+      insertScopedMemory('mem-stale', 'project', 'alpha', 'stale');
+
+      expect(() =>
+        assertTwinRefsVisible(getAdapter(), [{ kind: 'memory', id: 'mem-stale' }], {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+        })
+      ).toThrow(/not visible/i);
+    });
+
     it('excludes edges whose subject or object endpoint is outside requested scopes', () => {
       insertScopedMemory('mem-alpha', 'project', 'alpha');
       const alphaRaw = insertScopedRaw('raw-alpha', 'project', 'alpha');
@@ -162,6 +179,40 @@ describe('Story M3.1: Twin Edge Visibility', () => {
       );
       // Matches existing mama-core read behavior: empty scopes mean no scope filter.
       expect(unscoped).toHaveLength(2);
+    });
+
+    it('applies limits to the newest visible edges first', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      insertScopedMemory('mem-old', 'project', 'alpha');
+      insertScopedMemory('mem-new', 'project', 'alpha');
+      const oldEdge = insertTwinEdge(getAdapter(), {
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'memory', id: 'mem-old' },
+        source: 'code',
+        reason_text: 'old context',
+      });
+      const newEdge = insertTwinEdge(getAdapter(), {
+        edge_type: 'mentions',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'memory', id: 'mem-new' },
+        source: 'code',
+        reason_text: 'new context',
+      });
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(1_000, oldEdge.edge_id);
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(2_000, newEdge.edge_id);
+
+      const limited = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        { scopes: [{ kind: 'project', id: 'alpha' }], limit: 1 }
+      );
+
+      expect(limited.map((edge) => edge.edge_id)).toEqual([newEdge.edge_id]);
     });
 
     it('excludes raw endpoints outside requested connector, project, and tenant visibility', () => {
@@ -277,6 +328,74 @@ describe('Story M3.1: Twin Edge Visibility', () => {
           tenantId: 'default',
         })
       ).toThrow(/not visible/i);
+    });
+
+    it('fails closed for raw endpoints with blank timestamps', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const blankTimestampRaw = insertScopedRaw('raw-blank-timestamp', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      getAdapter()
+        .prepare('UPDATE connector_event_index SET event_datetime = ? WHERE event_index_id = ?')
+        .run('', blankTimestampRaw);
+      insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: blankTimestampRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+        }
+      );
+
+      expect(scoped).toEqual([]);
+    });
+
+    it('accepts ISO timestamp strings for raw endpoint visibility checks', () => {
+      insertScopedMemory('mem-alpha', 'project', 'alpha');
+      const isoTimestampRaw = insertScopedRaw('raw-iso-timestamp', 'project', 'alpha', {
+        source_connector: 'slack',
+        project_id: 'alpha',
+        tenant_id: 'default',
+      });
+      getAdapter()
+        .prepare('UPDATE connector_event_index SET event_datetime = ? WHERE event_index_id = ?')
+        .run('2026-04-29T04:00:00.000Z', isoTimestampRaw);
+      const visible = insertTwinEdge(getAdapter(), {
+        edge_type: 'derived_from',
+        subject_ref: { kind: 'memory', id: 'mem-alpha' },
+        object_ref: { kind: 'raw', id: isoTimestampRaw },
+        source: 'code',
+        reason_text: 'connector replay',
+      });
+      getAdapter()
+        .prepare('UPDATE twin_edges SET created_at = ? WHERE edge_id = ?')
+        .run(Date.parse('2026-04-29T04:30:00.000Z'), visible.edge_id);
+
+      const scoped = listVisibleTwinEdgesForRefs(
+        getAdapter(),
+        [{ kind: 'memory', id: 'mem-alpha' }],
+        {
+          scopes: [{ kind: 'project', id: 'alpha' }],
+          connectors: ['slack'],
+          projectRefs: [{ kind: 'project', id: 'alpha' }],
+          tenantId: 'default',
+          asOfMs: Date.parse('2026-04-29T05:00:00.000Z'),
+        }
+      );
+
+      expect(scoped.map((edge) => edge.edge_id)).toEqual([visible.edge_id]);
     });
 
     it('keeps report endpoints unscoped-only while entity endpoints use entity scope', () => {
