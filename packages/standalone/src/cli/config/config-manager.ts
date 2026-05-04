@@ -382,7 +382,8 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  * SECURITY: Type guards ensure safe defaults for optional fields
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
-  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent);
+  const wikiEnabled = (config as { wiki?: { enabled?: boolean } }).wiki?.enabled === true;
+  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent, { wikiEnabled });
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
@@ -435,7 +436,8 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
  * delegate work, so we gently upgrade missing permission metadata.
  */
 function normalizeLegacyMultiAgentConfig(
-  multiAgentConfig?: MultiAgentConfig
+  multiAgentConfig?: MultiAgentConfig,
+  options: { wikiEnabled?: boolean } = {}
 ): MultiAgentConfig | undefined {
   if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
@@ -473,6 +475,13 @@ function normalizeLegacyMultiAgentConfig(
   let addedBuiltinAgent = false;
   let changedBuiltinAgent = false;
   for (const [agentId, defaultAgent] of Object.entries(defaultAgents)) {
+    // wiki-agent's runtime provisioning (persona, vault wiring) only runs when
+    // config.wiki.enabled is true. Skip the static backfill here unless the
+    // flag is on so we don't advertise an agent the runtime treats as
+    // optional. A user-defined wiki-agent entry is preserved as-is.
+    if (agentId === 'wiki-agent' && !options.wikiEnabled && !mergedAgents[agentId]) {
+      continue;
+    }
     if (!mergedAgents[agentId]) {
       mergedAgents[agentId] = defaultAgent;
       addedBuiltinAgent = true;
