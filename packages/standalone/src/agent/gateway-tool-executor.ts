@@ -1296,10 +1296,11 @@ export class GatewayToolExecutor {
     }
 
     const scopedInput = input as GatewayToolInput & { scopes?: unknown };
-    if (
-      toolName === 'mama_save' &&
-      getContextPacketIdForTrustedProvenance(scopedInput as SaveInput) !== null
-    ) {
+    if (toolName === 'mama_save' && hasContextPacketIdInput(scopedInput as SaveInput)) {
+      // Invalid context_packet_id values are rejected later in the mama_save
+      // handler. Skip default-scope injection for any present value so that
+      // subsequent validation can return context_packet_denied without being
+      // masked by envelope-scope defaults.
       return input;
     }
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
@@ -1888,7 +1889,19 @@ export class GatewayToolExecutor {
           const api = await getApi();
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
-          const hasContextPacketId = getContextPacketIdForTrustedProvenance(saveInput) !== null;
+          let hasContextPacketId: boolean;
+          try {
+            hasContextPacketId = getContextPacketIdForTrustedProvenance(saveInput) !== null;
+          } catch (error) {
+            if (error instanceof ContextPacketProvenanceError) {
+              return {
+                success: false,
+                code: 'context_packet_denied',
+                error: error.message,
+              };
+            }
+            throw error;
+          }
           if (hasContextPacketId && !this.isMemoryDecisionSaveInput(saveInput)) {
             return {
               success: false,
@@ -3794,8 +3807,9 @@ export class GatewayToolExecutor {
     }
 
     const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
-    const activeTier = ctx?.agentContext?.tier ?? ctx?.envelope?.tier;
-    if (activeTier === 3) {
+    // Fail closed: a Tier-3 designation in either source must block the call,
+    // otherwise a non-Tier-3 fallback could mask a Tier-3 envelope.
+    if (ctx?.agentContext?.tier === 3 || ctx?.envelope?.tier === 3) {
       return {
         success: false,
         code: 'permission_denied_tier3',
@@ -3918,15 +3932,34 @@ async function getContextPacketLookupAdapter(): Promise<ContextPacketLookupAdapt
   }
 }
 
+function hasContextPacketIdInput(
+  input: SaveInput | { context_packet_id?: unknown } | undefined
+): boolean {
+  if (!input || !('context_packet_id' in input)) {
+    return false;
+  }
+  const value = (input as { context_packet_id?: unknown }).context_packet_id;
+  return value !== undefined && value !== null;
+}
+
 function getContextPacketIdForTrustedProvenance(
   input: SaveInput | { context_packet_id?: unknown } | undefined
 ): string | null {
-  const value = input && 'context_packet_id' in input ? input.context_packet_id : undefined;
-  if (typeof value !== 'string') {
+  if (!input || !('context_packet_id' in input)) {
     return null;
   }
+  const value = (input as { context_packet_id?: unknown }).context_packet_id;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new ContextPacketProvenanceError('context_packet_id must be a string when provided.');
+  }
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (trimmed.length === 0) {
+    throw new ContextPacketProvenanceError('context_packet_id must not be empty when provided.');
+  }
+  return trimmed;
 }
 
 function dedupeSourceRefs(refs: string[]): string[] {

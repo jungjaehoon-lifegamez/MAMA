@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -57,11 +57,32 @@ function makeKeyEnv(mode: 'enabled' | 'required' = 'enabled'): Record<string, st
 
 describe('STORY-M1R-BOOTSTRAP-1: issuance/config validation', () => {
   describe('AC: buildRuntimeEnvelopeBootstrap validates issuance mode and key material', () => {
-    it.each([undefined, '', 'off', 'false'] as Array<string | undefined>)(
+    it('defaults new local installs to enabled issuance with a generated persistent key', () => {
+      const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-autokey-home-'));
+      try {
+        const db: SQLiteDatabase = new Database(':memory:');
+        const env = { HOME: tempHome };
+
+        const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeConfig(), env);
+
+        expect(bootstrap.envelopeAuthority).toBeDefined();
+        expect(bootstrap.envelopeConfig).toBeDefined();
+        expect(bootstrap.metadata).toEqual({
+          issuance: 'enabled',
+          key_id: 'local-generated',
+          key_version: 1,
+        });
+        expect(existsSync(join(tempHome, '.mama', 'envelope-key.json'))).toBe(true);
+      } finally {
+        rmSync(tempHome, { recursive: true, force: true });
+      }
+    });
+
+    it.each(['', 'off', 'false'] as Array<string | undefined>)(
       'treats issuance mode %s as disabled without loading key material',
       (mode) => {
         const db: SQLiteDatabase = new Database(':memory:');
-        const env = mode === undefined ? {} : { MAMA_ENVELOPE_ISSUANCE: mode };
+        const env = { MAMA_ENVELOPE_ISSUANCE: mode };
 
         const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeConfig(), env);
 

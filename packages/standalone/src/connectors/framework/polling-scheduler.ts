@@ -18,6 +18,56 @@ interface PollState {
   [connectorName: string]: string; // ISO timestamp
 }
 
+function stringField(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function findChannelConfig(
+  item: NormalizedItem,
+  channelConfigs: Record<string, Record<string, ChannelConfig>>
+): (ChannelConfig & Record<string, unknown>) | undefined {
+  const sourceConfigs = channelConfigs[item.source];
+  const direct = sourceConfigs?.[item.channel];
+  if (direct) {
+    return direct as ChannelConfig & Record<string, unknown>;
+  }
+  if (!sourceConfigs) {
+    return undefined;
+  }
+  return Object.values(sourceConfigs).find((cfg) => cfg.name === item.channel) as
+    | (ChannelConfig & Record<string, unknown>)
+    | undefined;
+}
+
+function bindConfiguredScope(
+  item: NormalizedItem,
+  channelConfigs: Record<string, Record<string, ChannelConfig>>
+): NormalizedItem {
+  if (stringField(item.memoryScopeKind) && stringField(item.memoryScopeId)) {
+    return item;
+  }
+
+  const channelConfig = findChannelConfig(item, channelConfigs);
+  const projectEntityId =
+    stringField(channelConfig?.project_entity_id) ??
+    stringField(item.metadata?.project_entity_id) ??
+    stringField(item.projectId);
+  if (!projectEntityId) {
+    return item;
+  }
+
+  return {
+    ...item,
+    projectId: item.projectId ?? projectEntityId,
+    memoryScopeKind: 'project',
+    memoryScopeId: projectEntityId,
+  };
+}
+
 export class PollingScheduler {
   private readonly rawStore: RawStore;
   private readonly rawIndexSink?: RawIndexSink;
@@ -85,11 +135,12 @@ export class PollingScheduler {
             `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
           );
           if (items.length > 0) {
-            this.rawStore.save(name, items);
+            const scopedItems = items.map((item) => bindConfiguredScope(item, channelConfigs));
+            this.rawStore.save(name, scopedItems);
             if (this.rawIndexSink) {
-              await this.rawIndexSink(name, items);
+              await this.rawIndexSink(name, scopedItems);
             }
-            allItems.push(...items);
+            allItems.push(...scopedItems);
           }
           // Only advance the cursor after a successful poll+save+index.
           this.lastPollTimes.set(name, new Date());

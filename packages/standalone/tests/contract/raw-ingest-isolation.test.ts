@@ -94,7 +94,7 @@ describe('Story M0: Connector extraction kill switch', () => {
     expect(findCallExpressions(source, 'buildSpokeExtractionPrompt')).toEqual([]);
   });
 
-  it('connector observation extraction failures are surfaced instead of swallowed', () => {
+  it('connector observation and raw-backed memory indexing failures are surfaced instead of swallowed', () => {
     const source = readFileSync(
       new URL('../../src/cli/runtime/connector-init.ts', import.meta.url),
       'utf8'
@@ -103,6 +103,7 @@ describe('Story M0: Connector extraction kill switch', () => {
 
     expect(extractAndSaveBody).toContain('buildEntityObservations');
     expect(extractAndSaveBody).toContain('entityObservationStore.upsertEntityObservations');
+    expect(extractAndSaveBody).toContain('ingestRawBackedMemoryCandidates');
     expect(extractAndSaveBody).not.toContain('console.error');
     expect(extractAndSaveBody).toContain('throw new Error');
   });

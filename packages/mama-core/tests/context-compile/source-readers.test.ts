@@ -712,6 +712,78 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
       ]);
     });
 
+    it('treats unscoped legacy connector rows as global system raw visibility', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'kagemusha',
+        source_type: 'message',
+        source_id: 'kgm-legacy-1',
+        title: 'Legacy Kagemusha raw event',
+        content: 'Kagemusha connector poll wrote this raw event before scope columns were filled.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          task: 'Kagemusha connector poll raw event',
+          scopes: [{ kind: 'global', id: 'system' }],
+          connectors: ['kagemusha'],
+          project_refs: [],
+          tenant_id: null,
+          boundary: {
+            scopes: [{ kind: 'global', id: 'system' }],
+            connectors: ['kagemusha'],
+            project_refs: [],
+            tenant_id: null,
+          },
+        })
+      );
+
+      expect(result.candidates.map((candidate) => candidate.title)).toEqual([
+        'Legacy Kagemusha raw event',
+      ]);
+    });
+
+    it('does not let legacy global raw rows leak into project-scoped raw windows', () => {
+      const adapter = createAdapter();
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'kagemusha',
+        source_type: 'message',
+        source_id: 'kgm-legacy-project-defaults',
+        title: 'Legacy Kagemusha project-default raw event',
+        content: 'Code-Act envelopes include workspace project and default tenant scopes.',
+        event_datetime: 1_200,
+        source_timestamp_ms: 1_200,
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({
+          task: 'Code-Act envelope project defaults must not include unrelated legacy Kagemusha rows',
+          scopes: [
+            { kind: 'project', id: 'repo-a' },
+            { kind: 'global', id: 'system' },
+          ],
+          connectors: ['kagemusha'],
+          project_refs: [{ kind: 'project', id: 'repo-a' }],
+          tenant_id: 'default',
+          boundary: {
+            scopes: [
+              { kind: 'project', id: 'repo-a' },
+              { kind: 'global', id: 'system' },
+            ],
+            connectors: ['kagemusha'],
+            project_refs: [{ kind: 'project', id: 'repo-a' }],
+            tenant_id: 'default',
+          },
+        })
+      );
+
+      expect(result.candidates).toEqual([]);
+    });
+
     it('defaults explicit null tenant to the non-null boundary tenant', () => {
       const adapter = createAdapter();
       upsertConnectorEventIndex(adapter, {
