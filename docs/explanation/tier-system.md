@@ -304,7 +304,7 @@ Separate from the search tiers above, the **Multi-Agent System** uses a 3-tier p
 | ---------- | ------------------- | -------------------------------------------- | ------------------------------------------- |
 | **Tier 1** | Full Access         | All gateway tools                            | Conductor, trusted agents                   |
 | **Tier 2** | Read + Memory Write | Read-only tools + `mama_save`, `mama_update` | Advisory agents that need to save decisions |
-| **Tier 3** | Read-Only           | Read-only tools only                         | Code-Act API, untrusted contexts            |
+| **Tier 3** | Read-Only           | Read-only tools only                         | Review agents, untrusted contexts           |
 
 ### Tier 1: Full Access
 
@@ -322,7 +322,9 @@ Read-only tools plus memory write tools (`mama_save`, `mama_update`). Cannot exe
 
 ### Tier 3: Strictly Read-Only
 
-Only read-only tools. Used for unauthenticated or untrusted contexts like the Code-Act HTTP API endpoint.
+Only read-only tools. Tier 3 agents cannot opt into Code-Act and fall back to normal tool-call
+mode. The `/api/code-act` HTTP endpoint defaults to Tier 2 for Code-Act-enabled agents, but can be
+forced into read-only injection with `MAMA_CODE_ACT_READ_ONLY=true`.
 
 ### Configuration
 

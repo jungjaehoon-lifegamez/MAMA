@@ -35,6 +35,13 @@ function columnExists(db: Database.Database, table: string, column: string): boo
   return columns.some((item) => item.name === column);
 }
 
+function tableExists(db: Database.Database, tableName: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name = ?")
+    .get(tableName) as { name?: string } | undefined;
+  return Boolean(row?.name);
+}
+
 function indexExists(db: Database.Database, indexName: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
@@ -123,6 +130,94 @@ describe('Story M2.3: Migration 034 duplicate-column recovery', () => {
           | { version: number }
           | undefined;
         expect(row?.version).toBe(34);
+        db.close();
+      });
+    });
+  });
+});
+
+describe('Story M2.4: Legacy high schema-version structural recovery', () => {
+  afterEach(cleanupTempDir);
+
+  describe('Acceptance Criteria', () => {
+    describe('AC #1: skipped feature migrations', () => {
+      it('repairs provenance and connector structures when legacy schema_version is already newer', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-high-version-'));
+        const dbPath = join(tempDir, 'legacy-high-version.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        setupDb.exec(`
+          CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            description TEXT
+          );
+          INSERT INTO schema_version (version, description)
+          VALUES (58, 'Legacy branch migration ahead of provenance migrations');
+
+          CREATE TABLE decisions (
+            id TEXT PRIMARY KEY,
+            topic TEXT NOT NULL
+          );
+          CREATE TABLE memory_events (
+            id INTEGER PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            topic TEXT,
+            created_at INTEGER NOT NULL
+          );
+          CREATE TABLE embeddings (
+            rowid INTEGER PRIMARY KEY,
+            embedding BLOB NOT NULL
+          );
+          CREATE TABLE connector_event_index (
+            event_index_id TEXT PRIMARY KEY,
+            source_connector TEXT NOT NULL
+          );
+        `);
+        setupDb.close();
+
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.disconnect();
+
+        const db = new Database(dbPath);
+        for (const table of [
+          'model_runs',
+          'tool_traces',
+          'twin_edges',
+          'agent_situation_packets',
+          'agent_situation_refresh_leases',
+          'context_packets',
+        ]) {
+          expect(tableExists(db, table)).toBe(true);
+        }
+        for (const column of [
+          'agent_id',
+          'model_run_id',
+          'envelope_hash',
+          'gateway_call_id',
+          'source_refs_json',
+          'provenance_json',
+        ]) {
+          expect(columnExists(db, 'decisions', column)).toBe(true);
+        }
+        for (const column of [
+          'source_cursor',
+          'tenant_id',
+          'project_id',
+          'memory_scope_kind',
+          'memory_scope_id',
+        ]) {
+          expect(columnExists(db, 'connector_event_index', column)).toBe(true);
+        }
+        expect(indexExists(db, 'idx_model_runs_envelope_hash')).toBe(true);
+        expect(indexExists(db, 'idx_tool_traces_model_run_id')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_envelope_hash')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_model_run_id')).toBe(true);
+        expect(indexExists(db, 'idx_decisions_gateway_call_id')).toBe(true);
+        expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
+        expect(indexExists(db, 'idx_connector_event_source_cursor')).toBe(true);
+        expect(indexExists(db, 'idx_context_packets_scope_hash')).toBe(true);
         db.close();
       });
     });

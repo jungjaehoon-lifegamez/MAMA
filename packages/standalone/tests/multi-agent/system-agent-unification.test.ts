@@ -1,7 +1,90 @@
 import { describe, it, expect } from 'vitest';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { AgentPersonaConfig } from '../../src/multi-agent/types.js';
 
 describe('system agent unification', () => {
+  describe('managed personas', () => {
+    it('dashboard-agent directs evidence gathering through context_compile', async () => {
+      const { DASHBOARD_AGENT_PERSONA } =
+        await import('../../src/multi-agent/dashboard-agent-persona.js');
+
+      expect(DASHBOARD_AGENT_PERSONA).toContain('context_compile');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('context_packet_id');
+    });
+
+    it('wiki-agent directs compilation evidence through context_compile', async () => {
+      const { WIKI_AGENT_PERSONA } = await import('../../src/multi-agent/wiki-agent-persona.js');
+
+      expect(WIKI_AGENT_PERSONA).toContain('context_compile');
+      expect(WIKI_AGENT_PERSONA).toContain('context_packet_id');
+    });
+
+    it('upgrades older managed wiki persona files to the context_compile workflow', async () => {
+      const testDir = join(
+        tmpdir(),
+        `mama-wiki-persona-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+      const personaDir = join(testDir, 'personas');
+      const personaPath = join(personaDir, 'wiki.md');
+      const { ensureWikiPersona, WIKI_AGENT_PERSONA } =
+        await import('../../src/multi-agent/wiki-agent-persona.js');
+
+      await mkdir(personaDir, { recursive: true });
+      await writeFile(
+        personaPath,
+        '<!-- MAMA managed wiki persona v3 -->\n\nUse mama_search with relevant queries.',
+        'utf-8'
+      );
+
+      try {
+        ensureWikiPersona(testDir);
+        const upgraded = await readFile(personaPath, 'utf-8');
+
+        expect(upgraded).toBe(WIKI_AGENT_PERSONA);
+      } finally {
+        await rm(testDir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  describe('scheduled system-run prompts', () => {
+    it('directs dashboard and wiki runs through context_compile before mama_search fallback', async () => {
+      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
+        encoding: 'utf-8',
+      });
+
+      expect(source).toContain('Use context_compile first');
+      expect(source).toContain(
+        'Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes"'
+      );
+      expect(source).toContain(
+        'Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text'
+      );
+      expect(source).toContain('fall back to mama_search');
+      expect(source).not.toContain('Use mama_search to find recent substantive decisions');
+    });
+  });
+
+  describe('process manager defaults', () => {
+    it('enables skip-permissions for headless system-run agents by default', async () => {
+      const { buildSystemAgentProcessDefaults } = await import('../../src/cli/commands/start.js');
+
+      expect(buildSystemAgentProcessDefaults({}).dangerouslySkipPermissions).toBe(true);
+    });
+
+    it('honors explicit skip-permissions disablement', async () => {
+      const { buildSystemAgentProcessDefaults } = await import('../../src/cli/commands/start.js');
+
+      expect(
+        buildSystemAgentProcessDefaults({
+          multi_agent: { dangerouslySkipPermissions: false },
+        }).dangerouslySkipPermissions
+      ).toBe(false);
+    });
+  });
+
   describe('code-act MCP merging', () => {
     it('adds code-act entry to mama-mcp-config.json', () => {
       const existing = {
@@ -53,18 +136,12 @@ describe('system agent unification', () => {
         useCodeAct: true,
         model: 'claude-sonnet-4-6',
         tool_permissions: {
-          allowed: ['mama_search', 'report_publish', 'code_act'],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
-          ],
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: ['mama_search', 'agent_notices', 'report_publish'],
+          blocked: [],
         },
       };
       expect(dashboardAgent.tier).toBe(2);
@@ -84,18 +161,19 @@ describe('system agent unification', () => {
         useCodeAct: true,
         model: 'claude-sonnet-4-6',
         tool_permissions: {
-          allowed: ['mama_search', 'wiki_publish', 'code_act'],
-          blocked: [
-            'Bash',
-            'Read',
-            'Write',
-            'Edit',
-            'Grep',
-            'Glob',
-            'Agent',
-            'WebSearch',
-            'WebFetch',
+          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+        },
+        gateway_tool_permissions: {
+          allowed: [
+            'mama_search',
+            'agent_notices',
+            'case_list',
+            'case_assemble',
+            'obsidian',
+            'wiki_publish',
           ],
+          blocked: [],
         },
       };
       expect(wikiAgent.tier).toBe(2);

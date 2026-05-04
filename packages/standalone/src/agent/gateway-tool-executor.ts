@@ -27,6 +27,10 @@ import { homedir } from 'os';
 import { execSync, spawn, execFile } from 'child_process';
 import { promisify } from 'util';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import {
+  getContextPacketForTrustedUse,
+  serializeContextRefForProvenance,
+} from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
@@ -34,8 +38,11 @@ import type {
   GatewayToolInput,
   GatewayToolResult,
   SaveInput,
+  SaveDecisionInput,
   SearchInput,
   RecallInput,
+  ContextCompileInput,
+  CodeActInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -119,6 +126,7 @@ type TrustedProvenanceRuntime = {
   createTrustedProvenanceCapability: () => TrustedMemoryWriteOptions['capability'];
 };
 let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
+type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
 const AGENT_DETAIL_TABS = new Set([
   'config',
   'persona',
@@ -156,6 +164,11 @@ type ScopeAuditFields = {
   mismatch: 0 | 1;
 };
 
+type TrustedMemoryWriteBuildResult = {
+  options: TrustedMemoryWriteOptions;
+  contextPacketScopes?: MemoryScope[];
+};
+
 type TraceCapableMAMAApi = MAMAApiInterface & {
   beginModelRun: (input: BeginModelRunInput) => Promise<ModelRunRecord>;
   commitModelRun: (modelRunId: string, summary?: string) => Promise<ModelRunRecord>;
@@ -168,19 +181,34 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'context_compile',
   'mama_update',
   'mama_add',
   'mama_ingest',
 ]);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
+  'mama_save',
   'mama_search',
   'mama_recall',
+  'context_compile',
 ]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'model_tool',
   'reactive_internal',
   'code_act',
 ]);
+
+type CodeActToolPatternResolution = {
+  patterns?: string[];
+  error?: string;
+};
+
+type CodeActSandboxRoleResolution = {
+  role?: RoleConfig;
+  error?: string;
+};
+
+class ContextPacketProvenanceError extends Error {}
 
 async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
   const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
@@ -294,6 +322,7 @@ export class GatewayToolExecutor {
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
+  private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -635,6 +664,7 @@ export class GatewayToolExecutor {
     this.sessionStore = options.sessionStore;
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
+    this.contextCompileService = options.contextCompileService;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -696,6 +726,10 @@ export class GatewayToolExecutor {
 
   setTelegramGateway(gateway: TelegramGatewayInterface): void {
     this.telegramGateway = gateway;
+  }
+
+  setContextCompileService(service: GatewayToolExecutorOptions['contextCompileService']): void {
+    this.contextCompileService = service;
   }
 
   /**
@@ -1175,6 +1209,9 @@ export class GatewayToolExecutor {
     }
 
     if (!requestedScopes || requestedScopes.length === 0) {
+      if (toolName === 'context_compile' && Array.isArray((input as { scopes?: unknown }).scopes)) {
+        return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
+      }
       return {
         requestedScopes,
         envelopeScopesSnapshot,
@@ -1203,7 +1240,11 @@ export class GatewayToolExecutor {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
-    if (toolName === 'mama_search' || toolName === 'mama_recall') {
+    if (
+      toolName === 'mama_search' ||
+      toolName === 'mama_recall' ||
+      toolName === 'context_compile'
+    ) {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
     }
 
@@ -1254,9 +1295,16 @@ export class GatewayToolExecutor {
       return input;
     }
 
-    const scopedInput = input as SearchInput | RecallInput;
+    const scopedInput = input as GatewayToolInput & { scopes?: unknown };
+    if (toolName === 'mama_save' && hasContextPacketIdInput(scopedInput as SaveInput)) {
+      // Invalid context_packet_id values are rejected later in the mama_save
+      // handler. Skip default-scope injection for any present value so that
+      // subsequent validation can return context_packet_denied without being
+      // masked by envelope-scope defaults.
+      return input;
+    }
     const hasCallerScopes = Array.isArray(scopedInput.scopes)
-      ? scopedInput.scopes.length > 0
+      ? toolName === 'context_compile' || scopedInput.scopes.length > 0
       : scopedInput.scopes !== undefined;
     if (hasCallerScopes) {
       return input;
@@ -1268,28 +1316,88 @@ export class GatewayToolExecutor {
     };
   }
 
-  private buildTrustedMemoryWriteOptions(
+  private async buildTrustedMemoryWriteOptions(
     toolName: string,
-    gatewayCallId: string
-  ): TrustedMemoryWriteOptions {
+    gatewayCallId: string,
+    input?: SaveInput | { context_packet_id?: unknown }
+  ): Promise<TrustedMemoryWriteBuildResult> {
     const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
     const capability = getTrustedProvenanceRuntime().createTrustedProvenanceCapability();
+    const contextPacketId = getContextPacketIdForTrustedProvenance(input);
+    const packetSourceRefs: string[] = [];
+    let contextPacketScopes: MemoryScope[] | undefined;
+
+    if (contextPacketId) {
+      if (!ctx?.envelope) {
+        throw new ContextPacketProvenanceError(
+          'context_packet_id requires an active worker envelope.'
+        );
+      }
+      if (!ctx.modelRunId) {
+        throw new ContextPacketProvenanceError(
+          'context_packet_id requires an active caller model run.'
+        );
+      }
+      let packet: ReturnType<typeof getContextPacketForTrustedUse>;
+      try {
+        packet = getContextPacketForTrustedUse(await getContextPacketLookupAdapter(), {
+          packetId: contextPacketId,
+          envelopeHash: ctx.envelope.envelope_hash,
+          callerModelRunId: ctx.modelRunId,
+        });
+      } catch (error) {
+        throw new ContextPacketProvenanceError(
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+      if (!packet) {
+        throw new ContextPacketProvenanceError(`Context packet not found: ${contextPacketId}`);
+      }
+      packetSourceRefs.push(...packet.source_refs.map(serializeContextRefForProvenance));
+      contextPacketScopes = packet.scopes.map((scope) => ({ kind: scope.kind, id: scope.id }));
+      if (contextPacketScopes.length === 0) {
+        throw new ContextPacketProvenanceError('Trusted context packet has no memory scopes.');
+      }
+      const requestedScopeValue = (input as { scopes?: unknown }).scopes;
+      if (Array.isArray(requestedScopeValue) && requestedScopeValue.length === 0) {
+        throw new ContextPacketProvenanceError(
+          'Requested save scope is outside the trusted context packet scope.'
+        );
+      }
+      const requestedScopes = normalizeMemoryScopes(requestedScopeValue);
+      if (
+        requestedScopes &&
+        !requestedScopes.every((scope) =>
+          contextPacketScopes?.some((allowed) => memoryScopeKey(allowed) === memoryScopeKey(scope))
+        )
+      ) {
+        throw new ContextPacketProvenanceError(
+          'Requested save scope is outside the trusted context packet scope.'
+        );
+      }
+    }
+
     return {
-      capability,
-      provenance: {
-        actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
-        agent_id: ctx?.agentId,
-        model_run_id: ctx?.modelRunId ?? undefined,
-        envelope_hash: ctx?.envelope?.envelope_hash,
-        tool_name: toolName,
-        gateway_call_id: gatewayCallId,
-        source_turn_id: ctx?.sourceTurnId,
-        source_message_ref: ctx?.sourceMessageRef,
-        source_refs: [
-          ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
-          ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
-        ],
+      options: {
+        capability,
+        provenance: {
+          actor: ctx?.agentContext?.roleName === 'memory_agent' ? 'memory_agent' : 'main_agent',
+          agent_id: ctx?.agentId,
+          model_run_id: ctx?.modelRunId ?? undefined,
+          envelope_hash: ctx?.envelope?.envelope_hash,
+          tool_name: toolName,
+          gateway_call_id: gatewayCallId,
+          ...(contextPacketId ? { context_packet_id: contextPacketId } : {}),
+          source_turn_id: ctx?.sourceTurnId,
+          source_message_ref: ctx?.sourceMessageRef,
+          source_refs: dedupeSourceRefs([
+            ...(ctx?.envelope?.envelope_hash ? [`envelope:${ctx.envelope.envelope_hash}`] : []),
+            ...(ctx?.sourceMessageRef ? [`message:${ctx.sourceMessageRef}`] : []),
+            ...packetSourceRefs,
+          ]),
+        },
       },
+      contextPacketScopes,
     };
   }
 
@@ -1301,7 +1409,7 @@ export class GatewayToolExecutor {
     return Boolean(api.saveWithTrustedProvenance);
   }
 
-  private isMemoryDecisionSaveInput(input: SaveInput): boolean {
+  private isMemoryDecisionSaveInput(input: SaveInput): input is SaveDecisionInput {
     const candidate = input as {
       type?: unknown;
       topic?: unknown;
@@ -1395,29 +1503,6 @@ export class GatewayToolExecutor {
     } catch {
       // Audit warnings must never affect tool execution.
     }
-  }
-
-  private auditedAutoSave(parentToolName: string, input: SaveInput): void {
-    const parentContext = this.executionContextStorage.getStore();
-    const task = (async () => {
-      try {
-        if (parentContext) {
-          const autosaveContext: ActiveGatewayExecutionContext = {
-            ...parentContext,
-            parentToolName,
-          };
-          await this.executionContextStorage.run(autosaveContext, () =>
-            this.execute('mama_save', input)
-          );
-          return;
-        }
-        await this.execute('mama_save', input);
-      } catch {
-        // Autosave is intentionally non-fatal for report/wiki publish tools.
-      }
-    })();
-    parentContext?.backgroundTasks?.register(task);
-    void task;
   }
 
   private async executeWithEnvelopeAndPermissions(
@@ -1541,7 +1626,7 @@ export class GatewayToolExecutor {
           );
         // Code-Act sandbox execution
         case 'code_act':
-          return await this.executeCodeAct(input as { code: string });
+          return await this.executeCodeAct(input as CodeActInput);
         // Obsidian vault management via CLI
         case 'obsidian':
           return await this.executeObsidian(
@@ -1677,7 +1762,7 @@ export class GatewayToolExecutor {
             model: string;
             tier: number;
             system?: string;
-            backend?: 'claude' | 'codex' | 'codex-mcp' | 'gemini';
+            backend?: 'claude' | 'codex' | 'codex-mcp';
           };
           const createError = validateManagedAgentCreateInput(
             createArgs as unknown as Record<string, unknown>
@@ -1802,21 +1887,78 @@ export class GatewayToolExecutor {
         case 'mama_save': {
           const saveInput = input as SaveInput;
           const api = await getApi();
+          let trustedOptions: TrustedMemoryWriteOptions | undefined;
+          let effectiveSaveInput = saveInput;
+          let hasContextPacketId: boolean;
+          try {
+            hasContextPacketId = getContextPacketIdForTrustedProvenance(saveInput) !== null;
+          } catch (error) {
+            if (error instanceof ContextPacketProvenanceError) {
+              return {
+                success: false,
+                code: 'context_packet_denied',
+                error: error.message,
+              };
+            }
+            throw error;
+          }
+          if (hasContextPacketId && !this.isMemoryDecisionSaveInput(saveInput)) {
+            return {
+              success: false,
+              code: 'context_packet_denied',
+              error: 'context_packet_id is only supported for trusted decision saves.',
+            };
+          }
+          if (this.isMemoryDecisionSaveInput(saveInput) && hasContextPacketId) {
+            if (!this.supportsTrustedSave(api)) {
+              return {
+                success: false,
+                code: 'context_packet_denied',
+                error: 'context_packet_id requires trusted save support.',
+              };
+            }
+            try {
+              const trustedBuild = await this.buildTrustedMemoryWriteOptions(
+                'mama_save',
+                gatewayCallId,
+                saveInput
+              );
+              trustedOptions = trustedBuild.options;
+              if (!Array.isArray(saveInput.scopes) && trustedBuild.contextPacketScopes) {
+                effectiveSaveInput = {
+                  ...saveInput,
+                  scopes: trustedBuild.contextPacketScopes,
+                };
+              }
+            } catch (error) {
+              if (error instanceof ContextPacketProvenanceError) {
+                return {
+                  success: false,
+                  code: 'context_packet_denied',
+                  error: error.message,
+                };
+              }
+              throw error;
+            }
+          } else if (this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)) {
+            trustedOptions = (await this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId))
+              .options;
+          }
           return await handleSave(
             api,
-            saveInput,
+            effectiveSaveInput,
             this.sessionStore?.getHistory
               ? () => this.sessionStore!.getHistory!('current')
               : undefined,
-            this.isMemoryDecisionSaveInput(saveInput) && this.supportsTrustedSave(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_save', gatewayCallId)
-              : undefined
+            trustedOptions
           );
         }
         case 'mama_search':
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
+        case 'context_compile':
+          return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update':
           return await handleUpdate(await getApi(), input as UpdateInput);
         case 'mama_load_checkpoint':
@@ -1826,7 +1968,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaAdd(
             input as { content: string },
             this.supportsTrustedIngest(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)
+              ? (await this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)).options
               : undefined
           );
         }
@@ -1835,7 +1977,7 @@ export class GatewayToolExecutor {
           return await this.handleMamaIngest(
             input as { content: string; scopes?: unknown },
             this.supportsTrustedIngest(api)
-              ? this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)
+              ? (await this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)).options
               : undefined
           );
         }
@@ -1852,22 +1994,6 @@ export class GatewayToolExecutor {
           if (this.reportPublisher) {
             this.reportPublisher(slotsInput);
             const slotNames = Object.keys(slotsInput);
-
-            // Persist report summary to mama memory for Conductor querying
-            const slotValues = Object.values(slotsInput).join(' ');
-            const textSummary = slotValues
-              .replace(/<[^>]+>/g, ' ')
-              .replace(/\s+/g, ' ')
-              .trim();
-            const truncated =
-              textSummary.length > 1500 ? textSummary.substring(0, 1500) + '...' : textSummary;
-            this.auditedAutoSave('report_publish', {
-              type: 'decision' as const,
-              topic: 'dashboard_briefing',
-              decision: `Dashboard briefing (${new Date().toISOString().split('T')[0]}): ${truncated}`,
-              reasoning: 'Auto-saved by dashboard agent after report_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            });
 
             return {
               success: true,
@@ -1908,23 +2034,6 @@ export class GatewayToolExecutor {
               confidence: p.confidence || 'medium',
             }));
             this.wikiPublisher(wikiPages);
-
-            // Persist wiki compilation summary to mama memory for Conductor querying
-            const pageSummary = pagesInput
-              .slice(0, 20)
-              .map(
-                (p: { title?: string; path: string; type?: string }) =>
-                  `- ${p.title || p.path} (${p.type || 'page'})`
-              )
-              .join('\n');
-            const wikiSummary = `Wiki compilation (${now.split('T')[0]}): ${pagesInput.length} pages\n${pageSummary}`;
-            this.auditedAutoSave('wiki_publish', {
-              type: 'decision' as const,
-              topic: 'wiki_compilation',
-              decision: wikiSummary,
-              reasoning: 'Auto-saved by wiki agent after wiki_publish',
-              scopes: [{ kind: 'global', id: 'system' }],
-            });
 
             return {
               success: true,
@@ -3378,13 +3487,134 @@ export class GatewayToolExecutor {
     }
   }
 
-  private async executeCodeAct(input: { code: string }): Promise<GatewayToolResult> {
+  private resolveCodeActSandboxRole(
+    input: CodeActInput,
+    activeRole: RoleConfig | undefined,
+    registryNames: string[]
+  ): CodeActSandboxRoleResolution {
+    const allowedResolution = this.normalizeCodeActToolPatterns(
+      input.allowedTools,
+      'allowedTools',
+      registryNames
+    );
+    if (allowedResolution.error) {
+      return { error: allowedResolution.error };
+    }
+
+    const blockedResolution = this.normalizeCodeActToolPatterns(
+      input.blockedTools,
+      'blockedTools',
+      registryNames
+    );
+    if (blockedResolution.error) {
+      return { error: blockedResolution.error };
+    }
+
+    if (!activeRole && !allowedResolution.patterns && !blockedResolution.patterns) {
+      return {};
+    }
+
+    let effectiveToolNames = activeRole
+      ? registryNames.filter((toolName) => this.roleManager.isToolAllowed(activeRole, toolName))
+      : [...registryNames];
+
+    const allowedPatterns = allowedResolution.patterns;
+    if (allowedPatterns) {
+      effectiveToolNames = effectiveToolNames.filter((toolName) =>
+        this.matchesAnyCodeActToolPattern(toolName, allowedPatterns)
+      );
+    }
+
+    const blockedPatterns = blockedResolution.patterns;
+    if (blockedPatterns) {
+      effectiveToolNames = effectiveToolNames.filter(
+        (toolName) => !this.matchesAnyCodeActToolPattern(toolName, blockedPatterns)
+      );
+    }
+
+    return {
+      role: {
+        ...activeRole,
+        allowedTools: effectiveToolNames,
+        blockedTools: undefined,
+        allowedPaths: activeRole?.allowedPaths ?? [],
+        systemControl: activeRole?.systemControl ?? false,
+        sensitiveAccess: activeRole?.sensitiveAccess ?? false,
+      },
+    };
+  }
+
+  private normalizeCodeActToolPatterns(
+    value: unknown,
+    fieldName: 'allowedTools' | 'blockedTools',
+    registryNames: string[]
+  ): CodeActToolPatternResolution {
+    if (value === undefined) {
+      return {};
+    }
+    if (!Array.isArray(value)) {
+      return { error: `${fieldName} must be an array of gateway tool names.` };
+    }
+
+    const patterns: string[] = [];
+    const seen = new Set<string>();
+    for (const item of value) {
+      if (typeof item !== 'string' || item.trim().length === 0) {
+        return { error: `${fieldName} must contain non-empty gateway tool names.` };
+      }
+      const pattern = item.trim();
+      if (seen.has(pattern)) {
+        continue;
+      }
+      if (!this.isKnownCodeActToolPattern(pattern, registryNames)) {
+        return { error: `Unknown Code-Act tool pattern in ${fieldName}: ${pattern}` };
+      }
+      seen.add(pattern);
+      patterns.push(pattern);
+    }
+
+    return { patterns };
+  }
+
+  private isKnownCodeActToolPattern(pattern: string, registryNames: string[]): boolean {
+    return (
+      pattern === '*' ||
+      registryNames.some((toolName) => this.matchesCodeActToolPattern(toolName, pattern))
+    );
+  }
+
+  private matchesAnyCodeActToolPattern(toolName: string, patterns: string[]): boolean {
+    return patterns.some((pattern) => this.matchesCodeActToolPattern(toolName, pattern));
+  }
+
+  private matchesCodeActToolPattern(toolName: string, pattern: string): boolean {
+    return this.roleManager.isToolAllowed(
+      {
+        allowedTools: [pattern],
+        allowedPaths: [],
+        systemControl: false,
+        sensitiveAccess: false,
+      },
+      toolName
+    );
+  }
+
+  private async executeCodeAct(input: CodeActInput): Promise<GatewayToolResult> {
     const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
-    const bridge = new HostBridge(this);
     const context = this.getActiveContext();
     const tier = (context?.tier ?? 1) as 1 | 2 | 3;
-    bridge.injectInto(sandbox, tier, context?.role);
+    const registryNames = HostBridge.getToolRegistry().map((meta) => meta.name);
+    const sandboxRole = this.resolveCodeActSandboxRole(input, context?.role, registryNames);
+    if (sandboxRole.error) {
+      return {
+        success: false,
+        error: sandboxRole.error,
+      } as GatewayToolResult;
+    }
+
+    const bridge = new HostBridge(this, this.roleManager);
+    bridge.injectInto(sandbox, tier, sandboxRole.role);
 
     const result = await sandbox.execute(input.code);
 
@@ -3458,15 +3688,20 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
 
-      const context = this.getActiveContext();
-      const fallbackScopes = context
-        ? deriveMemoryScopes({
-            source: context.source,
-            channelId: context.session.channelId,
-            userId: context.session.userId,
-            projectId: process.env.MAMA_WORKSPACE || process.cwd(),
-          })
-        : [];
+      const activeState = this.getExecutionState();
+      const context = activeState.agentContext;
+      const envelopeScopes = activeState.envelope?.scope.memory_scopes ?? null;
+      const fallbackScopes =
+        envelopeScopes && envelopeScopes.length > 0
+          ? envelopeScopes
+          : context
+            ? deriveMemoryScopes({
+                source: context.source,
+                channelId: context.session.channelId,
+                userId: context.session.userId,
+                projectId: process.env.MAMA_WORKSPACE || process.cwd(),
+              })
+            : [];
 
       let scopes = fallbackScopes;
       if (Array.isArray(input.scopes) && input.scopes.length > 0) {
@@ -3561,6 +3796,61 @@ export class GatewayToolExecutor {
   static isValidTool(toolName: string): toolName is GatewayToolName {
     return VALID_TOOLS.includes(toolName as GatewayToolName);
   }
+
+  private async handleContextCompile(input: ContextCompileInput): Promise<GatewayToolResult> {
+    if (!this.contextCompileService) {
+      return {
+        success: false,
+        code: 'context_compile_unavailable',
+        error: 'context_compile service is not available.',
+      } as GatewayToolResult;
+    }
+
+    const ctx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    // Fail closed: a Tier-3 designation in either source must block the call,
+    // otherwise a non-Tier-3 fallback could mask a Tier-3 envelope.
+    if (ctx?.agentContext?.tier === 3 || ctx?.envelope?.tier === 3) {
+      return {
+        success: false,
+        code: 'permission_denied_tier3',
+        error: 'context_compile is not allowed for Tier 3 agents.',
+      } as GatewayToolResult;
+    }
+    if (!ctx?.envelope) {
+      return {
+        success: false,
+        code: 'envelope_missing',
+        error: 'context_compile requires an active worker envelope.',
+      } as GatewayToolResult;
+    }
+
+    try {
+      const result = await this.contextCompileService.compileAndPersistContext({
+        caller: 'gateway',
+        envelope: ctx.envelope,
+        modelRunId: ctx.modelRunId ?? null,
+        input,
+      });
+      return {
+        success: true,
+        packet: result.packet,
+        packet_id: result.packet.packet_id,
+        model_run_id: result.modelRunId,
+        parent_model_run_id: result.parentModelRunId,
+      } as GatewayToolResult;
+    } catch (err) {
+      const errorRecord =
+        err && typeof err === 'object' ? (err as { code?: unknown; details?: unknown }) : undefined;
+      const code =
+        typeof errorRecord?.code === 'string' ? errorRecord.code : 'context_compile_failed';
+      return {
+        success: false,
+        code,
+        error: `context_compile failed: ${err instanceof Error ? err.message : String(err)}`,
+        ...(errorRecord && 'details' in errorRecord ? { details: errorRecord.details } : {}),
+      } as GatewayToolResult;
+    }
+  }
 }
 
 function isTruthyEnv(name: string): boolean {
@@ -3618,6 +3908,62 @@ function getTrustedProvenanceRuntime(): TrustedProvenanceRuntime {
     lastError instanceof Error ? lastError : undefined,
     false
   );
+}
+
+async function getContextPacketLookupAdapter(): Promise<ContextPacketLookupAdapter> {
+  try {
+    const dbManager = (await import('@jungjaehoon/mama-core/db-manager')) as {
+      getAdapter: () => ContextPacketLookupAdapter;
+      initDB?: () => Promise<unknown>;
+    };
+    try {
+      return dbManager.getAdapter();
+    } catch (error) {
+      if (typeof dbManager.initDB !== 'function') {
+        throw error;
+      }
+      await dbManager.initDB();
+      return dbManager.getAdapter();
+    }
+  } catch (error) {
+    throw new ContextPacketProvenanceError(
+      `Context packet store unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function hasContextPacketIdInput(
+  input: SaveInput | { context_packet_id?: unknown } | undefined
+): boolean {
+  if (!input || !('context_packet_id' in input)) {
+    return false;
+  }
+  const value = (input as { context_packet_id?: unknown }).context_packet_id;
+  return value !== undefined && value !== null;
+}
+
+function getContextPacketIdForTrustedProvenance(
+  input: SaveInput | { context_packet_id?: unknown } | undefined
+): string | null {
+  if (!input || !('context_packet_id' in input)) {
+    return null;
+  }
+  const value = (input as { context_packet_id?: unknown }).context_packet_id;
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw new ContextPacketProvenanceError('context_packet_id must be a string when provided.');
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw new ContextPacketProvenanceError('context_packet_id must not be empty when provided.');
+  }
+  return trimmed;
+}
+
+function dedupeSourceRefs(refs: string[]): string[] {
+  return [...new Set(refs)];
 }
 
 function normalizeMemoryScopes(value: unknown): MemoryScope[] | null {

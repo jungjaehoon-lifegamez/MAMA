@@ -63,6 +63,12 @@ export interface CodeActResult {
   metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
 }
 
+export interface CodeActExecutionContext {
+  agentId?: string;
+  allowedTools?: string[];
+  blockedTools?: string[];
+}
+
 export interface GraphHandlerOptions {
   getAgentStates?: () => Map<string, string>;
   getSwarmTasks?: (limit: number) => SwarmTask[];
@@ -70,7 +76,7 @@ export interface GraphHandlerOptions {
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   stopMultiAgentAgent?: (agentId: string) => Promise<void>;
-  executeCodeAct?: (code: string) => Promise<CodeActResult>;
+  executeCodeAct?: (code: string, context?: CodeActExecutionContext) => Promise<CodeActResult>;
   healthService?: { compute(windowMs?: number): unknown };
   healthCheckService?: {
     check(): Promise<import('../observability/health-check.js').SystemHealthReport>;

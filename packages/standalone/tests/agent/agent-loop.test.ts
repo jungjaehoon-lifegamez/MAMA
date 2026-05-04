@@ -7,9 +7,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentLoop, getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
 import type { OAuthManager } from '../../src/auth/index.js';
-import type { AgentContext, MAMAApiInterface } from '../../src/agent/types.js';
+import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
-const { laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
+const { codexRuntimeProcessMock, laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
+  codexRuntimeProcessMock: vi.fn(),
   laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
 }));
 
@@ -18,6 +20,7 @@ const persistentPromptMock = vi.fn().mockResolvedValue({
   usage: { input_tokens: 10, output_tokens: 5 },
   session_id: 'test-session',
 });
+const persistentSetSystemPromptMock = vi.fn();
 const gatewayExecutorSetAgentContextMock = vi.fn();
 const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
 const gatewayExecutorClearCurrentAgentContextMock = vi.fn();
@@ -59,9 +62,24 @@ vi.mock('../../src/agent/persistent-cli-adapter.js', () => {
   return {
     PersistentCLIAdapter: vi.fn().mockImplementation(() => ({
       prompt: persistentPromptMock,
+      setSystemPrompt: persistentSetSystemPromptMock,
       setSessionId: vi.fn(),
       close: vi.fn(),
     })),
+  };
+});
+
+vi.mock('../../src/multi-agent/runtime-process.js', () => {
+  return {
+    CodexRuntimeProcess: vi.fn().mockImplementation((options) => {
+      codexRuntimeProcessMock(options);
+      return {
+        prompt: persistentPromptMock,
+        setSystemPrompt: persistentSetSystemPromptMock,
+        setSessionId: vi.fn(),
+        stop: vi.fn(),
+      };
+    }),
   };
 });
 
@@ -165,6 +183,7 @@ describe('AgentLoop', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    codexRuntimeProcessMock.mockClear();
     persistentPromptMock.mockClear();
     gatewayExecutorSetAgentContextMock.mockClear();
     gatewayExecutorSetCurrentAgentContextMock.mockClear();
@@ -177,6 +196,7 @@ describe('AgentLoop', () => {
     gatewayExecutorCommitRuntimeModelRunMock.mockClear();
     gatewayExecutorFailRuntimeModelRunMock.mockClear();
     laneManagerEnqueueWithSessionMock.mockClear();
+    persistentSetSystemPromptMock.mockClear();
   });
 
   describe('run()', () => {
@@ -252,6 +272,34 @@ describe('AgentLoop', () => {
       });
 
       expect(gatewayExecutorSetCurrentAgentContextMock).not.toHaveBeenCalled();
+    });
+
+    it('binds envelope agent and instance ids to parent model runs', async () => {
+      const envelope = makeSignedEnvelope({
+        agent_id: 'worker',
+        instance_id: 'inst_context_compile_parent',
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {},
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('Compile context', {
+        source: 'telegram',
+        channelId: '7026976631',
+        agentContext: createChatBotContext(),
+        envelope,
+      });
+
+      expect(gatewayExecutorBeginRuntimeModelRunMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agent_id: 'worker',
+          instance_id: 'inst_context_compile_parent',
+          envelope_hash: envelope.envelope_hash,
+        })
+      );
     });
 
     it('should not clear shared gateway executor routing state when agentContext is absent', async () => {
@@ -373,6 +421,94 @@ describe('AgentLoop', () => {
     it('should expose the full gateway tools prompt', () => {
       expect(getGatewayToolsPrompt()).toContain('# Gateway Tools');
       expect(getGatewayToolsPrompt()).toContain('mama_search');
+    });
+
+    it('filters role-blocked gateway tools out of Code-Act declarations', async () => {
+      const { PersistentCLIAdapter } = await import('../../src/agent/persistent-cli-adapter.js');
+      const adapterMock = PersistentCLIAdapter as unknown as ReturnType<typeof vi.fn>;
+      adapterMock.mockClear();
+
+      new AgentLoop(
+        createMockOAuthManager(),
+        {
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          agentContext: {
+            ...createChatBotContext(),
+            role: {
+              ...createChatBotContext().role,
+              allowedTools: ['*'],
+              blockedTools: ['mama_save'],
+            },
+          },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const callOptions = adapterMock.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
+      expect(callOptions.systemPrompt).toContain('declare function mama_search');
+      expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('expands blocked-only roles before generating Code-Act declarations', async () => {
+      const { PersistentCLIAdapter } = await import('../../src/agent/persistent-cli-adapter.js');
+      const adapterMock = PersistentCLIAdapter as unknown as ReturnType<typeof vi.fn>;
+      adapterMock.mockClear();
+
+      new AgentLoop(
+        createMockOAuthManager(),
+        {
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          agentContext: {
+            ...createChatBotContext(),
+            role: {
+              ...createChatBotContext().role,
+              allowedTools: undefined as unknown as string[],
+              blockedTools: ['mama_save'],
+            },
+          },
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const callOptions = adapterMock.mock.calls.at(-1)?.[0] as { systemPrompt?: string };
+      expect(callOptions.systemPrompt).toContain('declare function mama_search');
+      expect(callOptions.systemPrompt).not.toContain('declare function mama_save');
+    });
+
+    it('passes explicit MCP config paths into single-agent Codex runtime sessions', () => {
+      const options = {
+        backend: 'codex-mcp',
+        model: 'gpt-5.3-codex',
+        systemPrompt: 'base prompt',
+        mcpConfigPath: '/tmp/code-act-only.json',
+      } as AgentLoopOptions & { mcpConfigPath: string };
+
+      new AgentLoop(createMockOAuthManager(), options, {}, { mamaApi: createMockApi() });
+
+      expect(codexRuntimeProcessMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mcpConfigPath: '/tmp/code-act-only.json',
+        })
+      );
+    });
+
+    it('restores the default system prompt when a message override is cleared', () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { systemPrompt: 'default prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      agentLoop.setSystemPrompt('override prompt');
+      agentLoop.setSystemPrompt(undefined);
+
+      expect(persistentSetSystemPromptMock).toHaveBeenNthCalledWith(1, 'override prompt');
+      expect(persistentSetSystemPromptMock.mock.calls[1]?.[0]).toContain('default prompt');
     });
   });
 

@@ -153,6 +153,47 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
       expect(provenance?.provenance).not.toHaveProperty('result');
       expect(provenance?.provenance).not.toHaveProperty('unsupported_field');
     });
+
+    it('preserves trusted context_packet_id in compact provenance only', async () => {
+      const capability = createTrustedProvenanceCapability();
+
+      const result = await saveMemoryWithTrustedProvenance(
+        {
+          topic: 'context_packet_provenance_contract',
+          kind: 'decision',
+          summary: 'Context packets can own downstream write provenance',
+          details: 'The packet id belongs in compact provenance, not source refs',
+          scopes: [PROJECT_SCOPE],
+          source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+        },
+        {
+          capability,
+          provenance: {
+            actor: 'main_agent',
+            envelope_hash: 'env_context_packet',
+            model_run_id: 'mr_parent_context_packet',
+            tool_name: 'mama_save',
+            gateway_call_id: 'gw_context_packet',
+            context_packet_id: 'ctxp_trusted_packet',
+            source_refs: ['memory:mem-1'],
+          },
+        }
+      );
+
+      const provenance = await getMemoryProvenance(result.id);
+      expect(provenance?.provenance).toMatchObject({
+        context_packet_id: 'ctxp_trusted_packet',
+      });
+      expect(provenance?.source_refs).toEqual(['memory:mem-1']);
+
+      const row = getAdapter()
+        .prepare('SELECT source_refs_json, provenance_json FROM decisions WHERE id = ?')
+        .get(result.id) as { source_refs_json: string; provenance_json: string };
+      expect(JSON.parse(row.source_refs_json)).toEqual(['memory:mem-1']);
+      expect(JSON.parse(row.provenance_json)).toMatchObject({
+        context_packet_id: 'ctxp_trusted_packet',
+      });
+    });
   });
 
   describe('AC: direct public writes get honest fallback provenance', () => {
@@ -181,12 +222,17 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
         reasoning: 'Only internal trusted options can set provenance ids',
         confidence: 0.8,
         scopes: [PROJECT_SCOPE],
-        provenance: { envelope_hash: 'attacker_env', gateway_call_id: 'attacker_gw' },
+        provenance: {
+          envelope_hash: 'attacker_env',
+          gateway_call_id: 'attacker_gw',
+          context_packet_id: 'ctxp_attacker',
+        },
       } as never);
 
       const provenance = await getMemoryProvenance(result.id);
       expect(provenance?.envelope_hash).toBeNull();
       expect(provenance?.gateway_call_id).toBeNull();
+      expect(provenance?.provenance).not.toHaveProperty('context_packet_id');
       expect(provenance?.latest_event?.actor).toBe('actor:direct_client');
     });
 

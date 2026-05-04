@@ -27,6 +27,7 @@ import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
 import { TypeDefinitionGenerator, getCodeActInstructions } from '../agent/code-act/index.js';
+import { HostBridge } from '../agent/code-act/host-bridge.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -46,6 +47,53 @@ function resolvePath(path: string): string {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
+}
+
+function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
+  if (pattern === '*') {
+    return true;
+  }
+  if (pattern.endsWith('*')) {
+    return toolName.startsWith(pattern.slice(0, -1));
+  }
+  return pattern === toolName;
+}
+
+function safeConfigId(agentId: string): string {
+  return agentId.replace(/[^a-zA-Z0-9_.-]/g, '_');
+}
+
+function codeActBlockedTools(agentConfig: Omit<AgentPersonaConfig, 'id'>): string[] | undefined {
+  return agentConfig.gateway_tool_permissions?.blocked ?? agentConfig.tool_permissions?.blocked;
+}
+
+function withCodeActPolicyEnv(
+  entry: unknown,
+  agentId: string,
+  allowedTools: string[] | undefined,
+  blockedTools: string[] | undefined
+): unknown {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    return entry;
+  }
+  const current = entry as Record<string, unknown>;
+  const currentEnv =
+    current.env && typeof current.env === 'object' && !Array.isArray(current.env)
+      ? (current.env as Record<string, unknown>)
+      : {};
+  return {
+    ...current,
+    env: {
+      ...currentEnv,
+      MAMA_CODE_ACT_AGENT_ID: agentId,
+      ...(allowedTools !== undefined
+        ? { MAMA_CODE_ACT_ALLOWED_TOOLS: JSON.stringify(allowedTools) }
+        : {}),
+      ...(blockedTools !== undefined
+        ? { MAMA_CODE_ACT_BLOCKED_TOOLS: JSON.stringify(blockedTools) }
+        : {}),
+    },
+  };
 }
 
 /**
@@ -154,12 +202,12 @@ export class AgentProcessManager extends EventEmitter {
   private getAgentBackend(
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     agentId?: string
-  ): 'claude' | 'codex-mcp' | 'gemini' {
+  ): 'claude' | 'codex' | 'codex-mcp' {
     const backend = agentConfig.backend ?? this.runtimeOptions.backend;
     if (!backend) {
       throw new Error(
         `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
-          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex-mcp'`
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'codex-mcp'`
       );
     }
     return backend;
@@ -263,26 +311,48 @@ export class AgentProcessManager extends EventEmitter {
     // (report_publish, wiki_publish) which are ONLY available inside code_act.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      if (agentConfig.useCodeAct) {
+      if (agentConfig?.useCodeAct) {
         // Code-Act agents: only provide code-act MCP server
-        const codeActOnlyConfig = resolve(homedir(), '.mama', 'code-act-only-mcp-config.json');
+        const codeActOnlyConfig = resolve(
+          homedir(),
+          '.mama',
+          `code-act-only-mcp-config-${safeConfigId(agentId)}.json`
+        );
         try {
           const fullConfig = JSON.parse(readFileSync(mcpConfigPath, 'utf-8')) as {
             mcpServers?: Record<string, unknown>;
           };
           const codeActEntry = fullConfig.mcpServers?.['code-act'];
           if (codeActEntry) {
+            const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
+            const blockedTools = codeActBlockedTools(agentConfig);
             writeFileSync(
               codeActOnlyConfig,
-              JSON.stringify({ mcpServers: { 'code-act': codeActEntry } }, null, 2),
+              JSON.stringify(
+                {
+                  mcpServers: {
+                    'code-act': withCodeActPolicyEnv(
+                      codeActEntry,
+                      agentId,
+                      allowedTools,
+                      blockedTools
+                    ),
+                  },
+                },
+                null,
+                2
+              ),
               'utf-8'
             );
             options.mcpConfigPath = codeActOnlyConfig;
           } else {
-            options.mcpConfigPath = mcpConfigPath;
+            throw new Error(`Missing mcpServers["code-act"] in ${mcpConfigPath}`);
           }
-        } catch {
-          options.mcpConfigPath = mcpConfigPath;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Code-Act MCP config unavailable for agent "${agentId}" at ${mcpConfigPath}: ${message}`
+          );
         }
       } else {
         options.mcpConfigPath = mcpConfigPath;
@@ -310,7 +380,7 @@ export class AgentProcessManager extends EventEmitter {
 
     // Code-Act: available as optional tool alongside direct tools (no forced disallowedTools)
 
-    if (agentBackend === 'codex-mcp') {
+    if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
@@ -362,6 +432,7 @@ export class AgentProcessManager extends EventEmitter {
       sandbox: this.runtimeOptions.codexSandbox,
       command: this.runtimeOptions.codexCommand,
       requestTimeout: options.requestTimeout,
+      mcpConfigPath: options.mcpConfigPath,
     });
   }
 
@@ -552,7 +623,7 @@ export class AgentProcessManager extends EventEmitter {
     const bmadBlock = includeBmadBlock ? await this.buildBmadBlock() : '';
     const bmadMs = includeBmadBlock ? Date.now() - bmadStart : 0;
 
-    const skillsPrompt = this.buildSkillsPrompt();
+    const skillsPrompt = this.buildSkillsPrompt(agentId, agentConfig);
     const agentBackend = this.getAgentBackend(agentConfig, agentId);
     const backendAgentsMd = loadBackendAgentsMd(agentBackend);
 
@@ -590,10 +661,17 @@ ${skillsPrompt}## Guidelines
     const tier = agentConfig.tier ?? 1;
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
-      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3);
+      const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
+      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3, allowedTools);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
-      const codeActBackend = backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
-      return getCodeActInstructions(codeActBackend) + '\n```typescript\n' + typeDefs + '\n```\n';
+      const codeActBackend =
+        backend === 'codex' || backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+      return (
+        getCodeActInstructions(codeActBackend, allowedTools) +
+        '\n```typescript\n' +
+        typeDefs +
+        '\n```\n'
+      );
     }
 
     // Per-agent tool filtering via ToolRegistry (STORY-018)
@@ -604,6 +682,61 @@ ${skillsPrompt}## Guidelines
 
     // Default: full gateway tools from gateway-tools.md
     return getGatewayToolsPrompt();
+  }
+
+  private deriveCodeActAllowedTools(
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): string[] | undefined {
+    const explicitGatewayAllowed = agentConfig.gateway_tool_permissions?.allowed;
+    if (explicitGatewayAllowed) {
+      return this.filterCodeActAllowedTools(
+        explicitGatewayAllowed,
+        agentConfig.gateway_tool_permissions?.blocked
+      );
+    }
+
+    const explicitGatewayBlocked = agentConfig.gateway_tool_permissions?.blocked;
+    if (explicitGatewayBlocked) {
+      const allGatewayTools = HostBridge.getToolRegistry().map((meta) => meta.name);
+      return this.filterCodeActAllowedTools(allGatewayTools, explicitGatewayBlocked);
+    }
+
+    const cliAllowed = agentConfig.tool_permissions?.allowed;
+    if (cliAllowed) {
+      return this.filterCodeActAllowedTools(cliAllowed, agentConfig.tool_permissions?.blocked);
+    }
+
+    const cliBlocked = agentConfig.tool_permissions?.blocked;
+    if (cliBlocked) {
+      const allGatewayTools = HostBridge.getToolRegistry().map((meta) => meta.name);
+      return this.filterCodeActAllowedTools(allGatewayTools, cliBlocked);
+    }
+
+    return undefined;
+  }
+
+  private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {
+    if (blockedTools?.includes('*')) {
+      return [];
+    }
+    if (allowedTools.includes('*') && !blockedTools?.length) {
+      return ['*'];
+    }
+    const registry = HostBridge.getToolRegistry();
+    const allowedNames = allowedTools.includes('*')
+      ? registry.map((meta) => meta.name)
+      : registry
+          .filter((meta) =>
+            allowedTools.some((pattern) => matchCodeActToolPattern(pattern, meta.name))
+          )
+          .map((meta) => meta.name);
+
+    if (!blockedTools?.length) {
+      return allowedNames;
+    }
+    return allowedNames.filter(
+      (toolName) => !blockedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
+    );
   }
 
   private shouldTracePrompt(agentId: string): boolean {
@@ -672,7 +805,10 @@ ${skillsPrompt}## Guidelines
   /**
    * Build installed skills prompt section
    */
-  private buildSkillsPrompt(): string {
+  private buildSkillsPrompt(agentId: string, agentConfig: Omit<AgentPersonaConfig, 'id'>): string {
+    if (this.shouldOmitSkillCatalog(agentId, agentConfig)) {
+      return '';
+    }
     const skillCatalog = filterSkillCatalogForContext(loadInstalledSkills(), null);
     if (skillCatalog.length === 0) return '';
 
@@ -683,6 +819,23 @@ The full skill instructions will be provided automatically when matched.
 
 ${skillCatalog.join('\n')}
 `;
+  }
+
+  private shouldOmitSkillCatalog(
+    agentId: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>
+  ): boolean {
+    const systemAutomationAgents = new Set([
+      'conductor',
+      'dashboard-agent',
+      'wiki-agent',
+      'memory',
+      'memory-agent',
+    ]);
+    if (systemAutomationAgents.has(agentId.toLowerCase())) {
+      return true;
+    }
+    return agentConfig.can_delegate === false && agentConfig.useCodeAct === true;
   }
 
   /**
@@ -859,7 +1012,7 @@ Respond to messages in a helpful and professional manner.
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
       persona_file: '', // inline system prompt, no file
-      backend: agentDef.backend as 'claude' | 'codex-mcp' | 'gemini',
+      backend: agentDef.backend as 'claude' | 'codex' | 'codex-mcp',
       model: agentDef.model,
       tier: agentDef.tier ?? 1,
       tool_permissions: agentDef.tool_permissions,

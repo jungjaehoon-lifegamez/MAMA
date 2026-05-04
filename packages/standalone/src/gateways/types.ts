@@ -157,7 +157,7 @@ export interface MessageRouterConfig {
   /** Target language for auto-translation prompts (default: Korean) */
   translationTargetLanguage?: string;
   /** Backend type for backend-specific AGENTS.md injection */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex' | 'codex-mcp';
 }
 
 /**
