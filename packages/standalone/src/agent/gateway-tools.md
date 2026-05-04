@@ -11,7 +11,7 @@ Call tools via JSON block:
 - **mama_save**(type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?) — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context.
 - **mama_search**(query?, type?, limit?, scopes?, strict?, strictness?, threshold?, disableRecency?, includeRelated?, topicPrefix?, minLexicalSupport?, diagnostics?) — Search decisions
 - **mama_recall**(query, scopes?, includeProfile?) — Recall memory bundle with profile, memories, and graph context
-- **context_compile**(task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?) — Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3/read-only agents.
+- **context_compile**(task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?) — Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3 agents.
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
 - **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku

@@ -130,6 +130,46 @@ describe('PollingScheduler', () => {
       expect(notionItems[0]?.sourceId).toBe('notion-stored');
     });
 
+    it('binds configured project scope before saving raw rows and raw index inputs', async () => {
+      const rawIndexSink = vi.fn().mockResolvedValue(undefined);
+      const scheduler = new PollingScheduler(rawStore, tmpDir, { rawIndexSink });
+      const registry = new ConnectorRegistry();
+      const item = makeItem('scoped-raw', new Date('2026-04-07T10:00:00Z'));
+      item.source = 'slack';
+      item.channel = 'general';
+      registry.register('slack', makeMockConnector('slack', [item]));
+
+      const channelConfigs = {
+        slack: {
+          general: {
+            role: 'hub' as const,
+            project_entity_id: 'project_tinklestar',
+          },
+        },
+      };
+
+      await scheduler.pollAll(registry, channelConfigs, vi.fn());
+
+      const stored = rawStore.query('slack', new Date(0));
+      expect(stored[0]).toMatchObject({
+        sourceId: 'scoped-raw',
+        projectId: 'project_tinklestar',
+        memoryScopeKind: 'project',
+        memoryScopeId: 'project_tinklestar',
+      });
+      expect(rawIndexSink).toHaveBeenCalledWith(
+        'slack',
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceId: 'scoped-raw',
+            projectId: 'project_tinklestar',
+            memoryScopeKind: 'project',
+            memoryScopeId: 'project_tinklestar',
+          }),
+        ])
+      );
+    });
+
     it('startBatch fires initial poll and sets interval', async () => {
       const onBatchExtract = vi.fn().mockResolvedValue(undefined);
       const scheduler = new PollingScheduler(rawStore, tmpDir);

@@ -689,6 +689,14 @@ export function readRawCandidates(
   const connectors = effectiveInput.connectors ?? [];
   const scopes = effectiveInput.scopes ?? [];
   const projectIds = (effectiveInput.project_refs ?? []).map((project) => project.id);
+  const hasGlobalSystemScope = scopes.some(
+    (scope) => scope.kind === 'global' && scope.id === 'system'
+  );
+  const hasScopedVisibility =
+    scopes.some((scope) => !(scope.kind === 'global' && scope.id === 'system')) ||
+    projectIds.length > 0 ||
+    Boolean(effectiveInput.tenant_id);
+  const includesLegacyGlobalSystem = hasGlobalSystemScope && !hasScopedVisibility;
   if (
     connectors.length === 0 ||
     scopes.length === 0 ||
@@ -700,16 +708,24 @@ export function readRawCandidates(
   const clauses = [`source_connector IN (${placeholders(connectors)})`];
   const params: unknown[] = [...connectors];
   if (projectIds.length > 0) {
-    clauses.push(`project_id IN (${placeholders(projectIds)})`);
+    const projectMatches = [`project_id IN (${placeholders(projectIds)})`];
+    if (includesLegacyGlobalSystem) {
+      projectMatches.push('project_id IS NULL');
+    }
+    clauses.push(`(${projectMatches.join(' OR ')})`);
     params.push(...projectIds);
   }
   if (effectiveInput.tenant_id) {
-    clauses.push('tenant_id = ?');
+    clauses.push(
+      includesLegacyGlobalSystem ? '(tenant_id = ? OR tenant_id IS NULL)' : 'tenant_id = ?'
+    );
     params.push(effectiveInput.tenant_id);
   }
-  clauses.push(
-    `(${scopes.map(() => '(memory_scope_kind = ? AND memory_scope_id = ?)').join(' OR ')})`
-  );
+  const scopeMatches = scopes.map(() => '(memory_scope_kind = ? AND memory_scope_id = ?)');
+  if (includesLegacyGlobalSystem) {
+    scopeMatches.push('(memory_scope_kind IS NULL AND memory_scope_id IS NULL)');
+  }
+  clauses.push(`(${scopeMatches.join(' OR ')})`);
   for (const scope of scopes) {
     params.push(scope.kind, scope.id);
   }

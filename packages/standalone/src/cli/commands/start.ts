@@ -58,7 +58,7 @@ import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
-import { deriveMemoryScopes } from '../../memory/scope-context.js';
+import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
 import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
@@ -191,19 +191,101 @@ export function resolveCodeActAgentPolicy(
   if (agentConfig.useCodeAct !== true) {
     return { agentId, error: `Agent is not configured for Code-Act: ${agentId}` };
   }
+  const policy = deriveCodeActToolPolicy(requestContext, agentConfig);
+  if (!policy.allowedTools || policy.allowedTools.length === 0) {
+    // Fail closed: an agent that resolves to no allowed tools must be rejected
+    // rather than silently widened to wildcard access.
+    return {
+      agentId,
+      agentConfig,
+      policy,
+      error: `Agent has no allowed Code-Act tools: ${agentId}`,
+    };
+  }
   return {
     agentId,
     agentConfig,
-    policy: deriveCodeActToolPolicy(requestContext, agentConfig),
+    policy,
   };
+}
+
+export function resolveCodeActRawConnectors(
+  enabledConnectorNames: readonly string[] | undefined
+): string[] {
+  return [...new Set((enabledConnectorNames ?? []).map((name) => name.trim()).filter(Boolean))];
+}
+
+const CODE_ACT_RAW_MEMORY_SCOPE_LIMIT = 500;
+const MEMORY_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
+
+function isMemoryScopeKind(value: unknown): value is MemoryScopeRef['kind'] {
+  return typeof value === 'string' && MEMORY_SCOPE_KINDS.has(value);
+}
+
+function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[] {
+  const seen = new Set<string>();
+  const unique: MemoryScopeRef[] = [];
+  for (const scope of scopes) {
+    const id = scope.id.trim();
+    if (!id) {
+      continue;
+    }
+    const key = `${scope.kind}:${id}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push({ kind: scope.kind, id });
+  }
+  return unique;
+}
+
+export function resolveCodeActMemoryScopes(
+  baseScopes: readonly MemoryScopeRef[],
+  adapter?: Pick<DatabaseAdapter, 'prepare'>
+): MemoryScopeRef[] {
+  const scopes = [...baseScopes];
+  if (!adapter) {
+    return uniqueMemoryScopes(scopes);
+  }
+
+  try {
+    const rows = adapter
+      .prepare(
+        `
+          SELECT DISTINCT ms.kind AS kind, ms.external_id AS id
+          FROM memory_scopes ms
+          JOIN memory_scope_bindings msb ON msb.scope_id = ms.id
+          JOIN decisions d ON d.id = msb.memory_id
+          WHERE d.topic LIKE 'raw/%'
+            AND (d.status = 'active' OR d.status IS NULL)
+            AND d.superseded_by IS NULL
+          ORDER BY ms.kind, ms.external_id
+          LIMIT ?
+        `
+      )
+      .all(CODE_ACT_RAW_MEMORY_SCOPE_LIMIT) as Array<Record<string, unknown>>;
+    for (const row of rows) {
+      if (!isMemoryScopeKind(row.kind) || typeof row.id !== 'string') {
+        continue;
+      }
+      scopes.push({ kind: row.kind, id: row.id });
+    }
+  } catch {
+    return uniqueMemoryScopes(scopes);
+  }
+
+  return uniqueMemoryScopes(scopes);
 }
 
 function buildCodeActRole(policy: {
   allowedTools?: string[];
   blockedTools?: string[];
 }): RoleConfig {
+  // Caller (resolveCodeActAgentPolicy) rejects empty/undefined allowedTools, so
+  // here we honor the resolved policy verbatim instead of widening to wildcard.
   return {
-    allowedTools: policy.allowedTools ?? ['*'],
+    allowedTools: policy.allowedTools ?? [],
     blockedTools: policy.blockedTools,
     allowedPaths: [],
     systemControl: false,
@@ -584,6 +666,7 @@ export async function runAgentLoop(
     sessionsDb: db,
     uiCommandQueue,
   };
+  let codeActRawConnectors: string[] = [];
 
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
@@ -621,12 +704,15 @@ export async function runAgentLoop(
       if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
         const projectId = resolveReactiveProjectRoot(config, process.env);
         const projectRef = { kind: 'project' as const, id: projectId };
-        const memoryScopes = deriveMemoryScopes({
-          source: 'watch',
-          channelId: 'api:code-act',
-          userId: 'api',
-          projectId,
-        });
+        const memoryScopes = resolveCodeActMemoryScopes(
+          deriveMemoryScopes({
+            source: 'watch',
+            channelId: 'api:code-act',
+            userId: 'api',
+            projectId,
+          }),
+          getAdapter()
+        );
         const wallSeconds = Math.min(
           Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
           300
@@ -639,7 +725,7 @@ export async function runAgentLoop(
           trigger_context: { user_text: '<api-code-act invocation>' },
           scope: {
             project_refs: [projectRef],
-            raw_connectors: [],
+            raw_connectors: codeActRawConnectors,
             memory_scopes: memoryScopes,
             allowed_destinations: [],
           },
@@ -1007,6 +1093,7 @@ export async function runAgentLoop(
 
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } =
     await initConnectors(connectorExtractionFn);
+  codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
   // Inject rawStore into tool executor for agent_test connector data access
   if (rawStoreForApi) {

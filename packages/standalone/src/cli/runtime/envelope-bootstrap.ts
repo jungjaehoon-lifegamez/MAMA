@@ -2,7 +2,11 @@ import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
 import { applyEnvelopeTablesMigration } from '../../db/migrations/envelope-tables.js';
 import { EnvelopeAuthority } from '../../envelope/authority.js';
-import { loadEnvelopeSigningKeyFromEnv, makeEnvKeyLookup } from '../../envelope/key-provider.js';
+import {
+  loadEnvelopeSigningKeyFromEnv,
+  loadOrCreateLocalEnvelopeSigningKey,
+  makeEnvKeyLookup,
+} from '../../envelope/key-provider.js';
 import { createDefaultReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import type { EnvLike, ReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import { EnvelopeStore } from '../../envelope/store.js';
@@ -20,7 +24,11 @@ export interface RuntimeEnvelopeBootstrap {
 }
 
 function parseEnvelopeIssuanceMode(env: EnvLike): EnvelopeIssuanceMode {
-  const raw = env.MAMA_ENVELOPE_ISSUANCE?.trim().toLowerCase();
+  const configured = env.MAMA_ENVELOPE_ISSUANCE;
+  if (configured === undefined) {
+    return 'enabled';
+  }
+  const raw = configured.trim().toLowerCase();
   if (!raw || raw === 'off' || raw === 'false') {
     return 'off';
   }
@@ -45,7 +53,10 @@ export function buildRuntimeEnvelopeBootstrap(
     };
   }
 
-  const signingKey = loadEnvelopeSigningKeyFromEnv(env);
+  const signingKey =
+    issuance === 'required'
+      ? loadEnvelopeSigningKeyFromEnv(env)
+      : loadOrCreateLocalEnvelopeSigningKey(env);
   applyEnvelopeTablesMigration(db);
   const envelopeAuthority = new EnvelopeAuthority(
     new EnvelopeStore(db),

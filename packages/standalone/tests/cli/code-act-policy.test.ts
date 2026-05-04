@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   deriveCodeActToolPolicy,
+  resolveCodeActMemoryScopes,
+  resolveCodeActRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
 
@@ -115,5 +117,31 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     expect(resolved).toMatchObject({
       error: 'Agent is not configured for Code-Act: memory',
     });
+  });
+
+  it('uses enabled connector names as Code-Act raw connector visibility', () => {
+    expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
+  });
+
+  it('adds active raw-backed memory scopes to Code-Act context_compile envelopes', () => {
+    const adapter = {
+      prepare: () => ({
+        all: () => [
+          { kind: 'project', id: 'project_tinklestar' },
+          { kind: 'project', id: 'project_tinklestar' },
+          { kind: 'project', id: 'kakao:user_alpha' },
+          { kind: 'not-a-scope', id: 'ignored' },
+          { kind: 'project', id: '  ' },
+        ],
+      }),
+    };
+
+    expect(
+      resolveCodeActMemoryScopes([{ kind: 'global', id: 'system' }], adapter as never)
+    ).toEqual([
+      { kind: 'global', id: 'system' },
+      { kind: 'project', id: 'project_tinklestar' },
+      { kind: 'project', id: 'kakao:user_alpha' },
+    ]);
   });
 });
