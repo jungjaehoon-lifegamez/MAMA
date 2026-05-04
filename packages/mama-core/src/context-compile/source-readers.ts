@@ -461,15 +461,27 @@ function adapterScopedRecallMemory(
         ? 'LEFT JOIN memory_scopes ms ON ms.id = msb.scope_id'
         : 'JOIN memory_scopes ms ON ms.id = msb.scope_id'
     );
-    const scopeMatch = scopes.map(() => '(ms.kind = ? AND ms.external_id = ?)').join(' OR ');
+    // Records written before the 'global'/'system' alignment shipped with id
+    // 'global'. Match both ids when the request includes the global-system
+    // sentinel so legacy records remain visible.
+    const scopeClauses: string[] = [];
+    const scopeParams: unknown[] = [];
+    for (const scope of scopes) {
+      if (scope.kind === 'global' && scope.id === 'system') {
+        scopeClauses.push('(ms.kind = ? AND ms.external_id IN (?, ?))');
+        scopeParams.push('global', 'system', 'global');
+      } else {
+        scopeClauses.push('(ms.kind = ? AND ms.external_id = ?)');
+        scopeParams.push(scope.kind, scope.id);
+      }
+    }
+    const scopeMatch = scopeClauses.join(' OR ');
     where.push(
       includesLegacyGlobalSystem
         ? `((${scopeMatch}) OR NOT EXISTS (SELECT 1 FROM memory_scope_bindings legacy_msb WHERE legacy_msb.memory_id = d.id))`
         : `(${scopeMatch})`
     );
-    for (const scope of scopes) {
-      params.push(scope.kind, scope.id);
-    }
+    params.push(...scopeParams);
   }
   const lexicalWhere = memoryLexicalWhereClause(lexicalTokens);
   if (lexicalWhere) {
@@ -721,14 +733,24 @@ export function readRawCandidates(
     );
     params.push(effectiveInput.tenant_id);
   }
-  const scopeMatches = scopes.map(() => '(memory_scope_kind = ? AND memory_scope_id = ?)');
+  // Mirror the legacy global-id handling from readMemoryCandidates: rows
+  // saved before the alignment used memory_scope_id='global'.
+  const scopeMatches: string[] = [];
+  const scopeParams: unknown[] = [];
+  for (const scope of scopes) {
+    if (scope.kind === 'global' && scope.id === 'system') {
+      scopeMatches.push('(memory_scope_kind = ? AND memory_scope_id IN (?, ?))');
+      scopeParams.push('global', 'system', 'global');
+    } else {
+      scopeMatches.push('(memory_scope_kind = ? AND memory_scope_id = ?)');
+      scopeParams.push(scope.kind, scope.id);
+    }
+  }
   if (includesLegacyGlobalSystem) {
     scopeMatches.push('(memory_scope_kind IS NULL AND memory_scope_id IS NULL)');
   }
   clauses.push(`(${scopeMatches.join(' OR ')})`);
-  for (const scope of scopes) {
-    params.push(scope.kind, scope.id);
-  }
+  params.push(...scopeParams);
   const min = minVisibleTimeMs(effectiveInput);
   const max = maxVisibleTimeMs(effectiveInput);
   if (min !== null) {

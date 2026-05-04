@@ -164,6 +164,7 @@ describe('ConfigManager', () => {
         agent: { model: 'custom-model' },
         database: { path: '~/.test/db.sqlite' },
         logging: { level: 'info', file: '~/.test/logs/test.log' },
+        wiki: { enabled: true },
         multi_agent: {
           enabled: true,
           agents: {
@@ -186,6 +187,40 @@ describe('ConfigManager', () => {
       expect(loaded.multi_agent?.agents?.custom?.tool_permissions?.allowed).toEqual(['Read']);
       expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
       expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeDefined();
+    });
+
+    it('should skip wiki-agent backfill when config.wiki.enabled is not set', async () => {
+      // AC: wiki-agent runtime provisioning is gated on config.wiki.enabled, so
+      // the static backfill must not advertise it when wiki is disabled.
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const existingConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        logging: { level: 'info', file: '~/.test/logs/test.log' },
+        multi_agent: {
+          enabled: true,
+          agents: {
+            custom: {
+              name: 'Custom',
+              display_name: 'Custom',
+              trigger_prefix: '!custom',
+              persona_file: '~/.mama/personas/custom.md',
+              tier: 2,
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(existingConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
+      expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeUndefined();
     });
 
     it('should migrate legacy Code-Act system agent permissions on load', async () => {
