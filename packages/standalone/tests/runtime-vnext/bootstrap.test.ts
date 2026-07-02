@@ -54,6 +54,22 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       );
     });
 
+    it('falls back to runtime_vnext.enabled when runtime.vnext is null-like', () => {
+      expect(
+        resolveVNextRuntimeFlags(
+          {
+            runtime: { vnext: undefined },
+            runtime_vnext: { enabled: true },
+          },
+          {}
+        )
+      ).toEqual({
+        enabled: true,
+        mode: 'bootstrap',
+        source: 'config',
+      });
+    });
+
     it('publishes the PR1 startup allowlist and no-op primary operator placeholder', () => {
       const plan = buildVNextBootstrapPlan({
         enabled: true,
