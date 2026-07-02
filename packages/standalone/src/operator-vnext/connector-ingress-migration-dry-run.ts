@@ -38,10 +38,23 @@ export type ConnectorIngressMigrationDryRunProvider = (
   input: ConnectorEventIngressScope & { limit?: number }
 ) => ConnectorIngressMigrationDryRun;
 
+function positiveDryRunLimit(value: number | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('limit must be a positive integer');
+  }
+  return value;
+}
+
 export function buildConnectorIngressMigrationDryRun(
   input: ConnectorEventIngressPreviewInput
 ): ConnectorIngressMigrationDryRun {
-  const preview = buildConnectorEventIngressPreview(input);
+  const preview = buildConnectorEventIngressPreview({
+    ...input,
+    limit: positiveDryRunLimit(input.limit),
+  });
   const candidates = preview.events.map((event): ConnectorIngressMigrationDryRunCandidate => {
     return {
       seq: event.seq,
