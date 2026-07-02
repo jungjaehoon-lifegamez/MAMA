@@ -4,7 +4,10 @@ process.env.MAMA_FORCE_TIER_3 ||= 'true';
 
 import Database from '../../src/sqlite.js';
 import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
-import { createWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
+import {
+  createWikiPublishAdapter,
+  isVNextWikiPublishAdapter,
+} from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 describe('Story PR4.2: Wiki Publish Adapter', () => {
   describe('AC #1: legacy compatibility, vNext storage, and validation', () => {
@@ -360,6 +363,62 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
       ]);
 
       db.close();
+    });
+
+    it('keeps legacy adapters out of vNext even if callers try to mutate runtime state', () => {
+      const adapter = createWikiPublishAdapter({
+        mode: 'legacy',
+        publisher: vi.fn(),
+      });
+
+      expect(Reflect.set(adapter, 'mode', 'vnext')).toBe(false);
+      expect(() => {
+        Object.defineProperty(adapter, Symbol('mama.wikiPublishAdapter.mode'), {
+          value: 'vnext',
+        });
+      }).toThrow();
+
+      expect(adapter.mode).toBe('legacy');
+      expect(isVNextWikiPublishAdapter(adapter)).toBe(false);
+    });
+
+    it('does not let later factory options mutation downgrade a branded vNext adapter', () => {
+      const db = new Database(':memory:');
+      const store = new WikiArtifactStore(db);
+      const publisher = vi.fn();
+      const options = {
+        mode: 'vnext' as const,
+        store,
+        publisher,
+      };
+      const adapter = createWikiPublishAdapter(options);
+
+      Reflect.set(options, 'mode', 'legacy');
+      Reflect.set(options, 'store', null);
+      Reflect.set(options, 'publisher', null);
+
+      try {
+        const result = adapter.publish({
+          pages: [
+            {
+              path: 'projects/api.md',
+              title: 'API',
+              type: 'entity',
+              content: 'content',
+              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-options-mutation' }],
+            },
+          ],
+        });
+
+        expect(result).toEqual({ pagesPublished: 1, artifactsStored: 1 });
+        expect(publisher).toHaveBeenCalledOnce();
+        expect(store.getByPath('projects/api.md')).toMatchObject({
+          sourceRefs: ['raw:slack:event-options-mutation'],
+        });
+        expect(isVNextWikiPublishAdapter(adapter)).toBe(true);
+      } finally {
+        db.close();
+      }
     });
   });
 });
