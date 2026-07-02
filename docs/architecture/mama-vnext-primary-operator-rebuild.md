@@ -230,14 +230,14 @@ Current `origin/main` connector polling files that PR 1 must control:
 Do not create a third provenance dialect in standalone. The canonical parser belongs
 in `mama-core`.
 
-| Surface | Current shape | Current kinds | Problem | vNext rule |
-|---------|---------------|---------------|---------|------------|
-| context compile | object refs | `memory`, `raw`, `entity`, `case` | rejects `context_packet`, `report`, `wiki_page` | keep V0 parser, add conversion to canonical `SourceRef` |
-| context provenance string | `raw:${connector}:${raw_id}` or `${kind}:${id}` | `raw`, `memory`, `entity`, `case` | string form is narrower than needed | canonical serializer must round-trip current strings |
-| verify artifact | `{ type, id }` | `decision`, `os_task`, `agent_situation_packet`, `report_slot`, `context_packet`, `model_run`, `tool_trace` | uses `type`, not `kind` | add adapter from verify artifact to canonical `SourceRef` |
-| memory provenance | `source_refs: string[]` | unconstrained strings | permits bad refs | validate strings before trusted writes |
-| legacy memory provenance | string refs | `message:*`, `conversation:*`, `raw_memory:*` | current tests allow these strings | grandfather as `legacy` refs before strict enforcement |
-| wiki current | `sourceIds: string[]` | often empty | source chain breaks | reject empty source refs in vNext |
+| Surface                   | Current shape                                   | Current kinds                                                                                               | Problem                                         | vNext rule                                                |
+| ------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------- |
+| context compile           | object refs                                     | `memory`, `raw`, `entity`, `case`                                                                           | rejects `context_packet`, `report`, `wiki_page` | keep V0 parser, add conversion to canonical `SourceRef`   |
+| context provenance string | `raw:${connector}:${raw_id}` or `${kind}:${id}` | `raw`, `memory`, `entity`, `case`                                                                           | string form is narrower than needed             | canonical serializer must round-trip current strings      |
+| verify artifact           | `{ type, id }`                                  | `decision`, `os_task`, `agent_situation_packet`, `report_slot`, `context_packet`, `model_run`, `tool_trace` | uses `type`, not `kind`                         | add adapter from verify artifact to canonical `SourceRef` |
+| memory provenance         | `source_refs: string[]`                         | unconstrained strings                                                                                       | permits bad refs                                | validate strings before trusted writes                    |
+| legacy memory provenance  | string refs                                     | `message:*`, `conversation:*`, `raw_memory:*`                                                               | current tests allow these strings               | grandfather as `legacy` refs before strict enforcement    |
+| wiki current              | `sourceIds: string[]`                           | often empty                                                                                                 | source chain breaks                             | reject empty source refs in vNext                         |
 
 Canonical file:
 
@@ -305,15 +305,15 @@ Rules:
 
 Default in vNext: deny durable writes unless explicitly allowed.
 
-| Tool/path | Primary operator | Worker | Legacy agent | Viewer/admin | Notes |
-|-----------|------------------|--------|--------------|--------------|-------|
-| `task_create` | allow | deny | legacy-only | deny | worker returns task proposal |
-| `task_update` | allow | deny | legacy-only | deny | primary commits after verify |
-| `mama_save` | allow through memory commit path | deny | legacy-only | admin/manual allowed with refs | source refs required |
-| `wiki_publish` | allow proposal commit | proposal-only | legacy-only | admin/manual allowed with refs | no empty refs |
-| `report_publish` | deny as canonical state | deny | legacy-only | deny | dashboard reads projection |
-| `delegate` | allow | deny nested by default | legacy-only | deny | bounded depth |
-| filesystem writes | deny by default | deny by default | legacy policy | viewer policy | not part of canonical state |
+| Tool/path         | Primary operator                 | Worker                 | Legacy agent  | Viewer/admin                   | Notes                        |
+| ----------------- | -------------------------------- | ---------------------- | ------------- | ------------------------------ | ---------------------------- |
+| `task_create`     | allow                            | deny                   | legacy-only   | deny                           | worker returns task proposal |
+| `task_update`     | allow                            | deny                   | legacy-only   | deny                           | primary commits after verify |
+| `mama_save`       | allow through memory commit path | deny                   | legacy-only   | admin/manual allowed with refs | source refs required         |
+| `wiki_publish`    | allow proposal commit            | proposal-only          | legacy-only   | admin/manual allowed with refs | no empty refs                |
+| `report_publish`  | deny as canonical state          | deny                   | legacy-only   | deny                           | dashboard reads projection   |
+| `delegate`        | allow                            | deny nested by default | legacy-only   | deny                           | bounded depth                |
+| filesystem writes | deny by default                  | deny by default        | legacy policy | viewer policy                  | not part of canonical state  |
 
 Implementation hook:
 
@@ -539,30 +539,37 @@ Regression cases:
 - two operators racing on same idempotency key result in one commit
 - DB busy retry stops after bounded attempts
 
-### PR 3: Trigger-Scoped Memory Hints
+### PR 3: Primary Operator Bootstrap Runtime
 
 Goal:
 
-- Stop vNext mode from recalling memory on ordinary turns.
-- Port the reference memory hint policy shape: ordinary turns skip recall, prior-rule
-  language triggers bounded hints.
-- Keep legacy mode unchanged.
+- Replace the PR 1 `primary_operator_placeholder` startup step with explicit
+  operator schema and runtime preparation.
+- Keep legacy fanout disabled while exposing the primary operator readiness state
+  through authenticated status APIs.
+- Preserve the PR 1/PR 2-compatible `primary_operator` response field during the
+  transition; expose the new runtime payload as `primary_operator_runtime`.
 
 Files:
 
-- Create: `packages/standalone/src/memory-vnext/memory-hint-policy.ts`
-- Create: `packages/standalone/src/memory-vnext/memory-hint-renderer.ts`
-- Modify: `packages/standalone/src/gateways/message-router.ts`
-- Create: `packages/standalone/tests/memory-vnext/memory-hint-policy.test.ts`
-- Create: `packages/standalone/tests/memory-vnext/memory-hint-renderer.test.ts`
-- Create: `packages/standalone/tests/gateways/message-router-memory-hints.test.ts`
+- Create: `packages/standalone/src/operator-vnext/schema.ts`
+- Modify: `packages/standalone/src/runtime-vnext/bootstrap.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Create: `packages/standalone/tests/operator-vnext/schema.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
 
 Regression cases:
 
-- ordinary message does not call `mamaApi.recallMemory` in vNext mode
-- trigger message calls recall once
-- recall failure is non-fatal
-- legacy mode keeps current behavior
+- empty sessions DB gets vNext operator tables before runtime creation
+- existing sessions DB skips repeated schema work
+- failed operator schema installation rolls back as one transaction
+- status endpoints keep `/health` public and `/api/*` authenticated
+- existing status clients can still parse `primary_operator.status = noop`
+- new status clients can read `primary_operator_runtime.cursor_name`,
+  `connector`, and `advanced_through_seq`
+- `createVNextPrimaryOperatorRuntime` binds the manual connector and advances
+  the `operator:primary` cursor through `processBatch`
 
 ### PR 4: Wiki Artifact Adapter And Store
 
@@ -657,12 +664,12 @@ MAMA_FORCE_TIER_3=true pnpm vitest run \
 
 Only pure contract/store work runs in parallel. Integration work is sequential.
 
-| Lane | Work | Modules | Depends on |
-|------|------|---------|------------|
-| A | PR 0 SourceRef and contracts | `mama-core/src/provenance`, migrations | none |
-| C | PR 2 commit stores | `operator-vnext` stores | A |
-| D | PR 3 memory hint policy | `memory-vnext` pure modules | A |
-| E | PR 4 wiki store/exporter pure modules | `wiki-artifacts` pure modules | A |
+| Lane | Work                                  | Modules                                | Depends on |
+| ---- | ------------------------------------- | -------------------------------------- | ---------- |
+| A    | PR 0 SourceRef and contracts          | `mama-core/src/provenance`, migrations | none       |
+| C    | PR 2 commit stores                    | `operator-vnext` stores                | A          |
+| D    | PR 3 memory hint policy               | `memory-vnext` pure modules            | A          |
+| E    | PR 4 wiki store/exporter pure modules | `wiki-artifacts` pure modules          | A          |
 
 Sequential integration:
 
