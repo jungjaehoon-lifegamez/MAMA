@@ -65,6 +65,7 @@ import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { requireAuth } from '../../api/auth-middleware.js';
+import { buildPublicVNextProjectionPayload } from '../../api/report-handler.js';
 import {
   buildVNextBootstrapPlan,
   buildVNextPrimaryOperatorReadyStatus,
@@ -79,6 +80,10 @@ import {
 import { resolveVNextRuntimeFlags } from '../../runtime-vnext/feature-flags.js';
 import { ensureVNextOperatorSchema } from '../../operator-vnext/schema.js';
 import { PrimaryOperatorRuntime } from '../../operator-vnext/primary-operator-runtime.js';
+import {
+  buildReportSlotsFromSituationProjection,
+  buildSituationProjection,
+} from '../../operator-vnext/situation-projection.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -564,6 +569,55 @@ function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<st
   };
 }
 
+function buildVNextBootstrapSituationProjection(status: VNextBootstrapRuntimeStatus) {
+  const primaryOperator = status.primaryOperator;
+  const degraded = primaryOperator.status === 'degraded';
+  const cursorSeq = primaryOperator.advancedThroughSeq;
+  const viewModelHash = [
+    'vnext-primary-operator',
+    primaryOperator.status,
+    cursorSeq,
+    primaryOperator.lastBatchStatus ?? 'none',
+    primaryOperator.failedSeq ?? 'none',
+  ].join(':');
+
+  return buildSituationProjection(
+    [
+      {
+        situationId: 'vnext_primary_operator',
+        situationVersion: cursorSeq,
+        awarenessRunId: `vnext-bootstrap-${status.startedAtMs}`,
+        title: 'Primary operator runtime',
+        status: degraded ? 'blocked' : 'in_progress',
+        summary: degraded
+          ? 'Primary operator runtime is degraded and needs manual inspection.'
+          : 'Primary operator runtime is prepared and owns vNext durable commits.',
+        nextAction: degraded
+          ? 'Inspect the failed batch and replay only verified source events.'
+          : 'Continue verified manual batches through the primary operator cursor.',
+        freshness: degraded ? 'degraded' : 'live',
+        verificationState: degraded ? 'conflicting' : 'verified',
+        confidence: degraded ? 0.4 : 1,
+        evidenceRefs: [
+          {
+            kind: 'raw',
+            connector: primaryOperator.connector,
+            id: `${primaryOperator.cursorName}:${cursorSeq}`,
+          },
+        ],
+        updatedAtMs: status.startedAtMs,
+        viewModelHash,
+        priority: degraded ? 0 : 10,
+        tags: ['vnext', 'primary_operator'],
+        pendingReason: degraded ? (primaryOperator.errorMessage ?? 'Runtime degraded.') : undefined,
+        ownerHint: primaryOperator.cursorName,
+        issueCount: degraded ? 1 : 0,
+      },
+    ],
+    Date.now()
+  );
+}
+
 function readVNextPrimaryOperatorCursorSeq(db: Database, cursorName: string): number {
   const row = db
     .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
@@ -624,6 +678,14 @@ export function createVNextBootstrapApiServer(status: VNextBootstrapRuntimeStatu
   });
   app.get('/api/status', (_req, res) => {
     res.json(buildVNextStatusPayload(status));
+  });
+  app.get('/api/report', (_req, res) => {
+    const projection = buildVNextBootstrapSituationProjection(status);
+    res.json({
+      mode: 'vnext',
+      projection: buildPublicVNextProjectionPayload(projection),
+      slots: buildReportSlotsFromSituationProjection(projection),
+    });
   });
 
   let server: HttpServer | null = null;
@@ -849,6 +911,7 @@ export async function runAgentLoop(
     rolesConfig: config.roles, // Pass roles from config.yaml
     envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     metricsStore,
+    vNextRuntimeEnabled: vNext.enabled,
   });
 
   const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
@@ -869,7 +932,11 @@ export async function runAgentLoop(
     db,
     metricsStore,
     agentLoopBackend,
-    { ...options, envelopeIssuanceMode: envelopeBootstrap.metadata.issuance }
+    {
+      ...options,
+      envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
+      vNextRuntimeEnabled: vNext.enabled,
+    }
   );
 
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
