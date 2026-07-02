@@ -200,6 +200,7 @@ export {
   listVisibleTwinEdgesForRefs,
 } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
+export * from './provenance/source-ref.js';
 export * from './agent-situation/index.js';
 export * from './agent-graph/index.js';
 export * from './entities/types.js';

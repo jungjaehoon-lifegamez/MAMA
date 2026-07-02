@@ -188,6 +188,10 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
           'agent_situation_packets',
           'agent_situation_refresh_leases',
           'context_packets',
+          'vnext_operator_cursors',
+          'vnext_operator_commits',
+          'operator_no_updates',
+          'worker_proposals',
         ]) {
           expect(tableExists(db, table)).toBe(true);
         }
@@ -218,6 +222,14 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
         expect(indexExists(db, 'idx_memory_events_memory_created')).toBe(true);
         expect(indexExists(db, 'idx_connector_event_source_cursor')).toBe(true);
         expect(indexExists(db, 'idx_context_packets_scope_hash')).toBe(true);
+        expect(indexExists(db, 'idx_vnext_operator_commits_cursor_seq')).toBe(true);
+        expect(indexExists(db, 'idx_operator_no_updates_scope_created')).toBe(true);
+        expect(indexExists(db, 'idx_worker_proposals_status_kind')).toBe(true);
+
+        const row = db.prepare('SELECT version FROM schema_version WHERE version = 38').get() as
+          | { version: number }
+          | undefined;
+        expect(row?.version).toBe(38);
         db.close();
       });
     });
