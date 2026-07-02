@@ -65,6 +65,7 @@ export function initMainAgentLoop(
     osAgentMode?: boolean;
     envelopeIssuanceMode?: EnvelopeIssuanceMode;
     contextCompileService?: GatewayToolExecutorOptions['contextCompileService'];
+    vNextRuntimeEnabled?: boolean;
   }
 ): AgentLoopInitResult {
   // Reasoning collector for Discord display
@@ -203,6 +204,7 @@ export function initMainAgentLoop(
       envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'off',
       metricsStore,
       contextCompileService: options?.contextCompileService,
+      vNextRuntimeEnabled: options?.vNextRuntimeEnabled,
     }
   );
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');

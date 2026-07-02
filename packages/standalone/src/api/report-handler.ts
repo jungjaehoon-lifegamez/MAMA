@@ -1,5 +1,11 @@
 import { Router, type Request, type Response } from 'express';
 import type { ServerResponse } from 'node:http';
+import { buildReportSlotsFromSituationProjection } from '../operator-vnext/situation-projection.js';
+import type {
+  VNextProjectionProvider,
+  VNextSituationProjection,
+  VNextTodaySituationRow,
+} from '../operator-vnext/situation-projection-types.js';
 
 export interface ReportSlot {
   slotId: string;
@@ -14,6 +20,51 @@ export interface ReportStore {
   delete(slotId: string): void;
   getAll(): Record<string, ReportSlot>;
   getAllSorted(): ReportSlot[];
+}
+
+export interface ReportRouterOptions {
+  vNextProjectionProvider?: VNextProjectionProvider;
+}
+
+type PublicVNextTodaySituationRow = Omit<VNextTodaySituationRow, 'evidence_refs' | 'owner_hint'> & {
+  evidence_refs: [];
+  owner_hint: null;
+};
+
+export interface PublicVNextProjectionPayload {
+  projection_version: VNextSituationProjection['projectionVersion'];
+  generated_at_ms: number;
+  view_model_hash: string | null;
+  status: VNextSituationProjection['status'];
+  today: PublicVNextTodaySituationRow[];
+}
+
+export function buildPublicVNextProjectionPayload(
+  projection: VNextSituationProjection
+): PublicVNextProjectionPayload {
+  return {
+    projection_version: projection.projectionVersion,
+    generated_at_ms: projection.generatedAtMs,
+    view_model_hash: projection.viewModelHash,
+    status: projection.status,
+    today: projection.today.map((row) => ({
+      ...row,
+      evidence_refs: [],
+      owner_hint: null,
+    })),
+  };
+}
+
+function rejectVNextReportMutation(options: ReportRouterOptions, res: Response): boolean {
+  if (!options.vNextProjectionProvider) {
+    return false;
+  }
+  res.status(409).json({
+    ok: false,
+    code: 'vnext_report_projection_only',
+    error: 'Legacy report slot mutations are disabled while vNext projections are active.',
+  });
+  return true;
 }
 
 export function createReportStore(): ReportStore {
@@ -67,11 +118,24 @@ export function broadcastReportUpdate(
 /**
  * Create an Express Router that exposes report slot CRUD + SSE stream.
  */
-export function createReportRouter(store: ReportStore, sseClients: Set<ServerResponse>): Router {
+export function createReportRouter(
+  store: ReportStore,
+  sseClients: Set<ServerResponse>,
+  options: ReportRouterOptions = {}
+): Router {
   const router = Router();
 
   // GET / — list all slots sorted by priority
   router.get('/', (_req: Request, res: Response) => {
+    const projection = options.vNextProjectionProvider?.();
+    if (projection) {
+      res.json({
+        mode: 'vnext',
+        projection: buildPublicVNextProjectionPayload(projection),
+        slots: buildReportSlotsFromSituationProjection(projection),
+      });
+      return;
+    }
     res.json({ slots: store.getAllSorted() });
   });
 
@@ -92,6 +156,9 @@ export function createReportRouter(store: ReportStore, sseClients: Set<ServerRes
 
   // PUT / — bulk update
   router.put('/', (req: Request, res: Response) => {
+    if (rejectVNextReportMutation(options, res)) {
+      return;
+    }
     const body = req.body as { slots?: Record<string, { html: string; priority?: number }> };
     const incoming = body?.slots ?? {};
     for (const [id, { html, priority = 0 }] of Object.entries(incoming)) {
@@ -103,6 +170,9 @@ export function createReportRouter(store: ReportStore, sseClients: Set<ServerRes
 
   // PUT /slots/:slotId — single update
   router.put('/slots/:slotId', (req: Request<{ slotId: string }>, res: Response) => {
+    if (rejectVNextReportMutation(options, res)) {
+      return;
+    }
     const slotId = req.params.slotId as string;
     const { html, priority = 0 } = req.body as { html: string; priority?: number };
     store.update(slotId, html, priority);
@@ -112,6 +182,9 @@ export function createReportRouter(store: ReportStore, sseClients: Set<ServerRes
 
   // DELETE /slots/:slotId — delete a slot
   router.delete('/slots/:slotId', (req: Request<{ slotId: string }>, res: Response) => {
+    if (rejectVNextReportMutation(options, res)) {
+      return;
+    }
     const slotId = req.params.slotId as string;
     store.delete(slotId);
     broadcastReportUpdate(sseClients, { deleted: slotId });
