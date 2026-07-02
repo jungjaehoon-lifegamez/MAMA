@@ -36,37 +36,39 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     }
   });
 
-  it('keeps /health unauthenticated but protects /api status routes for tunneled requests', async () => {
-    process.env.MAMA_AUTH_TOKEN = 'vnext-status-token';
-    const apiServer = createVNextBootstrapApiServer(makeStatus());
+  describe('AC: vNext status endpoints keep public health separate from authenticated API', () => {
+    it('keeps /health unauthenticated but protects /api status routes for tunneled requests', async () => {
+      process.env.MAMA_AUTH_TOKEN = 'vnext-status-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus());
 
-    const health = await request(apiServer.app)
-      .get('/health')
-      .set('cf-connecting-ip', '203.0.113.10');
-    expect(health.status).toBe(200);
-    expect(health.body).toMatchObject({ status: 'ok', runtime: 'vnext' });
+      const health = await request(apiServer.app)
+        .get('/health')
+        .set('cf-connecting-ip', '203.0.113.10');
+      expect(health.status).toBe(200);
+      expect(health.body).toMatchObject({ status: 'ok', runtime: 'vnext' });
 
-    const unauthenticated = await request(apiServer.app)
-      .get('/api/vnext/status')
-      .set('cf-connecting-ip', '203.0.113.10');
-    expect(unauthenticated.status).toBe(401);
-    expect(unauthenticated.body).toMatchObject({
-      error: true,
-      code: 'UNAUTHORIZED',
-    });
+      const unauthenticated = await request(apiServer.app)
+        .get('/api/vnext/status')
+        .set('cf-connecting-ip', '203.0.113.10');
+      expect(unauthenticated.status).toBe(401);
+      expect(unauthenticated.body).toMatchObject({
+        error: true,
+        code: 'UNAUTHORIZED',
+      });
 
-    const authenticated = await request(apiServer.app)
-      .get('/api/status')
-      .set('cf-connecting-ip', '203.0.113.10')
-      .set('authorization', 'Bearer vnext-status-token');
-    expect(authenticated.status).toBe(200);
-    expect(authenticated.body).toMatchObject({
-      ok: true,
-      runtime: 'vnext',
-      primary_operator: {
-        kind: 'primary_operator',
-        status: 'noop',
-      },
+      const authenticated = await request(apiServer.app)
+        .get('/api/status')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+      expect(authenticated.status).toBe(200);
+      expect(authenticated.body).toMatchObject({
+        ok: true,
+        runtime: 'vnext',
+        primary_operator: {
+          kind: 'primary_operator',
+          status: 'noop',
+        },
+      });
     });
   });
 });
