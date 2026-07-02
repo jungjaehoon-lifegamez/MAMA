@@ -11,6 +11,7 @@ import {
   buildConnectorEventIngressPreview,
   createConnectorEventIngressPreviewProvider,
 } from '../../src/operator-vnext/connector-event-ingress.js';
+import { createConnectorIngressMigrationDryRunProvider } from '../../src/operator-vnext/connector-ingress-migration-dry-run.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
@@ -377,6 +378,73 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       expect(response.body).toMatchObject({
         ok: false,
         code: 'vnext_ingress_preview_invalid_request',
+      });
+
+      db.close();
+    });
+
+    it('serves authenticated connector ingress migration dry-run reports without committing', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      const eventIndexId = insertRawEvent(db, 'msg-1');
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C-ROLL',
+        }),
+      });
+
+      const response = await request(apiServer.app)
+        .get('/api/vnext/ingress/migration-dry-run?connector=slack&channel=C-ROLL&limit=5')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        ok: true,
+        mode: 'dry_run',
+        dry_run: {
+          mode: 'dry_run',
+          status: 'ready',
+          cursorName: 'connector:slack:channel:C-ROLL',
+          connector: 'slack',
+          channel: 'C-ROLL',
+          advancedThroughSeq: 0,
+          candidateCount: 1,
+          highestCandidateSeq: 1,
+          requiresOperatorDecision: true,
+          durableWrites: {
+            commits: 0,
+            cursors: 0,
+            noUpdates: 0,
+          },
+          candidates: [
+            {
+              seq: 1,
+              eventIndexId,
+              sourceRef: {
+                kind: 'raw',
+                connector: 'slack',
+                id: eventIndexId,
+                source_id: 'msg-1',
+                channel_id: 'C-ROLL',
+              },
+              readiness: 'requires_decision',
+            },
+          ],
+        },
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_cursors').get()).toEqual({
+        count: 0,
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM operator_no_updates').get()).toEqual({
+        count: 0,
       });
 
       db.close();
