@@ -734,6 +734,52 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
   tests/runtime-vnext/legacy-fanout-disabled.test.ts
 ```
 
+### PR 8: Default Config Drops Legacy Self-Paced Agents
+
+Decision:
+
+- Remove legacy self-paced `dashboard-agent` and `wiki-agent` from new default
+  `multi_agent.agents`.
+- Stop automatically backfilling those agents into existing configs.
+- Preserve user-defined `dashboard-agent` and `wiki-agent` entries and keep their
+  legacy permission migrations active.
+- Update agent guidance so dashboard/wiki delegation is opt-in and only happens
+  when the agent exists in config.
+
+Files:
+
+- Modify: `packages/standalone/src/cli/config/config-manager.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Modify: `packages/standalone/src/cli/runtime/api-routes-init.ts`
+- Modify: `packages/standalone/tests/cli/config-manager.test.ts`
+- Modify: `packages/standalone/tests/agent/gateway-tool-executor.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/legacy-fanout-disabled.test.ts`
+- Modify: `packages/standalone/src/agent/os-agent-capabilities.md`
+- Modify: `packages/standalone/src/multi-agent/conductor-persona.ts`
+
+Rules:
+
+- New default config includes the primary operator-facing agents only:
+  `os-agent`, `conductor`, and `memory`.
+- Loading an older config must not create missing `dashboard-agent` or
+  `wiki-agent` entries, even when `wiki.enabled` is true.
+- Runtime startup must not persist missing `dashboard-agent` or `wiki-agent`
+  entries back into config.
+- Legacy dashboard/wiki timers, publishers, persona writes, MCP rewrites, and
+  Obsidian wiring only start when the corresponding agent is explicitly
+  configured and not disabled.
+- Loading an older config that already has those agents must keep them and still
+  migrate old Code-Act gateway permission allowlists.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/cli/config-manager.test.ts \
+  tests/agent/gateway-tool-executor.test.ts \
+  tests/runtime-vnext/legacy-fanout-disabled.test.ts
+```
+
 ## Global Regression Checklist
 
 - legacy mode behavior unchanged
@@ -799,7 +845,7 @@ Conflict flags:
 6. Land PR 5 and switch Today dashboard to existing projection extension.
 7. Land PR 6 and enable vNext dry-run preview locally for one connector/channel.
 8. Land PR 7 and run the authenticated migration dry-run report for one connector/channel.
-9. Decide whether to remove legacy self-paced agents from default config.
+9. Land PR 8 and verify legacy self-paced agents are opt-in, not default config.
 
 ## Review Notes
 

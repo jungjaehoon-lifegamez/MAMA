@@ -1367,7 +1367,8 @@ export async function runAgentLoop(
     !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
     !shouldSkipVNextFanout(vNext, 'persona_write')
   ) {
-    // Ensure OS system agents exist in config (memory agent may be missing in older configs)
+    // Ensure current primary system agents exist in config. Legacy self-paced
+    // dashboard/wiki agents are opt-in and must not be backfilled here.
     if (!config.multi_agent) {
       config.multi_agent = getDefaultMultiAgentConfig();
     }
@@ -1386,15 +1387,6 @@ export async function runAgentLoop(
         model: string;
         can_delegate?: boolean;
         enabled?: boolean;
-        useCodeAct?: boolean;
-        tool_permissions?: {
-          allowed?: string[];
-          blocked?: string[];
-        };
-        gateway_tool_permissions?: {
-          allowed?: string[];
-          blocked?: string[];
-        };
       }
     > = {
       'os-agent': {
@@ -1419,58 +1411,7 @@ export async function runAgentLoop(
         can_delegate: false,
         enabled: true,
       },
-      'dashboard-agent': {
-        name: 'Dashboard Agent',
-        display_name: '📊 Dashboard',
-        trigger_prefix: '!dashboard',
-        persona_file: '~/.mama/personas/dashboard.md',
-        tier: 2,
-        backend: runtimeBackend,
-        model: config.agent.model,
-        can_delegate: false,
-        enabled: true,
-        useCodeAct: true,
-        tool_permissions: {
-          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
-          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
-        },
-        gateway_tool_permissions: {
-          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
-          blocked: [],
-        },
-      },
     };
-    const wikiConfig = config.wiki as { enabled?: boolean } | undefined;
-    if (wikiConfig?.enabled) {
-      osAgents['wiki-agent'] = {
-        name: 'Wiki Agent',
-        display_name: '📚 Wiki',
-        trigger_prefix: '!wiki',
-        persona_file: '~/.mama/personas/wiki.md',
-        tier: 2,
-        backend: runtimeBackend,
-        model: config.agent.model,
-        can_delegate: false,
-        enabled: true,
-        useCodeAct: true,
-        tool_permissions: {
-          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
-          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
-        },
-        gateway_tool_permissions: {
-          allowed: [
-            'mama_search',
-            'context_compile',
-            'agent_notices',
-            'case_list',
-            'case_assemble',
-            'obsidian',
-            'wiki_publish',
-          ],
-          blocked: [],
-        },
-      };
-    }
     let osAgentsAdded = false;
     for (const [id, cfg] of Object.entries(osAgents)) {
       if (!config.multi_agent.agents[id]) {

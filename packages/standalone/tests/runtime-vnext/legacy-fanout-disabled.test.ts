@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -45,6 +45,54 @@ function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
     wiki: { enabled: true, vaultPath: '/tmp/mama-vnext-wiki' },
     ...overrides,
   } as unknown as MAMAConfig;
+}
+
+function makeMultiAgentConfig(
+  agents: NonNullable<MAMAConfig['multi_agent']>['agents']
+): NonNullable<MAMAConfig['multi_agent']> {
+  return {
+    enabled: false,
+    free_chat: true,
+    default_agent: 'conductor',
+    agents,
+    loop_prevention: {
+      max_chain_length: 5,
+      global_cooldown_ms: 1000,
+      chain_window_ms: 60000,
+    },
+    workflow: { enabled: true },
+    council: { enabled: true },
+  };
+}
+
+function makeDashboardAgentConfig(): NonNullable<MAMAConfig['multi_agent']>['agents'][string] {
+  return {
+    name: 'Dashboard Agent',
+    display_name: 'Dashboard',
+    trigger_prefix: '!dashboard',
+    persona_file: '~/.mama/personas/dashboard.md',
+    tier: 2,
+    backend: 'claude',
+    model: 'claude-sonnet-4-6',
+    can_delegate: false,
+    enabled: true,
+    useCodeAct: true,
+  };
+}
+
+function makeWikiAgentConfig(): NonNullable<MAMAConfig['multi_agent']>['agents'][string] {
+  return {
+    name: 'Wiki Agent',
+    display_name: 'Wiki',
+    trigger_prefix: '!wiki',
+    persona_file: '~/.mama/personas/wiki.md',
+    tier: 2,
+    backend: 'claude',
+    model: 'claude-sonnet-4-6',
+    can_delegate: false,
+    enabled: true,
+    useCodeAct: true,
+  };
 }
 
 function makeVNextPlan() {
@@ -117,6 +165,7 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
     }
     rmSync(tempHome, { recursive: true, force: true });
     vi.restoreAllMocks();
+    vi.doUnmock('child_process');
   });
 
   describe('AC: startup schedulers are inert in vNext bootstrap mode', () => {
@@ -215,7 +264,106 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
       expect(setIntervalSpy).not.toHaveBeenCalled();
     });
 
-    it('keeps dashboard and conductor fanout active in legacy mode', async () => {
+    it('does not start legacy self-paced agents in legacy mode unless configured', async () => {
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
+      });
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const setReportPublisherSpy = vi.spyOn(toolExecutor, 'setReportPublisher');
+      const setObsidianVaultPathSpy = vi.spyOn(toolExecutor, 'setObsidianVaultPath');
+      const setWikiPublisherSpy = vi.spyOn(toolExecutor, 'setWikiPublisher');
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
+      const setTimeoutSpy = vi
+        .spyOn(globalThis, 'setTimeout')
+        .mockImplementation(() => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>);
+      const setIntervalSpy = vi
+        .spyOn(globalThis, 'setInterval')
+        .mockImplementation(
+          () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setInterval>
+        );
+
+      await registerApiRoutes({
+        config: makeConfig(),
+        apiServer,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
+        mamaApi: {},
+        messageRouter,
+        agentLoop,
+        toolExecutor,
+        discordGateway: null,
+        slackGateway: null,
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
+      });
+
+      expect(setReportPublisherSpy).not.toHaveBeenCalled();
+      expect(setObsidianVaultPathSpy).not.toHaveBeenCalled();
+      expect(setWikiPublisherSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 10_000);
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 15_000);
+      expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+    });
+
+    it('does not start explicitly disabled legacy self-paced agents in legacy mode', async () => {
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
+      });
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const setReportPublisherSpy = vi.spyOn(toolExecutor, 'setReportPublisher');
+      const setObsidianVaultPathSpy = vi.spyOn(toolExecutor, 'setObsidianVaultPath');
+      const setWikiPublisherSpy = vi.spyOn(toolExecutor, 'setWikiPublisher');
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
+      const setTimeoutSpy = vi
+        .spyOn(globalThis, 'setTimeout')
+        .mockImplementation(() => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>);
+      const setIntervalSpy = vi
+        .spyOn(globalThis, 'setInterval')
+        .mockImplementation(
+          () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setInterval>
+        );
+
+      await registerApiRoutes({
+        config: makeConfig({
+          multi_agent: makeMultiAgentConfig({
+            'dashboard-agent': { ...makeDashboardAgentConfig(), enabled: false },
+            'wiki-agent': { ...makeWikiAgentConfig(), enabled: false },
+          }),
+        }),
+        apiServer,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
+        mamaApi: {},
+        messageRouter,
+        agentLoop,
+        toolExecutor,
+        discordGateway: null,
+        slackGateway: null,
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
+      });
+
+      expect(setReportPublisherSpy).not.toHaveBeenCalled();
+      expect(setObsidianVaultPathSpy).not.toHaveBeenCalled();
+      expect(setWikiPublisherSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 10_000);
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 15_000);
+      expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+    });
+
+    it('keeps dashboard and conductor fanout active in legacy mode when configured', async () => {
       const apiServer = createApiServer({
         scheduler: initCronScheduler(makeConfig()).scheduler,
         port: 0,
@@ -237,7 +385,12 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
         );
 
       await registerApiRoutes({
-        config: makeConfig({ wiki: { enabled: false } }),
+        config: makeConfig({
+          wiki: { enabled: false },
+          multi_agent: makeMultiAgentConfig({
+            'dashboard-agent': makeDashboardAgentConfig(),
+          }),
+        }),
         apiServer,
         eventBus,
         oauthManager: makeOAuthManager(tempHome),
@@ -255,6 +408,119 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
+    });
+
+    it('recreates code-act MCP config when legacy self-paced agent config finds invalid JSON', async () => {
+      const mamaDir = join(tempHome, '.mama');
+      const mamaMcpConfigPath = join(mamaDir, 'mama-mcp-config.json');
+      mkdirSync(mamaDir, { recursive: true });
+      writeFileSync(mamaMcpConfigPath, '{ invalid json', 'utf-8');
+
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
+      });
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>
+      );
+      vi.spyOn(globalThis, 'setInterval').mockImplementation(
+        () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setInterval>
+      );
+
+      await registerApiRoutes({
+        config: makeConfig({
+          wiki: { enabled: false },
+          multi_agent: makeMultiAgentConfig({
+            'dashboard-agent': makeDashboardAgentConfig(),
+          }),
+        }),
+        apiServer,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
+        mamaApi: {},
+        messageRouter,
+        agentLoop,
+        toolExecutor,
+        discordGateway: null,
+        slackGateway: null,
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
+      });
+
+      const mcpConfig = JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8')) as {
+        mcpServers?: Record<
+          string,
+          { command?: string; args?: string[]; env?: Record<string, string> }
+        >;
+      };
+
+      expect(mcpConfig.mcpServers?.['code-act']).toMatchObject({
+        command: 'node',
+        env: { MAMA_SERVER_PORT: '3847' },
+      });
+      expect(mcpConfig.mcpServers?.['code-act']?.args?.[0]).toContain('code-act-server.js');
+    });
+
+    it('keeps wiki fanout active in legacy mode when wiki-agent is configured', async () => {
+      vi.doMock('child_process', () => ({ execSync: vi.fn() }));
+
+      const wikiVault = join(tempHome, 'vault');
+      const wikiDir = 'knowledge';
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
+      });
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const setReportPublisherSpy = vi.spyOn(toolExecutor, 'setReportPublisher');
+      const setObsidianVaultPathSpy = vi.spyOn(toolExecutor, 'setObsidianVaultPath');
+      const setWikiPublisherSpy = vi.spyOn(toolExecutor, 'setWikiPublisher');
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
+      const setTimeoutSpy = vi
+        .spyOn(globalThis, 'setTimeout')
+        .mockImplementation(() => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>);
+      const setIntervalSpy = vi
+        .spyOn(globalThis, 'setInterval')
+        .mockImplementation(
+          () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setInterval>
+        );
+
+      await registerApiRoutes({
+        config: makeConfig({
+          wiki: { enabled: true, vaultPath: wikiVault, wikiDir },
+          multi_agent: makeMultiAgentConfig({
+            'wiki-agent': makeWikiAgentConfig(),
+          }),
+        }),
+        apiServer,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
+        mamaApi: {},
+        messageRouter,
+        agentLoop,
+        toolExecutor,
+        discordGateway: null,
+        slackGateway: null,
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
+      });
+
+      expect(setReportPublisherSpy).not.toHaveBeenCalled();
+      expect(setObsidianVaultPathSpy).toHaveBeenCalledWith(join(wikiVault, wikiDir));
+      expect(setWikiPublisherSpy).toHaveBeenCalledOnce();
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 10_000);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 15_000);
+      expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+      expect(setIntervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
     });
   });
 });
