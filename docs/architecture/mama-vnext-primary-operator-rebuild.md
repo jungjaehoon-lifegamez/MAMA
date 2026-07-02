@@ -664,12 +664,12 @@ MAMA_FORCE_TIER_3=true pnpm vitest run \
 
 Only pure contract/store work runs in parallel. Integration work is sequential.
 
-| Lane | Work                                  | Modules                                | Depends on |
-| ---- | ------------------------------------- | -------------------------------------- | ---------- |
-| A    | PR 0 SourceRef and contracts          | `mama-core/src/provenance`, migrations | none       |
-| C    | PR 2 commit stores                    | `operator-vnext` stores                | A          |
-| D    | PR 3 memory hint policy               | `memory-vnext` pure modules            | A          |
-| E    | PR 4 wiki store/exporter pure modules | `wiki-artifacts` pure modules          | A          |
+| Lane | Work                                    | Modules                                      | Depends on |
+| ---- | --------------------------------------- | -------------------------------------------- | ---------- |
+| A    | PR 0 SourceRef and contracts            | `mama-core/src/provenance`, migrations       | none       |
+| C    | PR 2 commit stores                      | `operator-vnext` stores                      | A          |
+| D    | PR 3 primary operator bootstrap runtime | `operator-vnext`, `runtime-vnext`, start API | C          |
+| E    | PR 4 wiki store/exporter pure modules   | `wiki-artifacts` pure modules                | A          |
 
 Sequential integration:
 
@@ -677,7 +677,7 @@ Sequential integration:
 1. Merge A.
 2. Implement PR 1 sequentially. It touches startup/config/connector/scheduler files.
 3. Merge C.
-4. Integrate D into MessageRouter.
+4. Integrate D into vNext bootstrap/start API.
 5. Integrate E into GatewayToolExecutor.
 6. Add situation projection and report API adapter.
 7. Add commit authority to GatewayToolExecutor and DelegationExecutor.
