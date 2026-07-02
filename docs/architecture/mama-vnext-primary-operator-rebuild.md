@@ -139,11 +139,14 @@ Required commands for every PR:
 ```bash
 git diff --cached --check
 git diff --cached --name-only
-git diff --cached | rg -n \
-  'sk-[A-Za-z0-9]|api[_-]?key|token|secret|password|private_key|BEGIN (RSA|OPENSSH|PRIVATE)|/Users/|/home/|slack_file:|telegram:|discord:|chatwork:|customer|client|고객|거래처|채널|프로젝트명'
+./scripts/check-pii.sh
 ```
 
-If the grep finds anything:
+`scripts/check-pii.sh` is the authoritative staged-file privacy check. It loads
+`.pii-patterns` when that gitignored file exists and always runs the generic ID
+checks built into the script.
+
+If the gate finds anything:
 
 1. classify it as synthetic/public-safe or private/internal
 2. remove, redact, or replace private/internal content before review
@@ -348,12 +351,13 @@ CREATE TABLE IF NOT EXISTS vnext_operator_commits (
   commit_id TEXT PRIMARY KEY,
   cursor_name TEXT NOT NULL,
   idempotency_key TEXT NOT NULL UNIQUE,
-  first_change_seq INTEGER NOT NULL,
-  last_change_seq INTEGER NOT NULL,
+  first_change_seq INTEGER NOT NULL CHECK (first_change_seq >= 0),
+  last_change_seq INTEGER NOT NULL CHECK (last_change_seq >= first_change_seq),
   status TEXT NOT NULL CHECK (status IN ('changed', 'no_update')),
   changed_refs_json TEXT NOT NULL,
   source_refs_json TEXT NOT NULL,
-  created_at_ms INTEGER NOT NULL
+  created_at_ms INTEGER NOT NULL,
+  FOREIGN KEY (cursor_name) REFERENCES vnext_operator_cursors(cursor_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_vnext_operator_commits_cursor_seq
@@ -377,7 +381,7 @@ CREATE TABLE IF NOT EXISTS worker_proposals (
   confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
   status TEXT NOT NULL CHECK (status IN ('proposed', 'accepted', 'rejected', 'superseded')),
   created_at_ms INTEGER NOT NULL,
-  accepted_at_ms INTEGER
+  accepted_at_ms INTEGER CHECK (accepted_at_ms IS NULL OR accepted_at_ms >= created_at_ms)
 );
 
 CREATE INDEX IF NOT EXISTS idx_worker_proposals_status_kind
@@ -489,8 +493,9 @@ Forbidden in vNext PR 1:
 - vNext mode does not schedule Conductor audit.
 - vNext mode does not call `messageRouter.process()` autonomously.
 - vNext mode does not start connector polling.
-- vNext connector mode is either disabled or raw-index-only; no memory/entity writes
-  and no file poll-state advancement before operator commit exists.
+- vNext PR 1 has no connector mode at all. Raw-index-only connector ingestion is
+  deferred until PR 2, where the operator can commit raw events and cursor
+  advancement in one transaction.
 - legacy mode still schedules existing behavior.
 
 Verify:
@@ -634,7 +639,7 @@ MAMA_FORCE_TIER_3=true pnpm vitest run \
 - vNext bootstrap does not rewrite MCP config as part of dashboard/wiki setup
 - vNext bootstrap does not mutate config/persona files
 - vNext bootstrap does not start heartbeat/token/audit timers
-- vNext bootstrap does not start connector polling before atomic operator commit exists
+- vNext bootstrap does not start connector polling in PR 1
 - migration filenames are contiguous with no version gaps
 - ordinary turn does not recall memory
 - trigger turn recalls memory once
@@ -711,7 +716,9 @@ issues:
 
 - migration `061` was invalid on `origin/main`; current next migration is `038`
 - DB contracts were not exact enough
-- connector polling could still write and advance file poll-state before vNext operator commit exists
+- connector polling could still write and advance file poll-state before the vNext
+  operator commit exists; PR 1 now disables it completely and defers raw-index-only
+  ingestion to PR 2
 - startup side effects needed an allowlist, not a denylist
 - several paths existed only on the investigation branch, not on `origin/main`
 - legacy memory provenance strings need compatibility tests
