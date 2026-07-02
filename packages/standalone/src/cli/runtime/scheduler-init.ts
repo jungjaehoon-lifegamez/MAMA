@@ -25,6 +25,7 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { DiscordGateway } from '../../gateways/index.js';
 import type { AgentLoop } from '../../agent/index.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
+import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vnext/bootstrap.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -56,17 +57,29 @@ export interface HeartbeatResult {
   healthWarningInterval: ReturnType<typeof setInterval> | null;
 }
 
+export interface SchedulerInitOptions {
+  vNext?: VNextBootstrapPlan;
+}
+
 /**
  * Initialize cron scheduler with a dedicated CronWorker and EventEmitter.
  *
  * Creates the scheduler, wires the execute callback to CronWorker,
  * and loads cron jobs from config.scheduling.jobs.
  */
-export function initCronScheduler(config: MAMAConfig): CronSchedulerResult {
+export function initCronScheduler(
+  config: MAMAConfig,
+  options: SchedulerInitOptions = {}
+): CronSchedulerResult {
   // Initialize cron scheduler with dedicated CronWorker (isolated from OS agent)
   const cronEmitter = new EventEmitter();
   const cronWorker = new CronWorker({ emitter: cronEmitter });
   const scheduler = new CronScheduler();
+
+  if (options.vNext?.enabled) {
+    return { scheduler, cronWorker, cronEmitter };
+  }
+
   scheduler.setExecuteCallback(async (prompt, job) => {
     console.log(`[Cron] Executing: ${prompt.substring(0, 50)}...`);
     const result = await cronWorker.execute(prompt, {
@@ -131,7 +144,8 @@ export function initHeartbeat(
   agentLoop: AgentLoop,
   discordGateway: DiscordGateway | null,
   scheduler: CronScheduler,
-  healthCheckService: HealthCheckService
+  healthCheckService: HealthCheckService,
+  options: SchedulerInitOptions = {}
 ): HeartbeatResult {
   // Initialize heartbeat scheduler
   const heartbeatConfig = config.heartbeat || {};
@@ -150,14 +164,31 @@ export function initHeartbeat(
       : undefined
   );
 
+  // Wire scheduler and heartbeat into health check service
+  healthCheckService.setCronScheduler(scheduler);
+  healthCheckService.setHeartbeat(heartbeatScheduler);
+
+  const tokenKeepAlive = new TokenKeepAlive({
+    intervalMs: 6 * 60 * 60 * 1000, // 6 hours
+    onRefresh: () => {
+      console.log('✓ OAuth token kept alive');
+    },
+    onError: (error) => {
+      console.warn(`⚠️ Token refresh warning: ${error.message}`);
+    },
+  });
+
+  if (
+    shouldSkipVNextFanout(options.vNext, 'heartbeat_timer') ||
+    shouldSkipVNextFanout(options.vNext, 'token_keepalive_timer')
+  ) {
+    return { heartbeatScheduler, tokenKeepAlive, healthWarningInterval: null };
+  }
+
   if (heartbeatConfig.enabled !== false) {
     heartbeatScheduler.start();
     console.log('✓ Heartbeat scheduler started');
   }
-
-  // Wire scheduler and heartbeat into health check service
-  healthCheckService.setCronScheduler(scheduler);
-  healthCheckService.setHeartbeat(heartbeatScheduler);
 
   // Periodic health check warning log (every 5 minutes)
   const healthWarningInterval = setInterval(
@@ -180,15 +211,6 @@ export function initHeartbeat(
   );
 
   // Initialize token keep-alive (prevents OAuth token expiration)
-  const tokenKeepAlive = new TokenKeepAlive({
-    intervalMs: 6 * 60 * 60 * 1000, // 6 hours
-    onRefresh: () => {
-      console.log('✓ OAuth token kept alive');
-    },
-    onError: (error) => {
-      console.warn(`⚠️ Token refresh warning: ${error.message}`);
-    },
-  });
   tokenKeepAlive.start();
 
   return { heartbeatScheduler, tokenKeepAlive, healthWarningInterval };
