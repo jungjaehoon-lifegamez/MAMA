@@ -36,7 +36,7 @@ function nonNegativeInteger(value: number, field: string): number {
   return value;
 }
 
-function clampConfidence(value: number): number {
+function validateConfidence(value: number): number {
   const confidence = finiteNumber(value, 'confidence');
   if (confidence < 0 || confidence > 1) {
     throw new Error('confidence must be between 0 and 1');
@@ -79,7 +79,7 @@ function rowFromSituation(input: VNextSituationInput): VNextTodaySituationRow {
     status: input.status,
     freshness: input.freshness,
     verification_state: input.verificationState,
-    confidence: clampConfidence(input.confidence),
+    confidence: validateConfidence(input.confidence),
     evidence_count: evidenceRefs.length,
     evidence_refs: evidenceRefs,
     updated_at_ms: nonNegativeInteger(input.updatedAtMs, 'updatedAtMs'),

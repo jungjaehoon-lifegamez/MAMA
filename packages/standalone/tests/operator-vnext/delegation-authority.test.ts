@@ -98,6 +98,35 @@ describe('Story PR5.4: vNext Delegation Authority', () => {
       });
     });
 
+    it('denies agent_test through the same injected authority gate', async () => {
+      const executor = new DelegationExecutor({
+        agentProcessManager: null,
+        delegationManagerRef: null,
+        retryDelayMs: 1,
+        resolveManagedAgentId: (id) => id,
+        checkViewerOnly: () => null,
+        checkDelegationAuthority: () => ({
+          allowed: false,
+          code: 'vnext_worker_delegation_denied',
+          reason: 'vNext workers must return proposals instead of delegating.',
+        }),
+      });
+
+      const result = await executor.runAgentTest(
+        {
+          agent_id: 'dashboard-agent',
+          test_data: [{ input: 'Run nested durable check' }],
+        },
+        { agentId: 'wiki-agent', source: 'system', channelId: 'system:wiki-agent' }
+      );
+
+      expect(result).toEqual({
+        success: false,
+        code: 'vnext_worker_delegation_denied',
+        error: 'vNext workers must return proposals instead of delegating.',
+      });
+    });
+
     it('requires direct viewer-admin surface for manual vNext memory commits', async () => {
       const mamaApi = createMamaApiMock();
       const executor = new GatewayToolExecutor({
