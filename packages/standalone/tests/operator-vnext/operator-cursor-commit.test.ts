@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   buildConnectorIdempotencyKey,
   commitOperatorCursor,
-  runWithBoundedBusyRetry,
 } from '../../src/operator-vnext/operator-cursor-commit.js';
 import { countRows, makeOperatorVNextDb } from './fixtures.js';
 
@@ -122,7 +121,7 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
         db
           .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
           .get('connector:slack')
-      ).toEqual({ last_change_seq: 0 });
+      ).toBeUndefined();
       expect(countRows(db, 'vnext_operator_commits')).toBe(0);
 
       db.close();
@@ -144,6 +143,28 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
           nowMs: 1710000000000,
         })
       ).toThrow(/status/i);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
+
+      db.close();
+    });
+
+    it('rejects changed commits without changed refs using a clear error', () => {
+      const db = makeOperatorVNextDb();
+
+      expect(() =>
+        commitOperatorCursor(db, {
+          commitId: 'commit-empty-changed-refs',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+          status: 'changed',
+          changedRefs: [],
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+          nowMs: 1710000000000,
+        })
+      ).toThrow(/changedRefs must not be empty/i);
       expect(countRows(db, 'vnext_operator_commits')).toBe(0);
       expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
 
@@ -189,7 +210,7 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
         db
           .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
           .get('connector:slack')
-      ).toEqual({ last_change_seq: 0 });
+      ).toBeUndefined();
 
       db.close();
     });
@@ -307,7 +328,7 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
         db
           .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
           .get('connector:discord')
-      ).toEqual({ last_change_seq: 0 });
+      ).toBeUndefined();
 
       db.close();
     });
@@ -486,23 +507,6 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
       expect(countRows(db, 'operator_no_updates')).toBe(1);
 
       db.close();
-    });
-
-    it('stops retrying SQLITE_BUSY after the configured attempt budget', () => {
-      let attempts = 0;
-
-      expect(() =>
-        runWithBoundedBusyRetry(
-          () => {
-            attempts += 1;
-            const error = new Error('database is locked');
-            Object.assign(error, { code: 'SQLITE_BUSY' });
-            throw error;
-          },
-          { maxBusyRetries: 2 }
-        )
-      ).toThrow(/database is locked/i);
-      expect(attempts).toBe(3);
     });
   });
 });

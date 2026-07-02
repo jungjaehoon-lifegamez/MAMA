@@ -37,48 +37,15 @@ interface NormalizedNoUpdateCommit {
   reason: string;
 }
 
-export interface BusyRetryOptions {
-  maxBusyRetries?: number;
-}
-
 export interface ExistingOperatorCursorCommitInput {
   cursorName: string;
   idempotencyKey: string;
   nowMs?: number;
 }
 
-function isBusyError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-  const maybeCode = (error as { code?: unknown }).code;
-  return (
-    maybeCode === 'SQLITE_BUSY' ||
-    maybeCode === 'SQLITE_LOCKED' ||
-    /SQLITE_BUSY|SQLITE_LOCKED|database is locked/i.test(error.message)
-  );
-}
-
 function assertOperatorCommitStatus(status: unknown): asserts status is OperatorCommitStatus {
   if (status !== 'changed' && status !== 'no_update') {
     throw new Error('Operator commit status must be changed or no_update');
-  }
-}
-
-export function runWithBoundedBusyRetry<T>(operation: () => T, options: BusyRetryOptions = {}): T {
-  const maxBusyRetries = options.maxBusyRetries ?? 3;
-  nonNegativeInteger(maxBusyRetries, 'maxBusyRetries');
-
-  let retries = 0;
-  for (;;) {
-    try {
-      return operation();
-    } catch (error) {
-      if (!isBusyError(error) || retries >= maxBusyRetries) {
-        throw error;
-      }
-      retries += 1;
-    }
   }
 }
 
@@ -249,33 +216,29 @@ function resultFromExistingCommit(
 
 export function recoverExistingOperatorCursorCommit(
   db: SQLiteDatabase,
-  input: ExistingOperatorCursorCommitInput,
-  options: BusyRetryOptions = {}
+  input: ExistingOperatorCursorCommitInput
 ): OperatorCursorCommitResult | null {
   const nowMs = input.nowMs ?? Date.now();
   const cursorName = requiredString(input.cursorName, 'cursorName');
   const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
 
-  return runWithBoundedBusyRetry(() => {
-    const tx = db.transaction(() => {
-      const existing = getExistingCommit(db, idempotencyKey);
-      if (!existing) {
-        return null;
-      }
-      if (existing.cursor_name !== cursorName) {
-        throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
-      }
-      const cursor = getCursor(db, cursorName);
-      return resultFromStoredCommit(db, cursor, existing, nowMs);
-    });
-    return tx();
-  }, options);
+  const tx = db.transaction(() => {
+    const existing = getExistingCommit(db, idempotencyKey);
+    if (!existing) {
+      return null;
+    }
+    if (existing.cursor_name !== cursorName) {
+      throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
+    }
+    const cursor = getCursor(db, cursorName);
+    return resultFromStoredCommit(db, cursor, existing, nowMs);
+  });
+  return tx();
 }
 
 export function commitOperatorCursor(
   db: SQLiteDatabase,
-  input: OperatorCursorCommitInput,
-  options: BusyRetryOptions = {}
+  input: OperatorCursorCommitInput
 ): OperatorCursorCommitResult {
   const nowMs = input.nowMs ?? Date.now();
   const cursorName = requiredString(input.cursorName, 'cursorName');
@@ -288,10 +251,11 @@ export function commitOperatorCursor(
   }
 
   const sourceRefs = serializeRequiredSourceRefs(input.sourceRefs);
-  const changedRefs =
-    input.status === 'changed'
-      ? serializeRequiredSourceRefs(input.changedRefs ?? [])
-      : ([] as string[]);
+  const changedInputRefs = input.status === 'changed' ? input.changedRefs : undefined;
+  if (input.status === 'changed' && (!changedInputRefs || changedInputRefs.length === 0)) {
+    throw new Error('changedRefs must not be empty for changed commits');
+  }
+  const changedRefs = changedInputRefs ? serializeRequiredSourceRefs(changedInputRefs) : [];
   if (input.status === 'no_update' && !input.noUpdate) {
     throw new Error('noUpdate details are required for no_update commits');
   }
@@ -316,71 +280,69 @@ export function commitOperatorCursor(
   const changedRefsJson = JSON.stringify(changedRefs);
   const sourceRefsJson = JSON.stringify(sourceRefs);
 
-  return runWithBoundedBusyRetry(() => {
+  const tx = db.transaction(() => {
     ensureCursor(db, cursorName, nowMs);
-    const tx = db.transaction(() => {
-      const cursor = getCursor(db, cursorName);
-      const existing = getExistingCommit(db, idempotencyKey);
-      if (existing) {
-        return resultFromExistingCommit(
-          db,
-          cursor,
-          existing,
-          {
-            status: input.status,
-            firstChangeSeq,
-            lastChangeSeq,
-            changedRefsJson,
-            sourceRefsJson,
-            noUpdate,
-          },
-          nowMs
-        );
-      }
-
-      assertContiguous(cursor, firstChangeSeq);
-
-      db.prepare(
-        `INSERT INTO vnext_operator_commits (
-          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
-          status, changed_refs_json, source_refs_json, created_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        commitId,
-        cursorName,
-        idempotencyKey,
-        firstChangeSeq,
-        lastChangeSeq,
-        input.status,
-        changedRefsJson,
-        sourceRefsJson,
+    const cursor = getCursor(db, cursorName);
+    const existing = getExistingCommit(db, idempotencyKey);
+    if (existing) {
+      return resultFromExistingCommit(
+        db,
+        cursor,
+        existing,
+        {
+          status: input.status,
+          firstChangeSeq,
+          lastChangeSeq,
+          changedRefsJson,
+          sourceRefsJson,
+          noUpdate,
+        },
         nowMs
       );
+    }
 
-      if (input.status === 'no_update' && noUpdate) {
-        recordNoUpdate(db, {
-          noUpdateId: noUpdate.noUpdateId,
-          scopeKey: noUpdate.scopeKey,
-          reason: noUpdate.reason,
-          sourceRefs: input.sourceRefs,
-          idempotencyKey,
-          nowMs,
-        });
-      }
+    assertContiguous(cursor, firstChangeSeq);
 
-      updateCursor(db, cursorName, lastChangeSeq, idempotencyKey, nowMs);
+    db.prepare(
+      `INSERT INTO vnext_operator_commits (
+        commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+        status, changed_refs_json, source_refs_json, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      commitId,
+      cursorName,
+      idempotencyKey,
+      firstChangeSeq,
+      lastChangeSeq,
+      input.status,
+      changedRefsJson,
+      sourceRefsJson,
+      nowMs
+    );
 
-      return {
-        outcome: 'committed',
-        commitId,
-        cursorName,
-        firstChangeSeq,
-        lastChangeSeq,
+    if (input.status === 'no_update' && noUpdate) {
+      recordNoUpdate(db, {
+        noUpdateId: noUpdate.noUpdateId,
+        scopeKey: noUpdate.scopeKey,
+        reason: noUpdate.reason,
+        sourceRefs: input.sourceRefs,
         idempotencyKey,
-        status: input.status,
-        cursorAdvanced: true,
-      } satisfies OperatorCursorCommitResult;
-    });
-    return tx();
-  }, options);
+        nowMs,
+      });
+    }
+
+    updateCursor(db, cursorName, lastChangeSeq, idempotencyKey, nowMs);
+
+    return {
+      outcome: 'committed',
+      commitId,
+      cursorName,
+      firstChangeSeq,
+      lastChangeSeq,
+      idempotencyKey,
+      status: input.status,
+      cursorAdvanced: true,
+    } satisfies OperatorCursorCommitResult;
+  });
+  return tx();
 }

@@ -55,6 +55,28 @@ export type PrimaryOperatorBatchResult =
       commits: OperatorCursorCommitResult[];
     };
 
+const cursorLocks = new Map<string, Promise<void>>();
+
+async function withCursorLock<T>(cursorName: string, operation: () => Promise<T>): Promise<T> {
+  const previous = cursorLocks.get(cursorName) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.catch(() => undefined).then(() => current);
+  cursorLocks.set(cursorName, chained);
+
+  await previous.catch(() => undefined);
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (cursorLocks.get(cursorName) === chained) {
+      cursorLocks.delete(cursorName);
+    }
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -128,6 +150,13 @@ export class PrimaryOperatorRuntime {
   }
 
   async processBatch(
+    events: readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
+  ): Promise<PrimaryOperatorBatchResult> {
+    return withCursorLock(this.cursorName, () => this.processBatchLocked(events, decide));
+  }
+
+  private async processBatchLocked(
     events: readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
   ): Promise<PrimaryOperatorBatchResult> {

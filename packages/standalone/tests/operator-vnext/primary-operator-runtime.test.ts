@@ -11,6 +11,12 @@ function lastCursorSeq(db: SQLiteDatabase, cursorName = 'connector:slack'): numb
   return row?.last_change_seq ?? 0;
 }
 
+function waitOneTurn(): Promise<void> {
+  return new Promise((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () => {
   describe('AC: only delivered changed/no-update decisions advance the cursor', () => {
     it('advances only the contiguous prefix before a channel failure', async () => {
@@ -320,6 +326,55 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       expect(result.commits[0]?.outcome).toBe('recovered');
       expect(decide).not.toHaveBeenCalled();
       expect(lastCursorSeq(db)).toBe(1);
+
+      db.close();
+    });
+
+    it('serializes concurrent batches for the same cursor before invoking the decider', async () => {
+      const db = makeOperatorVNextDb();
+      const firstRuntime = new PrimaryOperatorRuntime({
+        db,
+        cursorName: 'connector:slack',
+        connector: 'slack',
+        nowMs: () => 1710000000000,
+      });
+      const secondRuntime = new PrimaryOperatorRuntime({
+        db,
+        cursorName: 'connector:slack',
+        connector: 'slack',
+        nowMs: () => 1710000000001,
+      });
+      let releaseDecision!: () => void;
+      const decisionGate = new Promise<void>((resolve) => {
+        releaseDecision = resolve;
+      });
+      const decide = vi.fn(async () => {
+        await decisionGate;
+        return {
+          status: 'changed',
+          changedRefs: [{ kind: 'os_task', id: 'task-1' }],
+        };
+      });
+
+      const first = firstRuntime.processBatch(
+        [{ seq: 1, sourceRef: { kind: 'raw', connector: 'slack', id: 'event-1' } }],
+        decide
+      );
+      const second = secondRuntime.processBatch(
+        [{ seq: 1, sourceRef: { kind: 'raw', connector: 'slack', id: 'event-1' } }],
+        decide
+      );
+      await waitOneTurn();
+
+      expect(decide).toHaveBeenCalledTimes(1);
+      releaseDecision();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+
+      expect(firstResult.commits[0]?.outcome).toBe('committed');
+      expect(secondResult.commits[0]?.outcome).toBe('already_committed');
+      expect(decide).toHaveBeenCalledTimes(1);
+      expect(lastCursorSeq(db)).toBe(1);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(1);
 
       db.close();
     });
