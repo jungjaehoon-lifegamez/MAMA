@@ -567,10 +567,33 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         executor.setRestartMultiAgentAgent(restartMultiAgentAgent);
 
         const multiAgentConfig = getDefaultMultiAgentConfig();
+        multiAgentConfig.agents['wiki-agent'] = {
+          name: 'Wiki Agent',
+          display_name: 'Wiki',
+          trigger_prefix: '!wiki',
+          persona_file: '~/.mama/personas/wiki.md',
+          tier: 2,
+          useCodeAct: true,
+          tool_permissions: {
+            allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+            blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+          },
+          gateway_tool_permissions: {
+            allowed: [
+              'mama_search',
+              'context_compile',
+              'agent_notices',
+              'case_list',
+              'case_assemble',
+              'obsidian',
+              'wiki_publish',
+            ],
+            blocked: [],
+          },
+        };
         await saveConfig({ ...DEFAULT_CONFIG, multi_agent: multiAgentConfig });
 
-        const wikiAgentConfig = multiAgentConfig.agents['wiki-agent'];
-        expect(wikiAgentConfig).toBeDefined();
+        const wikiAgentConfig = multiAgentConfig.agents['wiki-agent']!;
         createAgentVersion(db, {
           agent_id: 'wiki-agent',
           snapshot: wikiAgentConfig as Record<string, unknown>,
