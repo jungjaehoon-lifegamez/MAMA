@@ -556,6 +556,19 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'context packet store'
       );
     }
+
+    if (
+      !this.tableExists('vnext_operator_cursors') ||
+      !this.tableExists('vnext_operator_commits') ||
+      !this.tableExists('operator_no_updates') ||
+      !this.tableExists('worker_proposals')
+    ) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '038-create-vnext-operator-contracts.sql',
+        'vNext operator contracts'
+      );
+    }
   }
 
   private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
