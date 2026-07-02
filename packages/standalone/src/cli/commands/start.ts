@@ -603,9 +603,11 @@ function queryLimit(value: unknown): number | undefined {
   return limit;
 }
 
-function isVNextIngressPreviewClientError(error: unknown): boolean {
+function isVNextIngressClientError(error: unknown): boolean {
   return (
-    error instanceof Error && error.message.includes('locked to the configured connector/channel')
+    error instanceof Error &&
+    (error.message.includes('locked to the configured connector/channel') ||
+      error.message === 'limit must be a positive integer')
   );
 }
 
@@ -775,7 +777,7 @@ export function createVNextBootstrapApiServer(
         preview: options.ingressPreviewProvider({ connector, channel, limit }),
       });
     } catch (error) {
-      const clientError = isVNextIngressPreviewClientError(error);
+      const clientError = isVNextIngressClientError(error);
       res.status(clientError ? 400 : 500).json({
         ok: false,
         code: clientError
@@ -825,7 +827,7 @@ export function createVNextBootstrapApiServer(
         dry_run: options.ingressMigrationDryRunProvider({ connector, channel, limit }),
       });
     } catch (error) {
-      const clientError = isVNextIngressPreviewClientError(error);
+      const clientError = isVNextIngressClientError(error);
       res.status(clientError ? 400 : 500).json({
         ok: false,
         code: clientError
