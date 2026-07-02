@@ -11,8 +11,10 @@ export interface WikiPage {
   title: string;
   type: WikiPageType;
   content: string;
-  /** Decision IDs this page was compiled from */
+  /** Legacy decision IDs or serialized source refs this page was compiled from */
   sourceIds: string[];
+  /** Canonical vNext source refs this page was compiled from */
+  sourceRefs?: string[];
   /** ISO 8601 timestamp */
   compiledAt: string;
   confidence: 'high' | 'medium' | 'low';
