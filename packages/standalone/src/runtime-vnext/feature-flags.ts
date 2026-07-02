@@ -38,7 +38,10 @@ function parseBooleanFlag(value: unknown): boolean | null {
 function resolveConfigFlag(config: Record<string, unknown> | null | undefined): boolean | null {
   const runtime = config?.runtime;
   if (runtime && typeof runtime === 'object' && 'vnext' in runtime) {
-    return parseBooleanFlag((runtime as { vnext?: unknown }).vnext);
+    const parsed = parseBooleanFlag((runtime as { vnext?: unknown }).vnext);
+    if (parsed !== null) {
+      return parsed;
+    }
   }
   const runtimeVNext = config?.runtime_vnext;
   if (runtimeVNext && typeof runtimeVNext === 'object' && 'enabled' in runtimeVNext) {

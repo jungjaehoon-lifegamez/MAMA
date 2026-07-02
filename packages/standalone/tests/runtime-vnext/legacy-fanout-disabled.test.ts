@@ -1,18 +1,22 @@
-import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentLoop } from '../../src/agent/index.js';
-import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
-import type { ApiServer } from '../../src/api/index.js';
+import { AgentLoop } from '../../src/agent/index.js';
+import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { createApiServer } from '../../src/api/index.js';
+import { OAuthManager } from '../../src/auth/index.js';
+import { MessageRouter } from '../../src/gateways/index.js';
+import { SessionStore } from '../../src/gateways/session-store.js';
+import { AgentEventBus } from '../../src/multi-agent/agent-event-bus.js';
+import { HealthCheckService } from '../../src/observability/health-check.js';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import type { MAMAConfig } from '../../src/cli/config/types.js';
 import { registerApiRoutes } from '../../src/cli/runtime/api-routes-init.js';
 import { initConnectors } from '../../src/cli/runtime/connector-init.js';
 import { initCronScheduler, initHeartbeat } from '../../src/cli/runtime/scheduler-init.js';
-import type { OAuthManager } from '../../src/auth/index.js';
 import { buildVNextBootstrapPlan } from '../../src/runtime-vnext/bootstrap.js';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
@@ -51,17 +55,61 @@ function makeVNextPlan() {
   });
 }
 
+function makeOAuthManager(home: string): OAuthManager {
+  return new OAuthManager({
+    credentialsPath: join(home, '.claude', '.credentials.json'),
+  });
+}
+
+function makeAgentLoop(home: string): AgentLoop {
+  return new AgentLoop(makeOAuthManager(home), {
+    maxTurns: 1,
+    model: 'claude-sonnet-4-6',
+    systemPrompt: 'test runtime fanout boundary',
+    toolsConfig: { gateway: [], mcp: [] },
+  });
+}
+
+function makeMessageRouter(db: SQLiteDatabase, home: string): MessageRouter {
+  const sessionStore = new SessionStore(db);
+  return new MessageRouter(
+    sessionStore,
+    makeAgentLoop(home),
+    {
+      search: async () => [],
+      listDecisions: async () => [],
+      loadCheckpoint: async () => null,
+    },
+    {}
+  );
+}
+
+function makeAdapter() {
+  return {
+    prepare: () => ({
+      get: () => ({ count: 0 }),
+      all: () => [],
+    }),
+    exec: () => undefined,
+  };
+}
+
 describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let databases: SQLiteDatabase[];
 
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), 'mama-vnext-home-'));
     originalHome = process.env.HOME;
     process.env.HOME = tempHome;
+    databases = [];
   });
 
   afterEach(() => {
+    for (const db of databases) {
+      db.close();
+    }
     if (originalHome === undefined) {
       delete process.env.HOME;
     } else {
@@ -79,18 +127,15 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
     });
 
     it('does not start heartbeat, token keep-alive, or health warning timers', () => {
+      const agentLoop = makeAgentLoop(tempHome);
+      const healthCheckService = new HealthCheckService({});
+      const setCronSchedulerSpy = vi.spyOn(healthCheckService, 'setCronScheduler');
+      const setHeartbeatSpy = vi.spyOn(healthCheckService, 'setHeartbeat');
       const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
-      const healthCheckService = {
-        setCronScheduler: vi.fn(),
-        setHeartbeat: vi.fn(),
-        check: vi.fn(),
-      };
 
       const { healthWarningInterval } = initHeartbeat(
         makeConfig(),
-        {
-          run: vi.fn(),
-        } as unknown as AgentLoop,
+        agentLoop,
         null,
         initCronScheduler(makeConfig(), { vNext: makeVNextPlan() }).scheduler,
         healthCheckService,
@@ -99,8 +144,8 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
 
       expect(healthWarningInterval).toBeNull();
       expect(setIntervalSpy).not.toHaveBeenCalled();
-      expect(healthCheckService.setCronScheduler).toHaveBeenCalledOnce();
-      expect(healthCheckService.setHeartbeat).toHaveBeenCalledOnce();
+      expect(setCronSchedulerSpy).toHaveBeenCalledOnce();
+      expect(setHeartbeatSpy).toHaveBeenCalledOnce();
     });
 
     it('does not create raw stores, auto-enable connectors, or start connector polling', async () => {
@@ -131,91 +176,57 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
 
   describe('AC: API route registration does not schedule dashboard/wiki/conductor work', () => {
     it('skips persona writes, MCP config rewrites, Obsidian launch, and autonomous timers', async () => {
-      const app = {
-        get: vi.fn(),
-        post: vi.fn(),
-        use: vi.fn(),
-      };
-      const apiServer = {
-        app,
-        reportStore: {
-          update: vi.fn(),
-          getAllSorted: vi.fn(() => []),
-        },
-        reportSseClients: new Set(),
-      } as unknown as ApiServer;
-      const eventBus = Object.assign(new EventEmitter(), {
-        emit: vi.fn(),
-        getRecentNotices: vi.fn(() => []),
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig(), { vNext: makeVNextPlan() }).scheduler,
+        port: 0,
       });
-      const toolExecutor = {
-        setAgentEventBus: vi.fn(),
-        setReportPublisher: vi.fn(),
-        setObsidianVaultPath: vi.fn(),
-        setWikiPublisher: vi.fn(),
-        getAgentProcessManager: vi.fn(),
-      } as unknown as GatewayToolExecutor;
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const setReportPublisherSpy = vi.spyOn(toolExecutor, 'setReportPublisher');
+      const setObsidianVaultPathSpy = vi.spyOn(toolExecutor, 'setObsidianVaultPath');
+      const setWikiPublisherSpy = vi.spyOn(toolExecutor, 'setWikiPublisher');
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
       const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
       const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
 
       await registerApiRoutes({
         config: makeConfig(),
         apiServer,
-        eventBus: eventBus as never,
-        oauthManager: {} as OAuthManager,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
         mamaApi: {},
-        messageRouter: {
-          getMemoryAgentStats: vi.fn(() => ({})),
-          listSessions: vi.fn(() => []),
-          process: vi.fn(),
-        } as never,
-        agentLoop: {} as AgentLoop,
+        messageRouter,
+        agentLoop,
         toolExecutor,
         discordGateway: null,
         slackGateway: null,
-        graphHandler: vi.fn(async () => false),
-        getAdapter: vi.fn(() => ({
-          prepare: vi.fn(() => ({
-            get: vi.fn(() => ({ count: 0 })),
-            all: vi.fn(() => []),
-          })),
-          exec: vi.fn(),
-        })),
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
         vNext: makeVNextPlan(),
       });
 
-      expect(toolExecutor.setReportPublisher).not.toHaveBeenCalled();
-      expect(toolExecutor.setObsidianVaultPath).not.toHaveBeenCalled();
-      expect(toolExecutor.setWikiPublisher).not.toHaveBeenCalled();
+      expect(setReportPublisherSpy).not.toHaveBeenCalled();
+      expect(setObsidianVaultPathSpy).not.toHaveBeenCalled();
+      expect(setWikiPublisherSpy).not.toHaveBeenCalled();
       expect(setTimeoutSpy).not.toHaveBeenCalled();
       expect(setIntervalSpy).not.toHaveBeenCalled();
     });
 
     it('keeps dashboard and conductor fanout active in legacy mode', async () => {
-      const app = {
-        get: vi.fn(),
-        post: vi.fn(),
-        use: vi.fn(),
-      };
-      const apiServer = {
-        app,
-        reportStore: {
-          update: vi.fn(),
-          getAllSorted: vi.fn(() => []),
-        },
-        reportSseClients: new Set(),
-      } as unknown as ApiServer;
-      const eventBus = Object.assign(new EventEmitter(), {
-        emit: vi.fn(),
-        getRecentNotices: vi.fn(() => []),
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
       });
-      const toolExecutor = {
-        setAgentEventBus: vi.fn(),
-        setReportPublisher: vi.fn(),
-        setObsidianVaultPath: vi.fn(),
-        setWikiPublisher: vi.fn(),
-        getAgentProcessManager: vi.fn(),
-      } as unknown as GatewayToolExecutor;
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const setReportPublisherSpy = vi.spyOn(toolExecutor, 'setReportPublisher');
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
       const setTimeoutSpy = vi
         .spyOn(globalThis, 'setTimeout')
         .mockImplementation(() => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>);
@@ -228,29 +239,19 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
       await registerApiRoutes({
         config: makeConfig({ wiki: { enabled: false } }),
         apiServer,
-        eventBus: eventBus as never,
-        oauthManager: {} as OAuthManager,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
         mamaApi: {},
-        messageRouter: {
-          getMemoryAgentStats: vi.fn(() => ({})),
-          listSessions: vi.fn(() => []),
-          process: vi.fn(),
-        } as never,
-        agentLoop: {} as AgentLoop,
+        messageRouter,
+        agentLoop,
         toolExecutor,
         discordGateway: null,
         slackGateway: null,
-        graphHandler: vi.fn(async () => false),
-        getAdapter: vi.fn(() => ({
-          prepare: vi.fn(() => ({
-            get: vi.fn(() => ({ count: 0 })),
-            all: vi.fn(() => []),
-          })),
-          exec: vi.fn(),
-        })),
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
       });
 
-      expect(toolExecutor.setReportPublisher).toHaveBeenCalledOnce();
+      expect(setReportPublisherSpy).toHaveBeenCalledOnce();
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
