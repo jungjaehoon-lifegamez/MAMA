@@ -596,6 +596,12 @@ function queryLimit(value: unknown): number | undefined {
   return limit;
 }
 
+function isVNextIngressPreviewClientError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes('locked to the configured connector/channel')
+  );
+}
+
 function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
   return {
     ok: true,
@@ -762,9 +768,12 @@ export function createVNextBootstrapApiServer(
         preview: options.ingressPreviewProvider({ connector, channel, limit }),
       });
     } catch (error) {
-      res.status(500).json({
+      const clientError = isVNextIngressPreviewClientError(error);
+      res.status(clientError ? 400 : 500).json({
         ok: false,
-        code: 'vnext_ingress_preview_failed',
+        code: clientError
+          ? 'vnext_ingress_preview_invalid_request'
+          : 'vnext_ingress_preview_failed',
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -913,8 +922,7 @@ export async function runAgentLoop(
     let vNextRawAdapter: ConnectorEventIngressAdapter | null = null;
     if (vNextIngressConfig.enabled) {
       process.env.MAMA_DB_PATH = expandPath(config.database.path);
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { initDB, getAdapter } = require('@jungjaehoon/mama-core/db-manager') as {
+      const { initDB, getAdapter } = (await import('@jungjaehoon/mama-core/db-manager')) as {
         initDB: () => Promise<unknown>;
         getAdapter: () => ConnectorEventIngressAdapter;
       };
