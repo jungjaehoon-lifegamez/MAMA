@@ -188,6 +188,40 @@ describe('STORY-VNEXT-PR4-WIKI-ARTIFACTS: wiki artifact store', () => {
     db.close();
   });
 
+  it('loads artifacts by path in the requested order', () => {
+    const db = new Database(':memory:');
+    const store = new WikiArtifactStore(db);
+
+    store.upsertArtifact({
+      path: 'projects/a.md',
+      title: 'A',
+      type: 'entity',
+      content: 'A',
+      confidence: 'medium',
+      compiledAt: '2026-07-02T00:00:00.000Z',
+      sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+      nowMs: 1000,
+    });
+    store.upsertArtifact({
+      path: 'projects/b.md',
+      title: 'B',
+      type: 'entity',
+      content: 'B',
+      confidence: 'medium',
+      compiledAt: '2026-07-02T00:00:00.000Z',
+      sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-2' }],
+      nowMs: 2000,
+    });
+
+    expect(store.getByPaths(['projects/b.md', 'projects/missing.md', 'projects/a.md'])).toEqual([
+      expect.objectContaining({ path: 'projects/b.md' }),
+      expect.objectContaining({ path: 'projects/a.md' }),
+    ]);
+    expect(store.getByPaths([])).toEqual([]);
+
+    db.close();
+  });
+
   it('rejects artifacts without source refs', () => {
     const db = new Database(':memory:');
     const store = new WikiArtifactStore(db);

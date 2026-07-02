@@ -140,10 +140,7 @@ export class WikiArtifactStore {
           artifact_id, path, title, type, content, confidence, compiled_at,
           source_refs_json, source_ids_json, created_at_ms, updated_at_ms
         ) VALUES (
-          COALESCE((SELECT artifact_id FROM wiki_artifacts WHERE path = ?), ?),
-          ?, ?, ?, ?, ?, ?, ?, ?,
-          COALESCE((SELECT created_at_ms FROM wiki_artifacts WHERE path = ?), ?),
-          ?
+          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         )
         ON CONFLICT(path) DO UPDATE SET
           title = excluded.title,
@@ -167,7 +164,6 @@ export class WikiArtifactStore {
       const records: WikiArtifactRecord[] = [];
       for (const input of normalizedInputs) {
         upsert.run(
-          input.path,
           input.artifactId,
           input.path,
           input.title,
@@ -177,7 +173,6 @@ export class WikiArtifactStore {
           input.compiledAt,
           JSON.stringify(input.sourceRefs),
           JSON.stringify(input.sourceIds),
-          input.path,
           input.nowMs,
           input.nowMs
         );
@@ -206,6 +201,29 @@ export class WikiArtifactStore {
       )
       .get(normalizedPath) as WikiArtifactRow | undefined;
     return row ? rowToRecord(row) : null;
+  }
+
+  getByPaths(paths: readonly string[]): WikiArtifactRecord[] {
+    this.ensureSchema();
+    if (paths.length === 0) {
+      return [];
+    }
+    const normalizedPaths = paths.map((path) => normalizeWikiPagePath(path, 'Wiki artifact path'));
+    const placeholders = normalizedPaths.map(() => '?').join(', ');
+    const rows = this.db
+      .prepare(
+        `SELECT
+          artifact_id, path, title, type, content, confidence, compiled_at,
+          source_refs_json, source_ids_json, created_at_ms, updated_at_ms
+        FROM wiki_artifacts
+        WHERE path IN (${placeholders})`
+      )
+      .all(...normalizedPaths) as WikiArtifactRow[];
+    const byPath = new Map(rows.map((row) => [row.path, rowToRecord(row)]));
+    return normalizedPaths.flatMap((path) => {
+      const record = byPath.get(path);
+      return record ? [record] : [];
+    });
   }
 
   listArtifacts(options: WikiArtifactListOptions = {}): WikiArtifactRecord[] {
