@@ -1,12 +1,20 @@
 import type { VNextRuntimeFlags } from './feature-flags.js';
+import type {
+  PrimaryOperatorBatchResult,
+  PrimaryOperatorEvent,
+} from '../operator-vnext/primary-operator-runtime.js';
 
 export const VNEXT_ALLOWED_STARTUP_STEPS = [
   'config_read',
   'db_initialization',
+  'primary_operator_schema',
+  'primary_operator_runtime',
   'api_server_health',
   'manual_status_endpoints',
-  'primary_operator_placeholder',
 ] as const;
+
+export const VNEXT_PRIMARY_OPERATOR_CURSOR_NAME = 'operator:primary';
+export const VNEXT_PRIMARY_OPERATOR_CONNECTOR = 'manual';
 
 export const VNEXT_FORBIDDEN_FANOUT = [
   'dashboard_agent_interval',
@@ -27,16 +35,31 @@ export const VNEXT_FORBIDDEN_FANOUT = [
 export type VNextAllowedStartupStep = (typeof VNEXT_ALLOWED_STARTUP_STEPS)[number];
 export type VNextForbiddenFanout = (typeof VNEXT_FORBIDDEN_FANOUT)[number];
 
-export interface VNextPrimaryOperatorPlaceholder {
+export interface VNextPrimaryOperatorReadyStatus {
   kind: 'primary_operator';
-  status: 'noop';
-  reason: string;
+  status: 'prepared' | 'degraded';
+  mode: 'manual_batch';
+  ingress: 'not_wired';
+  cursorName: string;
+  connector: string;
+  advancedThroughSeq: number;
+  lastBatchStatus?: PrimaryOperatorBatchResult['status'];
+  failedSeq?: number;
+  errorMessage?: string;
+}
+
+export interface VNextPrimaryOperatorRuntimeHandle {
+  status: VNextPrimaryOperatorReadyStatus;
+  processBatch: (
+    events: readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
+  ) => Promise<PrimaryOperatorBatchResult>;
 }
 
 export interface VNextBootstrapPlan extends VNextRuntimeFlags {
   allowedStartupSteps: VNextAllowedStartupStep[];
   forbiddenFanout: VNextForbiddenFanout[];
-  primaryOperator: VNextPrimaryOperatorPlaceholder;
+  primaryOperator: VNextPrimaryOperatorReadyStatus;
 }
 
 export interface VNextBootstrapRuntimeStatus {
@@ -44,7 +67,7 @@ export interface VNextBootstrapRuntimeStatus {
   mode: 'bootstrap';
   source: VNextBootstrapPlan['source'];
   startedAtMs: number;
-  primaryOperator: VNextPrimaryOperatorPlaceholder;
+  primaryOperator: VNextPrimaryOperatorReadyStatus;
   executedStartupSteps: VNextAllowedStartupStep[];
 }
 
@@ -56,11 +79,14 @@ export interface VNextBootstrapApiServer {
 export interface VNextBootstrapRuntimeHandles<DatabaseHandle> {
   apiServer: VNextBootstrapApiServer;
   database: DatabaseHandle;
+  primaryOperator: VNextPrimaryOperatorRuntimeHandle;
   status: VNextBootstrapRuntimeStatus;
 }
 
 export interface VNextBootstrapRuntimeDeps<DatabaseHandle> {
   openDatabase: () => DatabaseHandle;
+  initializeOperatorSchema: (database: DatabaseHandle) => void;
+  createPrimaryOperator: (database: DatabaseHandle) => VNextPrimaryOperatorRuntimeHandle;
   createApiServer: (status: VNextBootstrapRuntimeStatus) => VNextBootstrapApiServer;
   installShutdownHandlers?: (handles: VNextBootstrapRuntimeHandles<DatabaseHandle>) => void;
   now?: () => number;
@@ -91,11 +117,21 @@ export function buildVNextBootstrapPlan(flags: VNextRuntimeFlags): VNextBootstra
     ...flags,
     allowedStartupSteps: [...VNEXT_ALLOWED_STARTUP_STEPS],
     forbiddenFanout: [...VNEXT_FORBIDDEN_FANOUT],
-    primaryOperator: {
-      kind: 'primary_operator',
-      status: 'noop',
-      reason: 'PR1 only installs the startup boundary; the operator loop lands later.',
-    },
+    primaryOperator: buildVNextPrimaryOperatorReadyStatus(0),
+  };
+}
+
+export function buildVNextPrimaryOperatorReadyStatus(
+  advancedThroughSeq: number
+): VNextPrimaryOperatorReadyStatus {
+  return {
+    kind: 'primary_operator',
+    status: 'prepared',
+    mode: 'manual_batch',
+    ingress: 'not_wired',
+    cursorName: VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
+    connector: VNEXT_PRIMARY_OPERATOR_CONNECTOR,
+    advancedThroughSeq,
   };
 }
 
@@ -144,27 +180,35 @@ export async function startVNextBootstrapRuntime<DatabaseHandle>(
   executeAllowedStep('db_initialization');
   const database = deps.openDatabase();
 
-  executeAllowedStep('api_server_health');
-  executeAllowedStep('manual_status_endpoints');
-  executeAllowedStep('primary_operator_placeholder');
+  let primaryOperator: VNextPrimaryOperatorRuntimeHandle;
+  let apiServer: VNextBootstrapApiServer;
 
-  const status: VNextBootstrapRuntimeStatus = {
-    enabled: true,
-    mode: 'bootstrap',
-    source: plan.source,
-    startedAtMs: deps.now?.() ?? Date.now(),
-    primaryOperator: plan.primaryOperator,
-    executedStartupSteps: [...executedStartupSteps],
-  };
-  const apiServer = deps.createApiServer(status);
   try {
+    executeAllowedStep('primary_operator_schema');
+    deps.initializeOperatorSchema(database);
+
+    executeAllowedStep('primary_operator_runtime');
+    primaryOperator = deps.createPrimaryOperator(database);
+
+    executeAllowedStep('api_server_health');
+    executeAllowedStep('manual_status_endpoints');
+
+    const status: VNextBootstrapRuntimeStatus = {
+      enabled: true,
+      mode: 'bootstrap',
+      source: plan.source,
+      startedAtMs: deps.now?.() ?? Date.now(),
+      primaryOperator: primaryOperator.status,
+      executedStartupSteps: [...executedStartupSteps],
+    };
+    apiServer = deps.createApiServer(status);
     await apiServer.start();
+
+    const handles = { apiServer, database, primaryOperator, status };
+    deps.installShutdownHandlers?.(handles);
+    return handles;
   } catch (error) {
     closeDatabaseIfPossible(database);
     throw error;
   }
-
-  const handles = { apiServer, database, status };
-  deps.installShutdownHandlers?.(handles);
-  return handles;
 }
