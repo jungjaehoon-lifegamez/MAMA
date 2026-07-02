@@ -638,6 +638,58 @@ MAMA_FORCE_TIER_3=true pnpm vitest run \
   packages/standalone/tests/operator-vnext/delegation-authority.test.ts
 ```
 
+### PR 6: Connector Ingress Dry-Run Rollout
+
+Goal:
+
+- Add a local, authenticated dry-run runway for one explicit connector/channel.
+- Convert `connector_event_index` rows into source-linked primary-operator event
+  candidates without advancing cursors or committing durable state.
+- Keep connector polling, dashboard/wiki agents, memory compose, and worker commits
+  disabled by default in vNext bootstrap mode.
+
+Files:
+
+- Create: `packages/standalone/src/operator-vnext/connector-event-ingress.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Create: `packages/standalone/tests/operator-vnext/connector-event-ingress.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+
+Runtime opt-in:
+
+```bash
+MAMA_VNEXT_RUNTIME=1 \
+MAMA_VNEXT_INGRESS_CONNECTOR=slack \
+MAMA_VNEXT_INGRESS_CHANNEL=C_PUBLIC_SYNTHETIC \
+mama start --foreground
+```
+
+Authenticated preview endpoint:
+
+```text
+GET /api/vnext/ingress/preview?connector=slack&channel=C_PUBLIC_SYNTHETIC&limit=25
+```
+
+Rules:
+
+- `MAMA_VNEXT_INGRESS_CONNECTOR` and `MAMA_VNEXT_INGRESS_CHANNEL` must be set
+  together.
+- Preview is locked to the configured connector/channel.
+- Preview returns source refs and deterministic event seq candidates only.
+- Preview must not insert `vnext_operator_commits`, `vnext_operator_cursors`, or
+  `operator_no_updates` rows.
+- Preview must not promote legacy report/wiki/memory artifacts.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/connector-event-ingress.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts \
+  tests/runtime-vnext/bootstrap.test.ts \
+  tests/runtime-vnext/legacy-fanout-disabled.test.ts
+```
+
 ## Global Regression Checklist
 
 - legacy mode behavior unchanged
@@ -700,8 +752,8 @@ Conflict flags:
 4. Land PR 3 and dogfood ordinary chat vs prior-rule chat.
 5. Land PR 4 and import one wiki page as unverified, then commit one source-linked artifact.
 6. Land PR 5 and switch Today dashboard to existing projection extension.
-7. Enable vNext locally for one connector/channel.
-8. Run dry-run migration.
+7. Land PR 6 and enable vNext dry-run preview locally for one connector/channel.
+8. Run dry-run migration against the authenticated ingress preview.
 9. Decide whether to remove legacy self-paced agents from default config.
 
 ## Review Notes

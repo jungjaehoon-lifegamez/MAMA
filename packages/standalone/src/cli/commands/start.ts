@@ -84,6 +84,12 @@ import {
   buildReportSlotsFromSituationProjection,
   buildSituationProjection,
 } from '../../operator-vnext/situation-projection.js';
+import {
+  createConnectorEventIngressPreviewProvider,
+  resolveConnectorEventIngressConfig,
+  type ConnectorEventIngressAdapter,
+  type ConnectorEventIngressPreview,
+} from '../../operator-vnext/connector-event-ingress.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -556,6 +562,46 @@ function buildVNextLegacyPrimaryOperatorPayload(): Record<string, unknown> {
   };
 }
 
+export interface VNextIngressPreviewRequest {
+  connector: string;
+  channel: string;
+  limit?: number;
+}
+
+export interface VNextBootstrapApiServerOptions {
+  ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
+}
+
+function firstQueryString(value: unknown): string | null {
+  const candidate = Array.isArray(value) ? value[0] : value;
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+  const trimmed = candidate.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function queryLimit(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const raw = firstQueryString(value);
+  if (raw === null) {
+    throw new Error('limit must be a number');
+  }
+  const limit = Number(raw);
+  if (!Number.isFinite(limit)) {
+    throw new Error('limit must be a number');
+  }
+  return limit;
+}
+
+function isVNextIngressPreviewClientError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes('locked to the configured connector/channel')
+  );
+}
+
 function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
   return {
     ok: true,
@@ -655,7 +701,10 @@ export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOpe
   };
 }
 
-export function createVNextBootstrapApiServer(status: VNextBootstrapRuntimeStatus): {
+export function createVNextBootstrapApiServer(
+  status: VNextBootstrapRuntimeStatus,
+  options: VNextBootstrapApiServerOptions = {}
+): {
   app: Express;
   server: HttpServer | null;
   start: () => Promise<void>;
@@ -678,6 +727,56 @@ export function createVNextBootstrapApiServer(status: VNextBootstrapRuntimeStatu
   });
   app.get('/api/status', (_req, res) => {
     res.json(buildVNextStatusPayload(status));
+  });
+  app.get('/api/vnext/ingress/preview', (req, res) => {
+    if (!options.ingressPreviewProvider) {
+      res.status(404).json({
+        ok: false,
+        code: 'vnext_ingress_preview_unavailable',
+        error: 'vNext connector ingress preview is not configured.',
+      });
+      return;
+    }
+
+    const connector = firstQueryString(req.query.connector);
+    const channel = firstQueryString(req.query.channel);
+    if (!connector || !channel) {
+      res.status(400).json({
+        ok: false,
+        code: 'vnext_ingress_preview_invalid_request',
+        error: 'connector and channel query parameters are required.',
+      });
+      return;
+    }
+
+    let limit: number | undefined;
+    try {
+      limit = queryLimit(req.query.limit);
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        code: 'vnext_ingress_preview_invalid_request',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    try {
+      res.json({
+        ok: true,
+        mode: 'dry_run',
+        preview: options.ingressPreviewProvider({ connector, channel, limit }),
+      });
+    } catch (error) {
+      const clientError = isVNextIngressPreviewClientError(error);
+      res.status(clientError ? 400 : 500).json({
+        ok: false,
+        code: clientError
+          ? 'vnext_ingress_preview_invalid_request'
+          : 'vnext_ingress_preview_failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
   app.get('/api/report', (_req, res) => {
     const projection = buildVNextBootstrapSituationProjection(status);
@@ -819,17 +918,50 @@ export async function runAgentLoop(
   const vNext = buildVNextBootstrapPlan(resolveVNextRuntimeFlags(config, process.env));
   if (vNext.enabled) {
     console.log('✓ MAMA vNext bootstrap mode enabled (legacy fanout disabled)');
+    const vNextIngressConfig = resolveConnectorEventIngressConfig(process.env);
+    let vNextRawAdapter: ConnectorEventIngressAdapter | null = null;
+    if (vNextIngressConfig.enabled) {
+      process.env.MAMA_DB_PATH = expandPath(config.database.path);
+      const { initDB, getAdapter } = (await import('@jungjaehoon/mama-core/db-manager')) as {
+        initDB: () => Promise<unknown>;
+        getAdapter: () => ConnectorEventIngressAdapter;
+      };
+      await initDB();
+      vNextRawAdapter = getAdapter();
+      console.log(
+        `✓ vNext connector ingress preview enabled (${vNextIngressConfig.connector}/${vNextIngressConfig.channel})`
+      );
+    }
+    let vNextOperatorDb: Database | null = null;
     await startVNextBootstrapRuntime(vNext, {
       openDatabase: () => {
         const dbPath = expandPath(config.database.path).replace(
           'mama-memory.db',
           'mama-sessions.db'
         );
-        return new Database(dbPath);
+        vNextOperatorDb = new Database(dbPath);
+        return vNextOperatorDb;
       },
       initializeOperatorSchema: ensureVNextOperatorSchema,
       createPrimaryOperator: createVNextPrimaryOperatorRuntime,
-      createApiServer: createVNextBootstrapApiServer,
+      createApiServer: (status) => {
+        if (!vNextIngressConfig.enabled) {
+          return createVNextBootstrapApiServer(status);
+        }
+        if (!vNextRawAdapter || !vNextOperatorDb) {
+          throw new Error(
+            'vNext connector ingress preview requires initialized raw and operator DBs'
+          );
+        }
+        return createVNextBootstrapApiServer(status, {
+          ingressPreviewProvider: createConnectorEventIngressPreviewProvider({
+            rawAdapter: vNextRawAdapter,
+            operatorDb: vNextOperatorDb,
+            connector: vNextIngressConfig.connector,
+            channel: vNextIngressConfig.channel,
+          }),
+        });
+      },
       installShutdownHandlers: installVNextBootstrapShutdownHandlers,
     });
     return;
