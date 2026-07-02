@@ -119,6 +119,12 @@ import {
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
+import {
+  resolveCommitAuthority,
+  type VNextCommitActor,
+  type VNextCommitAuthorityDecision,
+  type VNextCommitRuntimeMode,
+} from '../operator-vnext/commit-authority.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -328,6 +334,7 @@ export class GatewayToolExecutor {
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
+  private readonly vNextCommitRuntimeMode: VNextCommitRuntimeMode;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -481,6 +488,61 @@ export class GatewayToolExecutor {
     };
   }
 
+  private resolveVNextCommitActor(): VNextCommitActor {
+    const state = this.getExecutionState();
+    const roleName = state.agentContext?.roleName ?? '';
+    const normalizedRole = roleName
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, '-');
+    const normalizedAgent = (state.agentId ?? '').trim().toLowerCase();
+
+    if (
+      normalizedAgent === 'operator:primary' ||
+      normalizedAgent === 'primary-operator' ||
+      normalizedRole === 'primary-operator' ||
+      normalizedRole === 'vnext-primary-operator'
+    ) {
+      return { kind: 'primary_operator', agentId: state.agentId };
+    }
+
+    if (
+      state.source === 'viewer' &&
+      state.executionSurface === 'direct' &&
+      state.agentContext?.role?.systemControl === true &&
+      state.agentContext?.role?.sensitiveAccess === true
+    ) {
+      return { kind: 'viewer_admin', agentId: state.agentId };
+    }
+
+    if (state.agentId || normalizedRole.endsWith('-agent')) {
+      return { kind: 'worker', agentId: state.agentId || roleName };
+    }
+
+    return { kind: 'unknown', agentId: state.agentId };
+  }
+
+  private resolveGatewayCommitAuthority(toolName: string): VNextCommitAuthorityDecision {
+    return resolveCommitAuthority({
+      runtimeMode: this.vNextCommitRuntimeMode,
+      toolName,
+      actor: this.resolveVNextCommitActor(),
+    });
+  }
+
+  private checkVNextCommitAuthority(toolName: string): GatewayToolResult | null {
+    const decision = this.resolveGatewayCommitAuthority(toolName);
+    if (decision.allowed) {
+      return null;
+    }
+    return {
+      success: false,
+      code: decision.code,
+      error: decision.reason,
+      effect: decision.effect,
+    } as GatewayToolResult;
+  }
+
   async withExecutionContext<T>(
     executionContext: GatewayExecutionContext | undefined,
     fn: () => Promise<T>
@@ -630,6 +692,7 @@ export class GatewayToolExecutor {
       retryDelayMs: this._retryDelayMs,
       resolveManagedAgentId: (id) => this.resolveManagedAgentId(id),
       checkViewerOnly: () => this.checkViewerOnly(),
+      checkDelegationAuthority: () => this.resolveGatewayCommitAuthority('delegate'),
     });
   }
 
@@ -651,6 +714,8 @@ export class GatewayToolExecutor {
     this.metricsStore = options.metricsStore ?? null;
     this.contextCompileService = options.contextCompileService;
     this.wikiPublishAdapter = options.wikiPublishAdapter ?? null;
+    this.vNextCommitRuntimeMode =
+      options.vNextCommitRuntimeMode ?? (options.vNextRuntimeEnabled ? 'vnext' : 'legacy');
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -1543,6 +1608,11 @@ export class GatewayToolExecutor {
     }
 
     try {
+      const authorityDenied = this.checkVNextCommitAuthority(toolName);
+      if (authorityDenied) {
+        return authorityDenied;
+      }
+
       // Handle non-MAMA tools first
       switch (toolName) {
         case 'Read':
