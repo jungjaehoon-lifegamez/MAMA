@@ -7,7 +7,10 @@ import {
   createVNextBootstrapApiServer,
   createVNextPrimaryOperatorRuntime,
 } from '../../src/cli/commands/start.js';
-import { buildConnectorEventIngressPreview } from '../../src/operator-vnext/connector-event-ingress.js';
+import {
+  buildConnectorEventIngressPreview,
+  createConnectorEventIngressPreviewProvider,
+} from '../../src/operator-vnext/connector-event-ingress.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
@@ -351,6 +354,32 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
         ok: false,
         code: 'vnext_ingress_preview_unavailable',
       });
+    });
+
+    it('returns 400 for connector ingress preview requests outside the configured channel', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const db = new Database(':memory:');
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressPreviewProvider: createConnectorEventIngressPreviewProvider({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C-ROLL',
+        }),
+      });
+
+      const response = await request(apiServer.app)
+        .get('/api/vnext/ingress/preview?connector=slack&channel=C-OTHER')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_preview_invalid_request',
+      });
+
+      db.close();
     });
   });
 });
