@@ -449,5 +449,34 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
 
       db.close();
     });
+
+    it('returns 400 for non-positive or fractional migration dry-run limits', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const db = new Database(':memory:');
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C-ROLL',
+        }),
+      });
+
+      for (const limit of ['0', '-1', '0.5']) {
+        const response = await request(apiServer.app)
+          .get(`/api/vnext/ingress/migration-dry-run?connector=slack&channel=C-ROLL&limit=${limit}`)
+          .set('cf-connecting-ip', '203.0.113.10')
+          .set('authorization', 'Bearer vnext-status-token');
+
+        expect(response.status).toBe(400);
+        expect(response.body).toMatchObject({
+          ok: false,
+          code: 'vnext_ingress_migration_dry_run_invalid_request',
+          error: 'limit must be a positive integer',
+        });
+      }
+
+      db.close();
+    });
   });
 });

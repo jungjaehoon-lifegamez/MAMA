@@ -133,6 +133,24 @@ describe('STORY-VNEXT-PR7-INGRESS-MIGRATION-DRY-RUN: connector ingress migration
     db.close();
   });
 
+  it('rejects non-positive and fractional dry-run limits', () => {
+    const db = makeOperatorVNextDb();
+
+    for (const limit of [0, -1, 0.5]) {
+      expect(() =>
+        buildConnectorIngressMigrationDryRun({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C-ROLL',
+          limit,
+        })
+      ).toThrow(/limit must be a positive integer/);
+    }
+
+    db.close();
+  });
+
   it('creates a provider locked to the configured connector/channel', () => {
     const db = makeOperatorVNextDb();
     insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
