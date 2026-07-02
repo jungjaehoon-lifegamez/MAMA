@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import request from 'supertest';
+import { connectorEventIndexId } from '@jungjaehoon/mama-core/connectors/event-index';
+import { applyMigrationsThrough } from '@jungjaehoon/mama-core/test-utils';
 
 import {
   createVNextBootstrapApiServer,
   createVNextPrimaryOperatorRuntime,
 } from '../../src/cli/commands/start.js';
+import { buildConnectorEventIngressPreview } from '../../src/operator-vnext/connector-event-ingress.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
-import Database from '../../src/sqlite.js';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 
 const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
 
@@ -35,6 +38,35 @@ function makeStatus(): VNextBootstrapRuntimeStatus {
       'manual_status_endpoints',
     ],
   };
+}
+
+function insertRawEvent(db: SQLiteDatabase, sourceId: string): string {
+  const eventIndexId = connectorEventIndexId('slack', sourceId);
+  db.prepare(
+    `INSERT INTO connector_event_index (
+      event_index_id, source_connector, source_type, source_id, source_locator,
+      channel, author, title, content, event_datetime, event_date, source_timestamp_ms,
+      metadata_json, content_hash, indexed_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    eventIndexId,
+    'slack',
+    'message',
+    sourceId,
+    `slack:C-ROLL:${sourceId}`,
+    'C-ROLL',
+    'synthetic-user',
+    null,
+    `synthetic public rollout event ${sourceId}`,
+    1710000001000,
+    '2026-03-09',
+    1710000001000,
+    JSON.stringify({ synthetic: true }),
+    Buffer.alloc(32, 2),
+    '2026-07-02T00:00:00.000Z',
+    '2026-07-02T00:00:00.000Z'
+  );
+  return eventIndexId;
 }
 
 describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
@@ -250,6 +282,75 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       });
 
       db.close();
+    });
+
+    it('serves authenticated dry-run connector ingress previews without committing', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      const eventIndexId = insertRawEvent(db, 'msg-1');
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressPreviewProvider: (input) =>
+          buildConnectorEventIngressPreview({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .get('/api/vnext/ingress/preview?connector=slack&channel=C-ROLL&limit=5')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        ok: true,
+        mode: 'dry_run',
+        preview: {
+          cursorName: 'connector:slack:channel:C-ROLL',
+          connector: 'slack',
+          channel: 'C-ROLL',
+          advancedThroughSeq: 0,
+          events: [
+            {
+              seq: 1,
+              sourceRef: {
+                kind: 'raw',
+                connector: 'slack',
+                id: eventIndexId,
+                source_id: 'msg-1',
+                channel_id: 'C-ROLL',
+              },
+              eventIndexId,
+              sourceTimestampMs: 1710000001000,
+              sourceId: 'msg-1',
+              channel: 'C-ROLL',
+            },
+          ],
+        },
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('rejects connector ingress preview when the provider is not configured', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus());
+
+      const response = await request(apiServer.app)
+        .get('/api/vnext/ingress/preview?connector=slack&channel=C-ROLL')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_preview_unavailable',
+      });
     });
   });
 });
