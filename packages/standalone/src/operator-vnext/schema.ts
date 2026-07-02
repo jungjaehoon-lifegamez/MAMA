@@ -51,6 +51,7 @@ const REQUIRED_INDEXES = [
   'idx_operator_no_updates_scope_created',
   'idx_worker_proposals_status_kind',
 ] as const;
+const SQLITE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 const VNEXT_OPERATOR_CONTRACTS_SQL = `
 CREATE TABLE IF NOT EXISTS vnext_operator_cursors (
@@ -141,6 +142,9 @@ function indexExists(db: SQLiteDatabase, indexName: string): boolean {
 }
 
 function tableColumns(db: SQLiteDatabase, tableName: string): Set<string> {
+  if (!SQLITE_IDENTIFIER_PATTERN.test(tableName)) {
+    throw new Error(`Invalid SQLite identifier: ${tableName}`);
+  }
   const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
   return new Set(columns.map((column) => column.name));
 }
