@@ -109,4 +109,14 @@ describe('Story VNext PR0: canonical SourceRef compatibility', () => {
       /unsupported/i
     );
   });
+
+  it('AC: rejects nullish refs and malformed context refs with explicit errors', () => {
+    expect(() => fromContextRef(null as never)).toThrow(/context ref/i);
+    expect(() => fromContextRef({ kind: 'decision', id: 'decision-1' } as never)).toThrow(
+      /unsupported/i
+    );
+    expect(toContextRef(null as never)).toBeNull();
+    expect(() => fromVerifyArtifact(null as never)).toThrow(/artifact/i);
+    expect(() => serializeSourceRef(null as never)).toThrow(/source ref/i);
+  });
 });

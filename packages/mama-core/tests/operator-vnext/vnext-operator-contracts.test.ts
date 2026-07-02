@@ -112,6 +112,27 @@ describe('Story VNext PR0: operator contract migration', () => {
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
+          'commit-bad-source-json',
+          'connector:slack',
+          'connector:slack:seq:6-6',
+          6,
+          6,
+          'changed',
+          '[]',
+          'not-json',
+          1710000000006
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO vnext_operator_commits (
+            commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+            status, changed_refs_json, source_refs_json, created_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
           'commit-inverted',
           'connector:slack',
           'connector:slack:seq:4-3',
@@ -144,6 +165,100 @@ describe('Story VNext PR0: operator contract migration', () => {
           1710000000004
         )
     ).toThrow(/FOREIGN KEY constraint/i);
+
+    db.close();
+  });
+
+  it('AC: rejects malformed JSON payload columns before durable operator writes', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyMigrationsThrough(db, 38);
+
+    db.prepare(
+      `INSERT INTO vnext_operator_cursors (
+        cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+      ) VALUES (?, ?, ?, ?)`
+    ).run('connector:slack', 0, null, 1710000000000);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO vnext_operator_commits (
+            commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+            status, changed_refs_json, source_refs_json, created_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'commit-bad-json',
+          'connector:slack',
+          'connector:slack:seq:5-5',
+          5,
+          5,
+          'changed',
+          'not-json',
+          '["raw:slack:event-5"]',
+          1710000000005
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO operator_no_updates (
+            no_update_id, scope_key, reason, source_refs_json, idempotency_key, created_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'no-update-bad-json',
+          'scope-1',
+          'unchanged',
+          'not-json',
+          'scope-1:seq:1',
+          1710000000006
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO worker_proposals (
+            proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+            status, created_at_ms, accepted_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'proposal-bad-json',
+          'worker-1',
+          'memory_hint',
+          '{not-json}',
+          '["context_packet:packet-1"]',
+          0.5,
+          'proposed',
+          1710000000007,
+          null
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO worker_proposals (
+            proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+            status, created_at_ms, accepted_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'proposal-bad-source-json',
+          'worker-1',
+          'memory_hint',
+          '{}',
+          'not-json',
+          0.5,
+          'proposed',
+          1710000000008,
+          null
+        )
+    ).toThrow(/CHECK constraint/i);
 
     db.close();
   });
@@ -211,6 +326,86 @@ describe('Story VNext PR0: operator contract migration', () => {
           1710000000000
         )
     ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO worker_proposals (
+            proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+            status, created_at_ms, accepted_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'proposal-proposed-with-accepted-time',
+          'worker-1',
+          'memory_hint',
+          '{}',
+          '["context_packet:packet-1"]',
+          0.5,
+          'proposed',
+          1710000000000,
+          1710000000000
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO worker_proposals (
+            proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+            status, created_at_ms, accepted_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'proposal-accepted-without-accepted-time',
+          'worker-1',
+          'memory_hint',
+          '{}',
+          '["context_packet:packet-1"]',
+          0.5,
+          'accepted',
+          1710000000000,
+          null
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO worker_proposals (
+            proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+            status, created_at_ms, accepted_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          'proposal-rejected-with-accepted-time',
+          'worker-1',
+          'memory_hint',
+          '{}',
+          '["context_packet:packet-1"]',
+          0.5,
+          'rejected',
+          1710000000000,
+          1710000000000
+        )
+    ).toThrow(/CHECK constraint/i);
+
+    db.prepare(
+      `INSERT INTO worker_proposals (
+        proposal_id, worker_id, kind, payload_json, source_refs_json, confidence,
+        status, created_at_ms, accepted_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      'proposal-superseded-after-acceptance',
+      'worker-1',
+      'memory_hint',
+      '{}',
+      '["context_packet:packet-1"]',
+      0.5,
+      'superseded',
+      1710000000000,
+      1710000000001
+    );
 
     db.close();
   });
