@@ -3,6 +3,7 @@ import type {
   PrimaryOperatorBatchResult,
   PrimaryOperatorEvent,
 } from '../operator-vnext/primary-operator-runtime.js';
+import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 
 export const VNEXT_ALLOWED_STARTUP_STEPS = [
   'config_read',
@@ -50,6 +51,7 @@ export interface VNextPrimaryOperatorReadyStatus {
 
 export interface VNextPrimaryOperatorRuntimeHandle {
   status: VNextPrimaryOperatorReadyStatus;
+  wikiPublishAdapter?: WikiPublishAdapter | null;
   processBatch: (
     events: readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown

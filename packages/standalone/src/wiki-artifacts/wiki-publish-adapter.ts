@@ -19,9 +19,10 @@ import type {
 export type WikiPublishMode = 'legacy' | 'vnext';
 const MAX_WIKI_PUBLISH_PAGES = 100;
 const MAX_WIKI_PAGE_CONTENT_CHARS = 200_000;
+const vNextWikiPublishAdapters = new WeakSet<WikiPublishAdapter>();
 
 export interface WikiPublishAdapter {
-  mode: WikiPublishMode;
+  readonly mode: WikiPublishMode;
   publish(input: { pages: WikiPublishPageInput[] }): WikiPublishResult;
 }
 
@@ -85,26 +86,30 @@ function normalizeAndDedupePages(
 }
 
 export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): WikiPublishAdapter {
-  return {
-    mode: options.mode,
+  const mode = options.mode;
+  const publisher = options.publisher ?? null;
+  const store = mode === 'vnext' ? (options.store ?? null) : null;
+  const now = options.now ?? (() => new Date());
+  const nowMs = options.nowMs;
+  const adapter: WikiPublishAdapter = {
+    mode,
     publish(input: { pages: WikiPublishPageInput[] }): WikiPublishResult {
-      const compiledAt = (options.now ?? (() => new Date()))().toISOString();
+      const compiledAt = now().toISOString();
       if (!Array.isArray(input.pages)) {
         throw new Error('wiki_publish pages must be an array');
       }
       if (input.pages.length > MAX_WIKI_PUBLISH_PAGES) {
         throw new Error(`wiki_publish accepts at most ${MAX_WIKI_PUBLISH_PAGES} pages`);
       }
-      const store = options.mode === 'vnext' ? options.store : undefined;
-      if (options.mode === 'vnext' && !store) {
+      if (mode === 'vnext' && !store) {
         throw new Error('Wiki artifact store not configured');
       }
 
-      const pagePairs = normalizeAndDedupePages(input.pages, compiledAt, options.mode);
+      const pagePairs = normalizeAndDedupePages(input.pages, compiledAt, mode);
       const pages = pagePairs.map((pair) => pair.page);
       let artifactsStored = 0;
 
-      if (options.mode === 'vnext') {
+      if (mode === 'vnext') {
         if (!store) {
           throw new Error('Wiki artifact store not configured');
         }
@@ -118,23 +123,33 @@ export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): Wi
             compiledAt: page.compiledAt,
             sourceRefs: rawPage.sourceRefs ?? [],
             sourceIds: page.sourceIds,
-            nowMs: options.nowMs?.(),
+            nowMs: nowMs?.(),
           };
         });
         artifactsStored = store.upsertArtifacts(artifacts).length;
-        if (options.publisher) {
-          options.publisher(pages);
+        if (publisher) {
+          publisher(pages);
         }
-      } else if (options.publisher) {
-        options.publisher(pages);
+      } else if (publisher) {
+        publisher(pages);
       } else {
         throw new Error('Wiki publisher not configured');
       }
 
       return {
-        pagesPublished: options.publisher ? pages.length : 0,
+        pagesPublished: publisher ? pages.length : 0,
         artifactsStored,
       };
     },
   };
+  if (mode === 'vnext') {
+    vNextWikiPublishAdapters.add(adapter);
+  }
+  return Object.freeze(adapter);
+}
+
+export function isVNextWikiPublishAdapter(
+  adapter: WikiPublishAdapter | null | undefined
+): adapter is WikiPublishAdapter {
+  return typeof adapter === 'object' && adapter !== null && vNextWikiPublishAdapters.has(adapter);
 }

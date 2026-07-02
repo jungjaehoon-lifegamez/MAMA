@@ -61,6 +61,7 @@ import { initCronScheduler, initHeartbeat } from '../runtime/scheduler-init.js';
 import { initConnectors } from '../runtime/connector-init.js';
 import { initApiServer } from '../runtime/api-server-init.js';
 import { registerApiRoutes } from '../runtime/api-routes-init.js';
+import { initVNextWikiPublishAdapter } from '../runtime/wiki-publish-adapter-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
@@ -680,7 +681,14 @@ function readVNextPrimaryOperatorCursorSeq(db: Database, cursorName: string): nu
   return row?.last_change_seq ?? 0;
 }
 
-export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOperatorRuntimeHandle {
+export interface VNextPrimaryOperatorRuntimeOptions {
+  wikiPublishAdapter?: VNextPrimaryOperatorRuntimeHandle['wikiPublishAdapter'];
+}
+
+export function createVNextPrimaryOperatorRuntime(
+  db: Database,
+  options: VNextPrimaryOperatorRuntimeOptions = {}
+): VNextPrimaryOperatorRuntimeHandle {
   const runtime = new PrimaryOperatorRuntime({
     db,
     cursorName: VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
@@ -692,6 +700,7 @@ export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOpe
 
   return {
     status,
+    wikiPublishAdapter: options.wikiPublishAdapter ?? null,
     processBatch: async (events, decide) => {
       const result = await runtime.processBatch(events, decide);
       status.advancedThroughSeq = result.advancedThroughSeq;
@@ -708,6 +717,15 @@ export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOpe
       return result;
     },
   };
+}
+
+export function createVNextBootstrapPrimaryOperatorRuntime(
+  db: Database,
+  plan: Pick<ReturnType<typeof buildVNextBootstrapPlan>, 'enabled'>
+): VNextPrimaryOperatorRuntimeHandle {
+  return createVNextPrimaryOperatorRuntime(db, {
+    wikiPublishAdapter: initVNextWikiPublishAdapter(db, { enabled: plan.enabled }),
+  });
 }
 
 export function createVNextBootstrapApiServer(
@@ -1002,7 +1020,8 @@ export async function runAgentLoop(
         return vNextOperatorDb;
       },
       initializeOperatorSchema: ensureVNextOperatorSchema,
-      createPrimaryOperator: createVNextPrimaryOperatorRuntime,
+      createPrimaryOperator: (database) =>
+        createVNextBootstrapPrimaryOperatorRuntime(database, vNext),
       createApiServer: (status) => {
         if (!vNextIngressConfig.enabled) {
           return createVNextBootstrapApiServer(status);

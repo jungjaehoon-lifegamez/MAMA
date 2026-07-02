@@ -5,6 +5,7 @@ import { applyMigrationsThrough } from '@jungjaehoon/mama-core/test-utils';
 
 import {
   createVNextBootstrapApiServer,
+  createVNextBootstrapPrimaryOperatorRuntime,
   createVNextPrimaryOperatorRuntime,
 } from '../../src/cli/commands/start.js';
 import {
@@ -13,8 +14,13 @@ import {
 } from '../../src/operator-vnext/connector-event-ingress.js';
 import { createConnectorIngressMigrationDryRunProvider } from '../../src/operator-vnext/connector-ingress-migration-dry-run.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
-import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
+import {
+  buildVNextBootstrapPlan,
+  startVNextBootstrapRuntime,
+  type VNextBootstrapRuntimeStatus,
+} from '../../src/runtime-vnext/bootstrap.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { isVNextWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
 
@@ -230,6 +236,67 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       });
 
       db.close();
+    });
+
+    it('wires source-linked wiki publishing into the bootstrap primary operator runtime', () => {
+      const db = new Database(':memory:');
+      ensureVNextOperatorSchema(db);
+
+      try {
+        const primaryOperator = createVNextBootstrapPrimaryOperatorRuntime(db, {
+          enabled: true,
+        });
+
+        expect(isVNextWikiPublishAdapter(primaryOperator.wikiPublishAdapter)).toBe(true);
+        const result = primaryOperator.wikiPublishAdapter?.publish({
+          pages: [
+            {
+              path: 'projects/mama.md',
+              title: 'MAMA',
+              type: 'entity',
+              content: 'bootstrap source-linked runtime artifact',
+              sourceRefs: [{ kind: 'raw', connector: 'manual', id: 'event-bootstrap-wiki' }],
+            },
+          ],
+        });
+
+        expect(result).toEqual({ pagesPublished: 0, artifactsStored: 1 });
+        expect(db.prepare('SELECT path, source_refs_json FROM wiki_artifacts').get()).toEqual({
+          path: 'projects/mama.md',
+          source_refs_json: JSON.stringify(['raw:manual:event-bootstrap-wiki']),
+        });
+      } finally {
+        db.close();
+      }
+    });
+
+    it('prepares the source-linked wiki adapter through the bootstrap startup runner', async () => {
+      const db = new Database(':memory:');
+      const plan = buildVNextBootstrapPlan({
+        enabled: true,
+        mode: 'bootstrap',
+        source: 'env',
+      });
+      const apiServer = {
+        start: async () => {},
+        stop: async () => {},
+      };
+
+      try {
+        const handles = await startVNextBootstrapRuntime(plan, {
+          openDatabase: () => db,
+          initializeOperatorSchema: ensureVNextOperatorSchema,
+          createPrimaryOperator: (database) =>
+            createVNextBootstrapPrimaryOperatorRuntime(database, plan),
+          createApiServer: () => apiServer,
+        });
+
+        expect(handles.primaryOperator.wikiPublishAdapter).toBeDefined();
+        expect(isVNextWikiPublishAdapter(handles.primaryOperator.wikiPublishAdapter)).toBe(true);
+        expect(handles.status.primaryOperator).toEqual(handles.primaryOperator.status);
+      } finally {
+        db.close();
+      }
     });
 
     it('marks primary operator runtime degraded after a failed batch', async () => {
