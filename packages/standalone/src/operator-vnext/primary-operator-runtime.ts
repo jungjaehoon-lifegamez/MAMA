@@ -177,9 +177,11 @@ export class PrimaryOperatorRuntime {
         const seq = nonNegativeInteger(event.seq, 'event.seq');
         assertRawEventSourceBoundToConnector(event.sourceRef, this.connector);
         const idempotencyKey = buildConnectorIdempotencyKey(this.connector, seq, seq);
+        const sourceRefs = [event.sourceRef];
         const existingCommit = recoverExistingOperatorCursorCommit(this.db, {
           cursorName: this.cursorName,
           idempotencyKey,
+          sourceRefs,
           nowMs: this.nowMs(),
         });
         if (existingCommit) {
@@ -187,8 +189,12 @@ export class PrimaryOperatorRuntime {
           advancedThroughSeq = Math.max(advancedThroughSeq, existingCommit.lastChangeSeq);
           continue;
         }
+        if (seq !== advancedThroughSeq + 1) {
+          throw new Error(
+            `Operator events must be contiguous; expected seq ${advancedThroughSeq + 1}, got ${seq}`
+          );
+        }
         const decision = parseDecision(await decide(event));
-        const sourceRefs = [event.sourceRef];
         const commit =
           decision.status === 'changed'
             ? commitOperatorCursor(this.db, {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+process.env.MAMA_FORCE_TIER_3 ||= 'true';
+
 import {
   buildConnectorIdempotencyKey,
   commitOperatorCursor,

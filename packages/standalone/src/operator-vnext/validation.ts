@@ -9,8 +9,8 @@ export function requiredString(value: unknown, field: string): string {
   return trimmed;
 }
 
-export function nonNegativeInteger(value: number, field: string): number {
-  if (!Number.isInteger(value) || value < 0) {
+export function nonNegativeInteger(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
     throw new Error(`${field} must be a non-negative integer`);
   }
   return value;

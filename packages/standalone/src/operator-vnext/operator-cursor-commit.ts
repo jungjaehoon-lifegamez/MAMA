@@ -1,3 +1,5 @@
+import type { SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
+
 import type { SQLiteDatabase } from '../sqlite.js';
 import { recordNoUpdate, serializeRequiredSourceRefs } from './no-update-ledger.js';
 import type {
@@ -40,6 +42,7 @@ interface NormalizedNoUpdateCommit {
 export interface ExistingOperatorCursorCommitInput {
   cursorName: string;
   idempotencyKey: string;
+  sourceRefs: readonly SourceRef[];
   nowMs?: number;
 }
 
@@ -221,6 +224,7 @@ export function recoverExistingOperatorCursorCommit(
   const nowMs = input.nowMs ?? Date.now();
   const cursorName = requiredString(input.cursorName, 'cursorName');
   const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
+  const expectedSourceRefsJson = JSON.stringify(serializeRequiredSourceRefs(input.sourceRefs));
 
   const tx = db.transaction(() => {
     const existing = getExistingCommit(db, idempotencyKey);
@@ -229,6 +233,9 @@ export function recoverExistingOperatorCursorCommit(
     }
     if (existing.cursor_name !== cursorName) {
       throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
+    }
+    if (existing.source_refs_json !== expectedSourceRefsJson) {
+      throw new Error('Idempotent replay source refs do not match the original operator commit');
     }
     const cursor = getCursor(db, cursorName);
     return resultFromStoredCommit(db, cursor, existing, nowMs);
