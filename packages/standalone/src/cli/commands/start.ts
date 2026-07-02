@@ -591,7 +591,7 @@ export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOpe
         status.status = 'degraded';
         status.failedSeq = result.failedSeq;
         status.errorMessage = result.error.message;
-      } else {
+      } else if (result.status === 'committed') {
         status.status = 'prepared';
         delete status.failedSeq;
         delete status.errorMessage;

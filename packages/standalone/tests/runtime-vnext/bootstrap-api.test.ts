@@ -182,6 +182,20 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
         failedSeq: 1,
       });
 
+      const idleResult = await primaryOperator.processBatch([], () => ({
+        status: 'no_update',
+        reason: 'idle batches do not resolve failures',
+      }));
+      expect(idleResult).toMatchObject({
+        status: 'idle',
+        advancedThroughSeq: 0,
+      });
+      expect(primaryOperator.status).toMatchObject({
+        status: 'degraded',
+        lastBatchStatus: 'idle',
+        failedSeq: 1,
+      });
+
       const statusResponse = await request(apiServer.app)
         .get('/api/vnext/status')
         .set('cf-connecting-ip', '203.0.113.10')
@@ -189,7 +203,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       expect(statusResponse.status).toBe(200);
       expect(statusResponse.body.primary_operator_runtime).toMatchObject({
         status: 'degraded',
-        last_batch_status: 'partial_failure',
+        last_batch_status: 'idle',
         failed_seq: 1,
       });
 
