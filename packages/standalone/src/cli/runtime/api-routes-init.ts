@@ -39,6 +39,7 @@ import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
+import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vnext/bootstrap.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -74,6 +75,8 @@ export interface RegisterApiRoutesParams {
   };
   /** Sessions DB for validation */
   sessionsDb?: SQLiteDatabase;
+  /** vNext bootstrap plan; when enabled, autonomous legacy fanout must stay off. */
+  vNext?: VNextBootstrapPlan;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -91,6 +94,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     graphHandler,
     getAdapter,
     sessionsDb,
+    vNext,
   } = params;
 
   // ── Validation Session Service ────────────────────────────────────────
@@ -254,8 +258,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
 
-  // ── Report Slots ──────────────────────────────────────────────────────
-  {
+  // ── Report Slots + legacy dashboard/wiki fanout ───────────────────────
+  if (
+    !shouldSkipVNextFanout(vNext, 'dashboard_agent_interval') &&
+    !shouldSkipVNextFanout(vNext, 'wiki_agent_interval') &&
+    !shouldSkipVNextFanout(vNext, 'persona_write') &&
+    !shouldSkipVNextFanout(vNext, 'mcp_config_rewrite') &&
+    !shouldSkipVNextFanout(vNext, 'obsidian_launch')
+  ) {
     const { broadcastReportUpdate } = await import('../../api/report-handler.js');
 
     // Manual refresh endpoint (kept for compatibility)
@@ -467,7 +477,10 @@ This saves resources. Only compile when there is genuinely new information to do
   }
 
   // ── Conductor Audit — hourly system health check ──────────────────────
-  {
+  if (
+    !shouldSkipVNextFanout(vNext, 'conductor_audit') &&
+    !shouldSkipVNextFanout(vNext, 'message_router_autonomous_process')
+  ) {
     const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
     const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
 
