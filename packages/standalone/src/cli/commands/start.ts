@@ -90,6 +90,10 @@ import {
   type ConnectorEventIngressAdapter,
   type ConnectorEventIngressPreview,
 } from '../../operator-vnext/connector-event-ingress.js';
+import {
+  createConnectorIngressMigrationDryRunProvider,
+  type ConnectorIngressMigrationDryRun,
+} from '../../operator-vnext/connector-ingress-migration-dry-run.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -570,6 +574,9 @@ export interface VNextIngressPreviewRequest {
 
 export interface VNextBootstrapApiServerOptions {
   ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
+  ingressMigrationDryRunProvider?: (
+    input: VNextIngressPreviewRequest
+  ) => ConnectorIngressMigrationDryRun;
 }
 
 function firstQueryString(value: unknown): string | null {
@@ -596,9 +603,11 @@ function queryLimit(value: unknown): number | undefined {
   return limit;
 }
 
-function isVNextIngressPreviewClientError(error: unknown): boolean {
+function isVNextIngressClientError(error: unknown): boolean {
   return (
-    error instanceof Error && error.message.includes('locked to the configured connector/channel')
+    error instanceof Error &&
+    (error.message.includes('locked to the configured connector/channel') ||
+      error.message === 'limit must be a positive integer')
   );
 }
 
@@ -768,12 +777,62 @@ export function createVNextBootstrapApiServer(
         preview: options.ingressPreviewProvider({ connector, channel, limit }),
       });
     } catch (error) {
-      const clientError = isVNextIngressPreviewClientError(error);
+      const clientError = isVNextIngressClientError(error);
       res.status(clientError ? 400 : 500).json({
         ok: false,
         code: clientError
           ? 'vnext_ingress_preview_invalid_request'
           : 'vnext_ingress_preview_failed',
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+  app.get('/api/vnext/ingress/migration-dry-run', (req, res) => {
+    if (!options.ingressMigrationDryRunProvider) {
+      res.status(404).json({
+        ok: false,
+        code: 'vnext_ingress_migration_dry_run_unavailable',
+        error: 'vNext connector ingress migration dry-run is not configured.',
+      });
+      return;
+    }
+
+    const connector = firstQueryString(req.query.connector);
+    const channel = firstQueryString(req.query.channel);
+    if (!connector || !channel) {
+      res.status(400).json({
+        ok: false,
+        code: 'vnext_ingress_migration_dry_run_invalid_request',
+        error: 'connector and channel query parameters are required.',
+      });
+      return;
+    }
+
+    let limit: number | undefined;
+    try {
+      limit = queryLimit(req.query.limit);
+    } catch (error) {
+      res.status(400).json({
+        ok: false,
+        code: 'vnext_ingress_migration_dry_run_invalid_request',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return;
+    }
+
+    try {
+      res.json({
+        ok: true,
+        mode: 'dry_run',
+        dry_run: options.ingressMigrationDryRunProvider({ connector, channel, limit }),
+      });
+    } catch (error) {
+      const clientError = isVNextIngressClientError(error);
+      res.status(clientError ? 400 : 500).json({
+        ok: false,
+        code: clientError
+          ? 'vnext_ingress_migration_dry_run_invalid_request'
+          : 'vnext_ingress_migration_dry_run_failed',
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -955,6 +1014,12 @@ export async function runAgentLoop(
         }
         return createVNextBootstrapApiServer(status, {
           ingressPreviewProvider: createConnectorEventIngressPreviewProvider({
+            rawAdapter: vNextRawAdapter,
+            operatorDb: vNextOperatorDb,
+            connector: vNextIngressConfig.connector,
+            channel: vNextIngressConfig.channel,
+          }),
+          ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
             rawAdapter: vNextRawAdapter,
             operatorDb: vNextOperatorDb,
             connector: vNextIngressConfig.connector,

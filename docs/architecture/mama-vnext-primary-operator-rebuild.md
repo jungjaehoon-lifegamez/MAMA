@@ -690,6 +690,50 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
   tests/runtime-vnext/legacy-fanout-disabled.test.ts
 ```
 
+### PR 7: Connector Ingress Migration Dry-Run Report
+
+Goal:
+
+- Add an authenticated migration dry-run report on top of the PR 6 connector
+  ingress preview.
+- Report which explicit connector/channel raw events would require primary
+  operator decisions before migration.
+- Keep the report read-only: no commits, cursor movement, no-update rows, or
+  promotion of report/wiki/memory artifacts.
+
+Files:
+
+- Create: `packages/standalone/src/operator-vnext/connector-ingress-migration-dry-run.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Create: `packages/standalone/tests/operator-vnext/connector-ingress-migration-dry-run.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+
+Authenticated migration dry-run endpoint:
+
+```text
+GET /api/vnext/ingress/migration-dry-run?connector=slack&channel=C_PUBLIC_SYNTHETIC&limit=25
+```
+
+Rules:
+
+- Migration dry-run is locked to the configured connector/channel.
+- Migration dry-run returns source refs, event seqs, and decision-readiness only.
+- Migration dry-run must not call the primary operator commit path.
+- Migration dry-run must not insert `vnext_operator_commits`,
+  `vnext_operator_cursors`, or `operator_no_updates` rows.
+- Migration dry-run must not promote report/wiki/memory artifacts.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/connector-ingress-migration-dry-run.test.ts \
+  tests/operator-vnext/connector-event-ingress.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts \
+  tests/runtime-vnext/bootstrap.test.ts \
+  tests/runtime-vnext/legacy-fanout-disabled.test.ts
+```
+
 ## Global Regression Checklist
 
 - legacy mode behavior unchanged
@@ -710,6 +754,7 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
 - crash after cursor write does not duplicate commit
 - two operators racing commit once
 - DB busy retry is bounded
+- migration dry run does not write operator commits, cursors, or no-update rows
 - migration dry run does not promote unverified legacy artifacts
 
 ## Parallelization
@@ -753,7 +798,7 @@ Conflict flags:
 5. Land PR 4 and import one wiki page as unverified, then commit one source-linked artifact.
 6. Land PR 5 and switch Today dashboard to existing projection extension.
 7. Land PR 6 and enable vNext dry-run preview locally for one connector/channel.
-8. Run dry-run migration against the authenticated ingress preview.
+8. Land PR 7 and run the authenticated migration dry-run report for one connector/channel.
 9. Decide whether to remove legacy self-paced agents from default config.
 
 ## Review Notes
