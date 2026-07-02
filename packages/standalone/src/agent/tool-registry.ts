@@ -97,7 +97,7 @@ register({
   description:
     'Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.',
   category: 'os_monitoring',
-  params: 'pages: [{path, title, type, content, confidence}]',
+  params: 'pages: [{path, title, type, content, confidence?, sourceIds?, sourceRefs?}]',
 });
 register({
   name: 'obsidian',

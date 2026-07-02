@@ -6,10 +6,38 @@ import {
   appendFileSync,
   readdirSync,
 } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, posix } from 'path';
 import type { WikiPage } from './types.js';
+import { normalizeWikiPagePath } from './path-safety.js';
 
 const HUMAN_MARKER = '<!-- human -->';
+const FRONTMATTER_LIST_UNSAFE_PATTERN = /[\r\n]/;
+
+function frontmatterScalar(value: string, field: string): string {
+  if (value.includes('\0')) {
+    throw new Error(`${field} contains characters that cannot be safely written to frontmatter`);
+  }
+  return JSON.stringify(value);
+}
+
+function frontmatterListItem(value: string, field: string): string {
+  if (value.includes('\0') || FRONTMATTER_LIST_UNSAFE_PATTERN.test(value)) {
+    throw new Error(`${field} contains characters that cannot be safely written to frontmatter`);
+  }
+  return JSON.stringify(value);
+}
+
+function parseFrontmatterScalar(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (typeof parsed === 'string') {
+      return parsed;
+    }
+  } catch {
+    // Legacy wiki pages wrote unquoted scalars. Keep matching those pages.
+  }
+  return value;
+}
 
 /** Word overlap ratio between two titles. Returns 0-1. */
 function titleWordOverlap(a: string, b: string): number {
@@ -47,10 +75,11 @@ export class ObsidianWriter {
    * Prevents duplicates when LLM generates different filenames for the same entity.
    */
   private findExistingPage(page: WikiPage): string | null {
-    const dir = join(this.wikiPath, dirname(page.path));
+    const pageDir = posix.dirname(page.path);
+    const dir = join(this.wikiPath, pageDir);
     if (!existsSync(dir)) return null;
 
-    const targetSlug = slugify(basename(page.path, '.md'));
+    const targetSlug = slugify(posix.basename(page.path, '.md'));
     const targetTitle = page.title.toLowerCase();
 
     for (const file of readdirSync(dir)) {
@@ -59,7 +88,7 @@ export class ObsidianWriter {
 
       // Exact slug match (case-insensitive)
       if (fileSlug === targetSlug) {
-        return join(dirname(page.path), file);
+        return posix.join(pageDir, file);
       }
 
       // Title match: read frontmatter and compare
@@ -67,14 +96,14 @@ export class ObsidianWriter {
         const content = readFileSync(join(dir, file), 'utf8');
         const titleMatch = content.match(/^title:\s*(.+)$/m);
         if (titleMatch) {
-          const existingTitle = titleMatch[1].trim().toLowerCase();
+          const existingTitle = parseFrontmatterScalar(titleMatch[1].trim()).toLowerCase();
           // Loose match: one title contains the other, or they share >60% of words
           if (
             existingTitle.includes(targetTitle) ||
             targetTitle.includes(existingTitle) ||
             titleWordOverlap(existingTitle, targetTitle) > 0.6
           ) {
-            return join(dirname(page.path), file);
+            return posix.join(pageDir, file);
           }
         }
       } catch {
@@ -99,22 +128,23 @@ export class ObsidianWriter {
     }
   }
 
-  writePage(page: WikiPage): void {
+  writePage(page: WikiPage): string {
+    const safePage = { ...page, path: normalizeWikiPagePath(page.path) };
     // Dedup: check if a similar page already exists in the same directory
-    const existingPath = this.findExistingPage(page);
-    const effectivePath = existingPath || page.path;
+    const existingPath = this.findExistingPage(safePage);
+    const effectivePath = existingPath || safePage.path;
 
     const filePath = join(this.wikiPath, effectivePath);
     const dir = dirname(filePath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 
     // Strip duplicate frontmatter from LLM-generated content
-    let cleanContent = page.content;
+    let cleanContent = safePage.content;
     if (cleanContent.trimStart().startsWith('---')) {
       cleanContent = cleanContent.replace(/^[\s]*---[\s\S]*?---[\s]*/, '').trimStart();
     }
     // Strip duplicate title heading if it matches page title
-    const titlePrefix = `# ${page.title}`;
+    const titlePrefix = `# ${safePage.title}`;
     if (cleanContent.startsWith(titlePrefix)) {
       cleanContent = cleanContent.slice(titlePrefix.length).trimStart();
     }
@@ -130,21 +160,28 @@ export class ObsidianWriter {
 
     const frontmatter = [
       '---',
-      `title: ${page.title}`,
-      `type: ${page.type}`,
-      `confidence: ${page.confidence}`,
-      `compiled_at: ${page.compiledAt}`,
+      `title: ${frontmatterScalar(safePage.title, 'title')}`,
+      `type: ${frontmatterScalar(safePage.type, 'type')}`,
+      `confidence: ${frontmatterScalar(safePage.confidence, 'confidence')}`,
+      `compiled_at: ${frontmatterScalar(safePage.compiledAt, 'compiledAt')}`,
+      ...(safePage.sourceRefs && safePage.sourceRefs.length > 0
+        ? [
+            'source_refs:',
+            ...safePage.sourceRefs.map((ref) => `  - ${frontmatterListItem(ref, 'sourceRefs')}`),
+          ]
+        : []),
       `source_ids:`,
-      ...page.sourceIds.map((id) => `  - ${id}`),
+      ...safePage.sourceIds.map((id) => `  - ${frontmatterListItem(id, 'sourceIds')}`),
       '---',
     ].join('\n');
 
-    let body = `${frontmatter}\n\n# ${page.title}\n\n${cleanContent}`;
+    let body = `${frontmatter}\n\n# ${safePage.title}\n\n${cleanContent}`;
     if (humanSection) {
       body += '\n\n' + humanSection;
     }
 
     writeFileSync(filePath, body, 'utf8');
+    return effectivePath;
   }
 
   appendLog(action: string, message: string): void {
@@ -160,9 +197,10 @@ export class ObsidianWriter {
 
     const byType = new Map<string, WikiPage[]>();
     for (const p of pages) {
-      const list = byType.get(p.type) || [];
-      list.push(p);
-      byType.set(p.type, list);
+      const safePage = { ...p, path: normalizeWikiPagePath(p.path) };
+      const list = byType.get(safePage.type) || [];
+      list.push(safePage);
+      byType.set(safePage.type, list);
     }
 
     for (const [type, typePages] of byType) {
