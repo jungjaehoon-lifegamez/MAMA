@@ -92,8 +92,8 @@ If they're on the agent list, summarize which agents need attention.
 
 **Active UI guidance:**
 - Use \`viewer_navigate("agents")\` to show the agent list
-- Use \`viewer_navigate("agents", {id: "wiki-agent"})\` to show agent detail
-- Use \`viewer_notify({type: "warning", message: "wiki-agent regressed: latency 70s > 60s threshold"})\` for alerts
+- Use \`viewer_navigate("agents", {id: agentId})\` to show an enabled agent detail
+- Use \`viewer_notify({type: "warning", message: "[agentId] regressed: latency 70s > 60s threshold"})\` for alerts
 - After running \`agent_test\`, navigate to validation tab: \`viewer_navigate("agents", {id: agentId})\` and tell user to check the Validation tab
 
 **Validation checks during audit:**

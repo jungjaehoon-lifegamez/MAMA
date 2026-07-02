@@ -258,6 +258,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
 
+  const hasEnabledAgentConfig = (agentId: string): boolean => {
+    const agentConfig = config.multi_agent?.agents?.[agentId];
+    return Boolean(agentConfig && agentConfig.enabled !== false);
+  };
+
   // ── Report Slots + legacy dashboard/wiki fanout ───────────────────────
   if (
     !shouldSkipVNextFanout(vNext, 'dashboard_agent_interval') &&
@@ -266,61 +271,68 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     !shouldSkipVNextFanout(vNext, 'mcp_config_rewrite') &&
     !shouldSkipVNextFanout(vNext, 'obsidian_launch')
   ) {
-    const { broadcastReportUpdate } = await import('../../api/report-handler.js');
+    const dashboardAgentConfigured = hasEnabledAgentConfig('dashboard-agent');
+    const wikiAgentConfigured = hasEnabledAgentConfig('wiki-agent');
 
     // Manual refresh endpoint (kept for compatibility)
     apiServer.app.post('/api/report/refresh', requireAuth, (_req, res) => {
       res.json({ ok: true, message: 'Viewer now renders data directly from Intelligence API' });
     });
 
-    // Wire report_publish tool to OS agent — only briefing slot
-    toolExecutor.setReportPublisher((slots) => {
-      for (const [slotId, html] of Object.entries(slots)) {
-        if (slotId !== 'briefing') continue; // only accept briefing slot
-        apiServer.reportStore.update(slotId, html, 0);
-      }
-      broadcastReportUpdate(apiServer.reportSseClients, {
-        slots: apiServer.reportStore.getAllSorted(),
-      });
-      routesLogger.debug(`[Report] Agent published briefing slot`);
-      eventBus.emit({
-        type: 'agent:action',
-        agent: 'dashboard-agent',
-        action: 'publish',
-        target: 'briefing',
-      });
-    });
-
     // ── Conductor Persona (section injection — non-destructive) ────────
     const { ensureConductorPersona } = await import('../../multi-agent/conductor-persona.js');
     ensureConductorPersona();
 
-    // ── Dashboard Agent ─────────────────────────────────────────────────
-    const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
-    ensureDashboardPersona();
-    routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
-
-    // Merge code-act MCP server into mama-mcp-config.json
-    // Makes code_act available to all CLI processes (AgentProcessManager agents)
-    const codeActServerPath = path.join(__dirname, '../../mcp/code-act-server.js');
-    try {
-      const mamaMcpConfigPath = path.join(homedir(), '.mama', 'mama-mcp-config.json');
-      const existing = existsSync(mamaMcpConfigPath)
-        ? JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8'))
-        : { mcpServers: {} };
-      existing.mcpServers['code-act'] = {
-        command: 'node',
-        args: [codeActServerPath],
-        env: { MAMA_SERVER_PORT: String(API_PORT) },
-      };
-      writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
-      routesLogger.debug('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
-    } catch (err) {
-      routesLogger.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
+    if (dashboardAgentConfigured || wikiAgentConfigured) {
+      // Merge code-act MCP server into mama-mcp-config.json.
+      // Makes code_act available to configured legacy self-paced agents.
+      const codeActServerPath = path.join(__dirname, '../../mcp/code-act-server.js');
+      try {
+        const mamaMcpConfigPath = path.join(homedir(), '.mama', 'mama-mcp-config.json');
+        const existing = existsSync(mamaMcpConfigPath)
+          ? JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8'))
+          : { mcpServers: {} };
+        existing.mcpServers['code-act'] = {
+          command: 'node',
+          args: [codeActServerPath],
+          env: { MAMA_SERVER_PORT: String(API_PORT) },
+        };
+        writeFileSync(mamaMcpConfigPath, JSON.stringify(existing, null, 2), 'utf-8');
+        routesLogger.debug('[api-routes-init] code-act MCP merged into mama-mcp-config.json');
+      } catch (err) {
+        routesLogger.warn('[api-routes-init] Failed to merge code-act into MCP config:', err);
+      }
     }
 
-    // Dashboard cron: 30-min interval via AgentProcessManager
-    const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
+    if (dashboardAgentConfigured) {
+      const { broadcastReportUpdate } = await import('../../api/report-handler.js');
+
+      // Wire report_publish tool to Dashboard Agent — only briefing slot
+      toolExecutor.setReportPublisher((slots) => {
+        for (const [slotId, html] of Object.entries(slots)) {
+          if (slotId !== 'briefing') continue; // only accept briefing slot
+          apiServer.reportStore.update(slotId, html, 0);
+        }
+        broadcastReportUpdate(apiServer.reportSseClients, {
+          slots: apiServer.reportStore.getAllSorted(),
+        });
+        routesLogger.debug(`[Report] Agent published briefing slot`);
+        eventBus.emit({
+          type: 'agent:action',
+          agent: 'dashboard-agent',
+          action: 'publish',
+          target: 'briefing',
+        });
+      });
+
+      // ── Dashboard Agent ───────────────────────────────────────────────
+      const { ensureDashboardPersona } =
+        await import('../../multi-agent/dashboard-agent-persona.js');
+      ensureDashboardPersona();
+      routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
+
+      // Dashboard cron: 30-min interval via AgentProcessManager
+      const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
 1. Use agent_notices({limit: 50}) to find the most recent dashboard-agent publish/task_complete notice. Treat that as the last briefing boundary.
 2. Use context_compile first to find recent substantive decisions (limit 20, max_tool_calls 2, strictness "balanced").
@@ -333,41 +345,44 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
 This saves resources. Only publish when there is genuinely new information to report.`;
 
-    const runDashboardAgent = async () => {
-      const pm = toolExecutor.getAgentProcessManager();
-      if (!pm) {
-        routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
-        return;
-      }
-      try {
-        routesLogger.debug('[Dashboard Agent] Checking for updates...');
-        const { noUpdate } = await executeValidatedRun('dashboard-agent', dashboardPrompt);
-        if (noUpdate) {
-          routesLogger.debug('[Dashboard Agent] No changes detected, skipped');
-        } else {
-          routesLogger.debug('[Dashboard Agent] Briefing published');
+      const runDashboardAgent = async () => {
+        const pm = toolExecutor.getAgentProcessManager();
+        if (!pm) {
+          routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
+          return;
         }
-      } catch (err) {
-        routesLogger.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
-      }
-    };
+        try {
+          routesLogger.debug('[Dashboard Agent] Checking for updates...');
+          const { noUpdate } = await executeValidatedRun('dashboard-agent', dashboardPrompt);
+          if (noUpdate) {
+            routesLogger.debug('[Dashboard Agent] No changes detected, skipped');
+          } else {
+            routesLogger.debug('[Dashboard Agent] Briefing published');
+          }
+        } catch (err) {
+          routesLogger.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
+        }
+      };
 
-    // First run after 10s (let connectors poll first), then every 30 min
-    setTimeout(runDashboardAgent, 10_000);
-    setInterval(runDashboardAgent, 30 * 60 * 1000);
+      // First run after 10s (let connectors poll first), then every 30 min
+      setTimeout(runDashboardAgent, 10_000);
+      setInterval(runDashboardAgent, 30 * 60 * 1000);
 
-    // Manual trigger
-    apiServer.app.post('/api/report/agent-refresh', requireAuth, async (_req, res) => {
-      runDashboardAgent().catch(() => {});
-      res.json({ ok: true, message: 'Dashboard agent triggered' });
-    });
+      // Manual trigger
+      apiServer.app.post('/api/report/agent-refresh', requireAuth, async (_req, res) => {
+        runDashboardAgent().catch(() => {});
+        res.json({ ok: true, message: 'Dashboard agent triggered' });
+      });
+    } else {
+      routesLogger.debug('[Dashboard Agent] Skipped; dashboard-agent is not configured');
+    }
 
     // ── Wiki Agent ──────────────────────────────────────────────────────
     const wikiConfig = config.wiki as
       | { enabled?: boolean; vaultPath?: string; wikiDir?: string }
       | undefined;
 
-    if (wikiConfig?.enabled && wikiConfig.vaultPath) {
+    if (wikiAgentConfigured && wikiConfig?.enabled && wikiConfig.vaultPath) {
       const { ensureWikiPersona } = await import('../../multi-agent/wiki-agent-persona.js');
       const { ObsidianWriter } = await import('../../wiki/obsidian-writer.js');
 
