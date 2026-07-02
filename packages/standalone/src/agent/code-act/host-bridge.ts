@@ -126,13 +126,13 @@ const TOOL_REGISTRY: ToolMeta[] = [
     params: [
       {
         name: 'pages',
-        type: 'Array<{ path: string; title: string; type: string; content: string; confidence: string }>',
+        type: "Array<{ path: string; title: string; type: string; content: string; confidence?: 'high' | 'medium' | 'low'; sourceIds?: string[]; sourceRefs?: Array<{ kind: string; id: string; connector?: string }> }>",
         required: true,
         description:
-          'Array of wiki pages to publish. Each page has path, title, type (entity/lesson/synthesis/process), content (markdown), confidence (high/medium/low).',
+          'Array of wiki pages to publish. Path must be relative to the wiki directory. sourceRefs is canonical vNext provenance; sourceIds is legacy-compatible provenance.',
       },
     ],
-    returnType: '{ success: boolean; message: string }',
+    returnType: '{ success: boolean; message: string; artifactsStored?: number }',
     category: 'os',
   },
   // Obsidian CLI — vault management

@@ -114,6 +114,11 @@ import {
 } from './delegation-executor.js';
 import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
+import {
+  createWikiPublishAdapter,
+  type WikiPublishAdapter,
+} from '../wiki-artifacts/wiki-publish-adapter.js';
+import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -332,19 +337,8 @@ export class GatewayToolExecutor {
   private currentChannelId: string = '';
   private disallowedGatewayTools: Set<string> = new Set();
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
-  private wikiPublisher:
-    | ((
-        pages: Array<{
-          path: string;
-          title: string;
-          type: string;
-          content: string;
-          sourceIds: string[];
-          compiledAt: string;
-          confidence: string;
-        }>
-      ) => void)
-    | null = null;
+  private wikiPublisher: WikiPagePublisher | null = null;
+  private wikiPublishAdapter: WikiPublishAdapter | null = null;
   private obsidianVaultPath: string | null = null;
   setObsidianVaultPath(vaultPath: string): void {
     this.obsidianVaultPath = vaultPath;
@@ -606,20 +600,11 @@ export class GatewayToolExecutor {
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
   }
-  setWikiPublisher(
-    fn: (
-      pages: Array<{
-        path: string;
-        title: string;
-        type: string;
-        content: string;
-        sourceIds: string[];
-        compiledAt: string;
-        confidence: string;
-      }>
-    ) => void
-  ): void {
+  setWikiPublisher(fn: WikiPagePublisher): void {
     this.wikiPublisher = fn;
+  }
+  setWikiPublishAdapter(adapter: WikiPublishAdapter | null): void {
+    this.wikiPublishAdapter = adapter;
   }
 
   /** Check if a memory agent is available for routing memory writes. */
@@ -665,6 +650,7 @@ export class GatewayToolExecutor {
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
     this.contextCompileService = options.contextCompileService;
+    this.wikiPublishAdapter = options.wikiPublishAdapter ?? null;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
     });
@@ -2005,13 +1991,7 @@ export class GatewayToolExecutor {
         case 'wiki_publish': {
           const pagesInput = (
             input as {
-              pages?: Array<{
-                path: string;
-                title: string;
-                type: string;
-                content: string;
-                confidence?: string;
-              }>;
+              pages?: WikiPublishPageInput[];
             }
           ).pages;
           if (!pagesInput || !Array.isArray(pagesInput)) {
@@ -2022,25 +2002,27 @@ export class GatewayToolExecutor {
               false
             );
           }
-          if (this.wikiPublisher) {
-            const now = new Date().toISOString();
-            const wikiPages = pagesInput.map((p) => ({
-              path: p.path,
-              title: p.title,
-              type: p.type || 'entity',
-              content: p.content,
-              sourceIds: [] as string[],
-              compiledAt: now,
-              confidence: p.confidence || 'medium',
-            }));
-            this.wikiPublisher(wikiPages);
-
+          const adapter =
+            this.wikiPublishAdapter ??
+            createWikiPublishAdapter({
+              mode: 'legacy',
+              publisher: this.wikiPublisher,
+            });
+          try {
+            const publishResult = adapter.publish({ pages: pagesInput });
             return {
               success: true,
-              message: `Wiki published: ${wikiPages.length} pages`,
+              message: `Wiki published: ${publishResult.pagesPublished} pages`,
+              artifactsStored: publishResult.artifactsStored,
             };
+          } catch (error) {
+            throw new AgentError(
+              error instanceof Error ? error.message : 'Wiki publish failed',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
           }
-          throw new AgentError('Wiki publisher not configured', 'TOOL_ERROR', undefined, false);
         }
         // Kagemusha query tools — progressive business data exploration
         case 'kagemusha_overview': {

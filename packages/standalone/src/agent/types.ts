@@ -11,6 +11,7 @@
 
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
+import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { ContextCompileService } from './context-compile-service.js';
 import type {
   AppendToolTraceInput,
@@ -1206,6 +1207,8 @@ export interface GatewayToolExecutorOptions {
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
   /** Shared context compile service for gateway context_compile calls. */
   contextCompileService?: ContextCompileService;
+  /** Optional wiki publish adapter, used by vNext callers that persist source-linked artifacts. */
+  wikiPublishAdapter?: WikiPublishAdapter | null;
 }
 
 export interface MemoryWriteProvenance {

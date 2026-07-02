@@ -582,7 +582,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     const result = await executor.execute(
       'wiki_publish',
       {
-        pages: [{ path: '/wiki/a.md', title: 'A', type: 'entity', content: 'A page' }],
+        pages: [{ path: 'wiki/a.md', title: 'A', type: 'entity', content: 'A page' }],
       } as unknown as GatewayToolInput,
       {
         agentId: 'wiki',
@@ -598,6 +598,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(result).toEqual({
       success: true,
       message: 'Wiki published: 1 pages',
+      artifactsStored: 0,
     });
     const rows = readGatewayToolRows(db);
     expect(rows.map((row) => row.input_summary)).toEqual(['wiki_publish']);
@@ -693,7 +694,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
         toolName === 'report_publish'
           ? ({ slots: { blocked: 'blocked' } } as unknown as GatewayToolInput)
           : ({
-              pages: [{ path: '/wiki/a.md', title: 'A', type: 'entity', content: 'A page' }],
+              pages: [{ path: 'wiki/a.md', title: 'A', type: 'entity', content: 'A page' }],
             } as unknown as GatewayToolInput);
 
       const result = (await executor.execute(toolName, input, {

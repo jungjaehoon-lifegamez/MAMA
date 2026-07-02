@@ -41,11 +41,99 @@ describe('ObsidianWriter', () => {
 
     const content = readFileSync(join(wikiDir, 'projects', 'ProjectAlpha.md'), 'utf8');
     expect(content).toContain('---');
-    expect(content).toContain('title: ProjectAlpha');
-    expect(content).toContain('type: entity');
-    expect(content).toContain('confidence: high');
+    expect(content).toContain('title: "ProjectAlpha"');
+    expect(content).toContain('type: "entity"');
+    expect(content).toContain('confidence: "high"');
     expect(content).toContain('source_ids:');
+    expect(content).toContain('  - "d_123"');
     expect(content).toContain('## Current Status');
+  });
+
+  it('quotes frontmatter scalars that YAML could otherwise reinterpret', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page: WikiPage = {
+      path: 'projects/ProjectAlpha.md',
+      title: 'ProjectAlpha: true # comment',
+      type: 'entity',
+      content: 'Content.',
+      sourceIds: ['d_123: # comment'],
+      sourceRefs: ['raw:slack:event-1'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+
+    writer.writePage(page);
+
+    const content = readFileSync(join(wikiDir, 'projects', 'ProjectAlpha.md'), 'utf8');
+    expect(content).toContain('title: "ProjectAlpha: true # comment"');
+    expect(content).toContain('  - "d_123: # comment"');
+    expect(content).toContain('  - "raw:slack:event-1"');
+  });
+
+  it('rejects source refs that would inject frontmatter keys', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page: WikiPage = {
+      path: 'projects/ProjectAlpha.md',
+      title: 'ProjectAlpha',
+      type: 'entity',
+      content: 'Content.',
+      sourceIds: ['d_123'],
+      sourceRefs: ['decision:d_123\ninjected: true'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+
+    expect(() => writer.writePage(page)).toThrow(/frontmatter/i);
+  });
+
+  it('rejects page paths that would escape the wiki directory', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page: WikiPage = {
+      path: '../outside.md',
+      title: 'ProjectAlpha',
+      type: 'entity',
+      content: 'Content.',
+      sourceIds: ['d_123'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+
+    expect(() => writer.writePage(page)).toThrow(/parent-directory/i);
+  });
+
+  it('rejects generated pages that would overwrite reserved wiki files', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page: WikiPage = {
+      path: 'index.md',
+      title: 'ProjectAlpha',
+      type: 'entity',
+      content: 'Content.',
+      sourceIds: ['d_123'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+
+    expect(() => writer.writePage(page)).toThrow(/reserved wiki files/i);
+  });
+
+  it('rejects generated pages that target reserved wiki directories', () => {
+    const writer = new ObsidianWriter(tempDir, 'wiki');
+    writer.ensureDirectories();
+    const page: WikiPage = {
+      path: 'projects',
+      title: 'ProjectAlpha',
+      type: 'entity',
+      content: 'Content.',
+      sourceIds: ['d_123'],
+      compiledAt: '2026-04-08T12:00:00Z',
+      confidence: 'high',
+    };
+
+    expect(() => writer.writePage(page)).toThrow(/reserved wiki directories/i);
   });
 
   it('updates existing page preserving human sections', () => {
