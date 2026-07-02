@@ -38,6 +38,22 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       });
     });
 
+    it('parses numeric config flags and rejects invalid numeric config values', () => {
+      expect(resolveVNextRuntimeFlags({ runtime: { vnext: 1 } }, {})).toEqual({
+        enabled: true,
+        mode: 'bootstrap',
+        source: 'config',
+      });
+      expect(resolveVNextRuntimeFlags({ runtime_vnext: { enabled: 0 } }, {})).toEqual({
+        enabled: false,
+        mode: 'legacy',
+        source: 'config',
+      });
+      expect(() => resolveVNextRuntimeFlags({ runtime: { vnext: 2 } }, {})).toThrow(
+        'Invalid MAMA_VNEXT_RUNTIME value: 2'
+      );
+    });
+
     it('publishes the PR1 startup allowlist and no-op primary operator placeholder', () => {
       const plan = buildVNextBootstrapPlan({
         enabled: true,
@@ -131,6 +147,39 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       expect(result.status.executedStartupSteps).toEqual(plan.allowedStartupSteps);
       expect(result.status.primaryOperator.status).toBe('noop');
       expect(calls).toEqual(['db.open', 'api.create:noop', 'api.start', 'shutdown.install']);
+    });
+
+    it('closes the opened database if vNext API startup fails', async () => {
+      const calls: string[] = [];
+      const database = { close: () => calls.push('db.close') };
+      const plan = buildVNextBootstrapPlan({
+        enabled: true,
+        mode: 'bootstrap',
+        source: 'env',
+      });
+
+      await expect(
+        startVNextBootstrapRuntime(plan, {
+          openDatabase: () => {
+            calls.push('db.open');
+            return database;
+          },
+          createApiServer: () => ({
+            start: async () => {
+              calls.push('api.start');
+              throw new Error('bind failed');
+            },
+            stop: async () => {
+              calls.push('api.stop');
+            },
+          }),
+          installShutdownHandlers: () => {
+            calls.push('shutdown.install');
+          },
+        })
+      ).rejects.toThrow('bind failed');
+
+      expect(calls).toEqual(['db.open', 'api.start', 'db.close']);
     });
   });
 });

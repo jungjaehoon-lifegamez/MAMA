@@ -608,11 +608,20 @@ export function createVNextBootstrapApiServer(status: VNextBootstrapRuntimeStatu
       server = null;
       activeServer.closeAllConnections();
       await new Promise<void>((resolve) => {
-        const timeoutId = setTimeout(resolve, 2000);
-        activeServer.close(() => {
-          clearTimeout(timeoutId);
+        let settled = false;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const done = () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           resolve();
-        });
+        };
+        timeoutId = setTimeout(done, 2000);
+        activeServer.close(done);
       });
     },
   };
@@ -630,8 +639,13 @@ function installVNextBootstrapShutdownHandlers(
     console.log('\n\n🛑 Shutting down MAMA vNext bootstrap...');
     try {
       await handles.apiServer.stop();
-    } finally {
+    } catch (error) {
+      console.error('Failed to stop vNext bootstrap API server during shutdown:', error);
+    }
+    try {
       handles.database.close();
+    } catch (error) {
+      console.error('Failed to close vNext bootstrap database during shutdown:', error);
     }
     process.exit(0);
   };

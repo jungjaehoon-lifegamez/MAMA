@@ -13,6 +13,15 @@ function parseBooleanFlag(value: unknown): boolean | null {
   if (typeof value === 'boolean') {
     return value;
   }
+  if (typeof value === 'number') {
+    if (value === 1) {
+      return true;
+    }
+    if (value === 0) {
+      return false;
+    }
+    throw new Error(`Invalid MAMA_VNEXT_RUNTIME value: ${value}`);
+  }
   if (typeof value !== 'string') {
     return null;
   }
