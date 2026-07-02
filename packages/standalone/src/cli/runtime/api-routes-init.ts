@@ -289,9 +289,30 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       const codeActServerPath = path.join(__dirname, '../../mcp/code-act-server.js');
       try {
         const mamaMcpConfigPath = path.join(homedir(), '.mama', 'mama-mcp-config.json');
-        const existing = existsSync(mamaMcpConfigPath)
-          ? JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8'))
-          : { mcpServers: {} };
+        let existing: {
+          mcpServers?: Record<string, unknown>;
+          [key: string]: unknown;
+        } = { mcpServers: {} };
+        if (existsSync(mamaMcpConfigPath)) {
+          try {
+            const parsedConfig = JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8')) as unknown;
+            if (parsedConfig && typeof parsedConfig === 'object' && !Array.isArray(parsedConfig)) {
+              existing = parsedConfig as typeof existing;
+            }
+          } catch (parseErr) {
+            routesLogger.warn(
+              '[api-routes-init] Invalid MCP config JSON; recreating code-act entry:',
+              parseErr
+            );
+          }
+        }
+        if (
+          !existing.mcpServers ||
+          typeof existing.mcpServers !== 'object' ||
+          Array.isArray(existing.mcpServers)
+        ) {
+          existing.mcpServers = {};
+        }
         existing.mcpServers['code-act'] = {
           command: 'node',
           args: [codeActServerPath],
