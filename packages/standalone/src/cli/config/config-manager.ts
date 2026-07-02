@@ -382,8 +382,7 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  * SECURITY: Type guards ensure safe defaults for optional fields
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
-  const wikiEnabled = (config as { wiki?: { enabled?: boolean } }).wiki?.enabled === true;
-  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent, { wikiEnabled });
+  const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent);
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
@@ -436,8 +435,7 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
  * delegate work, so we gently upgrade missing permission metadata.
  */
 function normalizeLegacyMultiAgentConfig(
-  multiAgentConfig?: MultiAgentConfig,
-  options: { wikiEnabled?: boolean } = {}
+  multiAgentConfig?: MultiAgentConfig
 ): MultiAgentConfig | undefined {
   if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
@@ -475,13 +473,6 @@ function normalizeLegacyMultiAgentConfig(
   let addedBuiltinAgent = false;
   let changedBuiltinAgent = false;
   for (const [agentId, defaultAgent] of Object.entries(defaultAgents)) {
-    // wiki-agent's runtime provisioning (persona, vault wiring) only runs when
-    // config.wiki.enabled is true. Skip the static backfill here unless the
-    // flag is on so we don't advertise an agent the runtime treats as
-    // optional. A user-defined wiki-agent entry is preserved as-is.
-    if (agentId === 'wiki-agent' && !options.wikiEnabled && !mergedAgents[agentId]) {
-      continue;
-    }
     if (!mergedAgents[agentId]) {
       mergedAgents[agentId] = defaultAgent;
       addedBuiltinAgent = true;
@@ -495,6 +486,21 @@ function normalizeLegacyMultiAgentConfig(
         changedBuiltinAgent = true;
         mergedAgents[agentId] = normalizedAgent;
       }
+    }
+  }
+  for (const [agentId, defaultAgent] of Object.entries(getLegacySelfPacedAgentDefaults())) {
+    const existingAgent = mergedAgents[agentId];
+    if (!existingAgent) {
+      continue;
+    }
+    const normalizedAgent = normalizeBuiltinCodeActAgentPermissions(
+      agentId,
+      existingAgent,
+      defaultAgent
+    );
+    if (normalizedAgent !== existingAgent) {
+      changedBuiltinAgent = true;
+      mergedAgents[agentId] = normalizedAgent;
     }
   }
   if (addedBuiltinAgent || changedBuiltinAgent) {
@@ -701,50 +707,6 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
         can_delegate: false,
         enabled: true,
       },
-      'dashboard-agent': {
-        name: 'Dashboard Agent',
-        display_name: '📊 Dashboard',
-        trigger_prefix: '!dashboard',
-        persona_file: '~/.mama/personas/dashboard.md',
-        tier: 2,
-        can_delegate: false,
-        enabled: true,
-        useCodeAct: true,
-        tool_permissions: {
-          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
-          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
-        },
-        gateway_tool_permissions: {
-          allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
-          blocked: [],
-        },
-      },
-      'wiki-agent': {
-        name: 'Wiki Agent',
-        display_name: '📚 Wiki',
-        trigger_prefix: '!wiki',
-        persona_file: '~/.mama/personas/wiki.md',
-        tier: 2,
-        can_delegate: false,
-        enabled: true,
-        useCodeAct: true,
-        tool_permissions: {
-          allowed: ['Read', 'Grep', 'Glob', 'code_act'],
-          blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
-        },
-        gateway_tool_permissions: {
-          allowed: [
-            'mama_search',
-            'context_compile',
-            'agent_notices',
-            'case_list',
-            'case_assemble',
-            'obsidian',
-            'wiki_publish',
-          ],
-          blocked: [],
-        },
-      },
     },
     loop_prevention: {
       max_chain_length: 5,
@@ -756,6 +718,55 @@ export function getDefaultMultiAgentConfig(): MultiAgentConfig {
     },
     council: {
       enabled: true,
+    },
+  };
+}
+
+function getLegacySelfPacedAgentDefaults(): Record<string, Omit<AgentPersonaConfig, 'id'>> {
+  return {
+    'dashboard-agent': {
+      name: 'Dashboard Agent',
+      display_name: '📊 Dashboard',
+      trigger_prefix: '!dashboard',
+      persona_file: '~/.mama/personas/dashboard.md',
+      tier: 2,
+      can_delegate: false,
+      enabled: true,
+      useCodeAct: true,
+      tool_permissions: {
+        allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+        blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+      },
+      gateway_tool_permissions: {
+        allowed: ['mama_search', 'context_compile', 'agent_notices', 'report_publish'],
+        blocked: [],
+      },
+    },
+    'wiki-agent': {
+      name: 'Wiki Agent',
+      display_name: '📚 Wiki',
+      trigger_prefix: '!wiki',
+      persona_file: '~/.mama/personas/wiki.md',
+      tier: 2,
+      can_delegate: false,
+      enabled: true,
+      useCodeAct: true,
+      tool_permissions: {
+        allowed: ['Read', 'Grep', 'Glob', 'code_act'],
+        blocked: ['Bash', 'Write', 'Edit', 'Agent', 'WebSearch', 'WebFetch'],
+      },
+      gateway_tool_permissions: {
+        allowed: [
+          'mama_search',
+          'context_compile',
+          'agent_notices',
+          'case_list',
+          'case_assemble',
+          'obsidian',
+          'wiki_publish',
+        ],
+        blocked: [],
+      },
     },
   };
 }
