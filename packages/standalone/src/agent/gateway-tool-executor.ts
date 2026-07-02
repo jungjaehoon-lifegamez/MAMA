@@ -2072,6 +2072,17 @@ export class GatewayToolExecutor {
               false
             );
           }
+          if (
+            this.vNextCommitRuntimeMode === 'vnext' &&
+            this.wikiPublishAdapter?.mode !== 'vnext'
+          ) {
+            throw new AgentError(
+              'vNext wiki_publish requires a vNext source-linked wiki artifact adapter',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
           const adapter =
             this.wikiPublishAdapter ??
             createWikiPublishAdapter({

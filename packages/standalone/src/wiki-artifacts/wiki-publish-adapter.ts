@@ -16,11 +16,12 @@ import type {
   WikiPublishResult,
 } from './types.js';
 
-type WikiPublishMode = 'legacy' | 'vnext';
+export type WikiPublishMode = 'legacy' | 'vnext';
 const MAX_WIKI_PUBLISH_PAGES = 100;
 const MAX_WIKI_PAGE_CONTENT_CHARS = 200_000;
 
 export interface WikiPublishAdapter {
+  mode: WikiPublishMode;
   publish(input: { pages: WikiPublishPageInput[] }): WikiPublishResult;
 }
 
@@ -85,6 +86,7 @@ function normalizeAndDedupePages(
 
 export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): WikiPublishAdapter {
   return {
+    mode: options.mode,
     publish(input: { pages: WikiPublishPageInput[] }): WikiPublishResult {
       const compiledAt = (options.now ?? (() => new Date()))().toISOString();
       if (!Array.isArray(input.pages)) {
