@@ -62,7 +62,7 @@ function rejectVNextReportMutation(options: ReportRouterOptions, res: Response):
   res.status(409).json({
     ok: false,
     code: 'vnext_report_projection_only',
-    error: 'Legacy report slot mutations are disabled while vNext projections are active.',
+    error: 'Legacy report slot mutations are disabled while vNext report mode is configured.',
   });
   return true;
 }

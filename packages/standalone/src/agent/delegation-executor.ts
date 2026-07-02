@@ -128,6 +128,17 @@ export class DelegationExecutor {
     const { agent_id } = input;
     const sample_count = Number.parseInt(String(input.sample_count ?? 2), 10);
     const resolvedAgentId = this.deps.resolveManagedAgentId(agent_id);
+    const authority = this.deps.checkDelegationAuthority?.(
+      { agentId: resolvedAgentId, task: `agent_test:${resolvedAgentId}` },
+      routing
+    );
+    if (authority && !authority.allowed) {
+      return {
+        success: false,
+        code: authority.code,
+        error: authority.reason,
+      } as GatewayToolResult;
+    }
     if (!Number.isFinite(sample_count) || sample_count < 1) {
       securityLogger.warn('[Agent test] Invalid sample_count received', {
         agent_id: resolvedAgentId,

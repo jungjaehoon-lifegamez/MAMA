@@ -9,7 +9,7 @@ import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
 import Database from '../../src/sqlite.js';
 
-const AUTH_TOKEN_ENV = 'MAMA_' + 'AUTH_TOKEN';
+const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
 
 function makeStatus(): VNextBootstrapRuntimeStatus {
   return {
