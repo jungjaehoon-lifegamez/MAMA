@@ -9,6 +9,8 @@ import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import type { VNextBootstrapRuntimeStatus } from '../../src/runtime-vnext/bootstrap.js';
 import Database from '../../src/sqlite.js';
 
+const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
+
 function makeStatus(): VNextBootstrapRuntimeStatus {
   return {
     enabled: true,
@@ -36,19 +38,19 @@ function makeStatus(): VNextBootstrapRuntimeStatus {
 }
 
 describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
-  const originalAuthToken = process.env.MAMA_AUTH_TOKEN;
+  const originalAuthToken = process.env[AUTH_TOKEN_ENV];
 
   afterEach(() => {
     if (originalAuthToken === undefined) {
-      delete process.env.MAMA_AUTH_TOKEN;
+      delete process.env[AUTH_TOKEN_ENV];
     } else {
-      process.env.MAMA_AUTH_TOKEN = originalAuthToken;
+      process.env[AUTH_TOKEN_ENV] = originalAuthToken;
     }
   });
 
   describe('AC: vNext status endpoints keep public health separate from authenticated API', () => {
     it('keeps /health unauthenticated but protects /api status routes for tunneled requests', async () => {
-      process.env.MAMA_AUTH_TOKEN = 'vnext-status-token';
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const apiServer = createVNextBootstrapApiServer(makeStatus());
 
       const health = await request(apiServer.app)
@@ -95,8 +97,48 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       expect(authenticated.body.primary_operator_runtime).not.toHaveProperty('advancedThroughSeq');
     });
 
+    it('serves the Today dashboard from vNext projection slots in bootstrap mode', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      const status = makeStatus();
+      status.primaryOperator.advancedThroughSeq = 9;
+      const apiServer = createVNextBootstrapApiServer(status);
+
+      const response = await request(apiServer.app)
+        .get('/api/report')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token');
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        mode: 'vnext',
+        projection: {
+          projection_version: 1,
+          status: {
+            total: 1,
+            live: 1,
+            issueCount: 0,
+          },
+        },
+      });
+      expect(response.body.projection.today[0]).toMatchObject({
+        situation_id: 'vnext_primary_operator',
+        freshness: 'live',
+        verification_state: 'verified',
+        evidence_count: 1,
+        evidence_refs: [],
+        owner_hint: null,
+      });
+      expect(response.body.projection.today[0].evidence_refs).not.toContain('operator:primary:9');
+      expect(response.body.slots.map((slot: { slotId: string }) => slot.slotId)).toEqual([
+        'briefing',
+        'vnext-status',
+        'vnext-today',
+        'vnext-evidence',
+      ]);
+    });
+
     it('creates a primary operator runtime bound to the manual cursor', async () => {
-      process.env.MAMA_AUTH_TOKEN = 'vnext-status-token';
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
       ensureVNextOperatorSchema(db);
       db.prepare(
@@ -155,7 +197,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     });
 
     it('marks primary operator runtime degraded after a failed batch', async () => {
-      process.env.MAMA_AUTH_TOKEN = 'vnext-status-token';
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
       ensureVNextOperatorSchema(db);
       const primaryOperator = createVNextPrimaryOperatorRuntime(db);
