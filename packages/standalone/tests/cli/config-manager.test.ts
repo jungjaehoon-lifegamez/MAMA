@@ -153,8 +153,8 @@ describe('ConfigManager', () => {
       expect(loaded.multi_agent?.agents?.developer?.tool_permissions?.blocked).toEqual([]);
     });
 
-    it('should merge missing built-in agents into existing multi-agent configs on load', async () => {
-      // AC: Existing configs keep custom agents while receiving newly introduced built-ins.
+    it('should merge current built-in agents into existing multi-agent configs on load', async () => {
+      // AC: Existing configs keep custom agents while receiving current built-ins.
       const mamaDir = join(testDir, '.mama');
       await mkdir(mamaDir, { recursive: true });
       const configPath = join(mamaDir, 'config.yaml');
@@ -185,13 +185,15 @@ describe('ConfigManager', () => {
       const loaded = await loadConfig();
 
       expect(loaded.multi_agent?.agents?.custom?.tool_permissions?.allowed).toEqual(['Read']);
-      expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
-      expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeDefined();
+      expect(loaded.multi_agent?.agents?.['os-agent']).toBeDefined();
+      expect(loaded.multi_agent?.agents?.conductor).toBeDefined();
+      expect(loaded.multi_agent?.agents?.memory).toBeDefined();
+      expect(loaded.multi_agent?.agents).not.toHaveProperty('dashboard-agent');
+      expect(loaded.multi_agent?.agents).not.toHaveProperty('wiki-agent');
     });
 
-    it('should skip wiki-agent backfill when config.wiki.enabled is not set', async () => {
-      // AC: wiki-agent runtime provisioning is gated on config.wiki.enabled, so
-      // the static backfill must not advertise it when wiki is disabled.
+    it('should not backfill legacy self-paced agents when wiki is enabled', async () => {
+      // AC: vNext removes legacy self-paced dashboard/wiki agents from default backfill.
       const mamaDir = join(testDir, '.mama');
       await mkdir(mamaDir, { recursive: true });
       const configPath = join(mamaDir, 'config.yaml');
@@ -201,6 +203,7 @@ describe('ConfigManager', () => {
         agent: { model: 'custom-model' },
         database: { path: '~/.test/db.sqlite' },
         logging: { level: 'info', file: '~/.test/logs/test.log' },
+        wiki: { enabled: true },
         multi_agent: {
           enabled: true,
           agents: {
@@ -219,7 +222,8 @@ describe('ConfigManager', () => {
 
       const loaded = await loadConfig();
 
-      expect(loaded.multi_agent?.agents?.['dashboard-agent']).toBeDefined();
+      expect(loaded.multi_agent?.agents?.custom).toBeDefined();
+      expect(loaded.multi_agent?.agents).not.toHaveProperty('dashboard-agent');
       expect(loaded.multi_agent?.agents?.['wiki-agent']).toBeUndefined();
     });
 
@@ -382,55 +386,26 @@ describe('ConfigManager', () => {
   });
 
   describe('getDefaultMultiAgentConfig()', () => {
-    it('should include os-agent in the default system agent set', () => {
-      // AC: System agents expose CLI read tools separately from Code-Act gateway tools.
+    it('should include only current primary agents in the default system agent set', () => {
+      // AC: Legacy self-paced dashboard/wiki agents are opt-in, not default config.
       const multiAgentConfig = getDefaultMultiAgentConfig();
 
       expect(multiAgentConfig.agents['os-agent']).toBeDefined();
       expect(multiAgentConfig.agents['os-agent']?.enabled).toBe(true);
-      expect(multiAgentConfig.agents['dashboard-agent']).toMatchObject({
-        tier: 2,
+      expect(multiAgentConfig.agents.conductor).toMatchObject({
+        tier: 1,
+        can_delegate: true,
+      });
+      expect(multiAgentConfig.agents.memory).toMatchObject({
+        tier: 3,
         can_delegate: false,
         enabled: true,
-        persona_file: '~/.mama/personas/dashboard.md',
       });
-      expect(
-        multiAgentConfig.agents['dashboard-agent']?.gateway_tool_permissions?.allowed
-      ).toContain('report_publish');
-      expect(
-        multiAgentConfig.agents['dashboard-agent']?.gateway_tool_permissions?.allowed
-      ).toContain('context_compile');
-      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
-        'Read'
-      );
-      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.allowed).toContain(
-        'code_act'
-      );
-      expect(multiAgentConfig.agents['dashboard-agent']?.tool_permissions?.blocked).not.toContain(
-        'Read'
-      );
-      expect(multiAgentConfig.agents['wiki-agent']).toMatchObject({
-        tier: 2,
-        can_delegate: false,
-        enabled: true,
-        persona_file: '~/.mama/personas/wiki.md',
-      });
-      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
-        'wiki_publish'
-      );
-      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
-        'agent_notices'
-      );
-      expect(multiAgentConfig.agents['wiki-agent']?.gateway_tool_permissions?.allowed).toContain(
-        'context_compile'
-      );
-      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.allowed).toContain('Read');
-      expect(multiAgentConfig.agents['wiki-agent']?.tool_permissions?.blocked).not.toContain(
-        'Read'
-      );
+      expect(multiAgentConfig.agents).not.toHaveProperty('dashboard-agent');
+      expect(multiAgentConfig.agents).not.toHaveProperty('wiki-agent');
     });
 
-    it('should exclude legacy swarm agents from the default agent set', () => {
+    it('should exclude legacy swarm and self-paced agents from the default agent set', () => {
       const multiAgentConfig = getDefaultMultiAgentConfig();
 
       expect(multiAgentConfig.agents.conductor).toBeDefined();
@@ -438,6 +413,8 @@ describe('ConfigManager', () => {
       expect(multiAgentConfig.agents).not.toHaveProperty('reviewer');
       expect(multiAgentConfig.agents).not.toHaveProperty('architect');
       expect(multiAgentConfig.agents).not.toHaveProperty('pm');
+      expect(multiAgentConfig.agents).not.toHaveProperty('dashboard-agent');
+      expect(multiAgentConfig.agents).not.toHaveProperty('wiki-agent');
     });
   });
 
