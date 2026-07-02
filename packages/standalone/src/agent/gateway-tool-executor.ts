@@ -495,7 +495,7 @@ export class GatewayToolExecutor {
       .trim()
       .toLowerCase()
       .replace(/[_\s]+/g, '-');
-    const normalizedAgent = state.agentId.trim().toLowerCase();
+    const normalizedAgent = (state.agentId ?? '').trim().toLowerCase();
 
     if (
       normalizedAgent === 'operator:primary' ||

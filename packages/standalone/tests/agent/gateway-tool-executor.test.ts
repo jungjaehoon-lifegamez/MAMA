@@ -389,6 +389,33 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           message: expect.stringContaining('Invalid outcome'),
         });
       });
+
+      it('should not crash vNext authority checks when agentId is null at runtime', async () => {
+        const mockApi = createMockApi();
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          vNextRuntimeEnabled: true,
+        });
+
+        const result = await executor.execute(
+          'mama_update',
+          {
+            id: 'decision_123',
+            outcome: 'success',
+          },
+          {
+            agentId: null,
+            source: 'system',
+            channelId: 'system',
+          } as unknown as Parameters<GatewayToolExecutor['execute']>[2]
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          code: 'vnext_commit_authority_denied',
+        });
+        expect(mockApi.updateOutcome).not.toHaveBeenCalled();
+      });
     });
 
     describe('agent management tools', () => {
