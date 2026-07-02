@@ -93,7 +93,8 @@ export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): Wi
       if (input.pages.length > MAX_WIKI_PUBLISH_PAGES) {
         throw new Error(`wiki_publish accepts at most ${MAX_WIKI_PUBLISH_PAGES} pages`);
       }
-      if (options.mode === 'vnext' && !options.store) {
+      const store = options.mode === 'vnext' ? options.store : undefined;
+      if (options.mode === 'vnext' && !store) {
         throw new Error('Wiki artifact store not configured');
       }
 
@@ -102,6 +103,9 @@ export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): Wi
       let artifactsStored = 0;
 
       if (options.mode === 'vnext') {
+        if (!store) {
+          throw new Error('Wiki artifact store not configured');
+        }
         const artifacts = pagePairs.map(({ page, rawPage }) => {
           return {
             path: page.path,
@@ -115,7 +119,7 @@ export function createWikiPublishAdapter(options: WikiPublishAdapterOptions): Wi
             nowMs: options.nowMs?.(),
           };
         });
-        artifactsStored = options.store!.upsertArtifacts(artifacts).length;
+        artifactsStored = store.upsertArtifacts(artifacts).length;
         if (options.publisher) {
           options.publisher(pages);
         }

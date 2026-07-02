@@ -47,6 +47,21 @@ function createArtifactId(path: string): string {
   return `wiki_artifact:${digest}`;
 }
 
+function runPaginated<T>(
+  db: SQLiteDatabase,
+  sql: string,
+  limit: number | undefined,
+  offset: number
+): T[] {
+  if (limit === undefined && offset === 0) {
+    return db.prepare(sql).all() as T[];
+  }
+  if (limit === undefined) {
+    return db.prepare(`${sql} LIMIT -1 OFFSET ?`).all(offset) as T[];
+  }
+  return db.prepare(`${sql} LIMIT ? OFFSET ?`).all(limit, offset) as T[];
+}
+
 function rowToRecord(row: WikiArtifactRow): WikiArtifactRecord {
   return {
     artifactId: row.artifact_id,
@@ -64,10 +79,16 @@ function rowToRecord(row: WikiArtifactRow): WikiArtifactRecord {
 }
 
 export class WikiArtifactStore {
+  private schemaEnsured = false;
+
   constructor(private readonly db: SQLiteDatabase) {}
 
   ensureSchema(): void {
+    if (this.schemaEnsured) {
+      return;
+    }
     applyWikiArtifactsMigration(this.db);
+    this.schemaEnsured = true;
   }
 
   private normalizeInput(input: WikiArtifactInput): Omit<
@@ -235,12 +256,7 @@ export class WikiArtifactStore {
             source_refs_json, source_ids_json, created_at_ms, updated_at_ms
           FROM wiki_artifacts
           ORDER BY updated_at_ms DESC, path ASC`;
-    const rows =
-      limit === undefined && offset === 0
-        ? (this.db.prepare(sql).all() as WikiArtifactRow[])
-        : limit === undefined
-          ? (this.db.prepare(`${sql} LIMIT -1 OFFSET ?`).all(offset) as WikiArtifactRow[])
-          : (this.db.prepare(`${sql} LIMIT ? OFFSET ?`).all(limit, offset) as WikiArtifactRow[]);
+    const rows = runPaginated<WikiArtifactRow>(this.db, sql, limit, offset);
     return rows.map((row) => rowToRecord(row));
   }
 
@@ -250,14 +266,7 @@ export class WikiArtifactStore {
     const sql = `SELECT path
           FROM wiki_artifacts
           ORDER BY updated_at_ms DESC, path ASC`;
-    const rows =
-      limit === undefined && offset === 0
-        ? (this.db.prepare(sql).all() as Array<{ path: string }>)
-        : limit === undefined
-          ? (this.db.prepare(`${sql} LIMIT -1 OFFSET ?`).all(offset) as Array<{ path: string }>)
-          : (this.db.prepare(`${sql} LIMIT ? OFFSET ?`).all(limit, offset) as Array<{
-              path: string;
-            }>);
+    const rows = runPaginated<{ path: string }>(this.db, sql, limit, offset);
     return rows.map((row) => row.path);
   }
 }

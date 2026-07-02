@@ -6,7 +6,7 @@ import {
   appendFileSync,
   readdirSync,
 } from 'fs';
-import { join, dirname, basename } from 'path';
+import { join, dirname, basename, posix } from 'path';
 import type { WikiPage } from './types.js';
 import { normalizeWikiPagePath } from './path-safety.js';
 
@@ -75,10 +75,11 @@ export class ObsidianWriter {
    * Prevents duplicates when LLM generates different filenames for the same entity.
    */
   private findExistingPage(page: WikiPage): string | null {
-    const dir = join(this.wikiPath, dirname(page.path));
+    const pageDir = posix.dirname(page.path);
+    const dir = join(this.wikiPath, pageDir);
     if (!existsSync(dir)) return null;
 
-    const targetSlug = slugify(basename(page.path, '.md'));
+    const targetSlug = slugify(posix.basename(page.path, '.md'));
     const targetTitle = page.title.toLowerCase();
 
     for (const file of readdirSync(dir)) {
@@ -87,7 +88,7 @@ export class ObsidianWriter {
 
       // Exact slug match (case-insensitive)
       if (fileSlug === targetSlug) {
-        return join(dirname(page.path), file);
+        return posix.join(pageDir, file);
       }
 
       // Title match: read frontmatter and compare
@@ -102,7 +103,7 @@ export class ObsidianWriter {
             targetTitle.includes(existingTitle) ||
             titleWordOverlap(existingTitle, targetTitle) > 0.6
           ) {
-            return join(dirname(page.path), file);
+            return posix.join(pageDir, file);
           }
         }
       } catch {
@@ -127,7 +128,7 @@ export class ObsidianWriter {
     }
   }
 
-  writePage(page: WikiPage): void {
+  writePage(page: WikiPage): string {
     const safePage = { ...page, path: normalizeWikiPagePath(page.path) };
     // Dedup: check if a similar page already exists in the same directory
     const existingPath = this.findExistingPage(safePage);
@@ -180,6 +181,7 @@ export class ObsidianWriter {
     }
 
     writeFileSync(filePath, body, 'utf8');
+    return effectivePath;
   }
 
   appendLog(action: string, message: string): void {

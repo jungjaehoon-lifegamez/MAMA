@@ -43,9 +43,9 @@ export function exportWikiArtifactsToObsidian(
     const batch = artifactPaths.slice(offset, offset + batchSize);
     for (const record of input.store.getByPaths(batch)) {
       const page = artifactToPage(record);
-      input.writer.writePage(page);
-      paths.push(page.path);
-      indexPages.push(page);
+      const writtenPath = input.writer.writePage(page);
+      paths.push(writtenPath);
+      indexPages.push({ ...page, path: writtenPath, content: '' });
     }
   }
   if (indexPages.length > 0) {
