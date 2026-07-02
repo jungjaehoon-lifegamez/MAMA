@@ -70,7 +70,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       });
     });
 
-    it('publishes the PR1 startup allowlist and no-op primary operator placeholder', () => {
+    it('publishes the PR3 startup allowlist and ready primary operator contract', () => {
       const plan = buildVNextBootstrapPlan({
         enabled: true,
         mode: 'bootstrap',
@@ -80,14 +80,19 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       expect(plan.allowedStartupSteps).toEqual([
         'config_read',
         'db_initialization',
+        'primary_operator_schema',
+        'primary_operator_runtime',
         'api_server_health',
         'manual_status_endpoints',
-        'primary_operator_placeholder',
       ]);
       expect(plan.primaryOperator).toEqual({
         kind: 'primary_operator',
-        status: 'noop',
-        reason: 'PR1 only installs the startup boundary; the operator loop lands later.',
+        status: 'prepared',
+        mode: 'manual_batch',
+        ingress: 'not_wired',
+        cursorName: 'operator:primary',
+        connector: 'manual',
+        advancedThroughSeq: 0,
       });
       expect(isVNextStartupStepAllowed(plan, 'config_read')).toBe(true);
       expect(isVNextStartupStepAllowed(plan, 'connector_polling')).toBe(false);
@@ -131,6 +136,23 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
     it('starts vNext bootstrap through the central allowlist only', async () => {
       const calls: string[] = [];
       const database = { close: () => calls.push('db.close') };
+      const primaryOperator = {
+        status: {
+          kind: 'primary_operator' as const,
+          status: 'prepared' as const,
+          mode: 'manual_batch' as const,
+          ingress: 'not_wired' as const,
+          cursorName: 'operator:primary',
+          connector: 'manual',
+          advancedThroughSeq: 7,
+        },
+        processBatch: async () => ({
+          status: 'idle' as const,
+          processed: 0,
+          advancedThroughSeq: 7,
+          commits: [],
+        }),
+      };
       const apiServer = {
         start: async () => {
           calls.push('api.start');
@@ -150,8 +172,17 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
           calls.push('db.open');
           return database;
         },
+        initializeOperatorSchema: () => {
+          calls.push('operator.schema');
+        },
+        createPrimaryOperator: () => {
+          calls.push('operator.create');
+          return primaryOperator;
+        },
         createApiServer: (status) => {
-          calls.push(`api.create:${status.primaryOperator.status}`);
+          calls.push(
+            `api.create:${status.primaryOperator.status}:${status.primaryOperator.cursorName}`
+          );
           return apiServer;
         },
         installShutdownHandlers: () => {
@@ -161,8 +192,52 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
       });
 
       expect(result.status.executedStartupSteps).toEqual(plan.allowedStartupSteps);
-      expect(result.status.primaryOperator.status).toBe('noop');
-      expect(calls).toEqual(['db.open', 'api.create:noop', 'api.start', 'shutdown.install']);
+      expect(result.primaryOperator).toBe(primaryOperator);
+      expect(result.status.primaryOperator).toEqual(primaryOperator.status);
+      expect(calls).toEqual([
+        'db.open',
+        'operator.schema',
+        'operator.create',
+        'api.create:prepared:operator:primary',
+        'api.start',
+        'shutdown.install',
+      ]);
+    });
+
+    it('closes the opened database if primary operator bootstrap fails', async () => {
+      const calls: string[] = [];
+      const database = { close: () => calls.push('db.close') };
+      const plan = buildVNextBootstrapPlan({
+        enabled: true,
+        mode: 'bootstrap',
+        source: 'env',
+      });
+
+      await expect(
+        startVNextBootstrapRuntime(plan, {
+          openDatabase: () => {
+            calls.push('db.open');
+            return database;
+          },
+          initializeOperatorSchema: () => {
+            calls.push('operator.schema');
+            throw new Error('schema unavailable');
+          },
+          createPrimaryOperator: () => {
+            throw new Error('should not create operator');
+          },
+          createApiServer: () => ({
+            start: async () => {
+              calls.push('api.start');
+            },
+            stop: async () => {
+              calls.push('api.stop');
+            },
+          }),
+        })
+      ).rejects.toThrow('schema unavailable');
+
+      expect(calls).toEqual(['db.open', 'operator.schema', 'db.close']);
     });
 
     it('closes the opened database if vNext API startup fails', async () => {
@@ -180,6 +255,26 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
             calls.push('db.open');
             return database;
           },
+          initializeOperatorSchema: () => {
+            calls.push('operator.schema');
+          },
+          createPrimaryOperator: () => ({
+            status: {
+              kind: 'primary_operator',
+              status: 'prepared',
+              mode: 'manual_batch',
+              ingress: 'not_wired',
+              cursorName: 'operator:primary',
+              connector: 'manual',
+              advancedThroughSeq: 0,
+            },
+            processBatch: async () => ({
+              status: 'idle',
+              processed: 0,
+              advancedThroughSeq: 0,
+              commits: [],
+            }),
+          }),
           createApiServer: () => ({
             start: async () => {
               calls.push('api.start');
@@ -195,7 +290,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
         })
       ).rejects.toThrow('bind failed');
 
-      expect(calls).toEqual(['db.open', 'api.start', 'db.close']);
+      expect(calls).toEqual(['db.open', 'operator.schema', 'api.start', 'db.close']);
     });
   });
 });
