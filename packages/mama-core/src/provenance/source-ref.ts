@@ -1,4 +1,4 @@
-import type { ContextRef } from '../context-compile/types.js';
+import { CONTEXT_REF_KINDS, type ContextRef } from '../context-compile/types.js';
 
 export const STRICT_SOURCE_REF_KINDS = [
   'memory',
@@ -35,6 +35,7 @@ export type SourceRef =
   | { kind: 'legacy'; legacy_kind: LegacySourceRefKind; id: string };
 
 const STRICT_SOURCE_REF_KIND_SET = new Set<string>(STRICT_SOURCE_REF_KINDS);
+const CONTEXT_REF_KIND_SET = new Set<string>(CONTEXT_REF_KINDS);
 const LEGACY_SOURCE_REF_KIND_SET = new Set<string>(LEGACY_SOURCE_REF_KINDS);
 const VERIFY_ARTIFACT_KIND_SET = new Set<string>([
   'decision',
@@ -83,15 +84,29 @@ function assertLegacySourceRefKind(kind: string): asserts kind is LegacySourceRe
   }
 }
 
+function assertContextSourceRefKind(
+  kind: string
+): asserts kind is Exclude<ContextRef['kind'], 'raw'> {
+  if (kind === 'raw' || !CONTEXT_REF_KIND_SET.has(kind)) {
+    throw new Error(`Unsupported context source ref kind: ${kind}`);
+  }
+}
+
 export function fromContextRef(ref: ContextRef): SourceRef {
-  if (ref.kind === 'raw') {
+  if (ref === null || ref === undefined) {
+    throw new Error('Context ref must not be null or undefined');
+  }
+
+  const input = ref as Record<string, unknown>;
+  const kind = requiredString(input.kind, 'kind');
+  if (kind === 'raw') {
     const normalized: SourceRef = {
       kind: 'raw',
-      id: requiredString(ref.raw_id, 'raw_id'),
-      connector: requiredString(ref.connector, 'connector'),
+      id: requiredString(input.raw_id, 'raw_id'),
+      connector: requiredString(input.connector, 'connector'),
     };
-    const sourceId = optionalString(ref.source_id, 'source_id');
-    const channelId = optionalNullableString(ref.channel_id, 'channel_id');
+    const sourceId = optionalString(input.source_id, 'source_id');
+    const channelId = optionalNullableString(input.channel_id, 'channel_id');
     if (sourceId !== undefined) {
       normalized.source_id = sourceId;
     }
@@ -101,13 +116,19 @@ export function fromContextRef(ref: ContextRef): SourceRef {
     return normalized;
   }
 
+  assertContextSourceRefKind(kind);
+
   return {
-    kind: ref.kind,
-    id: requiredString(ref.id, 'id'),
+    kind,
+    id: requiredString(input.id, 'id'),
   };
 }
 
 export function toContextRef(ref: SourceRef): ContextRef | null {
+  if (ref === null || ref === undefined) {
+    return null;
+  }
+
   switch (ref.kind) {
     case 'memory':
     case 'entity':
@@ -138,6 +159,10 @@ export function toContextRef(ref: SourceRef): ContextRef | null {
 }
 
 export function fromVerifyArtifact(artifact: { type: string; id: string }): SourceRef {
+  if (artifact === null || artifact === undefined) {
+    throw new Error('Artifact must not be null or undefined');
+  }
+
   const kind = requiredString(artifact.type, 'type');
   if (!VERIFY_ARTIFACT_KIND_SET.has(kind)) {
     throw new Error(`Unsupported verify artifact source ref kind: ${kind}`);
@@ -184,6 +209,10 @@ export function parseSourceRefString(value: string): SourceRef {
 }
 
 export function serializeSourceRef(ref: SourceRef): string {
+  if (ref === null || ref === undefined) {
+    throw new Error('Source ref must not be null or undefined');
+  }
+
   switch (ref.kind) {
     case 'raw':
       return `raw:${requiredString(ref.connector, 'connector')}:${requiredString(ref.id, 'id')}`;
