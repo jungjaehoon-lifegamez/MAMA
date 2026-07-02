@@ -40,6 +40,16 @@ export type DelegateInput = {
   skill?: string;
 };
 
+export type DelegationAuthorityDecision =
+  | {
+      allowed: true;
+    }
+  | {
+      allowed: false;
+      code: string;
+      reason: string;
+    };
+
 export type DelegationExecutorDeps = {
   agentProcessManager: AgentProcessManager | null;
   delegationManagerRef: DelegationManager | null;
@@ -49,6 +59,10 @@ export type DelegationExecutorDeps = {
   retryDelayMs: number;
   resolveManagedAgentId: (id: string) => string;
   checkViewerOnly: () => string | null;
+  checkDelegationAuthority?: (
+    input: DelegateInput,
+    routing: DelegationRoutingContext
+  ) => DelegationAuthorityDecision;
 };
 
 function summarizeActivityOutput(output: unknown): string | undefined {
@@ -147,6 +161,14 @@ export class DelegationExecutor {
     input: DelegateInput,
     routing: DelegationRoutingContext
   ): Promise<GatewayToolResult> {
+    const authority = this.deps.checkDelegationAuthority?.(input, routing);
+    if (authority && !authority.allowed) {
+      return {
+        success: false,
+        code: authority.code,
+        error: authority.reason,
+      } as GatewayToolResult;
+    }
     return this.runDelegateInternal(input, routing);
   }
 

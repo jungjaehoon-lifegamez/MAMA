@@ -123,5 +123,24 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
 
       expect(runWithContentSpy).toHaveBeenCalledWith(content, expect.objectContaining(options));
     });
+
+    it('passes vNext runtime mode into the gateway executor', () => {
+      const { agentLoop } = initMainAgentLoop(
+        createConfig(),
+        { getToken: vi.fn() } as unknown as OAuthManager,
+        {} as SQLiteDatabase,
+        null as MetricsStore | null,
+        'claude',
+        { vNextRuntimeEnabled: true }
+      );
+
+      const executor = (
+        agentLoop as unknown as {
+          mcpExecutor: { vNextCommitRuntimeMode: string };
+        }
+      ).mcpExecutor;
+
+      expect(executor.vNextCommitRuntimeMode).toBe('vnext');
+    });
   });
 });
