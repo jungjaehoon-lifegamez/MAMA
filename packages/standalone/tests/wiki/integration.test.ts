@@ -57,8 +57,8 @@ describe('Wiki compilation integration', () => {
     writer.appendLog('compile', result.logEntry);
 
     const pageContent = readFileSync(join(tempDir, 'wiki', 'projects', 'TestProject.md'), 'utf8');
-    expect(pageContent).toContain('title: TestProject');
-    expect(pageContent).toContain('type: entity');
+    expect(pageContent).toContain('title: "TestProject"');
+    expect(pageContent).toContain('type: "entity"');
     expect(pageContent).toContain('Chose React over Vue');
 
     const index = readFileSync(join(tempDir, 'wiki', 'index.md'), 'utf8');
@@ -103,7 +103,7 @@ describe('Wiki compilation integration', () => {
     expect(result).toContain('Completed!');
     expect(result).toContain('My Observations');
     expect(result).toContain('This project needs attention.');
-    expect(result).toContain('confidence: high');
+    expect(result).toContain('confidence: "high"');
   });
 
   it('handles multiple projects in one compilation', () => {
