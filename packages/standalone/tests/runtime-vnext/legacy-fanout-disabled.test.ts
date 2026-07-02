@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -408,6 +408,63 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
       expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 30 * 60 * 1000);
+    });
+
+    it('recreates code-act MCP config when legacy self-paced agent config finds invalid JSON', async () => {
+      const mamaDir = join(tempHome, '.mama');
+      const mamaMcpConfigPath = join(mamaDir, 'mama-mcp-config.json');
+      mkdirSync(mamaDir, { recursive: true });
+      writeFileSync(mamaMcpConfigPath, '{ invalid json', 'utf-8');
+
+      const apiServer = createApiServer({
+        scheduler: initCronScheduler(makeConfig()).scheduler,
+        port: 0,
+      });
+      const eventBus = new AgentEventBus();
+      const toolExecutor = new GatewayToolExecutor();
+      const db = new Database(':memory:');
+      databases.push(db);
+      const messageRouter = makeMessageRouter(db, tempHome);
+      const agentLoop = makeAgentLoop(tempHome);
+      vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+        () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setTimeout>
+      );
+      vi.spyOn(globalThis, 'setInterval').mockImplementation(
+        () => ({ unref: vi.fn() }) as unknown as ReturnType<typeof setInterval>
+      );
+
+      await registerApiRoutes({
+        config: makeConfig({
+          wiki: { enabled: false },
+          multi_agent: makeMultiAgentConfig({
+            'dashboard-agent': makeDashboardAgentConfig(),
+          }),
+        }),
+        apiServer,
+        eventBus,
+        oauthManager: makeOAuthManager(tempHome),
+        mamaApi: {},
+        messageRouter,
+        agentLoop,
+        toolExecutor,
+        discordGateway: null,
+        slackGateway: null,
+        graphHandler: async () => false,
+        getAdapter: makeAdapter,
+      });
+
+      const mcpConfig = JSON.parse(readFileSync(mamaMcpConfigPath, 'utf-8')) as {
+        mcpServers?: Record<
+          string,
+          { command?: string; args?: string[]; env?: Record<string, string> }
+        >;
+      };
+
+      expect(mcpConfig.mcpServers?.['code-act']).toMatchObject({
+        command: 'node',
+        env: { MAMA_SERVER_PORT: '3847' },
+      });
+      expect(mcpConfig.mcpServers?.['code-act']?.args?.[0]).toContain('code-act-server.js');
     });
 
     it('keeps wiki fanout active in legacy mode when wiki-agent is configured', async () => {
