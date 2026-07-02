@@ -67,12 +67,18 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { requireAuth } from '../../api/auth-middleware.js';
 import {
   buildVNextBootstrapPlan,
+  buildVNextPrimaryOperatorReadyStatus,
+  VNEXT_PRIMARY_OPERATOR_CONNECTOR,
+  VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
   shouldSkipVNextFanout,
   startVNextBootstrapRuntime,
   type VNextBootstrapRuntimeHandles,
   type VNextBootstrapRuntimeStatus,
+  type VNextPrimaryOperatorRuntimeHandle,
 } from '../../runtime-vnext/bootstrap.js';
 import { resolveVNextRuntimeFlags } from '../../runtime-vnext/feature-flags.js';
+import { ensureVNextOperatorSchema } from '../../operator-vnext/schema.js';
+import { PrimaryOperatorRuntime } from '../../operator-vnext/primary-operator-runtime.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -520,6 +526,31 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   }
 }
 
+function buildVNextPrimaryOperatorPayload(
+  primaryOperator: VNextBootstrapRuntimeStatus['primaryOperator']
+): Record<string, unknown> {
+  return {
+    kind: primaryOperator.kind,
+    status: primaryOperator.status,
+    mode: primaryOperator.mode,
+    ingress: primaryOperator.ingress,
+    cursor_name: primaryOperator.cursorName,
+    connector: primaryOperator.connector,
+    advanced_through_seq: primaryOperator.advancedThroughSeq,
+    last_batch_status: primaryOperator.lastBatchStatus,
+    failed_seq: primaryOperator.failedSeq,
+    error_message: primaryOperator.errorMessage,
+  };
+}
+
+function buildVNextLegacyPrimaryOperatorPayload(): Record<string, unknown> {
+  return {
+    kind: 'primary_operator',
+    status: 'noop',
+    reason: 'vNext primary operator runtime is exposed as primary_operator_runtime.',
+  };
+}
+
 function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
   return {
     ok: true,
@@ -527,8 +558,46 @@ function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<st
     mode: status.mode,
     source: status.source,
     started_at_ms: status.startedAtMs,
-    primary_operator: status.primaryOperator,
+    primary_operator: buildVNextLegacyPrimaryOperatorPayload(),
+    primary_operator_runtime: buildVNextPrimaryOperatorPayload(status.primaryOperator),
     executed_startup_steps: status.executedStartupSteps,
+  };
+}
+
+function readVNextPrimaryOperatorCursorSeq(db: Database, cursorName: string): number {
+  const row = db
+    .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
+    .get(cursorName) as { last_change_seq: number } | undefined;
+  return row?.last_change_seq ?? 0;
+}
+
+export function createVNextPrimaryOperatorRuntime(db: Database): VNextPrimaryOperatorRuntimeHandle {
+  const runtime = new PrimaryOperatorRuntime({
+    db,
+    cursorName: VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
+    connector: VNEXT_PRIMARY_OPERATOR_CONNECTOR,
+  });
+  const status = buildVNextPrimaryOperatorReadyStatus(
+    readVNextPrimaryOperatorCursorSeq(db, VNEXT_PRIMARY_OPERATOR_CURSOR_NAME)
+  );
+
+  return {
+    status,
+    processBatch: async (events, decide) => {
+      const result = await runtime.processBatch(events, decide);
+      status.advancedThroughSeq = result.advancedThroughSeq;
+      status.lastBatchStatus = result.status;
+      if (result.status === 'partial_failure') {
+        status.status = 'degraded';
+        status.failedSeq = result.failedSeq;
+        status.errorMessage = result.error.message;
+      } else if (result.status === 'committed') {
+        status.status = 'prepared';
+        delete status.failedSeq;
+        delete status.errorMessage;
+      }
+      return result;
+    },
   };
 }
 
@@ -696,6 +765,8 @@ export async function runAgentLoop(
         );
         return new Database(dbPath);
       },
+      initializeOperatorSchema: ensureVNextOperatorSchema,
+      createPrimaryOperator: createVNextPrimaryOperatorRuntime,
       createApiServer: createVNextBootstrapApiServer,
       installShutdownHandlers: installVNextBootstrapShutdownHandlers,
     });
