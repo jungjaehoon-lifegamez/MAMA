@@ -66,6 +66,26 @@ export interface VNextBootstrapRuntimeDeps<DatabaseHandle> {
   now?: () => number;
 }
 
+function hasCloseMethod(value: unknown): value is { close: () => void } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { close?: unknown }).close === 'function'
+  );
+}
+
+function closeDatabaseIfPossible(database: unknown): void {
+  if (!hasCloseMethod(database)) {
+    return;
+  }
+
+  try {
+    database.close();
+  } catch {
+    // Preserve the original startup failure.
+  }
+}
+
 export function buildVNextBootstrapPlan(flags: VNextRuntimeFlags): VNextBootstrapPlan {
   return {
     ...flags,
@@ -137,7 +157,12 @@ export async function startVNextBootstrapRuntime<DatabaseHandle>(
     executedStartupSteps: [...executedStartupSteps],
   };
   const apiServer = deps.createApiServer(status);
-  await apiServer.start();
+  try {
+    await apiServer.start();
+  } catch (error) {
+    closeDatabaseIfPossible(database);
+    throw error;
+  }
 
   const handles = { apiServer, database, status };
   deps.installShutdownHandlers?.(handles);
