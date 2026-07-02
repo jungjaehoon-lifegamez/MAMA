@@ -12,6 +12,10 @@ function migrationFiles(): string[] {
     .sort((left, right) => left.localeCompare(right));
 }
 
+function migrationVersion(file: string): number {
+  return Number.parseInt(file.slice(0, 3), 10);
+}
+
 function applyAll(db: Database.Database): void {
   for (const file of migrationFiles()) {
     db.exec(readFileSync(join(MIGRATIONS_DIR, file), 'utf8'));
@@ -45,6 +49,11 @@ function columnExists(db: Database.Database, table: string, column: string): boo
 }
 
 describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)', () => {
+  it('keeps migration filenames contiguous with no version gaps', () => {
+    const versions = migrationFiles().map(migrationVersion);
+    expect(versions).toEqual(Array.from({ length: versions.length }, (_, index) => index + 1));
+  });
+
   it('creates every Phase 1 table/index/trigger on a fresh DB', () => {
     const db = new Database(':memory:');
     db.pragma('foreign_keys = ON');
