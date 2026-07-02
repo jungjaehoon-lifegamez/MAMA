@@ -30,6 +30,7 @@ import {
   type RawIndexSink,
   type RawStore,
 } from '../../connectors/framework/raw-store.js';
+import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vnext/bootstrap.js';
 
 const logger = new DebugLogger('connector-init');
 
@@ -43,6 +44,10 @@ export interface ConnectorInitResult {
   connectorSchedulerStop: (() => void) | undefined;
 }
 
+export interface ConnectorInitOptions {
+  vNext?: VNextBootstrapPlan;
+}
+
 /**
  * Initialize the connector framework.
  *
@@ -54,8 +59,20 @@ export interface ConnectorInitResult {
  */
 export async function initConnectors(
   /** @deprecated Direct LLM connector-to-memory extraction is disabled in M0. */
-  _connectorExtractionFn: ((prompt: string) => Promise<string>) | null
+  _connectorExtractionFn: ((prompt: string) => Promise<string>) | null,
+  options: ConnectorInitOptions = {}
 ): Promise<ConnectorInitResult> {
+  if (
+    shouldSkipVNextFanout(options.vNext, 'connector_mode') ||
+    shouldSkipVNextFanout(options.vNext, 'connector_polling')
+  ) {
+    return {
+      rawStoreForApi: undefined,
+      enabledConnectorNames: [],
+      connectorSchedulerStop: undefined,
+    };
+  }
+
   const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
   let enabledConnectorNames: string[] = [];
 

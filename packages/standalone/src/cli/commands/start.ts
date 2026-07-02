@@ -22,12 +22,19 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
-import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
+import {
+  SessionStore,
+  MessageRouter,
+  initChannelHistory,
+  PluginLoader,
+} from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
+import { createServer, type Server as HttpServer } from 'node:http';
 import { minimatch } from 'minimatch';
+import express, { type Express } from 'express';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -57,6 +64,15 @@ import { registerApiRoutes } from '../runtime/api-routes-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
+import { requireAuth } from '../../api/auth-middleware.js';
+import {
+  buildVNextBootstrapPlan,
+  shouldSkipVNextFanout,
+  startVNextBootstrapRuntime,
+  type VNextBootstrapRuntimeHandles,
+  type VNextBootstrapRuntimeStatus,
+} from '../../runtime-vnext/bootstrap.js';
+import { resolveVNextRuntimeFlags } from '../../runtime-vnext/feature-flags.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -432,6 +448,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const backend = config.agent.backend;
   const isValidBackend = validBackends.includes(backend as RuntimeBackend);
+  const vNextFlags = resolveVNextRuntimeFlags(config, process.env);
   process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
   if (backend === 'codex' || backend === 'codex-mcp') {
@@ -451,7 +468,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     const targetUrl = needsOnboarding
       ? `http://localhost:${API_PORT}/setup`
       : `http://localhost:${API_PORT}/viewer`;
-    if (shouldAutoOpenBrowser()) {
+    if (!vNextFlags.enabled && shouldAutoOpenBrowser()) {
       setTimeout(() => {
         if (needsOnboarding) {
           console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -483,7 +500,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
         : `http://localhost:${API_PORT}/viewer`;
 
       // Wait for server to be ready
-      if (shouldAutoOpenBrowser()) {
+      if (!vNextFlags.enabled && shouldAutoOpenBrowser()) {
         setTimeout(() => {
           if (needsOnboarding) {
             console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -501,6 +518,133 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       process.exit(1);
     }
   }
+}
+
+function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
+  return {
+    ok: true,
+    runtime: 'vnext',
+    mode: status.mode,
+    source: status.source,
+    started_at_ms: status.startedAtMs,
+    primary_operator: status.primaryOperator,
+    executed_startup_steps: status.executedStartupSteps,
+  };
+}
+
+export function createVNextBootstrapApiServer(status: VNextBootstrapRuntimeStatus): {
+  app: Express;
+  server: HttpServer | null;
+  start: () => Promise<void>;
+  stop: () => Promise<void>;
+} {
+  const app = express();
+  app.disable('x-powered-by');
+  app.use(express.json({ limit: '128kb' }));
+
+  app.get('/health', (_req, res) => {
+    res.json({
+      status: 'ok',
+      runtime: 'vnext',
+      timestamp: Date.now(),
+    });
+  });
+  app.use('/api', requireAuth);
+  app.get('/api/vnext/status', (_req, res) => {
+    res.json(buildVNextStatusPayload(status));
+  });
+  app.get('/api/status', (_req, res) => {
+    res.json(buildVNextStatusPayload(status));
+  });
+
+  let server: HttpServer | null = null;
+  let actualPort = API_PORT;
+
+  return {
+    app,
+    get server() {
+      return server;
+    },
+    async start(): Promise<void> {
+      const host = process.env.MAMA_API_HOST || '127.0.0.1';
+      await new Promise<void>((resolve, reject) => {
+        const candidate = createServer(app);
+        let settled = false;
+
+        candidate.on('error', (error) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          candidate.close();
+          reject(error);
+        });
+        candidate.listen({ port: API_PORT, host, exclusive: false }, () => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          const address = candidate.address();
+          if (!address || typeof address !== 'object') {
+            candidate.close();
+            reject(new Error(`Failed to bind vNext bootstrap API on port ${API_PORT}`));
+            return;
+          }
+          server = candidate;
+          actualPort = address.port;
+          console.log(`vNext bootstrap API listening on http://${host}:${actualPort}`);
+          if (host === '0.0.0.0') {
+            console.warn('⚠️  WARNING: vNext bootstrap API exposed to all interfaces.');
+          }
+          resolve();
+        });
+      });
+    },
+    async stop(): Promise<void> {
+      if (!server) {
+        return;
+      }
+      const activeServer = server;
+      server = null;
+      activeServer.closeAllConnections();
+      await new Promise<void>((resolve) => {
+        const timeoutId = setTimeout(resolve, 2000);
+        activeServer.close(() => {
+          clearTimeout(timeoutId);
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+function installVNextBootstrapShutdownHandlers(
+  handles: VNextBootstrapRuntimeHandles<Database>
+): void {
+  let shuttingDown = false;
+  const shutdown = async (): Promise<void> => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    console.log('\n\n🛑 Shutting down MAMA vNext bootstrap...');
+    try {
+      await handles.apiServer.stop();
+    } finally {
+      handles.database.close();
+    }
+    process.exit(0);
+  };
+
+  process.once('SIGINT', () => {
+    void shutdown();
+  });
+  process.once('SIGTERM', () => {
+    void shutdown();
+  });
+  process.once('SIGHUP', () => {
+    void shutdown();
+  });
 }
 
 /**
@@ -527,6 +671,23 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
+  const vNext = buildVNextBootstrapPlan(resolveVNextRuntimeFlags(config, process.env));
+  if (vNext.enabled) {
+    console.log('✓ MAMA vNext bootstrap mode enabled (legacy fanout disabled)');
+    await startVNextBootstrapRuntime(vNext, {
+      openDatabase: () => {
+        const dbPath = expandPath(config.database.path).replace(
+          'mama-memory.db',
+          'mama-sessions.db'
+        );
+        return new Database(dbPath);
+      },
+      createApiServer: createVNextBootstrapApiServer,
+      installShutdownHandlers: installVNextBootstrapShutdownHandlers,
+    });
+    return;
+  }
+
   const startupBackend = config.agent.backend;
   const usesCodexBackend =
     startupBackend === 'codex' ||
@@ -542,11 +703,18 @@ export async function runAgentLoop(
   // Claude CLI is always used (Pi Agent removed for ToS compliance)
   console.log('✓ Claude CLI mode (ToS compliance)');
 
-  // Provision default persona templates and multi-agent config on first start
-  try {
-    await provisionDefaults();
-  } catch (error) {
-    console.warn(`[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`);
+  if (
+    !shouldSkipVNextFanout(vNext, 'persona_write') &&
+    !shouldSkipVNextFanout(vNext, 'agent_config_mutation')
+  ) {
+    // Provision default persona templates and multi-agent config on first start
+    try {
+      await provisionDefaults();
+    } catch (error) {
+      console.warn(
+        `[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
   }
 
   const oauthManager = new OAuthManager();
@@ -648,14 +816,18 @@ export async function runAgentLoop(
 
   // validationService wired after creation (Phase 5 below)
 
-  const { memoryAgentLoop } = await initMemoryAgent(
-    oauthManager,
-    config,
-    mamaApi,
-    mamaApiClient,
-    messageRouter,
-    agentLoopBackend
-  );
+  const { memoryAgentLoop } =
+    shouldSkipVNextFanout(vNext, 'ledger_memory_compose') ||
+    shouldSkipVNextFanout(vNext, 'persona_write')
+      ? { memoryAgentLoop: null }
+      : await initMemoryAgent(
+          oauthManager,
+          config,
+          mamaApi,
+          mamaApiClient,
+          messageRouter,
+          agentLoopBackend
+        );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
@@ -683,7 +855,10 @@ export async function runAgentLoop(
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
-  {
+  if (
+    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
+    !shouldSkipVNextFanout(vNext, 'persona_write')
+  ) {
     graphHandlerOptions.executeCodeAct = async (
       code: string,
       codeActContext?: CodeActExecutionContext
@@ -839,7 +1014,10 @@ export async function runAgentLoop(
   toolExecutor.setValidationService(validationService);
   messageRouter.setValidationService(validationService);
   agentLoop.setValidationService(validationService);
-  {
+  if (
+    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
+    !shouldSkipVNextFanout(vNext, 'persona_write')
+  ) {
     // Ensure OS system agents exist in config (memory agent may be missing in older configs)
     if (!config.multi_agent) {
       config.multi_agent = getDefaultMultiAgentConfig();
@@ -983,38 +1161,43 @@ export async function runAgentLoop(
     console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
   }
 
-  await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
+  if (!vNext.enabled) {
+    await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
+  }
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
 
-  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config);
+  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config, { vNext });
 
   // ── Phase 7: Gateways ────────────────────────────────────────────────────
 
-  const { discordGateway, slackGateway, telegramGateway, gateways } = await initGateways(
-    config,
-    messageRouter,
-    toolExecutor,
-    agentLoop,
-    runtimeBackend,
-    db
-  );
+  const gatewayInit = shouldSkipVNextFanout(vNext, 'connector_mode')
+    ? {
+        discordGateway: null,
+        slackGateway: null,
+        telegramGateway: null,
+        gateways: [],
+      }
+    : await initGateways(config, messageRouter, toolExecutor, agentLoop, runtimeBackend, db);
+  const { discordGateway, slackGateway, telegramGateway, gateways } = gatewayInit;
 
   // ── Phase 8: Gateway Wiring ──────────────────────────────────────────────
 
-  const { pluginLoader } = await wireGateways({
-    config,
-    messageRouter,
-    healthCheckService,
-    graphHandlerOptions,
-    db,
-    discordGateway,
-    slackGateway,
-    telegramGateway,
-    gateways,
-    agentLoop,
-    cronEmitter,
-  });
+  const { pluginLoader } = shouldSkipVNextFanout(vNext, 'connector_mode')
+    ? { pluginLoader: new PluginLoader({ pluginsDir: '/__mama_vnext_no_plugins__' }) }
+    : await wireGateways({
+        config,
+        messageRouter,
+        healthCheckService,
+        graphHandlerOptions,
+        db,
+        discordGateway,
+        slackGateway,
+        telegramGateway,
+        gateways,
+        agentLoop,
+        cronEmitter,
+      });
 
   if (graphHandlerOptions.applyMultiAgentConfig) {
     toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
@@ -1029,16 +1212,20 @@ export async function runAgentLoop(
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
   // (Viewer, Telegram, iMessage, Terminal).
+  const fallbackMultiAgentConfig = config.multi_agent;
   const hasSystemRunAgents = Boolean(
-    config.multi_agent?.agents?.['dashboard-agent'] || config.multi_agent?.agents?.['wiki-agent']
+    fallbackMultiAgentConfig?.agents?.['dashboard-agent'] ||
+    fallbackMultiAgentConfig?.agents?.['wiki-agent']
   );
   if (
+    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
+    fallbackMultiAgentConfig &&
     !toolExecutor.getAgentProcessManager() &&
-    (config.multi_agent?.enabled || hasSystemRunAgents)
+    (fallbackMultiAgentConfig.enabled || hasSystemRunAgents)
   ) {
     const { AgentProcessManager } = await import('../../multi-agent/agent-process-manager.js');
     const pm = new AgentProcessManager(
-      config.multi_agent,
+      fallbackMultiAgentConfig,
       buildSystemAgentProcessDefaults(config),
       {
         backend: runtimeBackend,
@@ -1060,12 +1247,14 @@ export async function runAgentLoop(
     agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
     agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
-    if (config.multi_agent?.enabled && !toolExecutor.hasDelegateSupport()) {
+    if (fallbackMultiAgentConfig.enabled && !toolExecutor.hasDelegateSupport()) {
       const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
-      const agentConfigs = Object.entries(config.multi_agent.agents || {}).map(([id, cfg]) => ({
-        id,
-        ...cfg,
-      }));
+      const agentConfigs = Object.entries(fallbackMultiAgentConfig.agents || {}).map(
+        ([id, cfg]) => ({
+          id,
+          ...cfg,
+        })
+      );
       const dm = new DelegationManager(agentConfigs);
       dm.setSessionsDb(db);
       toolExecutor.setDelegationManager(dm);
@@ -1092,11 +1281,14 @@ export async function runAgentLoop(
     agentLoop,
     discordGateway,
     scheduler,
-    healthCheckService
+    healthCheckService,
+    { vNext }
   );
 
-  const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } =
-    await initConnectors(connectorExtractionFn);
+  const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
+    connectorExtractionFn,
+    { vNext }
+  );
   codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
   // Inject rawStore into tool executor for agent_test connector data access
@@ -1141,6 +1333,7 @@ export async function runAgentLoop(
     graphHandler,
     getAdapter,
     sessionsDb: db,
+    vNext,
   });
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────
