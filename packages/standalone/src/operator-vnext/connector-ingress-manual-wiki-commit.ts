@@ -98,6 +98,10 @@ function rejectWikiPageError(error: unknown): never {
 }
 
 function normalizeManualWikiPage(page: WikiPublishPageInput): WikiPublishPageInput {
+  if (page === null || typeof page !== 'object') {
+    throw requestError('Each wiki page must be a non-null object');
+  }
+  // Runtime API payloads can still include forbidden caller-supplied keys beyond the TS shape.
   const rawPage = page as unknown as Record<string, unknown>;
   if (
     Object.prototype.hasOwnProperty.call(rawPage, 'sourceRefs') ||
@@ -217,23 +221,27 @@ function assertNoExistingNonChangedCommits(input: {
   connector: string;
   events: readonly PrimaryOperatorEvent[];
 }): void {
-  const lookupExistingCommit = input.operatorDb.prepare(
-    `SELECT status
-     FROM vnext_operator_commits
-     WHERE cursor_name = ?
-       AND idempotency_key IN (?, ?)`
-  );
+  if (input.events.length === 0) {
+    return;
+  }
+  const idempotencyKeys: string[] = [];
   for (const event of input.events) {
-    const cursorScopedKey = buildCursorScopedIdempotencyKey(input.cursorName, event.seq, event.seq);
-    const legacyKey = buildConnectorIdempotencyKey(input.connector, event.seq, event.seq);
-    const rows = lookupExistingCommit.all(
-      input.cursorName,
-      cursorScopedKey,
-      legacyKey
-    ) as ExistingOperatorCommitStatusRow[];
-    if (rows.some((row) => row.status !== 'changed')) {
-      throw requestError('Manual wiki commit cannot replace a non-changed operator commit');
-    }
+    idempotencyKeys.push(
+      buildCursorScopedIdempotencyKey(input.cursorName, event.seq, event.seq),
+      buildConnectorIdempotencyKey(input.connector, event.seq, event.seq)
+    );
+  }
+  const placeholders = idempotencyKeys.map(() => '?').join(', ');
+  const rows = input.operatorDb
+    .prepare(
+      `SELECT status
+       FROM vnext_operator_commits
+       WHERE cursor_name = ?
+         AND idempotency_key IN (${placeholders})`
+    )
+    .all(input.cursorName, ...idempotencyKeys) as ExistingOperatorCommitStatusRow[];
+  if (rows.some((row) => row.status !== 'changed')) {
+    throw requestError('Manual wiki commit cannot replace a non-changed operator commit');
   }
 }
 
