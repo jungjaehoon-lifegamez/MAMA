@@ -46,6 +46,16 @@ type ParsedPrimaryOperatorDecision =
       scopeKey?: string;
     };
 
+interface ParsedPrimaryOperatorCommitContext {
+  event: PrimaryOperatorEvent;
+  sourceRefs: readonly SourceRef[];
+  idempotencyKey: string;
+  fallbackIdempotencyKeys: readonly string[];
+  seq: number;
+  nowMs: number;
+  commitChanged?: PrimaryOperatorChangedCommitter;
+}
+
 export interface PrimaryOperatorChangedCommitInput {
   event: PrimaryOperatorEvent;
   decision: PrimaryOperatorTrustedChangedCommitDecision;
@@ -311,32 +321,15 @@ export class PrimaryOperatorRuntime {
           const decision = parseDecision(await decide(event), {
             requireChangedRefs: false,
           });
-          const commit =
-            decision.status === 'changed'
-              ? this.commitChangedDecision({
-                  event,
-                  decision,
-                  sourceRefs,
-                  idempotencyKey,
-                  fallbackIdempotencyKeys,
-                  seq,
-                  nowMs: commitNowMs,
-                  commitChanged,
-                })
-              : commitOperatorCursor(this.db, {
-                  cursorName: this.cursorName,
-                  firstChangeSeq: seq,
-                  lastChangeSeq: seq,
-                  idempotencyKey,
-                  status: 'no_update',
-                  sourceRefs,
-                  noUpdate: {
-                    scopeKey: this.resolveNoUpdateScope(decision.scopeKey),
-                    reason: decision.reason,
-                  },
-                  nowMs: commitNowMs,
-                  allowSeqGaps: this.allowSeqGaps,
-                });
+          const commit = this.commitParsedDecision(decision, {
+            event,
+            sourceRefs,
+            idempotencyKey,
+            fallbackIdempotencyKeys,
+            seq,
+            nowMs: commitNowMs,
+            commitChanged,
+          });
           commits.push(commit);
           advancedThroughSeq = Math.max(advancedThroughSeq, commit.lastChangeSeq);
           continue;
@@ -346,32 +339,15 @@ export class PrimaryOperatorRuntime {
         const decision = parseDecision(await decide(event), {
           requireChangedRefs: true,
         });
-        const commit =
-          decision.status === 'changed'
-            ? this.commitChangedDecision({
-                event,
-                decision,
-                sourceRefs,
-                idempotencyKey,
-                fallbackIdempotencyKeys,
-                seq,
-                nowMs: commitNowMs,
-                commitChanged,
-              })
-            : commitOperatorCursor(this.db, {
-                cursorName: this.cursorName,
-                firstChangeSeq: seq,
-                lastChangeSeq: seq,
-                idempotencyKey,
-                status: 'no_update',
-                sourceRefs,
-                noUpdate: {
-                  scopeKey: this.resolveNoUpdateScope(decision.scopeKey),
-                  reason: decision.reason,
-                },
-                nowMs: commitNowMs,
-                allowSeqGaps: this.allowSeqGaps,
-              });
+        const commit = this.commitParsedDecision(decision, {
+          event,
+          sourceRefs,
+          idempotencyKey,
+          fallbackIdempotencyKeys,
+          seq,
+          nowMs: commitNowMs,
+          commitChanged,
+        });
         commits.push(commit);
         advancedThroughSeq = Math.max(advancedThroughSeq, commit.lastChangeSeq);
       } catch (error) {
@@ -392,6 +368,32 @@ export class PrimaryOperatorRuntime {
       advancedThroughSeq,
       commits,
     };
+  }
+
+  private commitParsedDecision(
+    decision: ParsedPrimaryOperatorDecision,
+    context: ParsedPrimaryOperatorCommitContext
+  ): OperatorCursorCommitResult {
+    if (decision.status === 'changed') {
+      return this.commitChangedDecision({
+        ...context,
+        decision,
+      });
+    }
+    return commitOperatorCursor(this.db, {
+      cursorName: this.cursorName,
+      firstChangeSeq: context.seq,
+      lastChangeSeq: context.seq,
+      idempotencyKey: context.idempotencyKey,
+      status: 'no_update',
+      sourceRefs: context.sourceRefs,
+      noUpdate: {
+        scopeKey: this.resolveNoUpdateScope(decision.scopeKey),
+        reason: decision.reason,
+      },
+      nowMs: context.nowMs,
+      allowSeqGaps: this.allowSeqGaps,
+    });
   }
 
   private commitChangedDecision(input: {

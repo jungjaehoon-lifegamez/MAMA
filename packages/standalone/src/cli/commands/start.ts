@@ -120,6 +120,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+const vNextOperatorLogger = new DebugLogger('VNextPrimaryOperator');
 type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
@@ -795,6 +796,10 @@ export function createVNextPrimaryOperatorRuntime(
     status.advancedThroughSeq = result.advancedThroughSeq;
     status.lastBatchStatus = result.status;
     if (result.status === 'partial_failure') {
+      vNextOperatorLogger.warn('Primary operator batch failed', {
+        failedSeq: result.failedSeq,
+        error: result.error.message,
+      });
       status.status = 'degraded';
       status.failedSeq = result.failedSeq;
       status.errorMessage = sanitizeBatchErrorForStatus();
