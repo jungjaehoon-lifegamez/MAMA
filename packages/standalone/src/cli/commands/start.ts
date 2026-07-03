@@ -702,9 +702,13 @@ function bodyWikiPages(value: unknown): WikiPublishPageInput[] {
       Object.prototype.hasOwnProperty.call(page, 'sourceRefs') ||
       Object.prototype.hasOwnProperty.call(page, 'source_refs') ||
       Object.prototype.hasOwnProperty.call(page, 'sourceIds') ||
-      Object.prototype.hasOwnProperty.call(page, 'source_ids')
+      Object.prototype.hasOwnProperty.call(page, 'source_ids') ||
+      Object.prototype.hasOwnProperty.call(page, 'changedRefs') ||
+      Object.prototype.hasOwnProperty.call(page, 'changed_refs')
     ) {
-      throw new Error('manual wiki commits derive source refs from reviewed events');
+      throw new Error(
+        'manual wiki commits derive source refs from reviewed events and changed refs from wiki page paths'
+      );
     }
     const parsed: WikiPublishPageInput = {
       path: bodyString(page, 'path'),

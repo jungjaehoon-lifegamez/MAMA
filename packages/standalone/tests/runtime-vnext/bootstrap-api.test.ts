@@ -1063,6 +1063,47 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       expect(providerCalls).toBe(0);
     });
 
+    it('rejects manual wiki ingress commit requests that try to supply page changed refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when page changed refs are supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  content: 'operator-authored wiki summary',
+                  changed_refs: ['wiki_page:projects/caller-supplied.md'],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
     it('rejects manual no-update ingress commit requests that try to supply changed refs', async () => {
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
