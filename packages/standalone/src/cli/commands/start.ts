@@ -120,6 +120,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+const vNextOperatorLogger = new DebugLogger('VNextPrimaryOperator');
 type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
@@ -789,23 +790,37 @@ export function createVNextPrimaryOperatorRuntime(
   const status = buildVNextPrimaryOperatorReadyStatus(
     readVNextPrimaryOperatorCursorSeq(db, VNEXT_PRIMARY_OPERATOR_CURSOR_NAME)
   );
+  const sanitizeBatchErrorForStatus = (): string =>
+    'Primary operator batch failed. Check local logs for details.';
+  const applyBatchResult = (result: Awaited<ReturnType<typeof runtime.processBatch>>): void => {
+    status.advancedThroughSeq = result.advancedThroughSeq;
+    status.lastBatchStatus = result.status;
+    if (result.status === 'partial_failure') {
+      vNextOperatorLogger.warn('Primary operator batch failed', {
+        failedSeq: result.failedSeq,
+        error: result.error.message,
+      });
+      status.status = 'degraded';
+      status.failedSeq = result.failedSeq;
+      status.errorMessage = sanitizeBatchErrorForStatus();
+    } else if (result.status === 'committed') {
+      status.status = 'prepared';
+      delete status.failedSeq;
+      delete status.errorMessage;
+    }
+  };
 
   return {
     status,
     wikiPublishAdapter: options.wikiPublishAdapter ?? null,
     processBatch: async (events, decide) => {
       const result = await runtime.processBatch(events, decide);
-      status.advancedThroughSeq = result.advancedThroughSeq;
-      status.lastBatchStatus = result.status;
-      if (result.status === 'partial_failure') {
-        status.status = 'degraded';
-        status.failedSeq = result.failedSeq;
-        status.errorMessage = result.error.message;
-      } else if (result.status === 'committed') {
-        status.status = 'prepared';
-        delete status.failedSeq;
-        delete status.errorMessage;
-      }
+      applyBatchResult(result);
+      return result;
+    },
+    processBatchWithChangedCommit: async (events, decide, commitChanged) => {
+      const result = await runtime.processBatchWithChangedCommit(events, decide, commitChanged);
+      applyBatchResult(result);
       return result;
     },
   };

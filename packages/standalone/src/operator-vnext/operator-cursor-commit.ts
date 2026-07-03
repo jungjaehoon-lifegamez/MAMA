@@ -3,6 +3,7 @@ import type { SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
 import type { SQLiteDatabase } from '../sqlite.js';
 import { recordNoUpdate, serializeRequiredSourceRefs } from './no-update-ledger.js';
 import type {
+  OperatorChangedCursorCommitInput,
   OperatorCommitStatus,
   OperatorCursorCommitInput,
   OperatorCursorCommitResult,
@@ -39,10 +40,37 @@ interface NormalizedNoUpdateCommit {
   reason: string;
 }
 
+interface NormalizedChangedWriteCommitInput {
+  nowMs: number;
+  cursorName: string;
+  idempotencyKey: string;
+  idempotencyKeys: string[];
+  firstChangeSeq: number;
+  lastChangeSeq: number;
+  allowSeqGaps: boolean;
+  sourceRefsJson: string;
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger'];
+}
+
+interface ExistingChangedWriteCommitLookup {
+  cursorName: string;
+  idempotencyKeys: readonly string[];
+  firstChangeSeq: number;
+  lastChangeSeq: number;
+  sourceRefsJson: string;
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger'];
+  nowMs: number;
+  allowSeqGaps: boolean;
+  cursor?: CursorRow;
+}
+
+let changedReplaySavepointSeq = 0;
+
 export interface ExistingOperatorCursorCommitInput {
   cursorName: string;
   idempotencyKey: string;
   fallbackIdempotencyKeys?: readonly string[];
+  statusFilter?: readonly OperatorCommitStatus[];
   sourceRefs: readonly SourceRef[];
   nowMs?: number;
   allowSeqGaps?: boolean;
@@ -243,6 +271,207 @@ function resultFromExistingCommit(
   return resultFromStoredCommit(db, cursor, existing, nowMs, allowSeqGaps);
 }
 
+function resultFromExistingChangedWriteCommit(
+  db: SQLiteDatabase,
+  cursor: CursorRow,
+  existing: CommitRow,
+  expected: {
+    firstChangeSeq: number;
+    lastChangeSeq: number;
+    changedRefsJson: string;
+    sourceRefsJson: string;
+  },
+  nowMs: number,
+  allowSeqGaps: boolean
+): OperatorCursorCommitResult {
+  if (existing.changed_refs_json !== expected.changedRefsJson) {
+    throw new Error('Idempotency key replay changed refs do not match the durable changed writer');
+  }
+
+  return resultFromStoredCommit(db, cursor, existing, nowMs, allowSeqGaps);
+}
+
+function assertExistingChangedWriteCommitMetadata(
+  cursor: CursorRow,
+  existing: CommitRow,
+  expected: {
+    firstChangeSeq: number;
+    lastChangeSeq: number;
+    sourceRefsJson: string;
+  }
+): void {
+  if (existing.cursor_name !== cursor.cursor_name) {
+    throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
+  }
+  if (
+    existing.status !== 'changed' ||
+    existing.first_change_seq !== expected.firstChangeSeq ||
+    existing.last_change_seq !== expected.lastChangeSeq ||
+    existing.source_refs_json !== expected.sourceRefsJson
+  ) {
+    throw new Error('Idempotency key replay does not match the original changed operator commit');
+  }
+}
+
+function nextChangedReplaySavepointName(): string {
+  changedReplaySavepointSeq = (changedReplaySavepointSeq + 1) % Number.MAX_SAFE_INTEGER;
+  return `vnext_changed_replay_${changedReplaySavepointSeq}`;
+}
+
+function rollbackAndReleaseSavepoint(db: SQLiteDatabase, savepointName: string): void {
+  try {
+    db.exec(`ROLLBACK TO SAVEPOINT ${savepointName}`);
+  } catch (error) {
+    try {
+      db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+    } catch {
+      // Preserve the rollback failure; release can fail after a broken savepoint state.
+    }
+    throw error;
+  }
+  db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+}
+
+function rollbackAndReleaseSavepointAfterError(
+  db: SQLiteDatabase,
+  savepointName: string,
+  originalError: unknown
+): never {
+  try {
+    rollbackAndReleaseSavepoint(db, savepointName);
+  } catch {
+    // Preserve the original durable writer error; rollback/release are cleanup.
+  }
+  throw originalError;
+}
+
+function validateChangedWriteInput(input: OperatorChangedCursorCommitInput): {
+  sourceRefsJson: string;
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger'];
+} {
+  if (!input.sourceRefs || input.sourceRefs.length === 0) {
+    throw new Error('sourceRefs must not be empty');
+  }
+  if (typeof input.writeChangedLedger !== 'function') {
+    throw new Error('writeChangedLedger must be a function');
+  }
+  return {
+    sourceRefsJson: JSON.stringify(serializeRequiredSourceRefs(input.sourceRefs)),
+    writeChangedLedger: input.writeChangedLedger,
+  };
+}
+
+function normalizeChangedWriteCommitInput(
+  input: OperatorChangedCursorCommitInput
+): NormalizedChangedWriteCommitInput {
+  const nowMs = input.nowMs ?? Date.now();
+  const cursorName = requiredString(input.cursorName, 'cursorName');
+  const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
+  const idempotencyKeys = [
+    idempotencyKey,
+    ...(input.fallbackIdempotencyKeys ?? []).map((key) =>
+      requiredString(key, 'fallbackIdempotencyKeys[]')
+    ),
+  ];
+  const firstChangeSeq = nonNegativeInteger(input.firstChangeSeq, 'firstChangeSeq');
+  const lastChangeSeq = nonNegativeInteger(input.lastChangeSeq, 'lastChangeSeq');
+  const allowSeqGaps = input.allowSeqGaps === true;
+  if (lastChangeSeq < firstChangeSeq) {
+    throw new Error('lastChangeSeq must be greater than or equal to firstChangeSeq');
+  }
+
+  const { sourceRefsJson, writeChangedLedger } = validateChangedWriteInput(input);
+  return {
+    nowMs,
+    cursorName,
+    idempotencyKey,
+    idempotencyKeys,
+    firstChangeSeq,
+    lastChangeSeq,
+    allowSeqGaps,
+    sourceRefsJson,
+    writeChangedLedger,
+  };
+}
+
+function readChangedRefsWithoutPersistingReplayWrites(
+  db: SQLiteDatabase,
+  idempotencyKey: string,
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger']
+): string[] {
+  const savepointName = nextChangedReplaySavepointName();
+  db.exec(`SAVEPOINT ${savepointName}`);
+  try {
+    const changedRefs = serializeRequiredSourceRefs(writeChangedLedger({ idempotencyKey }));
+    rollbackAndReleaseSavepoint(db, savepointName);
+    return changedRefs;
+  } catch (error) {
+    rollbackAndReleaseSavepointAfterError(db, savepointName, error);
+  }
+}
+
+function readChangedRefsForExistingChangedCommit(
+  db: SQLiteDatabase,
+  cursor: CursorRow,
+  existing: CommitRow,
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger']
+): string[] {
+  if (cursor.last_change_seq < existing.last_change_seq) {
+    return serializeRequiredSourceRefs(
+      writeChangedLedger({ idempotencyKey: existing.idempotency_key })
+    );
+  }
+  return readChangedRefsWithoutPersistingReplayWrites(
+    db,
+    existing.idempotency_key,
+    writeChangedLedger
+  );
+}
+
+function findExistingChangedWriteCommit(
+  db: SQLiteDatabase,
+  input: ExistingChangedWriteCommitLookup
+): OperatorCursorCommitResult | null {
+  for (const [index, key] of input.idempotencyKeys.entries()) {
+    const existing = getExistingCommit(db, key);
+    if (!existing) {
+      continue;
+    }
+    if (existing.cursor_name !== input.cursorName) {
+      if (index === 0) {
+        throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
+      }
+      continue;
+    }
+    const cursor = input.cursor ?? getCursor(db, input.cursorName);
+    assertExistingChangedWriteCommitMetadata(cursor, existing, {
+      firstChangeSeq: input.firstChangeSeq,
+      lastChangeSeq: input.lastChangeSeq,
+      sourceRefsJson: input.sourceRefsJson,
+    });
+    const changedRefs = readChangedRefsForExistingChangedCommit(
+      db,
+      cursor,
+      existing,
+      input.writeChangedLedger
+    );
+    return resultFromExistingChangedWriteCommit(
+      db,
+      cursor,
+      existing,
+      {
+        firstChangeSeq: input.firstChangeSeq,
+        lastChangeSeq: input.lastChangeSeq,
+        changedRefsJson: JSON.stringify(changedRefs),
+        sourceRefsJson: input.sourceRefsJson,
+      },
+      input.nowMs,
+      input.allowSeqGaps
+    );
+  }
+  return null;
+}
+
 export function recoverExistingOperatorCursorCommit(
   db: SQLiteDatabase,
   input: ExistingOperatorCursorCommitInput
@@ -258,6 +487,8 @@ export function recoverExistingOperatorCursorCommit(
   ];
   const expectedSourceRefsJson = JSON.stringify(serializeRequiredSourceRefs(input.sourceRefs));
   const allowSeqGaps = input.allowSeqGaps === true;
+  const statusFilter =
+    input.statusFilter === undefined ? null : new Set<OperatorCommitStatus>(input.statusFilter);
 
   const tx = db.transaction(() => {
     for (const [index, key] of idempotencyKeys.entries()) {
@@ -271,6 +502,9 @@ export function recoverExistingOperatorCursorCommit(
         }
         continue;
       }
+      if (statusFilter && !statusFilter.has(existing.status)) {
+        continue;
+      }
       if (existing.source_refs_json !== expectedSourceRefsJson) {
         throw new Error('Idempotent replay source refs do not match the original operator commit');
       }
@@ -278,6 +512,84 @@ export function recoverExistingOperatorCursorCommit(
       return resultFromStoredCommit(db, cursor, existing, nowMs, allowSeqGaps);
     }
     return null;
+  });
+  return tx();
+}
+
+export function recoverExistingOperatorCursorChangedWrite(
+  db: SQLiteDatabase,
+  input: OperatorChangedCursorCommitInput
+): OperatorCursorCommitResult | null {
+  const normalized = normalizeChangedWriteCommitInput(input);
+
+  const tx = db.transaction(() => {
+    return findExistingChangedWriteCommit(db, normalized);
+  });
+  return tx();
+}
+
+export function commitOperatorCursorWithChangedWrite(
+  db: SQLiteDatabase,
+  input: OperatorChangedCursorCommitInput
+): OperatorCursorCommitResult {
+  const normalized = normalizeChangedWriteCommitInput(input);
+  const commitId = requiredString(
+    input.commitId ?? `commit:${normalized.idempotencyKey}`,
+    'commitId'
+  );
+
+  const tx = db.transaction(() => {
+    ensureCursor(db, normalized.cursorName, normalized.nowMs);
+    const cursor = getCursor(db, normalized.cursorName);
+    const existing = findExistingChangedWriteCommit(db, {
+      ...normalized,
+      cursor,
+    });
+    if (existing) {
+      return existing;
+    }
+
+    assertSeqAdvances(cursor, normalized.firstChangeSeq, normalized.allowSeqGaps);
+    const changedRefs = serializeRequiredSourceRefs(
+      normalized.writeChangedLedger({ idempotencyKey: normalized.idempotencyKey })
+    );
+    const changedRefsJson = JSON.stringify(changedRefs);
+
+    db.prepare(
+      `INSERT INTO vnext_operator_commits (
+        commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+        status, changed_refs_json, source_refs_json, created_at_ms
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      commitId,
+      normalized.cursorName,
+      normalized.idempotencyKey,
+      normalized.firstChangeSeq,
+      normalized.lastChangeSeq,
+      'changed',
+      changedRefsJson,
+      normalized.sourceRefsJson,
+      normalized.nowMs
+    );
+
+    updateCursor(
+      db,
+      normalized.cursorName,
+      normalized.lastChangeSeq,
+      normalized.idempotencyKey,
+      normalized.nowMs
+    );
+
+    return {
+      outcome: 'committed',
+      commitId,
+      cursorName: normalized.cursorName,
+      firstChangeSeq: normalized.firstChangeSeq,
+      lastChangeSeq: normalized.lastChangeSeq,
+      idempotencyKey: normalized.idempotencyKey,
+      status: 'changed',
+      cursorAdvanced: true,
+    } satisfies OperatorCursorCommitResult;
   });
   return tx();
 }
