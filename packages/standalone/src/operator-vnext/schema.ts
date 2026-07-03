@@ -65,9 +65,7 @@ const REQUIRED_INDEXES = [
   'idx_operator_no_updates_scope_created',
   'idx_worker_proposals_status_kind',
   'idx_operator_memory_commit_intents_cursor_created',
-  'idx_operator_memory_commit_intents_idempotency_key',
 ] as const;
-const REQUIRED_UNIQUE_INDEXES = ['idx_operator_memory_commit_intents_idempotency_key'] as const;
 const REQUIRED_TABLE_SQL_FRAGMENTS: Partial<
   Record<(typeof REQUIRED_OPERATOR_TABLES)[number], readonly string[]>
 > = {
@@ -159,9 +157,6 @@ CREATE TABLE IF NOT EXISTS operator_memory_commit_intents (
 
 CREATE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_cursor_created
   ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_idempotency_key
-  ON operator_memory_commit_intents(idempotency_key);
 `;
 
 export interface VNextOperatorSchemaOptions {
@@ -190,13 +185,6 @@ function indexExists(db: SQLiteDatabase, indexName: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
     .get(indexName);
   return row !== undefined;
-}
-
-function indexSql(db: SQLiteDatabase, indexName: string): string {
-  const row = db
-    .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
-    .get(indexName) as { sql?: string } | undefined;
-  return row?.sql ?? '';
 }
 
 function tableColumns(db: SQLiteDatabase, tableName: string): Set<string> {
@@ -248,11 +236,6 @@ function assertOperatorSchemaCompatible(db: SQLiteDatabase): void {
   for (const index of REQUIRED_INDEXES) {
     if (!indexExists(db, index)) {
       throw new Error(`vNext operator schema is missing index ${index}`);
-    }
-  }
-  for (const index of REQUIRED_UNIQUE_INDEXES) {
-    if (!indexSql(db, index).includes('CREATE UNIQUE INDEX')) {
-      throw new Error(`vNext operator schema index ${index} must be unique`);
     }
   }
 }

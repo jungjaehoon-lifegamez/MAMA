@@ -825,16 +825,17 @@ Rules:
   through the normal memory evolution path, including `supersedes` chain updates.
 - If status promotion fails after the cursor commit, the response is still
   `committed` with `promotionPending: true`; the intent stays `saved` so the
-  next idempotent replay can finish promotion without saving duplicate memories.
-- Duplicate committed replays must not re-save memories or re-promote memory
-  statuses.
+  first idempotent replay after the committed cursor can finish promotion
+  without saving duplicate memories.
+- Later duplicate committed replays, after the intent reaches `promoted`, must
+  not re-save memories or re-promote memory statuses.
 - Concurrent or cross-process attempts use
   `operator_memory_commit_intents.status` and `claim_token` so only the current
   save owner can update memory ids or advance the intent state.
 - A durable `saving` intent is a bounded lease, not a permanent lock. After the
   lease expires, replay may CAS-take the claim and recover already-saved memory
   ids from deterministic `gateway_call_id` provenance before saving anything new.
-- Partial failures must not advance the operator cursor.
+- Partial failures before cursor commit must not advance the operator cursor.
 
 Verify:
 

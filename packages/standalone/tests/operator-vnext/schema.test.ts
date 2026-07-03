@@ -150,8 +150,6 @@ describe('STORY-VNEXT-PR3-OPERATOR-BOOTSTRAP: operator schema bootstrap', () => 
         );
         CREATE INDEX idx_operator_memory_commit_intents_cursor_created
           ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
-        CREATE INDEX idx_operator_memory_commit_intents_idempotency_key
-          ON operator_memory_commit_intents(idempotency_key);
       `);
 
       expect(() => ensureVNextOperatorSchema(db)).toThrow(/operator_memory_commit_intents/i);

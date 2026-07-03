@@ -15,8 +15,5 @@ CREATE TABLE IF NOT EXISTS operator_memory_commit_intents (
 CREATE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_cursor_created
   ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_idempotency_key
-  ON operator_memory_commit_intents(idempotency_key);
-
 INSERT OR IGNORE INTO schema_version (version, description)
 VALUES (40, 'Create operator memory commit intents');
