@@ -1,5 +1,6 @@
 import type { VNextRuntimeFlags } from './feature-flags.js';
 import type {
+  PrimaryOperatorChangedCommitter,
   PrimaryOperatorBatchResult,
   PrimaryOperatorEvent,
 } from '../operator-vnext/primary-operator-runtime.js';
@@ -55,6 +56,11 @@ export interface VNextPrimaryOperatorRuntimeHandle {
   processBatch: (
     events: readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
+  ) => Promise<PrimaryOperatorBatchResult>;
+  processBatchWithChangedCommit: (
+    events: readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown,
+    commitChanged: PrimaryOperatorChangedCommitter
   ) => Promise<PrimaryOperatorBatchResult>;
 }
 

@@ -5,7 +5,9 @@ process.env.MAMA_FORCE_TIER_3 ||= 'true';
 import {
   buildConnectorIdempotencyKey,
   commitOperatorCursor,
+  commitOperatorCursorWithChangedWrite,
 } from '../../src/operator-vnext/operator-cursor-commit.js';
+import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
 import { countRows, makeOperatorVNextDb } from './fixtures.js';
 
 describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
@@ -42,6 +44,92 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
         changed_refs_json: '["os_task:task-1"]',
         source_refs_json: '["raw:slack:event-1"]',
       });
+
+      db.close();
+    });
+
+    it('runs durable changed writers inside the cursor commit transaction', () => {
+      const db = makeOperatorVNextDb();
+      const store = new WikiArtifactStore(db);
+
+      const result = commitOperatorCursorWithChangedWrite(db, {
+        commitId: 'commit-wiki-artifact',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+        writeChangedLedger: () => {
+          const artifact = store.upsertArtifact({
+            path: 'docs/synthetic.md',
+            title: 'Synthetic',
+            type: 'entity',
+            content: 'synthetic artifact',
+            confidence: 'high',
+            sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+            nowMs: 1710000000000,
+          });
+          return [{ kind: 'wiki_page', id: artifact.path }];
+        },
+      });
+
+      expect(result.outcome).toBe('committed');
+      expect(countRows(db, 'wiki_artifacts')).toBe(1);
+      expect(db.prepare('SELECT path, source_refs_json FROM wiki_artifacts').get()).toEqual({
+        path: 'docs/synthetic.md',
+        source_refs_json: '["raw:slack:event-1"]',
+      });
+      expect(
+        db.prepare('SELECT status, changed_refs_json FROM vnext_operator_commits').get()
+      ).toEqual({
+        status: 'changed',
+        changed_refs_json: '["wiki_page:docs/synthetic.md"]',
+      });
+      expect(
+        db
+          .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
+          .get('connector:slack')
+      ).toEqual({ last_change_seq: 1 });
+
+      db.close();
+    });
+
+    it('rolls back durable changed writer side effects when returned refs are invalid', () => {
+      const db = makeOperatorVNextDb();
+      const store = new WikiArtifactStore(db);
+
+      expect(() =>
+        commitOperatorCursorWithChangedWrite(db, {
+          commitId: 'commit-empty-wiki-ref',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+          nowMs: 1710000000000,
+          writeChangedLedger: () => {
+            store.upsertArtifact({
+              path: 'docs/rollback.md',
+              title: 'Rollback',
+              type: 'entity',
+              content: 'rollback artifact',
+              confidence: 'high',
+              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+              nowMs: 1710000000000,
+            });
+            return [];
+          },
+        })
+      ).toThrow(/Source refs must not be empty/i);
+
+      expect(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+          .get('wiki_artifacts')
+      ).toBeUndefined();
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
 
       db.close();
     });
@@ -289,6 +377,276 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
       expect(commitOperatorCursor(db, input).outcome).toBe('committed');
       expect(commitOperatorCursor(db, input).outcome).toBe('already_committed');
       expect(countRows(db, 'vnext_operator_commits')).toBe(1);
+
+      db.close();
+    });
+
+    it('reruns durable changed writers to verify idempotent replay refs', () => {
+      const db = makeOperatorVNextDb();
+      let writes = 0;
+      const input = {
+        commitId: 'commit-writer-once',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw' as const, connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+        writeChangedLedger: () => {
+          writes += 1;
+          return [{ kind: 'wiki_page' as const, id: 'docs/synthetic.md' }];
+        },
+      };
+
+      expect(commitOperatorCursorWithChangedWrite(db, input).outcome).toBe('committed');
+      expect(commitOperatorCursorWithChangedWrite(db, input).outcome).toBe('already_committed');
+      expect(writes).toBe(2);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(1);
+
+      db.close();
+    });
+
+    it('rolls back durable writer side effects during changed replay verification', () => {
+      const db = makeOperatorVNextDb();
+      const store = new WikiArtifactStore(db);
+      const input = {
+        commitId: 'commit-replay-savepoint',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw' as const, connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+        writeChangedLedger: () => {
+          const artifact = store.upsertArtifact({
+            path: 'docs/synthetic.md',
+            title: 'Synthetic',
+            type: 'entity',
+            content: 'original artifact',
+            confidence: 'high',
+            sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+            nowMs: 1710000000000,
+          });
+          return [{ kind: 'wiki_page' as const, id: artifact.path }];
+        },
+      };
+
+      expect(commitOperatorCursorWithChangedWrite(db, input).outcome).toBe('committed');
+      expect(
+        commitOperatorCursorWithChangedWrite(db, {
+          ...input,
+          writeChangedLedger: () => {
+            const artifact = store.upsertArtifact({
+              path: 'docs/synthetic.md',
+              title: 'Synthetic Replay',
+              type: 'entity',
+              content: 'replayed artifact',
+              confidence: 'high',
+              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+              nowMs: 1710000000001,
+            });
+            return [{ kind: 'wiki_page' as const, id: artifact.path }];
+          },
+        }).outcome
+      ).toBe('already_committed');
+      expect(db.prepare('SELECT title, content, updated_at_ms FROM wiki_artifacts').get()).toEqual({
+        title: 'Synthetic',
+        content: 'original artifact',
+        updated_at_ms: 1710000000000,
+      });
+
+      db.close();
+    });
+
+    it('persists durable writer side effects while recovering a changed cursor', () => {
+      const db = makeOperatorVNextDb();
+      const store = new WikiArtifactStore(db);
+
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack', 0, null, 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit-existing',
+        'connector:slack',
+        'connector:slack:seq:1-1',
+        1,
+        1,
+        'changed',
+        '["wiki_page:docs/synthetic.md"]',
+        '["raw:slack:event-1"]',
+        1710000000000
+      );
+
+      const result = commitOperatorCursorWithChangedWrite(db, {
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: 'connector:slack:seq:1-1',
+        sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000001,
+        writeChangedLedger: () => {
+          const artifact = store.upsertArtifact({
+            path: 'docs/synthetic.md',
+            title: 'Synthetic Recovery',
+            type: 'entity',
+            content: 'recovered artifact',
+            confidence: 'high',
+            sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+            nowMs: 1710000000001,
+          });
+          return [{ kind: 'wiki_page' as const, id: artifact.path }];
+        },
+      });
+
+      expect(result.outcome).toBe('recovered');
+      expect(db.prepare('SELECT path, content FROM wiki_artifacts').get()).toEqual({
+        path: 'docs/synthetic.md',
+        content: 'recovered artifact',
+      });
+      expect(
+        db
+          .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
+          .get('connector:slack')
+      ).toEqual({ last_change_seq: 1 });
+
+      db.close();
+    });
+
+    it('keeps wiki artifact schema cache valid after replay verification rolls back first schema creation', () => {
+      const db = makeOperatorVNextDb();
+      const store = new WikiArtifactStore(db);
+
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack', 1, 'connector:slack:seq:1-1', 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit-existing',
+        'connector:slack',
+        'connector:slack:seq:1-1',
+        1,
+        1,
+        'changed',
+        '["wiki_page:docs/synthetic.md"]',
+        '["raw:slack:event-1"]',
+        1710000000000
+      );
+
+      expect(
+        commitOperatorCursorWithChangedWrite(db, {
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: 'connector:slack:seq:1-1',
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+          nowMs: 1710000000001,
+          writeChangedLedger: () => {
+            const artifact = store.upsertArtifact({
+              path: 'docs/synthetic.md',
+              title: 'Synthetic Replay',
+              type: 'entity',
+              content: 'replayed artifact',
+              confidence: 'high',
+              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+              nowMs: 1710000000001,
+            });
+            return [{ kind: 'wiki_page' as const, id: artifact.path }];
+          },
+        }).outcome
+      ).toBe('already_committed');
+      expect(
+        db
+          .prepare(
+            `SELECT name
+             FROM sqlite_master
+             WHERE type = 'table' AND name = 'wiki_artifacts'`
+          )
+          .get()
+      ).toBeUndefined();
+
+      expect(
+        commitOperatorCursorWithChangedWrite(db, {
+          commitId: 'commit-next',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 2,
+          lastChangeSeq: 2,
+          idempotencyKey: 'connector:slack:seq:2-2',
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-2' }],
+          nowMs: 1710000000002,
+          writeChangedLedger: () => {
+            const artifact = store.upsertArtifact({
+              path: 'docs/synthetic-2.md',
+              title: 'Synthetic Next',
+              type: 'entity',
+              content: 'next artifact',
+              confidence: 'high',
+              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-2' }],
+              nowMs: 1710000000002,
+            });
+            return [{ kind: 'wiki_page' as const, id: artifact.path }];
+          },
+        }).outcome
+      ).toBe('committed');
+      expect(db.prepare('SELECT path FROM wiki_artifacts').get()).toEqual({
+        path: 'docs/synthetic-2.md',
+      });
+
+      db.close();
+    });
+
+    it('does not run durable changed writers when replay metadata mismatches', () => {
+      const db = makeOperatorVNextDb();
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack', 1, 'cursor:connector:slack:seq:1-1', 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit-writer-mismatch',
+        'connector:slack',
+        'cursor:connector:slack:seq:1-1',
+        1,
+        1,
+        'changed',
+        '["wiki_page:docs/synthetic.md"]',
+        '["raw:slack:event-1"]',
+        1710000000000
+      );
+      let writes = 0;
+
+      expect(() =>
+        commitOperatorCursorWithChangedWrite(db, {
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: 'cursor:connector:slack:seq:1-1',
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-2' }],
+          nowMs: 1710000000001,
+          writeChangedLedger: () => {
+            writes += 1;
+            return [{ kind: 'wiki_page', id: 'docs/synthetic.md' }];
+          },
+        })
+      ).toThrow(/original changed operator commit/i);
+      expect(writes).toBe(0);
 
       db.close();
     });
