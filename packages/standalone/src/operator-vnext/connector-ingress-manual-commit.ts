@@ -3,6 +3,7 @@ import type { SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
 import type { SQLiteDatabase } from '../sqlite.js';
 import {
   buildConnectorOperatorCursorName,
+  connectorEventIngressOperatorSeqSql,
   type ConnectorEventIngressAdapter,
 } from './connector-event-ingress.js';
 import {
@@ -134,9 +135,7 @@ function readReviewedEvents(input: {
       `
         WITH ordered_events AS (
           SELECT
-            ROW_NUMBER() OVER (
-              ORDER BY rowid ASC
-            ) AS operator_seq,
+            ${connectorEventIngressOperatorSeqSql()} AS operator_seq,
             event_index_id,
             source_connector,
             source_id,
