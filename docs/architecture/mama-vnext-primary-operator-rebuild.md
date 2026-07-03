@@ -1,6 +1,6 @@
 # MAMA vNext Primary Operator Rebuild Plan
 
-Status: implementation through PR 13 merged; PR 14 aligns completion gates.
+Status: implementation through PR 13 merged; PR 14 aligns completion gates and privacy checks.
 Branch base: `origin/main`.
 Decision date: 2026-07-02.
 Last updated: 2026-07-03.
@@ -55,8 +55,8 @@ PR 0 through PR 13 have landed on `main`.
 | PR 13 | #111      | merged | manual reviewed memory ingress commit              |
 
 PR 14 does not add runtime behavior. It closes the plan drift created by PR 9-13,
-defines completion gates, and prevents the next code slice from guessing what
-"done" means.
+centralizes staged privacy checks, defines completion gates, and prevents the
+next code slice from guessing what "done" means.
 
 ## Why
 
@@ -170,19 +170,12 @@ gitleaks protect --source . --staged --redact --verbose --no-banner
 ```
 
 `scripts/check-pii.sh` is the authoritative staged-file privacy check. It loads
-`.pii-patterns` when that gitignored file exists and always runs the generic ID
-checks built into the script.
+`.pii-patterns` when that gitignored file exists, always runs the generic ID
+checks built into the script, blocks high-confidence local path and credential
+prefix matches in staged added lines, and prints review-only warnings for
+privacy-sensitive connector or provider terms.
 
-For vNext PRs, also inspect the added lines for accidental local paths, real
-connector identifiers, raw message bodies, tokens, and project-private terms:
-
-```bash
-git diff --cached --unified=0 | rg -n \
-  "^[+]([^+]|$).*(${HOME}|/Users/|token|secret|password|webhook|xox|ghp_|sk-|discord|slack|telegram|gmail|notion)" \
-  || true
-```
-
-The command above is a review aid. It is not a substitute for reading the diff.
+The script is not a substitute for reading the diff.
 
 If the gate finds anything:
 
@@ -1091,10 +1084,11 @@ Goal:
 Files:
 
 - Modify: `docs/architecture/mama-vnext-primary-operator-rebuild.md`
+- Modify: `scripts/check-pii.sh`
 
 Rules:
 
-- PR 14 changes documentation only.
+- PR 14 changes documentation and the public-project privacy gate only.
 - Do not add runtime behavior, test fixtures, generated reports, or local
   planning artifacts.
 - The next code PR must start from this updated plan and must pass the same
@@ -1104,6 +1098,7 @@ Rules:
 Verify:
 
 ```bash
+bash -n scripts/check-pii.sh
 git diff --check
 ./scripts/check-pii.sh
 gitleaks protect --source . --redact --verbose --no-banner
