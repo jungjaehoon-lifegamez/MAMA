@@ -3,11 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import request from 'supertest';
 
 import { AgentLoop } from '../../src/agent/index.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { createApiServer } from '../../src/api/index.js';
 import { OAuthManager } from '../../src/auth/index.js';
+import { createVNextBootstrapApiServer } from '../../src/cli/commands/start.js';
 import { MessageRouter } from '../../src/gateways/index.js';
 import { SessionStore } from '../../src/gateways/session-store.js';
 import { AgentEventBus } from '../../src/multi-agent/agent-event-bus.js';
@@ -17,7 +19,12 @@ import type { MAMAConfig } from '../../src/cli/config/types.js';
 import { registerApiRoutes } from '../../src/cli/runtime/api-routes-init.js';
 import { initConnectors } from '../../src/cli/runtime/connector-init.js';
 import { initCronScheduler, initHeartbeat } from '../../src/cli/runtime/scheduler-init.js';
-import { buildVNextBootstrapPlan } from '../../src/runtime-vnext/bootstrap.js';
+import {
+  buildVNextBootstrapPlan,
+  type VNextBootstrapRuntimeStatus,
+} from '../../src/runtime-vnext/bootstrap.js';
+
+const ADMIN_TOKEN_ENV = 'MAMA_ADMIN_TOKEN';
 
 function makeConfig(overrides: Partial<MAMAConfig> = {}): MAMAConfig {
   return {
@@ -103,6 +110,25 @@ function makeVNextPlan() {
   });
 }
 
+function makeVNextStatus(): VNextBootstrapRuntimeStatus {
+  return {
+    enabled: true,
+    mode: 'bootstrap',
+    source: 'env',
+    startedAtMs: 1710000000000,
+    primaryOperator: {
+      kind: 'primary_operator',
+      status: 'prepared',
+      mode: 'manual_batch',
+      ingress: 'not_wired',
+      cursorName: 'operator:primary',
+      connector: 'manual',
+      advancedThroughSeq: 0,
+    },
+    executedStartupSteps: ['manual_status_endpoints'],
+  };
+}
+
 function makeOAuthManager(home: string): OAuthManager {
   return new OAuthManager({
     credentialsPath: join(home, '.claude', '.credentials.json'),
@@ -145,11 +171,13 @@ function makeAdapter() {
 describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
   let tempHome: string;
   let originalHome: string | undefined;
+  let originalAdminToken: string | undefined;
   let databases: SQLiteDatabase[];
 
   beforeEach(() => {
     tempHome = mkdtempSync(join(tmpdir(), 'mama-vnext-home-'));
     originalHome = process.env.HOME;
+    originalAdminToken = process.env[ADMIN_TOKEN_ENV];
     process.env.HOME = tempHome;
     databases = [];
   });
@@ -162,6 +190,11 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
       delete process.env.HOME;
     } else {
       process.env.HOME = originalHome;
+    }
+    if (originalAdminToken === undefined) {
+      delete process.env[ADMIN_TOKEN_ENV];
+    } else {
+      process.env[ADMIN_TOKEN_ENV] = originalAdminToken;
     }
     rmSync(tempHome, { recursive: true, force: true });
     vi.restoreAllMocks();
@@ -205,6 +238,57 @@ describe('STORY-VNEXT-PR1-FANOUT-OFF: vNext disables legacy fanout', () => {
         enabledConnectorNames: [],
         connectorSchedulerStop: undefined,
       });
+    });
+
+    it('does not start legacy fanout when the manual no-update commit endpoint is called', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const messageRouterSpy = vi.spyOn(MessageRouter.prototype, 'process');
+      const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+      const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+      const apiServer = createVNextBootstrapApiServer(makeVNextStatus(), {
+        ingressManualNoUpdateCommitProvider: async (input) => ({
+          ok: true,
+          mode: 'manual_no_update_commit',
+          status: 'committed',
+          cursorName: `connector:${input.connector}:channel:${input.channel}`,
+          connector: input.connector,
+          channel: input.channel,
+          requestedCount: input.eventIndexIds.length,
+          processed: input.eventIndexIds.length,
+          advancedThroughSeq: input.expectedAdvancedThroughSeq + input.eventIndexIds.length,
+          firstSeq: input.expectedAdvancedThroughSeq + 1,
+          lastSeq: input.expectedAdvancedThroughSeq + input.eventIndexIds.length,
+          commits: input.eventIndexIds.map((_, index) => ({
+            seq: input.expectedAdvancedThroughSeq + index + 1,
+            status: 'no_update',
+            outcome: 'committed',
+            cursorAdvanced: true,
+          })),
+        }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: ['synthetic-event-index-id'],
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        ok: true,
+        mode: 'manual_no_update_commit',
+        processed: 1,
+      });
+      expect(messageRouterSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 10_000);
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 15_000);
+      expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), 5 * 60 * 1000);
+      expect(setIntervalSpy).not.toHaveBeenCalled();
     });
 
     it('keeps cron loading active in legacy mode', () => {
