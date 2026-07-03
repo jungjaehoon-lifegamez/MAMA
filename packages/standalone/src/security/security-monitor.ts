@@ -44,14 +44,17 @@ interface BanRecord {
 const banMap = new Map<string, BanRecord>();
 
 // Periodic cleanup (every hour)
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, rec] of banMap) {
-    if (now > rec.bannedUntil && now - rec.firstFailAt > AUTH_FAILURE_WINDOW_MS) {
-      banMap.delete(ip);
+setInterval(
+  () => {
+    const now = Date.now();
+    for (const [ip, rec] of banMap) {
+      if (now > rec.bannedUntil && now - rec.firstFailAt > AUTH_FAILURE_WINDOW_MS) {
+        banMap.delete(ip);
+      }
     }
-  }
-}, 60 * 60 * 1000).unref();
+  },
+  60 * 60 * 1000
+).unref();
 
 export function isIpBanned(clientAddress: string | null | undefined): boolean {
   if (!clientAddress || clientAddress === 'unknown' || isLocalAddress(clientAddress)) {
@@ -86,11 +89,15 @@ export function recordAuthFailure(clientAddress: string | null | undefined): voi
   }
 
   rec.failCount++;
-  logger.warn(`[SECURITY] Auth failure from ${clientAddress} (${rec.failCount}/${MAX_AUTH_FAILURES})`);
+  logger.warn(
+    `[SECURITY] Auth failure from ${clientAddress} (${rec.failCount}/${MAX_AUTH_FAILURES})`
+  );
 
   if (rec.failCount >= MAX_AUTH_FAILURES) {
     rec.bannedUntil = now + BAN_DURATION_MS;
-    logger.error(`[SECURITY] IP ${clientAddress} BANNED — ${rec.failCount} auth failures in ${AUTH_FAILURE_WINDOW_MS / 60000}min`);
+    logger.error(
+      `[SECURITY] IP ${clientAddress} BANNED — ${rec.failCount} auth failures in ${AUTH_FAILURE_WINDOW_MS / 60000}min`
+    );
   }
 }
 
@@ -744,6 +751,7 @@ export function setSecurityAlertSender(sender: SecurityAlertSender | null): void
 }
 
 export function resetSecurityMonitorForTests(): void {
+  banMap.clear();
   alertSender = null;
   lastAlertAt.clear();
   suspicionScores.clear();
