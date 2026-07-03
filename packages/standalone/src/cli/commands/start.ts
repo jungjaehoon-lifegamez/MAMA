@@ -102,6 +102,12 @@ import {
   type ConnectorIngressManualCommitResult,
 } from '../../operator-vnext/connector-ingress-manual-commit.js';
 import {
+  createDefaultConnectorIngressManualMemoryCommitProvider,
+  MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES,
+  type ConnectorIngressManualMemoryCommitResult,
+  type ManualMemorySaveInput,
+} from '../../operator-vnext/connector-ingress-manual-memory-commit.js';
+import {
   createConnectorIngressManualWikiCommitProvider,
   MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES,
   type ConnectorIngressManualWikiCommitResult,
@@ -614,6 +620,16 @@ export interface VNextIngressManualWikiCommitRequest {
   }>;
 }
 
+export interface VNextIngressManualMemoryCommitRequest {
+  connector: string;
+  channel: string;
+  expectedAdvancedThroughSeq: number;
+  eventMemories: Array<{
+    eventIndexId: string;
+    memories: ManualMemorySaveInput[];
+  }>;
+}
+
 export interface VNextBootstrapApiServerOptions {
   ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
   ingressMigrationDryRunProvider?: (
@@ -625,6 +641,9 @@ export interface VNextBootstrapApiServerOptions {
   ingressManualWikiCommitProvider?: (
     input: VNextIngressManualWikiCommitRequest
   ) => Promise<ConnectorIngressManualWikiCommitResult> | ConnectorIngressManualWikiCommitResult;
+  ingressManualMemoryCommitProvider?: (
+    input: VNextIngressManualMemoryCommitRequest
+  ) => Promise<ConnectorIngressManualMemoryCommitResult> | ConnectorIngressManualMemoryCommitResult;
 }
 
 function firstQueryString(value: unknown): string | null {
@@ -761,6 +780,124 @@ function bodyManualWikiEventPages(
   return parsed;
 }
 
+function bodyMemoryScopes(value: unknown): MemoryScopeRef[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('memories[].scopes must be a non-empty array');
+  }
+  return value.map((item) => {
+    const scope = requireRequestBodyRecord(item);
+    const kind = bodyString(scope, 'kind');
+    if (kind !== 'global' && kind !== 'user' && kind !== 'channel' && kind !== 'project') {
+      throw new Error(`Unsupported memory scope kind: ${kind}`);
+    }
+    return {
+      kind,
+      id: bodyString(scope, 'id'),
+    };
+  });
+}
+
+function rejectManualMemoryDerivedFields(memory: Record<string, unknown>): void {
+  const forbiddenKeys = [
+    'source',
+    'provenance',
+    'sourceRefs',
+    'source_refs',
+    'sourceIds',
+    'source_ids',
+    'changedRefs',
+    'changed_refs',
+    'gatewayCallId',
+    'gateway_call_id',
+    'agentId',
+    'agent_id',
+    'modelRunId',
+    'model_run_id',
+    'envelopeHash',
+    'envelope_hash',
+    'timelineEvent',
+    'timeline_event',
+    'entityObservationIds',
+    'entity_observation_ids',
+  ];
+  if (forbiddenKeys.some((key) => Object.prototype.hasOwnProperty.call(memory, key))) {
+    throw new Error('manual memory commits derive source and provenance refs from reviewed events');
+  }
+}
+
+function bodyManualMemory(value: unknown): ManualMemorySaveInput {
+  const memory = requireRequestBodyRecord(value);
+  rejectManualMemoryDerivedFields(memory);
+  const parsed: ManualMemorySaveInput = {
+    topic: bodyString(memory, 'topic'),
+    kind: bodyString(memory, 'kind') as ManualMemorySaveInput['kind'],
+    summary: bodyString(memory, 'summary'),
+    details: bodyString(memory, 'details'),
+    scopes: bodyMemoryScopes(memory.scopes),
+  };
+  const confidence = memory.confidence;
+  if (confidence !== undefined) {
+    if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
+      throw new Error('confidence must be a number');
+    }
+    parsed.confidence = confidence;
+  }
+  const status = memory.status;
+  if (status !== undefined) {
+    parsed.status = bodyString(memory, 'status') as ManualMemorySaveInput['status'];
+  }
+  const eventDate = memory.event_date ?? memory.eventDate;
+  if (eventDate !== undefined) {
+    if (typeof eventDate !== 'string' || eventDate.trim().length === 0) {
+      throw new Error('event_date must be a non-empty string');
+    }
+    parsed.eventDate = eventDate.trim();
+  }
+  const eventDateTime = memory.event_datetime ?? memory.eventDateTime;
+  if (eventDateTime !== undefined) {
+    if (typeof eventDateTime !== 'number' || !Number.isFinite(eventDateTime)) {
+      throw new Error('event_datetime must be a number');
+    }
+    parsed.eventDateTime = eventDateTime;
+  }
+  return parsed;
+}
+
+function bodyManualMemoryEventMemories(
+  body: Record<string, unknown>
+): VNextIngressManualMemoryCommitRequest['eventMemories'] {
+  const value = body.event_memories;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('event_memories must be a non-empty array');
+  }
+  if (value.length > MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS) {
+    throw new Error(
+      `event_memories must contain at most ${MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS} items`
+    );
+  }
+  const parsed = value.map((item) => {
+    const eventMemory = requireRequestBodyRecord(item);
+    const memories = eventMemory.memories;
+    if (!Array.isArray(memories) || memories.length === 0) {
+      throw new Error('event_memories[].memories must be a non-empty array');
+    }
+    return {
+      eventIndexId: bodyString(eventMemory, 'event_index_id'),
+      memories: memories.map((memory) => bodyManualMemory(memory)),
+    };
+  });
+  const totalMemories = parsed.reduce(
+    (total, eventMemory) => total + eventMemory.memories.length,
+    0
+  );
+  if (totalMemories > MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES) {
+    throw new Error(
+      `event_memories must contain at most ${MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES} total memories`
+    );
+  }
+  return parsed;
+}
+
 function parseManualNoUpdateCommitBody(rawBody: unknown): VNextIngressManualNoUpdateCommitRequest {
   const body = requireRequestBodyRecord(rawBody);
   if (
@@ -790,6 +927,66 @@ function parseManualWikiCommitBody(rawBody: unknown): VNextIngressManualWikiComm
     channel: bodyString(body, 'channel'),
     expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
     eventPages: bodyManualWikiEventPages(body),
+  };
+}
+
+function parseManualMemoryCommitBody(rawBody: unknown): VNextIngressManualMemoryCommitRequest {
+  const body = requireRequestBodyRecord(rawBody);
+  if (
+    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
+    Object.prototype.hasOwnProperty.call(body, 'changed_refs') ||
+    Object.prototype.hasOwnProperty.call(body, 'sourceRefs') ||
+    Object.prototype.hasOwnProperty.call(body, 'source_refs') ||
+    Object.prototype.hasOwnProperty.call(body, 'source') ||
+    Object.prototype.hasOwnProperty.call(body, 'provenance') ||
+    Object.prototype.hasOwnProperty.call(body, 'gatewayCallId') ||
+    Object.prototype.hasOwnProperty.call(body, 'gateway_call_id') ||
+    Object.prototype.hasOwnProperty.call(body, 'agentId') ||
+    Object.prototype.hasOwnProperty.call(body, 'agent_id') ||
+    Object.prototype.hasOwnProperty.call(body, 'modelRunId') ||
+    Object.prototype.hasOwnProperty.call(body, 'model_run_id') ||
+    Object.prototype.hasOwnProperty.call(body, 'envelopeHash') ||
+    Object.prototype.hasOwnProperty.call(body, 'envelope_hash')
+  ) {
+    throw new Error('manual memory commits do not accept request-supplied refs or provenance');
+  }
+  return {
+    connector: bodyString(body, 'connector'),
+    channel: bodyString(body, 'channel'),
+    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
+    eventMemories: bodyManualMemoryEventMemories(body),
+  };
+}
+
+const SAFE_MANUAL_MEMORY_COMMIT_PARTIAL_FAILURE_ERROR = 'Manual memory commit partially failed.';
+
+function manualMemoryCommitResponse(
+  result: ConnectorIngressManualMemoryCommitResult
+): ConnectorIngressManualMemoryCommitResult {
+  return {
+    ok: result.ok,
+    mode: 'manual_memory_commit',
+    status: result.status,
+    cursorName: result.cursorName,
+    connector: result.connector,
+    channel: result.channel,
+    requestedCount: result.requestedCount,
+    processed: result.processed,
+    advancedThroughSeq: result.advancedThroughSeq,
+    firstSeq: result.firstSeq,
+    lastSeq: result.lastSeq,
+    memoriesSaved: result.memoriesSaved,
+    ...(result.promotionPending === true ? { promotionPending: true } : {}),
+    commits: result.commits.map((commit) => ({
+      seq: commit.seq,
+      status: 'changed',
+      outcome: commit.outcome,
+      cursorAdvanced: commit.cursorAdvanced,
+    })),
+    ...(result.failedSeq !== undefined ? { failedSeq: result.failedSeq } : {}),
+    ...(result.error !== undefined
+      ? { error: SAFE_MANUAL_MEMORY_COMMIT_PARTIAL_FAILURE_ERROR }
+      : {}),
   };
 }
 
@@ -1068,6 +1265,52 @@ export function createVNextBootstrapApiServer(
     }
   );
   app.use('/api/vnext/ingress/manual-wiki-commit', handleVNextManualCommitJsonError);
+  app.post(
+    '/api/vnext/ingress/manual-memory-commit',
+    requireAdminAuth,
+    jsonBodyParser,
+    async (req, res) => {
+      if (!options.ingressManualMemoryCommitProvider) {
+        res.status(404).json({
+          ok: false,
+          code: 'vnext_ingress_manual_memory_commit_unavailable',
+          error: 'vNext manual memory ingress commit is not configured.',
+        });
+        return;
+      }
+
+      let input: VNextIngressManualMemoryCommitRequest;
+      try {
+        input = parseManualMemoryCommitBody(req.body);
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          code: 'vnext_ingress_manual_memory_commit_invalid_request',
+          error: error instanceof Error ? error.message : 'Invalid manual memory commit request.',
+        });
+        return;
+      }
+
+      try {
+        const result = await options.ingressManualMemoryCommitProvider(input);
+        res.status(result.ok ? 200 : 409).json(manualMemoryCommitResponse(result));
+      } catch (error) {
+        const clientError = isVNextManualCommitClientError(error);
+        res.status(clientError ? 400 : 500).json({
+          ok: false,
+          code: clientError
+            ? 'vnext_ingress_manual_memory_commit_invalid_request'
+            : 'vnext_ingress_manual_memory_commit_failed',
+          error: clientError
+            ? error instanceof Error
+              ? error.message
+              : 'Invalid manual memory commit request.'
+            : 'vNext manual memory ingress commit failed.',
+        });
+      }
+    }
+  );
+  app.use('/api/vnext/ingress/manual-memory-commit', handleVNextManualCommitJsonError);
   app.use(jsonBodyParser);
   app.use('/api', requireAuth);
   app.get('/api/vnext/status', (_req, res) => {
@@ -1378,6 +1621,13 @@ export async function runAgentLoop(
             connector: vNextIngressConfig.connector,
             channel: vNextIngressConfig.channel,
           }),
+          ingressManualMemoryCommitProvider:
+            createDefaultConnectorIngressManualMemoryCommitProvider({
+              rawAdapter: vNextRawAdapter,
+              operatorDb: vNextOperatorDb,
+              connector: vNextIngressConfig.connector,
+              channel: vNextIngressConfig.channel,
+            }),
         });
       },
       installShutdownHandlers: installVNextBootstrapShutdownHandlers,

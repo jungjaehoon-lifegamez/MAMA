@@ -372,7 +372,7 @@ export function createConnectorIngressManualWikiCommitProvider(
     const requestedChannel = requiredString(input.channel, 'channel');
     if (requestedConnector !== connector || requestedChannel !== channel) {
       throw requestError(
-        `Connector ingress manual wiki commit is locked to the configured connector/channel: ${connector}/${channel}`
+        'Connector ingress manual wiki commit is locked to the configured connector/channel'
       );
     }
     return commitConnectorIngressWikiBatch({

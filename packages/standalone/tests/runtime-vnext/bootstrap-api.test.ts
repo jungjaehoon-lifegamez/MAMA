@@ -16,6 +16,10 @@ import {
   commitConnectorIngressNoUpdateBatch,
   createConnectorIngressManualNoUpdateCommitProvider,
 } from '../../src/operator-vnext/connector-ingress-manual-commit.js';
+import {
+  commitConnectorIngressMemoryBatch,
+  createConnectorIngressManualMemoryCommitProvider,
+} from '../../src/operator-vnext/connector-ingress-manual-memory-commit.js';
 import { commitConnectorIngressWikiBatch } from '../../src/operator-vnext/connector-ingress-manual-wiki-commit.js';
 import { createConnectorIngressMigrationDryRunProvider } from '../../src/operator-vnext/connector-ingress-migration-dry-run.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
@@ -31,6 +35,7 @@ import {
   isVNextWikiPublishAdapter,
   MAX_WIKI_PAGE_CONTENT_CHARS,
 } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
+import { resetSecurityMonitorForTests } from '../../src/security/security-monitor.js';
 
 const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
 const ADMIN_TOKEN_ENV = 'MAMA_ADMIN_TOKEN';
@@ -106,11 +111,42 @@ function makeManualWikiPages(count: number, prefix: string) {
   }));
 }
 
+function makeManualMemory(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    topic: 'operator/manual-memory',
+    kind: 'decision',
+    summary: 'Manual reviewed memory should be committed.',
+    details: 'The admin reviewed the connector event and approved this memory.',
+    confidence: 0.82,
+    scopes: [{ kind: 'project', id: 'project_public_synthetic' }],
+    ...overrides,
+  };
+}
+
+function makeManualMemoryCommitBody(
+  eventIndexId = 'synthetic-event-index-id',
+  overrides: Record<string, unknown> = {}
+): Record<string, unknown> {
+  return {
+    connector: 'slack',
+    channel: 'C_PUBLIC_SYNTHETIC',
+    expected_advanced_through_seq: 0,
+    event_memories: [
+      {
+        event_index_id: eventIndexId,
+        memories: [makeManualMemory()],
+      },
+    ],
+    ...overrides,
+  };
+}
+
 describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
   const originalAuthToken = process.env[AUTH_TOKEN_ENV];
   const originalAdminToken = process.env[ADMIN_TOKEN_ENV];
 
   afterEach(() => {
+    resetSecurityMonitorForTests();
     if (originalAuthToken === undefined) {
       delete process.env[AUTH_TOKEN_ENV];
     } else {
@@ -823,6 +859,311 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       db.close();
     });
 
+    it('serves admin-only manual memory ingress commits with an allowlisted payload', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 40);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: (input) =>
+          commitConnectorIngressMemoryBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+            saveMemory: async (_memory, options) => ({
+              success: true,
+              id: `memory-${String(options.provenance.gateway_call_id).split(':').pop()}`,
+            }),
+            createTrustedProvenanceCapability: () =>
+              Object.freeze({
+                __trustedProvenanceCapability: 'mama-core',
+              }) as never,
+            listMemoriesByGatewayCallId: async () => [],
+            setMemoryStatus: async () => {},
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_memories: [
+            {
+              event_index_id: eventIndexId,
+              memories: [
+                {
+                  topic: 'operator/manual-memory',
+                  kind: 'decision',
+                  summary: 'Manual reviewed memory should be committed.',
+                  details: 'The admin reviewed the connector event and approved this memory.',
+                  confidence: 0.82,
+                  scopes: [{ kind: 'project', id: 'project_public_synthetic' }],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        ok: true,
+        mode: 'manual_memory_commit',
+        status: 'committed',
+        cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        connector: 'slack',
+        channel: 'C_PUBLIC_SYNTHETIC',
+        requestedCount: 1,
+        processed: 1,
+        advancedThroughSeq: 1,
+        firstSeq: 1,
+        lastSeq: 1,
+        memoriesSaved: 1,
+        commits: [{ seq: 1, status: 'changed', outcome: 'committed', cursorAdvanced: true }],
+      });
+      expect(JSON.stringify(response.body)).not.toContain('synthetic public rollout event');
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-user');
+      expect(JSON.stringify(response.body)).not.toContain('metadata_json');
+      expect(JSON.stringify(response.body)).not.toContain('project_public_synthetic');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+      expect(db.prepare('SELECT changed_refs_json FROM vnext_operator_commits').get()).toEqual({
+        changed_refs_json: JSON.stringify(['memory:memory-0']),
+      });
+
+      db.close();
+    });
+
+    it('requires admin auth for manual memory ingress commits', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run without admin auth');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token')
+        .send(makeManualMemoryCommitBody());
+
+      expect(response.status).toBe(401);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'UNAUTHORIZED',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('fails closed when admin auth is not configured for manual memory ingress commits', async () => {
+      delete process.env[ADMIN_TOKEN_ENV];
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run without admin auth');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .send(makeManualMemoryCommitBody());
+
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'admin_token_required',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('returns unavailable when manual memory ingress commits are not configured', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus());
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(makeManualMemoryCommitBody());
+
+      expect(response.status).toBe(404);
+      expect(response.body).toEqual({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_unavailable',
+        error: 'vNext manual memory ingress commit is not configured.',
+      });
+    });
+
+    it('rejects manual memory ingress commits for the wrong configured channel', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 40);
+      let saveCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: createConnectorIngressManualMemoryCommitProvider({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          saveMemory: async () => {
+            saveCalls += 1;
+            throw new Error('memory save must not run for wrong channel');
+          },
+          createTrustedProvenanceCapability: () =>
+            Object.freeze({
+              __trustedProvenanceCapability: 'mama-core',
+            }) as never,
+          listMemoriesByGatewayCallId: async () => [],
+          setMemoryStatus: async () => {},
+          nowMs: () => 1710000000000,
+        }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(makeManualMemoryCommitBody('synthetic-event-index-id', { channel: 'C_OTHER' }));
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('C_PUBLIC_SYNTHETIC');
+      expect(saveCalls).toBe(0);
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('rejects manual memory API requests above the aggregate memory limit before provider execution', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when aggregate memories exceed the request limit');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(
+          makeManualMemoryCommitBody('synthetic-event-index-id', {
+            event_memories: [
+              {
+                event_index_id: 'synthetic-event-index-id',
+                memories: Array.from({ length: 101 }, (_, index) =>
+                  makeManualMemory({ topic: `operator/manual-memory-${index}` })
+                ),
+              },
+            ],
+          })
+        );
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
+      });
+      expect(response.body.error).toMatch(/at most 100 total memories/i);
+      expect(providerCalls).toBe(0);
+    });
+
+    it('sanitizes unexpected manual memory ingress commit failures', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          throw new Error('memory backend failed with synthetic-error-marker');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(makeManualMemoryCommitBody());
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_failed',
+        error: 'vNext manual memory ingress commit failed.',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('memory backend');
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-error-marker');
+    });
+
+    it('allowlists provider-returned manual memory partial failures', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () =>
+          ({
+            ok: false,
+            mode: 'manual_memory_commit',
+            status: 'partial_failure',
+            cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+            connector: 'slack',
+            channel: 'C_PUBLIC_SYNTHETIC',
+            requestedCount: 1,
+            processed: 0,
+            advancedThroughSeq: 0,
+            firstSeq: 1,
+            lastSeq: 1,
+            memoriesSaved: 0,
+            commits: [],
+            failedSeq: 1,
+            error: `${LOCAL_PATH_PREFIX}/private-memory.json raw synthetic public rollout event memory-private-id`,
+            rawConnectorEvent: 'synthetic public rollout event msg-1',
+            memoryIds: ['memory-private-id'],
+            localPath: `${LOCAL_PATH_PREFIX}/private-memory.json`,
+          }) as never,
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(makeManualMemoryCommitBody());
+
+      expect(response.status).toBe(409);
+      expect(response.body).toEqual({
+        ok: false,
+        mode: 'manual_memory_commit',
+        status: 'partial_failure',
+        cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        connector: 'slack',
+        channel: 'C_PUBLIC_SYNTHETIC',
+        requestedCount: 1,
+        processed: 0,
+        advancedThroughSeq: 0,
+        firstSeq: 1,
+        lastSeq: 1,
+        memoriesSaved: 0,
+        commits: [],
+        failedSeq: 1,
+        error: 'Manual memory commit partially failed.',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('synthetic public rollout event');
+      expect(JSON.stringify(response.body)).not.toContain('memory-private-id');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+    });
+
     it('accepts manual wiki content below the core wiki content limit through the API', async () => {
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const validLargeContent = 'x'.repeat(MAX_WIKI_PAGE_CONTENT_CHARS - 1);
@@ -1100,6 +1441,174 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       expect(response.body).toMatchObject({
         ok: false,
         code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('rejects manual memory ingress commit requests that try to supply source refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when memory source refs are supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_memories: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              memories: [
+                {
+                  topic: 'operator/manual-memory',
+                  kind: 'decision',
+                  summary: 'Manual reviewed memory should be committed.',
+                  details: 'The admin reviewed the connector event and approved this memory.',
+                  scopes: [{ kind: 'project', id: 'project_public_synthetic' }],
+                  source_refs: ['raw:slack:synthetic-event-index-id'],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('rejects manual memory ingress commit requests that try to supply root provenance', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when root provenance is supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send(
+          makeManualMemoryCommitBody('synthetic-event-index-id', {
+            provenance: { gateway_call_id: 'caller-spoofed' },
+            gateway_call_id: 'caller-spoofed',
+            agent_id: 'caller-spoofed-agent',
+            model_run_id: 'caller-spoofed-model-run',
+          })
+        );
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('rejects manual memory ingress commit requests that try to supply source metadata', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when memory source metadata is supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_memories: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              memories: [
+                {
+                  topic: 'operator/manual-memory',
+                  kind: 'decision',
+                  summary: 'Manual reviewed memory should be committed.',
+                  details: 'The admin reviewed the connector event and approved this memory.',
+                  scopes: [{ kind: 'project', id: 'project_public_synthetic' }],
+                  source: {
+                    package: 'standalone',
+                    source_type: 'caller-spoofed',
+                  },
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('rejects manual memory ingress commit requests that try to supply timeline or entity refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualMemoryCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when memory timeline refs are supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-memory-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_memories: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              memories: [
+                {
+                  topic: 'operator/manual-memory',
+                  kind: 'decision',
+                  summary: 'Manual reviewed memory should be committed.',
+                  details: 'The admin reviewed the connector event and approved this memory.',
+                  scopes: [{ kind: 'project', id: 'project_public_synthetic' }],
+                  timeline_event: {
+                    source_ref: 'raw:slack:caller-spoofed',
+                    event_type: 'decision',
+                    title: 'caller supplied timeline ref',
+                  },
+                  entity_observation_ids: ['entity-observation:caller-spoofed'],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_memory_commit_invalid_request',
       });
       expect(providerCalls).toBe(0);
     });
