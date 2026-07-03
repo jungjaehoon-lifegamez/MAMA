@@ -608,11 +608,11 @@ export class API {
   static async post<T = unknown, B = unknown>(
     endpoint: string,
     body: B,
-    options: ApiRequestOptions = {}
+    options: ApiRequestOptions | null = {}
   ): Promise<T> {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+      headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
       body: JSON.stringify(body),
     });
 

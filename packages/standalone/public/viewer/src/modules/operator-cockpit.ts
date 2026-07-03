@@ -33,7 +33,7 @@ export interface OperatorPreviewEvent {
   sourceTimestampMs: number;
   sourceId: string;
   channel: string | null;
-  sourceRef: OperatorSourceRef;
+  sourceRef?: OperatorSourceRef;
   [key: string]: unknown;
 }
 
@@ -54,7 +54,7 @@ export interface OperatorPreviewResponse {
 export interface OperatorDryRunCandidate {
   seq: number;
   eventIndexId: string;
-  sourceRef: OperatorSourceRef;
+  sourceRef?: OperatorSourceRef;
   readiness: 'requires_decision';
 }
 
@@ -201,7 +201,10 @@ function queryForScope(scope: OperatorCockpitScope): Record<string, string | num
   return query;
 }
 
-function sourceRefText(ref: OperatorSourceRef): string {
+function sourceRefText(ref?: OperatorSourceRef | null): string {
+  if (!ref) {
+    return 'raw:unknown:unknown';
+  }
   const kind = ref.kind ?? 'raw';
   const connector = ref.connector ?? 'unknown';
   const id = ref.id ?? 'unknown';
@@ -217,6 +220,14 @@ function numberOrNull(value: unknown): number | null {
 
 function numberOrZero(value: unknown): number {
   return numberOrNull(value) ?? 0;
+}
+
+function requiredFiniteNumber(value: unknown, fieldName: string): number {
+  const parsed = numberOrNull(value);
+  if (parsed === null) {
+    throw new Error(`${fieldName} is required for operator review events.`);
+  }
+  return parsed;
 }
 
 function stringOrEmpty(value: unknown): string {
@@ -472,6 +483,9 @@ export class OperatorCockpitModule {
           auth
         );
       } else if (action === 'wiki') {
+        if (!row) {
+          throw new Error('Event row element not found for wiki commit.');
+        }
         result = await this.controller.commitWiki(
           {
             ...base,
@@ -480,10 +494,10 @@ export class OperatorCockpitModule {
                 event_index_id: eventIndexId,
                 pages: [
                   {
-                    path: readTextInput(row ?? document, '[data-field="wiki-path"]'),
-                    title: readTextInput(row ?? document, '[data-field="wiki-title"]'),
+                    path: readTextInput(row, '[data-field="wiki-path"]'),
+                    title: readTextInput(row, '[data-field="wiki-title"]'),
                     type: 'entity',
-                    content: readTextInput(row ?? document, '[data-field="wiki-content"]'),
+                    content: readTextInput(row, '[data-field="wiki-content"]'),
                   },
                 ],
               },
@@ -492,6 +506,9 @@ export class OperatorCockpitModule {
           auth
         );
       } else if (action === 'memory') {
+        if (!row) {
+          throw new Error('Event row element not found for memory commit.');
+        }
         result = await this.controller.commitMemory(
           {
             ...base,
@@ -500,10 +517,10 @@ export class OperatorCockpitModule {
                 event_index_id: eventIndexId,
                 memories: [
                   {
-                    topic: readTextInput(row ?? document, '[data-field="memory-topic"]'),
+                    topic: readTextInput(row, '[data-field="memory-topic"]'),
                     kind: 'decision',
-                    summary: readTextInput(row ?? document, '[data-field="memory-summary"]'),
-                    details: readTextInput(row ?? document, '[data-field="memory-details"]'),
+                    summary: readTextInput(row, '[data-field="memory-summary"]'),
+                    details: readTextInput(row, '[data-field="memory-details"]'),
                     confidence: 0.8,
                     scopes: buildOperatorMemoryScopes(state.cursor.connector, state.cursor.channel),
                   },
@@ -527,30 +544,33 @@ export class OperatorCockpitModule {
 }
 
 export function buildOperatorReviewState(batch: OperatorReviewBatch): OperatorReviewState {
+  const preview = batch.preview?.preview;
+  if (!preview) {
+    throw new Error('Operator preview payload is required.');
+  }
+  const dryRun = batch.dryRun?.dry_run;
+  const candidates = Array.isArray(dryRun?.candidates) ? dryRun.candidates : [];
   const readinessByEventIndexId = new Map(
-    batch.dryRun.dry_run.candidates.map((candidate) => [
-      candidate.eventIndexId,
-      candidate.readiness,
-    ])
+    candidates.map((candidate) => [candidate.eventIndexId, candidate.readiness])
   );
-  const preview = batch.preview.preview;
+  const events = Array.isArray(preview.events) ? preview.events : [];
 
   return {
     cursor: {
-      cursorName: preview.cursorName,
-      connector: preview.connector,
-      channel: preview.channel,
-      advancedThroughSeq: preview.advancedThroughSeq,
-      status: batch.dryRun.dry_run.status,
-      candidateCount: batch.dryRun.dry_run.candidateCount,
+      cursorName: stringOrEmpty(preview.cursorName),
+      connector: stringOrEmpty(preview.connector),
+      channel: stringOrEmpty(preview.channel),
+      advancedThroughSeq: numberOrZero(preview.advancedThroughSeq),
+      status: dryRun?.status === 'ready' ? 'ready' : 'idle',
+      candidateCount: numberOrZero(dryRun?.candidateCount),
     },
-    events: preview.events.map((event) => ({
-      seq: event.seq,
-      eventIndexId: event.eventIndexId,
+    events: events.map((event) => ({
+      seq: numberOrZero(event.seq),
+      eventIndexId: stringOrEmpty(event.eventIndexId),
       sourceRefText: sourceRefText(event.sourceRef),
-      sourceId: event.sourceId,
-      channel: event.channel,
-      sourceTimestampMs: event.sourceTimestampMs,
+      sourceId: stringOrEmpty(event.sourceId),
+      channel: typeof event.channel === 'string' ? event.channel : null,
+      sourceTimestampMs: requiredFiniteNumber(event.sourceTimestampMs, 'sourceTimestampMs'),
       readiness: readinessByEventIndexId.get(event.eventIndexId) ?? 'requires_decision',
     })),
   };
