@@ -242,6 +242,17 @@ export class PrimaryOperatorRuntime {
     );
   }
 
+  async processBatchWithChangedCommitAfterValidation(
+    buildEvents: () => Promise<readonly PrimaryOperatorEvent[]> | readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown,
+    commitChanged: PrimaryOperatorChangedCommitter
+  ): Promise<PrimaryOperatorBatchResult> {
+    return withCursorLock(this.cursorName, async () => {
+      const events = await buildEvents();
+      return this.processBatchLocked(events, decide, commitChanged);
+    });
+  }
+
   async processBatchAfterValidation(
     buildEvents: () => Promise<readonly PrimaryOperatorEvent[]> | readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown

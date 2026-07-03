@@ -17,8 +17,8 @@ import type {
 } from './types.js';
 
 export type WikiPublishMode = 'legacy' | 'vnext';
-const MAX_WIKI_PUBLISH_PAGES = 100;
-const MAX_WIKI_PAGE_CONTENT_CHARS = 200_000;
+export const MAX_WIKI_PUBLISH_PAGES = 100;
+export const MAX_WIKI_PAGE_CONTENT_CHARS = 200_000;
 const vNextWikiPublishAdapters = new WeakSet<WikiPublishAdapter>();
 
 export interface WikiPublishAdapter {
