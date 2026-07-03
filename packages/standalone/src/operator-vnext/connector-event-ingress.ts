@@ -194,9 +194,7 @@ export function createConnectorEventIngressPreviewProvider(
     const requestedConnector = requiredString(input.connector, 'connector');
     const requestedChannel = requiredString(input.channel, 'channel');
     if (requestedConnector !== connector || requestedChannel !== channel) {
-      throw new Error(
-        `Connector ingress preview is locked to the configured connector/channel: ${connector}/${channel}`
-      );
+      throw new Error('Connector ingress preview is locked to the configured connector/channel');
     }
     return buildConnectorEventIngressPreview({
       rawAdapter: options.rawAdapter,
