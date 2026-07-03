@@ -66,18 +66,26 @@ const REQUIRED_INDEXES = [
   'idx_worker_proposals_status_kind',
   'idx_operator_memory_commit_intents_cursor_created',
 ] as const;
+const OPERATOR_MEMORY_COMMIT_INTENT_BASE_SQL_FRAGMENTS = [
+  'idempotency_key TEXT NOT NULL UNIQUE',
+  'expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0)',
+  "memory_payload_hash TEXT NOT NULL CHECK (memory_payload_hash LIKE 'sha256:%')",
+  'memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json))',
+  'source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json))',
+  "status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted'))",
+  'created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)',
+  'updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)',
+] as const;
+const OPERATOR_MEMORY_COMMIT_INTENT_CLAIM_SQL_FRAGMENTS = [
+  "(status = 'saving' AND claim_token IS NOT NULL)",
+  "(status != 'saving' AND claim_token IS NULL)",
+] as const;
 const REQUIRED_TABLE_SQL_FRAGMENTS: Partial<
   Record<(typeof REQUIRED_OPERATOR_TABLES)[number], readonly string[]>
 > = {
   operator_memory_commit_intents: [
-    'idempotency_key TEXT NOT NULL UNIQUE',
-    'expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0)',
-    "memory_payload_hash TEXT NOT NULL CHECK (memory_payload_hash LIKE 'sha256:%')",
-    'memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json))',
-    'source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json))',
-    "status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted'))",
-    'created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)',
-    'updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)',
+    ...OPERATOR_MEMORY_COMMIT_INTENT_BASE_SQL_FRAGMENTS,
+    ...OPERATOR_MEMORY_COMMIT_INTENT_CLAIM_SQL_FRAGMENTS,
   ],
 };
 const SQLITE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -150,10 +158,73 @@ CREATE TABLE IF NOT EXISTS operator_memory_commit_intents (
   memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json)),
   source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
   status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted')),
-  claim_token TEXT,
+  claim_token TEXT CHECK (
+    (status = 'saving' AND claim_token IS NOT NULL) OR
+    (status != 'saving' AND claim_token IS NULL)
+  ),
   created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
   updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)
 );
+
+CREATE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_cursor_created
+  ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
+`;
+
+const OPERATOR_MEMORY_COMMIT_INTENT_CLAIM_MIGRATION_SQL = `
+DROP TABLE IF EXISTS operator_memory_commit_intents_v041;
+
+CREATE TABLE operator_memory_commit_intents_v041 (
+  intent_id TEXT PRIMARY KEY,
+  cursor_name TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0),
+  memory_payload_hash TEXT NOT NULL CHECK (memory_payload_hash LIKE 'sha256:%'),
+  memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json)),
+  source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
+  status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted')),
+  claim_token TEXT CHECK (
+    (status = 'saving' AND claim_token IS NOT NULL) OR
+    (status != 'saving' AND claim_token IS NULL)
+  ),
+  created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)
+);
+
+INSERT INTO operator_memory_commit_intents_v041 (
+  intent_id,
+  cursor_name,
+  idempotency_key,
+  expected_memory_count,
+  memory_payload_hash,
+  memory_ids_json,
+  source_refs_json,
+  status,
+  claim_token,
+  created_at_ms,
+  updated_at_ms
+)
+SELECT
+  intent_id,
+  cursor_name,
+  idempotency_key,
+  expected_memory_count,
+  memory_payload_hash,
+  memory_ids_json,
+  source_refs_json,
+  CASE
+    WHEN status = 'saving' AND claim_token IS NULL THEN 'pending'
+    ELSE status
+  END,
+  CASE
+    WHEN status = 'saving' AND claim_token IS NOT NULL THEN claim_token
+    ELSE NULL
+  END,
+  created_at_ms,
+  updated_at_ms
+FROM operator_memory_commit_intents;
+
+DROP TABLE operator_memory_commit_intents;
+ALTER TABLE operator_memory_commit_intents_v041 RENAME TO operator_memory_commit_intents;
 
 CREATE INDEX IF NOT EXISTS idx_operator_memory_commit_intents_cursor_created
   ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
@@ -200,6 +271,33 @@ function tableSql(db: SQLiteDatabase, tableName: string): string {
     .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(tableName) as { sql?: string } | undefined;
   return row?.sql ?? '';
+}
+
+function tableHasSqlFragments(
+  db: SQLiteDatabase,
+  tableName: (typeof REQUIRED_OPERATOR_TABLES)[number],
+  fragments: readonly string[]
+): boolean {
+  const sql = tableSql(db, tableName);
+  return fragments.every((fragment) => sql.includes(fragment));
+}
+
+function migrateOperatorMemoryCommitIntentClaimInvariant(db: SQLiteDatabase): void {
+  const tableName = 'operator_memory_commit_intents';
+  if (!tableExists(db, tableName)) {
+    return;
+  }
+  if (tableHasSqlFragments(db, tableName, OPERATOR_MEMORY_COMMIT_INTENT_CLAIM_SQL_FRAGMENTS)) {
+    return;
+  }
+  const columns = tableColumns(db, tableName);
+  if (!REQUIRED_COLUMNS[tableName].every((column) => columns.has(column))) {
+    return;
+  }
+  if (!tableHasSqlFragments(db, tableName, OPERATOR_MEMORY_COMMIT_INTENT_BASE_SQL_FRAGMENTS)) {
+    return;
+  }
+  db.exec(OPERATOR_MEMORY_COMMIT_INTENT_CLAIM_MIGRATION_SQL);
 }
 
 function assertTableSqlCompatible(
@@ -279,11 +377,6 @@ export function ensureVNextOperatorSchema(
   db: SQLiteDatabase,
   options: VNextOperatorSchemaOptions = {}
 ): void {
-  if (hasInstalledOperatorSchema(db)) {
-    return;
-  }
-
-  const migrationSql = options.readMigrationSql?.() ?? VNEXT_OPERATOR_CONTRACTS_SQL;
   const tx = db.transaction(() => {
     db.exec(`
       CREATE TABLE IF NOT EXISTS schema_version (
@@ -293,7 +386,13 @@ export function ensureVNextOperatorSchema(
       )
     `);
     ensureSchemaVersionDescriptionColumn(db);
+    migrateOperatorMemoryCommitIntentClaimInvariant(db);
+    if (hasInstalledOperatorSchema(db)) {
+      return;
+    }
+    const migrationSql = options.readMigrationSql?.() ?? VNEXT_OPERATOR_CONTRACTS_SQL;
     db.exec(migrationSql);
+    migrateOperatorMemoryCommitIntentClaimInvariant(db);
     assertOperatorSchemaCompatible(db);
   });
   tx();
