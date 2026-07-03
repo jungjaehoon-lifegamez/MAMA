@@ -80,19 +80,17 @@ function rowToRecord(row: WikiArtifactRow): WikiArtifactRecord {
 
 export class WikiArtifactStore {
   private schemaEnsured = false;
+  private hasSchemaStatement: ReturnType<SQLiteDatabase['prepare']> | undefined;
 
   constructor(private readonly db: SQLiteDatabase) {}
 
   private hasSchema(): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT name
-           FROM sqlite_master
-           WHERE type = 'table' AND name = 'wiki_artifacts'`
-        )
-        .get() !== undefined
+    this.hasSchemaStatement ??= this.db.prepare(
+      `SELECT name
+       FROM sqlite_master
+       WHERE type = 'table' AND name = 'wiki_artifacts'`
     );
+    return this.hasSchemaStatement.get() !== undefined;
   }
 
   ensureSchema(): void {
