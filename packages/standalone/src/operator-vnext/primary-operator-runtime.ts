@@ -293,12 +293,12 @@ export class PrimaryOperatorRuntime {
             sourceRefs,
             nowMs: commitNowMs,
             allowSeqGaps: this.allowSeqGaps,
-            writeChangedLedger: () =>
+            writeChangedLedger: ({ idempotencyKey: matchedIdempotencyKey }) =>
               commitChanged({
                 event,
                 decision: { status: 'changed' },
                 sourceRefs,
-                idempotencyKey,
+                idempotencyKey: matchedIdempotencyKey,
                 nowMs: commitNowMs,
               }),
           });
@@ -415,12 +415,12 @@ export class PrimaryOperatorRuntime {
         sourceRefs: input.sourceRefs,
         nowMs: input.nowMs,
         allowSeqGaps: this.allowSeqGaps,
-        writeChangedLedger: () =>
+        writeChangedLedger: ({ idempotencyKey }) =>
           commitChanged({
             event: input.event,
             decision: { status: 'changed' },
             sourceRefs: input.sourceRefs,
-            idempotencyKey: input.idempotencyKey,
+            idempotencyKey,
             nowMs: input.nowMs,
           }),
       });

@@ -31,7 +31,7 @@ export interface OperatorChangedCursorCommitInput {
   idempotencyKey: string;
   fallbackIdempotencyKeys?: readonly string[];
   sourceRefs: readonly SourceRef[];
-  writeChangedLedger: () => readonly SourceRef[];
+  writeChangedLedger: (input: { idempotencyKey: string }) => readonly SourceRef[];
   nowMs?: number;
   allowSeqGaps?: boolean;
 }
