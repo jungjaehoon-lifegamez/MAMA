@@ -343,7 +343,9 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
         status: 'degraded',
         lastBatchStatus: 'partial_failure',
         failedSeq: 1,
+        errorMessage: 'Primary operator batch failed. Check local logs for details.',
       });
+      expect(primaryOperator.status.errorMessage).not.toContain('slack');
 
       const idleResult = await primaryOperator.processBatch([], () => ({
         status: 'no_update',
@@ -368,7 +370,9 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
         status: 'degraded',
         last_batch_status: 'idle',
         failed_seq: 1,
+        error_message: 'Primary operator batch failed. Check local logs for details.',
       });
+      expect(statusResponse.body.primary_operator_runtime.error_message).not.toContain('slack');
 
       db.close();
     });
