@@ -101,6 +101,16 @@ import {
   MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS,
   type ConnectorIngressManualCommitResult,
 } from '../../operator-vnext/connector-ingress-manual-commit.js';
+import {
+  createConnectorIngressManualWikiCommitProvider,
+  MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES,
+  type ConnectorIngressManualWikiCommitResult,
+} from '../../operator-vnext/connector-ingress-manual-wiki-commit.js';
+import {
+  MAX_WIKI_PAGE_CONTENT_CHARS,
+  MAX_WIKI_PUBLISH_PAGES,
+} from '../../wiki-artifacts/wiki-publish-adapter.js';
+import type { WikiPublishPageInput } from '../../wiki-artifacts/types.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -123,6 +133,13 @@ const codeActLogger = new DebugLogger('CodeAct');
 const vNextOperatorLogger = new DebugLogger('VNextPrimaryOperator');
 type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+const JSON_ESCAPE_BYTES_PER_UTF16_UNIT = 6;
+const MANUAL_WIKI_COMMIT_JSON_ENVELOPE_BYTES = 1024 * 1024;
+const MANUAL_WIKI_COMMIT_JSON_LIMIT_BYTES =
+  MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES *
+    MAX_WIKI_PAGE_CONTENT_CHARS *
+    JSON_ESCAPE_BYTES_PER_UTF16_UNIT +
+  MANUAL_WIKI_COMMIT_JSON_ENVELOPE_BYTES;
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
   'context_compile',
@@ -587,6 +604,16 @@ export interface VNextIngressManualNoUpdateCommitRequest {
   eventIndexIds: string[];
 }
 
+export interface VNextIngressManualWikiCommitRequest {
+  connector: string;
+  channel: string;
+  expectedAdvancedThroughSeq: number;
+  eventPages: Array<{
+    eventIndexId: string;
+    pages: WikiPublishPageInput[];
+  }>;
+}
+
 export interface VNextBootstrapApiServerOptions {
   ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
   ingressMigrationDryRunProvider?: (
@@ -595,6 +622,9 @@ export interface VNextBootstrapApiServerOptions {
   ingressManualNoUpdateCommitProvider?: (
     input: VNextIngressManualNoUpdateCommitRequest
   ) => Promise<ConnectorIngressManualCommitResult> | ConnectorIngressManualCommitResult;
+  ingressManualWikiCommitProvider?: (
+    input: VNextIngressManualWikiCommitRequest
+  ) => Promise<ConnectorIngressManualWikiCommitResult> | ConnectorIngressManualWikiCommitResult;
 }
 
 function firstQueryString(value: unknown): string | null {
@@ -659,6 +689,74 @@ function bodyStringArray(body: Record<string, unknown>, field: string, maxItems:
   return value.map((item) => item.trim());
 }
 
+function bodyWikiPages(value: unknown): WikiPublishPageInput[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('event_pages[].pages must be a non-empty array');
+  }
+  if (value.length > MAX_WIKI_PUBLISH_PAGES) {
+    throw new Error(`event_pages[].pages must contain at most ${MAX_WIKI_PUBLISH_PAGES} pages`);
+  }
+  return value.map((item) => {
+    const page = requireRequestBodyRecord(item);
+    if (
+      Object.prototype.hasOwnProperty.call(page, 'sourceRefs') ||
+      Object.prototype.hasOwnProperty.call(page, 'source_refs') ||
+      Object.prototype.hasOwnProperty.call(page, 'sourceIds') ||
+      Object.prototype.hasOwnProperty.call(page, 'source_ids')
+    ) {
+      throw new Error('manual wiki commits derive source refs from reviewed events');
+    }
+    const parsed: WikiPublishPageInput = {
+      path: bodyString(page, 'path'),
+      title: bodyString(page, 'title'),
+      content: bodyString(page, 'content'),
+    };
+    const type = page.type;
+    if (type !== undefined) {
+      if (typeof type !== 'string' || type.trim().length === 0) {
+        throw new Error('type must be a non-empty string');
+      }
+      parsed.type = type.trim();
+    }
+    const confidence = page.confidence;
+    if (confidence !== undefined) {
+      if (typeof confidence !== 'string' || confidence.trim().length === 0) {
+        throw new Error('confidence must be a non-empty string');
+      }
+      parsed.confidence = confidence.trim();
+    }
+    return parsed;
+  });
+}
+
+function bodyManualWikiEventPages(
+  body: Record<string, unknown>
+): VNextIngressManualWikiCommitRequest['eventPages'] {
+  const value = body.event_pages;
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error('event_pages must be a non-empty array');
+  }
+  if (value.length > MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS) {
+    throw new Error(
+      `event_pages must contain at most ${MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS} items`
+    );
+  }
+  const parsed = value.map((item) => {
+    const eventPage = requireRequestBodyRecord(item);
+    return {
+      eventIndexId: bodyString(eventPage, 'event_index_id'),
+      pages: bodyWikiPages(eventPage.pages),
+    };
+  });
+  const totalPages = parsed.reduce((total, eventPage) => total + eventPage.pages.length, 0);
+  if (totalPages > MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES) {
+    throw new Error(
+      `event_pages must contain at most ${MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES} total pages`
+    );
+  }
+  return parsed;
+}
+
 function parseManualNoUpdateCommitBody(rawBody: unknown): VNextIngressManualNoUpdateCommitRequest {
   const body = requireRequestBodyRecord(rawBody);
   if (
@@ -672,6 +770,22 @@ function parseManualNoUpdateCommitBody(rawBody: unknown): VNextIngressManualNoUp
     channel: bodyString(body, 'channel'),
     expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
     eventIndexIds: bodyStringArray(body, 'event_index_ids', MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS),
+  };
+}
+
+function parseManualWikiCommitBody(rawBody: unknown): VNextIngressManualWikiCommitRequest {
+  const body = requireRequestBodyRecord(rawBody);
+  if (
+    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
+    Object.prototype.hasOwnProperty.call(body, 'changed_refs')
+  ) {
+    throw new Error('manual wiki commits do not accept changed refs');
+  }
+  return {
+    connector: bodyString(body, 'connector'),
+    channel: bodyString(body, 'channel'),
+    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
+    eventPages: bodyManualWikiEventPages(body),
   };
 }
 
@@ -847,6 +961,9 @@ export function createVNextBootstrapApiServer(
   const app = express();
   app.disable('x-powered-by');
   const jsonBodyParser = express.json({ limit: '128kb' });
+  const manualWikiCommitJsonBodyParser = express.json({
+    limit: MANUAL_WIKI_COMMIT_JSON_LIMIT_BYTES,
+  });
 
   app.get('/health', (_req, res) => {
     res.json({
@@ -901,6 +1018,52 @@ export function createVNextBootstrapApiServer(
     }
   );
   app.use('/api/vnext/ingress/manual-no-update-commit', handleVNextManualCommitJsonError);
+  app.post(
+    '/api/vnext/ingress/manual-wiki-commit',
+    requireAdminAuth,
+    manualWikiCommitJsonBodyParser,
+    async (req, res) => {
+      if (!options.ingressManualWikiCommitProvider) {
+        res.status(404).json({
+          ok: false,
+          code: 'vnext_ingress_manual_wiki_commit_unavailable',
+          error: 'vNext manual wiki ingress commit is not configured.',
+        });
+        return;
+      }
+
+      let input: VNextIngressManualWikiCommitRequest;
+      try {
+        input = parseManualWikiCommitBody(req.body);
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+          error: error instanceof Error ? error.message : 'Invalid manual wiki commit request.',
+        });
+        return;
+      }
+
+      try {
+        const result = await options.ingressManualWikiCommitProvider(input);
+        res.status(result.ok ? 200 : 409).json(result);
+      } catch (error) {
+        const clientError = isVNextManualCommitClientError(error);
+        res.status(clientError ? 400 : 500).json({
+          ok: false,
+          code: clientError
+            ? 'vnext_ingress_manual_wiki_commit_invalid_request'
+            : 'vnext_ingress_manual_wiki_commit_failed',
+          error: clientError
+            ? error instanceof Error
+              ? error.message
+              : 'Invalid manual wiki commit request.'
+            : 'vNext manual wiki ingress commit failed.',
+        });
+      }
+    }
+  );
+  app.use('/api/vnext/ingress/manual-wiki-commit', handleVNextManualCommitJsonError);
   app.use(jsonBodyParser);
   app.use('/api', requireAuth);
   app.get('/api/vnext/status', (_req, res) => {
@@ -1201,6 +1364,13 @@ export async function runAgentLoop(
           ingressManualNoUpdateCommitProvider: createConnectorIngressManualNoUpdateCommitProvider({
             rawAdapter: vNextRawAdapter,
             operatorDb: vNextOperatorDb,
+            connector: vNextIngressConfig.connector,
+            channel: vNextIngressConfig.channel,
+          }),
+          ingressManualWikiCommitProvider: createConnectorIngressManualWikiCommitProvider({
+            rawAdapter: vNextRawAdapter,
+            operatorDb: vNextOperatorDb,
+            wikiPublishAdapter: initVNextWikiPublishAdapter(vNextOperatorDb, { enabled: true })!,
             connector: vNextIngressConfig.connector,
             channel: vNextIngressConfig.channel,
           }),
