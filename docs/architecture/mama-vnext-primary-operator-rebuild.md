@@ -1,8 +1,9 @@
 # MAMA vNext Primary Operator Rebuild Plan
 
-Status: draft, reviewed twice by read-only gstack-style subagents.
+Status: implementation through PR 13 merged; PR 14 aligns completion gates and privacy checks.
 Branch base: `origin/main`.
 Decision date: 2026-07-02.
+Last updated: 2026-07-03.
 
 ## Decision
 
@@ -31,6 +32,31 @@ Do not start runtime rewiring before PR 0 and PR 1 pass.
 
 A final blocker-only review after these edits returned `APPROVE`: no remaining P0/P1
 blockers for starting PR 0.
+
+## Implementation Status
+
+PR 0 through PR 13 have landed on `main`.
+
+| Slice | GitHub PR | State  | Result                                             |
+| ----- | --------- | ------ | -------------------------------------------------- |
+| PR 0  | #98       | merged | SourceRef contract and vNext operator DB contracts |
+| PR 1  | #99       | merged | vNext bootstrap mode with legacy fanout disabled   |
+| PR 2  | #100      | merged | primary operator commit shell and cursor semantics |
+| PR 3  | #101      | merged | primary operator runtime bootstrap/status API      |
+| PR 4  | #102      | merged | source-linked wiki artifact adapter and store      |
+| PR 5  | #103      | merged | dashboard projection and commit authority          |
+| PR 6  | #104      | merged | connector ingress preview dry-run                  |
+| PR 7  | #105      | merged | connector ingress migration dry-run report         |
+| PR 8  | #106      | merged | legacy dashboard/wiki agents opt-in by default     |
+| PR 9  | #107      | merged | global vNext architecture invariant coverage       |
+| PR 10 | #108      | merged | manual reviewed no-update ingress commit           |
+| PR 11 | #109      | merged | atomic changed commits through trusted writers     |
+| PR 12 | #110      | merged | manual reviewed wiki ingress commit                |
+| PR 13 | #111      | merged | manual reviewed memory ingress commit              |
+
+PR 14 does not add runtime behavior. It closes the plan drift created by PR 9-13,
+centralizes staged privacy checks, defines completion gates, and prevents the
+next code slice from guessing what "done" means.
 
 ## Why
 
@@ -140,11 +166,16 @@ Required commands for every PR:
 git diff --cached --check
 git diff --cached --name-only
 ./scripts/check-pii.sh
+gitleaks protect --source . --staged --redact --verbose --no-banner
 ```
 
 `scripts/check-pii.sh` is the authoritative staged-file privacy check. It loads
-`.pii-patterns` when that gitignored file exists and always runs the generic ID
-checks built into the script.
+`.pii-patterns` when that gitignored file exists, always runs the generic ID
+checks built into the script, blocks high-confidence local path and credential
+prefix matches in staged added lines, and prints review-only warnings for
+privacy-sensitive connector or provider terms.
+
+The script is not a substitute for reading the diff.
 
 If the gate finds anything:
 
@@ -780,6 +811,195 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
   tests/runtime-vnext/legacy-fanout-disabled.test.ts
 ```
 
+### PR 9: Global vNext Architecture Invariant Coverage
+
+Goal:
+
+- Add regression coverage that locks the vNext architecture boundaries after PR 0-8.
+- Prove startup fanout blocking, connector dry-run behavior, source-ref
+  requirements, commit authority, and wiki executor boundaries continue to hold.
+- Harden vNext `wiki_publish` so it requires the source-linked adapter created by
+  the local factory, not a spoofed or mutated adapter shape.
+
+Files:
+
+- Modify: `packages/standalone/tests/vnext/architecture-invariants.test.ts`
+- Modify: `packages/standalone/tests/wiki-artifacts/wiki-publish-adapter.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+- Create: `packages/standalone/src/cli/runtime/wiki-publish-adapter-init.ts`
+- Create: `packages/standalone/tests/cli/runtime/wiki-publish-adapter-init.test.ts`
+- Modify: `packages/standalone/tests/cli/runtime/agent-loop-init-envelope-options.test.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+
+Regression cases:
+
+- vNext startup skips legacy fanout including connector polling/mode.
+- Connector ingress preview stays dry-run and performs no durable writes.
+- Durable vNext wiki/no-update writes require non-empty source refs.
+- Worker/report paths remain proposal/projection-only while the primary operator
+  can commit.
+- vNext `wiki_publish` rejects absent, legacy, forged, and mutated adapters.
+- The wiki adapter factory snapshots options so caller mutation cannot downgrade
+  source-linked storage.
+- Bootstrap prepares the source-linked wiki adapter on the primary operator handle.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/wiki-artifacts/wiki-publish-adapter.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts \
+  tests/vnext/architecture-invariants.test.ts \
+  tests/cli/runtime/wiki-publish-adapter-init.test.ts \
+  tests/cli/runtime/agent-loop-init-envelope-options.test.ts
+```
+
+### PR 10: Manual No-Update Commit From Reviewed Ingress
+
+Goal:
+
+- Add an authenticated, admin-only manual no-update commit path for reviewed
+  vNext connector events.
+- Persist connector/channel operator ingest sequence values so cursor movement
+  does not depend on row number or rowid renumbering.
+- Preserve recovery for legacy connector-scoped idempotency keys while using
+  cursor-scoped idempotency for new commits.
+
+Files:
+
+- Create: `packages/mama-core/db/migrations/039-add-operator-ingest-seq.sql`
+- Modify: `packages/mama-core/src/connectors/event-index.ts`
+- Modify: `packages/mama-core/tests/connectors/connector-event-index-schema.test.ts`
+- Create: `packages/standalone/src/operator-vnext/connector-ingress-reviewed-events.ts`
+- Create: `packages/standalone/src/operator-vnext/connector-ingress-manual-commit.ts`
+- Modify: `packages/standalone/src/operator-vnext/connector-event-ingress.ts`
+- Modify: `packages/standalone/src/operator-vnext/primary-operator-runtime.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Create: `packages/standalone/tests/operator-vnext/connector-ingress-manual-commit.test.ts`
+- Modify: `packages/standalone/tests/operator-vnext/connector-event-ingress.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+
+Authenticated manual no-update endpoint:
+
+```text
+POST /api/vnext/ingress/manual-no-update-commit
+```
+
+Rules:
+
+- Manual no-update commits are locked to the configured connector/channel.
+- Requests name reviewed event ids only; source refs are derived from reviewed
+  raw events.
+- Caller-supplied changed refs are rejected.
+- Cursor advancement remains contiguous and happens under the primary operator
+  cursor lock.
+- Gaps caused by deleted or missing raw rows must not be skipped silently.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core exec vitest run \
+  tests/cases/migration-chain.test.ts \
+  tests/connectors/connector-event-index-schema.test.ts
+
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/connector-event-ingress.test.ts \
+  tests/operator-vnext/connector-ingress-manual-commit.test.ts \
+  tests/operator-vnext/primary-operator-runtime.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts
+```
+
+### PR 11: Atomic Changed Commit Through Trusted Writers
+
+Goal:
+
+- Add a trusted changed-commit path for the vNext primary operator.
+- Store `changed_refs_json` from the durable writer return value, never from
+  model/API-supplied changed refs.
+- Preserve no-update replay behavior and make changed replays idempotent.
+- Sanitize primary operator status errors exposed through status/report APIs.
+
+Files:
+
+- Modify: `packages/standalone/src/operator-vnext/operator-commit-result.ts`
+- Modify: `packages/standalone/src/operator-vnext/operator-cursor-commit.ts`
+- Modify: `packages/standalone/src/operator-vnext/primary-operator-runtime.ts`
+- Modify: `packages/standalone/src/runtime-vnext/bootstrap.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Modify: `packages/standalone/src/wiki-artifacts/wiki-artifact-store.ts`
+- Modify: `packages/standalone/tests/operator-vnext/primary-operator-runtime.test.ts`
+- Modify: `packages/standalone/tests/operator-vnext/operator-cursor-commit.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap.test.ts`
+
+Rules:
+
+- The trusted path validates event sequence before calling the decider.
+- A durable writer returns the changed refs that will be recorded.
+- Existing changed commits can be replayed without duplicating writer side
+  effects.
+- Recovery from an existing changed commit persists required writer effects before
+  advancing the cursor.
+- Status/report APIs expose sanitized failure messages only.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/primary-operator-runtime.test.ts \
+  tests/operator-vnext/operator-cursor-commit.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts \
+  tests/runtime-vnext/bootstrap.test.ts
+```
+
+### PR 12: Manual Wiki Commit From Reviewed Ingress
+
+Goal:
+
+- Add an authenticated, admin-only manual wiki commit path for reviewed connector
+  events.
+- Commit reviewed events into source-linked wiki artifacts through the vNext
+  `WikiPublishAdapter`.
+- Advance connector cursor state and changed commits inside the same DB
+  transaction after validation.
+
+Files:
+
+- Create: `packages/standalone/src/operator-vnext/connector-ingress-manual-wiki-commit.ts`
+- Modify: `packages/standalone/src/operator-vnext/connector-ingress-reviewed-events.ts`
+- Modify: `packages/standalone/src/operator-vnext/connector-ingress-manual-commit.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Modify: `packages/standalone/tests/operator-vnext/connector-ingress-manual-wiki-commit.test.ts`
+- Modify: `packages/standalone/tests/operator-vnext/connector-ingress-manual-commit.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+
+Authenticated manual wiki endpoint:
+
+```text
+POST /api/vnext/ingress/manual-wiki-commit
+```
+
+Rules:
+
+- Manual wiki commits are locked to the configured connector/channel.
+- Source refs are derived only from reviewed raw connector events.
+- Request-supplied `sourceRefs`, `source_refs`, `sourceIds`, `source_ids`,
+  `changedRefs`, and `changed_refs` are rejected.
+- All page validation happens before durable writes.
+- Duplicate normalized wiki paths across reviewed events are rejected before
+  commit.
+- The response is allowlisted and excludes raw content, user metadata, local
+  filesystem paths, and connector event payloads.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/connector-ingress-manual-wiki-commit.test.ts \
+  tests/operator-vnext/connector-ingress-manual-commit.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts
+```
+
 ### PR 13: Manual Memory Commit From Reviewed Ingress
 
 Goal:
@@ -852,6 +1072,97 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core exec vitest run \
   tests/cases/migration-chain.test.ts
 ```
 
+### PR 14: Completion Gates And Next Slice Definition
+
+Goal:
+
+- Reconcile this plan with the PR 9-13 implementation that has already landed.
+- Define the remaining work in terms of dogfoodable product gates, not vague
+  architecture goals.
+- Keep the public-project privacy gate explicit for every remaining PR.
+
+Files:
+
+- Modify: `docs/architecture/mama-vnext-primary-operator-rebuild.md`
+- Modify: `scripts/check-pii.sh`
+
+Rules:
+
+- PR 14 changes documentation and the public-project privacy gate only.
+- Do not add runtime behavior, test fixtures, generated reports, or local
+  planning artifacts.
+- The next code PR must start from this updated plan and must pass the same
+  privacy/review gates before PR creation, after review comments, and before the
+  following branch starts.
+
+Verify:
+
+```bash
+bash -n scripts/check-pii.sh
+git diff --check
+./scripts/check-pii.sh
+gitleaks protect --source . --redact --verbose --no-banner
+```
+
+## Remaining Product Gates
+
+Manual endpoints are necessary but not sufficient. vNext is not complete until a
+human operator can run one reviewed connector batch through preview, decision,
+commit, and projection without raw data leakage or hidden autonomous writers.
+
+### PR 15: Operator Review Cockpit
+
+Goal:
+
+- Add a Kagemusha-style operator review surface over the existing vNext ingress
+  preview, migration dry-run, manual no-update, manual wiki, and manual memory
+  endpoints.
+- Make the operator decide `no_update`, `wiki`, or `memory` per reviewed event
+  without exposing internal raw connector payloads beyond the authenticated local
+  UI.
+- Keep durable writes behind the existing primary operator endpoints.
+
+Rules:
+
+- The cockpit is a projection/client over existing endpoints, not a new canonical
+  ledger.
+- It must show event seq, source refs, decision readiness, commit result, and
+  cursor position.
+- It must not display memory ids, local paths, provider internals, or raw message
+  bodies in commit responses.
+- It must work with synthetic connector fixtures before any real connector data is
+  used.
+
+### PR 16: Synthetic End-To-End Dogfood Harness
+
+Goal:
+
+- Add a repeatable synthetic connector scenario that exercises preview,
+  migration dry-run, no-update commit, wiki commit, memory commit, projection,
+  and replay.
+- Prove ordinary chat still does not inject memory by default, while explicit
+  trigger turns can recall committed memory once.
+
+Rules:
+
+- Fixtures must be synthetic and labeled as synthetic.
+- The harness must run without network access or real connector credentials.
+- The harness must leave no local DB artifacts in the repo.
+
+### PR 17: Default Rollout Decision
+
+Goal:
+
+- Decide whether vNext remains opt-in, becomes default for selected local modes,
+  or needs another hardening pass.
+- Update user-facing docs and release notes only after PR 15 and PR 16 pass.
+
+Rules:
+
+- Do not make vNext default until the synthetic dogfood harness passes and the
+  operator cockpit has been reviewed for private-data leakage.
+- Legacy runtime must remain available until migration docs exist.
+
 ## Global Regression Checklist
 
 - legacy mode behavior unchanged
@@ -874,6 +1185,14 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core exec vitest run \
 - DB busy retry is bounded
 - migration dry run does not write operator commits, cursors, or no-update rows
 - migration dry run does not promote unverified legacy artifacts
+- manual no-update commit rejects caller-supplied changed refs before durable writes
+- manual no-update commit advances only contiguous reviewed connector events
+- changed commit records changed refs returned by the trusted durable writer
+- changed commit replay does not duplicate durable writer side effects
+- manual wiki commit rejects caller-supplied source and changed refs before durable writes
+- manual wiki commit validates all pages before the first durable write
+- manual wiki commit rejects duplicate normalized paths across reviewed events
+- manual wiki commit HTTP responses are explicit allowlists
 - manual memory commit rejects caller-supplied refs/provenance before durable writes
 - manual memory commit keeps saved memories staged until cursor commit succeeds
 - manual memory commit staged saves do not project to `memory_truth` until promotion
@@ -886,6 +1205,10 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core exec vitest run \
   duplicate saves
 - manual memory promotion writes both `supersedes` and `superseded_by` chain
   fields
+- operator review cockpit is a projection/client over primary-operator endpoints,
+  not a new canonical writer
+- synthetic dogfood harness covers preview, no-update, wiki, memory, projection,
+  and replay without real connector data
 
 ## Parallelization
 
@@ -909,6 +1232,9 @@ Sequential integration:
 6. Add situation projection and report API adapter.
 7. Add commit authority to GatewayToolExecutor and DelegationExecutor.
 8. Run E2E and build.
+9. Add manual no-update, changed, wiki, and memory commit paths sequentially.
+10. Add the operator review cockpit after all manual commit endpoints exist.
+11. Add synthetic dogfood only after the cockpit can drive the existing endpoints.
 ```
 
 Conflict flags:
@@ -930,6 +1256,16 @@ Conflict flags:
 7. Land PR 6 and enable vNext dry-run preview locally for one connector/channel.
 8. Land PR 7 and run the authenticated migration dry-run report for one connector/channel.
 9. Land PR 8 and verify legacy self-paced agents are opt-in, not default config.
+10. Land PR 9 and keep architecture invariant tests in every vNext review set.
+11. Land PR 10 and manually mark one synthetic reviewed event as no-update.
+12. Land PR 11 and replay one synthetic changed commit without duplicate effects.
+13. Land PR 12 and commit one synthetic reviewed event into a source-linked wiki artifact.
+14. Land PR 13 and commit one synthetic reviewed event into staged then promoted memory.
+15. Land PR 14 and use this updated completion gate as the source of truth for
+    remaining work.
+16. Land PR 15 and dogfood the operator review cockpit on synthetic connector data.
+17. Land PR 16 and run the synthetic end-to-end dogfood harness.
+18. Land PR 17 only if the default rollout decision remains safe after PR 15-16.
 
 ## Review Notes
 
@@ -965,4 +1301,6 @@ Final blocker-only review result:
 - Findings: no remaining P0/P1 blockers
 - First implementation target: PR 0, contracts and compatibility
 
-This tracked plan is the corrected version. Start with PR 0.
+This tracked plan is the corrected version through PR 14. After PR 14 lands, start
+PR 15 from `origin/main` and build the operator review cockpit as the next code
+slice.

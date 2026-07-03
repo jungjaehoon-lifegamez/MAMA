@@ -56,6 +56,53 @@ for f in $STAGED_FILES; do
   fi
 done
 
+# 3. Staged added-line checks for local paths and credential-like prefixes.
+BLOCKING_ADDED_LINE_PATTERN=$(
+  printf '%s\n' \
+    '/'"Users/[[:alnum:]_.-]+/[[:alnum:]_.-]+" \
+    '/'"home/[[:alnum:]_.-]+/[[:alnum:]_.-]+" \
+    'gh'"p_[[:alnum:]_]{8,}" \
+    'xo'"x[baprs]-[[:alnum:]-]{10,}" \
+    's'"k-[[:alnum:]_-]{20,}" |
+    paste -sd '|' -
+)
+
+REVIEW_ADDED_LINE_PATTERN=$(
+  printf '%s\n' \
+    'tok'"en" \
+    'sec'"ret" \
+    'pass'"word" \
+    'web'"hook" \
+    'disc'"ord" \
+    'sla'"ck" \
+    'tele'"gram" \
+    'gm'"ail" \
+    'no'"tion" |
+    paste -sd '|' -
+)
+
+BLOCKING_ADDED_LINE_MATCHES=$(
+  git diff --cached --unified=0 -- $STAGED_FILES |
+    grep -Ein "^[+]([^+]|$).*(${BLOCKING_ADDED_LINE_PATTERN})" || true
+)
+
+if [ -n "$BLOCKING_ADDED_LINE_MATCHES" ]; then
+  echo -e "${RED}✗ High-risk private data pattern found in staged added lines${NC}"
+  echo "$BLOCKING_ADDED_LINE_MATCHES"
+  FOUND=1
+fi
+
+REVIEW_ADDED_LINE_MATCHES=$(
+  git diff --cached --unified=0 -- $STAGED_FILES |
+    grep -Ein "^[+]([^+]|$).*(${REVIEW_ADDED_LINE_PATTERN})" || true
+)
+
+if [ -n "$REVIEW_ADDED_LINE_MATCHES" ]; then
+  echo -e "${YELLOW}⚠ Review staged added lines for possible private data:${NC}"
+  echo "$REVIEW_ADDED_LINE_MATCHES"
+  echo -e "  ${YELLOW}Review-only warning: confirm matches are synthetic, generic, or public-safe.${NC}"
+fi
+
 if [ "$FOUND" -eq 1 ]; then
   echo ""
   echo -e "${RED}╔══════════════════════════════════════════════════════╗${NC}"
