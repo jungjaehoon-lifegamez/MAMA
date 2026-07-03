@@ -147,6 +147,39 @@ describe('STORY-VNEXT-PR10-MANUAL-INGRESS: connector ingress manual no-update co
       db.close();
     });
 
+    it('commits the next surviving indexed event without requiring rowid-contiguous seqs', async () => {
+      const db = makeOperatorVNextDb();
+      const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+      const deleted = insertRawEvent(db, { sourceId: 'msg-2', timestampMs: 1710000002000 });
+      const surviving = insertRawEvent(db, { sourceId: 'msg-3', timestampMs: 1710000003000 });
+
+      await commitConnectorIngressNoUpdateBatch(makeInput(db, [first]));
+      db.prepare('DELETE FROM connector_event_index WHERE event_index_id = ?').run(deleted);
+
+      const result = await commitConnectorIngressNoUpdateBatch(
+        makeInput(db, [surviving], { expectedAdvancedThroughSeq: 1 })
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        status: 'committed',
+        processed: 1,
+        advancedThroughSeq: 3,
+        firstSeq: 3,
+        lastSeq: 3,
+        commits: [{ seq: 3, outcome: 'committed', cursorAdvanced: true }],
+      });
+      expect(cursorRow(db)).toEqual({
+        cursor_name: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        last_change_seq: 3,
+        last_idempotency_key: 'cursor:connector:slack:channel:C_PUBLIC_SYNTHETIC:seq:3-3',
+      });
+      expect(countRows(db, 'vnext_operator_commits')).toBe(2);
+      expect(countRows(db, 'operator_no_updates')).toBe(2);
+
+      db.close();
+    });
+
     it('rejects concurrent stale reviewed batches after revalidating under the cursor lock', async () => {
       const db = makeOperatorVNextDb();
       const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
@@ -221,6 +254,22 @@ describe('STORY-VNEXT-PR10-MANUAL-INGRESS: connector ingress manual no-update co
       await expect(
         commitConnectorIngressNoUpdateBatch(makeInput(db, [first, lateBackfill, second]))
       ).rejects.toThrow(/reviewed event ids do not match/i);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'operator_no_updates')).toBe(0);
+      expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
+
+      db.close();
+    });
+
+    it('rejects reviewed batches that skip a surviving connector event in the cursor range', async () => {
+      const db = makeOperatorVNextDb();
+      const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+      insertRawEvent(db, { sourceId: 'msg-2', timestampMs: 1710000002000 });
+      const third = insertRawEvent(db, { sourceId: 'msg-3', timestampMs: 1710000003000 });
+
+      await expect(
+        commitConnectorIngressNoUpdateBatch(makeInput(db, [first, third]))
+      ).rejects.toThrow(/cover the current connector cursor range/i);
       expect(countRows(db, 'vnext_operator_commits')).toBe(0);
       expect(countRows(db, 'operator_no_updates')).toBe(0);
       expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
