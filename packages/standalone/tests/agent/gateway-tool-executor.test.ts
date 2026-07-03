@@ -314,6 +314,64 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('recall tool', () => {
+      it('should deny model-supplied scopes outside the active Discord session', async () => {
+        const mockApi = createMockApi();
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          envelopeIssuanceMode: 'off',
+        });
+        const discordContext = createDiscordContext();
+
+        const result = await executor.execute(
+          'mama_recall',
+          {
+            query: 'operator/manual-memory',
+            scopes: [{ kind: 'project', id: 'project_other_synthetic' }],
+          },
+          {
+            agentContext: {
+              ...discordContext,
+              session: {
+                ...discordContext.session,
+                channelId: 'channel-allowed',
+                userId: 'user-allowed',
+              },
+            },
+            agentId: 'chat_bot',
+            source: 'discord',
+            channelId: 'channel-allowed',
+            executionSurface: 'model_tool',
+          } as Parameters<GatewayToolExecutor['execute']>[2]
+        );
+
+        expect(result).toMatchObject({
+          success: false,
+          code: 'memory_scope_denied',
+        });
+        expect(mockApi.recallMemory).not.toHaveBeenCalled();
+      });
+
+      it('should deny caller-supplied recall scopes without an active session boundary', async () => {
+        const mockApi = createMockApi();
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          envelopeIssuanceMode: 'off',
+        });
+
+        const result = await executor.execute('mama_recall', {
+          query: 'operator/manual-memory',
+          scopes: [{ kind: 'global', id: '*' }],
+        });
+
+        expect(result).toMatchObject({
+          success: false,
+          code: 'memory_scope_denied',
+        });
+        expect(mockApi.recallMemory).not.toHaveBeenCalled();
+      });
+    });
+
     describe('update tool', () => {
       it('should update outcome', async () => {
         const mockApi = createMockApi();

@@ -1,6 +1,6 @@
 # MAMA vNext Primary Operator Rebuild Plan
 
-Status: implementation through PR 13 merged; PR 14 aligns completion gates and privacy checks.
+Status: implementation through PR 15 merged; PR 16 adds the synthetic dogfood harness.
 Branch base: `origin/main`.
 Decision date: 2026-07-02.
 Last updated: 2026-07-03.
@@ -35,7 +35,7 @@ blockers for starting PR 0.
 
 ## Implementation Status
 
-PR 0 through PR 13 have landed on `main`.
+PR 0 through PR 15 have landed on `main`.
 
 | Slice | GitHub PR | State  | Result                                             |
 | ----- | --------- | ------ | -------------------------------------------------- |
@@ -53,10 +53,17 @@ PR 0 through PR 13 have landed on `main`.
 | PR 11 | #109      | merged | atomic changed commits through trusted writers     |
 | PR 12 | #110      | merged | manual reviewed wiki ingress commit                |
 | PR 13 | #111      | merged | manual reviewed memory ingress commit              |
+| PR 14 | #112      | merged | completion gates and staged privacy checks         |
+| PR 15 | #113      | merged | isolated vNext operator review cockpit             |
+| PR 16 | pending   | active | synthetic end-to-end dogfood harness               |
 
-PR 14 does not add runtime behavior. It closes the plan drift created by PR 9-13,
-centralizes staged privacy checks, defines completion gates, and prevents the
-next code slice from guessing what "done" means.
+PR 14 did not add runtime behavior. It closed the plan drift created by PR 9-13,
+centralized staged privacy checks, defined completion gates, and prevented later
+code slices from guessing what "done" means.
+
+PR 15 added the first-party operator review cockpit. PR 16 proves the cockpit's
+backend path with synthetic data only: preview, dry-run, no-update, wiki, memory,
+projection, replay, and explicit recall gating.
 
 ## Why
 
@@ -167,6 +174,7 @@ git diff --cached --check
 git diff --cached --name-only
 ./scripts/check-pii.sh
 gitleaks protect --source . --staged --redact --verbose --no-banner
+./scripts/check-pr-gitleaks.sh
 ```
 
 `scripts/check-pii.sh` is the authoritative staged-file privacy check. It loads
@@ -174,6 +182,12 @@ gitleaks protect --source . --staged --redact --verbose --no-banner
 checks built into the script, blocks high-confidence local path and credential
 prefix matches in staged added lines, and prints review-only warnings for
 privacy-sensitive connector or provider terms.
+
+`scripts/check-pr-gitleaks.sh` scans branch commits with `gitleaks git`,
+materializes staged blobs for direct gitleaks scans, and also scans files
+changed against the PR base from the working tree. This keeps the secret scan
+meaningful before and after commit creation without failing on unrelated
+historical examples in the base branch.
 
 The script is not a substitute for reading the diff.
 
@@ -1140,8 +1154,9 @@ Goal:
 - Add a repeatable synthetic connector scenario that exercises preview,
   migration dry-run, no-update commit, wiki commit, memory commit, projection,
   and replay.
-- Prove ordinary chat still does not inject memory by default, while explicit
-  trigger turns can recall committed memory once.
+- Prove ordinary message-router turns do not call `recallMemory` or legacy
+  decision-search context by default, while explicit `mama_recall` gateway turns
+  can recall committed memory through the reviewed memory path.
 
 Rules:
 
@@ -1149,12 +1164,43 @@ Rules:
 - The harness must run without network access or real connector credentials.
 - The harness must leave no local DB artifacts in the repo.
 
+Files:
+
+- Create: `packages/standalone/src/operator-vnext/synthetic-dogfood-harness.ts`
+- Create: `packages/standalone/tests/operator-vnext/synthetic-dogfood-harness.test.ts`
+- Create: `packages/standalone/tests/operator-vnext/synthetic-dogfood-agent-loop.test.ts`
+- Modify: `packages/standalone/src/agent/gateway-tool-executor.ts`
+- Modify: `packages/standalone/src/gateways/message-router.ts`
+- Modify: `packages/standalone/src/gateways/types.ts`
+- Modify: `packages/standalone/tests/agent/gateway-tool-executor.test.ts`
+- Modify: `packages/standalone/package.json`
+- Create: `scripts/check-pr-gitleaks.sh`
+- Modify: `docs/architecture/mama-vnext-primary-operator-rebuild.md`
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os dogfood:vnext
+```
+
+The package script is the PR 16 gate: it builds mama-core and standalone, runs
+the synthetic dogfood harness plus the ingress/router/executor/cockpit
+regression suite, then runs staged PII/gitleaks checks plus
+`scripts/check-pr-gitleaks.sh`. The staged checks protect the pre-commit
+workflow; the helper's commit, staged-blob, and PR-changed-file scans keep the
+gate meaningful after commit and in CI-style runs without inheriting unrelated
+base-branch false positives.
+Prerequisite: `gitleaks` must be installed on `PATH` for the local security
+gate, matching the existing developer pre-commit scan workflow.
+
 ### PR 17: Default Rollout Decision
 
 Goal:
 
 - Decide whether vNext remains opt-in, becomes default for selected local modes,
   or needs another hardening pass.
+- Reconfirm the ordinary message-router memory policy before default rollout and
+  document explicit opt-ins for implicit recall and legacy context search.
 - Update user-facing docs and release notes only after PR 15 and PR 16 pass.
 
 Rules:
@@ -1173,8 +1219,8 @@ Rules:
 - vNext bootstrap does not start heartbeat/token/audit timers
 - vNext bootstrap does not start connector polling in PR 1
 - migration filenames are contiguous with no version gaps
-- ordinary turn does not recall memory
-- trigger turn recalls memory once
+- ordinary turn does not recall memory or legacy context search by default
+- explicit trigger turn recalls memory once
 - wiki publish rejects empty source refs
 - worker cannot commit durable state directly
 - cursor does not advance on model text alone
