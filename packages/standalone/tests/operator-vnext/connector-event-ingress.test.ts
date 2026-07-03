@@ -187,6 +187,63 @@ describe('STORY-VNEXT-PR6-CONNECTOR-INGRESS: connector event dry-run ingress', (
     db.close();
   });
 
+  it('does not renumber surviving connector events after earlier indexed rows are deleted', () => {
+    const db = makeOperatorVNextDb();
+    insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+    const deleted = insertRawEvent(db, { sourceId: 'msg-2', timestampMs: 1710000002000 });
+    const surviving = insertRawEvent(db, { sourceId: 'msg-3', timestampMs: 1710000003000 });
+    db.prepare('DELETE FROM connector_event_index WHERE event_index_id = ?').run(
+      deleted.event_index_id
+    );
+    db.prepare(
+      `INSERT INTO vnext_operator_cursors (
+        cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+      ) VALUES (?, ?, ?, ?)`
+    ).run(buildConnectorOperatorCursorName({ connector: 'slack', channel: 'C-ROLL' }), 1, null, 1);
+
+    const preview = buildConnectorEventIngressPreview({
+      rawAdapter: db,
+      operatorDb: db,
+      connector: 'slack',
+      channel: 'C-ROLL',
+    });
+
+    expect(preview.advancedThroughSeq).toBe(1);
+    expect(
+      preview.events.map((event) => ({ seq: event.seq, eventIndexId: event.eventIndexId }))
+    ).toEqual([{ seq: 3, eventIndexId: surviving.event_index_id }]);
+
+    db.close();
+  });
+
+  it('does not reuse deleted connector seqs for later indexed rows', () => {
+    const db = makeOperatorVNextDb();
+    insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+    const deleted = insertRawEvent(db, { sourceId: 'msg-2', timestampMs: 1710000002000 });
+    db.prepare('DELETE FROM connector_event_index WHERE event_index_id = ?').run(
+      deleted.event_index_id
+    );
+    const later = insertRawEvent(db, { sourceId: 'msg-3', timestampMs: 1710000003000 });
+    db.prepare(
+      `INSERT INTO vnext_operator_cursors (
+        cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+      ) VALUES (?, ?, ?, ?)`
+    ).run(buildConnectorOperatorCursorName({ connector: 'slack', channel: 'C-ROLL' }), 1, null, 1);
+
+    const preview = buildConnectorEventIngressPreview({
+      rawAdapter: db,
+      operatorDb: db,
+      connector: 'slack',
+      channel: 'C-ROLL',
+    });
+
+    expect(preview.advancedThroughSeq).toBe(1);
+    expect(preview.events.map((event) => event.seq)).toEqual([3]);
+    expect(preview.events.map((event) => event.eventIndexId)).toEqual([later.event_index_id]);
+
+    db.close();
+  });
+
   it('rejects broad connector previews unless a single explicit channel is supplied', () => {
     const db = makeOperatorVNextDb();
 

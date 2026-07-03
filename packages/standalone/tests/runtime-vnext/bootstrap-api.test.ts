@@ -81,7 +81,7 @@ function insertRawEvent(
     null,
     `synthetic public rollout event ${sourceId}`,
     timestampMs,
-    '2026-03-09',
+    new Date(timestampMs).toISOString().slice(0, 10),
     timestampMs,
     JSON.stringify({ synthetic: true }),
     Buffer.alloc(32, 2),
@@ -376,7 +376,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('serves authenticated dry-run connector ingress previews without committing', async () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1');
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressPreviewProvider: (input) =>
@@ -471,7 +471,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('serves authenticated connector ingress migration dry-run reports without committing', async () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1');
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
@@ -568,7 +568,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressManualNoUpdateCommitProvider: (input) =>
@@ -676,7 +676,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressManualNoUpdateCommitProvider: (input) =>
@@ -733,7 +733,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('rejects manual no-update ingress commit requests that try to supply changed refs', async () => {
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressManualNoUpdateCommitProvider: (input) =>
@@ -772,7 +772,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('rejects manual no-update ingress commits for the wrong configured channel', async () => {
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressManualNoUpdateCommitProvider: createConnectorIngressManualNoUpdateCommitProvider({
@@ -866,7 +866,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('returns conflict with a safe payload when a manual no-update commit partially fails', async () => {
       process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const first = insertRawEvent(db, 'msg-1', {
         channel: 'C_PUBLIC_SYNTHETIC',
         timestampMs: 1710000001000,
