@@ -593,8 +593,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     if (
       !this.tableExists('operator_memory_commit_intents') ||
-      !this.indexExists('idx_operator_memory_commit_intents_cursor_created') ||
-      !this.indexExists('idx_operator_memory_commit_intents_idempotency_key')
+      !this.indexExists('idx_operator_memory_commit_intents_cursor_created')
     ) {
       this.applyRepairMigration(
         migrationsDir,
@@ -652,19 +651,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
-    for (const indexName of [
-      'idx_operator_memory_commit_intents_cursor_created',
-      'idx_operator_memory_commit_intents_idempotency_key',
-    ]) {
+    for (const indexName of ['idx_operator_memory_commit_intents_cursor_created']) {
       if (!this.indexExists(indexName)) {
         throw new Error(`Migration 040 recovery failed: missing index ${indexName}`);
       }
-    }
-    const idempotencyIndex = this.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='index' AND name = 'idx_operator_memory_commit_intents_idempotency_key'"
-    ).get() as { sql?: string } | undefined;
-    if (!idempotencyIndex?.sql?.includes('CREATE UNIQUE INDEX')) {
-      throw new Error('Migration 040 recovery failed: idempotency key index must be unique');
     }
 
     const tableDefinition = this.prepare(

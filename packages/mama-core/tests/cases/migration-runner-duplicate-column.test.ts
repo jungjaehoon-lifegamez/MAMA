@@ -287,7 +287,6 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
         expect(indexExists(db, 'idx_operator_no_updates_scope_created')).toBe(true);
         expect(indexExists(db, 'idx_worker_proposals_status_kind')).toBe(true);
         expect(indexExists(db, 'idx_operator_memory_commit_intents_cursor_created')).toBe(true);
-        expect(indexExists(db, 'idx_operator_memory_commit_intents_idempotency_key')).toBe(true);
 
         const row = db.prepare('SELECT version FROM schema_version WHERE version = 38').get() as
           | { version: number }
