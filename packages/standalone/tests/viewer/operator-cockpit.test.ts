@@ -11,6 +11,7 @@ vi.mock('../../public/viewer/src/utils/api.js', () => ({
 describe('viewer operator cockpit module', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('OperatorCockpitController.fetchReviewBatch', () => {
@@ -147,6 +148,88 @@ describe('viewer operator cockpit module', () => {
       expect(serialized).not.toContain('RAW_BODY_SHOULD_NOT_RENDER');
       expect(serialized).not.toContain('LOCAL_PATH_SHOULD_NOT_RENDER');
       expect(serialized).not.toContain('PROVIDER_REQUEST_SHOULD_NOT_RENDER');
+    });
+
+    it('uses safe defaults for missing optional review fields', async () => {
+      const { buildOperatorReviewState } =
+        await import('../../public/viewer/src/modules/operator-cockpit.js');
+
+      const malformedBatch = {
+        preview: {
+          ok: true,
+          mode: 'dry_run',
+          preview: {
+            cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+            connector: 'slack',
+            channel: 'C_PUBLIC_SYNTHETIC',
+            advancedThroughSeq: 7,
+            events: [
+              {
+                seq: 8,
+                eventIndexId: 'raw_synthetic_8',
+                sourceTimestampMs: 1710000001000,
+                sourceId: 'msg-8',
+                channel: 'C_PUBLIC_SYNTHETIC',
+              },
+            ],
+          },
+        },
+        dryRun: {
+          ok: true,
+          mode: 'dry_run',
+          dry_run: {
+            status: 'ready',
+            candidateCount: 1,
+          },
+        },
+      } as unknown as Parameters<typeof buildOperatorReviewState>[0];
+
+      const state = buildOperatorReviewState(malformedBatch);
+
+      expect(state.cursor.status).toBe('ready');
+      expect(state.cursor.candidateCount).toBe(1);
+      expect(state.events[0].sourceRefText).toBe('raw:unknown:unknown');
+      expect(state.events[0].readiness).toBe('requires_decision');
+    });
+
+    it('throws an explicit error when an event timestamp is missing', async () => {
+      const { buildOperatorReviewState } =
+        await import('../../public/viewer/src/modules/operator-cockpit.js');
+
+      const malformedBatch = {
+        preview: {
+          ok: true,
+          mode: 'dry_run',
+          preview: {
+            cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+            connector: 'slack',
+            channel: 'C_PUBLIC_SYNTHETIC',
+            advancedThroughSeq: 7,
+            events: [
+              {
+                seq: 8,
+                eventIndexId: 'raw_synthetic_8',
+                sourceId: 'msg-8',
+                channel: 'C_PUBLIC_SYNTHETIC',
+                sourceRef: { kind: 'raw', connector: 'slack', id: 'raw_synthetic_8' },
+              },
+            ],
+          },
+        },
+        dryRun: {
+          ok: true,
+          mode: 'dry_run',
+          dry_run: {
+            status: 'ready',
+            candidateCount: 1,
+            candidates: [],
+          },
+        },
+      } as unknown as Parameters<typeof buildOperatorReviewState>[0];
+
+      expect(() => buildOperatorReviewState(malformedBatch)).toThrow(
+        'sourceTimestampMs is required'
+      );
     });
   });
 
@@ -393,6 +476,71 @@ describe('viewer operator cockpit module', () => {
       expect(JSON.stringify(buildOperatorMemoryScopes('discord', 'G_PUBLIC'))).not.toContain(
         'project_public_synthetic'
       );
+    });
+
+    it('does not fall back to document inputs when the event row is missing', async () => {
+      const { OperatorCockpitModule } =
+        await import('../../public/viewer/src/modules/operator-cockpit.js');
+
+      class FakeHTMLElement {
+        innerHTML = '';
+      }
+      class FakeInput {
+        constructor(readonly value: string) {}
+      }
+      class FakeTextArea extends FakeInput {}
+
+      const documentRoot = {
+        querySelector: vi.fn((selector: string) => {
+          if (selector === '[data-field="wiki-path"]') {
+            return new FakeInput('WRONG_FIRST_ROW_PATH');
+          }
+          if (selector === '[data-field="wiki-title"]') {
+            return new FakeInput('WRONG_FIRST_ROW_TITLE');
+          }
+          if (selector === '[data-field="wiki-content"]') {
+            return new FakeTextArea('WRONG_FIRST_ROW_CONTENT');
+          }
+          return null;
+        }),
+      };
+      const resultSlot = new FakeHTMLElement();
+      const container = {
+        querySelector: vi.fn((selector: string) =>
+          selector === '#operator-cockpit-result' ? resultSlot : null
+        ),
+      };
+      const controller = {
+        commitWiki: vi.fn().mockResolvedValue({ ok: true, status: 'committed' }),
+      };
+      vi.stubGlobal('document', documentRoot);
+      vi.stubGlobal('HTMLElement', FakeHTMLElement);
+      vi.stubGlobal('HTMLInputElement', FakeInput);
+      vi.stubGlobal('HTMLTextAreaElement', FakeTextArea);
+
+      const module = new OperatorCockpitModule(
+        controller as unknown as ConstructorParameters<typeof OperatorCockpitModule>[0]
+      );
+      Reflect.set(module, 'container', container);
+      Reflect.set(module, 'currentState', {
+        cursor: {
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          advancedThroughSeq: 7,
+        },
+        events: [],
+      });
+      const commitEvent = Reflect.get(module, 'commitEvent') as (
+        action: string,
+        eventIndexId: string,
+        row: Element | null
+      ) => Promise<void>;
+
+      await commitEvent.call(module, 'wiki', 'raw_synthetic_8', null);
+
+      expect(controller.commitWiki).not.toHaveBeenCalled();
+      expect(documentRoot.querySelector).not.toHaveBeenCalled();
+      expect(resultSlot.innerHTML).toContain('Operator commit failed.');
     });
   });
 
