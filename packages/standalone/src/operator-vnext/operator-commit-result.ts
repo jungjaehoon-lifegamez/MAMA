@@ -23,6 +23,19 @@ export interface OperatorCursorCommitInput {
   allowSeqGaps?: boolean;
 }
 
+export interface OperatorChangedCursorCommitInput {
+  commitId?: string;
+  cursorName: string;
+  firstChangeSeq: number;
+  lastChangeSeq: number;
+  idempotencyKey: string;
+  fallbackIdempotencyKeys?: readonly string[];
+  sourceRefs: readonly SourceRef[];
+  writeChangedLedger: (input: { idempotencyKey: string }) => readonly SourceRef[];
+  nowMs?: number;
+  allowSeqGaps?: boolean;
+}
+
 export interface OperatorCursorCommitResult {
   outcome: OperatorCommitOutcome;
   commitId: string;
