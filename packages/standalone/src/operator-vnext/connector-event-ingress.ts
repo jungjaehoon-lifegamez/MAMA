@@ -148,7 +148,7 @@ export function buildConnectorEventIngressPreview(
         WITH ordered_events AS (
           SELECT
             ROW_NUMBER() OVER (
-              ORDER BY source_timestamp_ms ASC, event_index_id ASC
+              ORDER BY rowid ASC
             ) AS operator_seq,
             event_index_id,
             source_connector,
