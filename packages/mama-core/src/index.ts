@@ -112,6 +112,7 @@ export {
 export {
   saveMemory,
   saveMemoryWithTrustedProvenance,
+  promoteMemoryStatus,
   recallMemory,
   buildProfile,
   ingestMemory,

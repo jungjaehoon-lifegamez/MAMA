@@ -94,7 +94,7 @@ export function createConnectorIngressMigrationDryRunProvider(
     const requestedChannel = requiredString(input.channel, 'channel');
     if (requestedConnector !== connector || requestedChannel !== channel) {
       throw new Error(
-        `Connector ingress migration dry-run is locked to the configured connector/channel: ${connector}/${channel}`
+        'Connector ingress migration dry-run is locked to the configured connector/channel'
       );
     }
     return buildConnectorIngressMigrationDryRun({
