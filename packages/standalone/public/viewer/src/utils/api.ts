@@ -13,6 +13,9 @@ export type QueryValue = string | number | boolean | null | undefined;
 export type QueryParams = Record<string, QueryValue>;
 export type ApiErrorPayload = { message?: string; error?: string };
 export type JsonRecord = Record<string, unknown>;
+export interface ApiRequestOptions {
+  headers?: Record<string, string>;
+}
 
 export interface GraphNode {
   id: string | number;
@@ -602,10 +605,14 @@ export class API {
    * @param {Object} body - Request body
    * @returns {Promise<Object>} Response data
    */
-  static async post<T = unknown, B = unknown>(endpoint: string, body: B): Promise<T> {
+  static async post<T = unknown, B = unknown>(
+    endpoint: string,
+    body: B,
+    options: ApiRequestOptions | null = {}
+  ): Promise<T> {
     const response = await fetch(endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
       body: JSON.stringify(body),
     });
 

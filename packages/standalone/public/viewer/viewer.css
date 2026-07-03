@@ -987,6 +987,278 @@ body,
   box-shadow: none;
 }
 
+.operator-cockpit-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 1120px;
+}
+
+.operator-cockpit-page {
+  min-height: 100vh;
+  margin: 0;
+  background: #f9f7f4;
+  color: #131313;
+  font-family: Inter, 'Noto Sans KR', 'Noto Sans JP', sans-serif;
+}
+
+.operator-cockpit-page-main {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.operator-cockpit-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.operator-cockpit-page-header a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #131313;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.operator-cockpit-page-header strong {
+  font-size: 13px;
+  letter-spacing: 0;
+  color: #625b52;
+}
+
+.operator-cockpit-form {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.9fr) minmax(160px, 1fr) 88px minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #ede9e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.operator-cockpit-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #6b6560;
+}
+
+.operator-cockpit-form input,
+.operator-cockpit-editors input,
+.operator-cockpit-editors textarea {
+  width: 100%;
+  border: 1px solid #ded8cf;
+  border-radius: 6px;
+  background: #fff;
+  color: #1a1a1a;
+  font-size: 12px;
+  line-height: 1.4;
+  padding: 7px 8px;
+}
+
+.operator-cockpit-form input:focus,
+.operator-cockpit-editors input:focus,
+.operator-cockpit-editors textarea:focus {
+  outline: 2px solid rgba(255, 206, 0, 0.35);
+  border-color: #c5aa21;
+}
+
+.operator-cockpit-refresh,
+.operator-cockpit-actions button {
+  border: 1px solid #1a1a1a;
+  border-radius: 6px;
+  background: #1a1a1a;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 10px;
+}
+
+.operator-cockpit-actions button[data-action='wiki'] {
+  background: #fef9e7;
+  color: #1a1a1a;
+  border-color: #e0c33a;
+}
+
+.operator-cockpit-actions button[data-action='memory'] {
+  background: #edf7f2;
+  color: #183b2b;
+  border-color: #8fc7a8;
+}
+
+.operator-cockpit-panel,
+.operator-cockpit-result {
+  border: 1px solid #ede9e1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.operator-cockpit-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid #ede9e1;
+}
+
+.operator-cockpit-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.operator-cockpit-header p,
+.operator-cockpit-meta,
+.operator-cockpit-summary,
+.operator-cockpit-cursor span {
+  color: #6b6560;
+  font-size: 12px;
+}
+
+.operator-cockpit-cursor {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
+.operator-cockpit-cursor strong {
+  font-size: 20px;
+}
+
+.operator-cockpit-summary {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #ede9e1;
+}
+
+.operator-cockpit-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.operator-cockpit-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #f2eee7;
+}
+
+.operator-cockpit-row:last-child {
+  border-bottom: none;
+}
+
+.operator-cockpit-seq {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.operator-cockpit-source {
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: #1a1a1a;
+  overflow-wrap: anywhere;
+}
+
+.operator-cockpit-meta,
+.operator-cockpit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.operator-cockpit-editors {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.operator-cockpit-editors > div {
+  display: grid;
+  gap: 6px;
+}
+
+.operator-cockpit-editors textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.operator-cockpit-result {
+  padding: 12px 14px;
+}
+
+.operator-cockpit-result header {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.operator-cockpit-result dl {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+
+.operator-cockpit-result dt {
+  color: #6b6560;
+}
+
+.operator-cockpit-result ul {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+
+.operator-cockpit-result li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.operator-cockpit-empty,
+.operator-cockpit-error {
+  padding: 24px;
+  text-align: center;
+  color: #6b6560;
+  font-size: 13px;
+}
+
+.operator-cockpit-error {
+  color: #b42318;
+}
+
+@media (max-width: 768px) {
+  .operator-cockpit-form,
+  .operator-cockpit-row,
+  .operator-cockpit-editors {
+    grid-template-columns: 1fr;
+  }
+
+  .operator-cockpit-header {
+    flex-direction: column;
+  }
+
+  .operator-cockpit-cursor {
+    align-items: flex-start;
+  }
+}
+
 /* ============================================================================
    FLOATING BLOB DECORATIONS (Optional - for special sections)
    ============================================================================ */

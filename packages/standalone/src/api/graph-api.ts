@@ -96,6 +96,7 @@ function getViewerDirectory(): string {
 
 const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
+const OPERATOR_HTML_PATH = path.join(VIEWER_DIR, 'operator.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
@@ -106,6 +107,8 @@ const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
 const SIMILAR_QUERY_DECISION_CHARS = 400;
 const CODE_ACT_RATE_LIMIT_WINDOW_MS = 60_000;
+const OPERATOR_HTML_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const CODE_ACT_RATE_LIMIT_TTL_MS = CODE_ACT_RATE_LIMIT_WINDOW_MS * 5;
 const CODE_ACT_RATE_LIMIT_DEFAULT_MAX = 30;
 const codeActRateBuckets = new Map<
@@ -533,7 +536,12 @@ function filterEdgesByNodes(edges: GraphEdge[], nodes: GraphNode[]): GraphEdge[]
   return edges.filter((e) => nodeIds.has(e.from) || nodeIds.has(e.to));
 }
 
-function serveStaticFile(res: ServerResponse, filePath: string, contentType: string): void {
+function serveStaticFile(
+  res: ServerResponse,
+  filePath: string,
+  contentType: string,
+  extraHeaders: Record<string, string> = {}
+): void {
   try {
     const stats = fs.statSync(filePath);
     if (!stats.isFile()) {
@@ -551,6 +559,7 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
       Pragma: 'no-cache',
       Expires: '0',
       ETag: etag,
+      ...extraHeaders,
     });
     res.end(content);
   } catch (error: unknown) {
@@ -569,6 +578,12 @@ function serveStaticFile(res: ServerResponse, filePath: string, contentType: str
 
 function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_HTML_PATH, 'text/html');
+}
+
+function handleOperatorRequest(_req: IncomingMessage, res: ServerResponse): void {
+  serveStaticFile(res, OPERATOR_HTML_PATH, 'text/html', {
+    'Content-Security-Policy': OPERATOR_HTML_CSP,
+  });
 }
 
 function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
@@ -1303,6 +1318,13 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
+    // Route: GET/HEAD /viewer/operator.html - serve isolated operator console
+    if (pathname === '/viewer/operator.html' && (req.method === 'GET' || req.method === 'HEAD')) {
+      console.log('[GraphHandler] Serving operator.html');
+      handleOperatorRequest(req, res);
+      return true;
+    }
+
     // Route: GET/HEAD /viewer/viewer.css - serve stylesheet
     if (pathname === '/viewer/viewer.css' && (req.method === 'GET' || req.method === 'HEAD')) {
       handleCssRequest(req, res);
@@ -1365,6 +1387,20 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     ) {
       const fileName = pathname.split('/').pop()!;
       const filePath = path.join(VIEWER_DIR, 'js', 'utils', fileName);
+      serveStaticFile(res, filePath, 'application/javascript');
+      return true;
+    }
+
+    // Route: GET/HEAD /viewer/js/*.js - serve first-party viewer entry modules
+    if (
+      pathname.startsWith('/viewer/js/') &&
+      !pathname.includes('/modules/') &&
+      !pathname.includes('/utils/') &&
+      pathname.endsWith('.js') &&
+      (req.method === 'GET' || req.method === 'HEAD')
+    ) {
+      const fileName = pathname.split('/').pop()!;
+      const filePath = path.join(VIEWER_DIR, 'js', fileName);
       serveStaticFile(res, filePath, 'application/javascript');
       return true;
     }
@@ -4172,6 +4208,8 @@ export {
   filterNodesByTopic,
   filterEdgesByNodes,
   VIEWER_HTML_PATH,
+  OPERATOR_HTML_PATH,
+  OPERATOR_HTML_CSP,
   VIEWER_CSS_PATH,
 };
 
