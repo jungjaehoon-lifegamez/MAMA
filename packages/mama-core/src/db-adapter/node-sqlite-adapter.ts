@@ -442,6 +442,12 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           continue;
         }
 
+        if (message.includes('duplicate column') && version === 39) {
+          this.recoverConnectorEventOperatorSeqMigration039();
+          info(`[node-sqlite-adapter] Migration ${file} recovered successfully`);
+          continue;
+        }
+
         if (message.includes('duplicate column')) {
           warn(
             `[node-sqlite-adapter] Migration ${file} skipped (duplicate column - already applied)`
@@ -532,6 +538,21 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         this.recoverConnectorEventScopeMigration034();
         info('[node-sqlite-adapter] Repaired skipped connector event scope migration');
       }
+
+      const connectorColumnsAfterScopeRepair = this.tableColumns('connector_event_index');
+      const hasMissingOperatorSeqFeature =
+        !connectorColumnsAfterScopeRepair.has('operator_ingest_seq') ||
+        !this.tableExists('connector_event_index_operator_seq_cursors') ||
+        !this.indexExists('idx_connector_event_index_operator_scope_seq') ||
+        !this.indexExists('idx_connector_event_index_operator_cursor_order') ||
+        !this.triggerExists('trg_connector_event_index_operator_ingest_seq_ai') ||
+        !this.triggerExists('trg_connector_event_index_operator_ingest_seq_explicit_ai') ||
+        !this.schemaVersionExists(39);
+
+      if (hasMissingOperatorSeqFeature) {
+        this.recoverConnectorEventOperatorSeqMigration039();
+        info('[node-sqlite-adapter] Repaired skipped connector event operator sequence migration');
+      }
     }
 
     if (!this.tableExists('twin_edges')) {
@@ -569,6 +590,26 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'vNext operator contracts'
       );
     }
+
+    if (
+      !this.tableExists('operator_memory_commit_intents') ||
+      !this.indexExists('idx_operator_memory_commit_intents_cursor_created')
+    ) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '040-create-operator-memory-commit-intents.sql',
+        'operator memory commit intents'
+      );
+    }
+    this.assertMigration040BaseComplete();
+    if (!this.hasOperatorMemoryCommitIntentClaimInvariant()) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '041-enforce-operator-memory-commit-claim-invariant.sql',
+        'operator memory commit claim invariant'
+      );
+    }
+    this.assertMigration041Complete();
   }
 
   private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
@@ -587,6 +628,83 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Repair migration ${fileName} failed: ${message}`);
+    }
+  }
+
+  private operatorMemoryCommitIntentTableSql(): string {
+    const tableDefinition = this.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'operator_memory_commit_intents'"
+    ).get() as { sql?: string } | undefined;
+    return tableDefinition?.sql ?? '';
+  }
+
+  private hasOperatorMemoryCommitIntentClaimInvariant(): boolean {
+    const sql = this.operatorMemoryCommitIntentTableSql();
+    return (
+      sql.includes("(status = 'saving' AND claim_token IS NOT NULL)") &&
+      sql.includes("(status != 'saving' AND claim_token IS NULL)")
+    );
+  }
+
+  private assertMigration040BaseComplete(): void {
+    if (!this.tableExists('operator_memory_commit_intents')) {
+      throw new Error(
+        'Migration 040 recovery failed: missing table operator_memory_commit_intents'
+      );
+    }
+
+    const columns = this.tableColumns('operator_memory_commit_intents');
+    for (const column of [
+      'intent_id',
+      'cursor_name',
+      'idempotency_key',
+      'expected_memory_count',
+      'memory_payload_hash',
+      'memory_ids_json',
+      'source_refs_json',
+      'status',
+      'claim_token',
+      'created_at_ms',
+      'updated_at_ms',
+    ]) {
+      if (!columns.has(column)) {
+        throw new Error(
+          `Migration 040 recovery failed: missing operator_memory_commit_intents.${column}`
+        );
+      }
+    }
+
+    for (const indexName of ['idx_operator_memory_commit_intents_cursor_created']) {
+      if (!this.indexExists(indexName)) {
+        throw new Error(`Migration 040 recovery failed: missing index ${indexName}`);
+      }
+    }
+
+    const sql = this.operatorMemoryCommitIntentTableSql();
+    for (const fragment of [
+      'idempotency_key TEXT NOT NULL UNIQUE',
+      'expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0)',
+      "memory_payload_hash TEXT NOT NULL CHECK (memory_payload_hash LIKE 'sha256:%')",
+      'memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json))',
+      'source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json))',
+      "status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted'))",
+      'created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0)',
+      'updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)',
+    ]) {
+      if (!sql.includes(fragment)) {
+        throw new Error(
+          `Migration 040 recovery failed: incompatible operator_memory_commit_intents table definition missing ${fragment}`
+        );
+      }
+    }
+  }
+
+  private assertMigration041Complete(): void {
+    this.assertMigration040BaseComplete();
+    if (!this.hasOperatorMemoryCommitIntentClaimInvariant()) {
+      throw new Error(
+        'Migration 041 recovery failed: incompatible operator_memory_commit_intents table definition missing claim invariant'
+      );
     }
   }
 
@@ -715,6 +833,153 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
   }
 
+  private recoverConnectorEventOperatorSeqMigration039(): void {
+    this.transaction(() => {
+      const columns = this.tableColumns('connector_event_index');
+      if (!columns.has('operator_ingest_seq')) {
+        this.exec(`
+          ALTER TABLE connector_event_index
+            ADD COLUMN operator_ingest_seq INTEGER CHECK (
+              operator_ingest_seq IS NULL OR operator_ingest_seq >= 1
+            )
+        `);
+      }
+
+      this.exec(`
+        CREATE TABLE IF NOT EXISTS connector_event_index_operator_seq_cursors (
+          source_connector TEXT NOT NULL,
+          channel TEXT NOT NULL DEFAULT '',
+          next_seq INTEGER NOT NULL CHECK (next_seq >= 1),
+          PRIMARY KEY (source_connector, channel)
+        )
+      `);
+      this.exec(`
+        WITH ranked_events AS (
+          SELECT
+            event_index_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY source_connector, COALESCE(channel, '')
+              ORDER BY rowid ASC
+            ) AS operator_seq
+          FROM connector_event_index
+        )
+        UPDATE connector_event_index
+        SET operator_ingest_seq = (
+          SELECT operator_seq
+          FROM ranked_events
+          WHERE ranked_events.event_index_id = connector_event_index.event_index_id
+        )
+        WHERE operator_ingest_seq IS NULL
+      `);
+      this.exec(`
+        INSERT OR IGNORE INTO connector_event_index_operator_seq_cursors (
+          source_connector,
+          channel,
+          next_seq
+        )
+        SELECT
+          source_connector,
+          COALESCE(channel, ''),
+          COALESCE(MAX(operator_ingest_seq), 0) + 1
+        FROM connector_event_index
+        GROUP BY source_connector, COALESCE(channel, '')
+      `);
+      this.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_connector_event_index_operator_scope_seq
+          ON connector_event_index(source_connector, COALESCE(channel, ''), operator_ingest_seq)
+          WHERE operator_ingest_seq IS NOT NULL
+      `);
+      this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_connector_event_index_operator_cursor_order
+          ON connector_event_index(source_connector, channel, operator_ingest_seq)
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_operator_ingest_seq_ai
+        AFTER INSERT ON connector_event_index
+        WHEN NEW.operator_ingest_seq IS NULL
+        BEGIN
+          INSERT OR IGNORE INTO connector_event_index_operator_seq_cursors (
+            source_connector,
+            channel,
+            next_seq
+          )
+          VALUES (NEW.source_connector, COALESCE(NEW.channel, ''), 1);
+
+          UPDATE connector_event_index
+          SET operator_ingest_seq = (
+            SELECT next_seq
+            FROM connector_event_index_operator_seq_cursors
+            WHERE source_connector = NEW.source_connector
+              AND channel = COALESCE(NEW.channel, '')
+          )
+          WHERE event_index_id = NEW.event_index_id;
+
+          UPDATE connector_event_index_operator_seq_cursors
+          SET next_seq = next_seq + 1
+          WHERE source_connector = NEW.source_connector
+            AND channel = COALESCE(NEW.channel, '');
+        END
+      `);
+      this.exec(`
+        CREATE TRIGGER IF NOT EXISTS trg_connector_event_index_operator_ingest_seq_explicit_ai
+        AFTER INSERT ON connector_event_index
+        WHEN NEW.operator_ingest_seq IS NOT NULL
+        BEGIN
+          INSERT OR IGNORE INTO connector_event_index_operator_seq_cursors (
+            source_connector,
+            channel,
+            next_seq
+          )
+          VALUES (NEW.source_connector, COALESCE(NEW.channel, ''), 1);
+
+          UPDATE connector_event_index_operator_seq_cursors
+          SET next_seq = CASE
+            WHEN next_seq <= NEW.operator_ingest_seq THEN NEW.operator_ingest_seq + 1
+            ELSE next_seq
+          END
+          WHERE source_connector = NEW.source_connector
+            AND channel = COALESCE(NEW.channel, '');
+        END
+      `);
+
+      this.assertMigration039Complete();
+      this.prepare('INSERT OR IGNORE INTO schema_version (version, description) VALUES (?, ?)').run(
+        39,
+        'Add connector event operator ingest sequence'
+      );
+    });
+  }
+
+  private assertMigration039Complete(): void {
+    const columns = this.tableColumns('connector_event_index');
+    if (!columns.has('operator_ingest_seq')) {
+      throw new Error(
+        'Migration 039 recovery failed: missing connector_event_index.operator_ingest_seq'
+      );
+    }
+    if (!this.tableExists('connector_event_index_operator_seq_cursors')) {
+      throw new Error(
+        'Migration 039 recovery failed: missing connector_event_index_operator_seq_cursors'
+      );
+    }
+    for (const indexName of [
+      'idx_connector_event_index_operator_scope_seq',
+      'idx_connector_event_index_operator_cursor_order',
+    ]) {
+      if (!this.indexExists(indexName)) {
+        throw new Error(`Migration 039 recovery failed: missing index ${indexName}`);
+      }
+    }
+    for (const triggerName of [
+      'trg_connector_event_index_operator_ingest_seq_ai',
+      'trg_connector_event_index_operator_ingest_seq_explicit_ai',
+    ]) {
+      if (!this.triggerExists(triggerName)) {
+        throw new Error(`Migration 039 recovery failed: missing trigger ${triggerName}`);
+      }
+    }
+  }
+
   private tableColumns(tableName: string): Set<string> {
     if (!SQLITE_IDENTIFIER_PATTERN.test(tableName)) {
       throw new Error('Invalid SQLite table identifier');
@@ -740,6 +1005,23 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       indexName
     ) as { name?: string } | undefined;
     return row?.name === indexName;
+  }
+
+  private triggerExists(triggerName: string): boolean {
+    const row = this.prepare(
+      "SELECT name FROM sqlite_master WHERE type='trigger' AND name = ?"
+    ).get(triggerName) as { name?: string } | undefined;
+    return row?.name === triggerName;
+  }
+
+  private schemaVersionExists(version: number): boolean {
+    if (!this.tableExists('schema_version')) {
+      return false;
+    }
+    const row = this.prepare('SELECT version FROM schema_version WHERE version = ?').get(
+      version
+    ) as { version?: number } | undefined;
+    return row?.version === version;
   }
 
   private migrateFromVssMemories(): void {
