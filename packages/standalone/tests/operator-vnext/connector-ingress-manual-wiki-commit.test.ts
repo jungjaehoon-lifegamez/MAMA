@@ -9,6 +9,7 @@ import { commitConnectorIngressWikiBatch } from '../../src/operator-vnext/connec
 import type { SQLiteDatabase } from '../../src/sqlite.js';
 import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
 import { createWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
+import type { WikiPublishPageInput } from '../../src/wiki-artifacts/types.js';
 import { countRows, makeOperatorVNextDb } from './fixtures.js';
 
 function insertRawEvent(
@@ -206,7 +207,43 @@ describe('STORY-VNEXT-PR12-MANUAL-WIKI: connector ingress manual wiki commit', (
             },
           ],
         })
-      ).rejects.toThrow(/source refs are derived from reviewed events/i);
+      ).rejects.toThrow(/source refs.*reviewed events.*changed refs.*wiki page paths/i);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'wiki_artifacts')).toBe(0);
+
+      db.close();
+    });
+
+    it('rejects request-supplied wiki changed refs before durable writes', async () => {
+      const db = makeOperatorVNextDb();
+      const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+      const store = new WikiArtifactStore(db);
+      store.ensureSchema();
+      const wikiPublishAdapter = createWikiPublishAdapter({ mode: 'vnext', store });
+      const pageWithCallerChangedRefs: WikiPublishPageInput & { changedRefs: string[] } = {
+        path: 'projects/unsafe.md',
+        title: 'Unsafe',
+        type: 'entity',
+        content: 'operator-authored wiki summary',
+        changedRefs: ['wiki_page:projects/caller-supplied.md'],
+      };
+
+      await expect(
+        commitConnectorIngressWikiBatch({
+          rawAdapter: db,
+          operatorDb: db,
+          wikiPublishAdapter,
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expectedAdvancedThroughSeq: 0,
+          eventPages: [
+            {
+              eventIndexId: first,
+              pages: [pageWithCallerChangedRefs],
+            },
+          ],
+        })
+      ).rejects.toThrow(/source refs.*reviewed events.*changed refs.*wiki page paths/i);
       expect(countRows(db, 'vnext_operator_commits')).toBe(0);
       expect(countRows(db, 'wiki_artifacts')).toBe(0);
 
