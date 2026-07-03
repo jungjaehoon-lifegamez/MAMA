@@ -297,24 +297,59 @@ function nextChangedReplaySavepointName(): string {
 function rollbackAndReleaseSavepoint(db: SQLiteDatabase, savepointName: string): void {
   try {
     db.exec(`ROLLBACK TO SAVEPOINT ${savepointName}`);
-  } finally {
-    db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+  } catch (error) {
+    try {
+      db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+    } catch {
+      // Preserve the rollback failure; release can fail after a broken savepoint state.
+    }
+    throw error;
   }
+  db.exec(`RELEASE SAVEPOINT ${savepointName}`);
+}
+
+function rollbackAndReleaseSavepointAfterError(
+  db: SQLiteDatabase,
+  savepointName: string,
+  originalError: unknown
+): never {
+  try {
+    rollbackAndReleaseSavepoint(db, savepointName);
+  } catch {
+    // Preserve the original durable writer error; rollback/release are cleanup.
+  }
+  throw originalError;
+}
+
+function validateChangedWriteInput(input: OperatorChangedCursorCommitInput): {
+  sourceRefsJson: string;
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger'];
+} {
+  if (!input.sourceRefs || input.sourceRefs.length === 0) {
+    throw new Error('sourceRefs must not be empty');
+  }
+  if (typeof input.writeChangedLedger !== 'function') {
+    throw new Error('writeChangedLedger must be a function');
+  }
+  return {
+    sourceRefsJson: JSON.stringify(serializeRequiredSourceRefs(input.sourceRefs)),
+    writeChangedLedger: input.writeChangedLedger,
+  };
 }
 
 function readChangedRefsWithoutPersistingReplayWrites(
   db: SQLiteDatabase,
-  writeChangedLedger: () => readonly SourceRef[]
+  idempotencyKey: string,
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger']
 ): string[] {
   const savepointName = nextChangedReplaySavepointName();
   db.exec(`SAVEPOINT ${savepointName}`);
   try {
-    const changedRefs = serializeRequiredSourceRefs(writeChangedLedger());
+    const changedRefs = serializeRequiredSourceRefs(writeChangedLedger({ idempotencyKey }));
     rollbackAndReleaseSavepoint(db, savepointName);
     return changedRefs;
   } catch (error) {
-    rollbackAndReleaseSavepoint(db, savepointName);
-    throw error;
+    rollbackAndReleaseSavepointAfterError(db, savepointName, error);
   }
 }
 
@@ -322,12 +357,18 @@ function readChangedRefsForExistingChangedCommit(
   db: SQLiteDatabase,
   cursor: CursorRow,
   existing: CommitRow,
-  writeChangedLedger: () => readonly SourceRef[]
+  writeChangedLedger: OperatorChangedCursorCommitInput['writeChangedLedger']
 ): string[] {
   if (cursor.last_change_seq < existing.last_change_seq) {
-    return serializeRequiredSourceRefs(writeChangedLedger());
+    return serializeRequiredSourceRefs(
+      writeChangedLedger({ idempotencyKey: existing.idempotency_key })
+    );
   }
-  return readChangedRefsWithoutPersistingReplayWrites(db, writeChangedLedger);
+  return readChangedRefsWithoutPersistingReplayWrites(
+    db,
+    existing.idempotency_key,
+    writeChangedLedger
+  );
 }
 
 export function recoverExistingOperatorCursorCommit(
@@ -394,8 +435,7 @@ export function recoverExistingOperatorCursorChangedWrite(
     throw new Error('lastChangeSeq must be greater than or equal to firstChangeSeq');
   }
 
-  const sourceRefs = serializeRequiredSourceRefs(input.sourceRefs);
-  const sourceRefsJson = JSON.stringify(sourceRefs);
+  const { sourceRefsJson, writeChangedLedger } = validateChangedWriteInput(input);
 
   const tx = db.transaction(() => {
     for (const [index, key] of idempotencyKeys.entries()) {
@@ -419,7 +459,7 @@ export function recoverExistingOperatorCursorChangedWrite(
         db,
         cursor,
         existing,
-        input.writeChangedLedger
+        writeChangedLedger
       );
       return resultFromExistingChangedWriteCommit(
         db,
@@ -460,8 +500,7 @@ export function commitOperatorCursorWithChangedWrite(
     throw new Error('lastChangeSeq must be greater than or equal to firstChangeSeq');
   }
 
-  const sourceRefs = serializeRequiredSourceRefs(input.sourceRefs);
-  const sourceRefsJson = JSON.stringify(sourceRefs);
+  const { sourceRefsJson, writeChangedLedger } = validateChangedWriteInput(input);
   const commitId = requiredString(input.commitId ?? `commit:${idempotencyKey}`, 'commitId');
 
   const tx = db.transaction(() => {
@@ -487,7 +526,7 @@ export function commitOperatorCursorWithChangedWrite(
         db,
         cursor,
         existing,
-        input.writeChangedLedger
+        writeChangedLedger
       );
       return resultFromExistingChangedWriteCommit(
         db,
@@ -505,7 +544,7 @@ export function commitOperatorCursorWithChangedWrite(
     }
 
     assertSeqAdvances(cursor, firstChangeSeq, allowSeqGaps);
-    const changedRefs = serializeRequiredSourceRefs(input.writeChangedLedger());
+    const changedRefs = serializeRequiredSourceRefs(writeChangedLedger({ idempotencyKey }));
     const changedRefsJson = JSON.stringify(changedRefs);
 
     db.prepare(

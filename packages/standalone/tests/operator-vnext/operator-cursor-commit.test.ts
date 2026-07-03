@@ -134,6 +134,38 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
       db.close();
     });
 
+    it('rejects trusted changed commits with clear input validation errors', () => {
+      const db = makeOperatorVNextDb();
+      const missingWriterInput = {
+        commitId: 'commit-missing-writer',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw' as const, connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+      } as unknown as Parameters<typeof commitOperatorCursorWithChangedWrite>[1];
+
+      expect(() =>
+        commitOperatorCursorWithChangedWrite(db, {
+          commitId: 'commit-empty-source-refs',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+          sourceRefs: [],
+          nowMs: 1710000000000,
+          writeChangedLedger: () => [{ kind: 'wiki_page', id: 'docs/synthetic.md' }],
+        })
+      ).toThrow(/sourceRefs must not be empty/);
+      expect(() => commitOperatorCursorWithChangedWrite(db, missingWriterInput)).toThrow(
+        /writeChangedLedger must be a function/
+      );
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+
+      db.close();
+    });
+
     it('commits no-update rows and advances the cursor atomically', () => {
       const db = makeOperatorVNextDb();
 
@@ -454,6 +486,87 @@ describe('STORY-VNEXT-PR2-CURSOR-COMMIT: atomic cursor commits', () => {
         content: 'original artifact',
         updated_at_ms: 1710000000000,
       });
+
+      db.close();
+    });
+
+    it('preserves the durable writer error when replay cleanup fails', () => {
+      const db = makeOperatorVNextDb();
+      const originalExec = db.exec.bind(db);
+
+      commitOperatorCursorWithChangedWrite(db, {
+        commitId: 'commit-replay-cleanup-error',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+        writeChangedLedger: () => [{ kind: 'wiki_page', id: 'docs/synthetic.md' }],
+      });
+
+      db.exec = (sql: string) => {
+        if (sql.startsWith('ROLLBACK TO SAVEPOINT')) {
+          throw new Error('rollback cleanup failed');
+        }
+        originalExec(sql);
+      };
+
+      expect(() =>
+        commitOperatorCursorWithChangedWrite(db, {
+          commitId: 'commit-replay-cleanup-error',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+          nowMs: 1710000000001,
+          writeChangedLedger: () => {
+            throw new Error('ledger write failed');
+          },
+        })
+      ).toThrow(/ledger write failed/);
+
+      db.close();
+    });
+
+    it('preserves rollback errors when replay release cleanup also fails', () => {
+      const db = makeOperatorVNextDb();
+      const originalExec = db.exec.bind(db);
+
+      commitOperatorCursorWithChangedWrite(db, {
+        commitId: 'commit-replay-release-error',
+        cursorName: 'connector:slack',
+        firstChangeSeq: 1,
+        lastChangeSeq: 1,
+        idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+        sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+        nowMs: 1710000000000,
+        writeChangedLedger: () => [{ kind: 'wiki_page', id: 'docs/synthetic.md' }],
+      });
+
+      db.exec = (sql: string) => {
+        if (sql.startsWith('ROLLBACK TO SAVEPOINT')) {
+          throw new Error('rollback cleanup failed');
+        }
+        if (sql.startsWith('RELEASE SAVEPOINT')) {
+          throw new Error('release cleanup failed');
+        }
+        originalExec(sql);
+      };
+
+      expect(() =>
+        commitOperatorCursorWithChangedWrite(db, {
+          commitId: 'commit-replay-release-error',
+          cursorName: 'connector:slack',
+          firstChangeSeq: 1,
+          lastChangeSeq: 1,
+          idempotencyKey: buildConnectorIdempotencyKey('slack', 1, 1),
+          sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
+          nowMs: 1710000000001,
+          writeChangedLedger: () => [{ kind: 'wiki_page', id: 'docs/synthetic.md' }],
+        })
+      ).toThrow(/rollback cleanup failed/);
 
       db.close();
     });

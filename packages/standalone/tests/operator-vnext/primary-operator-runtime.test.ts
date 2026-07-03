@@ -396,6 +396,70 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       db.close();
     });
 
+    it('passes the matched legacy idempotency key to changed writers during trusted replay', async () => {
+      const db = makeOperatorVNextDb();
+      const legacyIdempotencyKey = 'connector:slack:seq:1-1';
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack', 1, legacyIdempotencyKey, 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit-legacy-changed',
+        'connector:slack',
+        legacyIdempotencyKey,
+        1,
+        1,
+        'changed',
+        '["wiki_page:docs/legacy.md"]',
+        '["raw:slack:event-1"]',
+        1710000000000
+      );
+      const runtime = new PrimaryOperatorRuntime({
+        db,
+        cursorName: 'connector:slack',
+        connector: 'slack',
+        nowMs: () => 1710000000001,
+      });
+      const decide = vi.fn(() => {
+        throw new Error('decider must not run');
+      });
+      const commitChanged = vi.fn(({ idempotencyKey }) => [
+        {
+          kind: 'wiki_page' as const,
+          id: idempotencyKey === legacyIdempotencyKey ? 'docs/legacy.md' : 'docs/cursor-scoped.md',
+        },
+      ]);
+
+      const result = await runtime.processBatchWithChangedCommit(
+        [{ seq: 1, sourceRef: { kind: 'raw', connector: 'slack', id: 'event-1' } }],
+        decide,
+        commitChanged
+      );
+
+      expect(result).toMatchObject({
+        status: 'committed',
+        processed: 1,
+        advancedThroughSeq: 1,
+      });
+      expect(result.commits[0]).toMatchObject({
+        outcome: 'already_committed',
+        idempotencyKey: legacyIdempotencyKey,
+        status: 'changed',
+      });
+      expect(commitChanged).toHaveBeenCalledWith(
+        expect.objectContaining({ idempotencyKey: legacyIdempotencyKey })
+      );
+      expect(decide).not.toHaveBeenCalled();
+
+      db.close();
+    });
+
     it('rejects non-contiguous trusted changed events before invoking decider or writer', async () => {
       const db = makeOperatorVNextDb();
       const runtime = new PrimaryOperatorRuntime({
