@@ -20,6 +20,7 @@ export interface OperatorCursorCommitInput {
   sourceRefs: readonly SourceRef[];
   noUpdate?: OperatorNoUpdateCommitInput;
   nowMs?: number;
+  allowSeqGaps?: boolean;
 }
 
 export interface OperatorCursorCommitResult {

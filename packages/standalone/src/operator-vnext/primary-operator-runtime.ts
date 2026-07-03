@@ -2,6 +2,7 @@ import type { SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
 
 import type { SQLiteDatabase } from '../sqlite.js';
 import {
+  buildConnectorIdempotencyKey,
   buildCursorScopedIdempotencyKey,
   commitOperatorCursor,
   recoverExistingOperatorCursorCommit,
@@ -31,6 +32,7 @@ export interface PrimaryOperatorRuntimeOptions {
   cursorName: string;
   connector: string;
   nowMs?: () => number;
+  allowSeqGaps?: boolean;
 }
 
 export type PrimaryOperatorBatchResult =
@@ -135,12 +137,14 @@ export class PrimaryOperatorRuntime {
   private readonly cursorName: string;
   private readonly connector: string;
   private readonly nowMs: () => number;
+  private readonly allowSeqGaps: boolean;
 
   constructor(options: PrimaryOperatorRuntimeOptions) {
     this.db = options.db;
     this.cursorName = options.cursorName.trim();
     this.connector = options.connector.trim();
     this.nowMs = options.nowMs ?? Date.now;
+    this.allowSeqGaps = options.allowSeqGaps === true;
     if (this.cursorName.length === 0) {
       throw new Error('cursorName must not be empty');
     }
@@ -187,21 +191,27 @@ export class PrimaryOperatorRuntime {
         const seq = nonNegativeInteger(event.seq, 'event.seq');
         assertRawEventSourceBoundToConnector(event.sourceRef, this.connector);
         const idempotencyKey = buildCursorScopedIdempotencyKey(this.cursorName, seq, seq);
+        const legacyIdempotencyKey = buildConnectorIdempotencyKey(this.connector, seq, seq);
         const sourceRefs = [event.sourceRef];
         const existingCommit = recoverExistingOperatorCursorCommit(this.db, {
           cursorName: this.cursorName,
           idempotencyKey,
+          fallbackIdempotencyKeys:
+            legacyIdempotencyKey === idempotencyKey ? [] : [legacyIdempotencyKey],
           sourceRefs,
           nowMs: this.nowMs(),
+          allowSeqGaps: this.allowSeqGaps,
         });
         if (existingCommit) {
           commits.push(existingCommit);
           advancedThroughSeq = Math.max(advancedThroughSeq, existingCommit.lastChangeSeq);
           continue;
         }
-        if (seq !== advancedThroughSeq + 1) {
+        if (this.allowSeqGaps ? seq <= advancedThroughSeq : seq !== advancedThroughSeq + 1) {
           throw new Error(
-            `Operator events must be contiguous; expected seq ${advancedThroughSeq + 1}, got ${seq}`
+            this.allowSeqGaps
+              ? `Operator events must advance cursor; current seq ${advancedThroughSeq}, got ${seq}`
+              : `Operator events must be contiguous; expected seq ${advancedThroughSeq + 1}, got ${seq}`
           );
         }
         const decision = parseDecision(await decide(event));
@@ -216,6 +226,7 @@ export class PrimaryOperatorRuntime {
                 changedRefs: decision.changedRefs,
                 sourceRefs,
                 nowMs: this.nowMs(),
+                allowSeqGaps: this.allowSeqGaps,
               })
             : commitOperatorCursor(this.db, {
                 cursorName: this.cursorName,
@@ -229,6 +240,7 @@ export class PrimaryOperatorRuntime {
                   reason: decision.reason,
                 },
                 nowMs: this.nowMs(),
+                allowSeqGaps: this.allowSeqGaps,
               });
         commits.push(commit);
         advancedThroughSeq = Math.max(advancedThroughSeq, commit.lastChangeSeq);

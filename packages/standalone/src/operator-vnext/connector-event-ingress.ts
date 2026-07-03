@@ -65,11 +65,7 @@ const CONNECTOR_ENV = 'MAMA_VNEXT_INGRESS_CONNECTOR';
 const CHANNEL_ENV = 'MAMA_VNEXT_INGRESS_CHANNEL';
 
 export function connectorEventIngressOperatorSeqSql(): string {
-  return `
-    ROW_NUMBER() OVER (
-      ORDER BY rowid ASC
-    )
-  `;
+  return 'operator_ingest_seq';
 }
 
 function positiveLimit(value: number | undefined): number {

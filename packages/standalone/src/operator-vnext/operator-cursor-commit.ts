@@ -42,8 +42,10 @@ interface NormalizedNoUpdateCommit {
 export interface ExistingOperatorCursorCommitInput {
   cursorName: string;
   idempotencyKey: string;
+  fallbackIdempotencyKeys?: readonly string[];
   sourceRefs: readonly SourceRef[];
   nowMs?: number;
+  allowSeqGaps?: boolean;
 }
 
 function assertOperatorCommitStatus(status: unknown): asserts status is OperatorCommitStatus {
@@ -128,7 +130,15 @@ function getExistingNoUpdate(db: SQLiteDatabase, idempotencyKey: string): NoUpda
   );
 }
 
-function assertContiguous(cursor: CursorRow, firstChangeSeq: number): void {
+function assertSeqAdvances(cursor: CursorRow, firstChangeSeq: number, allowSeqGaps: boolean): void {
+  if (allowSeqGaps) {
+    if (firstChangeSeq <= cursor.last_change_seq) {
+      throw new Error(
+        `Operator commit must advance cursor ${cursor.cursor_name}: current ${cursor.last_change_seq}, got ${firstChangeSeq}`
+      );
+    }
+    return;
+  }
   const expected = cursor.last_change_seq + 1;
   if (firstChangeSeq !== expected) {
     throw new Error(
@@ -155,7 +165,8 @@ function resultFromStoredCommit(
   db: SQLiteDatabase,
   cursor: CursorRow,
   existing: CommitRow,
-  nowMs: number
+  nowMs: number,
+  allowSeqGaps: boolean
 ): OperatorCursorCommitResult {
   if (existing.status === 'no_update' && !getExistingNoUpdate(db, existing.idempotency_key)) {
     throw new Error('Idempotent no-update replay is missing no-update commit details');
@@ -173,7 +184,7 @@ function resultFromStoredCommit(
     };
   }
 
-  assertContiguous(cursor, existing.first_change_seq);
+  assertSeqAdvances(cursor, existing.first_change_seq, allowSeqGaps);
   updateCursor(db, existing.cursor_name, existing.last_change_seq, existing.idempotency_key, nowMs);
   return {
     outcome: 'recovered',
@@ -199,7 +210,8 @@ function resultFromExistingCommit(
     sourceRefsJson: string;
     noUpdate?: NormalizedNoUpdateCommit;
   },
-  nowMs: number
+  nowMs: number,
+  allowSeqGaps: boolean
 ): OperatorCursorCommitResult {
   if (existing.cursor_name !== cursor.cursor_name) {
     throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
@@ -228,7 +240,7 @@ function resultFromExistingCommit(
     }
   }
 
-  return resultFromStoredCommit(db, cursor, existing, nowMs);
+  return resultFromStoredCommit(db, cursor, existing, nowMs, allowSeqGaps);
 }
 
 export function recoverExistingOperatorCursorCommit(
@@ -238,21 +250,34 @@ export function recoverExistingOperatorCursorCommit(
   const nowMs = input.nowMs ?? Date.now();
   const cursorName = requiredString(input.cursorName, 'cursorName');
   const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
+  const idempotencyKeys = [
+    idempotencyKey,
+    ...(input.fallbackIdempotencyKeys ?? []).map((key) =>
+      requiredString(key, 'fallbackIdempotencyKeys[]')
+    ),
+  ];
   const expectedSourceRefsJson = JSON.stringify(serializeRequiredSourceRefs(input.sourceRefs));
+  const allowSeqGaps = input.allowSeqGaps === true;
 
   const tx = db.transaction(() => {
-    const existing = getExistingCommit(db, idempotencyKey);
-    if (!existing) {
-      return null;
+    for (const [index, key] of idempotencyKeys.entries()) {
+      const existing = getExistingCommit(db, key);
+      if (!existing) {
+        continue;
+      }
+      if (existing.cursor_name !== cursorName) {
+        if (index === 0) {
+          throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
+        }
+        continue;
+      }
+      if (existing.source_refs_json !== expectedSourceRefsJson) {
+        throw new Error('Idempotent replay source refs do not match the original operator commit');
+      }
+      const cursor = getCursor(db, cursorName);
+      return resultFromStoredCommit(db, cursor, existing, nowMs, allowSeqGaps);
     }
-    if (existing.cursor_name !== cursorName) {
-      throw new Error(`Idempotency key belongs to a different cursor: ${existing.cursor_name}`);
-    }
-    if (existing.source_refs_json !== expectedSourceRefsJson) {
-      throw new Error('Idempotent replay source refs do not match the original operator commit');
-    }
-    const cursor = getCursor(db, cursorName);
-    return resultFromStoredCommit(db, cursor, existing, nowMs);
+    return null;
   });
   return tx();
 }
@@ -266,6 +291,7 @@ export function commitOperatorCursor(
   const idempotencyKey = requiredString(input.idempotencyKey, 'idempotencyKey');
   const firstChangeSeq = nonNegativeInteger(input.firstChangeSeq, 'firstChangeSeq');
   const lastChangeSeq = nonNegativeInteger(input.lastChangeSeq, 'lastChangeSeq');
+  const allowSeqGaps = input.allowSeqGaps === true;
   assertOperatorCommitStatus(input.status);
   if (lastChangeSeq < firstChangeSeq) {
     throw new Error('lastChangeSeq must be greater than or equal to firstChangeSeq');
@@ -318,11 +344,12 @@ export function commitOperatorCursor(
           sourceRefsJson,
           noUpdate,
         },
-        nowMs
+        nowMs,
+        allowSeqGaps
       );
     }
 
-    assertContiguous(cursor, firstChangeSeq);
+    assertSeqAdvances(cursor, firstChangeSeq, allowSeqGaps);
 
     db.prepare(
       `INSERT INTO vnext_operator_commits (

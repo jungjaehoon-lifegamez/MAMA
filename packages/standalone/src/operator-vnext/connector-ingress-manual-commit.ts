@@ -163,7 +163,36 @@ function readReviewedEvents(input: {
   return rows.map(rowToEvent);
 }
 
+function countEventsInSeqRange(input: {
+  rawAdapter: ConnectorEventIngressAdapter;
+  connector: string;
+  channel: string;
+  afterSeq: number;
+  throughSeq: number;
+}): number {
+  const row = input.rawAdapter
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM connector_event_index
+        WHERE source_connector = ?
+          AND channel = ?
+          AND ${connectorEventIngressOperatorSeqSql()} > ?
+          AND ${connectorEventIngressOperatorSeqSql()} <= ?
+      `
+    )
+    .get(input.connector, input.channel, input.afterSeq, input.throughSeq) as
+    | { count: number }
+    | undefined;
+  return nonNegativeInteger(row?.count ?? 0, 'reviewed_range_count');
+}
+
 function assertReviewedSeqs(
+  input: {
+    rawAdapter: ConnectorEventIngressAdapter;
+    connector: string;
+    channel: string;
+  },
   events: readonly PrimaryOperatorEvent[],
   expectedAdvancedThroughSeq: number,
   currentAdvancedThroughSeq: number
@@ -171,8 +200,18 @@ function assertReviewedSeqs(
   const expected = nonNegativeInteger(expectedAdvancedThroughSeq, 'expectedAdvancedThroughSeq');
   const firstSeq = events[0]?.seq ?? null;
   const lastSeq = events[events.length - 1]?.seq ?? null;
-  if (firstSeq !== expected + 1 || lastSeq !== expected + events.length) {
-    throw requestError('Reviewed event ids do not match the expected contiguous cursor range');
+  if (firstSeq === null || lastSeq === null || firstSeq <= expected) {
+    throw requestError('Reviewed event ids do not advance the expected connector cursor');
+  }
+  const rangeCount = countEventsInSeqRange({
+    rawAdapter: input.rawAdapter,
+    connector: input.connector,
+    channel: input.channel,
+    afterSeq: expected,
+    throughSeq: lastSeq,
+  });
+  if (rangeCount !== events.length) {
+    throw requestError('Reviewed event ids do not cover the current connector cursor range');
   }
   if (currentAdvancedThroughSeq > expected && currentAdvancedThroughSeq < lastSeq) {
     throw requestError('Reviewed event ids are stale for the current connector cursor');
@@ -212,6 +251,7 @@ export async function commitConnectorIngressNoUpdateBatch(
     cursorName,
     connector,
     nowMs: input.nowMs,
+    allowSeqGaps: true,
   });
   let events: PrimaryOperatorEvent[] = [];
   const batch = await runtime.processBatchAfterValidation(
@@ -223,6 +263,11 @@ export async function commitConnectorIngressNoUpdateBatch(
         eventIndexIds: input.eventIndexIds,
       });
       assertReviewedSeqs(
+        {
+          rawAdapter: input.rawAdapter,
+          connector,
+          channel,
+        },
         events,
         input.expectedAdvancedThroughSeq,
         readCursorSeq(input.operatorDb, cursorName)
