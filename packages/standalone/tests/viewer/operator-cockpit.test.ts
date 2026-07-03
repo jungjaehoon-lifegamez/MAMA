@@ -10,8 +10,9 @@ vi.mock('../../public/viewer/src/utils/api.js', () => ({
   API: { get, post },
 }));
 
-describe('viewer operator cockpit module', () => {
+describe('Story V19.15: Viewer operator cockpit', () => {
   beforeEach(() => {
+    process.env.MAMA_FORCE_TIER_3 = 'true';
     vi.clearAllMocks();
     vi.unstubAllGlobals();
   });
@@ -295,6 +296,7 @@ describe('viewer operator cockpit module', () => {
       expect(html).toContain('Operator request failed.');
       expect(html).not.toContain('LOCAL_PATH_SHOULD_NOT_RENDER');
       expect(consoleError).toHaveBeenCalled();
+      expect(JSON.stringify(consoleError.mock.calls)).not.toContain('LOCAL_PATH_SHOULD_NOT_RENDER');
       consoleError.mockRestore();
     });
 
@@ -311,6 +313,27 @@ describe('viewer operator cockpit module', () => {
       expect(html).toContain('type="password"');
       expect(html).toContain('id="operator-cockpit-batch"');
       expect(html).toContain('id="operator-cockpit-result"');
+    });
+
+    it('keeps admin token entry off the CDN-loaded main viewer page', () => {
+      const viewer = readFileSync(
+        new URL('../../public/viewer/viewer.html', import.meta.url),
+        'utf8'
+      );
+      const operator = readFileSync(
+        new URL('../../public/viewer/operator.html', import.meta.url),
+        'utf8'
+      );
+
+      expect(viewer).not.toContain('/viewer/js/modules/operator-cockpit.js');
+      expect(viewer).not.toContain('operator-cockpit-content');
+      expect(viewer).not.toContain('name="admin-token"');
+      expect(viewer).toContain('href="/viewer/operator.html"');
+      expect(operator).toContain('Content-Security-Policy');
+      expect(operator).toContain("script-src 'self'");
+      expect(operator).not.toContain('https://');
+      expect(operator).toContain('/viewer/js/operator-entry.js');
+      expect(operator).toContain('operator-cockpit-content');
     });
 
     it('renders cockpit review rows without raw connector payloads', async () => {
@@ -689,7 +712,9 @@ describe('viewer operator cockpit module', () => {
       const sw = readFileSync(new URL('../../public/viewer/sw.js', import.meta.url), 'utf8');
 
       expect(sw).toContain("const CACHE_NAME = 'mama-mobile-v1.6.1'");
+      expect(sw).toContain("'/viewer/operator.html'");
       expect(sw).toContain("'/viewer/js/modules/operator-cockpit.js'");
+      expect(sw).toContain("'/viewer/js/operator-entry.js'");
     });
   });
 });

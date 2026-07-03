@@ -994,6 +994,43 @@ body,
   max-width: 1120px;
 }
 
+.operator-cockpit-page {
+  min-height: 100vh;
+  margin: 0;
+  background: #f9f7f4;
+  color: #131313;
+  font-family: Inter, 'Noto Sans KR', 'Noto Sans JP', sans-serif;
+}
+
+.operator-cockpit-page-main {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.operator-cockpit-page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.operator-cockpit-page-header a {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #131313;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.operator-cockpit-page-header strong {
+  font-size: 13px;
+  letter-spacing: 0;
+  color: #625b52;
+}
+
 .operator-cockpit-form {
   display: grid;
   grid-template-columns: minmax(140px, 0.9fr) minmax(160px, 1fr) 88px minmax(160px, 1fr) auto;

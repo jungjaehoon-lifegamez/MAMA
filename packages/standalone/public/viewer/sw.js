@@ -10,6 +10,7 @@
 const CACHE_NAME = 'mama-mobile-v1.6.1';
 const STATIC_ASSETS = [
   '/viewer',
+  '/viewer/operator.html',
   '/viewer/viewer.css',
   '/viewer/manifest.json',
   '/viewer/js/modules/graph.js',
@@ -17,6 +18,7 @@ const STATIC_ASSETS = [
   '/viewer/js/modules/memory.js',
   '/viewer/js/modules/dashboard.js',
   '/viewer/js/modules/operator-cockpit.js',
+  '/viewer/js/operator-entry.js',
   '/viewer/js/modules/settings.js',
   '/viewer/js/utils/dom.js',
   '/viewer/js/utils/format.js',
