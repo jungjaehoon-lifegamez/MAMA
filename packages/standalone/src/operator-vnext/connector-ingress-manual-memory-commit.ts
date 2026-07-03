@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import {
+  DebugLogger,
   MEMORY_KINDS,
+  MEMORY_SCOPE_KINDS,
   MEMORY_STATUSES,
   createTrustedProvenanceCapability,
   listMemoriesByGatewayCallId,
@@ -156,7 +158,19 @@ const MEMORY_COMMIT_SAVING_LEASE_MS = 15 * 60 * 1000;
 const MEMORY_COMMIT_SAVING_HEARTBEAT_MS = Math.floor(MEMORY_COMMIT_SAVING_LEASE_MS / 3);
 const MEMORY_KIND_SET = new Set<string>(MEMORY_KINDS);
 const MEMORY_STATUS_SET = new Set<string>(MEMORY_STATUSES);
-const MEMORY_SCOPE_KIND_SET = new Set<string>(['global', 'user', 'channel', 'project']);
+const MEMORY_SCOPE_KIND_SET = new Set<string>(MEMORY_SCOPE_KINDS);
+const manualMemoryCommitLogger = new DebugLogger('VNextManualMemoryCommit');
+
+function formatErrorForLog(error: unknown): string {
+  if (error instanceof Error) {
+    return error.name;
+  }
+  return typeof error;
+}
+
+function logManualMemoryCommitFailure(context: string, error: unknown): void {
+  manualMemoryCommitLogger.error(`${context}: ${formatErrorForLog(error)}`);
+}
 
 function requestError(message: string): ConnectorIngressManualCommitRequestError {
   return new ConnectorIngressManualCommitRequestError(message);
@@ -1148,7 +1162,8 @@ async function tryPromoteSavedMemories(input: {
       nowMs: input.nowMs,
     });
     return true;
-  } catch {
+  } catch (error) {
+    logManualMemoryCommitFailure('memory promotion failed', error);
     return false;
   }
 }
@@ -1263,7 +1278,8 @@ export async function commitConnectorIngressMemoryBatch(
           memoryIds: memoryCommit.memoryIds,
           intentStatus: memoryCommit.intentStatus,
         });
-      } catch {
+      } catch (error) {
+        logManualMemoryCommitFailure(`memory save failed at seq ${seq}`, error);
         return batchResult({
           ok: false,
           status: 'partial_failure',
@@ -1321,7 +1337,11 @@ export async function commitConnectorIngressMemoryBatch(
       const committed = commitPreparedBatch();
       commits.push(...committed.commits);
       advancedThroughSeq = committed.advancedThroughSeq;
-    } catch {
+    } catch (error) {
+      logManualMemoryCommitFailure(
+        `operator cursor commit failed at seq ${commitFailureSeq}`,
+        error
+      );
       return batchResult({
         ok: false,
         status: 'partial_failure',

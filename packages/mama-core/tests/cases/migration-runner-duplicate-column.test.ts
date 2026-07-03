@@ -49,6 +49,13 @@ function indexExists(db: Database.Database, indexName: string): boolean {
   return Boolean(row?.name);
 }
 
+function tableSql(db: Database.Database, tableName: string): string {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?")
+    .get(tableName) as { sql?: string } | undefined;
+  return row?.sql ?? '';
+}
+
 function triggerExists(db: Database.Database, triggerName: string): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name = ?")
@@ -300,6 +307,123 @@ describe('Story M2.4: Legacy high schema-version structural recovery', () => {
           .prepare('SELECT version FROM schema_version WHERE version = 40')
           .get() as { version: number } | undefined;
         expect(memoryIntentRow?.version).toBe(40);
+        const memoryIntentClaimRow = db
+          .prepare('SELECT version FROM schema_version WHERE version = 41')
+          .get() as { version: number } | undefined;
+        expect(memoryIntentClaimRow?.version).toBe(41);
+        db.close();
+      });
+
+      it('upgrades existing migration 040 intent tables with the claim invariant', () => {
+        tempDir = mkdtempSync(join(tmpdir(), 'mama-migration-upgrade-040-'));
+        const dbPath = join(tempDir, 'upgrade-040.db');
+        const setupDb = new Database(dbPath);
+        setupDb.pragma('foreign_keys = ON');
+        setupDb.exec(`
+          CREATE TABLE schema_version (
+            version INTEGER PRIMARY KEY,
+            description TEXT
+          );
+          INSERT INTO schema_version (version, description)
+          VALUES (40, 'Create operator memory commit intents');
+
+          CREATE TABLE embeddings (
+            rowid INTEGER PRIMARY KEY,
+            embedding BLOB NOT NULL
+          );
+          CREATE TABLE decisions (
+            id TEXT PRIMARY KEY,
+            topic TEXT NOT NULL
+          );
+          CREATE TABLE memory_events (
+            id INTEGER PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            topic TEXT,
+            created_at INTEGER NOT NULL
+          );
+
+          CREATE TABLE operator_memory_commit_intents (
+            intent_id TEXT PRIMARY KEY,
+            cursor_name TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL UNIQUE,
+            expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0),
+            memory_payload_hash TEXT NOT NULL CHECK (memory_payload_hash LIKE 'sha256:%'),
+            memory_ids_json TEXT NOT NULL CHECK (json_valid(memory_ids_json)),
+            source_refs_json TEXT NOT NULL CHECK (json_valid(source_refs_json)),
+            status TEXT NOT NULL CHECK (status IN ('pending', 'saving', 'saved', 'promoted')),
+            claim_token TEXT,
+            created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+            updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms)
+          );
+          CREATE INDEX idx_operator_memory_commit_intents_cursor_created
+            ON operator_memory_commit_intents(cursor_name, created_at_ms DESC);
+
+          INSERT INTO operator_memory_commit_intents (
+            intent_id, cursor_name, idempotency_key, expected_memory_count,
+            memory_payload_hash, memory_ids_json, source_refs_json, status, claim_token,
+            created_at_ms, updated_at_ms
+          )
+          VALUES
+            (
+              'intent:legacy-saving-without-claim',
+              'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+              'cursor:connector:slack:channel:C_PUBLIC_SYNTHETIC:seq:1-1',
+              1,
+              'sha256:legacy-saving-without-claim',
+              '[null]',
+              '["raw:slack:synthetic-event-index-id"]',
+              'saving',
+              NULL,
+              1710000000000,
+              1710000000000
+            ),
+            (
+              'intent:legacy-pending-with-claim',
+              'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+              'cursor:connector:slack:channel:C_PUBLIC_SYNTHETIC:seq:2-2',
+              1,
+              'sha256:legacy-pending-with-claim',
+              '[null]',
+              '["raw:slack:synthetic-event-index-id"]',
+              'pending',
+              'claim:legacy',
+              1710000000000,
+              1710000000000
+            );
+        `);
+        setupDb.close();
+
+        const adapter = new NodeSQLiteAdapter({ dbPath });
+        adapter.connect();
+        adapter.runMigrations(MIGRATIONS_DIR);
+        adapter.disconnect();
+
+        const db = new Database(dbPath);
+        const sql = tableSql(db, 'operator_memory_commit_intents');
+        expect(sql).toContain("(status = 'saving' AND claim_token IS NOT NULL)");
+        expect(sql).toContain("(status != 'saving' AND claim_token IS NULL)");
+        expect(
+          db
+            .prepare(
+              `SELECT status, claim_token
+               FROM operator_memory_commit_intents
+               WHERE intent_id = 'intent:legacy-saving-without-claim'`
+            )
+            .get()
+        ).toEqual({ status: 'pending', claim_token: null });
+        expect(
+          db
+            .prepare(
+              `SELECT status, claim_token
+               FROM operator_memory_commit_intents
+               WHERE intent_id = 'intent:legacy-pending-with-claim'`
+            )
+            .get()
+        ).toEqual({ status: 'pending', claim_token: null });
+        const row = db.prepare('SELECT version FROM schema_version WHERE version = 41').get() as
+          | { version: number }
+          | undefined;
+        expect(row?.version).toBe(41);
         db.close();
       });
 

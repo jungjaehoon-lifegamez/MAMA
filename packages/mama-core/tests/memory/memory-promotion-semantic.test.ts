@@ -3,27 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-vi.mock('../../src/embeddings.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../src/embeddings.js')>('../../src/embeddings.js');
-  return {
-    ...actual,
-    generateEmbedding: vi.fn(async () => new Float32Array([0.1, 0.2, 0.3])),
-  };
-});
-
-vi.mock('../../src/db-manager.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../src/db-manager.js')>('../../src/db-manager.js');
-  return {
-    ...actual,
-    vectorSearch: vi.fn(),
-  };
-});
-
-import { closeDB, getAdapter, vectorSearch } from '../../src/db-manager.js';
+import { closeDB, getAdapter } from '../../src/db-manager.js';
 import {
   promoteMemoryStatus,
   saveMemory,
@@ -50,8 +32,6 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
     cleanupDb();
     process.env.MAMA_DB_PATH = TEST_DB;
     process.env.MAMA_FORCE_TIER_3 = 'true';
-    vi.mocked(vectorSearch).mockReset();
-    vi.mocked(vectorSearch).mockResolvedValue([]);
   });
 
   afterEach(async () => {
@@ -61,7 +41,7 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
     cleanupDb();
   });
 
-  it('uses semantic candidates when promoting a staged memory to active', async () => {
+  it('applies evolution candidates when promoting a staged memory to active', async () => {
     const oldMemory = await saveMemory({
       topic: 'sqlite_memory_store',
       kind: 'decision',
@@ -73,7 +53,7 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
     });
     const stagedMemory = await saveMemoryWithTrustedProvenance(
       {
-        topic: 'reviewed_manual_memory_store',
+        topic: 'sqlite_memory_store',
         kind: 'decision',
         summary: 'Use SQLite for the memory store with reviewed provenance',
         details: 'Manual operator review approved the replacement memory.',
@@ -95,31 +75,22 @@ describe('Story M2.1: staged memory promotion semantic evolution', () => {
       }
     );
 
-    vi.mocked(vectorSearch).mockResolvedValueOnce([
-      {
-        id: oldMemory.id,
-        topic: 'sqlite_memory_store',
-        decision: 'Use SQLite for the memory store',
-        status: 'active',
-      } as never,
-    ]);
-
     await promoteMemoryStatus({ memoryId: stagedMemory.id, status: 'active' });
 
     expect(
       getAdapter()
         .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
         .get(oldMemory.id)
-    ).toEqual({ status: 'active', superseded_by: null });
+    ).toEqual({ status: 'superseded', superseded_by: stagedMemory.id });
     expect(
       getAdapter()
-        .prepare('SELECT status, supersedes FROM decisions WHERE id = ?')
+        .prepare('SELECT status, supersedes, superseded_by FROM decisions WHERE id = ?')
         .get(stagedMemory.id)
-    ).toEqual({ status: 'active', supersedes: null });
+    ).toEqual({ status: 'active', supersedes: oldMemory.id, superseded_by: null });
     expect(
       getAdapter()
         .prepare('SELECT relationship FROM decision_edges WHERE from_id = ? AND to_id = ?')
         .get(stagedMemory.id, oldMemory.id)
-    ).toEqual({ relationship: 'builds_on' });
+    ).toEqual({ relationship: 'supersedes' });
   });
 });
