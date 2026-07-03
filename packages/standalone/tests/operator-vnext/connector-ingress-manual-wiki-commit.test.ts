@@ -263,6 +263,37 @@ describe('STORY-VNEXT-PR12-MANUAL-WIKI: connector ingress manual wiki commit', (
       db.close();
     });
 
+    it('rejects null wiki pages before any durable commit writes', async () => {
+      const db = makeOperatorVNextDb();
+      const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+      const store = new WikiArtifactStore(db);
+      store.ensureSchema();
+      const wikiPublishAdapter = createWikiPublishAdapter({ mode: 'vnext', store });
+
+      await expect(
+        commitConnectorIngressWikiBatch({
+          rawAdapter: db,
+          operatorDb: db,
+          wikiPublishAdapter,
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expectedAdvancedThroughSeq: 0,
+          eventPages: [
+            {
+              eventIndexId: first,
+              pages: [null as never],
+            },
+          ],
+          nowMs: () => 1710000000000,
+        })
+      ).rejects.toThrow(/non-null object/i);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'wiki_artifacts')).toBe(0);
+      expect(cursorRow(db)).toBeUndefined();
+
+      db.close();
+    });
+
     it('rejects duplicate wiki paths across events before any durable commit writes', async () => {
       const db = makeOperatorVNextDb();
       const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });

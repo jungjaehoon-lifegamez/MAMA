@@ -51,12 +51,19 @@ export function normalizeReviewedEventIndexIds(
   if (eventIndexIds.length > maxItems) {
     throwRequestError(requestError, `${options.fieldName} must contain at most ${maxItems} items`);
   }
+  const seen = new Set<string>();
   return eventIndexIds.map((eventIndexId) => {
+    let normalized: string;
     try {
-      return requiredString(eventIndexId, `${options.fieldName}[]`);
+      normalized = requiredString(eventIndexId, `${options.fieldName}[]`);
     } catch {
       throwRequestError(requestError, `${options.fieldName} must be a non-empty string array`);
     }
+    if (seen.has(normalized)) {
+      throwRequestError(requestError, `${options.fieldName} must not contain duplicate values`);
+    }
+    seen.add(normalized);
+    return normalized;
   });
 }
 
