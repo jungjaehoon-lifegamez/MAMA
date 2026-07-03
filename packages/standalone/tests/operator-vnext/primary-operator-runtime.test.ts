@@ -329,7 +329,7 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       ).run(
         'commit-orphaned',
         'connector:slack',
-        'connector:slack:seq:1-1',
+        'cursor:connector:slack:seq:1-1',
         1,
         1,
         'changed',
@@ -379,7 +379,7 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       ).run(
         'commit-orphaned',
         'connector:slack',
-        'connector:slack:seq:1-1',
+        'cursor:connector:slack:seq:1-1',
         1,
         1,
         'changed',

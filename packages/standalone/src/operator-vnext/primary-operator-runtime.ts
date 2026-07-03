@@ -2,7 +2,7 @@ import type { SourceRef } from '@jungjaehoon/mama-core/provenance/source-ref';
 
 import type { SQLiteDatabase } from '../sqlite.js';
 import {
-  buildConnectorIdempotencyKey,
+  buildCursorScopedIdempotencyKey,
   commitOperatorCursor,
   recoverExistingOperatorCursorCommit,
 } from './operator-cursor-commit.js';
@@ -156,6 +156,16 @@ export class PrimaryOperatorRuntime {
     return withCursorLock(this.cursorName, () => this.processBatchLocked(events, decide));
   }
 
+  async processBatchAfterValidation(
+    buildEvents: () => Promise<readonly PrimaryOperatorEvent[]> | readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
+  ): Promise<PrimaryOperatorBatchResult> {
+    return withCursorLock(this.cursorName, async () => {
+      const events = await buildEvents();
+      return this.processBatchLocked(events, decide);
+    });
+  }
+
   private async processBatchLocked(
     events: readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
@@ -176,7 +186,7 @@ export class PrimaryOperatorRuntime {
       try {
         const seq = nonNegativeInteger(event.seq, 'event.seq');
         assertRawEventSourceBoundToConnector(event.sourceRef, this.connector);
-        const idempotencyKey = buildConnectorIdempotencyKey(this.connector, seq, seq);
+        const idempotencyKey = buildCursorScopedIdempotencyKey(this.cursorName, seq, seq);
         const sourceRefs = [event.sourceRef];
         const existingCommit = recoverExistingOperatorCursorCommit(this.db, {
           cursorName: this.cursorName,

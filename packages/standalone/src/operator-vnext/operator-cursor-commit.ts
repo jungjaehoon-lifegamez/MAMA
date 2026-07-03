@@ -66,6 +66,20 @@ export function buildConnectorIdempotencyKey(
   return `connector:${connector}:seq:${first}-${last}`;
 }
 
+export function buildCursorScopedIdempotencyKey(
+  cursorName: string,
+  firstChangeSeq: number,
+  lastChangeSeq: number
+): string {
+  const cursor = requiredString(cursorName, 'cursorName');
+  const first = nonNegativeInteger(firstChangeSeq, 'firstChangeSeq');
+  const last = nonNegativeInteger(lastChangeSeq, 'lastChangeSeq');
+  if (last < first) {
+    throw new Error('lastChangeSeq must be greater than or equal to firstChangeSeq');
+  }
+  return `cursor:${cursor}:seq:${first}-${last}`;
+}
+
 function ensureCursor(db: SQLiteDatabase, cursorName: string, nowMs: number): void {
   db.prepare(
     `INSERT OR IGNORE INTO vnext_operator_cursors (

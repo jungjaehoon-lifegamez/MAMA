@@ -149,6 +149,44 @@ describe('STORY-VNEXT-PR6-CONNECTOR-INGRESS: connector event dry-run ingress', (
     db.close();
   });
 
+  it('keeps late backfilled connector events behind the current cursor instead of renumbering them away', () => {
+    const db = makeOperatorVNextDb();
+    insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+    db.prepare(
+      `INSERT INTO vnext_operator_cursors (
+        cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+      ) VALUES (?, ?, ?, ?)`
+    ).run(buildConnectorOperatorCursorName({ connector: 'slack', channel: 'C-ROLL' }), 1, null, 1);
+    const lateBackfill = insertRawEvent(db, {
+      sourceId: 'msg-late-backfill',
+      timestampMs: 1710000000000,
+    });
+
+    const preview = buildConnectorEventIngressPreview({
+      rawAdapter: db,
+      operatorDb: db,
+      connector: 'slack',
+      channel: 'C-ROLL',
+    });
+
+    expect(preview.advancedThroughSeq).toBe(1);
+    expect(
+      preview.events.map((event) => ({
+        seq: event.seq,
+        eventIndexId: event.eventIndexId,
+        sourceTimestampMs: event.sourceTimestampMs,
+      }))
+    ).toEqual([
+      {
+        seq: 2,
+        eventIndexId: lateBackfill.event_index_id,
+        sourceTimestampMs: 1710000000000,
+      },
+    ]);
+
+    db.close();
+  });
+
   it('rejects broad connector previews unless a single explicit channel is supplied', () => {
     const db = makeOperatorVNextDb();
 

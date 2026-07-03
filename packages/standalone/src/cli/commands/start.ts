@@ -34,7 +34,7 @@ import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { minimatch } from 'minimatch';
-import express, { type Express } from 'express';
+import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -65,7 +65,7 @@ import { initVNextWikiPublishAdapter } from '../runtime/wiki-publish-adapter-ini
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
-import { requireAuth } from '../../api/auth-middleware.js';
+import { requireAdminAuth, requireAuth } from '../../api/auth-middleware.js';
 import { buildPublicVNextProjectionPayload } from '../../api/report-handler.js';
 import {
   buildVNextBootstrapPlan,
@@ -95,6 +95,12 @@ import {
   createConnectorIngressMigrationDryRunProvider,
   type ConnectorIngressMigrationDryRun,
 } from '../../operator-vnext/connector-ingress-migration-dry-run.js';
+import {
+  createConnectorIngressManualNoUpdateCommitProvider,
+  isConnectorIngressManualCommitRequestError,
+  MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS,
+  type ConnectorIngressManualCommitResult,
+} from '../../operator-vnext/connector-ingress-manual-commit.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -573,11 +579,21 @@ export interface VNextIngressPreviewRequest {
   limit?: number;
 }
 
+export interface VNextIngressManualNoUpdateCommitRequest {
+  connector: string;
+  channel: string;
+  expectedAdvancedThroughSeq: number;
+  eventIndexIds: string[];
+}
+
 export interface VNextBootstrapApiServerOptions {
   ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
   ingressMigrationDryRunProvider?: (
     input: VNextIngressPreviewRequest
   ) => ConnectorIngressMigrationDryRun;
+  ingressManualNoUpdateCommitProvider?: (
+    input: VNextIngressManualNoUpdateCommitRequest
+  ) => Promise<ConnectorIngressManualCommitResult> | ConnectorIngressManualCommitResult;
 }
 
 function firstQueryString(value: unknown): string | null {
@@ -604,12 +620,88 @@ function queryLimit(value: unknown): number | undefined {
   return limit;
 }
 
+function requireRequestBodyRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('request body must be an object');
+  }
+  return value as Record<string, unknown>;
+}
+
+function bodyString(body: Record<string, unknown>, field: string): string {
+  const value = body[field];
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new Error(`${field} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function bodyNonNegativeInteger(body: Record<string, unknown>, field: string): number {
+  const value = body[field];
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    throw new Error(`${field} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function bodyStringArray(body: Record<string, unknown>, field: string, maxItems: number): string[] {
+  const value = body[field];
+  if (
+    !Array.isArray(value) ||
+    value.length === 0 ||
+    !value.every((item) => typeof item === 'string' && item.trim().length > 0)
+  ) {
+    throw new Error(`${field} must be a non-empty string array`);
+  }
+  if (value.length > maxItems) {
+    throw new Error(`${field} must contain at most ${maxItems} items`);
+  }
+  return value.map((item) => item.trim());
+}
+
+function parseManualNoUpdateCommitBody(rawBody: unknown): VNextIngressManualNoUpdateCommitRequest {
+  const body = requireRequestBodyRecord(rawBody);
+  if (
+    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
+    Object.prototype.hasOwnProperty.call(body, 'changed_refs')
+  ) {
+    throw new Error('manual no-update commits do not accept changed refs');
+  }
+  return {
+    connector: bodyString(body, 'connector'),
+    channel: bodyString(body, 'channel'),
+    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
+    eventIndexIds: bodyStringArray(body, 'event_index_ids', MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS),
+  };
+}
+
 function isVNextIngressClientError(error: unknown): boolean {
   return (
     error instanceof Error &&
     (error.message.includes('locked to the configured connector/channel') ||
       error.message === 'limit must be a positive integer')
   );
+}
+
+function isVNextManualCommitClientError(error: unknown): boolean {
+  return isConnectorIngressManualCommitRequestError(error);
+}
+
+function handleVNextManualCommitJsonError(
+  error: unknown,
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  if (typeof error === 'object' && error !== null && 'status' in error) {
+    const status = (error as { status?: unknown }).status;
+    res.status(typeof status === 'number' && status >= 400 && status < 500 ? status : 400).json({
+      ok: false,
+      code: 'vnext_ingress_manual_commit_invalid_json',
+      error: 'Invalid JSON request body.',
+    });
+    return;
+  }
+  next(error);
 }
 
 function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
@@ -739,7 +831,7 @@ export function createVNextBootstrapApiServer(
 } {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '128kb' }));
+  const jsonBodyParser = express.json({ limit: '128kb' });
 
   app.get('/health', (_req, res) => {
     res.json({
@@ -748,6 +840,53 @@ export function createVNextBootstrapApiServer(
       timestamp: Date.now(),
     });
   });
+  app.post(
+    '/api/vnext/ingress/manual-no-update-commit',
+    requireAdminAuth,
+    jsonBodyParser,
+    async (req, res) => {
+      if (!options.ingressManualNoUpdateCommitProvider) {
+        res.status(404).json({
+          ok: false,
+          code: 'vnext_ingress_manual_commit_unavailable',
+          error: 'vNext manual ingress commit is not configured.',
+        });
+        return;
+      }
+
+      let input: VNextIngressManualNoUpdateCommitRequest;
+      try {
+        input = parseManualNoUpdateCommitBody(req.body);
+      } catch (error) {
+        res.status(400).json({
+          ok: false,
+          code: 'vnext_ingress_manual_commit_invalid_request',
+          error: error instanceof Error ? error.message : 'Invalid manual ingress commit request.',
+        });
+        return;
+      }
+
+      try {
+        const result = await options.ingressManualNoUpdateCommitProvider(input);
+        res.status(result.ok ? 200 : 409).json(result);
+      } catch (error) {
+        const clientError = isVNextManualCommitClientError(error);
+        res.status(clientError ? 400 : 500).json({
+          ok: false,
+          code: clientError
+            ? 'vnext_ingress_manual_commit_invalid_request'
+            : 'vnext_ingress_manual_commit_failed',
+          error: clientError
+            ? error instanceof Error
+              ? error.message
+              : 'Invalid manual ingress commit request.'
+            : 'vNext manual ingress commit failed.',
+        });
+      }
+    }
+  );
+  app.use('/api/vnext/ingress/manual-no-update-commit', handleVNextManualCommitJsonError);
+  app.use(jsonBodyParser);
   app.use('/api', requireAuth);
   app.get('/api/vnext/status', (_req, res) => {
     res.json(buildVNextStatusPayload(status));
@@ -1039,6 +1178,12 @@ export async function runAgentLoop(
             channel: vNextIngressConfig.channel,
           }),
           ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
+            rawAdapter: vNextRawAdapter,
+            operatorDb: vNextOperatorDb,
+            connector: vNextIngressConfig.connector,
+            channel: vNextIngressConfig.channel,
+          }),
+          ingressManualNoUpdateCommitProvider: createConnectorIngressManualNoUpdateCommitProvider({
             rawAdapter: vNextRawAdapter,
             operatorDb: vNextOperatorDb,
             connector: vNextIngressConfig.connector,
