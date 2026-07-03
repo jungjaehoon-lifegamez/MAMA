@@ -65,6 +65,7 @@ export function initMainAgentLoop(
     osAgentMode?: boolean;
     envelopeIssuanceMode?: EnvelopeIssuanceMode;
     contextCompileService?: GatewayToolExecutorOptions['contextCompileService'];
+    wikiPublishAdapter?: GatewayToolExecutorOptions['wikiPublishAdapter'];
     vNextRuntimeEnabled?: boolean;
   }
 ): AgentLoopInitResult {
@@ -204,6 +205,7 @@ export function initMainAgentLoop(
       envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'off',
       metricsStore,
       contextCompileService: options?.contextCompileService,
+      wikiPublishAdapter: options?.wikiPublishAdapter,
       vNextRuntimeEnabled: options?.vNextRuntimeEnabled,
     }
   );
