@@ -601,7 +601,15 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
         'operator memory commit intents'
       );
     }
-    this.assertMigration040Complete();
+    this.assertMigration040BaseComplete();
+    if (!this.hasOperatorMemoryCommitIntentClaimInvariant()) {
+      this.applyRepairMigration(
+        migrationsDir,
+        '041-enforce-operator-memory-commit-claim-invariant.sql',
+        'operator memory commit claim invariant'
+      );
+    }
+    this.assertMigration041Complete();
   }
 
   private applyRepairMigration(migrationsDir: string, fileName: string, label: string): void {
@@ -623,7 +631,22 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
   }
 
-  private assertMigration040Complete(): void {
+  private operatorMemoryCommitIntentTableSql(): string {
+    const tableDefinition = this.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'operator_memory_commit_intents'"
+    ).get() as { sql?: string } | undefined;
+    return tableDefinition?.sql ?? '';
+  }
+
+  private hasOperatorMemoryCommitIntentClaimInvariant(): boolean {
+    const sql = this.operatorMemoryCommitIntentTableSql();
+    return (
+      sql.includes("(status = 'saving' AND claim_token IS NOT NULL)") &&
+      sql.includes("(status != 'saving' AND claim_token IS NULL)")
+    );
+  }
+
+  private assertMigration040BaseComplete(): void {
     if (!this.tableExists('operator_memory_commit_intents')) {
       throw new Error(
         'Migration 040 recovery failed: missing table operator_memory_commit_intents'
@@ -657,10 +680,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
-    const tableDefinition = this.prepare(
-      "SELECT sql FROM sqlite_master WHERE type='table' AND name = 'operator_memory_commit_intents'"
-    ).get() as { sql?: string } | undefined;
-    const sql = tableDefinition?.sql ?? '';
+    const sql = this.operatorMemoryCommitIntentTableSql();
     for (const fragment of [
       'idempotency_key TEXT NOT NULL UNIQUE',
       'expected_memory_count INTEGER NOT NULL CHECK (expected_memory_count > 0)',
@@ -676,6 +696,15 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
           `Migration 040 recovery failed: incompatible operator_memory_commit_intents table definition missing ${fragment}`
         );
       }
+    }
+  }
+
+  private assertMigration041Complete(): void {
+    this.assertMigration040BaseComplete();
+    if (!this.hasOperatorMemoryCommitIntentClaimInvariant()) {
+      throw new Error(
+        'Migration 041 recovery failed: incompatible operator_memory_commit_intents table definition missing claim invariant'
+      );
     }
   }
 

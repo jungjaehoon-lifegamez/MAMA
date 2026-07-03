@@ -425,8 +425,9 @@ describe('STORY-VNEXT-PR13-MANUAL-MEMORY: connector ingress manual memory commit
       db.prepare(
         `INSERT INTO operator_memory_commit_intents (
           intent_id, cursor_name, idempotency_key, expected_memory_count,
-          memory_payload_hash, memory_ids_json, source_refs_json, status, created_at_ms, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          memory_payload_hash, memory_ids_json, source_refs_json, status, claim_token,
+          created_at_ms, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         `memory-intent:${idempotencyKey}`,
         'connector:slack:channel:C_PUBLIC_SYNTHETIC',
@@ -436,6 +437,7 @@ describe('STORY-VNEXT-PR13-MANUAL-MEMORY: connector ingress manual memory commit
         JSON.stringify([null]),
         JSON.stringify([`raw:slack:${first}`]),
         'saving',
+        'claim:other-owner',
         1710000000000,
         1710000000000
       );
