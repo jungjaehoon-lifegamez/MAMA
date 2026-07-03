@@ -64,6 +64,14 @@ const MAX_INGRESS_LIMIT = 100;
 const CONNECTOR_ENV = 'MAMA_VNEXT_INGRESS_CONNECTOR';
 const CHANNEL_ENV = 'MAMA_VNEXT_INGRESS_CHANNEL';
 
+export function connectorEventIngressOperatorSeqSql(): string {
+  return `
+    ROW_NUMBER() OVER (
+      ORDER BY rowid ASC
+    )
+  `;
+}
+
 function positiveLimit(value: number | undefined): number {
   if (value === undefined) {
     return DEFAULT_INGRESS_LIMIT;
@@ -147,9 +155,7 @@ export function buildConnectorEventIngressPreview(
       `
         WITH ordered_events AS (
           SELECT
-            ROW_NUMBER() OVER (
-              ORDER BY rowid ASC
-            ) AS operator_seq,
+            ${connectorEventIngressOperatorSeqSql()} AS operator_seq,
             event_index_id,
             source_connector,
             source_id,
