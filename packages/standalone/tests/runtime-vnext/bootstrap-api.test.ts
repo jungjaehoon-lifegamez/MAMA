@@ -12,6 +12,10 @@ import {
   buildConnectorEventIngressPreview,
   createConnectorEventIngressPreviewProvider,
 } from '../../src/operator-vnext/connector-event-ingress.js';
+import {
+  commitConnectorIngressNoUpdateBatch,
+  createConnectorIngressManualNoUpdateCommitProvider,
+} from '../../src/operator-vnext/connector-ingress-manual-commit.js';
 import { createConnectorIngressMigrationDryRunProvider } from '../../src/operator-vnext/connector-ingress-migration-dry-run.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import {
@@ -23,6 +27,8 @@ import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { isVNextWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
+const ADMIN_TOKEN_ENV = 'MAMA_ADMIN_TOKEN';
+const LOCAL_PATH_PREFIX = ['', 'Users', ''].join('/');
 
 function makeStatus(): VNextBootstrapRuntimeStatus {
   return {
@@ -50,7 +56,13 @@ function makeStatus(): VNextBootstrapRuntimeStatus {
   };
 }
 
-function insertRawEvent(db: SQLiteDatabase, sourceId: string): string {
+function insertRawEvent(
+  db: SQLiteDatabase,
+  sourceId: string,
+  options: { channel?: string; timestampMs?: number } = {}
+): string {
+  const channel = options.channel ?? 'C-ROLL';
+  const timestampMs = options.timestampMs ?? 1710000001000;
   const eventIndexId = connectorEventIndexId('slack', sourceId);
   db.prepare(
     `INSERT INTO connector_event_index (
@@ -63,14 +75,14 @@ function insertRawEvent(db: SQLiteDatabase, sourceId: string): string {
     'slack',
     'message',
     sourceId,
-    `slack:C-ROLL:${sourceId}`,
-    'C-ROLL',
+    `slack:${channel}:${sourceId}`,
+    channel,
     'synthetic-user',
     null,
     `synthetic public rollout event ${sourceId}`,
-    1710000001000,
-    '2026-03-09',
-    1710000001000,
+    timestampMs,
+    new Date(timestampMs).toISOString().slice(0, 10),
+    timestampMs,
     JSON.stringify({ synthetic: true }),
     Buffer.alloc(32, 2),
     '2026-07-02T00:00:00.000Z',
@@ -81,12 +93,18 @@ function insertRawEvent(db: SQLiteDatabase, sourceId: string): string {
 
 describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
   const originalAuthToken = process.env[AUTH_TOKEN_ENV];
+  const originalAdminToken = process.env[ADMIN_TOKEN_ENV];
 
   afterEach(() => {
     if (originalAuthToken === undefined) {
       delete process.env[AUTH_TOKEN_ENV];
     } else {
       process.env[AUTH_TOKEN_ENV] = originalAuthToken;
+    }
+    if (originalAdminToken === undefined) {
+      delete process.env[ADMIN_TOKEN_ENV];
+    } else {
+      process.env[ADMIN_TOKEN_ENV] = originalAdminToken;
     }
   });
 
@@ -358,7 +376,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('serves authenticated dry-run connector ingress previews without committing', async () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1');
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressPreviewProvider: (input) =>
@@ -453,7 +471,7 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
     it('serves authenticated connector ingress migration dry-run reports without committing', async () => {
       process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
       const db = new Database(':memory:');
-      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 38);
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
       const eventIndexId = insertRawEvent(db, 'msg-1');
       const apiServer = createVNextBootstrapApiServer(makeStatus(), {
         ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
@@ -544,6 +562,397 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       }
 
       db.close();
+    });
+
+    it('requires admin auth for manual no-update ingress commits', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: (input) =>
+          commitConnectorIngressNoUpdateBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: [eventIndexId],
+        });
+
+      expect(response.status).toBe(401);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'UNAUTHORIZED',
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('fails closed when admin auth is not configured for manual no-update ingress commits', async () => {
+      delete process.env[ADMIN_TOKEN_ENV];
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: () => {
+          throw new Error('provider must not run without admin auth');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: ['synthetic-event-index-id'],
+        });
+
+      expect(response.status).toBe(503);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'admin_token_required',
+      });
+    });
+
+    it('requires admin auth before parsing malformed manual commit JSON bodies', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: () => {
+          throw new Error('provider must not run for unauthorized malformed JSON');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('content-type', 'application/json')
+        .send('{');
+
+      expect(response.status).toBe(401);
+      expect(response.type).toBe('application/json');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+    });
+
+    it('sanitizes malformed manual commit JSON after admin auth succeeds', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: () => {
+          throw new Error('provider must not run for malformed JSON');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .set('content-type', 'application/json')
+        .send('{');
+
+      expect(response.status).toBe(400);
+      expect(response.type).toBe('application/json');
+      expect(response.body).toEqual({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_invalid_json',
+        error: 'Invalid JSON request body.',
+      });
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+    });
+
+    it('serves admin-only manual no-update ingress commits with an allowlisted payload', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: (input) =>
+          commitConnectorIngressNoUpdateBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: [eventIndexId],
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        ok: true,
+        mode: 'manual_no_update_commit',
+        status: 'committed',
+        cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        connector: 'slack',
+        channel: 'C_PUBLIC_SYNTHETIC',
+        requestedCount: 1,
+        processed: 1,
+        advancedThroughSeq: 1,
+        firstSeq: 1,
+        lastSeq: 1,
+        commits: [{ seq: 1, status: 'no_update', outcome: 'committed', cursorAdvanced: true }],
+      });
+      expect(JSON.stringify(response.body)).not.toContain('synthetic public rollout event');
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-user');
+      expect(JSON.stringify(response.body)).not.toContain('author');
+      expect(JSON.stringify(response.body)).not.toContain('title');
+      expect(JSON.stringify(response.body)).not.toContain('metadata_json');
+      expect(JSON.stringify(response.body)).not.toContain('source_locator');
+      expect(JSON.stringify(response.body)).not.toContain('artifact_locator');
+      expect(JSON.stringify(response.body)).not.toContain('source_cursor');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+      expect(db.prepare('SELECT DISTINCT status FROM vnext_operator_commits').all()).toEqual([
+        { status: 'no_update' },
+      ]);
+
+      db.close();
+    });
+
+    it('rejects manual no-update ingress commit requests that try to supply changed refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: (input) =>
+          commitConnectorIngressNoUpdateBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: [eventIndexId],
+          changedRefs: [{ kind: 'os_task', id: 'task-should-not-be-accepted' }],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_invalid_request',
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('rejects manual no-update ingress commits for the wrong configured channel', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: createConnectorIngressManualNoUpdateCommitProvider({
+          rawAdapter: db,
+          operatorDb: db,
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          nowMs: () => 1710000000000,
+        }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_OTHER_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: [eventIndexId],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_invalid_request',
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('rejects unbounded manual no-update ingress commit batches before provider execution', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: () => {
+          throw new Error('provider must not run for unbounded batches');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: Array.from({ length: 101 }, (_, index) => `synthetic-event-${index}`),
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_invalid_request',
+        error: 'event_index_ids must contain at most 100 items',
+      });
+    });
+
+    it('sanitizes unexpected manual no-update ingress commit failures', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: () => {
+          throw new Error('cursor backend failed with synthetic-error-marker');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: ['synthetic-event-index-id'],
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_failed',
+        error: 'vNext manual ingress commit failed.',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('cursor backend');
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-error-marker');
+    });
+
+    it('returns conflict with a safe payload when a manual no-update commit partially fails', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const first = insertRawEvent(db, 'msg-1', {
+        channel: 'C_PUBLIC_SYNTHETIC',
+        timestampMs: 1710000001000,
+      });
+      const second = insertRawEvent(db, 'msg-2', {
+        channel: 'C_PUBLIC_SYNTHETIC',
+        timestampMs: 1710000002000,
+      });
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack:channel:C_PUBLIC_SYNTHETIC', 0, null, 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit:preexisting-conflict',
+        'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        'cursor:connector:slack:channel:C_PUBLIC_SYNTHETIC:seq:2-2',
+        2,
+        2,
+        'no_update',
+        JSON.stringify([]),
+        JSON.stringify(['raw:slack:conflicting-synthetic-event']),
+        1710000000000
+      );
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualNoUpdateCommitProvider: (input) =>
+          commitConnectorIngressNoUpdateBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            ...input,
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: [first, second],
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({
+        ok: false,
+        mode: 'manual_no_update_commit',
+        status: 'partial_failure',
+        processed: 1,
+        advancedThroughSeq: 1,
+        failedSeq: 2,
+        error: 'Manual no-update commit partially failed.',
+      });
+      expect(JSON.stringify(response.body)).not.toContain('source refs');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+
+      db.close();
+    });
+
+    it('rejects manual no-update ingress commits when the provider is not configured', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const apiServer = createVNextBootstrapApiServer(makeStatus());
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-no-update-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_index_ids: ['event_missing_provider'],
+        });
+
+      expect(response.status).toBe(404);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_commit_unavailable',
+      });
     });
   });
 });
