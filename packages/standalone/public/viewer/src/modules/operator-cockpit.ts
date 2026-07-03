@@ -8,6 +8,9 @@
 /* eslint-env browser */
 
 import { API } from '../utils/api.js';
+import { DebugLogger } from '../utils/debug-logger.js';
+
+const logger = new DebugLogger('OperatorCockpit');
 
 export interface OperatorCockpitScope {
   connector: string;
@@ -354,6 +357,9 @@ export function renderOperatorCockpitShell(): string {
 }
 
 export function renderOperatorError(message: string, _error?: unknown): string {
+  if (_error !== undefined) {
+    logger.error(message, _error);
+  }
   return `<div class="operator-cockpit-error">${esc(message)}</div>`;
 }
 
@@ -370,7 +376,20 @@ function readNumberInput(root: ParentNode, selector: string, fallback: number): 
     return fallback;
   }
   const value = Number(input.value);
-  return Number.isInteger(value) && value > 0 ? value : fallback;
+  const max = Number(input.max);
+  const upperBound = Number.isFinite(max) && max > 0 ? max : Number.POSITIVE_INFINITY;
+  return Number.isInteger(value) && value > 0 ? Math.min(value, upperBound) : fallback;
+}
+
+function rowCommitButtons(row: Element | null, trigger?: HTMLElement): HTMLButtonElement[] {
+  const buttons = row
+    ? Array.from(row.querySelectorAll('button[data-action]'))
+    : trigger
+      ? [trigger]
+      : [];
+  return buttons.filter(
+    (button): button is HTMLButtonElement => button instanceof HTMLButtonElement
+  );
 }
 
 export class OperatorCockpitModule {
@@ -449,7 +468,12 @@ export class OperatorCockpitModule {
         if (!eventIndexId || !action) {
           return;
         }
-        void this.commitEvent(action, eventIndexId, button.closest('.operator-cockpit-row'));
+        void this.commitEvent(
+          action,
+          eventIndexId,
+          button.closest('.operator-cockpit-row'),
+          button
+        );
       });
     });
   }
@@ -457,13 +481,21 @@ export class OperatorCockpitModule {
   private async commitEvent(
     action: string,
     eventIndexId: string,
-    row: Element | null
+    row: Element | null,
+    trigger?: HTMLElement
   ): Promise<void> {
     const state = this.currentState;
     const resultSlot = this.container?.querySelector('#operator-cockpit-result');
     if (!state || !(resultSlot instanceof HTMLElement)) {
       return;
     }
+    const commitButtons = rowCommitButtons(row, trigger);
+    if (commitButtons.some((button) => button.disabled)) {
+      return;
+    }
+    commitButtons.forEach((button) => {
+      button.disabled = true;
+    });
     resultSlot.innerHTML = '<div class="operator-cockpit-empty">Committing...</div>';
     const base = {
       connector: state.cursor.connector,
@@ -539,6 +571,10 @@ export class OperatorCockpitModule {
       resultSlot.innerHTML = renderCommitResultState(resultState);
     } catch (error) {
       resultSlot.innerHTML = renderOperatorError('Operator commit failed.', error);
+    } finally {
+      commitButtons.forEach((button) => {
+        button.disabled = false;
+      });
     }
   }
 }
