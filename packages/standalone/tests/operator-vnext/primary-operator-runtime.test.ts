@@ -329,7 +329,7 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       ).run(
         'commit-orphaned',
         'connector:slack',
-        'connector:slack:seq:1-1',
+        'cursor:connector:slack:seq:1-1',
         1,
         1,
         'changed',
@@ -364,6 +364,59 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       db.close();
     });
 
+    it('recovers legacy connector-scoped idempotency keys before invoking the decider', async () => {
+      const db = makeOperatorVNextDb();
+      db.prepare(
+        `INSERT INTO vnext_operator_cursors (
+          cursor_name, last_change_seq, last_idempotency_key, updated_at_ms
+        ) VALUES (?, ?, ?, ?)`
+      ).run('connector:slack', 0, null, 1710000000000);
+      db.prepare(
+        `INSERT INTO vnext_operator_commits (
+          commit_id, cursor_name, idempotency_key, first_change_seq, last_change_seq,
+          status, changed_refs_json, source_refs_json, created_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'commit-legacy-key',
+        'connector:slack',
+        'connector:slack:seq:1-1',
+        1,
+        1,
+        'changed',
+        '["os_task:task-1"]',
+        '["raw:slack:event-1"]',
+        1710000000000
+      );
+      const runtime = new PrimaryOperatorRuntime({
+        db,
+        cursorName: 'connector:slack',
+        connector: 'slack',
+        nowMs: () => 1710000000001,
+      });
+      const decide = vi.fn(() => {
+        throw new Error('decider must not run');
+      });
+
+      const result = await runtime.processBatch(
+        [{ seq: 1, sourceRef: { kind: 'raw', connector: 'slack', id: 'event-1' } }],
+        decide
+      );
+
+      expect(result).toMatchObject({
+        status: 'committed',
+        processed: 1,
+        advancedThroughSeq: 1,
+      });
+      expect(result.commits[0]).toMatchObject({
+        outcome: 'recovered',
+        idempotencyKey: 'connector:slack:seq:1-1',
+      });
+      expect(decide).not.toHaveBeenCalled();
+      expect(lastCursorSeq(db)).toBe(1);
+
+      db.close();
+    });
+
     it('rejects recovered commits with mismatched raw source provenance before invoking the decider', async () => {
       const db = makeOperatorVNextDb();
       db.prepare(
@@ -379,7 +432,7 @@ describe('STORY-VNEXT-PR2-PRIMARY-OPERATOR: primary operator commit shell', () =
       ).run(
         'commit-orphaned',
         'connector:slack',
-        'connector:slack:seq:1-1',
+        'cursor:connector:slack:seq:1-1',
         1,
         1,
         'changed',

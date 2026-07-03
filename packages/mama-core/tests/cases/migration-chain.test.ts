@@ -476,4 +476,119 @@ describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)'
 
     db.close();
   });
+
+  it('records migration 039 connector event operator ingest sequences', () => {
+    const db = new Database(':memory:');
+    db.pragma('foreign_keys = ON');
+    applyAll(db);
+
+    expect(columnExists(db, 'connector_event_index', 'operator_ingest_seq')).toBe(true);
+    expect(tableExists(db, 'connector_event_index_operator_seq_cursors')).toBe(true);
+    expect(indexExists(db, 'idx_connector_event_index_operator_scope_seq')).toBe(true);
+    expect(indexExists(db, 'idx_connector_event_index_operator_cursor_order')).toBe(true);
+    expect(triggerExists(db, 'trg_connector_event_index_operator_ingest_seq_ai')).toBe(true);
+
+    const insert = db.prepare(
+      `INSERT INTO connector_event_index (
+        event_index_id, source_connector, source_type, source_id, source_locator,
+        channel, author, title, content, event_datetime, event_date, source_timestamp_ms,
+        metadata_json, content_hash, indexed_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    insert.run(
+      'evt-c1-1',
+      'slack',
+      'message',
+      'c1-1',
+      'slack:C1:c1-1',
+      'C1',
+      'synthetic-user',
+      null,
+      'synthetic message c1-1',
+      1710000001000,
+      '2024-03-09',
+      1710000001000,
+      '{}',
+      Buffer.alloc(32, 1),
+      '2026-07-03T00:00:00.000Z',
+      '2026-07-03T00:00:00.000Z'
+    );
+    insert.run(
+      'evt-c2-1',
+      'slack',
+      'message',
+      'c2-1',
+      'slack:C2:c2-1',
+      'C2',
+      'synthetic-user',
+      null,
+      'synthetic message c2-1',
+      1710000002000,
+      '2024-03-09',
+      1710000002000,
+      '{}',
+      Buffer.alloc(32, 2),
+      '2026-07-03T00:00:00.000Z',
+      '2026-07-03T00:00:00.000Z'
+    );
+    insert.run(
+      'evt-c1-2',
+      'slack',
+      'message',
+      'c1-2',
+      'slack:C1:c1-2',
+      'C1',
+      'synthetic-user',
+      null,
+      'synthetic message c1-2',
+      1710000003000,
+      '2024-03-09',
+      1710000003000,
+      '{}',
+      Buffer.alloc(32, 3),
+      '2026-07-03T00:00:00.000Z',
+      '2026-07-03T00:00:00.000Z'
+    );
+    db.prepare('DELETE FROM connector_event_index WHERE event_index_id = ?').run('evt-c1-2');
+    insert.run(
+      'evt-c1-3',
+      'slack',
+      'message',
+      'c1-3',
+      'slack:C1:c1-3',
+      'C1',
+      'synthetic-user',
+      null,
+      'synthetic message c1-3',
+      1710000004000,
+      '2024-03-09',
+      1710000004000,
+      '{}',
+      Buffer.alloc(32, 4),
+      '2026-07-03T00:00:00.000Z',
+      '2026-07-03T00:00:00.000Z'
+    );
+
+    expect(
+      db
+        .prepare(
+          `SELECT event_index_id, channel, operator_ingest_seq
+           FROM connector_event_index
+           ORDER BY channel, operator_ingest_seq`
+        )
+        .all()
+    ).toEqual([
+      { event_index_id: 'evt-c1-1', channel: 'C1', operator_ingest_seq: 1 },
+      { event_index_id: 'evt-c1-3', channel: 'C1', operator_ingest_seq: 3 },
+      { event_index_id: 'evt-c2-1', channel: 'C2', operator_ingest_seq: 1 },
+    ]);
+
+    const row = db
+      .prepare('SELECT version, description FROM schema_version WHERE version = 39')
+      .get() as { version: number; description: string } | undefined;
+    expect(row?.version).toBe(39);
+    expect(row?.description).toContain('operator ingest sequence');
+
+    db.close();
+  });
 });
