@@ -83,8 +83,20 @@ export class WikiArtifactStore {
 
   constructor(private readonly db: SQLiteDatabase) {}
 
+  private hasSchema(): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT name
+           FROM sqlite_master
+           WHERE type = 'table' AND name = 'wiki_artifacts'`
+        )
+        .get() !== undefined
+    );
+  }
+
   ensureSchema(): void {
-    if (this.schemaEnsured) {
+    if (this.schemaEnsured && this.hasSchema()) {
       return;
     }
     applyWikiArtifactsMigration(this.db);

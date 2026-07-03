@@ -152,6 +152,12 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
           advancedThroughSeq: 7,
           commits: [],
         }),
+        processBatchWithChangedCommit: async () => ({
+          status: 'idle' as const,
+          processed: 0,
+          advancedThroughSeq: 7,
+          commits: [],
+        }),
       };
       const apiServer = {
         start: async () => {
@@ -269,6 +275,12 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP: vNext bootstrap contract', () => {
               advancedThroughSeq: 0,
             },
             processBatch: async () => ({
+              status: 'idle',
+              processed: 0,
+              advancedThroughSeq: 0,
+              commits: [],
+            }),
+            processBatchWithChangedCommit: async () => ({
               status: 'idle',
               processed: 0,
               advancedThroughSeq: 0,

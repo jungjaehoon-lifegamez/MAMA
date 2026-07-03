@@ -5,6 +5,8 @@ import {
   buildConnectorIdempotencyKey,
   buildCursorScopedIdempotencyKey,
   commitOperatorCursor,
+  commitOperatorCursorWithChangedWrite,
+  recoverExistingOperatorCursorChangedWrite,
   recoverExistingOperatorCursorCommit,
 } from './operator-cursor-commit.js';
 import type { OperatorCursorCommitResult } from './operator-commit-result.js';
@@ -26,6 +28,35 @@ export type PrimaryOperatorDecision =
       reason: string;
       scopeKey?: string;
     };
+
+export type PrimaryOperatorChangedCommitDecision = {
+  status: 'changed';
+  changedRefs?: readonly SourceRef[];
+};
+
+export type PrimaryOperatorTrustedChangedCommitDecision = {
+  status: 'changed';
+};
+
+type ParsedPrimaryOperatorDecision =
+  | PrimaryOperatorChangedCommitDecision
+  | {
+      status: 'no_update';
+      reason: string;
+      scopeKey?: string;
+    };
+
+export interface PrimaryOperatorChangedCommitInput {
+  event: PrimaryOperatorEvent;
+  decision: PrimaryOperatorTrustedChangedCommitDecision;
+  sourceRefs: readonly SourceRef[];
+  idempotencyKey: string;
+  nowMs: number;
+}
+
+export type PrimaryOperatorChangedCommitter = (
+  input: PrimaryOperatorChangedCommitInput
+) => readonly SourceRef[];
 
 export interface PrimaryOperatorRuntimeOptions {
   db: SQLiteDatabase;
@@ -87,13 +118,24 @@ function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }
 
-function parseDecision(value: unknown): PrimaryOperatorDecision {
+function parseDecision(
+  value: unknown,
+  options: { requireChangedRefs: boolean }
+): ParsedPrimaryOperatorDecision {
   if (!isRecord(value)) {
     throw new Error('Primary operator decision must be an object');
   }
   if (value.status === 'changed') {
+    if (value.changedRefs === undefined) {
+      if (options.requireChangedRefs) {
+        throw new Error('Changed primary operator decisions require changedRefs');
+      }
+      return {
+        status: 'changed',
+      };
+    }
     if (!Array.isArray(value.changedRefs)) {
-      throw new Error('Changed primary operator decisions require changedRefs');
+      throw new Error('Changed primary operator decision changedRefs must be an array');
     }
     return {
       status: 'changed',
@@ -132,6 +174,26 @@ function readCursorSeq(db: SQLiteDatabase, cursorName: string): number {
   return row?.last_change_seq ?? 0;
 }
 
+function assertEventAdvancesCursor(
+  seq: number,
+  advancedThroughSeq: number,
+  allowSeqGaps: boolean
+): void {
+  if (allowSeqGaps) {
+    if (seq <= advancedThroughSeq) {
+      throw new Error(
+        `Operator events must advance cursor; current seq ${advancedThroughSeq}, got ${seq}`
+      );
+    }
+    return;
+  }
+  if (seq !== advancedThroughSeq + 1) {
+    throw new Error(
+      `Operator events must be contiguous; expected seq ${advancedThroughSeq + 1}, got ${seq}`
+    );
+  }
+}
+
 export class PrimaryOperatorRuntime {
   private readonly db: SQLiteDatabase;
   private readonly cursorName: string;
@@ -160,6 +222,16 @@ export class PrimaryOperatorRuntime {
     return withCursorLock(this.cursorName, () => this.processBatchLocked(events, decide));
   }
 
+  async processBatchWithChangedCommit(
+    events: readonly PrimaryOperatorEvent[],
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown,
+    commitChanged: PrimaryOperatorChangedCommitter
+  ): Promise<PrimaryOperatorBatchResult> {
+    return withCursorLock(this.cursorName, () =>
+      this.processBatchLocked(events, decide, commitChanged)
+    );
+  }
+
   async processBatchAfterValidation(
     buildEvents: () => Promise<readonly PrimaryOperatorEvent[]> | readonly PrimaryOperatorEvent[],
     decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
@@ -172,7 +244,8 @@ export class PrimaryOperatorRuntime {
 
   private async processBatchLocked(
     events: readonly PrimaryOperatorEvent[],
-    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown
+    decide: (event: PrimaryOperatorEvent) => Promise<unknown> | unknown,
+    commitChanged?: PrimaryOperatorChangedCommitter
   ): Promise<PrimaryOperatorBatchResult> {
     if (events.length === 0) {
       return {
@@ -193,11 +266,13 @@ export class PrimaryOperatorRuntime {
         const idempotencyKey = buildCursorScopedIdempotencyKey(this.cursorName, seq, seq);
         const legacyIdempotencyKey = buildConnectorIdempotencyKey(this.connector, seq, seq);
         const sourceRefs = [event.sourceRef];
+        const fallbackIdempotencyKeys =
+          legacyIdempotencyKey === idempotencyKey ? [] : [legacyIdempotencyKey];
         const existingCommit = recoverExistingOperatorCursorCommit(this.db, {
           cursorName: this.cursorName,
           idempotencyKey,
-          fallbackIdempotencyKeys:
-            legacyIdempotencyKey === idempotencyKey ? [] : [legacyIdempotencyKey],
+          fallbackIdempotencyKeys,
+          statusFilter: commitChanged === undefined ? undefined : ['no_update'],
           sourceRefs,
           nowMs: this.nowMs(),
           allowSeqGaps: this.allowSeqGaps,
@@ -207,26 +282,81 @@ export class PrimaryOperatorRuntime {
           advancedThroughSeq = Math.max(advancedThroughSeq, existingCommit.lastChangeSeq);
           continue;
         }
-        if (this.allowSeqGaps ? seq <= advancedThroughSeq : seq !== advancedThroughSeq + 1) {
-          throw new Error(
-            this.allowSeqGaps
-              ? `Operator events must advance cursor; current seq ${advancedThroughSeq}, got ${seq}`
-              : `Operator events must be contiguous; expected seq ${advancedThroughSeq + 1}, got ${seq}`
-          );
+        if (commitChanged) {
+          const commitNowMs = this.nowMs();
+          const existingChangedCommit = recoverExistingOperatorCursorChangedWrite(this.db, {
+            cursorName: this.cursorName,
+            firstChangeSeq: seq,
+            lastChangeSeq: seq,
+            idempotencyKey,
+            fallbackIdempotencyKeys,
+            sourceRefs,
+            nowMs: commitNowMs,
+            allowSeqGaps: this.allowSeqGaps,
+            writeChangedLedger: () =>
+              commitChanged({
+                event,
+                decision: { status: 'changed' },
+                sourceRefs,
+                idempotencyKey,
+                nowMs: commitNowMs,
+              }),
+          });
+          if (existingChangedCommit) {
+            commits.push(existingChangedCommit);
+            advancedThroughSeq = Math.max(advancedThroughSeq, existingChangedCommit.lastChangeSeq);
+            continue;
+          }
+          assertEventAdvancesCursor(seq, advancedThroughSeq, this.allowSeqGaps);
+          const decision = parseDecision(await decide(event), {
+            requireChangedRefs: false,
+          });
+          const commit =
+            decision.status === 'changed'
+              ? this.commitChangedDecision({
+                  event,
+                  decision,
+                  sourceRefs,
+                  idempotencyKey,
+                  fallbackIdempotencyKeys,
+                  seq,
+                  nowMs: commitNowMs,
+                  commitChanged,
+                })
+              : commitOperatorCursor(this.db, {
+                  cursorName: this.cursorName,
+                  firstChangeSeq: seq,
+                  lastChangeSeq: seq,
+                  idempotencyKey,
+                  status: 'no_update',
+                  sourceRefs,
+                  noUpdate: {
+                    scopeKey: this.resolveNoUpdateScope(decision.scopeKey),
+                    reason: decision.reason,
+                  },
+                  nowMs: commitNowMs,
+                  allowSeqGaps: this.allowSeqGaps,
+                });
+          commits.push(commit);
+          advancedThroughSeq = Math.max(advancedThroughSeq, commit.lastChangeSeq);
+          continue;
         }
-        const decision = parseDecision(await decide(event));
+        assertEventAdvancesCursor(seq, advancedThroughSeq, this.allowSeqGaps);
+        const commitNowMs = this.nowMs();
+        const decision = parseDecision(await decide(event), {
+          requireChangedRefs: true,
+        });
         const commit =
           decision.status === 'changed'
-            ? commitOperatorCursor(this.db, {
-                cursorName: this.cursorName,
-                firstChangeSeq: seq,
-                lastChangeSeq: seq,
-                idempotencyKey,
-                status: 'changed',
-                changedRefs: decision.changedRefs,
+            ? this.commitChangedDecision({
+                event,
+                decision,
                 sourceRefs,
-                nowMs: this.nowMs(),
-                allowSeqGaps: this.allowSeqGaps,
+                idempotencyKey,
+                fallbackIdempotencyKeys,
+                seq,
+                nowMs: commitNowMs,
+                commitChanged,
               })
             : commitOperatorCursor(this.db, {
                 cursorName: this.cursorName,
@@ -239,7 +369,7 @@ export class PrimaryOperatorRuntime {
                   scopeKey: this.resolveNoUpdateScope(decision.scopeKey),
                   reason: decision.reason,
                 },
-                nowMs: this.nowMs(),
+                nowMs: commitNowMs,
                 allowSeqGaps: this.allowSeqGaps,
               });
         commits.push(commit);
@@ -262,6 +392,53 @@ export class PrimaryOperatorRuntime {
       advancedThroughSeq,
       commits,
     };
+  }
+
+  private commitChangedDecision(input: {
+    event: PrimaryOperatorEvent;
+    decision: PrimaryOperatorChangedCommitDecision;
+    sourceRefs: readonly SourceRef[];
+    idempotencyKey: string;
+    fallbackIdempotencyKeys: readonly string[];
+    seq: number;
+    nowMs: number;
+    commitChanged?: PrimaryOperatorChangedCommitter;
+  }): OperatorCursorCommitResult {
+    const commitChanged = input.commitChanged;
+    if (commitChanged) {
+      return commitOperatorCursorWithChangedWrite(this.db, {
+        cursorName: this.cursorName,
+        firstChangeSeq: input.seq,
+        lastChangeSeq: input.seq,
+        idempotencyKey: input.idempotencyKey,
+        fallbackIdempotencyKeys: input.fallbackIdempotencyKeys,
+        sourceRefs: input.sourceRefs,
+        nowMs: input.nowMs,
+        allowSeqGaps: this.allowSeqGaps,
+        writeChangedLedger: () =>
+          commitChanged({
+            event: input.event,
+            decision: { status: 'changed' },
+            sourceRefs: input.sourceRefs,
+            idempotencyKey: input.idempotencyKey,
+            nowMs: input.nowMs,
+          }),
+      });
+    }
+    if (!input.decision.changedRefs) {
+      throw new Error('Changed primary operator decisions require changedRefs');
+    }
+    return commitOperatorCursor(this.db, {
+      cursorName: this.cursorName,
+      firstChangeSeq: input.seq,
+      lastChangeSeq: input.seq,
+      idempotencyKey: input.idempotencyKey,
+      status: 'changed',
+      changedRefs: input.decision.changedRefs,
+      sourceRefs: input.sourceRefs,
+      nowMs: input.nowMs,
+      allowSeqGaps: this.allowSeqGaps,
+    });
   }
 
   private resolveNoUpdateScope(candidateScopeKey: string | undefined): string {
