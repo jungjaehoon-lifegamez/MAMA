@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import type { IncomingMessage, ServerResponse } from 'http';
+import { dirname } from 'path';
+import { existsSync, mkdirSync, rmSync, rmdirSync, writeFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import Database from '../../src/sqlite.js';
 import { initValidationTables, createValidationSession } from '../../src/validation/store.js';
 import * as validationStore from '../../src/validation/store.js';
@@ -15,6 +18,37 @@ import {
   validateConfigUpdate,
   createGraphHandler,
 } from '../../src/api/graph-api.js';
+
+const OPERATOR_ENTRY_JS_PATH = fileURLToPath(
+  new URL('../../public/viewer/js/operator-entry.js', import.meta.url)
+);
+
+function ensureOperatorEntryFixture(): () => void {
+  if (existsSync(OPERATOR_ENTRY_JS_PATH)) {
+    return () => {};
+  }
+
+  const operatorEntryDir = dirname(OPERATOR_ENTRY_JS_PATH);
+  const hadOperatorEntryDir = existsSync(operatorEntryDir);
+
+  mkdirSync(operatorEntryDir, { recursive: true });
+  writeFileSync(
+    OPERATOR_ENTRY_JS_PATH,
+    "import { OperatorCockpitModule } from './modules/operator-cockpit.js';\n",
+    'utf8'
+  );
+
+  return () => {
+    rmSync(OPERATOR_ENTRY_JS_PATH, { force: true });
+    if (!hadOperatorEntryDir) {
+      try {
+        rmdirSync(operatorEntryDir);
+      } catch {
+        // Another test may have reused the generated asset directory.
+      }
+    }
+  };
+}
 
 describe('graph api helpers', () => {
   let db: Database;
@@ -105,6 +139,7 @@ describe('graph api helpers', () => {
       });
 
       it('serves the first-party operator entry module without falling through to auth', async () => {
+        const cleanupOperatorEntryFixture = ensureOperatorEntryFixture();
         const handler = createGraphHandler({ sessionsDb: db });
         const req = {
           method: 'GET',
@@ -114,11 +149,15 @@ describe('graph api helpers', () => {
         } as IncomingMessage;
         const res = createMockRes();
 
-        const handled = await handler(req, res as unknown as ServerResponse);
+        try {
+          const handled = await handler(req, res as unknown as ServerResponse);
 
-        expect(handled).toBe(true);
-        expect(res._status).toBe(200);
-        expect(res._body).toContain('OperatorCockpitModule');
+          expect(handled).toBe(true);
+          expect(res._status).toBe(200);
+          expect(res._body).toContain('OperatorCockpitModule');
+        } finally {
+          cleanupOperatorEntryFixture();
+        }
       });
     });
   });
