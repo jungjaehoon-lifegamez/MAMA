@@ -107,9 +107,13 @@ function normalizeManualWikiPage(page: WikiPublishPageInput): WikiPublishPageInp
     Object.prototype.hasOwnProperty.call(rawPage, 'sourceRefs') ||
     Object.prototype.hasOwnProperty.call(rawPage, 'source_refs') ||
     Object.prototype.hasOwnProperty.call(rawPage, 'sourceIds') ||
-    Object.prototype.hasOwnProperty.call(rawPage, 'source_ids')
+    Object.prototype.hasOwnProperty.call(rawPage, 'source_ids') ||
+    Object.prototype.hasOwnProperty.call(rawPage, 'changedRefs') ||
+    Object.prototype.hasOwnProperty.call(rawPage, 'changed_refs')
   ) {
-    throw requestError('Wiki source refs are derived from reviewed events');
+    throw requestError(
+      'Wiki source refs are derived from reviewed events and changed refs are derived from wiki page paths'
+    );
   }
   try {
     const content = requiredWikiString(page.content, 'content', 'manual wiki commit page');
