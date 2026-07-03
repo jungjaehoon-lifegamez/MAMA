@@ -277,6 +277,20 @@ describe('STORY-VNEXT-PR10-MANUAL-INGRESS: connector ingress manual no-update co
       db.close();
     });
 
+    it('rejects duplicate reviewed event ids with a clear error before durable writes', async () => {
+      const db = makeOperatorVNextDb();
+      const first = insertRawEvent(db, { sourceId: 'msg-1', timestampMs: 1710000001000 });
+
+      await expect(
+        commitConnectorIngressNoUpdateBatch(makeInput(db, [first, first]))
+      ).rejects.toThrow(/duplicate values/i);
+      expect(countRows(db, 'vnext_operator_commits')).toBe(0);
+      expect(countRows(db, 'operator_no_updates')).toBe(0);
+      expect(countRows(db, 'vnext_operator_cursors')).toBe(0);
+
+      db.close();
+    });
+
     it('uses cursor-scoped idempotency keys so connector seqs cannot collide across channels', async () => {
       const db = makeOperatorVNextDb();
       const publicEvent = insertRawEvent(db, {
