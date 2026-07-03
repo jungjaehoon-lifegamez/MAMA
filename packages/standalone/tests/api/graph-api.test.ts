@@ -83,6 +83,46 @@ describe('graph api helpers', () => {
     expect(filtered).toEqual([{ from: 'a', to: 'b', relationship: 'builds_on', reason: null }]);
   });
 
+  describe('Story V19.15: isolated operator viewer assets', () => {
+    describe('AC #1: operator admin surface is served before the auth gate', () => {
+      it('serves operator.html with a strict CSP header', async () => {
+        const handler = createGraphHandler({ sessionsDb: db });
+        const req = {
+          method: 'GET',
+          url: '/viewer/operator.html',
+          headers: { host: 'localhost' },
+          socket: { remoteAddress: '127.0.0.1' },
+        } as IncomingMessage;
+        const res = createMockRes();
+
+        const handled = await handler(req, res as unknown as ServerResponse);
+
+        expect(handled).toBe(true);
+        expect(res._status).toBe(200);
+        expect(res._headers['Content-Security-Policy']).toContain("script-src 'self'");
+        expect(res._body).toContain('/viewer/js/operator-entry.js');
+        expect(res._body).not.toContain('https://');
+      });
+
+      it('serves the first-party operator entry module without falling through to auth', async () => {
+        const handler = createGraphHandler({ sessionsDb: db });
+        const req = {
+          method: 'GET',
+          url: '/viewer/js/operator-entry.js',
+          headers: { host: 'localhost' },
+          socket: { remoteAddress: '127.0.0.1' },
+        } as IncomingMessage;
+        const res = createMockRes();
+
+        const handled = await handler(req, res as unknown as ServerResponse);
+
+        expect(handled).toBe(true);
+        expect(res._status).toBe(200);
+        expect(res._body).toContain('OperatorCockpitModule');
+      });
+    });
+  });
+
   it('rejects validation approval when the session belongs to another agent', async () => {
     createValidationSession(db, {
       id: 'vs-foreign',
@@ -636,8 +676,9 @@ function createMockRes() {
     setHeader(name: string, value: string) {
       this._headers[name] = value;
     },
-    writeHead(status: number) {
+    writeHead(status: number, headers?: Record<string, string>) {
       this._status = status;
+      this._headers = { ...this._headers, ...(headers ?? {}) };
     },
     end(body: string) {
       this._body = body;

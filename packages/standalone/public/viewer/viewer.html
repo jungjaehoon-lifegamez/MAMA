@@ -214,6 +214,7 @@
         font-family: 'Inter', 'Noto Sans KR', sans-serif;
         font-size: 13px;
         font-weight: 600;
+        text-decoration: none;
         cursor: pointer;
         transition:
           background 0.15s ease,
@@ -280,6 +281,7 @@
         color: #6b6560;
         font-size: 10px;
         font-weight: 600;
+        text-decoration: none;
         font-family: 'Inter', 'Noto Sans KR', sans-serif;
         cursor: pointer;
         transition: color 0.15s ease;
@@ -444,14 +446,10 @@
             <i data-lucide="rss"></i>
             <span>Feed</span>
           </button>
-          <button
-            class="mama-nav-item"
-            data-tab="operator"
-            onclick="window.switchTab && window.switchTab('operator')"
-          >
+          <a class="mama-nav-item" href="/viewer/operator.html" target="_blank" rel="noopener">
             <i data-lucide="clipboard-check"></i>
             <span>Operator</span>
-          </button>
+          </a>
           <button
             class="mama-nav-item"
             data-tab="wiki"
@@ -521,13 +519,6 @@
                   Loading connectors...
                 </div>
               </div>
-            </div>
-          </div>
-
-          <!-- Operator Tab -->
-          <div class="tab-content" id="tab-operator">
-            <div class="flex-1 flex flex-col min-h-0 overflow-y-auto p-4 md:p-6">
-              <div id="operator-cockpit-content"></div>
             </div>
           </div>
 
@@ -1550,13 +1541,9 @@
           >
             <i data-lucide="rss"></i><span>Feed</span>
           </button>
-          <button
-            class="mama-mobile-tab"
-            data-tab="operator"
-            onclick="window.switchTab && window.switchTab('operator')"
-          >
+          <a class="mama-mobile-tab" href="/viewer/operator.html" target="_blank" rel="noopener">
             <i data-lucide="clipboard-check"></i><span>Operator</span>
-          </button>
+          </a>
           <button
             class="mama-mobile-tab"
             data-tab="wiki"
@@ -1952,7 +1939,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       import { DashboardModule } from '/viewer/js/modules/dashboard.js';
       import { SettingsModule } from '/viewer/js/modules/settings.js';
       import { ConnectorFeedModule } from '/viewer/js/modules/connector-feed.js';
-      import { OperatorCockpitModule } from '/viewer/js/modules/operator-cockpit.js';
       import { WikiModule } from '/viewer/js/modules/wiki.js';
       import { AgentsModule } from '/viewer/js/modules/agents.js';
       import { API } from '/viewer/js/utils/api.js';
@@ -1964,7 +1950,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       const dashboard = new DashboardModule();
       const settings = new SettingsModule();
       const connectorFeed = new ConnectorFeedModule();
-      const operatorCockpit = new OperatorCockpitModule();
       const wiki = new WikiModule();
       const agentsModule = new AgentsModule();
 
@@ -2047,7 +2032,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       window.memoryModule = memory;
       window.dashboardModule = dashboard;
       window.settingsModule = settings;
-      window.operatorCockpitModule = operatorCockpit;
 
       // Quiz choice button handler
       window.sendQuizChoice = (choice) => {
@@ -2067,7 +2051,7 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         const moreMenu = document.getElementById('mama-mobile-more');
         if (moreMenu) moreMenu.style.display = 'none';
         const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        const overflowTabs = ['feed', 'operator', 'wiki', 'logs', 'settings'];
+        const overflowTabs = ['feed', 'wiki', 'logs', 'settings'];
         if (moreBtn) {
           moreBtn.classList.toggle('mama-nav-active', overflowTabs.includes(tabName));
         }
@@ -2161,9 +2145,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
           publishBasicTabContext();
         } else if (tabName === 'feed') {
           connectorFeed.init();
-          publishBasicTabContext();
-        } else if (tabName === 'operator') {
-          operatorCockpit.init();
           publishBasicTabContext();
         } else if (tabName === 'agents') {
           agentsModule.init();

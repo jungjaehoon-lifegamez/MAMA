@@ -249,6 +249,20 @@ function esc(value: unknown): string {
     .replace(/"/g, '&quot;');
 }
 
+function errorDiagnostic(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${redactDiagnosticText(error.message)}`;
+  }
+  return `NonError:${typeof error}`;
+}
+
+function redactDiagnosticText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+\b/gi, 'Bearer ***')
+    .replace(/\/Users\/[^\s"'<>]+/g, '/Users/***')
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '***@***');
+}
+
 function sanitizeCommits(value: unknown): CommitResultCommit[] {
   if (!Array.isArray(value)) {
     return [];
@@ -358,7 +372,7 @@ export function renderOperatorCockpitShell(): string {
 
 export function renderOperatorError(message: string, _error?: unknown): string {
   if (_error !== undefined) {
-    logger.error(message, _error);
+    logger.error(message, errorDiagnostic(_error));
   }
   return `<div class="operator-cockpit-error">${esc(message)}</div>`;
 }
