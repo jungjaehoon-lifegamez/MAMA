@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+    />
+    <title>MAMA Operator</title>
+    <meta name="theme-color" content="#F9F7F4" />
+    <link rel="icon" type="image/svg+xml" href="/viewer/icons/mama-icon.svg" />
+    <link rel="stylesheet" href="/viewer/viewer.css" />
+  </head>
+  <body class="operator-cockpit-page">
+    <main class="operator-cockpit-page-main">
+      <header class="operator-cockpit-page-header">
+        <a href="/viewer" rel="noopener" aria-label="Back to MAMA viewer">
+          <img src="/viewer/icons/mama-icon.svg" alt="" width="28" height="28" />
+          <span>MAMA</span>
+        </a>
+        <strong>Operator</strong>
+      </header>
+      <div id="operator-cockpit-content"></div>
+    </main>
+    <script type="module" src="/viewer/js/operator-entry.js"></script>
+  </body>
+</html>
