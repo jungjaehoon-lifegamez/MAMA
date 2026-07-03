@@ -780,6 +780,77 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
   tests/runtime-vnext/legacy-fanout-disabled.test.ts
 ```
 
+### PR 13: Manual Memory Commit From Reviewed Ingress
+
+Goal:
+
+- Add an authenticated, operator-owned path that commits manually reviewed
+  connector events into MAMA memory.
+- Save approved memories as staged records first, then promote them only after the
+  primary operator cursor commit succeeds.
+- Make retries idempotent by recording memory commit intents keyed to the operator
+  cursor idempotency key.
+
+Files:
+
+- Create: `packages/mama-core/db/migrations/040-create-operator-memory-commit-intents.sql`
+- Create: `packages/standalone/src/operator-vnext/connector-ingress-manual-memory-commit.ts`
+- Modify: `packages/standalone/src/cli/commands/start.ts`
+- Modify: `packages/standalone/src/operator-vnext/schema.ts`
+- Modify: `packages/mama-core/src/db-adapter/node-sqlite-adapter.ts`
+- Create: `packages/standalone/tests/operator-vnext/connector-ingress-manual-memory-commit.test.ts`
+- Modify: `packages/standalone/tests/runtime-vnext/bootstrap-api.test.ts`
+- Modify: `packages/standalone/tests/operator-vnext/schema.test.ts`
+- Modify: `packages/mama-core/tests/cases/migration-runner-duplicate-column.test.ts`
+
+Authenticated manual memory endpoint:
+
+```text
+POST /api/vnext/ingress/manual-memory-commit
+```
+
+Rules:
+
+- Manual memory commit is locked to the configured connector/channel.
+- Requests provide only reviewed event ids and memory payloads; source refs and
+  provenance are derived from reviewed raw events.
+- Request-supplied source refs, provenance, gateway call ids, agent ids, or model
+  run ids are rejected before durable writes.
+- The HTTP response is allowlisted and must not expose raw connector events,
+  source message bodies, local paths, memory ids, or internal provider fields.
+- Saved memories remain `stale` and suppress `memory_truth` projection until the
+  primary operator commit succeeds, so staged memories cannot enter normal truth
+  snapshots before cursor commit.
+- After cursor commit, each memory is promoted to its requested final status
+  through the normal memory evolution path, including `supersedes` chain updates.
+- If status promotion fails after the cursor commit, the response is still
+  `committed` with `promotionPending: true`; the intent stays `saved` so the
+  next idempotent replay can finish promotion without saving duplicate memories.
+- Duplicate committed replays must not re-save memories or re-promote memory
+  statuses.
+- Concurrent or cross-process attempts use
+  `operator_memory_commit_intents.status` and `claim_token` so only the current
+  save owner can update memory ids or advance the intent state.
+- A durable `saving` intent is a bounded lease, not a permanent lock. After the
+  lease expires, replay may CAS-take the claim and recover already-saved memory
+  ids from deterministic `gateway_call_id` provenance before saving anything new.
+- Partial failures must not advance the operator cursor.
+
+Verify:
+
+```bash
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
+  tests/operator-vnext/connector-ingress-manual-memory-commit.test.ts \
+  tests/runtime-vnext/bootstrap-api.test.ts \
+  tests/operator-vnext/schema.test.ts
+
+MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core exec vitest run \
+  tests/memory/memory-provenance.test.ts \
+  tests/memory/memory-promotion-semantic.test.ts \
+  tests/cases/migration-runner-duplicate-column.test.ts \
+  tests/cases/migration-chain.test.ts
+```
+
 ## Global Regression Checklist
 
 - legacy mode behavior unchanged
@@ -802,6 +873,18 @@ MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os exec vitest run \
 - DB busy retry is bounded
 - migration dry run does not write operator commits, cursors, or no-update rows
 - migration dry run does not promote unverified legacy artifacts
+- manual memory commit rejects caller-supplied refs/provenance before durable writes
+- manual memory commit keeps saved memories staged until cursor commit succeeds
+- manual memory commit staged saves do not project to `memory_truth` until promotion
+- manual memory commit duplicate replay does not duplicate saves or status promotion
+- manual memory commit partial failure does not expose raw connector content
+- manual memory commit HTTP responses are explicit allowlists
+- manual memory commit promotion failure is recoverable with `promotionPending`
+- manual memory commit stale save owners cannot overwrite promoted intents
+- manual memory commit stale `saving` leases recover saved memory ids without
+  duplicate saves
+- manual memory promotion writes both `supersedes` and `superseded_by` chain
+  fields
 
 ## Parallelization
 

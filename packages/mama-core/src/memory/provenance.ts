@@ -28,6 +28,7 @@ export interface TrustedProvenanceCapability {
 export interface TrustedMemoryWriteOptions {
   provenance: MemoryWriteProvenance;
   capability: TrustedProvenanceCapability;
+  projectTruth?: boolean;
 }
 
 export interface NormalizedMemoryProvenance {
@@ -135,6 +136,7 @@ export function appendProvenanceSourceRefs(
   assertTrustedProvenanceCapability(options.capability);
   return {
     capability: options.capability,
+    projectTruth: options.projectTruth,
     provenance: {
       ...options.provenance,
       source_refs: [...(options.provenance.source_refs ?? []), ...refs],

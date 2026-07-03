@@ -642,11 +642,15 @@ async function saveMemoryInternal(
   const id = buildDecisionId(input.topic);
   const now = Date.now();
   const provenance = normalizeMemoryWriteProvenance(options);
+  const targetStatus = input.status ?? 'active';
+  const shouldApplyEvolution = targetStatus === 'active';
   // Find evolution candidates: exact topic match first, then semantic search fallback
   const primaryScope = input.scopes.length > 0 ? input.scopes[0] : null;
   const excludeIds = new Set(input.excludeIds ?? []);
   let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
-  if (primaryScope) {
+  if (!shouldApplyEvolution) {
+    existingCandidates = [];
+  } else if (primaryScope) {
     const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
     existingCandidates = (
       adapter
@@ -688,7 +692,7 @@ async function saveMemoryInternal(
   }
 
   // Semantic fallback: if no exact topic match, find similar memories via vector search
-  if (existingCandidates.length === 0) {
+  if (shouldApplyEvolution && existingCandidates.length === 0) {
     try {
       const queryText = `${input.topic} ${input.summary}`;
       const embedding = await generateEmbedding(queryText);
@@ -724,13 +728,15 @@ async function saveMemoryInternal(
     }
   }
 
-  const evolution = resolveMemoryEvolution({
-    incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
-    existing: existingCandidates.map((c) => ({
-      ...c,
-      kind: (c.kind || 'fact') as MemoryRecord['kind'],
-    })),
-  });
+  const evolution = shouldApplyEvolution
+    ? resolveMemoryEvolution({
+        incoming: { topic: input.topic, summary: input.summary, kind: input.kind },
+        existing: existingCandidates.map((c) => ({
+          ...c,
+          kind: (c.kind || 'fact') as MemoryRecord['kind'],
+        })),
+      })
+    : { edges: [] };
   const supersedesTarget =
     evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ?? null;
 
@@ -786,7 +792,7 @@ async function saveMemoryInternal(
         )
         .run(
           input.kind,
-          input.status ?? 'active',
+          targetStatus,
           input.summary,
           input.kind === 'preference' || input.kind === 'constraint' ? 1 : 0,
           JSON.stringify({ source: input.source }),
@@ -861,21 +867,23 @@ async function saveMemoryInternal(
     throw rollbackError;
   }
 
-  // Project to memory_truth table (best-effort; failure should not break save)
-  try {
-    await projectMemoryTruth({
-      memory_id: id,
-      topic: input.topic,
-      truth_status: (input.status ?? 'active') as MemoryTruthRow['truth_status'],
-      effective_summary: input.summary,
-      effective_details: input.details,
-      trust_score: input.confidence ?? 0.5,
-      scope_refs: input.scopes,
-      supporting_event_ids: [],
-      superseded_by: undefined,
-    });
-  } catch {
-    // Truth projection is best-effort; do not fail the save
+  if (options?.projectTruth !== false) {
+    // Project to memory_truth table (best-effort; failure should not break save)
+    try {
+      await projectMemoryTruth({
+        memory_id: id,
+        topic: input.topic,
+        truth_status: targetStatus as MemoryTruthRow['truth_status'],
+        effective_summary: input.summary,
+        effective_details: input.details,
+        trust_score: input.confidence ?? 0.5,
+        scope_refs: input.scopes,
+        supporting_event_ids: [],
+        superseded_by: undefined,
+      });
+    } catch {
+      // Truth projection is best-effort; do not fail the save
+    }
   }
 
   return {
@@ -896,6 +904,203 @@ export async function saveMemoryWithTrustedProvenance(
   options: TrustedMemoryWriteOptions
 ): Promise<SaveMemoryResult> {
   return saveMemoryInternal(sanitizePublicSaveMemoryInput(input), options);
+}
+
+export async function promoteMemoryStatus(input: {
+  memoryId: string;
+  status: MemoryStatus;
+  nowMs?: number;
+}): Promise<void> {
+  await initDB();
+  const adapter = getAdapter();
+  const memoryId = input.memoryId;
+  const now = input.nowMs ?? Date.now();
+  const targetStatus = input.status;
+  const row = adapter
+    .prepare(
+      `
+        SELECT id, topic, decision, reasoning, confidence, kind, summary, supersedes
+        FROM decisions
+        WHERE id = ?
+      `
+    )
+    .get(memoryId) as
+    | {
+        id: string;
+        topic: string;
+        decision: string;
+        reasoning: string | null;
+        confidence: number | null;
+        kind: string | null;
+        summary: string | null;
+        supersedes: string | null;
+      }
+    | undefined;
+
+  if (!row) {
+    throw new Error(`Cannot promote missing memory ${memoryId}`);
+  }
+
+  const topic = String(row.topic);
+  const summary = String(row.summary ?? row.decision ?? '');
+  const details = String(row.reasoning ?? row.decision ?? '');
+  const kind = ((row.kind ?? 'fact') as MemoryKind) || 'fact';
+  const scopes = batchLoadScopes(adapter, [memoryId]).get(memoryId) ?? [];
+  let evolution: ReturnType<typeof resolveMemoryEvolution> = { edges: [] };
+
+  if (targetStatus === 'active') {
+    const primaryScope = scopes[0] ?? null;
+    let existingCandidates: Array<{ id: string; topic: string; summary: string; kind: string }>;
+    if (primaryScope) {
+      const scopeId = await ensureMemoryScope(primaryScope.kind, primaryScope.id);
+      existingCandidates = adapter
+        .prepare(
+          `
+            SELECT d.id, d.topic, d.summary, d.kind
+            FROM decisions d
+            JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+            WHERE d.topic = ? AND msb.scope_id = ? AND d.id <> ?
+              AND (d.status = 'active' OR d.status IS NULL)
+              AND d.superseded_by IS NULL
+            ORDER BY d.created_at DESC
+            LIMIT 5
+          `
+        )
+        .all(topic, scopeId, memoryId) as Array<{
+        id: string;
+        topic: string;
+        summary: string;
+        kind: string;
+      }>;
+    } else {
+      existingCandidates = adapter
+        .prepare(
+          `
+            SELECT id, topic, summary, kind
+            FROM decisions
+            WHERE topic = ? AND id <> ?
+              AND (status = 'active' OR status IS NULL)
+              AND superseded_by IS NULL
+            ORDER BY created_at DESC
+            LIMIT 5
+          `
+        )
+        .all(topic, memoryId) as Array<{
+        id: string;
+        topic: string;
+        summary: string;
+        kind: string;
+      }>;
+    }
+
+    if (existingCandidates.length === 0) {
+      try {
+        const queryText = `${topic} ${summary}`;
+        const embedding = await generateEmbedding(queryText);
+        const semanticResults = await vectorSearch(embedding, 3, 0.82);
+
+        let scopeFiltered = semanticResults;
+        if (primaryScope) {
+          const semIds = semanticResults.map((result) => String(result.id));
+          const semScopeMap = batchLoadScopes(adapter, semIds);
+          const scopeKey = `${primaryScope.kind}:${primaryScope.id}`;
+          scopeFiltered = semanticResults.filter((result) => {
+            const resultScopes = semScopeMap.get(String(result.id)) ?? [];
+            return (
+              resultScopes.length === 0 ||
+              resultScopes.some((scope) => `${scope.kind}:${scope.id}` === scopeKey)
+            );
+          });
+        }
+
+        existingCandidates = scopeFiltered
+          .filter((result) => String(result.id) !== memoryId)
+          .filter((result) => {
+            const status = String((result as { status?: unknown }).status || '');
+            return !status || status === 'active' || status === '';
+          })
+          .map((result) => ({
+            id: String(result.id),
+            topic: String(result.topic || ''),
+            summary: String(result.decision || ''),
+            kind: 'fact' as const,
+            _semanticMatch: true,
+          }));
+      } catch {
+        // Semantic search unavailable — proceed with exact-match candidates only.
+      }
+    }
+
+    evolution = resolveMemoryEvolution({
+      incoming: { topic, summary, kind },
+      existing: existingCandidates.map((candidate) => ({
+        ...candidate,
+        kind: (candidate.kind || 'fact') as MemoryRecord['kind'],
+      })),
+    });
+  }
+  const existingSupersedesTarget =
+    typeof row.supersedes === 'string' && row.supersedes.length > 0 ? row.supersedes : null;
+  const supersedesTarget =
+    evolution.edges.find((edge) => edge.type === 'supersedes')?.to_id ??
+    (targetStatus === 'active' ? existingSupersedesTarget : null);
+
+  adapter.transaction(() => {
+    const updated = adapter
+      .prepare('UPDATE decisions SET status = ?, supersedes = ?, updated_at = ? WHERE id = ?')
+      .run(targetStatus, supersedesTarget, now, memoryId);
+    if (updated.changes !== 1) {
+      throw new Error(`Cannot promote missing memory ${memoryId}`);
+    }
+
+    adapter
+      .prepare(
+        `
+          INSERT OR REPLACE INTO memory_truth (
+            memory_id, topic, truth_status, effective_summary, effective_details, trust_score,
+            scope_refs, supporting_event_ids, superseded_by, contradicted_by, created_at, updated_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT supporting_event_ids FROM memory_truth WHERE memory_id = ?), '[]'), NULL, NULL, COALESCE((SELECT created_at FROM memory_truth WHERE memory_id = ?), ?), ?)
+        `
+      )
+      .run(
+        memoryId,
+        topic,
+        targetStatus,
+        summary,
+        details,
+        row.confidence ?? 0.5,
+        JSON.stringify(scopes),
+        memoryId,
+        memoryId,
+        now,
+        now
+      );
+
+    for (const edge of evolution.edges) {
+      if (edge.type === 'supersedes') {
+        adapter
+          .prepare(
+            `UPDATE decisions SET superseded_by = ?, status = 'superseded', updated_at = ? WHERE id = ?`
+          )
+          .run(memoryId, now, edge.to_id);
+        adapter
+          .prepare(
+            `UPDATE memory_truth SET truth_status = 'superseded', superseded_by = ?, updated_at = ? WHERE memory_id = ?`
+          )
+          .run(memoryId, now, edge.to_id);
+      }
+
+      adapter
+        .prepare(
+          `
+            INSERT OR REPLACE INTO decision_edges (from_id, to_id, relationship, reason, weight, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+          `
+        )
+        .run(memoryId, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
+    }
+  });
 }
 
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {

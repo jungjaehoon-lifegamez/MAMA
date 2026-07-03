@@ -120,6 +120,13 @@ async function withCursorLock<T>(cursorName: string, operation: () => Promise<T>
   }
 }
 
+export async function runWithPrimaryOperatorCursorLock<T>(
+  cursorName: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  return withCursorLock(cursorName, operation);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }

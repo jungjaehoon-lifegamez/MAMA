@@ -10,6 +10,7 @@ import {
   ingestConversation,
   ingestConversationWithTrustedProvenance,
   ingestMemory,
+  promoteMemoryStatus,
   saveMemory,
   saveMemoryWithTrustedProvenance,
   setExtractionFn,
@@ -20,6 +21,7 @@ import {
 } from '../../src/memory/provenance-query.js';
 import { createTrustedProvenanceCapability } from '../../src/memory/provenance.js';
 import { listMemoryEventsForMemory } from '../../src/memory/event-store.js';
+import { queryRelevantTruth } from '../../src/memory/truth-store.js';
 import mama from '../../src/mama-api.js';
 
 const TEST_DB = path.join(os.tmpdir(), `test-memory-provenance-${randomUUID()}.db`);
@@ -193,6 +195,136 @@ describe('Story M2.1: Memory Write Provenance Foundation', () => {
       expect(JSON.parse(row.provenance_json)).toMatchObject({
         context_packet_id: 'ctxp_trusted_packet',
       });
+    });
+
+    it('applies evolution semantics when a staged memory is promoted to active', async () => {
+      const oldMemory = await saveMemory({
+        topic: 'manual_promotion_evolution_contract',
+        kind: 'decision',
+        summary: 'Use SQLite for the memory store',
+        details: 'Initial operator decision',
+        confidence: 0.8,
+        scopes: [PROJECT_SCOPE],
+        source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+      });
+      const stagedMemory = await saveMemory({
+        topic: 'manual_promotion_evolution_contract',
+        kind: 'decision',
+        summary: 'Use SQLite for the memory store with reviewed operator provenance',
+        details: 'Manual ingress review approved the replacement memory',
+        confidence: 0.9,
+        status: 'stale',
+        scopes: [PROJECT_SCOPE],
+        source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+      });
+
+      await promoteMemoryStatus({ memoryId: stagedMemory.id, status: 'active' });
+
+      expect(
+        getAdapter()
+          .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
+          .get(oldMemory.id)
+      ).toEqual({ status: 'superseded', superseded_by: stagedMemory.id });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, supersedes, superseded_by FROM decisions WHERE id = ?')
+          .get(stagedMemory.id)
+      ).toEqual({ status: 'active', supersedes: oldMemory.id, superseded_by: null });
+      expect(
+        getAdapter()
+          .prepare(`SELECT relationship FROM decision_edges WHERE from_id = ? AND to_id = ?`)
+          .get(stagedMemory.id, oldMemory.id)
+      ).toEqual({ relationship: 'supersedes' });
+      expect(
+        getAdapter()
+          .prepare('SELECT truth_status, superseded_by FROM memory_truth WHERE memory_id = ?')
+          .get(oldMemory.id)
+      ).toEqual({ truth_status: 'superseded', superseded_by: stagedMemory.id });
+      expect(
+        getAdapter()
+          .prepare('SELECT truth_status, superseded_by FROM memory_truth WHERE memory_id = ?')
+          .get(stagedMemory.id)
+      ).toEqual({ truth_status: 'active', superseded_by: null });
+
+      await promoteMemoryStatus({ memoryId: stagedMemory.id, status: 'active' });
+
+      expect(
+        getAdapter()
+          .prepare('SELECT status, superseded_by FROM decisions WHERE id = ?')
+          .get(oldMemory.id)
+      ).toEqual({ status: 'superseded', superseded_by: stagedMemory.id });
+      expect(
+        getAdapter()
+          .prepare('SELECT status, supersedes, superseded_by FROM decisions WHERE id = ?')
+          .get(stagedMemory.id)
+      ).toEqual({ status: 'active', supersedes: oldMemory.id, superseded_by: null });
+      expect(
+        getAdapter()
+          .prepare('SELECT truth_status, superseded_by FROM memory_truth WHERE memory_id = ?')
+          .get(oldMemory.id)
+      ).toEqual({ truth_status: 'superseded', superseded_by: stagedMemory.id });
+    });
+
+    it('keeps trusted staged writes out of truth projection until promotion', async () => {
+      const capability = createTrustedProvenanceCapability();
+      const stagedMemory = await saveMemoryWithTrustedProvenance(
+        {
+          topic: 'manual_staged_truth_projection_contract',
+          kind: 'decision',
+          summary: 'Stage reviewed manual memory before cursor commit',
+          details: 'The staged memory must not appear in truth snapshots before promotion.',
+          confidence: 0.9,
+          status: 'stale',
+          scopes: [PROJECT_SCOPE],
+          source: { package: 'mama-core', source_type: 'test', project_id: PROJECT_SCOPE.id },
+        },
+        {
+          capability,
+          projectTruth: false,
+          provenance: {
+            actor: 'user',
+            agent_id: 'operator:manual-admin',
+            tool_name: 'mama_save',
+            gateway_call_id: 'manual-staged-truth:memory:0',
+            source_refs: ['raw:slack:manual-staged-truth'],
+          },
+        }
+      );
+
+      expect(
+        getAdapter().prepare('SELECT status FROM decisions WHERE id = ?').get(stagedMemory.id)
+      ).toEqual({ status: 'stale' });
+      expect(
+        getAdapter()
+          .prepare('SELECT COUNT(*) AS count FROM memory_truth WHERE memory_id = ?')
+          .get(stagedMemory.id)
+      ).toEqual({ count: 0 });
+      expect(
+        (
+          await queryRelevantTruth({
+            query: 'manual staged truth projection',
+            scopes: [PROJECT_SCOPE],
+            includeHistory: true,
+          })
+        ).some((row) => row.memory_id === stagedMemory.id)
+      ).toBe(false);
+
+      await promoteMemoryStatus({ memoryId: stagedMemory.id, status: 'active' });
+
+      expect(
+        getAdapter()
+          .prepare('SELECT truth_status FROM memory_truth WHERE memory_id = ?')
+          .get(stagedMemory.id)
+      ).toEqual({ truth_status: 'active' });
+      expect(
+        (
+          await queryRelevantTruth({
+            query: 'manual staged truth projection',
+            scopes: [PROJECT_SCOPE],
+            includeHistory: true,
+          })
+        ).some((row) => row.memory_id === stagedMemory.id)
+      ).toBe(true);
     });
   });
 

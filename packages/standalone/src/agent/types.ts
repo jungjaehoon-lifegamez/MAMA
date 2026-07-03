@@ -1232,6 +1232,7 @@ export interface MemoryWriteProvenance {
 export interface TrustedMemoryWriteOptions {
   provenance: MemoryWriteProvenance;
   capability: unknown;
+  projectTruth?: boolean;
 }
 
 /**

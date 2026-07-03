@@ -6,7 +6,7 @@ export function makeOperatorVNextDb(): SQLiteDatabase {
   const db = new Database(':memory:');
   db.pragma('foreign_keys = ON');
   // The standalone SQLite wrapper exposes the migration helper's required better-sqlite3 surface.
-  applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+  applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 40);
   return db;
 }
 
