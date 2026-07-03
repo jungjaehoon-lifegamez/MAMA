@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const get = vi.fn();
-const post = vi.fn();
+const { get, post } = vi.hoisted(() => ({
+  get: vi.fn(),
+  post: vi.fn(),
+}));
 
 vi.mock('../../public/viewer/src/utils/api.js', () => ({
   API: { get, post },
@@ -284,6 +286,7 @@ describe('viewer operator cockpit module', () => {
     it('renders generic request errors without backend internals', async () => {
       const { renderOperatorError } =
         await import('../../public/viewer/src/modules/operator-cockpit.js');
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       const html = renderOperatorError('Operator request failed.', {
         message: 'LOCAL_PATH_SHOULD_NOT_RENDER',
@@ -291,6 +294,8 @@ describe('viewer operator cockpit module', () => {
 
       expect(html).toContain('Operator request failed.');
       expect(html).not.toContain('LOCAL_PATH_SHOULD_NOT_RENDER');
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
     });
 
     it('renders the cockpit shell with synthetic defaults', async () => {
@@ -478,6 +483,137 @@ describe('viewer operator cockpit module', () => {
       );
     });
 
+    it('clamps review limit input to its visible max bound', async () => {
+      const { OperatorCockpitModule } =
+        await import('../../public/viewer/src/modules/operator-cockpit.js');
+
+      class FakeInput {
+        constructor(
+          readonly value: string,
+          readonly max = ''
+        ) {}
+      }
+      vi.stubGlobal('HTMLInputElement', FakeInput);
+      vi.stubGlobal('HTMLTextAreaElement', FakeInput);
+
+      const container = {
+        querySelector: vi.fn((selector: string) => {
+          if (selector === 'input[name="connector"]') {
+            return new FakeInput('discord');
+          }
+          if (selector === 'input[name="channel"]') {
+            return new FakeInput('G_PUBLIC');
+          }
+          if (selector === 'input[name="limit"]') {
+            return new FakeInput('10000', '100');
+          }
+          return null;
+        }),
+      };
+      const module = new OperatorCockpitModule();
+      Reflect.set(module, 'container', container);
+      const readScope = Reflect.get(module, 'readScope') as () => {
+        connector: string;
+        channel: string;
+        limit?: number;
+      };
+
+      expect(readScope.call(module)).toEqual({
+        connector: 'discord',
+        channel: 'G_PUBLIC',
+        limit: 100,
+      });
+    });
+
+    it('blocks duplicate commits while the same row is already committing', async () => {
+      const { OperatorCockpitModule } =
+        await import('../../public/viewer/src/modules/operator-cockpit.js');
+
+      class FakeHTMLElement {
+        innerHTML = '';
+      }
+      class FakeInput {
+        constructor(readonly value: string) {}
+      }
+      class FakeButton extends FakeHTMLElement {
+        disabled = false;
+      }
+      const firstButton = new FakeButton();
+      const secondButton = new FakeButton();
+      const row = {
+        querySelectorAll: vi.fn(() => [firstButton, secondButton]),
+      };
+      const resultSlot = new FakeHTMLElement();
+      const container = {
+        querySelector: vi.fn((selector: string) => {
+          if (selector === '#operator-cockpit-result') {
+            return resultSlot;
+          }
+          if (selector === 'input[name="admin-token"]') {
+            return new FakeInput('ADMIN_BEARER_VALUE');
+          }
+          return null;
+        }),
+      };
+      let resolveCommit: (value: { ok: boolean; status: string }) => void = () => {};
+      const pendingCommit = new Promise<{ ok: boolean; status: string }>((resolve) => {
+        resolveCommit = resolve;
+      });
+      const controller = {
+        commitNoUpdate: vi.fn(() => pendingCommit),
+      };
+
+      vi.stubGlobal('HTMLElement', FakeHTMLElement);
+      vi.stubGlobal('HTMLButtonElement', FakeButton);
+      vi.stubGlobal('HTMLInputElement', FakeInput);
+      vi.stubGlobal('HTMLTextAreaElement', FakeInput);
+
+      const module = new OperatorCockpitModule(
+        controller as unknown as ConstructorParameters<typeof OperatorCockpitModule>[0]
+      );
+      Reflect.set(module, 'container', container);
+      Reflect.set(module, 'currentState', {
+        cursor: {
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          advancedThroughSeq: 7,
+        },
+        events: [],
+      });
+      Reflect.set(module, 'loadBatch', vi.fn().mockResolvedValue(undefined));
+      const commitEvent = Reflect.get(module, 'commitEvent') as (
+        action: string,
+        eventIndexId: string,
+        row: Element | null,
+        trigger?: HTMLElement
+      ) => Promise<void>;
+
+      const firstCommit = commitEvent.call(
+        module,
+        'no_update',
+        'raw_synthetic_8',
+        row as unknown as Element,
+        firstButton as unknown as HTMLElement
+      );
+      await commitEvent.call(
+        module,
+        'no_update',
+        'raw_synthetic_8',
+        row as unknown as Element,
+        secondButton as unknown as HTMLElement
+      );
+
+      expect(controller.commitNoUpdate).toHaveBeenCalledTimes(1);
+      expect(firstButton.disabled).toBe(true);
+      expect(secondButton.disabled).toBe(true);
+
+      resolveCommit({ ok: true, status: 'committed' });
+      await firstCommit;
+
+      expect(firstButton.disabled).toBe(false);
+      expect(secondButton.disabled).toBe(false);
+    });
+
     it('does not fall back to document inputs when the event row is missing', async () => {
       const { OperatorCockpitModule } =
         await import('../../public/viewer/src/modules/operator-cockpit.js');
@@ -513,6 +649,7 @@ describe('viewer operator cockpit module', () => {
       const controller = {
         commitWiki: vi.fn().mockResolvedValue({ ok: true, status: 'committed' }),
       };
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       vi.stubGlobal('document', documentRoot);
       vi.stubGlobal('HTMLElement', FakeHTMLElement);
       vi.stubGlobal('HTMLInputElement', FakeInput);
@@ -533,7 +670,8 @@ describe('viewer operator cockpit module', () => {
       const commitEvent = Reflect.get(module, 'commitEvent') as (
         action: string,
         eventIndexId: string,
-        row: Element | null
+        row: Element | null,
+        trigger?: HTMLElement
       ) => Promise<void>;
 
       await commitEvent.call(module, 'wiki', 'raw_synthetic_8', null);
@@ -541,6 +679,8 @@ describe('viewer operator cockpit module', () => {
       expect(controller.commitWiki).not.toHaveBeenCalled();
       expect(documentRoot.querySelector).not.toHaveBeenCalled();
       expect(resultSlot.innerHTML).toContain('Operator commit failed.');
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
     });
   });
 
