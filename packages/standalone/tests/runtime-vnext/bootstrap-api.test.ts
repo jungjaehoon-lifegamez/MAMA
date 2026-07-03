@@ -16,6 +16,7 @@ import {
   commitConnectorIngressNoUpdateBatch,
   createConnectorIngressManualNoUpdateCommitProvider,
 } from '../../src/operator-vnext/connector-ingress-manual-commit.js';
+import { commitConnectorIngressWikiBatch } from '../../src/operator-vnext/connector-ingress-manual-wiki-commit.js';
 import { createConnectorIngressMigrationDryRunProvider } from '../../src/operator-vnext/connector-ingress-migration-dry-run.js';
 import { ensureVNextOperatorSchema } from '../../src/operator-vnext/schema.js';
 import {
@@ -24,7 +25,12 @@ import {
   type VNextBootstrapRuntimeStatus,
 } from '../../src/runtime-vnext/bootstrap.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
-import { isVNextWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
+import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
+import {
+  createWikiPublishAdapter,
+  isVNextWikiPublishAdapter,
+  MAX_WIKI_PAGE_CONTENT_CHARS,
+} from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 const AUTH_TOKEN_ENV = 'MAMA_AUTH_TOKEN';
 const ADMIN_TOKEN_ENV = 'MAMA_ADMIN_TOKEN';
@@ -89,6 +95,15 @@ function insertRawEvent(
     '2026-07-02T00:00:00.000Z'
   );
   return eventIndexId;
+}
+
+function makeManualWikiPages(count: number, prefix: string) {
+  return Array.from({ length: count }, (_, index) => ({
+    path: `projects/${prefix}-${index}.md`,
+    title: `${prefix} ${index}`,
+    type: 'entity',
+    content: 'operator-authored wiki summary',
+  }));
 }
 
 describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
@@ -732,6 +747,361 @@ describe('STORY-VNEXT-PR1-BOOTSTRAP-API: vNext bootstrap API security', () => {
       ]);
 
       db.close();
+    });
+
+    it('serves admin-only manual wiki ingress commits with an allowlisted payload', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const eventIndexId = insertRawEvent(db, 'msg-1', { channel: 'C_PUBLIC_SYNTHETIC' });
+      const store = new WikiArtifactStore(db);
+      const wikiPublishAdapter = createWikiPublishAdapter({
+        mode: 'vnext',
+        store,
+        now: () => new Date('2026-07-03T00:00:00.000Z'),
+        nowMs: () => 1710000000000,
+      });
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: (input) =>
+          commitConnectorIngressWikiBatch({
+            rawAdapter: db,
+            operatorDb: db,
+            wikiPublishAdapter,
+            ...input,
+            nowMs: () => 1710000000000,
+          }),
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: eventIndexId,
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  type: 'entity',
+                  content: 'operator-authored wiki summary',
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        ok: true,
+        mode: 'manual_wiki_commit',
+        status: 'committed',
+        cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+        connector: 'slack',
+        channel: 'C_PUBLIC_SYNTHETIC',
+        requestedCount: 1,
+        processed: 1,
+        advancedThroughSeq: 1,
+        firstSeq: 1,
+        lastSeq: 1,
+        pagesStored: 1,
+        commits: [{ seq: 1, status: 'changed', outcome: 'committed', cursorAdvanced: true }],
+      });
+      expect(JSON.stringify(response.body)).not.toContain('synthetic public rollout event');
+      expect(JSON.stringify(response.body)).not.toContain('synthetic-user');
+      expect(JSON.stringify(response.body)).not.toContain('metadata_json');
+      expect(JSON.stringify(response.body)).not.toContain(LOCAL_PATH_PREFIX);
+      expect(store.getByPath('projects/manual-wiki.md')?.sourceRefs).toEqual([
+        `raw:slack:${eventIndexId}`,
+      ]);
+
+      db.close();
+    });
+
+    it('accepts manual wiki content below the core wiki content limit through the API', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const validLargeContent = 'x'.repeat(MAX_WIKI_PAGE_CONTENT_CHARS - 1);
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: (input) => {
+          providerCalls += 1;
+          expect(input.eventPages[0]?.pages[0]?.content).toHaveLength(validLargeContent.length);
+          return {
+            ok: true,
+            mode: 'manual_wiki_commit',
+            status: 'committed',
+            cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+            connector: 'slack',
+            channel: 'C_PUBLIC_SYNTHETIC',
+            requestedCount: 1,
+            processed: 1,
+            advancedThroughSeq: 1,
+            firstSeq: 1,
+            lastSeq: 1,
+            pagesStored: 1,
+            commits: [{ seq: 1, status: 'changed', outcome: 'committed', cursorAdvanced: true }],
+          };
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  type: 'entity',
+                  content: validLargeContent,
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        ok: true,
+        mode: 'manual_wiki_commit',
+        pagesStored: 1,
+      });
+      expect(providerCalls).toBe(1);
+    });
+
+    it('accepts valid manual wiki payloads whose JSON encoding expands content bytes', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const validEscapedContent = '"'.repeat(MAX_WIKI_PAGE_CONTENT_CHARS);
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: (input) => {
+          providerCalls += 1;
+          expect(input.eventPages).toHaveLength(100);
+          expect(input.eventPages[0]?.pages[0]?.content).toHaveLength(MAX_WIKI_PAGE_CONTENT_CHARS);
+          return {
+            ok: true,
+            mode: 'manual_wiki_commit',
+            status: 'committed',
+            cursorName: 'connector:slack:channel:C_PUBLIC_SYNTHETIC',
+            connector: 'slack',
+            channel: 'C_PUBLIC_SYNTHETIC',
+            requestedCount: 100,
+            processed: 100,
+            advancedThroughSeq: 100,
+            firstSeq: 1,
+            lastSeq: 100,
+            pagesStored: 100,
+            commits: [],
+          };
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: Array.from({ length: 100 }, (_, index) => ({
+            event_index_id: `synthetic-event-index-id-${index}`,
+            pages: [
+              {
+                path: `projects/manual-wiki-${index}.md`,
+                title: `Manual Wiki ${index}`,
+                type: 'entity',
+                content: validEscapedContent,
+              },
+            ],
+          })),
+        });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toMatchObject({
+        ok: true,
+        mode: 'manual_wiki_commit',
+        pagesStored: 100,
+      });
+      expect(providerCalls).toBe(1);
+    });
+
+    it('rejects manual wiki API requests above the aggregate page limit before provider execution', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when aggregate pages exceed the request limit');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id-1',
+              pages: makeManualWikiPages(60, 'first'),
+            },
+            {
+              event_index_id: 'synthetic-event-index-id-2',
+              pages: makeManualWikiPages(41, 'second'),
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+      });
+      expect(response.body.error).toMatch(/at most 100 total pages/i);
+      expect(providerCalls).toBe(0);
+    });
+
+    it('requires admin auth for manual wiki ingress commits', async () => {
+      process.env[AUTH_TOKEN_ENV] = 'vnext-status-token';
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      const db = new Database(':memory:');
+      applyMigrationsThrough(db as unknown as Parameters<typeof applyMigrationsThrough>[0], 39);
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: () => {
+          throw new Error('provider must not run without admin auth');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-status-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  content: 'operator-authored wiki summary',
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(401);
+      expect(response.body).toMatchObject({
+        error: true,
+        code: 'UNAUTHORIZED',
+      });
+      expect(db.prepare('SELECT COUNT(*) AS count FROM vnext_operator_commits').get()).toEqual({
+        count: 0,
+      });
+
+      db.close();
+    });
+
+    it('rejects manual wiki ingress commit requests that try to supply source refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when source refs are supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  content: 'operator-authored wiki summary',
+                  source_refs: ['raw:slack:synthetic-event-index-id'],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
+    });
+
+    it('rejects manual wiki ingress commit requests that try to supply page changed refs', async () => {
+      process.env[ADMIN_TOKEN_ENV] = 'vnext-admin-token';
+      let providerCalls = 0;
+      const apiServer = createVNextBootstrapApiServer(makeStatus(), {
+        ingressManualWikiCommitProvider: () => {
+          providerCalls += 1;
+          throw new Error('provider must not run when page changed refs are supplied');
+        },
+      });
+
+      const response = await request(apiServer.app)
+        .post('/api/vnext/ingress/manual-wiki-commit')
+        .set('cf-connecting-ip', '203.0.113.10')
+        .set('authorization', 'Bearer vnext-admin-token')
+        .send({
+          connector: 'slack',
+          channel: 'C_PUBLIC_SYNTHETIC',
+          expected_advanced_through_seq: 0,
+          event_pages: [
+            {
+              event_index_id: 'synthetic-event-index-id',
+              pages: [
+                {
+                  path: 'projects/manual-wiki.md',
+                  title: 'Manual Wiki',
+                  content: 'operator-authored wiki summary',
+                  changed_refs: ['wiki_page:projects/caller-supplied.md'],
+                },
+              ],
+            },
+          ],
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({
+        ok: false,
+        code: 'vnext_ingress_manual_wiki_commit_invalid_request',
+      });
+      expect(providerCalls).toBe(0);
     });
 
     it('rejects manual no-update ingress commit requests that try to supply changed refs', async () => {
