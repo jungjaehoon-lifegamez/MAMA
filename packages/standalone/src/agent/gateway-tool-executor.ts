@@ -116,6 +116,7 @@ import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
 import {
   createWikiPublishAdapter,
+  isVNextWikiPublishAdapter,
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
@@ -2067,6 +2068,17 @@ export class GatewayToolExecutor {
           if (!pagesInput || !Array.isArray(pagesInput)) {
             throw new AgentError(
               'wiki_publish requires pages array',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (
+            this.vNextCommitRuntimeMode === 'vnext' &&
+            !isVNextWikiPublishAdapter(this.wikiPublishAdapter)
+          ) {
+            throw new AgentError(
+              'vNext wiki_publish requires a vNext source-linked wiki artifact adapter',
               'TOOL_ERROR',
               undefined,
               false
