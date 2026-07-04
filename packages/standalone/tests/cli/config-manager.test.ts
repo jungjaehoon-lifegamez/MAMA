@@ -155,8 +155,8 @@ describe('ConfigManager', () => {
 
       await writeFile(configPath, yaml.dump(minimalConfig));
 
-      process.env.MAMA_MEMORY_POLICY_IMPLICIT_RECALL = 'true';
-      process.env.MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH = '1';
+      process.env.MAMA_MEMORY_POLICY_IMPLICIT_RECALL = ' TRUE ';
+      process.env.MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH = ' 1 ';
 
       try {
         const loaded = await initConfig();
@@ -554,10 +554,13 @@ describe('ConfigManager', () => {
       const config = {
         ...DEFAULT_CONFIG,
         memory_policy: {
-          implicit_recall: 'false',
-          implicit_legacy_context_search: 'true',
+          ...DEFAULT_CONFIG.memory_policy!,
         },
-      } as unknown as MAMAConfig;
+      };
+      Object.assign(config.memory_policy, {
+        implicit_recall: 'false',
+        implicit_legacy_context_search: 'true',
+      });
 
       const errors = validateConfig(config);
 

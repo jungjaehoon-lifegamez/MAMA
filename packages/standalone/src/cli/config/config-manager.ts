@@ -183,7 +183,9 @@ function applyEnvOverrides(config: MAMAConfig): MAMAConfig {
     const [section, field] = path;
     const sectionObj = result[section];
     if (sectionObj && typeof sectionObj === 'object') {
-      const parsed = type === 'boolean' ? value === 'true' || value === '1' : Number(value);
+      const normalizedValue = value.trim().toLowerCase();
+      const parsed =
+        type === 'boolean' ? normalizedValue === 'true' || normalizedValue === '1' : Number(value);
       if (type === 'number' && isNaN(parsed as number)) {
         continue;
       }
