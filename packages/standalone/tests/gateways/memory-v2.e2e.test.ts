@@ -62,12 +62,13 @@ describe('Story: Memory V2 Standalone Integration', () => {
         return 'Agent response';
       });
 
+      const recallMemory = vi.fn(mamaApi.recallMemory.bind(mamaApi));
       const mamaApiClient = {
         search: async (query: string, limit?: number) => {
           const result = await mamaApi.suggest(query, limit !== undefined ? { limit } : undefined);
           return result?.results || [];
         },
-        recallMemory: mamaApi.recallMemory.bind(mamaApi),
+        recallMemory,
         ingestMemory: mamaApi.ingestMemory.bind(mamaApi),
         save: mamaApi.save.bind(mamaApi),
       };
@@ -111,6 +112,7 @@ describe('Story: Memory V2 Standalone Integration', () => {
 
       expect(lastPrompt).not.toContain('[MAMA Profile]');
       expect(lastPrompt).not.toContain('[MAMA Memories]');
+      expect(recallMemory).not.toHaveBeenCalled();
 
       sessionStore.close();
     });
