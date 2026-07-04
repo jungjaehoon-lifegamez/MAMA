@@ -287,6 +287,11 @@ agent:
 database:
   path: ~/.claude/mama-memory.db # SQLite database location
 
+# Message-router memory policy
+memory_policy:
+  implicit_recall: false # Opt into startup-prompt recallMemory injection
+  implicit_legacy_context_search: false # Opt into startup-prompt legacy decision search
+
 # Logging settings
 logging:
   level: info # Log level: debug, info, warn, error
@@ -304,8 +309,8 @@ discord:
 # Slack gateway (optional)
 slack:
   enabled: false
-  bot_token: xoxb-YOUR-BOT-TOKEN
-  app_token: xapp-YOUR-APP-TOKEN
+  bot_token: SLACK_BOT_TOKEN_VALUE
+  app_token: SLACK_APP_TOKEN_VALUE
 
 # Telegram gateway (optional)
 telegram:
@@ -404,6 +409,27 @@ Notes:
 | `path` | string | ~/.claude/mama-memory.db | SQLite database location |
 
 **Note:** Database is shared with Claude Code plugin and MCP server if using the same path.
+
+#### Memory Policy Settings
+
+| Option                           | Type | Default | Description                                   |
+| -------------------------------- | ---- | ------- | --------------------------------------------- |
+| `implicit_recall`                | bool | false   | Add `recallMemory` results to startup prompts |
+| `implicit_legacy_context_search` | bool | false   | Add legacy decision-search to startup prompts |
+
+By default, new gateway CLI sessions do not add `recallMemory` or legacy
+decision-search bundles to the startup prompt. Use explicit memory tools such as
+`mama_recall` when you want evidence for a turn. Enable these options only when
+broad startup recall is an intentional local policy.
+
+Use YAML booleans (`true`/`false`) rather than quoted strings.
+
+Continuing resumed CLI turns keep using the existing CLI context instead of
+rebuilding the full startup prompt.
+
+This policy does not disable the older session-start context path for channel
+summaries, checkpoints, or recent decision snippets when those startup APIs are
+configured.
 
 #### Logging Settings
 
@@ -801,6 +827,12 @@ export MAMA_DB_PATH=/custom/path/mama.db
 
 # Set log level
 export MAMA_LOG_LEVEL=debug
+
+# Opt into implicit startup-prompt memory recall
+export MAMA_MEMORY_POLICY_IMPLICIT_RECALL=true
+
+# Opt into startup-prompt legacy decision-search context injection
+export MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH=true
 
 # Start with environment overrides
 mama start

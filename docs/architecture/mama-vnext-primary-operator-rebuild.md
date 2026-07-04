@@ -1,9 +1,9 @@
 # MAMA vNext Primary Operator Rebuild Plan
 
-Status: implementation through PR 15 merged; PR 16 adds the synthetic dogfood harness.
+Status: implementation through PR 16 merged; PR 17 records the rollout decision and explicit memory-policy opt-ins.
 Branch base: `origin/main`.
 Decision date: 2026-07-02.
-Last updated: 2026-07-03.
+Last updated: 2026-07-04.
 
 ## Decision
 
@@ -35,7 +35,7 @@ blockers for starting PR 0.
 
 ## Implementation Status
 
-PR 0 through PR 15 have landed on `main`.
+PR 0 through PR 16 have landed on `main`.
 
 | Slice | GitHub PR | State  | Result                                             |
 | ----- | --------- | ------ | -------------------------------------------------- |
@@ -55,13 +55,14 @@ PR 0 through PR 15 have landed on `main`.
 | PR 13 | #111      | merged | manual reviewed memory ingress commit              |
 | PR 14 | #112      | merged | completion gates and staged privacy checks         |
 | PR 15 | #113      | merged | isolated vNext operator review cockpit             |
-| PR 16 | pending   | active | synthetic end-to-end dogfood harness               |
+| PR 16 | #114      | merged | synthetic end-to-end dogfood harness               |
+| PR 17 | pending   | active | default rollout decision and memory-policy opt-ins |
 
 PR 14 did not add runtime behavior. It closed the plan drift created by PR 9-13,
 centralized staged privacy checks, defined completion gates, and prevented later
 code slices from guessing what "done" means.
 
-PR 15 added the first-party operator review cockpit. PR 16 proves the cockpit's
+PR 15 added the first-party operator review cockpit. PR 16 proved the cockpit's
 backend path with synthetic data only: preview, dry-run, no-update, wiki, memory,
 projection, replay, and explicit recall gating.
 
@@ -1206,10 +1207,27 @@ Goal:
   document explicit opt-ins for implicit recall and legacy context search.
 - Update user-facing docs and release notes only after PR 15 and PR 16 pass.
 
+Decision:
+
+- vNext remains opt-in after PR 17. The synthetic dogfood harness and cockpit
+  prove the reviewed local path, but default rollout still needs migration
+  guidance and real local smoke evidence.
+- Ordinary gateway turns keep `implicit_recall` and
+  `implicit_legacy_context_search` disabled by default.
+- Explicit recall remains available through the reviewed tool path. Users who
+  deliberately want startup-prompt implicit context for new CLI sessions must
+  opt in through `memory_policy` in `config.yaml` or the matching
+  `MAMA_MEMORY_POLICY_*` environment variables.
+- PR 17 does not redefine the older session-start context path for channel
+  summaries, checkpoints, or recent decision snippets. That legacy startup
+  behavior remains one reason default rollout waits on migration docs and real
+  local smoke evidence.
+
 Rules:
 
-- Do not make vNext default until the synthetic dogfood harness passes and the
-  operator cockpit has been reviewed for private-data leakage.
+- Do not make vNext default until migration docs and real local smoke evidence
+  exist, even though the synthetic dogfood harness has passed.
+- Continue reviewing every rollout change for private-data leakage before PR.
 - Legacy runtime must remain available until migration docs exist.
 
 ## Global Regression Checklist
