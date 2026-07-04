@@ -210,15 +210,16 @@ const RECALL_TEXT_REDACTION_PATTERNS = [
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
   /\b(?:Bearer|Token|Authorization)\s*[:=]?\s*[A-Za-z0-9._~+/=-]{8,}/gi,
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*[^\s"']{8,}/gi,
-  /\b(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{8,}\b/g,
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g,
-  /\bsk-[A-Za-z0-9_-]{20,}\b/g,
+  /(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{8,}\b/g,
+  /xox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /sk-[A-Za-z0-9_-]{20,}\b/g,
   /\b[CU][A-Z0-9]{8,}\b/g,
   /\b[0-9]{17,20}\b/g,
   /(?:\/Users|\/home|\/tmp)\/[^\s"']*/g,
   /[A-Za-z]:\\Users\\[^\s"']*/g,
 ] as const;
 const MAX_RECALL_TEXT_LENGTH = 280;
+const RECALL_TEXT_REDACTION_SCAN_LIMIT = MAX_RECALL_TEXT_LENGTH + 2048;
 
 type TrustedMemoryWriteBuildResult = {
   options: TrustedMemoryWriteOptions;
@@ -286,12 +287,19 @@ function sanitizeRecallText(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
   }
-  const needsTruncation = value.length > MAX_RECALL_TEXT_LENGTH;
-  let sanitized = needsTruncation ? value.slice(0, MAX_RECALL_TEXT_LENGTH) : value;
+  let sanitized =
+    value.length > RECALL_TEXT_REDACTION_SCAN_LIMIT
+      ? value.slice(0, RECALL_TEXT_REDACTION_SCAN_LIMIT)
+      : value;
   for (const pattern of RECALL_TEXT_REDACTION_PATTERNS) {
     sanitized = sanitized.replace(pattern, '[redacted]');
   }
-  if (needsTruncation) {
+  const wasTruncated =
+    value.length > MAX_RECALL_TEXT_LENGTH || sanitized.length > MAX_RECALL_TEXT_LENGTH;
+  if (sanitized.length > MAX_RECALL_TEXT_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_RECALL_TEXT_LENGTH);
+  }
+  if (wasTruncated) {
     sanitized = `${sanitized} [truncated]`;
   }
   return sanitized;

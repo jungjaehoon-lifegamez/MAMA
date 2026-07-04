@@ -16,6 +16,20 @@ if ! command -v gitleaks >/dev/null 2>&1; then
   exit 1
 fi
 
+GITLEAKS_VERSION="$(gitleaks version 2>/dev/null | head -n 1)"
+GITLEAKS_VERSION="${GITLEAKS_VERSION#v}"
+GITLEAKS_MAJOR="${GITLEAKS_VERSION%%.*}"
+case "$GITLEAKS_MAJOR" in
+  '' | *[!0-9]*)
+    echo "Cannot parse gitleaks version: ${GITLEAKS_VERSION:-unknown}" >&2
+    exit 1
+    ;;
+esac
+if [ "$GITLEAKS_MAJOR" -lt 8 ]; then
+  echo "gitleaks v8.0.0 or newer is required (found: ${GITLEAKS_VERSION})" >&2
+  exit 1
+fi
+
 if ! git rev-parse --verify "${BASE_REF}^{commit}" >/dev/null 2>&1; then
   echo "Cannot resolve gitleaks base ref: ${BASE_REF}" >&2
   exit 1
@@ -88,21 +102,23 @@ fi
 
 echo "Scanning ${#CHANGED_FILES[@]} PR-changed files with gitleaks against ${BASE_REF}"
 
-for path in "${STAGED_FILES[@]}"; do
-  if [ -z "$path" ]; then
-    continue
-  fi
+if [ "${#STAGED_FILES[@]}" -gt 0 ]; then
+  for path in "${STAGED_FILES[@]}"; do
+    if [ -z "$path" ]; then
+      continue
+    fi
 
-  staged_scan_path="$TMP_STAGED_ROOT/$path"
-  mkdir -p "$(dirname -- "$staged_scan_path")"
-  if ! git show ":$path" > "$staged_scan_path"; then
-    echo "Failed to materialize staged blob for gitleaks scan: $path" >&2
-    FOUND=1
-    continue
-  fi
+    staged_scan_path="$TMP_STAGED_ROOT/$path"
+    mkdir -p "$(dirname -- "$staged_scan_path")"
+    if ! git show ":$path" > "$staged_scan_path"; then
+      echo "Failed to materialize staged blob for gitleaks scan: $path" >&2
+      FOUND=1
+      continue
+    fi
 
-  scan_materialized_file "$staged_scan_path" "$path"
-done
+    scan_materialized_file "$staged_scan_path" "$path"
+  done
+fi
 
 for path in "${CHANGED_FILES[@]}"; do
   if [ -z "$path" ]; then

@@ -370,6 +370,56 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         });
         expect(mockApi.recallMemory).not.toHaveBeenCalled();
       });
+
+      it('should redact recall secrets that cross the truncation boundary', async () => {
+        const mockApi = createMockApi();
+        const boundaryCrossingSecret = `sk-${'a'.repeat(120)}`;
+        vi.mocked(mockApi.recallMemory).mockResolvedValue({
+          profile: { static: [], dynamic: [], evidence: [] },
+          memories: [
+            {
+              topic: 'operator/manual-memory',
+              summary: `${'x'.repeat(260)}${boundaryCrossingSecret} should not leak`,
+            },
+          ],
+          graph_context: { primary: [], expanded: [], edges: [] },
+          search_meta: { query: boundaryCrossingSecret },
+        });
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          envelopeIssuanceMode: 'off',
+        });
+        const discordContext = createDiscordContext();
+
+        const result = await executor.execute(
+          'mama_recall',
+          {
+            query: 'operator/manual-memory',
+          },
+          {
+            agentContext: {
+              ...discordContext,
+              session: {
+                ...discordContext.session,
+                channelId: 'channel-allowed',
+                userId: 'user-allowed',
+              },
+            },
+            agentId: 'chat_bot',
+            source: 'discord',
+            channelId: 'channel-allowed',
+            executionSurface: 'model_tool',
+          } as Parameters<GatewayToolExecutor['execute']>[2]
+        );
+
+        expect(result).toMatchObject({ success: true });
+        const bundle = (result as { bundle: { memories: Array<{ summary?: string }> } }).bundle;
+        const summary = bundle.memories[0]?.summary ?? '';
+        expect(summary).toContain('[redacted]');
+        expect(summary).toContain('[truncated]');
+        expect(summary).not.toContain('sk-');
+        expect(JSON.stringify(result)).not.toContain(boundaryCrossingSecret);
+      });
     });
 
     describe('update tool', () => {

@@ -1173,6 +1173,9 @@ Files:
 - Modify: `packages/standalone/src/gateways/message-router.ts`
 - Modify: `packages/standalone/src/gateways/types.ts`
 - Modify: `packages/standalone/tests/agent/gateway-tool-executor.test.ts`
+- Modify: `packages/standalone/tests/contract/envelope-callsite-matrix.test.ts`
+- Modify: `packages/standalone/tests/gateways/memory-v2.e2e.test.ts`
+- Modify: `packages/standalone/tests/gateways/message-router.test.ts`
 - Modify: `packages/standalone/package.json`
 - Create: `scripts/check-pr-gitleaks.sh`
 - Modify: `docs/architecture/mama-vnext-primary-operator-rebuild.md`

@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { appendFileSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -12,8 +12,6 @@ import type {
 } from '@jungjaehoon/mama-core';
 import type { SyntheticDogfoodMemoryBackend } from '../../src/operator-vnext/synthetic-dogfood-harness.js';
 import type { SQLiteDatabase } from '../../src/sqlite.js';
-
-process.env.MAMA_FORCE_TIER_3 = 'true';
 
 const require = createRequire(import.meta.url);
 
@@ -53,8 +51,12 @@ let SYNTHETIC_DOGFOOD_CONNECTOR: HarnessModule['SYNTHETIC_DOGFOOD_CONNECTOR'];
 let SYNTHETIC_DOGFOOD_RAW_CANARIES: HarnessModule['SYNTHETIC_DOGFOOD_RAW_CANARIES'];
 let countRows: FixturesModule['countRows'];
 let makeOperatorVNextDb: FixturesModule['makeOperatorVNextDb'];
+let previousForceTier3: string | undefined;
 
 beforeAll(async () => {
+  previousForceTier3 = process.env.MAMA_FORCE_TIER_3;
+  process.env.MAMA_FORCE_TIER_3 = 'true';
+
   const harness = await import('../../src/operator-vnext/synthetic-dogfood-harness.js');
   const fixtures = await import('./fixtures.js');
 
@@ -65,6 +67,14 @@ beforeAll(async () => {
   SYNTHETIC_DOGFOOD_RAW_CANARIES = harness.SYNTHETIC_DOGFOOD_RAW_CANARIES;
   countRows = fixtures.countRows;
   makeOperatorVNextDb = fixtures.makeOperatorVNextDb;
+});
+
+afterAll(() => {
+  if (previousForceTier3 === undefined) {
+    delete process.env.MAMA_FORCE_TIER_3;
+    return;
+  }
+  process.env.MAMA_FORCE_TIER_3 = previousForceTier3;
 });
 
 function readNonRawLedgerRows(db: SQLiteDatabase): Record<string, unknown[]> {
