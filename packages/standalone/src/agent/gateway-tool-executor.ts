@@ -286,12 +286,13 @@ function sanitizeRecallText(value: string | undefined): string | undefined {
   if (!value) {
     return undefined;
   }
-  let sanitized = value;
+  const needsTruncation = value.length > MAX_RECALL_TEXT_LENGTH;
+  let sanitized = needsTruncation ? value.slice(0, MAX_RECALL_TEXT_LENGTH) : value;
   for (const pattern of RECALL_TEXT_REDACTION_PATTERNS) {
     sanitized = sanitized.replace(pattern, '[redacted]');
   }
-  if (sanitized.length > MAX_RECALL_TEXT_LENGTH) {
-    sanitized = `${sanitized.slice(0, MAX_RECALL_TEXT_LENGTH)} [truncated]`;
+  if (needsTruncation) {
+    sanitized = `${sanitized} [truncated]`;
   }
   return sanitized;
 }

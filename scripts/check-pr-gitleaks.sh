@@ -71,8 +71,15 @@ git diff -z --cached --name-only --diff-filter=ACMRT "$BASE_REF" -- \
   | tee -a "$TMP_ALL_PATHS" >> "$TMP_STAGED_PATHS"
 git diff -z --name-only --diff-filter=ACMRT "$BASE_REF" -- >> "$TMP_ALL_PATHS"
 
-readarray -d '' CHANGED_FILES < <(sort -zu "$TMP_ALL_PATHS")
-readarray -d '' STAGED_FILES < <(sort -zu "$TMP_STAGED_PATHS")
+CHANGED_FILES=()
+while IFS= read -r -d '' path; do
+  CHANGED_FILES+=("$path")
+done < <(sort -zu "$TMP_ALL_PATHS")
+
+STAGED_FILES=()
+while IFS= read -r -d '' path; do
+  STAGED_FILES+=("$path")
+done < <(sort -zu "$TMP_STAGED_PATHS")
 
 if [ "${#CHANGED_FILES[@]}" -eq 0 ]; then
   echo "No PR-changed files to scan with gitleaks."

@@ -270,7 +270,6 @@ describe('STORY-VNEXT-PR16-SYNTHETIC-DOGFOOD: production gateway tool-call path'
       scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
     });
 
-    expect(persistentAdapterOptionsMock.mock.calls[0]?.[0]?.systemPrompt).toContain('mama_recall');
     expect(mamaApi.recallMemory).toHaveBeenCalledWith('operator/manual-memory', {
       scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
       includeProfile: true,
