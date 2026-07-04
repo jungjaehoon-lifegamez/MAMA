@@ -50,8 +50,8 @@ gateways:
 
   slack:
     enabled: false
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
+    bot_token: 'SLACK_BOT_TOKEN_VALUE'
+    app_token: 'SLACK_APP_TOKEN_VALUE'
     # ... Slack-specific options
 
   telegram:
@@ -66,6 +66,32 @@ gateways:
 ```
 
 You can enable multiple gateways at once. MAMA will handle messages from all enabled platforms simultaneously.
+
+### Gateway Memory Policy
+
+New gateway CLI sessions do not add `recallMemory` or legacy decision-search
+bundles to the startup prompt by default. This keeps chat responses from pulling
+broad local context unless the user asks for it through explicit memory tools.
+
+To opt into startup-prompt recall for a trusted local deployment, set:
+
+```yaml
+memory_policy:
+  implicit_recall: true
+  implicit_legacy_context_search: true
+```
+
+These options are intentionally off by default. Leave them disabled for public,
+shared, or unreviewed gateway deployments.
+
+Use YAML booleans (`true`/`false`) rather than quoted strings.
+
+Continuing resumed CLI turns keep using the existing CLI context instead of
+rebuilding the full startup prompt.
+
+This policy does not disable the older session-start context path for channel
+summaries, checkpoints, or recent decision snippets when those startup APIs are
+configured.
 
 ---
 
@@ -260,7 +286,7 @@ Slack requires **two tokens**: bot token and app token.
 2. Toggle **Enable Socket Mode** → **On**
 3. Enter token name (e.g., "MAMA App Token")
 4. Click **Generate**
-5. Copy the **app token** (starts with `xapp-`)
+5. Copy the **app token** from Slack
 6. Click **Done**
 
 **Step 3: Add Bot Token Scopes**
@@ -282,7 +308,7 @@ Slack requires **two tokens**: bot token and app token.
 1. Scroll up to **OAuth Tokens for Your Workspace**
 2. Click **Install to Workspace**
 3. Review permissions → **Allow**
-4. Copy the **Bot User OAuth Token** (starts with `xoxb-`)
+4. Copy the **Bot User OAuth Token** from Slack
 
 **Step 5: Subscribe to Events**
 
@@ -296,12 +322,12 @@ Slack requires **two tokens**: bot token and app token.
 
 ### Configuration Options
 
-| Option      | Type    | Required | Description                                |
-| ----------- | ------- | -------- | ------------------------------------------ |
-| `enabled`   | boolean | Yes      | Enable Slack gateway                       |
-| `bot_token` | string  | Yes      | Bot User OAuth Token (xoxb-...)            |
-| `app_token` | string  | Yes      | App-Level Token for Socket Mode (xapp-...) |
-| `channels`  | object  | No       | Channel-specific settings (see below)      |
+| Option      | Type    | Required | Description                           |
+| ----------- | ------- | -------- | ------------------------------------- |
+| `enabled`   | boolean | Yes      | Enable Slack gateway                  |
+| `bot_token` | string  | Yes      | Bot User OAuth Token                  |
+| `app_token` | string  | Yes      | App-Level Token for Socket Mode       |
+| `channels`  | object  | No       | Channel-specific settings (see below) |
 
 ### Channel Configuration
 
@@ -342,8 +368,8 @@ gateways:
 gateways:
   slack:
     enabled: true
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
+    bot_token: 'SLACK_BOT_TOKEN_VALUE'
+    app_token: 'SLACK_APP_TOKEN_VALUE'
 ```
 
 **Respond to all messages in specific channel:**
@@ -352,8 +378,8 @@ gateways:
 gateways:
   slack:
     enabled: true
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
+    bot_token: 'SLACK_BOT_TOKEN_VALUE'
+    app_token: 'SLACK_APP_TOKEN_VALUE'
     channels:
       'C01234567': # #bot-testing channel
         requireMention: false
@@ -574,8 +600,8 @@ gateways:
 gateways:
   slack:
     enabled: true
-    bot_token: 'xoxb-...'
-    app_token: 'xapp-...'
+    bot_token: 'SLACK_BOT_TOKEN_VALUE'
+    app_token: 'SLACK_APP_TOKEN_VALUE'
     channels:
       'C01234567': # #bot-testing
         requireMention: false
@@ -776,7 +802,7 @@ Error: Incorrect login details were provided.
 Error: invalid_auth
 ```
 
-→ Check both `bot_token` (xoxb-) and `app_token` (xapp-) are correct.
+→ Check both `bot_token` and `app_token` are correct.
 
 **Telegram:**
 

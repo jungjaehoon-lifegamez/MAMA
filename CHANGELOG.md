@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Message-router memory policy opt-ins** — Added `memory_policy.implicit_recall`
+  and `memory_policy.implicit_legacy_context_search`, plus matching environment
+  variable overrides, so startup-prompt memory recall and legacy context search
+  remain explicit local choices instead of default gateway behavior.
+
+### Changed
+
+- **vNext rollout decision** — Kept vNext opt-in after the synthetic dogfood
+  harness and operator cockpit landed; default rollout now waits on migration
+  docs and real local smoke evidence.
+
 ## [0.20.1] / mama-core [1.7.0] / mama-os [0.20.1] - 2026-05-04
 
 ### Added
