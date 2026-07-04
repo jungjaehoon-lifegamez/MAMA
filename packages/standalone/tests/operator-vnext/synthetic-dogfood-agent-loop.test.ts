@@ -264,140 +264,144 @@ describe('STORY-VNEXT-PR16-SYNTHETIC-DOGFOOD: production gateway tool-call path'
     persistentAdapterOptionsMock.mockClear();
   });
 
-  it('exposes, authorizes, and executes mama_recall through AgentLoop tool_use routing', async () => {
-    const { mamaApi, gatewayResult, result } = await runSyntheticRecallTool({
-      query: 'operator/manual-memory',
-      scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
-    });
-
-    expect(mamaApi.recallMemory).toHaveBeenCalledWith('operator/manual-memory', {
-      scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
-      includeProfile: true,
-    });
-    expect(gatewayResult).toMatchObject({
-      success: true,
-      bundle: {
-        memories: [
-          {
-            topic: 'operator/manual-memory',
-            summary: 'Synthetic reviewed memory is available after explicit recall.',
-          },
-        ],
-      },
-    });
-    const toolResultContent = extractToolResultContent(result.history);
-    expect(toolResultContent).toContain(
-      'Synthetic reviewed memory is available after explicit recall.'
-    );
-    for (const canary of SYNTHETIC_DOGFOOD_RAW_CANARIES) {
-      expect(toolResultContent).not.toContain(canary);
-    }
-    const serializedGatewayResult = JSON.stringify(gatewayResult);
-    for (const internal of [
-      'memory_real_agent_loop_synthetic',
-      'memory_id',
-      'source_type',
-      'synthetic-agent-loop',
-      'channel_id',
-      'project_id',
-      'source_refs',
-      'raw:synthetic:private-source-ref',
-      '/tmp/mama-synthetic-private-source.txt',
-      'created_at',
-      'updated_at',
-      'search_meta',
-      'scope_order',
-      'retrieval_sources',
-    ]) {
-      expect(serializedGatewayResult).not.toContain(internal);
-      expect(toolResultContent).not.toContain(internal);
-    }
-  });
-
-  it('does not echo raw recall query canaries into model-visible tool output', async () => {
-    const queryCanary =
-      'MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK /tmp/mama-synthetic-query-canary';
-    const { gatewayResult, result } = await runSyntheticRecallTool({
-      query: queryCanary,
-      scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
-    });
-
-    const serializedGatewayResult = JSON.stringify(gatewayResult);
-    const toolResultContent = extractToolResultContent(result.history);
-    expect(serializedGatewayResult).not.toContain(queryCanary);
-    expect(toolResultContent).not.toContain(queryCanary);
-    expect(serializedGatewayResult).not.toContain('MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK');
-    expect(toolResultContent).not.toContain('MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK');
-  });
-
-  it('redacts raw canaries from returned recall topic and summary fields', async () => {
-    const { gatewayResult, result } = await runSyntheticRecallTool({
-      query: `operator/manual-memory ${SYNTHETIC_RETURNED_FIELD_CANARY}`,
-      scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
-    });
-
-    const serializedGatewayResult = JSON.stringify(gatewayResult);
-    const toolResultContent = extractToolResultContent(result.history);
-    expect(serializedGatewayResult).not.toContain(SYNTHETIC_RETURNED_FIELD_CANARY);
-    expect(toolResultContent).not.toContain(SYNTHETIC_RETURNED_FIELD_CANARY);
-    expect(serializedGatewayResult).not.toContain('/tmp/mama-synthetic-returned-field');
-    expect(toolResultContent).not.toContain('/tmp/mama-synthetic-returned-field');
-    expect(serializedGatewayResult).toContain('[redacted]');
-    expect(toolResultContent).toContain('[redacted]');
-  });
-
-  it('redacts production-shaped private strings from returned recall fields', async () => {
-    const { gatewayResult, result } = await runSyntheticRecallTool({
-      query: PRODUCTION_REDACTION_QUERY,
-      scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
-    });
-
-    const serializedGatewayResult = JSON.stringify(gatewayResult);
-    const toolResultContent = extractToolResultContent(result.history);
-    for (const leak of PRODUCTION_REDACTION_LEAKS) {
-      expect(serializedGatewayResult).not.toContain(leak);
-      expect(toolResultContent).not.toContain(leak);
-    }
-    expect(serializedGatewayResult).toContain('[redacted]');
-    expect(toolResultContent).toContain('[redacted]');
-  });
-
-  it('does not return memory for wrong project, wrong channel, or broad scopes', async () => {
-    const cases: Array<{ label: string; input: Record<string, unknown> }> = [
-      {
-        label: 'wrong project scope',
-        input: {
-          query: 'operator/manual-memory',
-          scopes: [{ kind: 'project', id: 'project_other_synthetic' }],
-        },
-      },
-      {
-        label: 'wrong channel scope',
-        input: {
-          query: 'operator/manual-memory',
-          scopes: [{ kind: 'channel', id: 'discord:C_OTHER_SYNTHETIC' }],
-        },
-      },
-      {
-        label: 'broad global scope',
-        input: {
-          query: 'operator/manual-memory',
-          scopes: [{ kind: 'global', id: '*' }],
-        },
-      },
-    ];
-
-    for (const testCase of cases) {
-      const { mamaApi, gatewayResult, result } = await runSyntheticRecallTool(testCase.input);
-
-      expect(gatewayResult, testCase.label).toMatchObject({
-        success: false,
-        code: 'memory_scope_denied',
+  describe('AC: scoped production recall is explicit and redacted', () => {
+    it('exposes, authorizes, and executes mama_recall through AgentLoop tool_use routing', async () => {
+      const { mamaApi, gatewayResult, result } = await runSyntheticRecallTool({
+        query: 'operator/manual-memory',
+        scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
       });
-      expect(mamaApi.recallMemory, testCase.label).not.toHaveBeenCalled();
-      expect(extractToolResultContent(result.history), testCase.label).toContain(
-        'memory_scope_denied'
+
+      expect(mamaApi.recallMemory).toHaveBeenCalledWith('operator/manual-memory', {
+        scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
+        includeProfile: true,
+      });
+      expect(gatewayResult).toMatchObject({
+        success: true,
+        bundle: {
+          memories: [
+            {
+              topic: 'operator/manual-memory',
+              summary: 'Synthetic reviewed memory is available after explicit recall.',
+            },
+          ],
+        },
+      });
+      const toolResultContent = extractToolResultContent(result.history);
+      expect(toolResultContent).toContain(
+        'Synthetic reviewed memory is available after explicit recall.'
       );
-    }
+      for (const canary of SYNTHETIC_DOGFOOD_RAW_CANARIES) {
+        expect(toolResultContent).not.toContain(canary);
+      }
+      const serializedGatewayResult = JSON.stringify(gatewayResult);
+      for (const internal of [
+        'memory_real_agent_loop_synthetic',
+        'memory_id',
+        'source_type',
+        'synthetic-agent-loop',
+        'channel_id',
+        'project_id',
+        'source_refs',
+        'raw:synthetic:private-source-ref',
+        '/tmp/mama-synthetic-private-source.txt',
+        'created_at',
+        'updated_at',
+        'search_meta',
+        'scope_order',
+        'retrieval_sources',
+      ]) {
+        expect(serializedGatewayResult).not.toContain(internal);
+        expect(toolResultContent).not.toContain(internal);
+      }
+    });
+
+    it('does not echo raw recall query canaries into model-visible tool output', async () => {
+      const queryCanary =
+        'MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK /tmp/mama-synthetic-query-canary';
+      const { gatewayResult, result } = await runSyntheticRecallTool({
+        query: queryCanary,
+        scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
+      });
+
+      const serializedGatewayResult = JSON.stringify(gatewayResult);
+      const toolResultContent = extractToolResultContent(result.history);
+      expect(serializedGatewayResult).not.toContain(queryCanary);
+      expect(toolResultContent).not.toContain(queryCanary);
+      expect(serializedGatewayResult).not.toContain(
+        'MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK'
+      );
+      expect(toolResultContent).not.toContain('MAMA_SYNTHETIC_RECALL_QUERY_CANARY_DO_NOT_LEAK');
+    });
+
+    it('redacts raw canaries from returned recall topic and summary fields', async () => {
+      const { gatewayResult, result } = await runSyntheticRecallTool({
+        query: `operator/manual-memory ${SYNTHETIC_RETURNED_FIELD_CANARY}`,
+        scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
+      });
+
+      const serializedGatewayResult = JSON.stringify(gatewayResult);
+      const toolResultContent = extractToolResultContent(result.history);
+      expect(serializedGatewayResult).not.toContain(SYNTHETIC_RETURNED_FIELD_CANARY);
+      expect(toolResultContent).not.toContain(SYNTHETIC_RETURNED_FIELD_CANARY);
+      expect(serializedGatewayResult).not.toContain('/tmp/mama-synthetic-returned-field');
+      expect(toolResultContent).not.toContain('/tmp/mama-synthetic-returned-field');
+      expect(serializedGatewayResult).toContain('[redacted]');
+      expect(toolResultContent).toContain('[redacted]');
+    });
+
+    it('redacts production-shaped private strings from returned recall fields', async () => {
+      const { gatewayResult, result } = await runSyntheticRecallTool({
+        query: PRODUCTION_REDACTION_QUERY,
+        scopes: [SYNTHETIC_ALLOWED_CHANNEL_SCOPE],
+      });
+
+      const serializedGatewayResult = JSON.stringify(gatewayResult);
+      const toolResultContent = extractToolResultContent(result.history);
+      for (const leak of PRODUCTION_REDACTION_LEAKS) {
+        expect(serializedGatewayResult).not.toContain(leak);
+        expect(toolResultContent).not.toContain(leak);
+      }
+      expect(serializedGatewayResult).toContain('[redacted]');
+      expect(toolResultContent).toContain('[redacted]');
+    });
+
+    it('does not return memory for wrong project, wrong channel, or broad scopes', async () => {
+      const cases: Array<{ label: string; input: Record<string, unknown> }> = [
+        {
+          label: 'wrong project scope',
+          input: {
+            query: 'operator/manual-memory',
+            scopes: [{ kind: 'project', id: 'project_other_synthetic' }],
+          },
+        },
+        {
+          label: 'wrong channel scope',
+          input: {
+            query: 'operator/manual-memory',
+            scopes: [{ kind: 'channel', id: 'discord:C_OTHER_SYNTHETIC' }],
+          },
+        },
+        {
+          label: 'broad global scope',
+          input: {
+            query: 'operator/manual-memory',
+            scopes: [{ kind: 'global', id: '*' }],
+          },
+        },
+      ];
+
+      for (const testCase of cases) {
+        const { mamaApi, gatewayResult, result } = await runSyntheticRecallTool(testCase.input);
+
+        expect(gatewayResult, testCase.label).toMatchObject({
+          success: false,
+          code: 'memory_scope_denied',
+        });
+        expect(mamaApi.recallMemory, testCase.label).not.toHaveBeenCalled();
+        expect(extractToolResultContent(result.history), testCase.label).toContain(
+          'memory_scope_denied'
+        );
+      }
+    });
   });
 });

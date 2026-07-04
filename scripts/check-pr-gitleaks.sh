@@ -42,6 +42,7 @@ trap 'rm -f "$TMP_ALL_PATHS" "$TMP_STAGED_PATHS"; rm -rf "$TMP_STAGED_ROOT"' EXI
 
 FOUND=0
 COMMIT_COUNT="$(git rev-list --count "${BASE_REF}..HEAD")"
+MERGE_BASE="$(git merge-base "$BASE_REF" HEAD)"
 
 HIGH_RISK_PRIVATE_PATTERN=$(
   printf '%s\n' \
@@ -80,10 +81,10 @@ if [ "$COMMIT_COUNT" -gt 0 ]; then
   fi
 fi
 
-git diff -z --name-only --diff-filter=ACMRT "${BASE_REF}...HEAD" -- >> "$TMP_ALL_PATHS"
-git diff -z --cached --name-only --diff-filter=ACMRT "$BASE_REF" -- \
+git diff -z --name-only --diff-filter=ACMRT "$MERGE_BASE" HEAD -- >> "$TMP_ALL_PATHS"
+git diff -z --cached --name-only --diff-filter=ACMRT "$MERGE_BASE" -- \
   | tee -a "$TMP_ALL_PATHS" >> "$TMP_STAGED_PATHS"
-git diff -z --name-only --diff-filter=ACMRT "$BASE_REF" -- >> "$TMP_ALL_PATHS"
+git diff -z --name-only --diff-filter=ACMRT "$MERGE_BASE" -- >> "$TMP_ALL_PATHS"
 
 CHANGED_FILES=()
 while IFS= read -r -d '' path; do
@@ -100,7 +101,7 @@ if [ "${#CHANGED_FILES[@]}" -eq 0 ]; then
   exit "$FOUND"
 fi
 
-echo "Scanning ${#CHANGED_FILES[@]} PR-changed files with gitleaks against ${BASE_REF}"
+echo "Scanning ${#CHANGED_FILES[@]} PR-changed files with gitleaks against merge-base ${MERGE_BASE} (${BASE_REF})"
 
 if [ "${#STAGED_FILES[@]}" -gt 0 ]; then
   for path in "${STAGED_FILES[@]}"; do
