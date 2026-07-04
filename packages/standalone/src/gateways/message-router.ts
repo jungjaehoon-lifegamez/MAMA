@@ -745,7 +745,8 @@ This protects your credentials from being exposed in chat logs.`;
       );
     }
 
-    // Per-turn memory injection (works for both NEW and CONTINUE sessions)
+    // NEW sessions may receive implicit memory/context prefixes. CONTINUE turns
+    // keep using CLI conversation state and only prepend queued audit notices.
     let memoryPrefix = '';
     let pendingNotices = false;
     let pendingNoticeCount = 0;
