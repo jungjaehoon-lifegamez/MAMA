@@ -46,6 +46,7 @@ _Step-by-step instructions for specific tasks_
 - [Installation Guide](guides/installation.md) - Complete installation process
 - [Standalone Setup](guides/standalone-setup.md) - Set up always-on AI agent
 - [Gateway Configuration](guides/gateway-config.md) - Configure Discord, Slack, Telegram bots
+- [vNext Release Readiness](guides/vnext-release-readiness.md) - Opt-in rollout, smoke evidence, and privacy gates
 - [Mobile Access](guides/mobile-access.md) - Access MAMA from any device with mobile chat
 - [Webchat Media](guides/webchat-media.md) - Image upload, TTS/STT voice features
 - [Troubleshooting](guides/troubleshooting.md) - Common issues and solutions
@@ -152,4 +153,4 @@ _Contributing, testing, and development guidelines_
 ---
 
 **Status:** MAMA OS v0.20.1 — Runtime Envelopes, Context Compile V0, Worker Context APIs
-**Last Updated:** 2026-05-03
+**Last Updated:** 2026-07-04
