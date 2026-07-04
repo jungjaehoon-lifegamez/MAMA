@@ -340,12 +340,12 @@ export interface AgentPersonaConfig {
    */
   bot_token?: string;
   /**
-   * Optional dedicated Slack bot token (xoxb-...) for this agent
+   * Optional dedicated Slack bot token for this agent
    * If provided, this agent will use its own Slack bot
    */
   slack_bot_token?: string;
   /**
-   * Optional dedicated Slack app token (xapp-...) for Socket Mode
+   * Optional dedicated Slack app token for Socket Mode
    * Required alongside slack_bot_token for Slack multi-bot support
    */
   slack_app_token?: string;
@@ -597,6 +597,20 @@ export interface TokenBudgetConfig {
 }
 
 /**
+ * Message-router memory policy.
+ *
+ * These controls are intentionally opt-in. By default, ordinary gateway turns do
+ * not silently add recall memory or legacy context-search bundles to startup
+ * prompts; users can call explicit memory tools when they want evidence in a turn.
+ */
+export interface MemoryPolicyConfig {
+  /** Opt into implicit recallMemory injection for new CLI session startup prompts @default false */
+  implicit_recall: boolean;
+  /** Opt into legacy decision-search context injection for new CLI session startup prompts @default false */
+  implicit_legacy_context_search: boolean;
+}
+
+/**
  * Full MAMA configuration
  */
 export interface MAMAConfig {
@@ -642,6 +656,8 @@ export interface MAMAConfig {
   metrics?: MetricsConfig;
   /** Token budget settings */
   token_budget?: TokenBudgetConfig;
+  /** Message-router memory policy */
+  memory_policy?: MemoryPolicyConfig;
   /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
   [key: string]: unknown;
 }
@@ -731,6 +747,10 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   token_budget: {
     daily_limit: 0,
     alert_threshold: 0.9,
+  },
+  memory_policy: {
+    implicit_recall: false,
+    implicit_legacy_context_search: false,
   },
 };
 

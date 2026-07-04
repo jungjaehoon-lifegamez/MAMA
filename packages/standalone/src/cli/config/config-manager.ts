@@ -58,6 +58,9 @@ export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
     token_budget: overrides.token_budget
       ? { ...base.token_budget!, ...overrides.token_budget }
       : base.token_budget,
+    memory_policy: overrides.memory_policy
+      ? { ...base.memory_policy!, ...overrides.memory_policy }
+      : base.memory_policy,
     agent: overrides.agent ? { ...base.agent, ...overrides.agent } : base.agent,
     database: overrides.database ? { ...base.database, ...overrides.database } : base.database,
     logging: overrides.logging ? { ...base.logging, ...overrides.logging } : base.logging,
@@ -151,6 +154,17 @@ const envMap: Array<{
     path: ['token_budget', 'alert_threshold'],
     type: 'number',
   },
+  // Message-router memory policy
+  {
+    env: 'MAMA_MEMORY_POLICY_IMPLICIT_RECALL',
+    path: ['memory_policy', 'implicit_recall'],
+    type: 'boolean',
+  },
+  {
+    env: 'MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH',
+    path: ['memory_policy', 'implicit_legacy_context_search'],
+    type: 'boolean',
+  },
 ];
 
 /**
@@ -240,8 +254,24 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
     }
   }
 
+  appendMemoryPolicyValidationErrors(config, errors);
+
   if (errors.length > 0) {
     throw new ConfigValidationError(errors, configPath);
+  }
+}
+
+function appendMemoryPolicyValidationErrors(config: MAMAConfig, errors: string[]): void {
+  if (!config.memory_policy) {
+    return;
+  }
+
+  if (typeof config.memory_policy.implicit_recall !== 'boolean') {
+    errors.push('memory_policy.implicit_recall must be boolean');
+  }
+
+  if (typeof config.memory_policy.implicit_legacy_context_search !== 'boolean') {
+    errors.push('memory_policy.implicit_legacy_context_search must be boolean');
   }
 }
 
@@ -423,6 +453,9 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     token_budget: config.token_budget
       ? { ...DEFAULT_CONFIG.token_budget!, ...config.token_budget }
       : DEFAULT_CONFIG.token_budget,
+    memory_policy: config.memory_policy
+      ? { ...DEFAULT_CONFIG.memory_policy!, ...config.memory_policy }
+      : DEFAULT_CONFIG.memory_policy,
   };
 }
 
@@ -668,6 +701,8 @@ export function validateConfig(config: MAMAConfig): string[] {
   if (!validLogLevels.includes(config.logging.level)) {
     errors.push(`logging.level must be one of: ${validLogLevels.join(', ')}`);
   }
+
+  appendMemoryPolicyValidationErrors(config, errors);
 
   return errors;
 }

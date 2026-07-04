@@ -11,6 +11,7 @@ import * as yaml from 'js-yaml';
 
 import {
   expandPath,
+  initConfig,
   loadConfig,
   saveConfig,
   createDefaultConfig,
@@ -117,6 +118,77 @@ describe('ConfigManager', () => {
       // Default values filled in
       expect(loaded.agent.max_turns).toBe(DEFAULT_CONFIG.agent.max_turns);
       expect(loaded.logging.level).toBe(DEFAULT_CONFIG.logging.level);
+      expect(loaded.memory_policy).toEqual(DEFAULT_CONFIG.memory_policy);
+    });
+
+    it('should keep implicit memory policy disabled unless explicitly configured', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const minimalConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+      };
+
+      await writeFile(configPath, yaml.dump(minimalConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.memory_policy).toEqual({
+        implicit_recall: false,
+        implicit_legacy_context_search: false,
+      });
+    });
+
+    it('should allow env overrides for explicit message-router memory policy opt-ins', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const minimalConfig = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+      };
+
+      await writeFile(configPath, yaml.dump(minimalConfig));
+
+      process.env.MAMA_MEMORY_POLICY_IMPLICIT_RECALL = 'true';
+      process.env.MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH = '1';
+
+      try {
+        const loaded = await initConfig();
+
+        expect(loaded.memory_policy).toEqual({
+          implicit_recall: true,
+          implicit_legacy_context_search: true,
+        });
+      } finally {
+        delete process.env.MAMA_MEMORY_POLICY_IMPLICIT_RECALL;
+        delete process.env.MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH;
+      }
+    });
+
+    it('should reject string values for message-router memory policy toggles', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+
+      const config = {
+        version: 1,
+        agent: { model: 'custom-model' },
+        database: { path: '~/.test/db.sqlite' },
+        memory_policy: {
+          implicit_recall: 'false',
+          implicit_legacy_context_search: 'true',
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(config));
+
+      await expect(loadConfig()).rejects.toThrow(/memory_policy\.implicit_recall must be boolean/);
     });
 
     it('should normalize legacy developer agent permissions on load', async () => {
@@ -476,6 +548,21 @@ describe('ConfigManager', () => {
       };
       const errors = validateConfig(config);
       expect(errors.some((e) => e.includes('logging.level'))).toBe(true);
+    });
+
+    it('should detect invalid memory policy toggle types', () => {
+      const config = {
+        ...DEFAULT_CONFIG,
+        memory_policy: {
+          implicit_recall: 'false',
+          implicit_legacy_context_search: 'true',
+        },
+      } as unknown as MAMAConfig;
+
+      const errors = validateConfig(config);
+
+      expect(errors).toContain('memory_policy.implicit_recall must be boolean');
+      expect(errors).toContain('memory_policy.implicit_legacy_context_search must be boolean');
     });
   });
 });
