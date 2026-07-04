@@ -65,6 +65,7 @@ import { initVNextWikiPublishAdapter } from '../runtime/wiki-publish-adapter-ini
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
+import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { requireAdminAuth, requireAuth } from '../../api/auth-middleware.js';
 import { buildPublicVNextProjectionPayload } from '../../api/report-handler.js';
 import {
@@ -1758,9 +1759,7 @@ export async function runAgentLoop(
     sessionStore,
     agentLoopClient,
     mamaApiClient,
-    {
-      backend: runtimeBackend,
-    },
+    resolveMessageRouterConfig(config, runtimeBackend),
     envelopeBootstrap.envelopeConfig,
     envelopeBootstrap.envelopeAuthority
   );
