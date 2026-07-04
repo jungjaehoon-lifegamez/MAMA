@@ -456,6 +456,8 @@ export class MessageRouter {
         'Korean'
       ),
       backend: config.backend ?? 'claude',
+      implicitMemoryRecall: config.implicitMemoryRecall ?? false,
+      implicitLegacyContextSearch: config.implicitLegacyContextSearch ?? false,
     };
     this.roleManager = getRoleManager();
     this.promptEnhancer = new PromptEnhancer();
@@ -650,9 +652,10 @@ This protects your credentials from being exposed in chat logs.`;
     const enhanced = await this.promptEnhancer.enhance(message.text, workspacePath, ruleContext);
 
     // CONTINUE: skip expensive embedding search — Codex retains full conversation via threadId
-    const context = isNewCliSession
-      ? await this.contextInjector.getRelevantContext(message.text)
-      : { prompt: '', decisions: [], hasContext: false };
+    const context =
+      isNewCliSession && this.config.implicitLegacyContextSearch
+        ? await this.contextInjector.getRelevantContext(message.text)
+        : { prompt: '', decisions: [], hasContext: false };
 
     if (!isNewCliSession) {
       systemPrompt = '';
@@ -1304,6 +1307,12 @@ ${historyContext}
         this.config.translationTargetLanguage
       );
     }
+    if (config.implicitMemoryRecall !== undefined) {
+      this.config.implicitMemoryRecall = config.implicitMemoryRecall;
+    }
+    if (config.implicitLegacyContextSearch !== undefined) {
+      this.config.implicitLegacyContextSearch = config.implicitLegacyContextSearch;
+    }
 
     // Update context injector config
     this.contextInjector.setConfig({
@@ -1494,7 +1503,7 @@ INSTRUCTION:
   }
 
   private async getPerTurnMemoryPrefix(message: NormalizedMessage): Promise<string> {
-    if (this.mamaApi.recallMemory) {
+    if (this.config.implicitMemoryRecall && this.mamaApi.recallMemory) {
       try {
         const scopes = deriveMemoryScopes({
           source: message.source,
@@ -1513,6 +1522,10 @@ INSTRUCTION:
           `[memory-prefix] recallMemory failed: ${error instanceof Error ? error.message : String(error)}`
         );
       }
+    }
+
+    if (!this.config.implicitLegacyContextSearch) {
+      return '';
     }
 
     const context = await this.contextInjector.getRelevantContext(message.text);

@@ -147,14 +147,16 @@ describe('MessageRouter', () => {
       expect(generatedTurnId).not.toBe('msg-1');
     });
 
-    it('should inject profile-aware recall bundle into the prompt', async () => {
+    it('should inject profile-aware recall bundle into the prompt when implicit recall is enabled', async () => {
       let receivedPrompt = '';
       const agentLoop = createMockAgentLoop((prompt) => {
         receivedPrompt = prompt;
         return 'Agent response';
       });
       const mamaApi = createMockMamaApi(mockDecisions);
-      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi);
+      const customRouter = new MessageRouter(sessionStore, agentLoop, mamaApi, {
+        implicitMemoryRecall: true,
+      });
 
       await customRouter.process({
         source: 'discord',
@@ -166,6 +168,32 @@ describe('MessageRouter', () => {
       expect(receivedPrompt).toContain('[MAMA Profile]');
       expect(receivedPrompt).toContain('[MAMA Memories]');
       expect(receivedPrompt).toContain('Current repo uses pnpm');
+    });
+
+    it('should not inject legacy MAMA Memory context by default', async () => {
+      let receivedPrompt = '';
+      const agentLoop = createMockAgentLoop((prompt) => {
+        receivedPrompt = prompt;
+        return 'Agent response';
+      });
+      const mamaApi = createMockMamaApi(mockDecisions);
+      const search = vi.fn(mamaApi.search.bind(mamaApi));
+      const customRouter = new MessageRouter(sessionStore, agentLoop, {
+        ...mamaApi,
+        search,
+      });
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: 'channel-legacy-memory',
+        userId: 'user-456',
+        text: 'Tell me about test_topic',
+      });
+
+      expect(search).not.toHaveBeenCalled();
+      expect(receivedPrompt).not.toContain('[MAMA Memory]');
+      expect(receivedPrompt).not.toContain('Prior Decisions');
+      expect(receivedPrompt).not.toContain('Test decision');
     });
 
     it('should pass system prompt to agent loop for new sessions', async () => {

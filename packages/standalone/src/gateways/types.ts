@@ -158,6 +158,10 @@ export interface MessageRouterConfig {
   translationTargetLanguage?: string;
   /** Backend type for backend-specific AGENTS.md injection */
   backend?: 'claude' | 'codex' | 'codex-mcp';
+  /** Opt into implicit per-turn recallMemory injection. Default: false. */
+  implicitMemoryRecall?: boolean;
+  /** Opt into legacy decision-search context injection. Default: false. */
+  implicitLegacyContextSearch?: boolean;
 }
 
 /**

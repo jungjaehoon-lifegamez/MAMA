@@ -176,6 +176,51 @@ type ScopeAuditFields = {
   mismatch: 0 | 1;
 };
 
+type SafeRecallMemory = {
+  topic?: string;
+  kind?: string;
+  summary?: string;
+  confidence?: number;
+  status?: string;
+};
+
+type SafeRecallProfileEvidence = {
+  topic?: string;
+};
+
+type SafeRecallBundle = {
+  profile: {
+    static: SafeRecallMemory[];
+    dynamic: SafeRecallMemory[];
+    evidence: SafeRecallProfileEvidence[];
+  };
+  memories: SafeRecallMemory[];
+  graph_context: {
+    primary: SafeRecallMemory[];
+    expanded: SafeRecallMemory[];
+    edge_count: number;
+  };
+};
+
+const RECALL_TEXT_REDACTION_PATTERNS = [
+  /MAMA_SYNTHETIC_[A-Z0-9_]+_DO_NOT_LEAK/g,
+  /synthetic:\/\/raw[^\s"']*/g,
+  /raw:[^\s"']*/g,
+  /\bhttps?:\/\/[^\s"'<>()]+/gi,
+  /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+  /\b(?:Bearer|Token|Authorization)\s*[:=]?\s*[A-Za-z0-9._~+/=-]{8,}/gi,
+  /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*[^\s"']{8,}/gi,
+  /(?:ghp|gho|ghu|ghs|ghr|github_pat)_[A-Za-z0-9_]{8,}\b/g,
+  /xox[baprs]-[A-Za-z0-9-]{10,}\b/g,
+  /sk-[A-Za-z0-9_-]{20,}\b/g,
+  /\b[CU][A-Z0-9]{8,}\b/g,
+  /\b[0-9]{17,20}\b/g,
+  /(?:\/Users|\/home|\/tmp)\/[^\s"']*/g,
+  /[A-Za-z]:\\Users\\[^\s"']*/g,
+] as const;
+const MAX_RECALL_TEXT_LENGTH = 280;
+const RECALL_TEXT_REDACTION_SCAN_LIMIT = MAX_RECALL_TEXT_LENGTH + 2048;
+
 type TrustedMemoryWriteBuildResult = {
   options: TrustedMemoryWriteOptions;
   contextPacketScopes?: MemoryScope[];
@@ -221,6 +266,126 @@ type CodeActSandboxRoleResolution = {
 };
 
 class ContextPacketProvenanceError extends Error {}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function stringField(record: Record<string, unknown>, field: string): string | undefined {
+  const value = record[field];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function numberField(record: Record<string, unknown>, field: string): number | undefined {
+  const value = record[field];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function sanitizeRecallText(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  let sanitized =
+    value.length > RECALL_TEXT_REDACTION_SCAN_LIMIT
+      ? value.slice(0, RECALL_TEXT_REDACTION_SCAN_LIMIT)
+      : value;
+  for (const pattern of RECALL_TEXT_REDACTION_PATTERNS) {
+    sanitized = sanitized.replace(pattern, '[redacted]');
+  }
+  const wasTruncated =
+    value.length > MAX_RECALL_TEXT_LENGTH || sanitized.length > MAX_RECALL_TEXT_LENGTH;
+  if (sanitized.length > MAX_RECALL_TEXT_LENGTH) {
+    sanitized = sanitized.slice(0, MAX_RECALL_TEXT_LENGTH);
+  }
+  if (wasTruncated) {
+    sanitized = `${sanitized} [truncated]`;
+  }
+  return sanitized;
+}
+
+function sanitizeRecallMemory(value: unknown): SafeRecallMemory | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const safe: SafeRecallMemory = {};
+  const topic = sanitizeRecallText(stringField(record, 'topic'));
+  const kind = sanitizeRecallText(stringField(record, 'kind'));
+  const summary = sanitizeRecallText(stringField(record, 'summary'));
+  const status = sanitizeRecallText(stringField(record, 'status'));
+  const confidence = numberField(record, 'confidence');
+
+  if (topic) {
+    safe.topic = topic;
+  }
+  if (kind) {
+    safe.kind = kind;
+  }
+  if (summary) {
+    safe.summary = summary;
+  }
+  if (status) {
+    safe.status = status;
+  }
+  if (confidence !== undefined) {
+    safe.confidence = confidence;
+  }
+
+  return Object.keys(safe).length > 0 ? safe : null;
+}
+
+function sanitizeRecallMemories(value: unknown): SafeRecallMemory[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((memory) => sanitizeRecallMemory(memory))
+    .filter((memory): memory is SafeRecallMemory => memory !== null);
+}
+
+function sanitizeProfileEvidence(value: unknown): SafeRecallProfileEvidence[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => {
+      const record = asRecord(item);
+      if (!record) {
+        return null;
+      }
+      const evidence: SafeRecallProfileEvidence = {};
+      const topic = sanitizeRecallText(stringField(record, 'topic'));
+      if (topic) {
+        evidence.topic = topic;
+      }
+      return Object.keys(evidence).length > 0 ? evidence : null;
+    })
+    .filter((evidence): evidence is SafeRecallProfileEvidence => evidence !== null);
+}
+
+function sanitizeMamaRecallBundle(bundle: unknown): SafeRecallBundle {
+  const record = asRecord(bundle) ?? {};
+  const profile = asRecord(record.profile) ?? {};
+  const graphContext = asRecord(record.graph_context) ?? {};
+  const edges = Array.isArray(graphContext.edges) ? graphContext.edges : [];
+
+  return {
+    profile: {
+      static: sanitizeRecallMemories(profile.static),
+      dynamic: sanitizeRecallMemories(profile.dynamic),
+      evidence: sanitizeProfileEvidence(profile.evidence),
+    },
+    memories: sanitizeRecallMemories(record.memories),
+    graph_context: {
+      primary: sanitizeRecallMemories(graphContext.primary),
+      expanded: sanitizeRecallMemories(graphContext.expanded),
+      edge_count: edges.length,
+    },
+  };
+}
 
 async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
   const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
@@ -1333,6 +1498,64 @@ export class GatewayToolExecutor {
       userId: context.session.userId,
       projectId: process.env.MAMA_WORKSPACE || process.cwd(),
     });
+  }
+
+  private resolveMamaRecallScopes(input: RecallInput): {
+    scopes: MemoryScope[];
+    denial?: GatewayToolResult;
+  } {
+    const ctx = this.getExecutionState();
+    const requestedScopes = normalizeMemoryScopes(input.scopes);
+    const callerProvidedScopes = input.scopes !== undefined;
+    const allowedScopes =
+      ctx.envelope?.scope.memory_scopes ?? this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
+    const hasActiveScopeBoundary = Boolean(ctx.envelope || ctx.agentContext);
+
+    if (callerProvidedScopes && !requestedScopes) {
+      return {
+        scopes: [],
+        denial: {
+          success: false,
+          code: 'memory_scope_invalid',
+          error: 'mama_recall scopes must be valid memory scope objects.',
+        } as GatewayToolResult,
+      };
+    }
+
+    if (!hasActiveScopeBoundary) {
+      if (callerProvidedScopes) {
+        return {
+          scopes: [],
+          denial: {
+            success: false,
+            code: 'memory_scope_denied',
+            error: 'mama_recall requires an active session or envelope for caller-supplied scopes.',
+          } as GatewayToolResult,
+        };
+      }
+      return { scopes: [] };
+    }
+
+    if (!requestedScopes || requestedScopes.length === 0) {
+      return { scopes: allowedScopes };
+    }
+
+    const allowedScopeKeys = new Set(allowedScopes.map(memoryScopeKey));
+    const hasUnauthorizedScope = requestedScopes.some(
+      (scope) => !allowedScopeKeys.has(memoryScopeKey(scope))
+    );
+    if (hasUnauthorizedScope) {
+      return {
+        scopes: [],
+        denial: {
+          success: false,
+          code: 'memory_scope_denied',
+          error: 'mama_recall requested scopes outside the active session or envelope.',
+        } as GatewayToolResult,
+      };
+    }
+
+    return { scopes: requestedScopes };
   }
 
   private applyEnvelopeScopedReadDefaults(
@@ -3817,17 +4040,11 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
-    const context = this.getActiveContext();
-    const fallbackScopes = context
-      ? deriveMemoryScopes({
-          source: context.source,
-          channelId: context.session.channelId,
-          userId: context.session.userId,
-          projectId: process.env.MAMA_WORKSPACE || process.cwd(),
-        })
-      : [];
-    const inputScopes = Array.isArray(input.scopes) ? input.scopes : [];
-    const scopes = inputScopes.length > 0 ? inputScopes : fallbackScopes;
+    const scopeResolution = this.resolveMamaRecallScopes(input);
+    if (scopeResolution.denial) {
+      return scopeResolution.denial;
+    }
+    const scopes = scopeResolution.scopes;
 
     if (scopes.length === 0) {
       return {
@@ -3841,7 +4058,7 @@ export class GatewayToolExecutor {
         scopes,
         includeProfile: true,
       });
-      return { success: true, bundle } as GatewayToolResult;
+      return { success: true, bundle: sanitizeMamaRecallBundle(bundle) } as GatewayToolResult;
     } catch (err) {
       return {
         success: false,
