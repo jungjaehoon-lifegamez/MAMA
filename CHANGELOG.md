@@ -10,12 +10,21 @@ All notable changes to this project will be documented in this file.
   and `memory_policy.implicit_legacy_context_search`, plus matching environment
   variable overrides, so startup-prompt memory recall and legacy context search
   remain explicit local choices instead of default gateway behavior.
+- **vNext release-readiness guide** — Added an opt-in rollout checklist that records
+  the remaining migration, real local smoke, privacy, dogfood, and review gates
+  before vNext can become the default runtime.
 
 ### Changed
 
 - **vNext rollout decision** — Kept vNext opt-in after the synthetic dogfood
   harness and operator cockpit landed; default rollout now waits on migration
   docs and real local smoke evidence.
+- **README release status** — Updated the top-level README to describe the PR #115
+  state: vNext remains opt-in, gateway memory recall is policy-gated, and release
+  readiness now depends on migration guidance plus public-safe smoke evidence.
+- **PII check branch-diff mode** — Added `scripts/check-pii.sh --base <ref>` so
+  release-readiness PRs can scan committed branch diffs, not only staged pre-commit
+  changes.
 
 ## [0.20.1] / mama-core [1.7.0] / mama-os [0.20.1] - 2026-05-04
 
