@@ -2,6 +2,7 @@
   "name": "memorybench",
   "version": "1.0.0",
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "start": "bun run src/index.ts",
     "test": "bun test",
