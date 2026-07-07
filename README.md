@@ -18,6 +18,25 @@ Context Compile V0. `context_compile` turns those pieces into one selected/rejec
 evidence packet for a task, and `mama_save` can attach that packet through trusted
 `context_packet_id` provenance.
 
+## vNext Release Readiness
+
+The vNext primary-operator rebuild is in opt-in release hardening. PRs #98 through #115 rebuilt the
+runtime around one commit authority, source-linked writes, an operator review cockpit, synthetic
+end-to-end dogfood, and explicit gateway memory-policy opt-ins.
+
+vNext is **not the default runtime yet**. The reviewed path has synthetic coverage, but default
+rollout still waits on migration guidance and real local smoke evidence that can be shared without
+private connector payloads, local paths, channel IDs, or internal project details.
+
+Current release decision:
+
+- **Opt-in only:** legacy runtime remains available.
+- **Memory policy default:** ordinary gateway turns do not inject implicit recall or legacy context
+  search unless `memory_policy` or `MAMA_MEMORY_POLICY_*` explicitly enables it.
+- **Next release gate:** finish the [vNext Release Readiness Guide](docs/guides/vnext-release-readiness.md),
+  run the real local smoke checklist, and pass the public-project privacy scans before any default
+  rollout decision.
+
 ## Target Workflow
 
 MAMA is being built toward a local memory twin that agents can inspect, cite, and act on inside
@@ -308,7 +327,7 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 | **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                               |
 | **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                       |
 | **Now**  | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance |
-| **Next** | v0.21   | Report composer, packet retention policy, search-quality feedback loops, browser onboarding for non-developers, and domain extraction templates                                                                                                   |
+| **Next** | v0.21   | vNext opt-in release readiness: migration guidance, real local smoke evidence, privacy gates, report composer hardening, packet retention policy, and search-quality feedback loops                                                               |
 |          | Later   | Domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                              |
 |          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                       |
 
@@ -322,7 +341,7 @@ pnpm test     # 3000+ tests across all packages
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-_Last updated: 2026-05-01_
+_Last updated: 2026-07-04_
 
 ## License
 

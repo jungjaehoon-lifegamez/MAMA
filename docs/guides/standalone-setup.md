@@ -807,6 +807,7 @@ After successful setup:
 **Recommended reading:**
 
 - [Gateway Configuration Guide](gateway-config.md) - Detailed gateway setup
+- [vNext Release Readiness Guide](vnext-release-readiness.md) - Opt-in rollout and smoke gates
 - [Skills API Reference](../reference/skills-api.md) - Build custom skills
 - [Security Guide](security.md) - Secure your MAMA instance
 
@@ -886,4 +887,4 @@ sudo systemctl status mama
 ---
 
 **Author**: SpineLift Team
-**Last Updated**: 2026-04-20
+**Last Updated**: 2026-07-04

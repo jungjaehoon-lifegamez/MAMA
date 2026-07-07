@@ -1,6 +1,6 @@
 # MAMA vNext Primary Operator Rebuild Plan
 
-Status: implementation through PR 16 merged; PR 17 records the rollout decision and explicit memory-policy opt-ins.
+Status: implementation through PR 17 merged; PR 18 is release-readiness documentation and smoke-gate alignment.
 Branch base: `origin/main`.
 Decision date: 2026-07-02.
 Last updated: 2026-07-04.
@@ -35,28 +35,29 @@ blockers for starting PR 0.
 
 ## Implementation Status
 
-PR 0 through PR 16 have landed on `main`.
+PR 0 through PR 17 have landed on `main`.
 
-| Slice | GitHub PR | State  | Result                                             |
-| ----- | --------- | ------ | -------------------------------------------------- |
-| PR 0  | #98       | merged | SourceRef contract and vNext operator DB contracts |
-| PR 1  | #99       | merged | vNext bootstrap mode with legacy fanout disabled   |
-| PR 2  | #100      | merged | primary operator commit shell and cursor semantics |
-| PR 3  | #101      | merged | primary operator runtime bootstrap/status API      |
-| PR 4  | #102      | merged | source-linked wiki artifact adapter and store      |
-| PR 5  | #103      | merged | dashboard projection and commit authority          |
-| PR 6  | #104      | merged | connector ingress preview dry-run                  |
-| PR 7  | #105      | merged | connector ingress migration dry-run report         |
-| PR 8  | #106      | merged | legacy dashboard/wiki agents opt-in by default     |
-| PR 9  | #107      | merged | global vNext architecture invariant coverage       |
-| PR 10 | #108      | merged | manual reviewed no-update ingress commit           |
-| PR 11 | #109      | merged | atomic changed commits through trusted writers     |
-| PR 12 | #110      | merged | manual reviewed wiki ingress commit                |
-| PR 13 | #111      | merged | manual reviewed memory ingress commit              |
-| PR 14 | #112      | merged | completion gates and staged privacy checks         |
-| PR 15 | #113      | merged | isolated vNext operator review cockpit             |
-| PR 16 | #114      | merged | synthetic end-to-end dogfood harness               |
-| PR 17 | pending   | active | default rollout decision and memory-policy opt-ins |
+| Slice | GitHub PR | State  | Result                                                   |
+| ----- | --------- | ------ | -------------------------------------------------------- |
+| PR 0  | #98       | merged | SourceRef contract and vNext operator DB contracts       |
+| PR 1  | #99       | merged | vNext bootstrap mode with legacy fanout disabled         |
+| PR 2  | #100      | merged | primary operator commit shell and cursor semantics       |
+| PR 3  | #101      | merged | primary operator runtime bootstrap/status API            |
+| PR 4  | #102      | merged | source-linked wiki artifact adapter and store            |
+| PR 5  | #103      | merged | dashboard projection and commit authority                |
+| PR 6  | #104      | merged | connector ingress preview dry-run                        |
+| PR 7  | #105      | merged | connector ingress migration dry-run report               |
+| PR 8  | #106      | merged | legacy dashboard/wiki agents opt-in by default           |
+| PR 9  | #107      | merged | global vNext architecture invariant coverage             |
+| PR 10 | #108      | merged | manual reviewed no-update ingress commit                 |
+| PR 11 | #109      | merged | atomic changed commits through trusted writers           |
+| PR 12 | #110      | merged | manual reviewed wiki ingress commit                      |
+| PR 13 | #111      | merged | manual reviewed memory ingress commit                    |
+| PR 14 | #112      | merged | completion gates and staged privacy checks               |
+| PR 15 | #113      | merged | isolated vNext operator review cockpit                   |
+| PR 16 | #114      | merged | synthetic end-to-end dogfood harness                     |
+| PR 17 | #115      | merged | default rollout decision and memory-policy opt-ins       |
+| PR 18 | pending   | active | release-readiness docs, migration checklist, smoke gates |
 
 PR 14 did not add runtime behavior. It closed the plan drift created by PR 9-13,
 centralized staged privacy checks, defined completion gates, and prevented later
@@ -65,6 +66,11 @@ code slices from guessing what "done" means.
 PR 15 added the first-party operator review cockpit. PR 16 proved the cockpit's
 backend path with synthetic data only: preview, dry-run, no-update, wiki, memory,
 projection, replay, and explicit recall gating.
+
+PR 17 kept vNext opt-in and made gateway startup-prompt memory recall and legacy
+context search explicit local opt-ins. PR 18 records the release checkpoint:
+README alignment, migration guidance, real local smoke evidence, and privacy
+scans before any default rollout decision.
 
 ## Why
 
@@ -152,11 +158,11 @@ Deterministic Projections
 
 ## Public Release Privacy Gate
 
-MAMA is a public project. Every stage must prove it does not publish private,
+MAMA is a public project. Every stage must show it does not publish private,
 customer, channel, local-machine, or internal project information.
 
-Run this gate before opening every PR, after responding to PR review comments, and
-before starting the next branch.
+Run this gate before committing staged changes, before opening every PR, after
+responding to PR review comments, and before starting the next branch.
 
 What to check:
 
@@ -168,21 +174,28 @@ What to check:
 - tests and fixtures: real connector payloads, real timestamps tied to private work,
   real message IDs unless synthetic and clearly marked
 
-Required commands for every PR:
+Required commands before committing staged changes:
 
 ```bash
 git diff --cached --check
-git diff --cached --name-only
 ./scripts/check-pii.sh
 gitleaks protect --source . --staged --redact --verbose --no-banner
+```
+
+Required commands before opening every PR, after responding to PR review
+comments, and before starting the next branch:
+
+```bash
+git diff origin/main...HEAD --check
+./scripts/check-pii.sh --base origin/main
 ./scripts/check-pr-gitleaks.sh
 ```
 
-`scripts/check-pii.sh` is the authoritative staged-file privacy check. It loads
-`.pii-patterns` when that gitignored file exists, always runs the generic ID
-checks built into the script, blocks high-confidence local path and credential
-prefix matches in staged added lines, and prints review-only warnings for
-privacy-sensitive connector or provider terms.
+`scripts/check-pii.sh` is the authoritative staged-file and branch-diff privacy
+check. It loads `.pii-patterns` when that gitignored file exists, always runs
+the generic ID checks built into the script, blocks high-confidence local path
+and credential prefix matches in added lines, and prints review-only warnings
+for privacy-sensitive connector or provider terms.
 
 `scripts/check-pr-gitleaks.sh` scans branch commits with `gitleaks git`,
 materializes staged blobs for direct gitleaks scans, and also scans files
@@ -1210,7 +1223,7 @@ Goal:
 Decision:
 
 - vNext remains opt-in after PR 17. The synthetic dogfood harness and cockpit
-  prove the reviewed local path, but default rollout still needs migration
+  exercise the reviewed path, but default rollout still needs migration
   guidance and real local smoke evidence.
 - Ordinary gateway turns keep `implicit_recall` and
   `implicit_legacy_context_search` disabled by default.
@@ -1229,6 +1242,39 @@ Rules:
   exist, even though the synthetic dogfood harness has passed.
 - Continue reviewing every rollout change for private-data leakage before PR.
 - Legacy runtime must remain available until migration docs exist.
+
+### PR 18: Release Readiness Docs And Smoke Checkpoint
+
+Goal:
+
+- Update README and release-facing docs so the public status matches PR #115:
+  vNext is opt-in, memory-policy injection is off by default, and default rollout
+  waits on migration docs plus real local smoke evidence.
+- Add a release-readiness guide that turns the remaining release work into
+  decision and checkpoint gates.
+- Keep all evidence public-safe: no real connector payloads, local absolute
+  paths, channel IDs, memory ids, screenshots, or internal project names.
+
+Files:
+
+- Modify: `README.md`
+- Modify: `CHANGELOG.md`
+- Modify: `docs/index.md`
+- Modify: `docs/architecture/mama-vnext-primary-operator-rebuild.md`
+- Modify: `docs/development/release-process.md`
+- Modify: `docs/guides/gateway-config.md`
+- Modify: `docs/guides/standalone-setup.md`
+- Modify: `scripts/check-pii.sh`
+- Create: `docs/guides/vnext-release-readiness.md`
+
+Verify:
+
+```bash
+git diff origin/main...HEAD --check
+rg "PR 17|#115|vNext|memory_policy|release readiness" README.md CHANGELOG.md docs
+./scripts/check-pii.sh --base origin/main
+./scripts/check-pr-gitleaks.sh
+```
 
 ## Global Regression Checklist
 
@@ -1332,7 +1378,10 @@ Conflict flags:
     remaining work.
 16. Land PR 15 and dogfood the operator review cockpit on synthetic connector data.
 17. Land PR 16 and run the synthetic end-to-end dogfood harness.
-18. Land PR 17 only if the default rollout decision remains safe after PR 15-16.
+18. Land PR 17 after confirming the default rollout decision remains safe after
+    PR 15-16.
+19. Land PR 18 after README, release-readiness docs, smoke gates, and privacy
+    checks agree on the same opt-in release status.
 
 ## Review Notes
 
