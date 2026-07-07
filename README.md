@@ -138,19 +138,19 @@ MAMA OS executes AI agents as **official CLI subprocesses** — spawning `claude
 
 ```
 MAMA OS daemon
-  └─ spawns: claude --session-id abc --system-prompt "..."
-       └─ Claude Code CLI (your existing OAuth session)
-            └─ Anthropic API (standard authenticated request)
+  └─ spawns: claude … / codex …   (your official agent CLI)
+       └─ Claude Code or Codex CLI (your existing OAuth session)
+            └─ Provider API (standard authenticated request)
 ```
 
 This is the provider-sanctioned execution method. No API keys to manage, no token extraction, no header spoofing. Your existing CLI authentication is reused directly.
 
-**Why this matters:** Some third-party agent frameworks access Claude via unofficial methods — extracting OAuth tokens, spoofing API headers, or bypassing rate limits. These approaches violate [Anthropic's Terms of Service](https://www.anthropic.com/policies/terms) and risk account suspension. MAMA OS doesn't do any of that. If `claude` or `codex` works in your terminal, MAMA OS works.
+**Why this matters:** Some third-party agent frameworks reach these providers via unofficial methods — extracting OAuth tokens, spoofing API headers, or bypassing rate limits. Those approaches violate provider Terms of Service (e.g. [Anthropic's](https://www.anthropic.com/policies/terms) or [OpenAI's](https://openai.com/policies/terms-of-use)) and risk account suspension. MAMA OS doesn't do any of that. If `claude` or `codex` works in your terminal, MAMA OS works.
 
 ```bash
-# Already have Claude Code?
-claude auth status # If this shows loggedIn=true, you're ready
-mama start         # MAMA uses your existing authentication
+# Already have Claude Code or Codex?
+claude auth status   # or: codex login — if authenticated, you're ready
+mama start           # MAMA reuses your existing CLI authentication
 ```
 
 ## Knowledge Graph
@@ -240,7 +240,7 @@ open-source components.
 | Package                                          | Version | Description                                           |
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
 | [@jungjaehoon/mama-os](packages/standalone/)     | 0.20.1  | Always-on runtime, envelopes, connectors, worker APIs |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code                    |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code and any MCP client |
 | [@jungjaehoon/mama-core](packages/mama-core/)    | 1.7.0   | Core memory, provenance, raw refs, graph, embeddings  |
 | [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
@@ -271,7 +271,7 @@ dedicated tab. Connects to Discord, Slack, Telegram.
 
 > **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.13.0.
 
-### MCP Server (Claude Desktop)
+### MCP Server (Claude Desktop / any MCP client)
 
 ```json
 {
@@ -294,7 +294,7 @@ dedicated tab. Connects to Discord, Slack, Telegram.
   packets, and context packets
 - **Context compiler:** Context Compile V0 turns broad search candidates into
   selected/rejected/missing evidence packets with trusted `context_packet_id` provenance
-- **Extraction:** Sonnet for structured fact extraction from conversations
+- **Extraction:** structured fact extraction from conversations via the configured model backend (default Sonnet; Codex/GPT models also supported)
 - **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
 
 ## What Works Today
