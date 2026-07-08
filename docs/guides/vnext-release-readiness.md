@@ -31,12 +31,45 @@ verification in [Release Process](../development/release-process.md) are true.
 | ------------------------- | ----------- | -------------------------------------------------------------------------------- |
 | PR #115 merged            | Done        | GitHub PR #115 merged into `main`                                                |
 | vNext opt-in documented   | In progress | README, setup guide, gateway guide, architecture plan, changelog                 |
-| Migration path documented | Pending     | Steps to enable vNext, run smoke checks, and return to legacy mode               |
+| Migration path documented | Done        | See [Migration Path](#migration-path): enable flags, smoke-test, return to legacy |
 | Real local smoke evidence | Pending     | Redacted command output or synthetic-equivalent transcript with no private data  |
 | Privacy scans             | Per PR      | `./scripts/check-pii.sh --base origin/main`, `./scripts/check-pr-gitleaks.sh`    |
 | Dogfood gate              | Pending     | `MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os dogfood:vnext`        |
 | Release verification      | Pending     | `pnpm test`, `pnpm build`, plus any scoped smoke checks from the release process |
 | Review gate               | Pending     | Code review before PR, after PR comments, and before the next branch             |
+
+## Migration Path
+
+vNext is opt-in. The runtime resolves to `legacy` mode unless a flag turns it on, so enabling and
+reverting are both non-destructive. Precedence is env `MAMA_VNEXT_RUNTIME` > config > default
+(`legacy`), implemented in `packages/standalone/src/runtime-vnext/feature-flags.ts`.
+
+### Enable
+
+```bash
+export MAMA_VNEXT_RUNTIME=1   # accepted: 1 / true / yes / on / bootstrap / vnext
+```
+
+Or, in the MAMA config, set `runtime.vnext: true` (equivalently `runtime_vnext.enabled: true`).
+With no flag set, the runtime resolves to `legacy`.
+
+Related opt-in flags (all default off):
+
+- Implicit memory recall on ordinary turns: `MAMA_MEMORY_POLICY_IMPLICIT_RECALL`,
+  `MAMA_MEMORY_POLICY_IMPLICIT_LEGACY_CONTEXT_SEARCH`
+- Connector ingress under review: `MAMA_VNEXT_INGRESS_CONNECTOR`, `MAMA_VNEXT_INGRESS_CHANNEL`,
+  `MAMA_VNEXT_SYNTHETIC`
+
+### Verify
+
+Run the [Smoke Checklist](#smoke-checklist) below. The synthetic dogfood gate exercises the preview,
+commit, projection, and recall paths without real connector data.
+
+### Return to legacy
+
+Unset `MAMA_VNEXT_RUNTIME` (or set `0` / `false` / `off` / `legacy`), or set `runtime.vnext: false`.
+Because the default is `legacy`, removing the flag reverts. The legacy runtime is preserved, not
+deleted (architecture invariant), so rollback needs no data migration.
 
 ## Smoke Checklist
 
