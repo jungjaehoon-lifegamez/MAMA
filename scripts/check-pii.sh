@@ -38,7 +38,7 @@ if ! DIFF_FILE_LIST=$(git diff "${DIFF_RANGE[@]}" --name-only --diff-filter=ACM)
 fi
 
 set +e
-FILTERED_FILE_LIST=$(printf '%s\n' "$DIFF_FILE_LIST" | grep -E '\.(ts|js|md|json)$')
+FILTERED_FILE_LIST=$(printf '%s\n' "$DIFF_FILE_LIST" | grep -E '\.(ts|js|cjs|mjs|cts|mts|md|json)$')
 FILTERED_FILE_STATUS=$?
 set -e
 if [ "$FILTERED_FILE_STATUS" -ne 0 ] && [ "$FILTERED_FILE_STATUS" -ne 1 ]; then
