@@ -126,6 +126,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   // (this cache can lag a status UPDATE until the next reloadVectorCache).
   private statusCache: Map<number, string> = new Map();
   private decisionsHasStatusColumns = false;
+  private decisionsColumnInfoChecked = false;
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -210,7 +211,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
     }
-    if (!this.decisionsHasStatusColumns) {
+    if (!this.decisionsColumnInfoChecked) {
       this.refreshDecisionColumnInfo();
     }
     const cacheSelect = this.decisionsHasStatusColumns
@@ -221,6 +222,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       | undefined;
     if (!row) {
       this.statusCache.delete(rowid);
+      this.topicCache.delete(rowid);
       return;
     }
     this.topicCache.set(rowid, row.topic);
@@ -232,14 +234,18 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     }
   }
 
-  private refreshDecisionColumnInfo(): void {
-    if (!this.db) return;
+  private refreshDecisionColumnInfo(): Set<string> {
+    if (!this.db) return new Set();
     const decisionCols = new Set(
       (this.db.prepare('PRAGMA table_info(decisions)').all() as Array<{ name: string }>).map(
         (c) => c.name
       )
     );
     this.decisionsHasStatusColumns = decisionCols.has('status') && decisionCols.has('outcome');
+    // Only latch "checked" once the decisions table actually exists - introspecting
+    // a not-yet-migrated DB must not stop later calls from re-checking.
+    this.decisionsColumnInfoChecked = decisionCols.size > 0;
+    return decisionCols;
   }
 
   private loadVectorCache(): void {
@@ -279,12 +285,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     // remains the authority.
     this.topicCache.clear();
     this.statusCache.clear();
-    const decisionCols = new Set(
-      (this.db.prepare('PRAGMA table_info(decisions)').all() as Array<{ name: string }>).map(
-        (c) => c.name
-      )
-    );
-    this.refreshDecisionColumnInfo();
+    const decisionCols = this.refreshDecisionColumnInfo();
     const statusSelect = decisionCols.has('status') ? 'status' : 'NULL AS status';
     const outcomeSelect = decisionCols.has('outcome') ? 'outcome' : 'NULL AS outcome';
     const topicRows = this.db

@@ -696,7 +696,16 @@ async function saveMemoryInternal(
     try {
       const queryText = `${input.topic} ${input.summary}`;
       const embedding = await generateEmbedding(queryText, 'query');
-      const semanticResults = await vectorSearch(embedding, 3, 0.82);
+      // Exclude superseded history so a dense supersede chain cannot fill all 3
+      // candidate slots and hide the prior ACTIVE decision (which would break the
+      // evolution link and create an active duplicate).
+      const semanticResults = await vectorSearch(
+        embedding,
+        3,
+        0.82,
+        undefined,
+        Array.from(EXCLUDED_STATUSES)
+      );
 
       // Scope-filter semantic candidates when a primary scope is available
       let scopeFiltered = semanticResults;
@@ -876,10 +885,9 @@ async function saveMemoryInternal(
       id,
       ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
     ];
+    const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
     for (const changedId of changedIds) {
-      const ridRow = adapter
-        .prepare('SELECT rowid FROM decisions WHERE id = ?')
-        .get(changedId) as { rowid: number } | undefined;
+      const ridRow = ridStmt.get(changedId) as { rowid: number } | undefined;
       if (ridRow) {
         adapter.refreshDecisionStatusCache(ridRow.rowid);
       }
@@ -1016,7 +1024,15 @@ export async function promoteMemoryStatus(input: {
       try {
         const queryText = `${topic} ${summary}`;
         const embedding = await generateEmbedding(queryText, 'query');
-        const semanticResults = await vectorSearch(embedding, 3, 0.82);
+        // Same exclusion as saveMemoryInternal's fallback: superseded history must
+        // not crowd out the prior ACTIVE decision from the 3 candidate slots.
+        const semanticResults = await vectorSearch(
+          embedding,
+          3,
+          0.82,
+          undefined,
+          Array.from(EXCLUDED_STATUSES)
+        );
 
         let scopeFiltered = semanticResults;
         if (primaryScope) {
@@ -1129,10 +1145,9 @@ export async function promoteMemoryStatus(input: {
       memoryId,
       ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
     ];
+    const ridStmt = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?');
     for (const id of changedIds) {
-      const ridRow = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?').get(id) as
-        | { rowid: number }
-        | undefined;
+      const ridRow = ridStmt.get(id) as { rowid: number } | undefined;
       if (ridRow) {
         adapter.refreshDecisionStatusCache(ridRow.rowid);
       }
