@@ -22,7 +22,6 @@ import type { HealthScoreService } from '../../observability/health-score.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
 import type { RawStore } from '../../connectors/framework/raw-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
-import type { VNextProjectionProvider } from '../../operator-vnext/situation-projection-types.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { RuntimeEnvelopeBootstrap } from './envelope-bootstrap.js';
 import { API_PORT } from './utilities.js';
@@ -42,7 +41,6 @@ export interface InitApiServerParams {
   envelopeMetadata?: RuntimeEnvelopeBootstrap['metadata'];
   envelopeAuthority?: RuntimeEnvelopeBootstrap['envelopeAuthority'];
   contextCompileService?: ContextCompileService;
-  vNextProjectionProvider?: VNextProjectionProvider;
   /** mama-core getAdapter() — used to create the memoryDb shim */
   getAdapter: () => AgentSituationAdapter & {
     exec: (sql: string) => void;
@@ -69,7 +67,6 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     envelopeMetadata,
     envelopeAuthority,
     contextCompileService: suppliedContextCompileService,
-    vNextProjectionProvider,
   } = params;
 
   // ── SkillRegistry + MCP config migration ──────────────────────────────
@@ -130,7 +127,6 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     envelope: envelopeMetadata,
     envelopeAuthority,
     contextCompileService,
-    vNextProjectionProvider,
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);
