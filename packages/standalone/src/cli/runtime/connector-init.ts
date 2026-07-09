@@ -35,6 +35,27 @@ import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vn
 const logger = new DebugLogger('connector-init');
 
 /**
+ * Resolve the unified connector batch poll cadence in minutes (M2.4).
+ *
+ * UNSET or empty/whitespace -> 60 (the historical default; a documented default, NOT a
+ * fallback-after-failure). A SET value must parse to a finite number > 0, otherwise this throws at
+ * startup (no-fallback: never silently default a bad value). Fractional values are allowed (for
+ * example "0.25" == 15s) so live verification can force a short cadence.
+ */
+export function resolvePollMinutes(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') {
+    return 60;
+  }
+  const minutes = Number(raw);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    throw new Error(
+      `[connector] MAMA_CONNECTOR_POLL_MINUTES must be a finite number > 0 (got: ${JSON.stringify(raw)})`
+    );
+  }
+  return minutes;
+}
+
+/**
  * Result returned by initConnectors.
  */
 export interface ConnectorInitResult {
@@ -72,6 +93,11 @@ export async function initConnectors(
       connectorSchedulerStop: undefined,
     };
   }
+
+  // M2.4: unified batch poll cadence. UNSET -> 60 (unchanged default); a bad value fails loud HERE,
+  // before any stateful connector init below.
+  const pollMinutes = resolvePollMinutes(process.env.MAMA_CONNECTOR_POLL_MINUTES);
+  console.log(`[connector] unified batch poll cadence: ${pollMinutes} min`);
 
   const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
   let enabledConnectorNames: string[] = [];
@@ -263,7 +289,7 @@ export async function initConnectors(
     connectorScheduler.startBatch(
       connectorRegistry,
       allChannelConfigs,
-      60, // unified polling interval (minutes)
+      pollMinutes, // M2.4: was hardcoded 60; unified poll cadence (min) from MAMA_CONNECTOR_POLL_MINUTES
       async ({ truth, activity, spoke }) => {
         // Pass 0: Truth → ProjectTruth (no LLM)
         const projectTruth = buildProjectTruth(truth);
