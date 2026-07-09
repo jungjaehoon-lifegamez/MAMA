@@ -13,7 +13,7 @@
 
 /**
  * A raw channel event pulled from the delta source.
- * Ports Kagemusha `DbChannelMessage` (db/channel-message-repo.ts:3-11) — generic, no platform.
+ * Ports Kagemusha `DbChannelMessage` (db/channel-message-repo.ts:3-11) - generic, no platform.
  */
 export interface OperatorChannelEvent {
   id: number;
@@ -54,7 +54,7 @@ export interface OperatorAgentResponse {
 }
 
 /**
- * The single serial agent (queue → one prompt in flight).
+ * The single serial agent (queue -> one prompt in flight).
  * Ports Kagemusha `KagemushaAgentLoop.chat` (agent/agent-loop.ts:269).
  */
 export interface OperatorAgentLoop {
@@ -66,7 +66,7 @@ export interface OperatorAgentLoop {
 }
 
 /**
- * Memory port — bound to mama-core in the MAMA implementation (Task 3).
+ * Memory port - bound to mama-core in the MAMA implementation (Task 3).
  * The operator delegates ONLY memory here; operational state stays operator-owned.
  */
 export interface OperatorMemoryPort {
@@ -87,7 +87,7 @@ export interface OperatorTask {
   updatedAt: number;
 }
 
-/** Task source — operator-owned operational state. */
+/** Task source - operator-owned operational state. */
 export interface TaskSource {
   getTasks(): OperatorTask[];
 }
@@ -98,14 +98,14 @@ export interface ReportSlotSnapshot {
   updatedAt: number;
 }
 
-/** Report sink — the deterministic report board. */
+/** Report sink - the deterministic report board. */
 export interface ReportSink {
   getReportSlots(): Record<string, ReportSlotSnapshot>;
   setReportSlots(slots: Record<string, string>): void;
 }
 
 /**
- * Output sink — generic outbound send. The personal destination (which chat/room) is
+ * Output sink - generic outbound send. The personal destination (which chat/room) is
  * bound inside the implementation, never here. Ports Kagemusha `sendTelegram`.
  */
 export interface OutputSink {
@@ -128,7 +128,7 @@ export interface OperatorScheduleConfig {
 
 /**
  * The full injection surface for the operator mechanism.
- * Genericizes Kagemusha `AgentAwarenessOptions` — every field is injected; the mechanism
+ * Genericizes Kagemusha `AgentAwarenessOptions` - every field is injected; the mechanism
  * hardcodes nothing personal.
  */
 export interface OperatorRuntimeDeps {
