@@ -20,7 +20,7 @@ import { matchTriggers } from './trigger-matcher.js';
 import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
-import { TriggerReporter } from './trigger-report.js';
+import { SituationReporter } from './situation-report.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -66,7 +66,7 @@ export class OperatorTriggerLoop {
   private tickCount = 0;
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
-  private reporter = new TriggerReporter();
+  private digest = new SituationReporter();
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -89,11 +89,12 @@ export class OperatorTriggerLoop {
         const result = await fireTrigger(signal, memory);
         fires += 1;
         if (signal.triggerId) registry.recordFire(signal.triggerId);
-        this.reporter.recordFire({
+        // Carry the recalled {topic, content} (agent-authored memoryQuery drove it) into the report.
+        this.digest.recordFire({
           triggerId: signal.triggerId ?? signal.detector,
           kind: signal.kind,
           channelId: signal.channelId,
-          recalledTopics: result.recalled.map((r) => r.topic),
+          recalled: result.recalled,
         });
         log(
           `[trigger-loop] tick ${tick}: fire trigger=${signal.triggerId ?? signal.detector} ` +
@@ -103,8 +104,10 @@ export class OperatorTriggerLoop {
     }
     delta.commit(events);
 
-    // Maintain the recent-events window for authoring.
+    // Feed the drained window into the report accumulator (bounded per-channel) and keep the
+    // author window. The digest reports on ALL channels seen, not only the ones that fired.
     if (events.length > 0) {
+      this.digest.recordWindow(events);
       this.recentEvents = [...this.recentEvents, ...events].slice(-config.authorWindowSize);
     }
 
@@ -115,7 +118,7 @@ export class OperatorTriggerLoop {
         note: `authored at tick ${tick}`,
       });
       authored = created.length;
-      if (authored > 0) this.reporter.recordAuthored(authored);
+      if (authored > 0) this.digest.recordAuthored(authored);
       log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }
 
@@ -132,13 +135,14 @@ export class OperatorTriggerLoop {
       }
     }
 
-    // 5. Owner digest (M1.5 output leg): the agent composes it; the sink delivers it.
+    // 5. Situational digest (M1.5 cadence, M2 window-aware): the agent composes it from the
+    //    window + fire activity + recalled memory; the sink delivers it. Agent may reply NOTHING.
     let reported = false;
     const { output } = this.deps;
     const reportEvery = config.reportEveryNTicks ?? 0;
-    if (output && reportEvery > 0 && tick % reportEvery === 0 && this.reporter.hasActivity()) {
-      reported = await this.reporter.maybeReport(askAgent, output);
-      log(`[trigger-loop] tick ${tick}: owner report ${reported ? 'SENT' : 'suppressed by agent'}`);
+    if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
+      reported = await this.digest.report(askAgent, output, 'digest');
+      log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
     return { tick, drained: events.length, fires, authored, reviewed, reported };

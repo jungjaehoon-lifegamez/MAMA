@@ -184,4 +184,27 @@ describe('OperatorTriggerLoop', () => {
       vi.useRealTimers();
     }
   });
+
+  it('situational digest includes the drained window (all channels), not just fires (M2)', async () => {
+    seedTrigger(reg, 'tr1', 'report'); // fires on 'report'
+    const send = vi.fn(async () => {});
+    const captured: string[] = [];
+    const askAgent = vi.fn(async (prompt: string) => {
+      captured.push(prompt);
+      return prompt.includes('Fire activity') ? 'digest text' : '[]';
+    });
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 2 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'the report is late'), ev(2, 'ch-b', 'unrelated chatter')];
+    await loop.tick();            // tick 1: fire on ch-a; window buffers ch-a + ch-b
+    const r2 = await loop.tick(); // tick 2: digest
+    expect(r2.reported).toBe(true);
+    const digestPrompt = captured.find((p) => p.includes('Fire activity'))!;
+    expect(digestPrompt).toContain('ch-b');             // a NON-firing channel is in the window
+    expect(digestPrompt).toContain('unrelated chatter');
+    expect(digestPrompt).toContain('ch-a');
+  });
 });
