@@ -40,16 +40,6 @@ export type DelegateInput = {
   skill?: string;
 };
 
-export type DelegationAuthorityDecision =
-  | {
-      allowed: true;
-    }
-  | {
-      allowed: false;
-      code: string;
-      reason: string;
-    };
-
 export type DelegationExecutorDeps = {
   agentProcessManager: AgentProcessManager | null;
   delegationManagerRef: DelegationManager | null;
@@ -59,10 +49,6 @@ export type DelegationExecutorDeps = {
   retryDelayMs: number;
   resolveManagedAgentId: (id: string) => string;
   checkViewerOnly: () => string | null;
-  checkDelegationAuthority?: (
-    input: DelegateInput,
-    routing: DelegationRoutingContext
-  ) => DelegationAuthorityDecision;
 };
 
 function summarizeActivityOutput(output: unknown): string | undefined {
@@ -128,17 +114,6 @@ export class DelegationExecutor {
     const { agent_id } = input;
     const sample_count = Number.parseInt(String(input.sample_count ?? 2), 10);
     const resolvedAgentId = this.deps.resolveManagedAgentId(agent_id);
-    const authority = this.deps.checkDelegationAuthority?.(
-      { agentId: resolvedAgentId, task: `agent_test:${resolvedAgentId}` },
-      routing
-    );
-    if (authority && !authority.allowed) {
-      return {
-        success: false,
-        code: authority.code,
-        error: authority.reason,
-      } as GatewayToolResult;
-    }
     if (!Number.isFinite(sample_count) || sample_count < 1) {
       securityLogger.warn('[Agent test] Invalid sample_count received', {
         agent_id: resolvedAgentId,
@@ -172,14 +147,6 @@ export class DelegationExecutor {
     input: DelegateInput,
     routing: DelegationRoutingContext
   ): Promise<GatewayToolResult> {
-    const authority = this.deps.checkDelegationAuthority?.(input, routing);
-    if (authority && !authority.allowed) {
-      return {
-        success: false,
-        code: authority.code,
-        error: authority.reason,
-      } as GatewayToolResult;
-    }
     return this.runDelegateInternal(input, routing);
   }
 
