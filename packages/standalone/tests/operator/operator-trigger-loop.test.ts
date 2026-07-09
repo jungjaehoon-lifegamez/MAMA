@@ -128,6 +128,28 @@ describe('OperatorTriggerLoop', () => {
     expect(reg.getById('silent-one')?.status).toBe('active');
   });
 
+  it('owner report: agent digest sent on cadence when fires accumulated (M1.5)', async () => {
+    seedTrigger(reg, 'tr1', 'report');
+    const send = vi.fn(async () => {});
+    const askAgent = vi.fn(async (prompt: string) =>
+      prompt.includes('digest') || prompt.includes('Fire activity') ? 'owner digest text' : '[]'
+    );
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 2 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'the report is late')];
+    await loop.tick(); // fire buffered
+    const r2 = await loop.tick(); // report tick
+    expect(r2.reported).toBe(true);
+    expect(send).toHaveBeenCalledWith('owner digest text');
+    // no activity afterwards -> no more sends
+    await loop.tick();
+    await loop.tick();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it('start() ticks on the interval and the returned stop fn halts it', async () => {
     vi.useFakeTimers();
     try {

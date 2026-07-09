@@ -2210,6 +2210,13 @@ export async function runAgentLoop(
     const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
     mkdirSync(dirname(triggerDbPath), { recursive: true });
     const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+    // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
+    // never source. No chat configured or no telegram gateway -> loop stays read-only.
+    const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+    const reportOutput =
+      reportChatId && telegramGateway
+        ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
+        : undefined;
     const triggerLoop = new OperatorTriggerLoop({
       delta: new ConnectorDeltaRepo(
         getAdapter(),
@@ -2219,15 +2226,20 @@ export async function runAgentLoop(
       registry: triggerRegistry,
       askAgent: askAgentCLI,
       review: (trigger, context) => reviewTriggerCLI(trigger, context),
+      output: reportOutput,
       config: {
         tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
         drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
         authorEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_AUTHOR_EVERY || 30),
         reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
         authorWindowSize: 50,
+        reportEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REPORT_EVERY || 15),
       },
       log: (line) => console.log(line),
     });
+    if (reportOutput) {
+      console.log('✓ Trigger loop owner-report leg enabled (telegram)');
+    }
     const stopTriggerLoop = triggerLoop.start();
     gateways.push({
       stop: () => {

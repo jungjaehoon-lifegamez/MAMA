@@ -13,13 +13,14 @@
  * M1-T4 wires the real adapters behind MAMA_TRIGGER_LOOP=1.
  */
 
-import type { OperatorChannelEvent, OperatorMemoryPort } from './operator-interfaces.js';
+import type { OperatorChannelEvent, OperatorMemoryPort, OutputSink } from './operator-interfaces.js';
 import type { TriggerRecord } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
 import { matchTriggers } from './trigger-matcher.js';
 import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
+import { TriggerReporter } from './trigger-report.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -33,6 +34,8 @@ export interface TriggerLoopConfig {
   authorEveryNTicks: number;
   reviewEveryNTicks: number;
   authorWindowSize: number;
+  /** Owner-digest cadence (M1.5 output leg). Only used when deps.output is set. */
+  reportEveryNTicks?: number;
 }
 
 export interface TriggerLoopDeps {
@@ -43,6 +46,8 @@ export interface TriggerLoopDeps {
   askAgent: AskAgent;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
+  /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
+  output?: Pick<OutputSink, 'send'>;
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -53,6 +58,7 @@ export interface TickResult {
   fires: number;
   authored: number;
   reviewed: number;
+  reported: boolean;
 }
 
 export class OperatorTriggerLoop {
@@ -60,6 +66,7 @@ export class OperatorTriggerLoop {
   private tickCount = 0;
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
+  private reporter = new TriggerReporter();
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -82,6 +89,12 @@ export class OperatorTriggerLoop {
         const result = await fireTrigger(signal, memory);
         fires += 1;
         if (signal.triggerId) registry.recordFire(signal.triggerId);
+        this.reporter.recordFire({
+          triggerId: signal.triggerId ?? signal.detector,
+          kind: signal.kind,
+          channelId: signal.channelId,
+          recalledTopics: result.recalled.map((r) => r.topic),
+        });
         log(
           `[trigger-loop] tick ${tick}: fire trigger=${signal.triggerId ?? signal.detector} ` +
             `recalled=${result.recalled.length} channel=${signal.channelId}`
@@ -102,6 +115,7 @@ export class OperatorTriggerLoop {
         note: `authored at tick ${tick}`,
       });
       authored = created.length;
+      if (authored > 0) this.reporter.recordAuthored(authored);
       log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }
 
@@ -118,7 +132,16 @@ export class OperatorTriggerLoop {
       }
     }
 
-    return { tick, drained: events.length, fires, authored, reviewed };
+    // 5. Owner digest (M1.5 output leg): the agent composes it; the sink delivers it.
+    let reported = false;
+    const { output } = this.deps;
+    const reportEvery = config.reportEveryNTicks ?? 0;
+    if (output && reportEvery > 0 && tick % reportEvery === 0 && this.reporter.hasActivity()) {
+      reported = await this.reporter.maybeReport(askAgent, output);
+      log(`[trigger-loop] tick ${tick}: owner report ${reported ? 'SENT' : 'suppressed by agent'}`);
+    }
+
+    return { tick, drained: events.length, fires, authored, reviewed, reported };
   }
 
   /**
