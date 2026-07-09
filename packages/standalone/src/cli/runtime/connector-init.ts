@@ -67,6 +67,13 @@ export interface ConnectorInitResult {
 
 export interface ConnectorInitOptions {
   vNext?: VNextBootstrapPlan;
+  /**
+   * M2.4 freshness nudge. Called best-effort whenever a poll batch indexes >= 1 item into
+   * connector_event_index, so the trigger loop can tick soon instead of waiting for its next
+   * interval. Late-bound by the caller (the loop is constructed AFTER initConnectors returns), so
+   * this is a stable forwarder that no-ops until the loop exists. Pure timing signal.
+   */
+  nudge?: () => void;
 }
 
 /**
@@ -191,6 +198,13 @@ export async function initConnectors(
           }
           for (const input of mapNormalizedItemsToConnectorEventIndexInputs(connectorName, items)) {
             mamaCore.upsertConnectorEventIndex(adapter, input);
+          }
+          // M2.4: a batch that indexed rows wakes the trigger loop (debounced downstream). pollAll
+          // only calls the sink with items.length > 0; the guard is defensive + self-documenting.
+          // The loop's own operator_ingest_seq cursor is authoritative, so a rare idempotent
+          // re-upsert costs at most one empty debounced tick.
+          if (items.length > 0) {
+            options.nudge?.();
           }
         }
       : undefined;
