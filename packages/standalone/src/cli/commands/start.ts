@@ -2251,6 +2251,15 @@ export async function runAgentLoop(
       review: (trigger, context) => reviewTriggerCLI(trigger, context),
       output: reportOutput,
       reportScheduler,
+      // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
+      // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
+      // reports "quiet" whenever polling is between batches).
+      fullReportSelfGather: [
+        'kagemusha_overview() for room/task/message counts',
+        'kagemusha_tasks({ status: "needs_review" }) and kagemusha_tasks({ status: "blocked" }) for the task board state',
+        'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "24h ago" }) on the busiest 2-3',
+        'mama_recall(query) for memory relevant to what you find',
+      ],
       config: {
         tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
         drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
