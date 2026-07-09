@@ -2206,6 +2206,9 @@ export async function runAgentLoop(
     const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
     const { mkdirSync } = await import('node:fs');
     const { dirname } = await import('node:path');
+    const { ReportScheduler, FileReportScheduleStore, parseReportHours } = await import(
+      '../../operator/report-scheduler.js'
+    );
 
     const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
     mkdirSync(dirname(triggerDbPath), { recursive: true });
@@ -2217,6 +2220,16 @@ export async function runAgentLoop(
       reportChatId && telegramGateway
         ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
         : undefined;
+    // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
+    // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
+    const fullReportHours = parseReportHours(process.env.MAMA_TRIGGER_LOOP_FULL_REPORT_HOURS || '');
+    const reportScheduler =
+      fullReportHours.length > 0 && reportOutput
+        ? new ReportScheduler(
+            fullReportHours,
+            new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
+          )
+        : undefined;
     const triggerLoop = new OperatorTriggerLoop({
       delta: new ConnectorDeltaRepo(
         getAdapter(),
@@ -2227,6 +2240,7 @@ export async function runAgentLoop(
       askAgent: askAgentCLI,
       review: (trigger, context) => reviewTriggerCLI(trigger, context),
       output: reportOutput,
+      reportScheduler,
       config: {
         tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
         drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
@@ -2239,6 +2253,9 @@ export async function runAgentLoop(
     });
     if (reportOutput) {
       console.log('✓ Trigger loop owner-report leg enabled (telegram)');
+    }
+    if (reportScheduler) {
+      console.log(`✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`);
     }
     const stopTriggerLoop = triggerLoop.start();
     gateways.push({
