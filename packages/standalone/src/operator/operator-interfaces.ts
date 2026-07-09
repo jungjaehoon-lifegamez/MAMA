@@ -26,6 +26,8 @@ export interface OperatorChannelEvent {
   role: 'user' | 'assistant';
   content: string;
   createdAt: number;
+  /** stable provenance id when the source is connector_event_index (TEXT PK); optional. */
+  eventIndexId?: string;
 }
 
 /**
