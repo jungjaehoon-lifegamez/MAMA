@@ -578,6 +578,14 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     }
 
+    // TOMBSTONE (M6, 2026-07): the vnext_* operator tables (vnext_operator_cursors,
+    // vnext_operator_commits, operator_no_updates, worker_proposals) lost their last
+    // living reader/writer when the vNext parallel runtime was deleted in M4 (PR #120).
+    // They are intentionally KEPT: this repair path re-creates them on any DB that
+    // skipped migration 038, vnext_operator_commits holds an FK to
+    // vnext_operator_cursors, and shipped migrations are append-only. Do not drop
+    // them without also removing this repair block, the 040/041 repair/asserts below,
+    // and the schema-contract tests that pin them.
     if (
       !this.tableExists('vnext_operator_cursors') ||
       !this.tableExists('vnext_operator_commits') ||
@@ -591,6 +599,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       );
     }
 
+    // TOMBSTONE (M6, 2026-07): operator_memory_commit_intents (migrations 040/041)
+    // has no living reader/writer since M4 (PR #120). Kept for the same reasons as
+    // the 038 family above; the fail-loud asserts below still protect personal DBs
+    // that skipped or corrupted these migrations.
     if (
       !this.tableExists('operator_memory_commit_intents') ||
       !this.indexExists('idx_operator_memory_commit_intents_cursor_created')
