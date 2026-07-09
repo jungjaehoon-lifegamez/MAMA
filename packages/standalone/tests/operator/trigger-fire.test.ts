@@ -61,6 +61,22 @@ describe('fireTrigger', () => {
     expect(out.evidence.task_state).toBeNull();
   });
 
+  it('a THROWING evidence provider does not abort the fire; failure surfaces in the evidence (PR #119)', async () => {
+    const out = await fireTrigger(
+      sig({ requiredEvidence: ['current_message', 'channel_history'] }),
+      fakeMem([{ topic: 't', content: 'c' }]),
+      {
+        channel_history: async () => {
+          throw new Error('db locked');
+        },
+      }
+    );
+    expect(out.recalled).toHaveLength(1); // the fire itself completed
+    expect(out.evidence.current_message).toBe('the report is late');
+    expect(String(out.evidence.channel_history)).toContain('failed');
+    expect(String(out.evidence.channel_history)).toContain('db locked'); // surfaced, not swallowed
+  });
+
   it('calls the onFire observability hook once per fire', async () => {
     let fires = 0;
     await fireTrigger(sig(), fakeMem([]), {}, { onFire: () => (fires += 1) });
