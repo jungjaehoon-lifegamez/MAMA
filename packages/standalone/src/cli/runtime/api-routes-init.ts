@@ -468,8 +468,9 @@ This saves resources. Only compile when there is genuinely new information to do
       }
     };
 
-    // Event-driven: compile when extraction completes (debounced)
-    eventBus.on('extraction:completed', () => runWikiAgent());
+    // Event-driven: compile when extraction completes. Trailing-edge debounce so
+    // bursts of extraction:completed events coalesce into one wiki compile run.
+    eventBus.onDebounced('extraction:completed', () => runWikiAgent(), 30_000);
 
     // Emit agent:action notices when wiki pages are compiled
     eventBus.on('wiki:compiled', (event) => {
