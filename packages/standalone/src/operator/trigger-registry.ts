@@ -109,6 +109,18 @@ export class TriggerRegistry {
     return row ? rowToRecord(row) : null;
   }
 
+  /**
+   * Record that a trigger FIRED (read-only surface loop) - bumps `fired` only.
+   * Distinct from recordOutcome: a fire is not a success/failure judgment, and the
+   * read-only loop must never fabricate one (M1-T2).
+   */
+  recordFire(id: string): void {
+    const result = this.db
+      .prepare(`UPDATE operator_triggers SET fired = fired + 1, updated_at = ? WHERE id = ?`)
+      .run(Date.now(), id);
+    if (result.changes === 0) throw new Error(`recordFire: no trigger with id ${id}`);
+  }
+
   /** Record an intervention outcome - the G2 evolution feed (Task 4 reads stats). */
   recordOutcome(id: string, outcome: 'succeeded' | 'failed'): void {
     const column = outcome === 'succeeded' ? 'succeeded' : 'failed';
