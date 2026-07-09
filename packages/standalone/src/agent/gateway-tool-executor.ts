@@ -2228,7 +2228,6 @@ export class GatewayToolExecutor {
           const adapter =
             this.wikiPublishAdapter ??
             createWikiPublishAdapter({
-              mode: 'legacy',
               publisher: this.wikiPublisher,
             });
           try {

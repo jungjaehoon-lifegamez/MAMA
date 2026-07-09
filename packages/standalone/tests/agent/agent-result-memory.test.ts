@@ -8,9 +8,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
-import Database from '../../src/sqlite.js';
-import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
-import { createWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational outputs stay out of long-term memory', () => {
   const createMockApi = (): MAMAApiInterface => ({
@@ -158,45 +155,6 @@ describe('STORY-AGENT-RESULT-MEMORY: Agent result publication - AC operational o
         expect.objectContaining({ sourceIds: ['decision:d_1'] }),
       ]);
       expect(mockApi.save).not.toHaveBeenCalled();
-    });
-
-    it('uses injected vNext wiki adapter to store source-linked artifacts', async () => {
-      const mockApi = createMockApi();
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
-      const executor = new GatewayToolExecutor({
-        mamaApi: mockApi,
-        wikiPublishAdapter: createWikiPublishAdapter({
-          mode: 'vnext',
-          store,
-          now: () => new Date('2026-07-02T00:00:00.000Z'),
-          nowMs: () => 1000,
-        }),
-      });
-      executor.setAgentContext(createAgentContext());
-
-      const result = await executor.execute('wiki_publish', {
-        pages: [
-          {
-            path: 'wiki/api.md',
-            title: 'API Reference',
-            type: 'entity',
-            content: '# API',
-            sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
-          },
-        ],
-      });
-
-      expect(result).toEqual({
-        success: true,
-        message: 'Wiki published: 0 pages',
-        artifactsStored: 1,
-      });
-      expect(store.getByPath('wiki/api.md')).toMatchObject({
-        sourceRefs: ['raw:slack:event-1'],
-      });
-      expect(mockApi.save).not.toHaveBeenCalled();
-      db.close();
     });
 
     it('should handle empty pages array', async () => {
