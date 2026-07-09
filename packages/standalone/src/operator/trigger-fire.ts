@@ -38,7 +38,17 @@ export async function fireTrigger(
     if (key === 'current_message') {
       evidence[key] = signal.text;
     } else if (evidenceProviders[key]) {
-      evidence[key] = await evidenceProviders[key]();
+      // Component isolation (PR #119 review): evidence is auxiliary surface data - one
+      // throwing provider must not abort the whole tick (uncommitted deltas would re-fire
+      // every signal next tick). The failure is surfaced IN the evidence handed to the
+      // agent, never swallowed silently.
+      try {
+        evidence[key] = await evidenceProviders[key]();
+      } catch (error) {
+        evidence[key] = `(evidence provider "${key}" failed: ${
+          error instanceof Error ? error.message : String(error)
+        })`;
+      }
     } else {
       // Not available. Surface honestly as null rather than guessing (no-fallback).
       evidence[key] = null;

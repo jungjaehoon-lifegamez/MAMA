@@ -59,11 +59,27 @@ export interface ReportToolAudit {
 }
 
 /** True when a tool_result proves the call did NOT execute: errored, or denied by the envelope
- *  layer with {"success":false,...,"code":"envelope_missing"} (gateway-tool-executor.ts:1090-1142). */
+ *  layer with {"success":false,...,"code":"envelope_missing"} (gateway-tool-executor.ts:1090-1142).
+ *  The gateway loop serializes the tool-result OBJECT as the content (JSON.stringify in
+ *  executeTools), so parse and inspect the ROOT properties first - a substring regex alone
+ *  false-positives on a SUCCESSFUL result whose nested payload merely mentions
+ *  '"success":false' (PR #119 review). The substring heuristic remains only as the
+ *  conservative fallback for unparseable content. */
 function isErroredOrDenied(block: { is_error?: boolean; content?: unknown }): boolean {
-  if (block.is_error === true) return true;
+  if (block.is_error === true) {
+    return true;
+  }
   const body =
     typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '');
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const root = parsed as { success?: unknown; code?: unknown };
+      return root.success === false || root.code === 'envelope_missing';
+    }
+  } catch {
+    // Not JSON - fall through to the conservative substring heuristic.
+  }
   return /"success"\s*:\s*false/.test(body) || body.includes('envelope_missing');
 }
 
