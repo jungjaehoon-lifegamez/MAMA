@@ -30,6 +30,15 @@ test('statsOf reports mean and >0.90 fraction', () => {
   assert.ok(s.min <= s.p50 && s.p50 <= s.max);
 });
 
+test('statsOf returns n=0 with null stats for an empty array (no NaN)', () => {
+  const s = statsOf([]);
+  assert.equal(s.n, 0);
+  assert.equal(s.mean, null);
+  assert.equal(s.min, null);
+  assert.equal(s.max, null);
+  assert.ok(!Object.values(s).some((v) => Number.isNaN(v)));
+});
+
 test('computeTop1 isolates distinct-text nearest neighbour', () => {
   const e = (i) => { const v = new Float32Array(4); v[i] = 1; return v; };
   const items = [

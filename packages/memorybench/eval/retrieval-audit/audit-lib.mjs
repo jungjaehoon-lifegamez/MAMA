@@ -5,32 +5,45 @@ export const VEC_BYTES = 4096; // 1024 float32
 
 // Byte-safe: build a fresh 4096-byte ArrayBuffer at offset 0, then L2-normalize.
 export function parseVec(buf) {
-  if (!buf || buf.length !== VEC_BYTES) return null;
+  if (!buf || buf.length !== VEC_BYTES) {
+    return null;
+  }
   const u = new Uint8Array(VEC_BYTES);
   u.set(buf);
   const f = new Float32Array(u.buffer);
   let n = 0;
-  for (let i = 0; i < f.length; i++) n += f[i] * f[i];
+  for (let i = 0; i < f.length; i++) {
+    n += f[i] * f[i];
+  }
   n = Math.sqrt(n);
-  if (!(n > 0)) return null;
+  if (!(n > 0)) {
+    return null;
+  }
   const out = new Float32Array(f.length);
-  for (let i = 0; i < f.length; i++) out[i] = f[i] / n;
+  for (let i = 0; i < f.length; i++) {
+    out[i] = f[i] / n;
+  }
   return out;
 }
 
 export function dot(a, b) {
   let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  for (let i = 0; i < a.length; i++) {
+    s += a[i] * b[i];
+  }
   return s;
 }
 
 export function statsOf(arr) {
+  if (arr.length === 0) {
+    return { n: 0, min: null, p50: null, mean: null, p90: null, max: null, pct_gt_090: null, pct_gt_095: null };
+  }
   const a = arr.slice().sort((x, y) => x - y);
-  const n = a.length || 1;
+  const n = a.length;
   const q = (p) => a[Math.min(a.length - 1, Math.max(0, Math.floor(p * (a.length - 1))))];
   const mean = a.reduce((s, x) => s + x, 0) / n;
   return {
-    n: a.length,
+    n,
     min: +(+q(0)).toFixed(4),
     p50: +(+q(0.5)).toFixed(4),
     mean: +mean.toFixed(4),
@@ -49,13 +62,21 @@ export function computeTop1(items) {
     let best = -1;
     let bestDistinct = -1;
     for (let j = 0; j < items.length; j++) {
-      if (i === j) continue;
+      if (i === j) {
+        continue;
+      }
       const s = dot(items[i].vec, items[j].vec);
-      if (s > best) best = s;
-      if (s > bestDistinct && items[j].dtext !== items[i].dtext) bestDistinct = s;
+      if (s > best) {
+        best = s;
+      }
+      if (s > bestDistinct && items[j].dtext !== items[i].dtext) {
+        bestDistinct = s;
+      }
     }
     top1.push(best);
-    if (bestDistinct >= 0) top1Distinct.push(bestDistinct);
+    if (bestDistinct >= 0) {
+      top1Distinct.push(bestDistinct);
+    }
   }
   return { top1, top1Distinct };
 }
@@ -80,14 +101,28 @@ export function computeLeakage(itemsSortedByTime, linkOf, K = 5) {
     let lin = false;
     let hi = false;
     for (const { m, s } of scored) {
-      if (m.dtext === h.dtext) ex = true;
-      if (nbrs.has(m.id)) lin = true;
-      if (s > 0.9) hi = true;
+      if (m.dtext === h.dtext) {
+        ex = true;
+      }
+      if (nbrs.has(m.id)) {
+        lin = true;
+      }
+      if (s > 0.9) {
+        hi = true;
+      }
     }
-    if (ex) leakExact++;
-    if (lin) leakLineage++;
-    if (ex || lin) leakAny++;
-    if (hi) leakHiCos++;
+    if (ex) {
+      leakExact++;
+    }
+    if (lin) {
+      leakLineage++;
+    }
+    if (ex || lin) {
+      leakAny++;
+    }
+    if (hi) {
+      leakHiCos++;
+    }
   }
   const dz = held.length || 1;
   return {
@@ -105,8 +140,12 @@ export function computeLeakage(itemsSortedByTime, linkOf, K = 5) {
 export function buildLineage(rows, edges) {
   const linkOf = new Map();
   const link = (a, b) => {
-    if (!a || !b) return;
-    if (!linkOf.has(a)) linkOf.set(a, new Set());
+    if (!a || !b) {
+      return;
+    }
+    if (!linkOf.has(a)) {
+      linkOf.set(a, new Set());
+    }
     linkOf.get(a).add(b);
   };
   for (const r of rows) {
