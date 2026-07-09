@@ -1,0 +1,4 @@
+[test]
+# Restrict bun test discovery to src/. The retrieval-audit tests under eval/ use
+# node:test and MUST run under node (see "test:audit" script), never under bun.
+root = "src"
