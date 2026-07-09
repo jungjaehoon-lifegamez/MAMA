@@ -41,7 +41,9 @@ export async function reEmbedDatabase({ db, embedDecision, embedWiki, log = () =
   for (const row of decisions) {
     const vec = await embedDecision(row);
     decVecs.push({ rid: row.rid, buf: Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength) });
-    if (++i % 50 === 0) log(`  decisions embedded: ${i}/${decisions.length}`);
+    if (++i % 50 === 0) {
+      log(`  decisions embedded: ${i}/${decisions.length}`);
+    }
   }
 
   // 2) Wiki pages -> wiki_page_embeddings (schema-aware; skip if table empty/absent).
@@ -73,12 +75,16 @@ export async function reEmbedDatabase({ db, embedDecision, embedWiki, log = () =
   // 3) One sync transaction: overwrite vectors + flip marker last.
   const writeAll = db.transaction(() => {
     const putDec = db.prepare('INSERT OR REPLACE INTO embeddings (rowid, embedding) VALUES (?, ?)');
-    for (const d of decVecs) putDec.run(d.rid, d.buf);
+    for (const d of decVecs) {
+      putDec.run(d.rid, d.buf);
+    }
     if (wikiVecs.length) {
       const putWiki = wikiSchemaVector
         ? db.prepare('UPDATE wiki_page_embeddings SET vector = ? WHERE wiki_page_id = ?')
         : db.prepare('UPDATE wiki_page_embeddings SET embedding = ? WHERE page_id = ?');
-      for (const w of wikiVecs) putWiki.run(w.buf, w.key);
+      for (const w of wikiVecs) {
+        putWiki.run(w.buf, w.key);
+      }
     }
     db.prepare("INSERT OR REPLACE INTO embedding_meta (key, value) VALUES ('embedding_prefix_scheme', ?)")
       .run(EMBEDDING_PREFIX_SCHEME);
