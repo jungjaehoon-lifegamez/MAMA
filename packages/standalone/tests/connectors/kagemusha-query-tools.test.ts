@@ -10,5 +10,14 @@ describe('Story R2: kagemusha query tools fail loud on bad arguments', () => {
         /since.*ISO-8601/i
       );
     });
+
+    it('treats a JSON null since as absent (default window), not epoch 0', () => {
+      // new Date(null) parses to epoch 0, which would silently match ALL history.
+      // A null since must fall through to the default window - so validation must
+      // not throw for it (the DB open failing later on CI is a different error).
+      expect(() => queryMessages({ channelId: 'c1', since: null as unknown as string })).not.toThrow(
+        /since.*ISO-8601/i
+      );
+    });
   });
 });

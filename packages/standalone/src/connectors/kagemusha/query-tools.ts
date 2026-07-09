@@ -224,7 +224,9 @@ export function queryMessages(options: {
   // Validate BEFORE any DB access: new Date("24h ago") is NaN, and a NaN bind
   // makes `created_at > ?` silently match zero rows (empty-success). Fail loud.
   let sinceMs: number;
-  if (options.since !== undefined) {
+  // != null also treats a JSON null (common in LLM-produced payloads) as absent -
+  // new Date(null) would otherwise parse to epoch 0 and match ALL history.
+  if (options.since != null) {
     sinceMs = new Date(options.since).getTime();
     if (Number.isNaN(sinceMs)) {
       throw new Error(
