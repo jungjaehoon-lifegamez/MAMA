@@ -60,6 +60,7 @@ function buildSignal(trigger: TriggerRecord, event: OperatorChannelEvent, text: 
     occurredAt: event.createdAt,
     reason: `Agent-authored trigger ${trigger.id} matched.`,
     text,
-    sourceRefs: [{ sourceConnector: event.channel, sourceId: String(event.id) }],
+    sourceRefs: [{ sourceConnector: event.channel, sourceId: event.eventIndexId ?? String(event.id) }],
+    triggerId: trigger.id,
   };
 }

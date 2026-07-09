@@ -31,6 +31,12 @@ export interface TriggerSignal {
   reason: string;
   text: string;
   sourceRefs: TriggerSourceRef[];
+  /**
+   * Id of the trigger that produced this signal. OPTIONAL (a required field would break
+   * existing TriggerSignal literals under tsc); trigger-matcher's buildSignal always sets it,
+   * and the loop uses it for recordFire.
+   */
+  triggerId?: string;
 }
 
 /** The agent-authored match condition (replaces hardcoded regex markers, G1). */
