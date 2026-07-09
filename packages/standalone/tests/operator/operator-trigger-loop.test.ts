@@ -207,4 +207,73 @@ describe('OperatorTriggerLoop', () => {
     expect(digestPrompt).toContain('unrelated chatter');
     expect(digestPrompt).toContain('ch-a');
   });
+
+  it('scheduled full report: fires at a configured hour even with no trigger fires, marks the hour (M2)', async () => {
+    const send = vi.fn(async () => {});
+    const markFired = vi.fn();
+    const askAgent = vi.fn(async () => 'FULL REPORT text');
+    const scheduler = { shouldFire: () => ({ fire: true, hourKey: '2026-07-09:08' }), markFired };
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'some chatter'), ev(2, 'ch-b', 'more chatter')]; // window only, no trigger seeded
+    const r = await loop.tick();
+    expect(r.fires).toBe(0);
+    expect(r.fullReported).toBe(true);
+    expect(send).toHaveBeenCalledWith('FULL REPORT text');
+    expect(markFired).toHaveBeenCalledWith('2026-07-09:08');
+  });
+
+  it('scheduled full report: agent NOTHING suppresses the send but still marks the hour (fire once)', async () => {
+    const send = vi.fn();
+    const markFired = vi.fn();
+    const askAgent = vi.fn(async () => 'NOTHING');
+    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'chatter')];
+    const r = await loop.tick();
+    expect(r.fullReported).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(markFired).toHaveBeenCalledWith('k');
+  });
+
+  it('scheduled full report: send failure throws (no-fallback), hour NOT marked -> retries', async () => {
+    const send = vi.fn(async () => { throw new Error('telegram down'); });
+    const markFired = vi.fn();
+    const askAgent = vi.fn(async () => 'FULL');
+    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'chatter')];
+    await expect(loop.tick()).rejects.toThrow('telegram down');
+    expect(markFired).not.toHaveBeenCalled();
+  });
+
+  it('scheduled full report: not a configured hour -> no send, no mark', async () => {
+    const send = vi.fn();
+    const markFired = vi.fn();
+    const scheduler = { shouldFire: () => ({ fire: false, hourKey: 'k' }), markFired };
+    const loop = makeLoop({
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'chatter')];
+    const r = await loop.tick();
+    expect(r.fullReported).toBe(false);
+    expect(send).not.toHaveBeenCalled();
+    expect(markFired).not.toHaveBeenCalled();
+  });
 });
