@@ -695,7 +695,7 @@ async function saveMemoryInternal(
   if (shouldApplyEvolution && existingCandidates.length === 0) {
     try {
       const queryText = `${input.topic} ${input.summary}`;
-      const embedding = await generateEmbedding(queryText);
+      const embedding = await generateEmbedding(queryText, 'query');
       const semanticResults = await vectorSearch(embedding, 3, 0.82);
 
       // Scope-filter semantic candidates when a primary scope is available
@@ -996,7 +996,7 @@ export async function promoteMemoryStatus(input: {
     if (existingCandidates.length === 0) {
       try {
         const queryText = `${topic} ${summary}`;
-        const embedding = await generateEmbedding(queryText);
+        const embedding = await generateEmbedding(queryText, 'query');
         const semanticResults = await vectorSearch(embedding, 3, 0.82);
 
         let scopeFiltered = semanticResults;
@@ -1179,7 +1179,7 @@ export async function recallMemory(
   let primaryQueryEmbedding: Float32Array | null = null;
   try {
     for (const sq of subQueries) {
-      const queryEmbedding = await generateEmbedding(sq);
+      const queryEmbedding = await generateEmbedding(sq, 'query');
       if (sq === query && primaryQueryEmbedding === null) {
         primaryQueryEmbedding = queryEmbedding;
       }

@@ -125,7 +125,7 @@ async function main() {
 
     // Build search query from file path
     const searchQuery = buildSearchQuery(filePath);
-    const embedding = await generateEmbedding(searchQuery);
+    const embedding = await generateEmbedding(searchQuery, 'query');
 
     if (!embedding) {
       markFileEdited(filePath);

@@ -826,7 +826,7 @@ export async function queryVectorSearch(params: VectorSearchParams): Promise<Dec
 
   try {
     // Generate embedding for query
-    const embedding = await generateEmbedding(query);
+    const embedding = await generateEmbedding(query, 'query');
 
     const cutoffTime = Date.now() - timeWindow;
     const candidates = await adapter.vectorSearch(embedding, limit * 5);
