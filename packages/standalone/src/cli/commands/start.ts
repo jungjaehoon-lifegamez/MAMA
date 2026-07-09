@@ -2177,9 +2177,14 @@ export async function runAgentLoop(
     { vNext }
   );
 
+  // M2.4 freshness: the connector sink nudges the trigger loop when a poll indexes new rows. The
+  // loop is constructed AFTER initConnectors (below), so hand initConnectors a stable forwarder now
+  // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
+  // wake), which preserves today's behavior when MAMA_TRIGGER_LOOP is unset.
+  const triggerLoopNudge: { current: (() => void) | null } = { current: null };
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
-    { vNext }
+    { vNext, nudge: () => triggerLoopNudge.current?.() }
   );
   codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
@@ -2192,6 +2197,170 @@ export async function runAgentLoop(
   // Add connector scheduler to graceful shutdown if active
   if (connectorSchedulerStop) {
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });
+  }
+
+  // ── Trigger loop (M1, flag-gated, additive): agent-evolved triggers on the live stream ──
+  // Runs ONLY with MAMA_TRIGGER_LOOP=1. Placed after initConnectors (which feeds
+  // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
+  if (process.env.MAMA_TRIGGER_LOOP === '1') {
+    // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
+    // DB permission, registry constructor) must not abort the whole daemon before Phase
+    // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
+    // failure is still surfaced LOUDLY below (console.error), never swallowed silently.
+    try {
+    const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');
+    const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
+    const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
+    const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
+    const { askAgentCLI } = await import('../../operator/trigger-author.js');
+    const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
+    const { mkdirSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
+    const { ReportScheduler, FileReportScheduleStore, parseReportHours } = await import(
+      '../../operator/report-scheduler.js'
+    );
+    const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } = await import(
+      '../../operator/report-run.js'
+    );
+    const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
+
+    const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
+    mkdirSync(dirname(triggerDbPath), { recursive: true });
+    const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+    // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
+    // never source. No chat configured or no telegram gateway -> loop stays read-only.
+    const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+    const reportOutput =
+      reportChatId && telegramGateway
+        ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
+        : undefined;
+    // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
+    // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
+    const fullReportHours = parseReportHours(process.env.MAMA_TRIGGER_LOOP_FULL_REPORT_HOURS || '');
+    const reportScheduler =
+      fullReportHours.length > 0 && reportOutput
+        ? new ReportScheduler(
+            fullReportHours,
+            new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
+          )
+        : undefined;
+    const triggerLoop = new OperatorTriggerLoop({
+      delta: new ConnectorDeltaRepo(
+        getAdapter(),
+        expandPath('~/.mama/operator/trigger-loop-cursors.json')
+      ),
+      memory: createMamaMemoryPort(),
+      registry: triggerRegistry,
+      askAgent: askAgentCLI,
+      // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
+      // session lanes) instead of the bare CLI - report tone comes from generation inputs.
+      // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
+      // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
+      // loop is isolated from chat and continuous across cadences (runWithContent honors
+      // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
+      // 'model_tool' executions are envelope-gated (gateway-tool-executor.ts:252-256) and
+      // issuance defaults to 'enabled' (envelope-bootstrap.ts:28-30), so each report carries a
+      // per-run scoped envelope (mirrors the code-act issuance at start.ts:1834-1865); without it
+      // every call is denied with code 'envelope_missing'. Then audit the gateway tools the agent
+      // actually EXECUTED: a full report that executed NO gateway gather tool is logged loudly
+      // (no-fallback), and every write (mama_save) is logged (observability).
+      reportAsk: createPersonaReportAsk({
+        issueEnvelope:
+          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
+            ? async () => {
+                const projectId = resolveReactiveProjectRoot(config, process.env);
+                const wallSeconds = Math.min(
+                  Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
+                  300
+                );
+                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
+                  agent_id: 'operator-report',
+                  instance_id: randomUUID(),
+                  // 'operator' is not a member of EnvelopeSource (envelope/types.ts is a closed
+                  // union); 'watch' is the daemon-internal source used by the mirrored code-act
+                  // issuance (start.ts:1834-1865). This field is issuing-source metadata only -
+                  // enforcement authorizes on scope.memory_scopes (which cover the operator:report
+                  // run below), never on envelope.source (gateway-tool-executor.ts:1421,1511,1590).
+                  source: 'watch',
+                  channel_id: 'report',
+                  trigger_context: { user_text: '<operator scheduled report>' },
+                  scope: {
+                    // Reads: the enabled raw connectors (kagemusha_* gathers) + memory scopes
+                    // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
+                    // send surface (constraint 2).
+                    project_refs: [{ kind: 'project' as const, id: projectId }],
+                    raw_connectors: codeActRawConnectors,
+                    memory_scopes: resolveCodeActMemoryScopes(
+                      deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
+                      getAdapter()
+                    ),
+                    allowed_destinations: [],
+                  },
+                  tier: 2, // write tier: the report may mama_save (matches code-act write tier)
+                  budget: { wall_seconds: wallSeconds },
+                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+                });
+              }
+            : undefined,
+        run: async (prompt, envelope) => {
+          const result = await agentLoop.runWithContent([{ type: 'text' as const, text: prompt }], {
+            sessionKey: OPERATOR_REPORT_SESSION_KEY,
+            source: 'operator',
+            channelId: 'report',
+            ...(envelope ? { envelope } : {}),
+          });
+          return { response: result.response, history: result.history };
+        },
+        log: (line: string) => console.log(line),
+        fullReportTag: OPERATOR_FULL_REPORT_TAG,
+      }),
+      review: (trigger, context) => reviewTriggerCLI(trigger, context),
+      output: reportOutput,
+      reportScheduler,
+      // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
+      // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
+      // reports "quiet" whenever polling is between batches).
+      fullReportSelfGather: [
+        'kagemusha_overview() for room/task/message counts',
+        'kagemusha_tasks({ status: "needs_review" }) and kagemusha_tasks({ status: "blocked" }) for the task board state',
+        'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "24h ago" }) on the busiest 2-3',
+        'mama_recall(query) for memory relevant to what you find',
+      ],
+      config: {
+        tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
+        drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
+        authorEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_AUTHOR_EVERY || 30),
+        reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
+        authorWindowSize: 50,
+        reportEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REPORT_EVERY || 15),
+        nudgeDebounceMs: Number(process.env.MAMA_TRIGGER_LOOP_NUDGE_DEBOUNCE_MS || 15_000),
+      },
+      log: (line) => console.log(line),
+    });
+    if (reportOutput) {
+      console.log('✓ Trigger loop owner-report leg enabled (telegram)');
+    }
+    if (reportScheduler) {
+      console.log(`✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`);
+    }
+    const stopTriggerLoop = triggerLoop.start();
+    // M2.4: point the connector sink's forwarder at this loop now that it exists.
+    triggerLoopNudge.current = () => triggerLoop.nudge();
+    gateways.push({
+      stop: async () => {
+        triggerLoopNudge.current = null;
+        stopTriggerLoop();
+        // Close the operator triggers.db handle (PR #119 review: was leaked on shutdown).
+        triggerRegistry.close();
+      },
+    });
+    console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
+    } catch (error) {
+      console.error(
+        '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
+        error
+      );
+    }
   }
 
   // ── Phase 10: API Server + Routes ────────────────────────────────────────
