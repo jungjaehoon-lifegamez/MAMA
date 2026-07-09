@@ -227,6 +227,25 @@ describe('OperatorTriggerLoop', () => {
     expect(markFired).toHaveBeenCalledWith('2026-07-09:08');
   });
 
+  it('scheduled full report: fires even with ZERO activity - quiet-window aliveness (M2.1)', async () => {
+    const send = vi.fn(async () => {});
+    const markFired = vi.fn();
+    const askAgent = vi.fn(async () => 'Scheduled report: quiet window.');
+    const scheduler = { shouldFire: () => ({ fire: true, hourKey: '2026-07-09:13' }), markFired };
+    const loop = makeLoop({
+      askAgent,
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+    });
+    // NO events drained at all - the buffer is completely empty.
+    const r = await loop.tick();
+    expect(r.drained).toBe(0);
+    expect(r.fullReported).toBe(true);
+    expect(send).toHaveBeenCalledWith('Scheduled report: quiet window.');
+    expect(markFired).toHaveBeenCalledWith('2026-07-09:13');
+  });
+
   it('scheduled full report: agent NOTHING suppresses the send but still marks the hour (fire once)', async () => {
     const send = vi.fn();
     const markFired = vi.fn();

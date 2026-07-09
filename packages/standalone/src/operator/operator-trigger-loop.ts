@@ -164,14 +164,15 @@ export class OperatorTriggerLoop {
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
-    // 6. Scheduled full report (M2): fires at configured LOCAL hours, even if no triggers fired,
-    //    covering the whole window since the last full report. Fires once per hour (markFired
-    //    persists the hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT
-    //    marking the hour, so the next tick retries with the buffer intact.
+    // 6. Scheduled full report (M2): fires at configured LOCAL hours - even on a completely
+    //    quiet window (M2.1 aliveness: the agent reports "quiet" instead of skipping; owners
+    //    rely on the scheduled report arriving). Fires once per hour (markFired persists the
+    //    hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT marking the hour,
+    //    so the next tick retries with the buffer intact.
     let fullReported = false;
     if (output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
-      if (fire && this.fullReporter.hasActivity()) {
+      if (fire) {
         fullReported = await this.fullReporter.report(askAgent, output, 'full');
         reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
         log(`[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`);

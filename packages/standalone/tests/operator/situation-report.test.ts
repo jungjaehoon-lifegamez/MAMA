@@ -93,15 +93,28 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(prompt).not.toContain('y'.repeat(200));  // each excerpt truncated
   });
 
-  it('digest vs full framing differ; both keep NOTHING + the M1.5 fire section', () => {
+  it('digest keeps the NOTHING option (noise-only bar); full is a DUTY report without it (M2.1)', () => {
     const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
-    expect(r.buildPrompt('digest')).toContain('digest');
-    expect(r.buildPrompt('full')).toContain('FULLER');
-    for (const mode of ['digest', 'full'] as const) {
-      expect(r.buildPrompt(mode)).toContain('NOTHING');
-      expect(r.buildPrompt(mode)).toContain('Fire activity:');
-    }
+    const digest = r.buildPrompt('digest');
+    const full = r.buildPrompt('full');
+    expect(digest).toContain('digest');
+    expect(digest).toContain('NOTHING'); // still available, but only for pure noise
+    expect(full).toContain('FULLER');
+    expect(full).not.toContain('NOTHING'); // scheduled report always arrives (aliveness)
+    expect(full).toContain('quiet');
+    for (const prompt of [digest, full]) expect(prompt).toContain('Fire activity:');
+  });
+
+  it('full mode composes and sends even with an EMPTY buffer (scheduled aliveness, M2.1)', async () => {
+    const askAgent = vi.fn(async () => 'Scheduled report: quiet window, nothing notable.');
+    const send = vi.fn(async () => {});
+    const r = new SituationReporter();
+    expect(r.hasActivity()).toBe(false);
+    expect(await r.report(askAgent, { send }, 'full')).toBe(true);
+    const prompt = askAgent.mock.calls[0][0] as string;
+    expect(prompt).toContain('(no channel messages this window)');
+    expect(send).toHaveBeenCalledWith('Scheduled report: quiet window, nothing notable.');
   });
 
   it('many channels are bounded in the prompt (busiest first, rest collapsed)', () => {
