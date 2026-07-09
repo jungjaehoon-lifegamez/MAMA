@@ -468,8 +468,9 @@ This saves resources. Only compile when there is genuinely new information to do
       }
     };
 
-    // Event-driven: compile when extraction completes (debounced)
-    eventBus.on('extraction:completed', () => runWikiAgent());
+    // Event-driven: compile when extraction completes. Trailing-edge debounce so
+    // bursts of extraction:completed events coalesce into one wiki compile run.
+    eventBus.onDebounced('extraction:completed', () => runWikiAgent(), 30_000);
 
     // Emit agent:action notices when wiki pages are compiled
     eventBus.on('wiki:compiled', (event) => {
@@ -1405,16 +1406,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   apiServer.app.use(
     express.static(publicDir, {
-      setHeaders: (res, filePath) => {
+      setHeaders: (res, _filePath) => {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
-        if (filePath.endsWith(path.join('viewer', 'operator.html'))) {
-          res.setHeader(
-            'Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-          );
-        }
       },
     })
   );

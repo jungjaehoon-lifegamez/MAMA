@@ -2,19 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 process.env.MAMA_FORCE_TIER_3 ||= 'true';
 
-import Database from '../../src/sqlite.js';
-import { WikiArtifactStore } from '../../src/wiki-artifacts/wiki-artifact-store.js';
-import {
-  createWikiPublishAdapter,
-  isVNextWikiPublishAdapter,
-} from '../../src/wiki-artifacts/wiki-publish-adapter.js';
+import { createWikiPublishAdapter } from '../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 describe('Story PR4.2: Wiki Publish Adapter', () => {
-  describe('AC #1: legacy compatibility, vNext storage, and validation', () => {
+  describe('AC #1: publish compatibility and validation', () => {
     it('keeps legacy wiki_publish compatible while preserving supplied source IDs', () => {
       const publisher = vi.fn();
       const adapter = createWikiPublishAdapter({
-        mode: 'legacy',
         publisher,
         now: () => new Date('2026-07-02T00:00:00.000Z'),
       });
@@ -46,50 +40,9 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
       ]);
     });
 
-    it('rejects vNext wiki_publish pages that do not carry source refs', () => {
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
-      const adapter = createWikiPublishAdapter({ mode: 'vnext', store });
-
-      expect(() =>
-        adapter.publish({
-          pages: [
-            {
-              path: 'projects/api.md',
-              title: 'API',
-              type: 'entity',
-              content: 'content',
-            },
-          ],
-        })
-      ).toThrow(/source refs/i);
-
-      db.close();
-    });
-
-    it('rejects vNext publishing when no artifact store is configured', () => {
-      const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'vnext', publisher });
-
-      expect(() =>
-        adapter.publish({
-          pages: [
-            {
-              path: 'projects/api.md',
-              title: 'API',
-              type: 'entity',
-              content: 'content',
-              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
-            },
-          ],
-        })
-      ).toThrow(/store not configured/i);
-      expect(publisher).not.toHaveBeenCalled();
-    });
-
     it('rejects malformed page fields before invoking the publisher', () => {
       const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'legacy', publisher });
+      const adapter = createWikiPublishAdapter({ publisher });
 
       expect(() =>
         adapter.publish({
@@ -122,7 +75,7 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
 
     it('rejects page paths that would escape the wiki directory', () => {
       const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'legacy', publisher });
+      const adapter = createWikiPublishAdapter({ publisher });
 
       for (const path of [
         '../outside.md',
@@ -156,7 +109,7 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
 
     it('rejects unsupported explicit type and confidence values before invoking the publisher', () => {
       const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'legacy', publisher });
+      const adapter = createWikiPublishAdapter({ publisher });
 
       expect(() =>
         adapter.publish({
@@ -190,7 +143,7 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
 
     it('rejects non-string page fields before invoking the publisher', () => {
       const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'legacy', publisher });
+      const adapter = createWikiPublishAdapter({ publisher });
 
       expect(() =>
         adapter.publish({
@@ -209,7 +162,7 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
 
     it('rejects oversized wiki_publish requests before invoking the publisher', () => {
       const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({ mode: 'legacy', publisher });
+      const adapter = createWikiPublishAdapter({ publisher });
 
       expect(() =>
         adapter.publish({
@@ -238,16 +191,11 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
       expect(publisher).not.toHaveBeenCalled();
     });
 
-    it('dedupes same-path pages before publishing or storing artifacts', () => {
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
+    it('dedupes same-path pages before publishing', () => {
       const publisher = vi.fn();
       const adapter = createWikiPublishAdapter({
-        mode: 'vnext',
-        store,
         publisher,
         now: () => new Date('2026-07-02T00:00:00.000Z'),
-        nowMs: () => 2000,
       });
 
       const result = adapter.publish({
@@ -269,7 +217,7 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
         ],
       });
 
-      expect(result).toEqual({ pagesPublished: 1, artifactsStored: 1 });
+      expect(result).toEqual({ pagesPublished: 1, artifactsStored: 0 });
       expect(publisher).toHaveBeenCalledWith([
         expect.objectContaining({
           path: 'projects/api.md',
@@ -278,147 +226,6 @@ describe('Story PR4.2: Wiki Publish Adapter', () => {
           sourceRefs: ['raw:slack:event-2'],
         }),
       ]);
-      expect(store.getByPath('projects/api.md')).toMatchObject({
-        title: 'API Updated',
-        type: 'lesson',
-        content: 'second content',
-        sourceRefs: ['raw:slack:event-2'],
-      });
-
-      db.close();
-    });
-
-    it('persists vNext artifacts before publishing so failed vault writes remain retryable', () => {
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
-      const publisher = vi.fn(() => {
-        throw new Error('vault write failed');
-      });
-      const adapter = createWikiPublishAdapter({
-        mode: 'vnext',
-        store,
-        publisher,
-        now: () => new Date('2026-07-02T00:00:00.000Z'),
-        nowMs: () => 2000,
-      });
-
-      expect(() =>
-        adapter.publish({
-          pages: [
-            {
-              path: 'projects/api.md',
-              title: 'API',
-              type: 'entity',
-              content: 'content',
-              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
-            },
-          ],
-        })
-      ).toThrow(/vault write failed/i);
-
-      expect(store.getByPath('projects/api.md')).toMatchObject({
-        path: 'projects/api.md',
-        sourceRefs: ['raw:slack:event-1'],
-      });
-
-      db.close();
-    });
-
-    it('stores vNext wiki artifacts and publishes source-linked pages', () => {
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
-      const publisher = vi.fn();
-      const adapter = createWikiPublishAdapter({
-        mode: 'vnext',
-        store,
-        publisher,
-        now: () => new Date('2026-07-02T00:00:00.000Z'),
-        nowMs: () => 2000,
-      });
-
-      const result = adapter.publish({
-        pages: [
-          {
-            path: 'projects/api.md',
-            title: 'API',
-            type: 'entity',
-            content: 'content',
-            confidence: 'high',
-            sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-1' }],
-          },
-        ],
-      });
-
-      expect(result).toEqual({ pagesPublished: 1, artifactsStored: 1 });
-      expect(store.getByPath('projects/api.md')).toMatchObject({
-        path: 'projects/api.md',
-        sourceRefs: ['raw:slack:event-1'],
-      });
-      expect(publisher).toHaveBeenCalledWith([
-        expect.objectContaining({
-          path: 'projects/api.md',
-          sourceIds: ['raw:slack:event-1'],
-          sourceRefs: ['raw:slack:event-1'],
-        }),
-      ]);
-
-      db.close();
-    });
-
-    it('keeps legacy adapters out of vNext even if callers try to mutate runtime state', () => {
-      const adapter = createWikiPublishAdapter({
-        mode: 'legacy',
-        publisher: vi.fn(),
-      });
-
-      expect(Reflect.set(adapter, 'mode', 'vnext')).toBe(false);
-      expect(() => {
-        Object.defineProperty(adapter, Symbol('mama.wikiPublishAdapter.mode'), {
-          value: 'vnext',
-        });
-      }).toThrow();
-
-      expect(adapter.mode).toBe('legacy');
-      expect(isVNextWikiPublishAdapter(adapter)).toBe(false);
-    });
-
-    it('does not let later factory options mutation downgrade a branded vNext adapter', () => {
-      const db = new Database(':memory:');
-      const store = new WikiArtifactStore(db);
-      const publisher = vi.fn();
-      const options = {
-        mode: 'vnext' as const,
-        store,
-        publisher,
-      };
-      const adapter = createWikiPublishAdapter(options);
-
-      Reflect.set(options, 'mode', 'legacy');
-      Reflect.set(options, 'store', null);
-      Reflect.set(options, 'publisher', null);
-
-      try {
-        const result = adapter.publish({
-          pages: [
-            {
-              path: 'projects/api.md',
-              title: 'API',
-              type: 'entity',
-              content: 'content',
-              sourceRefs: [{ kind: 'raw', connector: 'slack', id: 'event-options-mutation' }],
-            },
-          ],
-        });
-
-        expect(result).toEqual({ pagesPublished: 1, artifactsStored: 1 });
-        expect(publisher).toHaveBeenCalledOnce();
-        expect(store.getByPath('projects/api.md')).toMatchObject({
-          sourceRefs: ['raw:slack:event-options-mutation'],
-        });
-        expect(isVNextWikiPublishAdapter(adapter)).toBe(true);
-      } finally {
-        db.close();
-      }
     });
   });
 });
