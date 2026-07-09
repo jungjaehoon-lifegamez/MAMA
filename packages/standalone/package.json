@@ -17,7 +17,6 @@
     "build:viewer:watch": "tsc -p public/viewer/tsconfig.viewer.json --watch",
     "test": "vitest run",
     "test:watch": "vitest watch",
-    "dogfood:vnext": "MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-core build && MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os build && MAMA_FORCE_TIER_3=true vitest run tests/operator-vnext/synthetic-dogfood-harness.test.ts tests/operator-vnext/synthetic-dogfood-agent-loop.test.ts tests/operator-vnext/connector-ingress-migration-dry-run.test.ts tests/operator-vnext/connector-ingress-manual-commit.test.ts tests/operator-vnext/connector-ingress-manual-wiki-commit.test.ts tests/operator-vnext/connector-ingress-manual-memory-commit.test.ts tests/gateways/message-router.test.ts tests/gateways/memory-v2.e2e.test.ts tests/agent/gateway-tool-executor.test.ts tests/viewer/operator-cockpit.test.ts && cd ../.. && ./scripts/check-pii.sh && gitleaks protect --source . --staged --redact --verbose --no-banner && ./scripts/check-pr-gitleaks.sh",
     "clean": "rm -rf dist node_modules",
     "typecheck": "tsc --noEmit",
     "start": "node dist/cli/index.js",
