@@ -30,7 +30,6 @@ import {
   type RawIndexSink,
   type RawStore,
 } from '../../connectors/framework/raw-store.js';
-import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vnext/bootstrap.js';
 
 const logger = new DebugLogger('connector-init');
 
@@ -66,7 +65,6 @@ export interface ConnectorInitResult {
 }
 
 export interface ConnectorInitOptions {
-  vNext?: VNextBootstrapPlan;
   /**
    * M2.4 freshness nudge. Called best-effort whenever a poll batch indexes >= 1 item into
    * connector_event_index, so the trigger loop can tick soon instead of waiting for its next
@@ -90,17 +88,6 @@ export async function initConnectors(
   _connectorExtractionFn: ((prompt: string) => Promise<string>) | null,
   options: ConnectorInitOptions = {}
 ): Promise<ConnectorInitResult> {
-  if (
-    shouldSkipVNextFanout(options.vNext, 'connector_mode') ||
-    shouldSkipVNextFanout(options.vNext, 'connector_polling')
-  ) {
-    return {
-      rawStoreForApi: undefined,
-      enabledConnectorNames: [],
-      connectorSchedulerStop: undefined,
-    };
-  }
-
   // M2.4: unified batch poll cadence. UNSET -> 60 (unchanged default); a bad value fails loud HERE,
   // before any stateful connector init below.
   const pollMinutes = resolvePollMinutes(process.env.MAMA_CONNECTOR_POLL_MINUTES);
