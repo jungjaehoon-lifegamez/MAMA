@@ -66,4 +66,15 @@ describe('TriggerRegistry', () => {
     expect(() => reg.recordOutcome('nope', 'failed')).toThrow();
     expect(() => reg.disable('nope', 'x')).toThrow();
   });
+
+  it('recordFire bumps fired ONLY - no succeeded/failed fabrication (M1-T2)', () => {
+    reg.create(sampleInput('t5'));
+    reg.recordFire('t5');
+    reg.recordFire('t5');
+    expect(reg.getById('t5')?.stats).toEqual({ fired: 2, succeeded: 0, failed: 0 });
+  });
+
+  it('recordFire on unknown id throws (no-fallback)', () => {
+    expect(() => reg.recordFire('nope')).toThrow();
+  });
 });
