@@ -96,7 +96,6 @@ function getViewerDirectory(): string {
 
 const VIEWER_DIR = getViewerDirectory();
 const VIEWER_HTML_PATH = path.join(VIEWER_DIR, 'viewer.html');
-const OPERATOR_HTML_PATH = path.join(VIEWER_DIR, 'operator.html');
 const VIEWER_CSS_PATH = path.join(VIEWER_DIR, 'viewer.css');
 const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
@@ -107,8 +106,6 @@ const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
 const SIMILAR_QUERY_DECISION_CHARS = 400;
 const CODE_ACT_RATE_LIMIT_WINDOW_MS = 60_000;
-const OPERATOR_HTML_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
 const CODE_ACT_RATE_LIMIT_TTL_MS = CODE_ACT_RATE_LIMIT_WINDOW_MS * 5;
 const CODE_ACT_RATE_LIMIT_DEFAULT_MAX = 30;
 const codeActRateBuckets = new Map<
@@ -578,12 +575,6 @@ function serveStaticFile(
 
 function handleViewerRequest(_req: IncomingMessage, res: ServerResponse): void {
   serveStaticFile(res, VIEWER_HTML_PATH, 'text/html');
-}
-
-function handleOperatorRequest(_req: IncomingMessage, res: ServerResponse): void {
-  serveStaticFile(res, OPERATOR_HTML_PATH, 'text/html', {
-    'Content-Security-Policy': OPERATOR_HTML_CSP,
-  });
 }
 
 function handleCssRequest(_req: IncomingMessage, res: ServerResponse): void {
@@ -1315,13 +1306,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     ) {
       console.log('[GraphHandler] Serving viewer.html');
       handleViewerRequest(req, res);
-      return true;
-    }
-
-    // Route: GET/HEAD /viewer/operator.html - serve isolated operator console
-    if (pathname === '/viewer/operator.html' && (req.method === 'GET' || req.method === 'HEAD')) {
-      console.log('[GraphHandler] Serving operator.html');
-      handleOperatorRequest(req, res);
       return true;
     }
 
@@ -4208,8 +4192,6 @@ export {
   filterNodesByTopic,
   filterEdgesByNodes,
   VIEWER_HTML_PATH,
-  OPERATOR_HTML_PATH,
-  OPERATOR_HTML_CSP,
   VIEWER_CSS_PATH,
 };
 

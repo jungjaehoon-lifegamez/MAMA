@@ -753,7 +753,7 @@ export async function runAgentLoop(
         capabilities: ['code_act'],
         limitations: codeActReadOnly ? ['Code-Act read-only mode: memory writes disabled'] : [],
         tier: codeActTier,
-        backend: 'claude',
+        backend: runtimeBackend,
       };
       executionContext = {
         agentContext,
