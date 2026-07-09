@@ -15,6 +15,7 @@
 import fs from 'fs';
 import path from 'path';
 import { info, warn } from './debug-logger.js';
+import type { EmbeddingRole } from './embeddings.js';
 
 function resolveConfiguredPort(): number {
   const rawPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '';
@@ -80,9 +81,13 @@ export async function isServerRunning(): Promise<boolean> {
  * Generate embedding via HTTP server
  *
  * @param text - Text to embed
+ * @param role - e5 role: 'passage' (default, stored text) or 'query' (search)
  * @returns Embedding or null if failed
  */
-export async function getEmbeddingFromServer(text: string): Promise<Float32Array | null> {
+export async function getEmbeddingFromServer(
+  text: string,
+  role: EmbeddingRole = 'passage'
+): Promise<Float32Array | null> {
   const port = getServerPort();
 
   try {
@@ -92,7 +97,7 @@ export async function getEmbeddingFromServer(text: string): Promise<Float32Array
     const response = await fetch(`http://${HOST}:${port}/embed`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, role }),
       signal: controller.signal,
     });
 

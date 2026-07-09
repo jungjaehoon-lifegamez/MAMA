@@ -843,7 +843,7 @@ async function getSimilarityEdges(): Promise<SimilarityEdge[]> {
   for (const decision of decisions.slice(0, 50)) {
     try {
       const query = `${decision.topic} ${decision.decision}`;
-      const embedding = await generateEmbedding(query);
+      const embedding = await generateEmbedding(query, 'query');
       const similar = (await vectorSearch(embedding, 3, 0.7)) as Array<{
         id: string;
         similarity: number;

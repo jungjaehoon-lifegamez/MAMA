@@ -16,6 +16,8 @@ export {
   embeddingCache,
   EMBEDDING_DIM,
   MODEL_NAME,
+  EMBEDDING_PREFIX_SCHEME,
+  type EmbeddingRole,
 } from './embeddings.js';
 
 export { EmbeddingCache } from './embedding-cache.js';
