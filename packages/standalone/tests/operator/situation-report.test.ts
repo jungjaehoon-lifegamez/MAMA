@@ -5,7 +5,7 @@
  * Agent injected (vi.fn) - no real CLI. Synthetic data only.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { SituationReporter } from '../../src/operator/situation-report.js';
+import { SituationReporter, OPERATOR_FULL_REPORT_TAG } from '../../src/operator/situation-report.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
@@ -151,5 +151,32 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const prompt = r.buildPrompt('full');
     expect(prompt).toContain('more channel(s)'); // collapsed tail
     expect(prompt).toContain('ch:19');           // busiest channel shown
+  });
+
+  it('full self-gather teaches the tool_call protocol and forbids native gathering (M3 GAP1)', () => {
+    const r = new SituationReporter({
+      selfGatherLines: ['kagemusha_tasks({status:"needs_review"}) for the board'],
+    });
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    const full = r.buildPrompt('full');
+    expect(full).toContain(OPERATOR_FULL_REPORT_TAG);            // machine frame tag present
+    expect(full).toContain('```tool_call');                     // protocol block shown
+    expect(full).toContain('"name":');                          // JSON block shape shown
+    expect(full).toMatch(/Do NOT read log files/i);             // anti-native directive
+    expect(full).toContain('kagemusha_tasks({status:"needs_review"}) for the board'); // raw line kept
+    expect(full).toContain('primary source');                   // window is only a hint
+    // digest stays protocol-free and tag-free
+    const digest = r.buildPrompt('digest');
+    expect(digest).not.toContain('```tool_call');
+    expect(digest).not.toContain(OPERATOR_FULL_REPORT_TAG);
+  });
+
+  it('full without self-gather stays plain (tag present, no protocol/gather block)', () => {
+    const r = new SituationReporter(); // no selfGatherLines
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    const full = r.buildPrompt('full');
+    expect(full).toContain(OPERATOR_FULL_REPORT_TAG);
+    expect(full).not.toContain('```tool_call');
+    expect(full).not.toContain('primary source');
   });
 });
