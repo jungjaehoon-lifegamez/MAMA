@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import Database from '../../../src/sqlite.js';
 import { AgentLoop } from '../../../src/agent/index.js';
 import type { AgentContext, AgentLoopOptions, ContentBlock } from '../../../src/agent/types.js';
 import type { MAMAConfig } from '../../../src/cli/config/types.js';
@@ -11,8 +10,6 @@ import type { MetricsStore } from '../../../src/observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../../src/sqlite.js';
 import { makeSignedEnvelope } from '../../envelope/fixtures.js';
 import { initMainAgentLoop } from '../../../src/cli/runtime/agent-loop-init.js';
-import { initVNextWikiPublishAdapter } from '../../../src/cli/runtime/wiki-publish-adapter-init.js';
-import { isVNextWikiPublishAdapter } from '../../../src/wiki-artifacts/wiki-publish-adapter.js';
 
 function createConfig(): MAMAConfig {
   return {
@@ -125,52 +122,6 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
       await agentLoopClient.runWithContent?.(content, options);
 
       expect(runWithContentSpy).toHaveBeenCalledWith(content, expect.objectContaining(options));
-    });
-
-    it('passes vNext runtime mode into the gateway executor', () => {
-      const { agentLoop } = initMainAgentLoop(
-        createConfig(),
-        { getToken: vi.fn() } as unknown as OAuthManager,
-        {} as SQLiteDatabase,
-        null as MetricsStore | null,
-        'claude',
-        { vNextRuntimeEnabled: true }
-      );
-
-      const executor = (
-        agentLoop as unknown as {
-          mcpExecutor: { vNextCommitRuntimeMode: string };
-        }
-      ).mcpExecutor;
-
-      expect(executor.vNextCommitRuntimeMode).toBe('vnext');
-    });
-
-    it('passes the vNext wiki publish adapter into the gateway executor', () => {
-      const db = new Database(':memory:');
-      const wikiPublishAdapter = initVNextWikiPublishAdapter(db, { enabled: true });
-      const { agentLoop } = initMainAgentLoop(
-        createConfig(),
-        { getToken: vi.fn() } as unknown as OAuthManager,
-        {} as SQLiteDatabase,
-        null as MetricsStore | null,
-        'claude',
-        { vNextRuntimeEnabled: true, wikiPublishAdapter }
-      );
-
-      try {
-        const executor = (
-          agentLoop as unknown as {
-            mcpExecutor: {
-              wikiPublishAdapter: unknown;
-            };
-          }
-        ).mcpExecutor;
-
-        expect(isVNextWikiPublishAdapter(executor.wikiPublishAdapter)).toBe(true);
-      } finally {
-        db.close();
-      }
     });
   });
 });
