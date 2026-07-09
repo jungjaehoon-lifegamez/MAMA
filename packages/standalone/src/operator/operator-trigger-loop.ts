@@ -38,6 +38,11 @@ export interface TriggerLoopConfig {
   authorWindowSize: number;
   /** Situational-digest cadence (M1.5 + M2 output leg). Only used when deps.output is set. */
   reportEveryNTicks?: number;
+  /**
+   * M2.4 freshness nudge debounce (ms). A poll batch that indexes new rows wakes the loop this many
+   * ms later (Kagemusha fast-flush port). Default 15000. 0 == tick immediately on nudge.
+   */
+  nudgeDebounceMs?: number;
 }
 
 export interface TriggerLoopDeps {
@@ -80,6 +85,7 @@ export class OperatorTriggerLoop {
   private tickCount = 0;
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
+  private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
   private digest = new SituationReporter();
   private fullReporter: SituationReporter;
 
@@ -194,6 +200,45 @@ export class OperatorTriggerLoop {
   }
 
   /**
+   * M2.4 freshness nudge: wake the loop to tick ~nudgeDebounceMs from now instead of waiting for the
+   * next scheduled interval. The connector sink calls this (via a forwarder) whenever a poll batch
+   * indexes new rows.
+   *
+   * Debounced (Kagemusha fast-flush port, agent-awareness.ts:322-332 mechanism): the FIRST nudge in
+   * a quiet window arms one timer; further nudges while it is armed are ignored, so a burst of poll
+   * batches collapses to a single extra tick. Busy-safe (agent-awareness.ts:343-346 mechanism): if a
+   * tick is in flight when the timer fires, the nudge is skipped - never concurrent ticks; the
+   * uncommitted deltas simply wait for the next tick. Pure timing assist: it only changes WHEN an
+   * existing tick runs, never WHAT it does.
+   */
+  nudge(): void {
+    if (this.nudgeTimer) return; // already armed - debounce collapses the burst
+    const configured = this.deps.config.nudgeDebounceMs;
+    const debounceMs =
+      typeof configured === 'number' && Number.isFinite(configured) && configured >= 0
+        ? configured
+        : 15_000;
+    this.nudgeTimer = setTimeout(() => {
+      this.nudgeTimer = null;
+      if (this.running) {
+        this.deps.log('[trigger-loop] nudge: tick already running - skipped (deltas wait for next tick)');
+        return;
+      }
+      this.running = true;
+      void this.tick()
+        .catch((error: unknown) => {
+          this.deps.log(
+            `[trigger-loop] nudge tick failed: ${error instanceof Error ? error.message : String(error)}`
+          );
+        })
+        .finally(() => {
+          this.running = false;
+        });
+    }, debounceMs);
+    this.nudgeTimer.unref?.();
+  }
+
+  /**
    * Start ticking on the configured interval. Returns a stop function.
    * The interval wrapper catches + logs tick errors so one bad tick does not kill the loop
    * (the error is still surfaced loudly in the log - not swallowed).
@@ -218,6 +263,10 @@ export class OperatorTriggerLoop {
     log(`[trigger-loop] started (tick every ${config.tickMs}ms)`);
     return () => {
       clearInterval(handle);
+      if (this.nudgeTimer) {
+        clearTimeout(this.nudgeTimer);
+        this.nudgeTimer = null;
+      }
       log('[trigger-loop] stopped');
     };
   }

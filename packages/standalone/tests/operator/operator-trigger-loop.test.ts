@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
-import { OperatorTriggerLoop } from '../../src/operator/operator-trigger-loop.js';
+import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
 import type { OperatorChannelEvent, OperatorMemoryPort } from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 
@@ -319,5 +319,84 @@ describe('OperatorTriggerLoop', () => {
     expect(r.fullReported).toBe(false);
     expect(send).not.toHaveBeenCalled();
     expect(markFired).not.toHaveBeenCalled();
+  });
+
+  it('nudge(): schedules ONE debounced tick; a burst collapses to a single tick (M2.4)', async () => {
+    vi.useFakeTimers();
+    try {
+      const loop = makeLoop({
+        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      loop.nudge();
+      loop.nudge();
+      loop.nudge(); // burst - one armed timer only
+      expect(tickSpy).not.toHaveBeenCalled(); // debounced: nothing yet
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(tickSpy).toHaveBeenCalledTimes(1); // burst collapsed to a single tick
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('nudge(): after the debounced tick fires, a later nudge arms a fresh tick (M2.4)', async () => {
+    vi.useFakeTimers();
+    try {
+      const loop = makeLoop({
+        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(tickSpy).toHaveBeenCalledTimes(1);
+      loop.nudge(); // fresh quiet window
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(tickSpy).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('nudge(): skips when the previous tick is still running - never concurrent (M2.4)', async () => {
+    vi.useFakeTimers();
+    try {
+      const loop = makeLoop({
+        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 5_000 },
+      });
+      // First nudge-driven tick hangs, so `running` stays true across the second nudge window.
+      let resolveFirst: () => void = () => {};
+      const firstTick = new Promise<TickResult>((res) => {
+        resolveFirst = () =>
+          res({ tick: 1, drained: 0, fires: 0, authored: 0, reviewed: 0, reported: false, fullReported: false });
+      });
+      const tickSpy = vi.spyOn(loop, 'tick').mockReturnValueOnce(firstTick);
+      loop.nudge();
+      await vi.advanceTimersByTimeAsync(5_000); // first debounced tick starts and hangs -> running=true
+      expect(tickSpy).toHaveBeenCalledTimes(1);
+      loop.nudge(); // arm a second nudge while the first tick is still in flight
+      await vi.advanceTimersByTimeAsync(5_000); // timer fires but running===true -> must skip
+      expect(tickSpy).toHaveBeenCalledTimes(1); // NOT called a second time
+      expect(logs.some((l) => l.includes('nudge') && l.includes('already running'))).toBe(true);
+      resolveFirst();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the returned stop fn cancels a pending nudge (no tick after stop) (M2.4)', async () => {
+    vi.useFakeTimers();
+    try {
+      const loop = makeLoop({
+        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      const stop = loop.start(); // interval at 60s
+      loop.nudge();              // arm nudge at +15s
+      stop();                    // must clear both the interval AND the pending nudge
+      await vi.advanceTimersByTimeAsync(15_000 + 60_000);
+      expect(tickSpy).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
