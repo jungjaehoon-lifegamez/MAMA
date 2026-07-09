@@ -221,11 +221,23 @@ export function queryMessages(options: {
   limit?: number;
   search?: string; // text search in content
 }): MessageInfo[] {
+  // Validate BEFORE any DB access: new Date("24h ago") is NaN, and a NaN bind
+  // makes `created_at > ?` silently match zero rows (empty-success). Fail loud.
+  let sinceMs: number;
+  // != null also treats a JSON null (common in LLM-produced payloads) as absent -
+  // new Date(null) would otherwise parse to epoch 0 and match ALL history.
+  if (options.since != null) {
+    sinceMs = new Date(options.since).getTime();
+    if (Number.isNaN(sinceMs)) {
+      throw new Error(
+        `since must be an ISO-8601 date/timestamp (got "${options.since}"); phrases like "24h ago" are not parseable`
+      );
+    }
+  } else {
+    sinceMs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  }
   const d = getDB();
   const limit = options.limit ?? 50;
-  const sinceMs = options.since
-    ? new Date(options.since).getTime()
-    : Date.now() - 7 * 24 * 60 * 60 * 1000;
 
   const conditions = ['channel_id = ?', 'created_at > ?'];
   const params: unknown[] = [options.channelId, sinceMs];

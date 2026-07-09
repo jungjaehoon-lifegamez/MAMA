@@ -184,7 +184,7 @@ export class SituationReporter {
                   'Emit each call as a fenced tool_call JSON block and wait for the result before',
                   'the next call. The block format is exactly:',
                   '```tool_call',
-                  '{"name": "kagemusha_tasks", "input": {"status": "needs_review"}}',
+                  '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
                   '```',
                   'Gather with these gateway tool calls:',
                   ...this.opts.selfGatherLines.map((line) => `- ${line}`),
