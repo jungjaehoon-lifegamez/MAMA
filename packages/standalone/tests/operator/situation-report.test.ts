@@ -106,6 +106,16 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     for (const prompt of [digest, full]) expect(prompt).toContain('Fire activity:');
   });
 
+  it('full mode fixes the report skeleton: 5 generic sections, owner language (M2.2)', () => {
+    const r = new SituationReporter();
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    const full = r.buildPrompt('full');
+    for (const section of ['Key situation', 'Action required', 'Decisions needed', 'Pipeline', 'Next actions']) {
+      expect(full).toContain(section);
+    }
+    expect(r.buildPrompt('digest')).not.toContain('Key situation'); // digest stays free-form short
+  });
+
   it('full mode composes and sends even with an EMPTY buffer (scheduled aliveness, M2.1)', async () => {
     const askAgent = vi.fn(async () => 'Scheduled report: quiet window, nothing notable.');
     const send = vi.fn(async () => {});
