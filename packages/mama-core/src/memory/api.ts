@@ -1856,6 +1856,12 @@ export async function recallMemory(
   fusedHits = fusedHits.filter(
     (hit) => hit.source_type !== 'decision' || acceptedPrimaryIds.has(hit.source_id)
   );
+  // Honor options.limit on the final memories (matched is RRF-rank-sorted, canonical
+  // dual-write appends last). Without this cap the full fusion set (hundreds of records)
+  // flowed into bundle.memories AND the per-record enrichment SQL loops below.
+  if (matched.length > requestedLimit) {
+    matched = matched.slice(0, requestedLimit);
+  }
   const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
     .sort((a, b) => b.score - a.score)
     .flatMap((entry) => {
