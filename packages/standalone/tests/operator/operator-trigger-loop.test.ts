@@ -399,4 +399,24 @@ describe('OperatorTriggerLoop', () => {
       vi.useRealTimers();
     }
   });
+
+  it('nudge forwarder pattern: no-ops before the loop is bound, wakes it after (M2.4 wiring)', async () => {
+    vi.useFakeTimers();
+    try {
+      // Mirror start.ts: a stable forwarder is handed to the connector sink BEFORE the loop exists.
+      const triggerLoopNudge: { current: (() => void) | null } = { current: null };
+      const forward = () => triggerLoopNudge.current?.();
+      forward(); // the initial poll's sink fires before the loop is constructed -> safe no-op
+      const loop = makeLoop({
+        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+      });
+      const tickSpy = vi.spyOn(loop, 'tick');
+      triggerLoopNudge.current = () => loop.nudge(); // gated block binds it after start()
+      forward();                                     // a later poll batch -> reaches loop.nudge()
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(tickSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

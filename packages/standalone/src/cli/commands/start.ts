@@ -2177,9 +2177,14 @@ export async function runAgentLoop(
     { vNext }
   );
 
+  // M2.4 freshness: the connector sink nudges the trigger loop when a poll indexes new rows. The
+  // loop is constructed AFTER initConnectors (below), so hand initConnectors a stable forwarder now
+  // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
+  // wake), which preserves today's behavior when MAMA_TRIGGER_LOOP is unset.
+  const triggerLoopNudge: { current: (() => void) | null } = { current: null };
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
-    { vNext }
+    { vNext, nudge: () => triggerLoopNudge.current?.() }
   );
   codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
@@ -2267,6 +2272,7 @@ export async function runAgentLoop(
         reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
         authorWindowSize: 50,
         reportEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REPORT_EVERY || 15),
+        nudgeDebounceMs: Number(process.env.MAMA_TRIGGER_LOOP_NUDGE_DEBOUNCE_MS || 15_000),
       },
       log: (line) => console.log(line),
     });
@@ -2277,8 +2283,11 @@ export async function runAgentLoop(
       console.log(`✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`);
     }
     const stopTriggerLoop = triggerLoop.start();
+    // M2.4: point the connector sink's forwarder at this loop now that it exists.
+    triggerLoopNudge.current = () => triggerLoop.nudge();
     gateways.push({
       stop: () => {
+        triggerLoopNudge.current = null;
         stopTriggerLoop();
         return Promise.resolve();
       },
