@@ -17,6 +17,7 @@
  *
  * ASCII-only. No personal strings.
  */
+import type { AskAgent } from './trigger-author.js';
 
 /** Dedicated persona session lane for operator reports; isolates the multi-turn gather loop from
  *  chat. runWithContent honors options.sessionKey (agent-loop.ts:879). */
@@ -132,4 +133,53 @@ export function formatReportToolAudit(audit: ReportToolAudit, isFullReport: bool
     }
   }
   return lines;
+}
+
+export interface PersonaReportRunResult {
+  response: string;
+  history: ReadonlyArray<ReportHistoryMessage>;
+}
+/** E = the envelope type; generic keeps this module free of agent/envelope imports while start.ts
+ *  gets full inference (no casts): E is inferred from the injected issuer's return type. */
+export interface PersonaReportRunner<E = unknown> {
+  (prompt: string, envelope?: E): Promise<PersonaReportRunResult>;
+}
+export interface PersonaReportAskDeps<E = unknown> {
+  run: PersonaReportRunner<E>;
+  log: (line: string) => void;
+  /** Marker that identifies a FULL report prompt (situation-report.OPERATOR_FULL_REPORT_TAG). */
+  fullReportTag: string;
+  /**
+   * Issue a per-report scoped worker envelope. Gateway 'model_tool' executions are envelope-gated
+   * (gateway-tool-executor.ts:252-256): without an envelope every call is denied with code
+   * 'envelope_missing' (:1090-1142). Injected from start.ts (envelopeAuthority.buildAndPersist);
+   * omit ONLY when issuance mode is 'off'. Failures propagate (no-fallback).
+   */
+  issueEnvelope?: () => Promise<E>;
+}
+
+/**
+ * Build the report-composition AskAgent (M3). Envelope-first: gateway 'model_tool' executions are
+ * envelope-gated (gateway-tool-executor.ts:252-256), so issue the per-report scoped envelope
+ * BEFORE running - without one every call is denied with code 'envelope_missing' (:1090-1142),
+ * the enforcement that killed the ancestor scheduled-report path. Issuance failure propagates
+ * loudly (no-fallback; the buffer is kept and the next cadence retries). Then run the persona
+ * agent (injected runner isolates the report into its own session lane and carries the envelope),
+ * audit + log the gateway tools it actually EXECUTED (no-fallback WARNING when a full report
+ * executed none; observability line for every write), and enforce the empty-report guard
+ * (M2 semantics).
+ */
+export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E>): AskAgent {
+  return async (prompt: string): Promise<string> => {
+    const envelope = deps.issueEnvelope ? await deps.issueEnvelope() : undefined;
+    const { response, history } = await deps.run(prompt, envelope);
+    const isFull = prompt.includes(deps.fullReportTag);
+    for (const line of formatReportToolAudit(summarizeReportToolUse(history), isFull)) {
+      deps.log(line);
+    }
+    if (!response || response.trim() === '') {
+      throw new Error('persona agent returned an empty report response');
+    }
+    return response;
+  };
 }

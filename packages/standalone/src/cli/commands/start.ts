@@ -2214,6 +2214,10 @@ export async function runAgentLoop(
     const { ReportScheduler, FileReportScheduleStore, parseReportHours } = await import(
       '../../operator/report-scheduler.js'
     );
+    const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } = await import(
+      '../../operator/report-run.js'
+    );
+    const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
 
     const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
     mkdirSync(dirname(triggerDbPath), { recursive: true });
@@ -2246,13 +2250,65 @@ export async function runAgentLoop(
       // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
       // session lanes) instead of the bare CLI - report tone comes from generation inputs.
       // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
-      reportAsk: async (prompt: string) => {
-        const result = await agentLoop.run(prompt);
-        if (!result.response || result.response.trim() === '') {
-          throw new Error('persona agent returned an empty report response');
-        }
-        return result.response;
-      },
+      // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
+      // loop is isolated from chat and continuous across cadences (runWithContent honors
+      // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
+      // 'model_tool' executions are envelope-gated (gateway-tool-executor.ts:252-256) and
+      // issuance defaults to 'enabled' (envelope-bootstrap.ts:28-30), so each report carries a
+      // per-run scoped envelope (mirrors the code-act issuance at start.ts:1834-1865); without it
+      // every call is denied with code 'envelope_missing'. Then audit the gateway tools the agent
+      // actually EXECUTED: a full report that executed NO gateway gather tool is logged loudly
+      // (no-fallback), and every write (mama_save) is logged (observability).
+      reportAsk: createPersonaReportAsk({
+        issueEnvelope:
+          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
+            ? async () => {
+                const projectId = resolveReactiveProjectRoot(config, process.env);
+                const wallSeconds = Math.min(
+                  Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
+                  300
+                );
+                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
+                  agent_id: 'operator-report',
+                  instance_id: randomUUID(),
+                  // 'operator' is not a member of EnvelopeSource (envelope/types.ts is a closed
+                  // union); 'watch' is the daemon-internal source used by the mirrored code-act
+                  // issuance (start.ts:1834-1865). This field is issuing-source metadata only -
+                  // enforcement authorizes on scope.memory_scopes (which cover the operator:report
+                  // run below), never on envelope.source (gateway-tool-executor.ts:1421,1511,1590).
+                  source: 'watch',
+                  channel_id: 'report',
+                  trigger_context: { user_text: '<operator scheduled report>' },
+                  scope: {
+                    // Reads: the enabled raw connectors (kagemusha_* gathers) + memory scopes
+                    // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
+                    // send surface (constraint 2).
+                    project_refs: [{ kind: 'project' as const, id: projectId }],
+                    raw_connectors: codeActRawConnectors,
+                    memory_scopes: resolveCodeActMemoryScopes(
+                      deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
+                      getAdapter()
+                    ),
+                    allowed_destinations: [],
+                  },
+                  tier: 2, // write tier: the report may mama_save (matches code-act write tier)
+                  budget: { wall_seconds: wallSeconds },
+                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+                });
+              }
+            : undefined,
+        run: async (prompt, envelope) => {
+          const result = await agentLoop.runWithContent([{ type: 'text' as const, text: prompt }], {
+            sessionKey: OPERATOR_REPORT_SESSION_KEY,
+            source: 'operator',
+            channelId: 'report',
+            ...(envelope ? { envelope } : {}),
+          });
+          return { response: result.response, history: result.history };
+        },
+        log: (line: string) => console.log(line),
+        fullReportTag: OPERATOR_FULL_REPORT_TAG,
+      }),
       review: (trigger, context) => reviewTriggerCLI(trigger, context),
       output: reportOutput,
       reportScheduler,

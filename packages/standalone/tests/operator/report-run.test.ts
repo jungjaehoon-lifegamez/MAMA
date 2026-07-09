@@ -98,3 +98,97 @@ describe('report tool-use audit (M3-T1)', () => {
     expect(OPERATOR_REPORT_SESSION_KEY).toBe('operator:report');
   });
 });
+
+import { createPersonaReportAsk } from '../../src/operator/report-run.js';
+
+describe('createPersonaReportAsk (M3-T4)', () => {
+  const TAG = '[operator_full_report]';
+
+  it('audits + logs gathered and written EXECUTIONS, then returns the response', async () => {
+    const logs: string[] = [];
+    const run = async () => ({
+      response: 'the report',
+      history: [...exchange('kagemusha_tasks'), ...exchange('mama_save')],
+    });
+    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
+    const out = await ask(`${TAG}\nwrite the report`);
+    expect(out).toBe('the report');
+    expect(logs.join('\n')).toMatch(/gathered via kagemusha_tasks/);
+    expect(logs.join('\n')).toMatch(/wrote via mama_save/);
+  });
+
+  it('full report with no gateway gather EXECUTION warns loudly (no-fallback)', async () => {
+    const logs: string[] = [];
+    const run = async () => ({ response: 'report', history: [...exchange('Bash')] });
+    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
+    await ask(`${TAG}\nwrite`);
+    expect(logs.join('\n')).toMatch(/NO gateway gather tools/);
+  });
+
+  it('empty response throws (no-fallback) but the audit is logged BEFORE the throw', async () => {
+    const logs: string[] = [];
+    const run = async () => ({ response: '   ', history: [...exchange('Bash')] });
+    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
+    await expect(ask(`${TAG}\nwrite`)).rejects.toThrow(/empty report response/);
+    expect(logs.join('\n')).toMatch(/NO gateway gather tools/);
+  });
+
+  it('a digest prompt (no tag) does not warn about missing gather tools', async () => {
+    const logs: string[] = [];
+    const run = async () => ({ response: 'digest', history: [] });
+    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
+    await ask('short digest, no tag');
+    expect(logs.join('\n')).not.toMatch(/NO gateway gather tools/);
+  });
+
+  it('issues ONE scoped envelope per report and hands it to the runner', async () => {
+    let issued = 0;
+    const marker = { envelope_id: 'env-marker' };
+    const seen: unknown[] = [];
+    const run = async (_prompt: string, envelope?: unknown) => {
+      seen.push(envelope);
+      return { response: 'r', history: [] };
+    };
+    const ask = createPersonaReportAsk({
+      run,
+      issueEnvelope: async () => {
+        issued += 1;
+        return marker;
+      },
+      log: () => {},
+      fullReportTag: TAG,
+    });
+    await ask('digest one');
+    await ask('digest two');
+    expect(issued).toBe(2); // per-report envelope, never reused across runs
+    expect(seen).toEqual([marker, marker]); // the runner carries it into runWithContent options
+  });
+
+  it('without an issuer (issuance off) the runner receives no envelope', async () => {
+    const seen: unknown[] = [];
+    const run = async (_prompt: string, envelope?: unknown) => {
+      seen.push(envelope);
+      return { response: 'r', history: [] };
+    };
+    const ask = createPersonaReportAsk({ run, log: () => {}, fullReportTag: TAG });
+    await ask('digest');
+    expect(seen).toEqual([undefined]);
+  });
+
+  it('envelope issuance failure propagates loudly (no-fallback); the runner never runs', async () => {
+    let ran = 0;
+    const ask = createPersonaReportAsk({
+      run: async () => {
+        ran += 1;
+        return { response: 'r', history: [] };
+      },
+      issueEnvelope: async () => {
+        throw new Error('envelope authority unavailable');
+      },
+      log: () => {},
+      fullReportTag: TAG,
+    });
+    await expect(ask('digest')).rejects.toThrow('envelope authority unavailable');
+    expect(ran).toBe(0);
+  });
+});
