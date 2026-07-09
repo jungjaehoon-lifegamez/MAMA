@@ -1861,6 +1861,13 @@ export async function recallMemory(
   // flowed into bundle.memories AND the per-record enrichment SQL loops below.
   if (matched.length > requestedLimit) {
     matched = matched.slice(0, requestedLimit);
+    // Keep bundle.fused_hits consistent with the capped memories: drop decision hits
+    // whose record no longer appears in `matched` (wiki hits are added below and are
+    // not keyed to memories).
+    const cappedIds = new Set(matched.map((record) => record.id));
+    fusedHits = fusedHits.filter(
+      (hit) => hit.source_type !== 'decision' || cappedIds.has(hit.source_id)
+    );
   }
   const acceptedWikiFusedHits: FusedHit[] = Array.from(wikiScores.values())
     .sort((a, b) => b.score - a.score)

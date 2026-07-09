@@ -81,7 +81,9 @@ export class FileReportScheduleStore implements ReportScheduleStore {
   }
 
   load(): string | null {
-    if (!existsSync(this.path)) return null;
+    if (!existsSync(this.path)) {
+      return null;
+    }
     const parsed: unknown = JSON.parse(readFileSync(this.path, 'utf8')); // throws on corrupt (no-fallback)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new Error(`corrupt report-schedule state (not an object): ${this.path}`);

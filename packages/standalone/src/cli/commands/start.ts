@@ -2203,6 +2203,11 @@ export async function runAgentLoop(
   // Runs ONLY with MAMA_TRIGGER_LOOP=1. Placed after initConnectors (which feeds
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
   if (process.env.MAMA_TRIGGER_LOOP === '1') {
+    // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
+    // DB permission, registry constructor) must not abort the whole daemon before Phase
+    // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
+    // failure is still surfaced LOUDLY below (console.error), never swallowed silently.
+    try {
     const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');
     const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
     const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
@@ -2342,13 +2347,20 @@ export async function runAgentLoop(
     // M2.4: point the connector sink's forwarder at this loop now that it exists.
     triggerLoopNudge.current = () => triggerLoop.nudge();
     gateways.push({
-      stop: () => {
+      stop: async () => {
         triggerLoopNudge.current = null;
         stopTriggerLoop();
-        return Promise.resolve();
+        // Close the operator triggers.db handle (PR #119 review: was leaked on shutdown).
+        triggerRegistry.close();
       },
     });
     console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
+    } catch (error) {
+      console.error(
+        '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
+        error
+      );
+    }
   }
 
   // ── Phase 10: API Server + Routes ────────────────────────────────────────

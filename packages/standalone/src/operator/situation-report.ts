@@ -84,7 +84,9 @@ export class SituationReporter {
       const text = e.content.trim();
       if (text) {
         w.excerpts.push(text.slice(0, MAX_EXCERPT_CHARS));
-        if (w.excerpts.length > MAX_EXCERPTS_PER_CHANNEL) w.excerpts.shift();
+        if (w.excerpts.length > MAX_EXCERPTS_PER_CHANNEL) {
+          w.excerpts.shift();
+        }
       }
       this.windowByChannel.set(e.channelId, w);
       this.windowTotal += 1;
