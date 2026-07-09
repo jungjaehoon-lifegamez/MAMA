@@ -59,6 +59,8 @@ export interface TriggerLoopDeps {
   output?: Pick<OutputSink, 'send'>;
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
+  /** M2.3: tool-call instructions for the FULL report so the agent self-gathers context. */
+  fullReportSelfGather?: string[];
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -79,10 +81,11 @@ export class OperatorTriggerLoop {
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
   private digest = new SituationReporter();
-  private fullReporter = new SituationReporter();
+  private fullReporter: SituationReporter;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
+    this.fullReporter = new SituationReporter({ selfGatherLines: deps.fullReportSelfGather });
   }
 
   async tick(): Promise<TickResult> {

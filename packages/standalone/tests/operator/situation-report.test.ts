@@ -106,6 +106,22 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     for (const prompt of [digest, full]) expect(prompt).toContain('Fire activity:');
   });
 
+  it('full mode injects self-gather tool instructions when configured (M2.3)', () => {
+    const r = new SituationReporter({
+      selfGatherLines: ['call overview() first', 'then read the busiest channels'],
+    });
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    const full = r.buildPrompt('full');
+    expect(full).toContain('call overview() first');
+    expect(full).toContain('then read the busiest channels');
+    expect(full).toContain('primary source'); // tools over the window hint
+    expect(r.buildPrompt('digest')).not.toContain('call overview() first'); // digest stays tool-free
+    // without the option nothing is injected
+    const plain = new SituationReporter();
+    plain.recordWindow([ev(1, 'slack:a', 'hi')]);
+    expect(plain.buildPrompt('full')).not.toContain('primary source');
+  });
+
   it('full mode fixes the report skeleton: 5 generic sections, owner language (M2.2)', () => {
     const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);

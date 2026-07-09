@@ -45,12 +45,29 @@ interface FireAgg {
   topics: Set<string>;
 }
 
+export interface SituationReporterOptions {
+  /**
+   * M2.3: tool-call instructions injected into the FULL report framing so the agent
+   * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
+   * lesson from Kagemusha, whose report prompt instructs its agent to call its tools
+   * (and which deleted its deterministic report builder for low quality). The lines
+   * are injected from the runtime wiring (which knows the daemon's toolset); this
+   * module stays generic. Digest mode never uses them (frequent + must stay light).
+   */
+  selfGatherLines?: string[];
+}
+
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
   private windowTotal = 0;
   private fireAgg = new Map<string, FireAgg>();
   private authored = 0;
   private recalled = new Map<string, string>(); // topic -> content (deduped, bounded)
+  private opts: SituationReporterOptions;
+
+  constructor(opts: SituationReporterOptions = {}) {
+    this.opts = opts;
+  }
 
   /** Fold a batch of drained events into the bounded per-channel window. */
   recordWindow(events: OperatorChannelEvent[]): void {
@@ -150,6 +167,14 @@ export class SituationReporter {
             'Structure the report with these sections (render the headings in the owner\'s language;',
             'omit a section only when it is truly empty):',
             '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
+            ...(this.opts.selfGatherLines && this.opts.selfGatherLines.length > 0
+              ? [
+                  '',
+                  'Before writing, ACTIVELY gather current context with your tools:',
+                  ...this.opts.selfGatherLines.map((line) => `- ${line}`),
+                  'Your tool findings are the primary source; the window summary below is only a hint.',
+                ]
+              : []),
           ]
         : [
             'You are the operator agent. Write a SHORT proactive digest for your owner about the',
