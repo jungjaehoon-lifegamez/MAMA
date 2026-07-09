@@ -6,7 +6,8 @@ export const VEC_BYTES = 4096; // 1024 float32
 // Byte-safe: build a fresh 4096-byte ArrayBuffer at offset 0, then L2-normalize.
 export function parseVec(buf) {
   if (!buf || buf.length !== VEC_BYTES) return null;
-  const u = Uint8Array.from(buf);
+  const u = new Uint8Array(VEC_BYTES);
+  u.set(buf);
   const f = new Float32Array(u.buffer);
   let n = 0;
   for (let i = 0; i < f.length; i++) n += f[i] * f[i];
