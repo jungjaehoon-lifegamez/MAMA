@@ -25,7 +25,6 @@ import { HeartbeatScheduler } from '../../scheduler/heartbeat.js';
 import { DiscordGateway } from '../../gateways/index.js';
 import type { AgentLoop } from '../../agent/index.js';
 import type { HealthCheckService } from '../../observability/health-check.js';
-import { shouldSkipVNextFanout, type VNextBootstrapPlan } from '../../runtime-vnext/bootstrap.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -57,28 +56,17 @@ export interface HeartbeatResult {
   healthWarningInterval: ReturnType<typeof setInterval> | null;
 }
 
-export interface SchedulerInitOptions {
-  vNext?: VNextBootstrapPlan;
-}
-
 /**
  * Initialize cron scheduler with a dedicated CronWorker and EventEmitter.
  *
  * Creates the scheduler, wires the execute callback to CronWorker,
  * and loads cron jobs from config.scheduling.jobs.
  */
-export function initCronScheduler(
-  config: MAMAConfig,
-  options: SchedulerInitOptions = {}
-): CronSchedulerResult {
+export function initCronScheduler(config: MAMAConfig): CronSchedulerResult {
   // Initialize cron scheduler with dedicated CronWorker (isolated from OS agent)
   const cronEmitter = new EventEmitter();
   const cronWorker = new CronWorker({ emitter: cronEmitter });
   const scheduler = new CronScheduler();
-
-  if (options.vNext?.enabled) {
-    return { scheduler, cronWorker, cronEmitter };
-  }
 
   scheduler.setExecuteCallback(async (prompt, job) => {
     console.log(`[Cron] Executing: ${prompt.substring(0, 50)}...`);
@@ -144,8 +132,7 @@ export function initHeartbeat(
   agentLoop: AgentLoop,
   discordGateway: DiscordGateway | null,
   scheduler: CronScheduler,
-  healthCheckService: HealthCheckService,
-  options: SchedulerInitOptions = {}
+  healthCheckService: HealthCheckService
 ): HeartbeatResult {
   // Initialize heartbeat scheduler
   const heartbeatConfig = config.heartbeat || {};
@@ -177,13 +164,6 @@ export function initHeartbeat(
       console.warn(`⚠️ Token refresh warning: ${error.message}`);
     },
   });
-
-  if (
-    shouldSkipVNextFanout(options.vNext, 'heartbeat_timer') ||
-    shouldSkipVNextFanout(options.vNext, 'token_keepalive_timer')
-  ) {
-    return { heartbeatScheduler, tokenKeepAlive, healthWarningInterval: null };
-  }
 
   if (heartbeatConfig.enabled !== false) {
     heartbeatScheduler.start();
