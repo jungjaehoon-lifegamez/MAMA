@@ -1,16 +1,17 @@
 /**
- * OperatorTriggerLoop - the live runtime of the trigger loop (M1-T3).
+ * OperatorTriggerLoop - the live runtime of the trigger loop (M1-T3, extended for M2).
  *
  * A setInterval tick (NOT scheduler.addJob, which executes an agent prompt, not a callback;
  * precedent: connector-ingress-manual-memory-commit.ts:742) that:
  *   1. drains new deltas (at-least-once: commit only after processing),
  *   2. matches active triggers -> fires them (recall memoryQuery + surface) + recordFire,
  *   3. every authorEveryNTicks: the agent authors new triggers from the recent-events window,
- *   4. every reviewEveryNTicks: the agent reviews fired triggers (keep/refine/retire).
+ *   4. every reviewEveryNTicks: the agent reviews fired triggers (keep/refine/retire),
+ *   5. every reportEveryNTicks: the agent composes a situational digest of the window (M2),
+ *   6. at configured LOCAL hours: the agent composes a fuller scheduled report (M2).
  *
- * Read-only: recall/surface/log only, no outbound send (M1). Every step logs
- * (observability-over-restriction). All deps are injected so the pipeline is unit-testable;
- * M1-T4 wires the real adapters behind MAMA_TRIGGER_LOOP=1.
+ * Read-only: recall/surface/log/report-to-owner only, no write-actions (M1/M2). All deps are
+ * injected so the pipeline is unit-testable.
  */
 
 import type { OperatorChannelEvent, OperatorMemoryPort, OutputSink } from './operator-interfaces.js';
@@ -21,6 +22,7 @@ import { fireTrigger } from './trigger-fire.js';
 import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
 import { SituationReporter } from './situation-report.js';
+import type { ReportSchedule } from './report-scheduler.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -34,7 +36,7 @@ export interface TriggerLoopConfig {
   authorEveryNTicks: number;
   reviewEveryNTicks: number;
   authorWindowSize: number;
-  /** Owner-digest cadence (M1.5 output leg). Only used when deps.output is set. */
+  /** Situational-digest cadence (M1.5 + M2 output leg). Only used when deps.output is set. */
   reportEveryNTicks?: number;
 }
 
@@ -42,12 +44,14 @@ export interface TriggerLoopDeps {
   delta: DeltaSource;
   memory: OperatorMemoryPort;
   registry: TriggerRegistry;
-  /** Agent used by authorTriggers (real: askAgentCLI). */
+  /** Agent used by authorTriggers + report composition (real: askAgentCLI). */
   askAgent: AskAgent;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
   output?: Pick<OutputSink, 'send'>;
+  /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
+  reportScheduler?: ReportSchedule;
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -59,6 +63,7 @@ export interface TickResult {
   authored: number;
   reviewed: number;
   reported: boolean;
+  fullReported: boolean;
 }
 
 export class OperatorTriggerLoop {
@@ -67,6 +72,7 @@ export class OperatorTriggerLoop {
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
   private digest = new SituationReporter();
+  private fullReporter = new SituationReporter();
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -74,6 +80,8 @@ export class OperatorTriggerLoop {
 
   async tick(): Promise<TickResult> {
     const { delta, memory, registry, askAgent, review, config, log } = this.deps;
+    const { output, reportScheduler } = this.deps;
+    const fullLegOn = Boolean(output && reportScheduler);
     this.tickCount += 1;
     const tick = this.tickCount;
 
@@ -81,7 +89,7 @@ export class OperatorTriggerLoop {
     const events = delta.drainNew(config.drainLimit);
     if (events.length > 0) log(`[trigger-loop] tick ${tick}: drained ${events.length} events`);
 
-    // 2. Match + fire + recordFire.
+    // 2. Match + fire + recordFire, folding fire activity into the report accumulators.
     let fires = 0;
     for (const event of events) {
       const signals = matchTriggers(event, registry);
@@ -96,6 +104,14 @@ export class OperatorTriggerLoop {
           channelId: signal.channelId,
           recalled: result.recalled,
         });
+        if (fullLegOn) {
+          this.fullReporter.recordFire({
+            triggerId: signal.triggerId ?? signal.detector,
+            kind: signal.kind,
+            channelId: signal.channelId,
+            recalled: result.recalled,
+          });
+        }
         log(
           `[trigger-loop] tick ${tick}: fire trigger=${signal.triggerId ?? signal.detector} ` +
             `recalled=${result.recalled.length} channel=${signal.channelId}`
@@ -104,10 +120,11 @@ export class OperatorTriggerLoop {
     }
     delta.commit(events);
 
-    // Feed the drained window into the report accumulator (bounded per-channel) and keep the
+    // Feed the drained window into the report accumulators (bounded per-channel) and keep the
     // author window. The digest reports on ALL channels seen, not only the ones that fired.
     if (events.length > 0) {
       this.digest.recordWindow(events);
+      if (fullLegOn) this.fullReporter.recordWindow(events);
       this.recentEvents = [...this.recentEvents, ...events].slice(-config.authorWindowSize);
     }
 
@@ -118,7 +135,10 @@ export class OperatorTriggerLoop {
         note: `authored at tick ${tick}`,
       });
       authored = created.length;
-      if (authored > 0) this.digest.recordAuthored(authored);
+      if (authored > 0) {
+        this.digest.recordAuthored(authored);
+        if (fullLegOn) this.fullReporter.recordAuthored(authored);
+      }
       log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }
 
@@ -138,14 +158,27 @@ export class OperatorTriggerLoop {
     // 5. Situational digest (M1.5 cadence, M2 window-aware): the agent composes it from the
     //    window + fire activity + recalled memory; the sink delivers it. Agent may reply NOTHING.
     let reported = false;
-    const { output } = this.deps;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
       reported = await this.digest.report(askAgent, output, 'digest');
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
-    return { tick, drained: events.length, fires, authored, reviewed, reported };
+    // 6. Scheduled full report (M2): fires at configured LOCAL hours, even if no triggers fired,
+    //    covering the whole window since the last full report. Fires once per hour (markFired
+    //    persists the hour key -> restart-safe). Send failure throws (no-fallback) WITHOUT
+    //    marking the hour, so the next tick retries with the buffer intact.
+    let fullReported = false;
+    if (output && reportScheduler) {
+      const { fire, hourKey } = reportScheduler.shouldFire(new Date());
+      if (fire && this.fullReporter.hasActivity()) {
+        fullReported = await this.fullReporter.report(askAgent, output, 'full');
+        reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
+        log(`[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`);
+      }
+    }
+
+    return { tick, drained: events.length, fires, authored, reviewed, reported, fullReported };
   }
 
   /**
