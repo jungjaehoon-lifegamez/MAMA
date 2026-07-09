@@ -51,10 +51,6 @@ const CLASSIFIED = new Map<string, string>([
     'agent/code-act/host-bridge.ts',
     'M1R Reactive Main: HostBridge gateway calls carry the active envelope context',
   ],
-  [
-    'operator-vnext/synthetic-dogfood-harness.ts',
-    'PR16 dogfood-only: explicit synthetic recall carries GatewayToolExecutionContext',
-  ],
   ['multi-agent/', 'M7-owned: spawn_subordinate delegated memory worker envelopes are outside M1R'],
   ['scheduler/', 'M8-owned: schedule_worker/Autonomous Standing envelope issuance is outside M1R'],
 ]);

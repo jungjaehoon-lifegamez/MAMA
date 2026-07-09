@@ -13,7 +13,6 @@ import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { ContextCompileService } from './context-compile-service.js';
-import type { VNextCommitRuntimeMode } from '../operator-vnext/commit-authority.js';
 import type {
   AppendToolTraceInput,
   BeginModelRunInput,
@@ -1208,12 +1207,8 @@ export interface GatewayToolExecutorOptions {
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
   /** Shared context compile service for gateway context_compile calls. */
   contextCompileService?: ContextCompileService;
-  /** Optional wiki publish adapter, used by vNext callers that persist source-linked artifacts. */
+  /** Optional wiki publish adapter for source-linked artifact persistence. */
   wikiPublishAdapter?: WikiPublishAdapter | null;
-  /** Enables vNext commit authority checks for durable write tools. */
-  vNextRuntimeEnabled?: boolean;
-  /** Explicit vNext authority mode override for tests and staged rollout. */
-  vNextCommitRuntimeMode?: VNextCommitRuntimeMode;
 }
 
 export interface MemoryWriteProvenance {
