@@ -1925,7 +1925,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
       }
 
       // Generate query embedding
-      const queryEmbedding = await generateEmbedding(userQuestion);
+      const queryEmbedding = await generateEmbedding(userQuestion, 'query');
 
       // Adaptive threshold (shorter queries need higher confidence)
       const wordCount = userQuestion.split(/\s+/).length;
