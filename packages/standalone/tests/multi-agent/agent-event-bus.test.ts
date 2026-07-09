@@ -74,4 +74,27 @@ describe('AgentEventBus', () => {
     bus.emit({ type: 'memory:saved', topic: 'y' });
     expect(handler).not.toHaveBeenCalled();
   });
+
+  it('onDebounced coalesces rapid events into one trailing invocation', async () => {
+    const bus = new AgentEventBus();
+    const handler = vi.fn();
+    bus.onDebounced('extraction:completed', handler, 50);
+    bus.emit({ type: 'extraction:completed', projects: ['a'] });
+    bus.emit({ type: 'extraction:completed', projects: ['b'] });
+    bus.emit({ type: 'extraction:completed', projects: ['c'] });
+    expect(handler).not.toHaveBeenCalled();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith({ type: 'extraction:completed', projects: ['c'] });
+  });
+
+  it('destroy clears pending debounced listener invocations', async () => {
+    const bus = new AgentEventBus();
+    const handler = vi.fn();
+    bus.onDebounced('extraction:completed', handler, 50);
+    bus.emit({ type: 'extraction:completed', projects: ['a'] });
+    bus.destroy();
+    await new Promise((r) => setTimeout(r, 80));
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
