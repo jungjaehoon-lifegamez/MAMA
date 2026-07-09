@@ -194,6 +194,11 @@ export class SituationReporter {
                   'databases, or the filesystem with Bash, Read, or other native tools - those are',
                   'not the task board and will make the report wrong. Your gateway tool findings',
                   'are the primary source; the window summary below is only a hint.',
+                  '',
+                  'After gathering, if the window contains a durable decision or lesson worth',
+                  'keeping, persist exactly ONE with a gateway tool_call to mama_save (type',
+                  '"decision", with topic, decision, reasoning). Only save when it is genuinely',
+                  'durable; skip the save otherwise. This is your judgement, not a requirement.',
                 ]
               : []),
           ]
