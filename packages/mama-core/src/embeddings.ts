@@ -22,6 +22,17 @@ const DEFAULT_CACHE_DIR = path.join(os.homedir(), '.cache', 'huggingface', 'tran
 const TIER3_ENV_VALUES = new Set(['1', 'true', 'yes']);
 export const EMBEDDING_MODEL_MAX_LENGTH = 512;
 export const EMBEDDING_MAX_TOKENISH_SEGMENTS = 480;
+
+// e5 instruction-prefix scheme. e5 models are trained with two prefixes: stored
+// text is embedded as "passage: <text>", a search query as "query: <text>".
+// Omitting them collapses cosine into a narrow cone. This constant is the single
+// source of truth for the scheme identifier used by the runtime version guard.
+export type EmbeddingRole = 'passage' | 'query';
+export const EMBEDDING_PREFIX_SCHEME = 'e5-prefixed-v1';
+
+function applyRolePrefix(preparedText: string, role: EmbeddingRole): string {
+  return `${role}: ${preparedText}`;
+}
 const TOKENISH_SEGMENT_PATTERN =
   /[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]|\S+/gu;
 
@@ -158,7 +169,10 @@ async function loadModel(): Promise<PipelineFunction> {
  * @returns Embedding vector (dimension from config)
  * @throws Error if text is empty or embedding fails
  */
-export async function generateEmbedding(text: string): Promise<Float32Array> {
+export async function generateEmbedding(
+  text: string,
+  role: EmbeddingRole = 'passage'
+): Promise<Float32Array> {
   if (typeof text !== 'string' || text.trim().length === 0) {
     throw new Error('Text cannot be empty');
   }
@@ -166,9 +180,10 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
   assertEmbeddingsEnabled();
 
   const preparedText = prepareEmbeddingText(text);
+  const modelInput = applyRolePrefix(preparedText, role); // e5 instruction prefix
 
-  // Task 2: Check cache first (AC #3)
-  const cached = embeddingCache.get(preparedText);
+  // Cache key is the PREFIXED input: a passage vector can never be served for a query.
+  const cached = embeddingCache.get(modelInput);
   if (cached) {
     return cached;
   }
@@ -180,7 +195,7 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     const expectedDim = getEmbeddingDim();
 
     // Generate embedding
-    const output = await model(preparedText, {
+    const output = await model(modelInput, {
       pooling: 'mean', // Mean pooling over tokens
       normalize: true, // L2 normalization
       truncation: true,
@@ -199,7 +214,7 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
     const _latency = Date.now() - startTime;
 
     // Task 2: Store in cache (AC #3)
-    embeddingCache.set(preparedText, embedding);
+    embeddingCache.set(modelInput, embedding);
 
     return embedding;
   } catch (error) {
@@ -218,7 +233,8 @@ export async function generateEmbedding(text: string): Promise<Float32Array> {
  * @returns 1024-dim enhanced embedding
  */
 export async function generateEnhancedEmbedding(
-  decision: DecisionForEmbedding
+  decision: DecisionForEmbedding,
+  role: EmbeddingRole = 'passage'
 ): Promise<Float32Array> {
   // Construct enriched text representation with narrative fields (Story 2.2)
   const parts = [
@@ -255,7 +271,7 @@ export async function generateEnhancedEmbedding(
 
   const enrichedText = parts.join('\n').trim();
 
-  return generateEmbedding(enrichedText);
+  return generateEmbedding(enrichedText, role);
 }
 
 /**
@@ -269,7 +285,10 @@ export async function generateEnhancedEmbedding(
  * @param texts - Array of texts to embed (max 10 per batch)
  * @returns Array of embeddings
  */
-export async function generateBatchEmbeddings(texts: string[]): Promise<Float32Array[]> {
+export async function generateBatchEmbeddings(
+  texts: string[],
+  role: EmbeddingRole = 'passage'
+): Promise<Float32Array[]> {
   if (!Array.isArray(texts) || texts.length === 0) {
     throw new Error('Texts must be a non-empty array');
   }
@@ -290,6 +309,8 @@ export async function generateBatchEmbeddings(texts: string[]): Promise<Float32A
     }
   }
 
+  const modelInputs = preparedTexts.map((t) => applyRolePrefix(t, role));
+
   const startTime = Date.now();
 
   try {
@@ -298,7 +319,7 @@ export async function generateBatchEmbeddings(texts: string[]): Promise<Float32A
 
     // Native batch processing - single model forward pass
     // This is significantly faster than sequential calls
-    const outputs = await model(preparedTexts, {
+    const outputs = await model(modelInputs, {
       pooling: 'mean',
       normalize: true,
       truncation: true,

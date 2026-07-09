@@ -26,6 +26,7 @@ export const SHUTDOWN_TOKEN: string =
 
 // Import embedding functions from mama-core
 import { generateEmbedding } from '../embeddings.js';
+import type { EmbeddingRole } from '../embeddings.js';
 import { getModelName, getEmbeddingDim } from '../config-loader.js';
 import { initDB } from '../db-manager.js';
 
@@ -116,6 +117,13 @@ export interface ServerOptions {
 interface EmbedRequestBody {
   text?: string;
   texts?: string[];
+  role?: string;
+}
+
+// Resolve the e5 role from an HTTP body value. Absent/unknown -> passage, so old
+// clients that never send a role keep getting passage vectors (backward compatible).
+export function resolveEmbeddingRole(raw: unknown): EmbeddingRole {
+  return raw === 'query' ? 'query' : 'passage';
 }
 
 /**
@@ -219,7 +227,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return;
       }
 
-      const embedding = await generateEmbedding(body.text);
+      const role = resolveEmbeddingRole(body.role);
+      const embedding = await generateEmbedding(body.text, role);
       modelLoaded = true;
       const latency = Date.now() - startTime;
 
@@ -252,8 +261,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         return;
       }
 
+      const role = resolveEmbeddingRole(body.role);
       const embeddings = await Promise.all(
-        body.texts.map((text) => generateEmbedding(text).then((e) => Array.from(e)))
+        body.texts.map((text) => generateEmbedding(text, role).then((e) => Array.from(e)))
       );
       modelLoaded = true;
       const latency = Date.now() - startTime;
