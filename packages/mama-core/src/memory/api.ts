@@ -1187,7 +1187,10 @@ export async function recallMemory(
         queryEmbedding,
         vectorLimit,
         searchOptions.threshold,
-        searchOptions.topicPrefix
+        searchOptions.topicPrefix,
+        // Keep superseded history out of the candidate top-K at search time; the
+        // post-filter below stays the authority (and includeHistory restores it).
+        options.includeHistory ? undefined : Array.from(EXCLUDED_STATUSES)
       );
 
       let filtered = vectorResults;

@@ -116,7 +116,13 @@ describe('memory v2 recall ranking', () => {
       diagnostics: true,
     });
 
-    expect(vectorSearchMock).toHaveBeenCalledWith(expect.any(Float32Array), 20, 0.6, undefined);
+    expect(vectorSearchMock).toHaveBeenCalledWith(
+      expect.any(Float32Array),
+      20,
+      0.6,
+      undefined,
+      expect.arrayContaining(['superseded', 'quarantined', 'contradicted', 'stale'])
+    );
     expect(bundle.memories).toEqual([]);
     expect((bundle as { fused_hits?: unknown[] }).fused_hits).toEqual([]);
     expect(bundle.search_meta.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
