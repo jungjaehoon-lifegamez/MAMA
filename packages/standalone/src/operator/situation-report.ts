@@ -147,6 +147,9 @@ export class SituationReporter {
             "what recurred, what is new, and what needs the owner's attention. Plain language, no",
             'markdown tables. This scheduled report must ALWAYS arrive: if the window was quiet,',
             'say so in one or two lines instead of skipping.',
+            'Structure the report with these sections (render the headings in the owner\'s language;',
+            'omit a section only when it is truly empty):',
+            '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
           ]
         : [
             'You are the operator agent. Write a SHORT proactive digest for your owner about the',

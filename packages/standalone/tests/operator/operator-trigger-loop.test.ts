@@ -227,6 +227,31 @@ describe('OperatorTriggerLoop', () => {
     expect(markFired).toHaveBeenCalledWith('2026-07-09:08');
   });
 
+  it('reports route through the persona agent (reportAsk) while authoring stays on askAgent (M2.2)', async () => {
+    seedTrigger(reg, 'tr1', 'report');
+    const send = vi.fn(async () => {});
+    const askAgent = vi.fn(async () => '[]'); // author/review path (bare CLI in prod)
+    const reportAsk = vi.fn(async () => 'persona-composed report');
+    const markFired = vi.fn();
+    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const loop = makeLoop({
+      askAgent,
+      reportAsk,
+      output: { send },
+      reportScheduler: scheduler,
+      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 1, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 1 },
+    });
+    delta.queue = [ev(1, 'ch-a', 'the report is late')];
+    const r = await loop.tick();
+    expect(r.reported).toBe(true);
+    expect(r.fullReported).toBe(true);
+    expect(reportAsk).toHaveBeenCalledTimes(2); // digest + full both on the persona path
+    expect(send).toHaveBeenCalledWith('persona-composed report');
+    expect(askAgent).toHaveBeenCalledTimes(1); // author pass only - never report composition
+    const authorPrompt = String(askAgent.mock.calls[0][0]);
+    expect(authorPrompt).toContain('TRIGGERS'); // sanity: askAgent got the authoring prompt
+  });
+
   it('scheduled full report: fires even with ZERO activity - quiet-window aliveness (M2.1)', async () => {
     const send = vi.fn(async () => {});
     const markFired = vi.fn();

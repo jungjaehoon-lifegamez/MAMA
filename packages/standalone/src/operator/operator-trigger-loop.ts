@@ -44,8 +44,15 @@ export interface TriggerLoopDeps {
   delta: DeltaSource;
   memory: OperatorMemoryPort;
   registry: TriggerRegistry;
-  /** Agent used by authorTriggers + report composition (real: askAgentCLI). */
+  /** Agent for structured-JSON tasks: authorTriggers (real: askAgentCLI - bare CLI parses reliably). */
   askAgent: AskAgent;
+  /**
+   * Agent for REPORT composition (M2.2). Bind this to the daemon's persona AgentLoop
+   * (SOUL.md system prompt, pinned model, session continuity) - tone/quality come from the
+   * generation inputs, and reports deserve the persona path while JSON tasks stay on the
+   * bare CLI. Absent -> reports use askAgent (explicit config choice, not a failure fallback).
+   */
+  reportAsk?: AskAgent;
   /** Agent review of one trigger (real: reviewTriggerCLI). */
   review: (trigger: TriggerRecord, recentContext: string[]) => Promise<ReviewDecision>;
   /** Owner-report sink (real: telegram gateway send). Absent -> loop stays read-only. */
@@ -158,9 +165,10 @@ export class OperatorTriggerLoop {
     // 5. Situational digest (M1.5 cadence, M2 window-aware): the agent composes it from the
     //    window + fire activity + recalled memory; the sink delivers it. Agent may reply NOTHING.
     let reported = false;
+    const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
-      reported = await this.digest.report(askAgent, output, 'digest');
+      reported = await this.digest.report(reportAsk, output, 'digest');
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
@@ -173,7 +181,7 @@ export class OperatorTriggerLoop {
     if (output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
-        fullReported = await this.fullReporter.report(askAgent, output, 'full');
+        fullReported = await this.fullReporter.report(reportAsk, output, 'full');
         reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
         log(`[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`);
       }

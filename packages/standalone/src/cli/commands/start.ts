@@ -2238,6 +2238,16 @@ export async function runAgentLoop(
       memory: createMamaMemoryPort(),
       registry: triggerRegistry,
       askAgent: askAgentCLI,
+      // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
+      // session lanes) instead of the bare CLI - report tone comes from generation inputs.
+      // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
+      reportAsk: async (prompt: string) => {
+        const result = await agentLoop.run(prompt);
+        if (!result.response || result.response.trim() === '') {
+          throw new Error('persona agent returned an empty report response');
+        }
+        return result.response;
+      },
       review: (trigger, context) => reviewTriggerCLI(trigger, context),
       output: reportOutput,
       reportScheduler,
