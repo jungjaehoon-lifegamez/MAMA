@@ -60,6 +60,12 @@ export async function reEmbedDatabase({ db, embedDecision, embedWiki, log = () =
   const wikiVecs = [];
   for (const row of wikiRows) {
     const text = `${row.title || ''}\n${row.content || ''}`.trim();
+    if (!text) {
+      throw new Error(
+        `wiki page "${row.key}" has empty title+content and cannot be re-embedded. ` +
+          `Remove its wiki_page_embeddings row and re-run (the scheme marker stays legacy until this succeeds).`
+      );
+    }
     const vec = await embedWiki(text);
     wikiVecs.push({ key: row.key, buf: Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength) });
   }
@@ -107,7 +113,7 @@ async function main() {
         },
         'passage'
       ),
-    embedWiki: (text) => generateEmbedding(text || ' ', 'passage'),
+    embedWiki: (text) => generateEmbedding(text, 'passage'),
     log,
   });
   db.close();
