@@ -18,6 +18,13 @@
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
 import type { AskAgent } from './trigger-author.js';
 
+/**
+ * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
+ * report from a digest for tool-use auditing (report-run.ts). Kagemusha frames its scheduled full
+ * report with the same bracketed-tag convention (report-prompts.ts buildFullReportPrompt).
+ */
+export const OPERATOR_FULL_REPORT_TAG = '[operator_full_report]';
+
 export interface FireActivity {
   triggerId: string;
   kind: string;
@@ -159,6 +166,7 @@ export class SituationReporter {
     const framing =
       mode === 'full'
         ? [
+            OPERATOR_FULL_REPORT_TAG,
             'You are the operator agent. Write your scheduled FULLER situation report for your owner',
             'covering the whole window below (multiple channels, since the last full report). Group',
             "what recurred, what is new, and what needs the owner's attention. Plain language, no",
@@ -170,9 +178,22 @@ export class SituationReporter {
             ...(this.opts.selfGatherLines && this.opts.selfGatherLines.length > 0
               ? [
                   '',
-                  'Before writing, ACTIVELY gather current context with your tools:',
+                  'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
+                  'Emit each call as a fenced tool_call JSON block and wait for the result before',
+                  'the next call. The block format is exactly:',
+                  '```tool_call',
+                  '{"name": "kagemusha_tasks", "input": {"status": "needs_review"}}',
+                  '```',
+                  'Gather with these gateway tool calls:',
                   ...this.opts.selfGatherLines.map((line) => `- ${line}`),
-                  'Your tool findings are the primary source; the window summary below is only a hint.',
+                  'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
+                  'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
+                  'blocks in your reply text - do not search for them, and do not fall back to',
+                  'Bash or curl against any API.',
+                  'Use ONLY these gateway tool_call blocks to gather. Do NOT read log files,',
+                  'databases, or the filesystem with Bash, Read, or other native tools - those are',
+                  'not the task board and will make the report wrong. Your gateway tool findings',
+                  'are the primary source; the window summary below is only a hint.',
                 ]
               : []),
           ]
