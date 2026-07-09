@@ -25,7 +25,6 @@ import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
 import { createSecurityMiddleware } from '../security/security-monitor.js';
 import { createReportRouter, createReportStore } from './report-handler.js';
-import type { VNextProjectionProvider } from '../operator-vnext/situation-projection-types.js';
 import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
@@ -111,8 +110,6 @@ export interface ApiServerOptions {
   situationNow?: AgentSituationRouterOptions['now'];
   /** Shared context compile service for HTTP/gateway packet compilation */
   contextCompileService?: AgentContextRouterOptions['contextCompileService'];
-  /** Optional vNext dashboard/report projection provider. Legacy report store is used when omitted. */
-  vNextProjectionProvider?: VNextProjectionProvider;
 }
 
 export type ApiEnvelopeMetadata = {
@@ -167,7 +164,6 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     situationBuilder,
     situationNow,
     contextCompileService,
-    vNextProjectionProvider,
   } = options;
 
   const app = express();
@@ -302,9 +298,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   }
 
   // Mount report router (always available)
-  const reportRouter = createReportRouter(reportStore, reportSseClients, {
-    vNextProjectionProvider,
-  });
+  const reportRouter = createReportRouter(reportStore, reportSseClients);
   app.use('/api/report', reportRouter);
 
   // Mount wiki router if wiki path is configured
