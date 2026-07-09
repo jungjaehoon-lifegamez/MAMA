@@ -121,6 +121,11 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   private _vectorSearchEnabled = true;
   private vectorCache: Map<number, Float32Array> = new Map();
   private topicCache: Map<number, string> = new Map();
+  // Effective status (status, falling back to outcome) per decision rowid. Used as a
+  // search-time optimization only - recallMemory's post-filter stays the authority
+  // (this cache can lag a status UPDATE until the next reloadVectorCache).
+  private statusCache: Map<number, string> = new Map();
+  private decisionsHasStatusColumns = false;
 
   constructor(config: SQLiteAdapterConfig = {}) {
     super();
@@ -196,6 +201,16 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     this.loadVectorCache();
   }
 
+  private refreshDecisionColumnInfo(): void {
+    if (!this.db) return;
+    const decisionCols = new Set(
+      (this.db.prepare('PRAGMA table_info(decisions)').all() as Array<{ name: string }>).map(
+        (c) => c.name
+      )
+    );
+    this.decisionsHasStatusColumns = decisionCols.has('status') && decisionCols.has('outcome');
+  }
+
   private loadVectorCache(): void {
     if (!this.db) return;
 
@@ -206,6 +221,7 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     if (tableCheck.length === 0) {
       this.vectorCache.clear();
       this.topicCache.clear();
+      this.statusCache.clear();
       return;
     }
 
@@ -224,14 +240,36 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
     }
 
-    // Load topic cache for scoped vector search
+    // Load topic + effective-status caches for scoped/filtered vector search.
+    // Legacy partial schemas may lack status/outcome (they are added by later
+    // migrations, and loadVectorCache also runs at connect time, before
+    // runMigrations) - introspect columns so prepare() cannot crash on them.
+    // A missing column just leaves statusCache empty; the api-layer post-filter
+    // remains the authority.
     this.topicCache.clear();
-    const topicRows = this.db.prepare('SELECT rowid, topic FROM decisions').all() as Array<{
+    this.statusCache.clear();
+    const decisionCols = new Set(
+      (this.db.prepare('PRAGMA table_info(decisions)').all() as Array<{ name: string }>).map(
+        (c) => c.name
+      )
+    );
+    this.refreshDecisionColumnInfo();
+    const statusSelect = decisionCols.has('status') ? 'status' : 'NULL AS status';
+    const outcomeSelect = decisionCols.has('outcome') ? 'outcome' : 'NULL AS outcome';
+    const topicRows = this.db
+      .prepare(`SELECT rowid, topic, ${statusSelect}, ${outcomeSelect} FROM decisions`)
+      .all() as Array<{
       rowid: number;
       topic: string;
+      status: string | null;
+      outcome: string | null;
     }>;
     for (const row of topicRows) {
       this.topicCache.set(row.rowid, row.topic);
+      const effectiveStatus = row.status || row.outcome;
+      if (effectiveStatus) {
+        this.statusCache.set(row.rowid, effectiveStatus);
+      }
     }
 
     const count = this.vectorCache.size;
@@ -298,7 +336,8 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
   vectorSearch(
     embedding: Float32Array | number[],
     limit = 5,
-    topicPrefix?: string
+    topicPrefix?: string,
+    excludeStatuses?: readonly string[]
   ): VectorSearchResult[] | null {
     if (!this.isConnected()) {
       throw new Error('Database not connected');
@@ -310,6 +349,8 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     const effectiveLimit = Math.max(limit, 1);
     const bestMatches: VectorSearchResult[] = [];
     let minScore = -Infinity;
+    const excluded =
+      excludeStatuses && excludeStatuses.length > 0 ? new Set(excludeStatuses) : null;
 
     for (const [rowid, candidate] of this.vectorCache) {
       if (candidate.length !== queryVector.length) continue;
@@ -318,6 +359,13 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       if (topicPrefix) {
         const topic = this.topicCache.get(rowid);
         if (!topic || !topic.startsWith(topicPrefix)) continue;
+      }
+
+      // Pre-filter by effective status so superseded history does not occupy
+      // top-K slots (the api-layer post-filter remains the authority)
+      if (excluded) {
+        const status = this.statusCache.get(rowid);
+        if (status && excluded.has(status)) continue;
       }
 
       const similarity = cosineSimilarity(candidate, queryVector);
@@ -357,12 +405,28 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     const result = stmt.run(rowid, buffer);
 
-    // Keep in-memory caches in sync
+    // Keep in-memory caches in sync. The column flag is stamped at loadVectorCache
+    // time, which can predate runMigrations (connect-time load on a fresh DB) - so
+    // while it reads false, re-introspect before deciding the select shape.
     this.vectorCache.set(rowid, vec);
-    const topicRow = this.prepare('SELECT topic FROM decisions WHERE rowid = ?').get(rowid) as
-      | { topic: string }
+    if (!this.decisionsHasStatusColumns) {
+      this.refreshDecisionColumnInfo();
+    }
+    const cacheSelect = this.decisionsHasStatusColumns
+      ? 'SELECT topic, status, outcome FROM decisions WHERE rowid = ?'
+      : 'SELECT topic, NULL AS status, NULL AS outcome FROM decisions WHERE rowid = ?';
+    const topicRow = this.prepare(cacheSelect).get(rowid) as
+      | { topic: string; status: string | null; outcome: string | null }
       | undefined;
-    if (topicRow) this.topicCache.set(rowid, topicRow.topic);
+    if (topicRow) {
+      this.topicCache.set(rowid, topicRow.topic);
+      const effectiveStatus = topicRow.status || topicRow.outcome;
+      if (effectiveStatus) {
+        this.statusCache.set(rowid, effectiveStatus);
+      } else {
+        this.statusCache.delete(rowid);
+      }
+    }
 
     return result;
   }
