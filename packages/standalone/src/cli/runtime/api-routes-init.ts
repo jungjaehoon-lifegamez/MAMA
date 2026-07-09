@@ -1405,16 +1405,10 @@ Keep the report under 2000 characters as it will be sent to Discord.`;
 
   apiServer.app.use(
     express.static(publicDir, {
-      setHeaders: (res, filePath) => {
+      setHeaders: (res, _filePath) => {
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         res.setHeader('Pragma', 'no-cache');
         res.setHeader('Expires', '0');
-        if (filePath.endsWith(path.join('viewer', 'operator.html'))) {
-          res.setHeader(
-            'Content-Security-Policy',
-            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-          );
-        }
       },
     })
   );
