@@ -52,7 +52,7 @@ const searchDecisionsAndContractsTool = {
       // Decision search
       if (decisionLimit > 0 && query) {
         try {
-          const queryEmbedding = await generateEmbedding(query);
+          const queryEmbedding = await generateEmbedding(query, 'query');
           const results = await vectorSearch(queryEmbedding, decisionLimit, similarityThreshold);
           if (Array.isArray(results)) {
             decisionResults = results.slice(0, decisionLimit);
@@ -79,7 +79,7 @@ const searchDecisionsAndContractsTool = {
 
         if (contractQuery) {
           try {
-            const contractEmbedding = await generateEmbedding(contractQuery);
+            const contractEmbedding = await generateEmbedding(contractQuery, 'query');
             const contractMatches = await vectorSearch(contractEmbedding, 10, similarityThreshold);
             if (Array.isArray(contractMatches)) {
               contractResults = contractMatches
