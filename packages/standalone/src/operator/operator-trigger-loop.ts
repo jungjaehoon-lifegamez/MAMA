@@ -103,7 +103,9 @@ export class OperatorTriggerLoop {
 
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
-    if (events.length > 0) log(`[trigger-loop] tick ${tick}: drained ${events.length} events`);
+    if (events.length > 0) {
+      log(`[trigger-loop] tick ${tick}: drained ${events.length} events`);
+    }
 
     // 2. Match + fire + recordFire, folding fire activity into the report accumulators.
     let fires = 0;
@@ -112,7 +114,9 @@ export class OperatorTriggerLoop {
       for (const signal of signals) {
         const result = await fireTrigger(signal, memory);
         fires += 1;
-        if (signal.triggerId) registry.recordFire(signal.triggerId);
+        if (signal.triggerId) {
+          registry.recordFire(signal.triggerId);
+        }
         // Carry the recalled {topic, content} (agent-authored memoryQuery drove it) into the report.
         this.digest.recordFire({
           triggerId: signal.triggerId ?? signal.detector,
@@ -140,7 +144,9 @@ export class OperatorTriggerLoop {
     // author window. The digest reports on ALL channels seen, not only the ones that fired.
     if (events.length > 0) {
       this.digest.recordWindow(events);
-      if (fullLegOn) this.fullReporter.recordWindow(events);
+      if (fullLegOn) {
+        this.fullReporter.recordWindow(events);
+      }
       this.recentEvents = [...this.recentEvents, ...events].slice(-config.authorWindowSize);
     }
 
@@ -153,7 +159,9 @@ export class OperatorTriggerLoop {
       authored = created.length;
       if (authored > 0) {
         this.digest.recordAuthored(authored);
-        if (fullLegOn) this.fullReporter.recordAuthored(authored);
+        if (fullLegOn) {
+          this.fullReporter.recordAuthored(authored);
+        }
       }
       log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }

@@ -48,6 +48,9 @@ describe('createMamaMemoryPort', () => {
     const port = createMamaMemoryPort();
     const hits = await port.recall('xyzzy quux nonexistent', { limit: 5 });
     expect(Array.isArray(hits)).toBe(true);
+    // The seeded memory must NOT leak through on an unrelated query (PR #119 review:
+    // Array.isArray alone would pass even if everything leaked).
+    expect(hits.some((h) => h.topic === 'weekly-report-cadence')).toBe(false);
   });
 
   it('save persists via mama-core and is recallable', async () => {
