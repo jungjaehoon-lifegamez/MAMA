@@ -867,6 +867,25 @@ async function saveMemoryInternal(
     throw rollbackError;
   }
 
+  // Sync the adapter's status cache for every row whose status changed in the
+  // post-insert transaction: the saved row itself (status is written AFTER
+  // insertEmbedding populated the cache) and any rows just superseded. This makes
+  // the vectorSearch pre-filter correct within this session, not only after reload.
+  if (adapter.refreshDecisionStatusCache) {
+    const changedIds = [
+      id,
+      ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
+    ];
+    for (const changedId of changedIds) {
+      const ridRow = adapter
+        .prepare('SELECT rowid FROM decisions WHERE id = ?')
+        .get(changedId) as { rowid: number } | undefined;
+      if (ridRow) {
+        adapter.refreshDecisionStatusCache(ridRow.rowid);
+      }
+    }
+  }
+
   if (options?.projectTruth !== false) {
     // Project to memory_truth table (best-effort; failure should not break save)
     try {
@@ -1101,6 +1120,24 @@ export async function promoteMemoryStatus(input: {
         .run(memoryId, edge.to_id, edge.type, edge.reason ?? null, 1.0, now);
     }
   });
+
+  // Sync the adapter's status cache for every row whose status changed above.
+  // Without this, a row promoted OUT of an excluded status (e.g. stale->active)
+  // stays invisible to the vectorSearch pre-filter until the next full reload.
+  if (adapter.refreshDecisionStatusCache) {
+    const changedIds = [
+      memoryId,
+      ...evolution.edges.filter((e) => e.type === 'supersedes').map((e) => e.to_id),
+    ];
+    for (const id of changedIds) {
+      const ridRow = adapter.prepare('SELECT rowid FROM decisions WHERE id = ?').get(id) as
+        | { rowid: number }
+        | undefined;
+      if (ridRow) {
+        adapter.refreshDecisionStatusCache(ridRow.rowid);
+      }
+    }
+  }
 }
 
 export async function buildProfile(scopes: MemoryScopeRef[]): Promise<ProfileSnapshot> {
