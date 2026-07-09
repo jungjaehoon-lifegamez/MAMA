@@ -96,7 +96,9 @@ export class SituationReporter {
    * sent, false if there was nothing to say or the agent suppressed it (NOTHING).
    */
   async report(askAgent: AskAgent, output: Pick<OutputSink, 'send'>, mode: ReportMode): Promise<boolean> {
-    if (!this.hasActivity()) return false;
+    // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
+    // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
+    if (mode !== 'full' && !this.hasActivity()) return false;
 
     const text = (await askAgent(this.buildPrompt(mode))).trim();
     if (text === '' || /^NOTHING\b/i.test(text)) {
@@ -134,23 +136,29 @@ export class SituationReporter {
     );
     const memoryLines = [...this.recalled.entries()].map(([topic, content]) => `- ${topic}: ${content}`);
 
+    // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
+    // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
+    // and keeps NOTHING only for pure noise.
     const framing =
       mode === 'full'
         ? [
-            'You are the operator agent. Write a FULLER situation report for your owner covering the',
-            'whole window below (multiple channels, since the last full report). Group what recurred,',
-            "what is new, and what needs the owner's attention. Plain language, no markdown tables.",
+            'You are the operator agent. Write your scheduled FULLER situation report for your owner',
+            'covering the whole window below (multiple channels, since the last full report). Group',
+            "what recurred, what is new, and what needs the owner's attention. Plain language, no",
+            'markdown tables. This scheduled report must ALWAYS arrive: if the window was quiet,',
+            'say so in one or two lines instead of skipping.',
           ]
         : [
             'You are the operator agent. Write a SHORT proactive digest for your owner about the',
             'situation below - what happened, what recurred, and what the owner may want to look at.',
-            '2-6 lines, plain language, no markdown tables.',
+            '2-6 lines, plain language, no markdown tables. Default to sending the brief when there',
+            'is meaningful activity; reply exactly NOTHING only if this window is pure noise',
+            '(duplicates, bot chatter) with nothing the owner could act on.',
           ];
 
     return [
       ...framing,
       'Reply in the language the owner uses on these channels if you can tell; otherwise English.',
-      "If this is genuinely not worth the owner's attention, reply exactly: NOTHING",
       '',
       'Window (per channel; excerpts truncated):',
       ...(windowLines.length > 0 ? windowLines : ['- (no channel messages this window)']),
