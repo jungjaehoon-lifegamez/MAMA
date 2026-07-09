@@ -24,6 +24,7 @@ import { info, warn, error as logError } from './debug-logger.js';
 import { logComplete, logSearching } from './progress-indicator.js';
 import { createAdapter } from './db-adapter/index.js';
 import type { PreparedStatement } from './db-adapter/statement.js';
+import { EMBEDDING_PREFIX_SCHEME } from './embeddings.js';
 
 // Re-export PreparedStatement for consumers
 export type { PreparedStatement };
@@ -153,6 +154,63 @@ const REAL_USER_DB_PATH = path.join(os.homedir(), '.claude', 'mama-memory.db');
  *
  * @returns SQLite database connection
  */
+function countRows(adapter: DatabaseAdapter, table: string): number {
+  try {
+    const row = adapter.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as
+      | { n: number }
+      | undefined;
+    return row?.n ?? 0;
+  } catch {
+    return 0; // table may not exist on very old DBs
+  }
+}
+
+/**
+ * Fail loud if stored vectors predate the e5 query/passage prefix scheme.
+ *
+ * Migration 042 records 'e5-prefixed-v1' on a fresh DB and 'legacy-unprefixed' on a DB
+ * that already held vectors at upgrade time. If the marker is not current AND legacy
+ * vectors exist, cosine search would be non-discriminative, so we throw with the exact
+ * re-embed command instead of silently serving degraded results. No-fallback by design.
+ */
+export function assertEmbeddingSchemeCurrent(adapter: DatabaseAdapter): void {
+  let scheme = 'legacy-unprefixed';
+  try {
+    const row = adapter
+      .prepare("SELECT value FROM embedding_meta WHERE key = 'embedding_prefix_scheme'")
+      .get() as { value?: string } | undefined;
+    if (row?.value) scheme = row.value;
+  } catch {
+    // embedding_meta missing (pre-042). runMigrations creates it, so this path
+    // only hits if migrations did not run; fall through to the vector check.
+  }
+
+  if (scheme === EMBEDDING_PREFIX_SCHEME) return; // current
+
+  const legacyVectors =
+    countRows(adapter, 'embeddings') + countRows(adapter, 'wiki_page_embeddings');
+  if (legacyVectors > 0) {
+    const dbPath = resolveAdapterDbPath(adapter) ?? '<db>';
+    throw new Error(
+      `[embedding-guard] ${dbPath} holds ${legacyVectors} vectors written WITHOUT the e5 ` +
+        `query/passage prefix (scheme='${scheme}', code requires '${EMBEDDING_PREFIX_SCHEME}'). ` +
+        `Cosine search would be non-discriminative. Re-embed before starting:\n` +
+        `  MAMA_DB_PATH="${dbPath}" node packages/mama-core/scripts/re-embed-migration.mjs`
+    );
+  }
+
+  // No legacy vectors present: safe. Upgrade the marker so we do not re-check.
+  try {
+    adapter
+      .prepare(
+        "INSERT OR REPLACE INTO embedding_meta (key, value) VALUES ('embedding_prefix_scheme', ?)"
+      )
+      .run(EMBEDDING_PREFIX_SCHEME);
+  } catch {
+    // best-effort; if embedding_meta truly missing, nothing to guard yet
+  }
+}
+
 export async function initDB(): Promise<unknown> {
   assertTestProcessIsNotUsingRealDb();
 
@@ -185,6 +243,8 @@ export async function initDB(): Promise<unknown> {
       if (typeof dbAdapter.reloadVectorCache === 'function') {
         dbAdapter.reloadVectorCache();
       }
+
+      assertEmbeddingSchemeCurrent(dbAdapter); // fail loud on legacy vectors + new code
 
       isInitialized = true;
 
