@@ -19,6 +19,7 @@ export class AgentEventBus {
   static readonly MAX_NOTICES = 50;
   private listeners = new Map<AgentEventType, Set<EventHandler>>();
   private debounceTimers = new Map<AgentEventType, ReturnType<typeof setTimeout>>();
+  private listenerDebounceTimers = new Set<ReturnType<typeof setTimeout>>();
   private notices: AgentNotice[] = [];
 
   on(type: AgentEventType, handler: EventHandler): void {
@@ -74,6 +75,37 @@ export class AgentEventBus {
     );
   }
 
+  /**
+   * Register a handler whose invocation is trailing-edge debounced: rapid
+   * successive events collapse into one call with the LAST event after
+   * delayMs of quiet. Pending invocations are cancelled by destroy().
+   */
+  onDebounced(type: AgentEventType, handler: EventHandler, delayMs: number): void {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    this.on(type, (event) => {
+      if (timer) {
+        clearTimeout(timer);
+        this.listenerDebounceTimers.delete(timer);
+      }
+      const scheduled = setTimeout(() => {
+        this.listenerDebounceTimers.delete(scheduled);
+        timer = null;
+        try {
+          const result = handler(event);
+          if (result && typeof (result as Promise<void>).catch === 'function') {
+            (result as Promise<void>).catch((err) =>
+              console.error(`[EventBus] Debounced handler error for ${type}:`, err)
+            );
+          }
+        } catch (err) {
+          console.error(`[EventBus] Debounced handler error for ${type}:`, err);
+        }
+      }, delayMs);
+      timer = scheduled;
+      this.listenerDebounceTimers.add(scheduled);
+    });
+  }
+
   getRecentNotices(limit: number): AgentNotice[] {
     return this.notices.slice(0, limit);
   }
@@ -83,6 +115,10 @@ export class AgentEventBus {
       clearTimeout(timer);
     }
     this.debounceTimers.clear();
+    for (const timer of this.listenerDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.listenerDebounceTimers.clear();
     this.listeners.clear();
     this.notices.length = 0;
   }
