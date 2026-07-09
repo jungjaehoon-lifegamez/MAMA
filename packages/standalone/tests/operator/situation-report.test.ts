@@ -179,4 +179,19 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(full).not.toContain('```tool_call');
     expect(full).not.toContain('primary source');
   });
+
+  it('full self-gather invites an agent-judged mama_save write (M3 GAP2)', () => {
+    const r = new SituationReporter({ selfGatherLines: ['kagemusha_overview() for counts'] });
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    const full = r.buildPrompt('full');
+    expect(full).toContain('mama_save');
+    expect(full).toMatch(/durable decision or lesson/i);
+    expect(full).toMatch(/your judgement, not a requirement/i); // agent-first, not forced
+    // bounded to the tool-enabled full report: no self-gather -> no write instruction
+    const plain = new SituationReporter();
+    plain.recordWindow([ev(1, 'slack:a', 'hi')]);
+    expect(plain.buildPrompt('full')).not.toContain('mama_save');
+    // digest never invites a write
+    expect(r.buildPrompt('digest')).not.toContain('mama_save');
+  });
 });
