@@ -91,7 +91,7 @@ async function getSavedTopicsFromDB() {
 
     // Get recent decisions (no embedding needed, just list recent)
     const { generateEmbedding } = require('@jungjaehoon/mama-core/embeddings');
-    const embedding = await generateEmbedding('recent decisions architecture');
+    const embedding = await generateEmbedding('recent decisions architecture', 'query');
     if (embedding) {
       const results = await vectorSearch(embedding, 20, 0.3);
       if (results && Array.isArray(results)) {

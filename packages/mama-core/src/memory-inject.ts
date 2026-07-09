@@ -92,7 +92,7 @@ async function performMemoryInjection(
 ): Promise<string | null> {
   // 1. Generate query embedding
   const { generateEmbedding } = await import('./embeddings.js');
-  const queryEmbedding = await generateEmbedding(userMessage);
+  const queryEmbedding = await generateEmbedding(userMessage, 'query');
 
   const embeddingLatency = Date.now() - startTime;
   info(`[MAMA] Embedding generation: ${embeddingLatency}ms`);

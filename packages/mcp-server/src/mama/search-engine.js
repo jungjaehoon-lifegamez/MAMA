@@ -46,7 +46,7 @@ class SearchEngine {
       info(`[SearchEngine] Searching for: "${query}" (limit: ${limit}, threshold: ${threshold})`);
 
       // 1. Generate embedding for query
-      const queryEmbedding = await generateEmbedding(query);
+      const queryEmbedding = await generateEmbedding(query, 'query');
 
       if (!queryEmbedding || queryEmbedding.length === 0) {
         logError('[SearchEngine] Failed to generate query embedding');
