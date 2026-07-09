@@ -22,19 +22,12 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
-import {
-  SessionStore,
-  MessageRouter,
-  initChannelHistory,
-  PluginLoader,
-} from '../../gateways/index.js';
+import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync } from 'node:fs';
-import { createServer, type Server as HttpServer } from 'node:http';
 import { minimatch } from 'minimatch';
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
 import { initValidationTables } from '../../validation/store.js';
@@ -61,63 +54,10 @@ import { initCronScheduler, initHeartbeat } from '../runtime/scheduler-init.js';
 import { initConnectors } from '../runtime/connector-init.js';
 import { initApiServer } from '../runtime/api-server-init.js';
 import { registerApiRoutes } from '../runtime/api-routes-init.js';
-import { initVNextWikiPublishAdapter } from '../runtime/wiki-publish-adapter-init.js';
 import { startServer } from '../runtime/server-start.js';
 import { installShutdownHandlers } from '../runtime/shutdown.js';
 import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js';
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
-import { requireAdminAuth, requireAuth } from '../../api/auth-middleware.js';
-import { buildPublicVNextProjectionPayload } from '../../api/report-handler.js';
-import {
-  buildVNextBootstrapPlan,
-  buildVNextPrimaryOperatorReadyStatus,
-  VNEXT_PRIMARY_OPERATOR_CONNECTOR,
-  VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
-  shouldSkipVNextFanout,
-  startVNextBootstrapRuntime,
-  type VNextBootstrapRuntimeHandles,
-  type VNextBootstrapRuntimeStatus,
-  type VNextPrimaryOperatorRuntimeHandle,
-} from '../../runtime-vnext/bootstrap.js';
-import { resolveVNextRuntimeFlags } from '../../runtime-vnext/feature-flags.js';
-import { ensureVNextOperatorSchema } from '../../operator-vnext/schema.js';
-import { PrimaryOperatorRuntime } from '../../operator-vnext/primary-operator-runtime.js';
-import {
-  buildReportSlotsFromSituationProjection,
-  buildSituationProjection,
-} from '../../operator-vnext/situation-projection.js';
-import {
-  createConnectorEventIngressPreviewProvider,
-  resolveConnectorEventIngressConfig,
-  type ConnectorEventIngressAdapter,
-  type ConnectorEventIngressPreview,
-} from '../../operator-vnext/connector-event-ingress.js';
-import {
-  createConnectorIngressMigrationDryRunProvider,
-  type ConnectorIngressMigrationDryRun,
-} from '../../operator-vnext/connector-ingress-migration-dry-run.js';
-import {
-  createConnectorIngressManualNoUpdateCommitProvider,
-  isConnectorIngressManualCommitRequestError,
-  MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS,
-  type ConnectorIngressManualCommitResult,
-} from '../../operator-vnext/connector-ingress-manual-commit.js';
-import {
-  createDefaultConnectorIngressManualMemoryCommitProvider,
-  MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES,
-  type ConnectorIngressManualMemoryCommitResult,
-  type ManualMemorySaveInput,
-} from '../../operator-vnext/connector-ingress-manual-memory-commit.js';
-import {
-  createConnectorIngressManualWikiCommitProvider,
-  MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES,
-  type ConnectorIngressManualWikiCommitResult,
-} from '../../operator-vnext/connector-ingress-manual-wiki-commit.js';
-import {
-  MAX_WIKI_PAGE_CONTENT_CHARS,
-  MAX_WIKI_PUBLISH_PAGES,
-} from '../../wiki-artifacts/wiki-publish-adapter.js';
-import type { WikiPublishPageInput } from '../../wiki-artifacts/types.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
 import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
@@ -137,16 +77,8 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
-const vNextOperatorLogger = new DebugLogger('VNextPrimaryOperator');
 type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
-const JSON_ESCAPE_BYTES_PER_UTF16_UNIT = 6;
-const MANUAL_WIKI_COMMIT_JSON_ENVELOPE_BYTES = 1024 * 1024;
-const MANUAL_WIKI_COMMIT_JSON_LIMIT_BYTES =
-  MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES *
-    MAX_WIKI_PAGE_CONTENT_CHARS *
-    JSON_ESCAPE_BYTES_PER_UTF16_UNIT +
-  MANUAL_WIKI_COMMIT_JSON_ENVELOPE_BYTES;
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
   'context_compile',
@@ -501,7 +433,6 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
   const backend = config.agent.backend;
   const isValidBackend = validBackends.includes(backend as RuntimeBackend);
-  const vNextFlags = resolveVNextRuntimeFlags(config, process.env);
   process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
   if (backend === 'codex' || backend === 'codex-mcp') {
@@ -521,7 +452,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     const targetUrl = needsOnboarding
       ? `http://localhost:${API_PORT}/setup`
       : `http://localhost:${API_PORT}/viewer`;
-    if (!vNextFlags.enabled && shouldAutoOpenBrowser()) {
+    if (shouldAutoOpenBrowser()) {
       setTimeout(() => {
         if (needsOnboarding) {
           console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -553,7 +484,7 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
         : `http://localhost:${API_PORT}/viewer`;
 
       // Wait for server to be ready
-      if (!vNextFlags.enabled && shouldAutoOpenBrowser()) {
+      if (shouldAutoOpenBrowser()) {
         setTimeout(() => {
           if (needsOnboarding) {
             console.log('🎭 First-time setup - Opening onboarding wizard...\n');
@@ -571,966 +502,6 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
       process.exit(1);
     }
   }
-}
-
-function buildVNextPrimaryOperatorPayload(
-  primaryOperator: VNextBootstrapRuntimeStatus['primaryOperator']
-): Record<string, unknown> {
-  return {
-    kind: primaryOperator.kind,
-    status: primaryOperator.status,
-    mode: primaryOperator.mode,
-    ingress: primaryOperator.ingress,
-    cursor_name: primaryOperator.cursorName,
-    connector: primaryOperator.connector,
-    advanced_through_seq: primaryOperator.advancedThroughSeq,
-    last_batch_status: primaryOperator.lastBatchStatus,
-    failed_seq: primaryOperator.failedSeq,
-    error_message: primaryOperator.errorMessage,
-  };
-}
-
-function buildVNextLegacyPrimaryOperatorPayload(): Record<string, unknown> {
-  return {
-    kind: 'primary_operator',
-    status: 'noop',
-    reason: 'vNext primary operator runtime is exposed as primary_operator_runtime.',
-  };
-}
-
-export interface VNextIngressPreviewRequest {
-  connector: string;
-  channel: string;
-  limit?: number;
-}
-
-export interface VNextIngressManualNoUpdateCommitRequest {
-  connector: string;
-  channel: string;
-  expectedAdvancedThroughSeq: number;
-  eventIndexIds: string[];
-}
-
-export interface VNextIngressManualWikiCommitRequest {
-  connector: string;
-  channel: string;
-  expectedAdvancedThroughSeq: number;
-  eventPages: Array<{
-    eventIndexId: string;
-    pages: WikiPublishPageInput[];
-  }>;
-}
-
-export interface VNextIngressManualMemoryCommitRequest {
-  connector: string;
-  channel: string;
-  expectedAdvancedThroughSeq: number;
-  eventMemories: Array<{
-    eventIndexId: string;
-    memories: ManualMemorySaveInput[];
-  }>;
-}
-
-export interface VNextBootstrapApiServerOptions {
-  ingressPreviewProvider?: (input: VNextIngressPreviewRequest) => ConnectorEventIngressPreview;
-  ingressMigrationDryRunProvider?: (
-    input: VNextIngressPreviewRequest
-  ) => ConnectorIngressMigrationDryRun;
-  ingressManualNoUpdateCommitProvider?: (
-    input: VNextIngressManualNoUpdateCommitRequest
-  ) => Promise<ConnectorIngressManualCommitResult> | ConnectorIngressManualCommitResult;
-  ingressManualWikiCommitProvider?: (
-    input: VNextIngressManualWikiCommitRequest
-  ) => Promise<ConnectorIngressManualWikiCommitResult> | ConnectorIngressManualWikiCommitResult;
-  ingressManualMemoryCommitProvider?: (
-    input: VNextIngressManualMemoryCommitRequest
-  ) => Promise<ConnectorIngressManualMemoryCommitResult> | ConnectorIngressManualMemoryCommitResult;
-}
-
-function firstQueryString(value: unknown): string | null {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  if (typeof candidate !== 'string') {
-    return null;
-  }
-  const trimmed = candidate.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function queryLimit(value: unknown): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const raw = firstQueryString(value);
-  if (raw === null) {
-    throw new Error('limit must be a number');
-  }
-  const limit = Number(raw);
-  if (!Number.isFinite(limit)) {
-    throw new Error('limit must be a number');
-  }
-  return limit;
-}
-
-function requireRequestBodyRecord(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error('request body must be an object');
-  }
-  return value as Record<string, unknown>;
-}
-
-function bodyString(body: Record<string, unknown>, field: string): string {
-  const value = body[field];
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`${field} must be a non-empty string`);
-  }
-  return value.trim();
-}
-
-function bodyNonNegativeInteger(body: Record<string, unknown>, field: string): number {
-  const value = body[field];
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
-    throw new Error(`${field} must be a non-negative integer`);
-  }
-  return value;
-}
-
-function bodyStringArray(body: Record<string, unknown>, field: string, maxItems: number): string[] {
-  const value = body[field];
-  if (
-    !Array.isArray(value) ||
-    value.length === 0 ||
-    !value.every((item) => typeof item === 'string' && item.trim().length > 0)
-  ) {
-    throw new Error(`${field} must be a non-empty string array`);
-  }
-  if (value.length > maxItems) {
-    throw new Error(`${field} must contain at most ${maxItems} items`);
-  }
-  return value.map((item) => item.trim());
-}
-
-function bodyWikiPages(value: unknown): WikiPublishPageInput[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error('event_pages[].pages must be a non-empty array');
-  }
-  if (value.length > MAX_WIKI_PUBLISH_PAGES) {
-    throw new Error(`event_pages[].pages must contain at most ${MAX_WIKI_PUBLISH_PAGES} pages`);
-  }
-  return value.map((item) => {
-    const page = requireRequestBodyRecord(item);
-    if (
-      Object.prototype.hasOwnProperty.call(page, 'sourceRefs') ||
-      Object.prototype.hasOwnProperty.call(page, 'source_refs') ||
-      Object.prototype.hasOwnProperty.call(page, 'sourceIds') ||
-      Object.prototype.hasOwnProperty.call(page, 'source_ids') ||
-      Object.prototype.hasOwnProperty.call(page, 'changedRefs') ||
-      Object.prototype.hasOwnProperty.call(page, 'changed_refs')
-    ) {
-      throw new Error(
-        'manual wiki commits derive source refs from reviewed events and changed refs from wiki page paths'
-      );
-    }
-    const parsed: WikiPublishPageInput = {
-      path: bodyString(page, 'path'),
-      title: bodyString(page, 'title'),
-      content: bodyString(page, 'content'),
-    };
-    const type = page.type;
-    if (type !== undefined) {
-      if (typeof type !== 'string' || type.trim().length === 0) {
-        throw new Error('type must be a non-empty string');
-      }
-      parsed.type = type.trim();
-    }
-    const confidence = page.confidence;
-    if (confidence !== undefined) {
-      if (typeof confidence !== 'string' || confidence.trim().length === 0) {
-        throw new Error('confidence must be a non-empty string');
-      }
-      parsed.confidence = confidence.trim();
-    }
-    return parsed;
-  });
-}
-
-function bodyManualWikiEventPages(
-  body: Record<string, unknown>
-): VNextIngressManualWikiCommitRequest['eventPages'] {
-  const value = body.event_pages;
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error('event_pages must be a non-empty array');
-  }
-  if (value.length > MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS) {
-    throw new Error(
-      `event_pages must contain at most ${MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS} items`
-    );
-  }
-  const parsed = value.map((item) => {
-    const eventPage = requireRequestBodyRecord(item);
-    return {
-      eventIndexId: bodyString(eventPage, 'event_index_id'),
-      pages: bodyWikiPages(eventPage.pages),
-    };
-  });
-  const totalPages = parsed.reduce((total, eventPage) => total + eventPage.pages.length, 0);
-  if (totalPages > MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES) {
-    throw new Error(
-      `event_pages must contain at most ${MAX_MANUAL_WIKI_COMMIT_TOTAL_PAGES} total pages`
-    );
-  }
-  return parsed;
-}
-
-function bodyMemoryScopes(value: unknown): MemoryScopeRef[] {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error('memories[].scopes must be a non-empty array');
-  }
-  return value.map((item) => {
-    const scope = requireRequestBodyRecord(item);
-    const kind = bodyString(scope, 'kind');
-    if (kind !== 'global' && kind !== 'user' && kind !== 'channel' && kind !== 'project') {
-      throw new Error(`Unsupported memory scope kind: ${kind}`);
-    }
-    return {
-      kind,
-      id: bodyString(scope, 'id'),
-    };
-  });
-}
-
-function rejectManualMemoryDerivedFields(memory: Record<string, unknown>): void {
-  const forbiddenKeys = [
-    'source',
-    'provenance',
-    'sourceRefs',
-    'source_refs',
-    'sourceIds',
-    'source_ids',
-    'changedRefs',
-    'changed_refs',
-    'gatewayCallId',
-    'gateway_call_id',
-    'agentId',
-    'agent_id',
-    'modelRunId',
-    'model_run_id',
-    'envelopeHash',
-    'envelope_hash',
-    'timelineEvent',
-    'timeline_event',
-    'entityObservationIds',
-    'entity_observation_ids',
-  ];
-  if (forbiddenKeys.some((key) => Object.prototype.hasOwnProperty.call(memory, key))) {
-    throw new Error('manual memory commits derive source and provenance refs from reviewed events');
-  }
-}
-
-function bodyManualMemory(value: unknown): ManualMemorySaveInput {
-  const memory = requireRequestBodyRecord(value);
-  rejectManualMemoryDerivedFields(memory);
-  const parsed: ManualMemorySaveInput = {
-    topic: bodyString(memory, 'topic'),
-    kind: bodyString(memory, 'kind') as ManualMemorySaveInput['kind'],
-    summary: bodyString(memory, 'summary'),
-    details: bodyString(memory, 'details'),
-    scopes: bodyMemoryScopes(memory.scopes),
-  };
-  const confidence = memory.confidence;
-  if (confidence !== undefined) {
-    if (typeof confidence !== 'number' || !Number.isFinite(confidence)) {
-      throw new Error('confidence must be a number');
-    }
-    parsed.confidence = confidence;
-  }
-  const status = memory.status;
-  if (status !== undefined) {
-    parsed.status = bodyString(memory, 'status') as ManualMemorySaveInput['status'];
-  }
-  const eventDate = memory.event_date ?? memory.eventDate;
-  if (eventDate !== undefined) {
-    if (typeof eventDate !== 'string' || eventDate.trim().length === 0) {
-      throw new Error('event_date must be a non-empty string');
-    }
-    parsed.eventDate = eventDate.trim();
-  }
-  const eventDateTime = memory.event_datetime ?? memory.eventDateTime;
-  if (eventDateTime !== undefined) {
-    if (typeof eventDateTime !== 'number' || !Number.isFinite(eventDateTime)) {
-      throw new Error('event_datetime must be a number');
-    }
-    parsed.eventDateTime = eventDateTime;
-  }
-  return parsed;
-}
-
-function bodyManualMemoryEventMemories(
-  body: Record<string, unknown>
-): VNextIngressManualMemoryCommitRequest['eventMemories'] {
-  const value = body.event_memories;
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error('event_memories must be a non-empty array');
-  }
-  if (value.length > MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS) {
-    throw new Error(
-      `event_memories must contain at most ${MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS} items`
-    );
-  }
-  const parsed = value.map((item) => {
-    const eventMemory = requireRequestBodyRecord(item);
-    const memories = eventMemory.memories;
-    if (!Array.isArray(memories) || memories.length === 0) {
-      throw new Error('event_memories[].memories must be a non-empty array');
-    }
-    return {
-      eventIndexId: bodyString(eventMemory, 'event_index_id'),
-      memories: memories.map((memory) => bodyManualMemory(memory)),
-    };
-  });
-  const totalMemories = parsed.reduce(
-    (total, eventMemory) => total + eventMemory.memories.length,
-    0
-  );
-  if (totalMemories > MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES) {
-    throw new Error(
-      `event_memories must contain at most ${MAX_MANUAL_MEMORY_COMMIT_TOTAL_MEMORIES} total memories`
-    );
-  }
-  return parsed;
-}
-
-function parseManualNoUpdateCommitBody(rawBody: unknown): VNextIngressManualNoUpdateCommitRequest {
-  const body = requireRequestBodyRecord(rawBody);
-  if (
-    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
-    Object.prototype.hasOwnProperty.call(body, 'changed_refs')
-  ) {
-    throw new Error('manual no-update commits do not accept changed refs');
-  }
-  return {
-    connector: bodyString(body, 'connector'),
-    channel: bodyString(body, 'channel'),
-    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
-    eventIndexIds: bodyStringArray(body, 'event_index_ids', MAX_MANUAL_NO_UPDATE_EVENT_INDEX_IDS),
-  };
-}
-
-function parseManualWikiCommitBody(rawBody: unknown): VNextIngressManualWikiCommitRequest {
-  const body = requireRequestBodyRecord(rawBody);
-  if (
-    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
-    Object.prototype.hasOwnProperty.call(body, 'changed_refs')
-  ) {
-    throw new Error('manual wiki commits do not accept changed refs');
-  }
-  return {
-    connector: bodyString(body, 'connector'),
-    channel: bodyString(body, 'channel'),
-    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
-    eventPages: bodyManualWikiEventPages(body),
-  };
-}
-
-function parseManualMemoryCommitBody(rawBody: unknown): VNextIngressManualMemoryCommitRequest {
-  const body = requireRequestBodyRecord(rawBody);
-  if (
-    Object.prototype.hasOwnProperty.call(body, 'changedRefs') ||
-    Object.prototype.hasOwnProperty.call(body, 'changed_refs') ||
-    Object.prototype.hasOwnProperty.call(body, 'sourceRefs') ||
-    Object.prototype.hasOwnProperty.call(body, 'source_refs') ||
-    Object.prototype.hasOwnProperty.call(body, 'source') ||
-    Object.prototype.hasOwnProperty.call(body, 'provenance') ||
-    Object.prototype.hasOwnProperty.call(body, 'gatewayCallId') ||
-    Object.prototype.hasOwnProperty.call(body, 'gateway_call_id') ||
-    Object.prototype.hasOwnProperty.call(body, 'agentId') ||
-    Object.prototype.hasOwnProperty.call(body, 'agent_id') ||
-    Object.prototype.hasOwnProperty.call(body, 'modelRunId') ||
-    Object.prototype.hasOwnProperty.call(body, 'model_run_id') ||
-    Object.prototype.hasOwnProperty.call(body, 'envelopeHash') ||
-    Object.prototype.hasOwnProperty.call(body, 'envelope_hash')
-  ) {
-    throw new Error('manual memory commits do not accept request-supplied refs or provenance');
-  }
-  return {
-    connector: bodyString(body, 'connector'),
-    channel: bodyString(body, 'channel'),
-    expectedAdvancedThroughSeq: bodyNonNegativeInteger(body, 'expected_advanced_through_seq'),
-    eventMemories: bodyManualMemoryEventMemories(body),
-  };
-}
-
-const SAFE_MANUAL_MEMORY_COMMIT_PARTIAL_FAILURE_ERROR = 'Manual memory commit partially failed.';
-
-function manualMemoryCommitResponse(
-  result: ConnectorIngressManualMemoryCommitResult
-): ConnectorIngressManualMemoryCommitResult {
-  return {
-    ok: result.ok,
-    mode: 'manual_memory_commit',
-    status: result.status,
-    cursorName: result.cursorName,
-    connector: result.connector,
-    channel: result.channel,
-    requestedCount: result.requestedCount,
-    processed: result.processed,
-    advancedThroughSeq: result.advancedThroughSeq,
-    firstSeq: result.firstSeq,
-    lastSeq: result.lastSeq,
-    memoriesSaved: result.memoriesSaved,
-    ...(result.promotionPending === true ? { promotionPending: true } : {}),
-    commits: result.commits.map((commit) => ({
-      seq: commit.seq,
-      status: 'changed',
-      outcome: commit.outcome,
-      cursorAdvanced: commit.cursorAdvanced,
-    })),
-    ...(result.failedSeq !== undefined ? { failedSeq: result.failedSeq } : {}),
-    ...(result.error !== undefined
-      ? { error: SAFE_MANUAL_MEMORY_COMMIT_PARTIAL_FAILURE_ERROR }
-      : {}),
-  };
-}
-
-function isVNextIngressClientError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.message.includes('locked to the configured connector/channel') ||
-      error.message === 'limit must be a positive integer')
-  );
-}
-
-function isVNextManualCommitClientError(error: unknown): boolean {
-  return isConnectorIngressManualCommitRequestError(error);
-}
-
-function handleVNextManualCommitJsonError(
-  error: unknown,
-  _req: Request,
-  res: Response,
-  next: NextFunction
-): void {
-  if (typeof error === 'object' && error !== null && 'status' in error) {
-    const status = (error as { status?: unknown }).status;
-    res.status(typeof status === 'number' && status >= 400 && status < 500 ? status : 400).json({
-      ok: false,
-      code: 'vnext_ingress_manual_commit_invalid_json',
-      error: 'Invalid JSON request body.',
-    });
-    return;
-  }
-  next(error);
-}
-
-function buildVNextStatusPayload(status: VNextBootstrapRuntimeStatus): Record<string, unknown> {
-  return {
-    ok: true,
-    runtime: 'vnext',
-    mode: status.mode,
-    source: status.source,
-    started_at_ms: status.startedAtMs,
-    primary_operator: buildVNextLegacyPrimaryOperatorPayload(),
-    primary_operator_runtime: buildVNextPrimaryOperatorPayload(status.primaryOperator),
-    executed_startup_steps: status.executedStartupSteps,
-  };
-}
-
-function buildVNextBootstrapSituationProjection(status: VNextBootstrapRuntimeStatus) {
-  const primaryOperator = status.primaryOperator;
-  const degraded = primaryOperator.status === 'degraded';
-  const cursorSeq = primaryOperator.advancedThroughSeq;
-  const viewModelHash = [
-    'vnext-primary-operator',
-    primaryOperator.status,
-    cursorSeq,
-    primaryOperator.lastBatchStatus ?? 'none',
-    primaryOperator.failedSeq ?? 'none',
-  ].join(':');
-
-  return buildSituationProjection(
-    [
-      {
-        situationId: 'vnext_primary_operator',
-        situationVersion: cursorSeq,
-        awarenessRunId: `vnext-bootstrap-${status.startedAtMs}`,
-        title: 'Primary operator runtime',
-        status: degraded ? 'blocked' : 'in_progress',
-        summary: degraded
-          ? 'Primary operator runtime is degraded and needs manual inspection.'
-          : 'Primary operator runtime is prepared and owns vNext durable commits.',
-        nextAction: degraded
-          ? 'Inspect the failed batch and replay only verified source events.'
-          : 'Continue verified manual batches through the primary operator cursor.',
-        freshness: degraded ? 'degraded' : 'live',
-        verificationState: degraded ? 'conflicting' : 'verified',
-        confidence: degraded ? 0.4 : 1,
-        evidenceRefs: [
-          {
-            kind: 'raw',
-            connector: primaryOperator.connector,
-            id: `${primaryOperator.cursorName}:${cursorSeq}`,
-          },
-        ],
-        updatedAtMs: status.startedAtMs,
-        viewModelHash,
-        priority: degraded ? 0 : 10,
-        tags: ['vnext', 'primary_operator'],
-        pendingReason: degraded ? (primaryOperator.errorMessage ?? 'Runtime degraded.') : undefined,
-        ownerHint: primaryOperator.cursorName,
-        issueCount: degraded ? 1 : 0,
-      },
-    ],
-    Date.now()
-  );
-}
-
-function readVNextPrimaryOperatorCursorSeq(db: Database, cursorName: string): number {
-  const row = db
-    .prepare('SELECT last_change_seq FROM vnext_operator_cursors WHERE cursor_name = ?')
-    .get(cursorName) as { last_change_seq: number } | undefined;
-  return row?.last_change_seq ?? 0;
-}
-
-export interface VNextPrimaryOperatorRuntimeOptions {
-  wikiPublishAdapter?: VNextPrimaryOperatorRuntimeHandle['wikiPublishAdapter'];
-}
-
-export function createVNextPrimaryOperatorRuntime(
-  db: Database,
-  options: VNextPrimaryOperatorRuntimeOptions = {}
-): VNextPrimaryOperatorRuntimeHandle {
-  const runtime = new PrimaryOperatorRuntime({
-    db,
-    cursorName: VNEXT_PRIMARY_OPERATOR_CURSOR_NAME,
-    connector: VNEXT_PRIMARY_OPERATOR_CONNECTOR,
-  });
-  const status = buildVNextPrimaryOperatorReadyStatus(
-    readVNextPrimaryOperatorCursorSeq(db, VNEXT_PRIMARY_OPERATOR_CURSOR_NAME)
-  );
-  const sanitizeBatchErrorForStatus = (): string =>
-    'Primary operator batch failed. Check local logs for details.';
-  const applyBatchResult = (result: Awaited<ReturnType<typeof runtime.processBatch>>): void => {
-    status.advancedThroughSeq = result.advancedThroughSeq;
-    status.lastBatchStatus = result.status;
-    if (result.status === 'partial_failure') {
-      vNextOperatorLogger.warn('Primary operator batch failed', {
-        failedSeq: result.failedSeq,
-        error: result.error.message,
-      });
-      status.status = 'degraded';
-      status.failedSeq = result.failedSeq;
-      status.errorMessage = sanitizeBatchErrorForStatus();
-    } else if (result.status === 'committed') {
-      status.status = 'prepared';
-      delete status.failedSeq;
-      delete status.errorMessage;
-    }
-  };
-
-  return {
-    status,
-    wikiPublishAdapter: options.wikiPublishAdapter ?? null,
-    processBatch: async (events, decide) => {
-      const result = await runtime.processBatch(events, decide);
-      applyBatchResult(result);
-      return result;
-    },
-    processBatchWithChangedCommit: async (events, decide, commitChanged) => {
-      const result = await runtime.processBatchWithChangedCommit(events, decide, commitChanged);
-      applyBatchResult(result);
-      return result;
-    },
-  };
-}
-
-export function createVNextBootstrapPrimaryOperatorRuntime(
-  db: Database,
-  plan: Pick<ReturnType<typeof buildVNextBootstrapPlan>, 'enabled'>
-): VNextPrimaryOperatorRuntimeHandle {
-  return createVNextPrimaryOperatorRuntime(db, {
-    wikiPublishAdapter: initVNextWikiPublishAdapter(db, { enabled: plan.enabled }),
-  });
-}
-
-export function createVNextBootstrapApiServer(
-  status: VNextBootstrapRuntimeStatus,
-  options: VNextBootstrapApiServerOptions = {}
-): {
-  app: Express;
-  server: HttpServer | null;
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
-} {
-  const app = express();
-  app.disable('x-powered-by');
-  const jsonBodyParser = express.json({ limit: '128kb' });
-  const manualWikiCommitJsonBodyParser = express.json({
-    limit: MANUAL_WIKI_COMMIT_JSON_LIMIT_BYTES,
-  });
-
-  app.get('/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      runtime: 'vnext',
-      timestamp: Date.now(),
-    });
-  });
-  app.post(
-    '/api/vnext/ingress/manual-no-update-commit',
-    requireAdminAuth,
-    jsonBodyParser,
-    async (req, res) => {
-      if (!options.ingressManualNoUpdateCommitProvider) {
-        res.status(404).json({
-          ok: false,
-          code: 'vnext_ingress_manual_commit_unavailable',
-          error: 'vNext manual ingress commit is not configured.',
-        });
-        return;
-      }
-
-      let input: VNextIngressManualNoUpdateCommitRequest;
-      try {
-        input = parseManualNoUpdateCommitBody(req.body);
-      } catch (error) {
-        res.status(400).json({
-          ok: false,
-          code: 'vnext_ingress_manual_commit_invalid_request',
-          error: error instanceof Error ? error.message : 'Invalid manual ingress commit request.',
-        });
-        return;
-      }
-
-      try {
-        const result = await options.ingressManualNoUpdateCommitProvider(input);
-        res.status(result.ok ? 200 : 409).json(result);
-      } catch (error) {
-        const clientError = isVNextManualCommitClientError(error);
-        res.status(clientError ? 400 : 500).json({
-          ok: false,
-          code: clientError
-            ? 'vnext_ingress_manual_commit_invalid_request'
-            : 'vnext_ingress_manual_commit_failed',
-          error: clientError
-            ? error instanceof Error
-              ? error.message
-              : 'Invalid manual ingress commit request.'
-            : 'vNext manual ingress commit failed.',
-        });
-      }
-    }
-  );
-  app.use('/api/vnext/ingress/manual-no-update-commit', handleVNextManualCommitJsonError);
-  app.post(
-    '/api/vnext/ingress/manual-wiki-commit',
-    requireAdminAuth,
-    manualWikiCommitJsonBodyParser,
-    async (req, res) => {
-      if (!options.ingressManualWikiCommitProvider) {
-        res.status(404).json({
-          ok: false,
-          code: 'vnext_ingress_manual_wiki_commit_unavailable',
-          error: 'vNext manual wiki ingress commit is not configured.',
-        });
-        return;
-      }
-
-      let input: VNextIngressManualWikiCommitRequest;
-      try {
-        input = parseManualWikiCommitBody(req.body);
-      } catch (error) {
-        res.status(400).json({
-          ok: false,
-          code: 'vnext_ingress_manual_wiki_commit_invalid_request',
-          error: error instanceof Error ? error.message : 'Invalid manual wiki commit request.',
-        });
-        return;
-      }
-
-      try {
-        const result = await options.ingressManualWikiCommitProvider(input);
-        res.status(result.ok ? 200 : 409).json(result);
-      } catch (error) {
-        const clientError = isVNextManualCommitClientError(error);
-        res.status(clientError ? 400 : 500).json({
-          ok: false,
-          code: clientError
-            ? 'vnext_ingress_manual_wiki_commit_invalid_request'
-            : 'vnext_ingress_manual_wiki_commit_failed',
-          error: clientError
-            ? error instanceof Error
-              ? error.message
-              : 'Invalid manual wiki commit request.'
-            : 'vNext manual wiki ingress commit failed.',
-        });
-      }
-    }
-  );
-  app.use('/api/vnext/ingress/manual-wiki-commit', handleVNextManualCommitJsonError);
-  app.post(
-    '/api/vnext/ingress/manual-memory-commit',
-    requireAdminAuth,
-    jsonBodyParser,
-    async (req, res) => {
-      if (!options.ingressManualMemoryCommitProvider) {
-        res.status(404).json({
-          ok: false,
-          code: 'vnext_ingress_manual_memory_commit_unavailable',
-          error: 'vNext manual memory ingress commit is not configured.',
-        });
-        return;
-      }
-
-      let input: VNextIngressManualMemoryCommitRequest;
-      try {
-        input = parseManualMemoryCommitBody(req.body);
-      } catch (error) {
-        res.status(400).json({
-          ok: false,
-          code: 'vnext_ingress_manual_memory_commit_invalid_request',
-          error: error instanceof Error ? error.message : 'Invalid manual memory commit request.',
-        });
-        return;
-      }
-
-      try {
-        const result = await options.ingressManualMemoryCommitProvider(input);
-        res.status(result.ok ? 200 : 409).json(manualMemoryCommitResponse(result));
-      } catch (error) {
-        const clientError = isVNextManualCommitClientError(error);
-        res.status(clientError ? 400 : 500).json({
-          ok: false,
-          code: clientError
-            ? 'vnext_ingress_manual_memory_commit_invalid_request'
-            : 'vnext_ingress_manual_memory_commit_failed',
-          error: clientError
-            ? error instanceof Error
-              ? error.message
-              : 'Invalid manual memory commit request.'
-            : 'vNext manual memory ingress commit failed.',
-        });
-      }
-    }
-  );
-  app.use('/api/vnext/ingress/manual-memory-commit', handleVNextManualCommitJsonError);
-  app.use(jsonBodyParser);
-  app.use('/api', requireAuth);
-  app.get('/api/vnext/status', (_req, res) => {
-    res.json(buildVNextStatusPayload(status));
-  });
-  app.get('/api/status', (_req, res) => {
-    res.json(buildVNextStatusPayload(status));
-  });
-  app.get('/api/vnext/ingress/preview', (req, res) => {
-    if (!options.ingressPreviewProvider) {
-      res.status(404).json({
-        ok: false,
-        code: 'vnext_ingress_preview_unavailable',
-        error: 'vNext connector ingress preview is not configured.',
-      });
-      return;
-    }
-
-    const connector = firstQueryString(req.query.connector);
-    const channel = firstQueryString(req.query.channel);
-    if (!connector || !channel) {
-      res.status(400).json({
-        ok: false,
-        code: 'vnext_ingress_preview_invalid_request',
-        error: 'connector and channel query parameters are required.',
-      });
-      return;
-    }
-
-    let limit: number | undefined;
-    try {
-      limit = queryLimit(req.query.limit);
-    } catch (error) {
-      res.status(400).json({
-        ok: false,
-        code: 'vnext_ingress_preview_invalid_request',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-
-    try {
-      res.json({
-        ok: true,
-        mode: 'dry_run',
-        preview: options.ingressPreviewProvider({ connector, channel, limit }),
-      });
-    } catch (error) {
-      const clientError = isVNextIngressClientError(error);
-      res.status(clientError ? 400 : 500).json({
-        ok: false,
-        code: clientError
-          ? 'vnext_ingress_preview_invalid_request'
-          : 'vnext_ingress_preview_failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-  app.get('/api/vnext/ingress/migration-dry-run', (req, res) => {
-    if (!options.ingressMigrationDryRunProvider) {
-      res.status(404).json({
-        ok: false,
-        code: 'vnext_ingress_migration_dry_run_unavailable',
-        error: 'vNext connector ingress migration dry-run is not configured.',
-      });
-      return;
-    }
-
-    const connector = firstQueryString(req.query.connector);
-    const channel = firstQueryString(req.query.channel);
-    if (!connector || !channel) {
-      res.status(400).json({
-        ok: false,
-        code: 'vnext_ingress_migration_dry_run_invalid_request',
-        error: 'connector and channel query parameters are required.',
-      });
-      return;
-    }
-
-    let limit: number | undefined;
-    try {
-      limit = queryLimit(req.query.limit);
-    } catch (error) {
-      res.status(400).json({
-        ok: false,
-        code: 'vnext_ingress_migration_dry_run_invalid_request',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return;
-    }
-
-    try {
-      res.json({
-        ok: true,
-        mode: 'dry_run',
-        dry_run: options.ingressMigrationDryRunProvider({ connector, channel, limit }),
-      });
-    } catch (error) {
-      const clientError = isVNextIngressClientError(error);
-      res.status(clientError ? 400 : 500).json({
-        ok: false,
-        code: clientError
-          ? 'vnext_ingress_migration_dry_run_invalid_request'
-          : 'vnext_ingress_migration_dry_run_failed',
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-  app.get('/api/report', (_req, res) => {
-    const projection = buildVNextBootstrapSituationProjection(status);
-    res.json({
-      mode: 'vnext',
-      projection: buildPublicVNextProjectionPayload(projection),
-      slots: buildReportSlotsFromSituationProjection(projection),
-    });
-  });
-
-  let server: HttpServer | null = null;
-  let actualPort = API_PORT;
-
-  return {
-    app,
-    get server() {
-      return server;
-    },
-    async start(): Promise<void> {
-      const host = process.env.MAMA_API_HOST || '127.0.0.1';
-      await new Promise<void>((resolve, reject) => {
-        const candidate = createServer(app);
-        let settled = false;
-
-        candidate.on('error', (error) => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          candidate.close();
-          reject(error);
-        });
-        candidate.listen({ port: API_PORT, host, exclusive: false }, () => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          const address = candidate.address();
-          if (!address || typeof address !== 'object') {
-            candidate.close();
-            reject(new Error(`Failed to bind vNext bootstrap API on port ${API_PORT}`));
-            return;
-          }
-          server = candidate;
-          actualPort = address.port;
-          console.log(`vNext bootstrap API listening on http://${host}:${actualPort}`);
-          if (host === '0.0.0.0') {
-            console.warn('⚠️  WARNING: vNext bootstrap API exposed to all interfaces.');
-          }
-          resolve();
-        });
-      });
-    },
-    async stop(): Promise<void> {
-      if (!server) {
-        return;
-      }
-      const activeServer = server;
-      server = null;
-      activeServer.closeAllConnections();
-      await new Promise<void>((resolve) => {
-        let settled = false;
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        const done = () => {
-          if (settled) {
-            return;
-          }
-          settled = true;
-          if (timeoutId) {
-            clearTimeout(timeoutId);
-          }
-          resolve();
-        };
-        timeoutId = setTimeout(done, 2000);
-        activeServer.close(done);
-      });
-    },
-  };
-}
-
-function installVNextBootstrapShutdownHandlers(
-  handles: VNextBootstrapRuntimeHandles<Database>
-): void {
-  let shuttingDown = false;
-  const shutdown = async (): Promise<void> => {
-    if (shuttingDown) {
-      return;
-    }
-    shuttingDown = true;
-    console.log('\n\n🛑 Shutting down MAMA vNext bootstrap...');
-    try {
-      await handles.apiServer.stop();
-    } catch (error) {
-      console.error('Failed to stop vNext bootstrap API server during shutdown:', error);
-    }
-    try {
-      handles.database.close();
-    } catch (error) {
-      console.error('Failed to close vNext bootstrap database during shutdown:', error);
-    }
-    process.exit(0);
-  };
-
-  process.once('SIGINT', () => {
-    void shutdown();
-  });
-  process.once('SIGTERM', () => {
-    void shutdown();
-  });
-  process.once('SIGHUP', () => {
-    void shutdown();
-  });
 }
 
 /**
@@ -1557,85 +528,6 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
-  const vNext = buildVNextBootstrapPlan(resolveVNextRuntimeFlags(config, process.env));
-  if (vNext.enabled) {
-    console.log('✓ MAMA vNext bootstrap mode enabled (legacy fanout disabled)');
-    const vNextIngressConfig = resolveConnectorEventIngressConfig(process.env);
-    let vNextRawAdapter: ConnectorEventIngressAdapter | null = null;
-    if (vNextIngressConfig.enabled) {
-      process.env.MAMA_DB_PATH = expandPath(config.database.path);
-      const { initDB, getAdapter } = (await import('@jungjaehoon/mama-core/db-manager')) as {
-        initDB: () => Promise<unknown>;
-        getAdapter: () => ConnectorEventIngressAdapter;
-      };
-      await initDB();
-      vNextRawAdapter = getAdapter();
-      console.log(
-        `✓ vNext connector ingress preview enabled (${vNextIngressConfig.connector}/${vNextIngressConfig.channel})`
-      );
-    }
-    let vNextOperatorDb: Database | null = null;
-    await startVNextBootstrapRuntime(vNext, {
-      openDatabase: () => {
-        const dbPath = expandPath(config.database.path).replace(
-          'mama-memory.db',
-          'mama-sessions.db'
-        );
-        vNextOperatorDb = new Database(dbPath);
-        return vNextOperatorDb;
-      },
-      initializeOperatorSchema: ensureVNextOperatorSchema,
-      createPrimaryOperator: (database) =>
-        createVNextBootstrapPrimaryOperatorRuntime(database, vNext),
-      createApiServer: (status) => {
-        if (!vNextIngressConfig.enabled) {
-          return createVNextBootstrapApiServer(status);
-        }
-        if (!vNextRawAdapter || !vNextOperatorDb) {
-          throw new Error(
-            'vNext connector ingress preview requires initialized raw and operator DBs'
-          );
-        }
-        return createVNextBootstrapApiServer(status, {
-          ingressPreviewProvider: createConnectorEventIngressPreviewProvider({
-            rawAdapter: vNextRawAdapter,
-            operatorDb: vNextOperatorDb,
-            connector: vNextIngressConfig.connector,
-            channel: vNextIngressConfig.channel,
-          }),
-          ingressMigrationDryRunProvider: createConnectorIngressMigrationDryRunProvider({
-            rawAdapter: vNextRawAdapter,
-            operatorDb: vNextOperatorDb,
-            connector: vNextIngressConfig.connector,
-            channel: vNextIngressConfig.channel,
-          }),
-          ingressManualNoUpdateCommitProvider: createConnectorIngressManualNoUpdateCommitProvider({
-            rawAdapter: vNextRawAdapter,
-            operatorDb: vNextOperatorDb,
-            connector: vNextIngressConfig.connector,
-            channel: vNextIngressConfig.channel,
-          }),
-          ingressManualWikiCommitProvider: createConnectorIngressManualWikiCommitProvider({
-            rawAdapter: vNextRawAdapter,
-            operatorDb: vNextOperatorDb,
-            wikiPublishAdapter: initVNextWikiPublishAdapter(vNextOperatorDb, { enabled: true })!,
-            connector: vNextIngressConfig.connector,
-            channel: vNextIngressConfig.channel,
-          }),
-          ingressManualMemoryCommitProvider:
-            createDefaultConnectorIngressManualMemoryCommitProvider({
-              rawAdapter: vNextRawAdapter,
-              operatorDb: vNextOperatorDb,
-              connector: vNextIngressConfig.connector,
-              channel: vNextIngressConfig.channel,
-            }),
-        });
-      },
-      installShutdownHandlers: installVNextBootstrapShutdownHandlers,
-    });
-    return;
-  }
-
   const startupBackend = config.agent.backend;
   const usesCodexBackend =
     startupBackend === 'codex' ||
@@ -1651,18 +543,11 @@ export async function runAgentLoop(
   // Claude CLI is always used (Pi Agent removed for ToS compliance)
   console.log('✓ Claude CLI mode (ToS compliance)');
 
-  if (
-    !shouldSkipVNextFanout(vNext, 'persona_write') &&
-    !shouldSkipVNextFanout(vNext, 'agent_config_mutation')
-  ) {
-    // Provision default persona templates and multi-agent config on first start
-    try {
-      await provisionDefaults();
-    } catch (error) {
-      console.warn(
-        `[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
+  // Provision default persona templates and multi-agent config on first start
+  try {
+    await provisionDefaults();
+  } catch (error) {
+    console.warn(`[Provision] Warning: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   const oauthManager = new OAuthManager();
@@ -1712,7 +597,6 @@ export async function runAgentLoop(
     rolesConfig: config.roles, // Pass roles from config.yaml
     envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     metricsStore,
-    vNextRuntimeEnabled: vNext.enabled,
   });
 
   const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
@@ -1736,7 +620,6 @@ export async function runAgentLoop(
     {
       ...options,
       envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
-      vNextRuntimeEnabled: vNext.enabled,
     }
   );
 
@@ -1767,18 +650,14 @@ export async function runAgentLoop(
 
   // validationService wired after creation (Phase 5 below)
 
-  const { memoryAgentLoop } =
-    shouldSkipVNextFanout(vNext, 'ledger_memory_compose') ||
-    shouldSkipVNextFanout(vNext, 'persona_write')
-      ? { memoryAgentLoop: null }
-      : await initMemoryAgent(
-          oauthManager,
-          config,
-          mamaApi,
-          mamaApiClient,
-          messageRouter,
-          agentLoopBackend
-        );
+  const { memoryAgentLoop } = await initMemoryAgent(
+    oauthManager,
+    config,
+    mamaApi,
+    mamaApiClient,
+    messageRouter,
+    agentLoopBackend
+  );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
 
@@ -1806,152 +685,147 @@ export async function runAgentLoop(
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
-  if (
-    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
-    !shouldSkipVNextFanout(vNext, 'persona_write')
-  ) {
-    graphHandlerOptions.executeCodeAct = async (
-      code: string,
-      codeActContext?: CodeActExecutionContext
-    ) => {
-      const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
-      const sandbox = new CodeActSandbox();
-      const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
-        codeActContext,
-        config.multi_agent?.agents,
-        config.multi_agent?.default_agent || 'conductor'
-      );
-      if (resolvedCodeActPolicy.error) {
-        return { success: false, error: resolvedCodeActPolicy.error };
-      }
-      const codeActAgentId = resolvedCodeActPolicy.agentId;
-      const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
-      const codeActRole = buildCodeActRole(codeActPolicy);
-      const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
-      const codeActTier = codeActReadOnly ? 3 : 2;
-      const instanceId = randomUUID();
-      let executionContext: GatewayToolExecutionContext | null = null;
-      if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
-        const projectId = resolveReactiveProjectRoot(config, process.env);
-        const projectRef = { kind: 'project' as const, id: projectId };
-        const memoryScopes = resolveCodeActMemoryScopes(
-          deriveMemoryScopes({
-            source: 'watch',
-            channelId: 'api:code-act',
-            userId: 'api',
-            projectId,
-          }),
-          getAdapter()
-        );
-        const wallSeconds = Math.min(
-          Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
-          300
-        );
-        const envelope = envelopeBootstrap.envelopeAuthority.buildAndPersist({
-          agent_id: codeActAgentId,
-          instance_id: instanceId,
-          source: 'watch',
-          channel_id: 'api:code-act',
-          trigger_context: { user_text: '<api-code-act invocation>' },
-          scope: {
-            project_refs: [projectRef],
-            raw_connectors: codeActRawConnectors,
-            memory_scopes: memoryScopes,
-            allowed_destinations: [],
-          },
-          tier: codeActTier,
-          budget: { wall_seconds: wallSeconds },
-          expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
-        });
-        const roleName = `code_act_${codeActAgentId}`;
-        const role = codeActRole;
-        const agentContext: AgentContext = {
-          source: 'watch',
-          platform: 'cli',
-          roleName,
-          role,
-          session: {
-            sessionId: `api:code-act:${instanceId}`,
-            channelId: 'api:code-act',
-            startedAt: new Date(),
-          },
-          capabilities: ['code_act'],
-          limitations: codeActReadOnly ? ['Code-Act read-only mode: memory writes disabled'] : [],
-          tier: codeActTier,
-          backend: 'claude',
-        };
-        executionContext = {
-          agentContext,
-          agentId: codeActAgentId,
+  graphHandlerOptions.executeCodeAct = async (
+    code: string,
+    codeActContext?: CodeActExecutionContext
+  ) => {
+    const { CodeActSandbox, HostBridge } = await import('../../agent/code-act/index.js');
+    const sandbox = new CodeActSandbox();
+    const resolvedCodeActPolicy = resolveCodeActAgentPolicy(
+      codeActContext,
+      config.multi_agent?.agents,
+      config.multi_agent?.default_agent || 'conductor'
+    );
+    if (resolvedCodeActPolicy.error) {
+      return { success: false, error: resolvedCodeActPolicy.error };
+    }
+    const codeActAgentId = resolvedCodeActPolicy.agentId;
+    const codeActPolicy = resolvedCodeActPolicy.policy ?? {};
+    const codeActRole = buildCodeActRole(codeActPolicy);
+    const codeActReadOnly = isTruthyEnvValue(process.env.MAMA_CODE_ACT_READ_ONLY);
+    const codeActTier = codeActReadOnly ? 3 : 2;
+    const instanceId = randomUUID();
+    let executionContext: GatewayToolExecutionContext | null = null;
+    if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
+      const projectId = resolveReactiveProjectRoot(config, process.env);
+      const projectRef = { kind: 'project' as const, id: projectId };
+      const memoryScopes = resolveCodeActMemoryScopes(
+        deriveMemoryScopes({
           source: 'watch',
           channelId: 'api:code-act',
-          envelope,
-          executionSurface: 'code_act',
-        };
-      }
-      const parentRun = bindCodeActParentModelRun(getAdapter(), executionContext, {
-        inputSnapshotRef: `code-act:${instanceId}`,
-        inputRefs: {
-          tool: 'code_act',
-          source: 'api',
-          channel_id: 'api:code-act',
-          read_only: codeActReadOnly,
-        },
-      });
-      executionContext = parentRun.executionContext;
-      const bridge = new HostBridge(
-        toolExecutor,
-        new RoleManager({ rolesConfig: config.roles ?? DEFAULT_ROLES }),
-        executionContext
+          userId: 'api',
+          projectId,
+        }),
+        getAdapter()
       );
-      const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
-      bridge.onToolUse = (toolName, input, result) => {
-        if (result !== undefined) {
-          toolCalls.push({ name: toolName, input });
-          if (CODE_ACT_MUTATION_TOOLS.has(toolName)) {
-            codeActLogger.warn('[CodeAct] mutation tool call', {
-              toolName,
-              success: Boolean((result as { success?: unknown }).success),
-              readOnly: codeActReadOnly,
-              envelopeHash: executionContext?.envelope?.envelope_hash ?? null,
-            });
-          }
-        }
+      const wallSeconds = Math.min(
+        Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
+        300
+      );
+      const envelope = envelopeBootstrap.envelopeAuthority.buildAndPersist({
+        agent_id: codeActAgentId,
+        instance_id: instanceId,
+        source: 'watch',
+        channel_id: 'api:code-act',
+        trigger_context: { user_text: '<api-code-act invocation>' },
+        scope: {
+          project_refs: [projectRef],
+          raw_connectors: codeActRawConnectors,
+          memory_scopes: memoryScopes,
+          allowed_destinations: [],
+        },
+        tier: codeActTier,
+        budget: { wall_seconds: wallSeconds },
+        expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+      });
+      const roleName = `code_act_${codeActAgentId}`;
+      const role = codeActRole;
+      const agentContext: AgentContext = {
+        source: 'watch',
+        platform: 'cli',
+        roleName,
+        role,
+        session: {
+          sessionId: `api:code-act:${instanceId}`,
+          channelId: 'api:code-act',
+          startedAt: new Date(),
+        },
+        capabilities: ['code_act'],
+        limitations: codeActReadOnly ? ['Code-Act read-only mode: memory writes disabled'] : [],
+        tier: codeActTier,
+        backend: 'claude',
       };
-      const previousRoutingContext = toolExecutor.getCurrentAgentRoutingContext();
-      try {
-        // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
-        // Per-request executionContext carries envelope data; this routing context is legacy fallback.
-        toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
-        bridge.injectInto(sandbox, codeActTier, codeActRole);
-        const result = await sandbox.execute(code);
-        finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
-        return {
-          success: result.success,
-          value: result.value,
-          logs: result.logs,
-          error: result.error?.message,
-          metrics: result.metrics,
-          toolCalls,
-        };
-      } catch (error) {
-        failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
-        throw error;
-      } finally {
-        toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
+      executionContext = {
+        agentContext,
+        agentId: codeActAgentId,
+        source: 'watch',
+        channelId: 'api:code-act',
+        envelope,
+        executionSurface: 'code_act',
+      };
+    }
+    const parentRun = bindCodeActParentModelRun(getAdapter(), executionContext, {
+      inputSnapshotRef: `code-act:${instanceId}`,
+      inputRefs: {
+        tool: 'code_act',
+        source: 'api',
+        channel_id: 'api:code-act',
+        read_only: codeActReadOnly,
+      },
+    });
+    executionContext = parentRun.executionContext;
+    const bridge = new HostBridge(
+      toolExecutor,
+      new RoleManager({ rolesConfig: config.roles ?? DEFAULT_ROLES }),
+      executionContext
+    );
+    const toolCalls: { name: string; input: Record<string, unknown> }[] = [];
+    bridge.onToolUse = (toolName, input, result) => {
+      if (result !== undefined) {
+        toolCalls.push({ name: toolName, input });
+        if (CODE_ACT_MUTATION_TOOLS.has(toolName)) {
+          codeActLogger.warn('[CodeAct] mutation tool call', {
+            toolName,
+            success: Boolean((result as { success?: unknown }).success),
+            readOnly: codeActReadOnly,
+            envelopeHash: executionContext?.envelope?.envelope_hash ?? null,
+          });
+        }
       }
     };
+    const previousRoutingContext = toolExecutor.getCurrentAgentRoutingContext();
+    try {
+      // Set default agent context for /api/code-act calls (Conductor, tiered sandbox).
+      // Per-request executionContext carries envelope data; this routing context is legacy fallback.
+      toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
+      bridge.injectInto(sandbox, codeActTier, codeActRole);
+      const result = await sandbox.execute(code);
+      finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
+      return {
+        success: result.success,
+        value: result.value,
+        logs: result.logs,
+        error: result.error?.message,
+        metrics: result.metrics,
+        toolCalls,
+      };
+    } catch (error) {
+      failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
+      throw error;
+    } finally {
+      toolExecutor.restoreCurrentAgentRoutingContext(previousRoutingContext);
+    }
+  };
 
-    // Pre-warm Code-Act WASM module for fast first execution
-    (async () => {
-      try {
-        const { CodeActSandbox } = await import('../../agent/code-act/index.js');
-        await CodeActSandbox.warmup();
-      } catch (err: unknown) {
-        console.warn('[CodeAct] WASM warmup failed (non-fatal):', err);
-      }
-    })();
-  }
+  // Pre-warm Code-Act WASM module for fast first execution
+  (async () => {
+    try {
+      const { CodeActSandbox } = await import('../../agent/code-act/index.js');
+      await CodeActSandbox.warmup();
+    } catch (err: unknown) {
+      console.warn('[CodeAct] WASM warmup failed (non-fatal):', err);
+    }
+  })();
 
   const graphHandler = createGraphHandler(graphHandlerOptions);
 
@@ -1965,131 +839,122 @@ export async function runAgentLoop(
   toolExecutor.setValidationService(validationService);
   messageRouter.setValidationService(validationService);
   agentLoop.setValidationService(validationService);
-  if (
-    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
-    !shouldSkipVNextFanout(vNext, 'persona_write')
-  ) {
-    // Ensure current primary system agents exist in config. Legacy self-paced
-    // dashboard/wiki agents are opt-in and must not be backfilled here.
-    if (!config.multi_agent) {
-      config.multi_agent = getDefaultMultiAgentConfig();
+  // Ensure current primary system agents exist in config. Legacy self-paced
+  // dashboard/wiki agents are opt-in and must not be backfilled here.
+  if (!config.multi_agent) {
+    config.multi_agent = getDefaultMultiAgentConfig();
+  }
+  if (!config.multi_agent.agents) {
+    config.multi_agent.agents = {};
+  }
+  const osAgents: Record<
+    string,
+    {
+      name: string;
+      display_name: string;
+      trigger_prefix: string;
+      persona_file: string;
+      tier: 1 | 2 | 3;
+      backend: RuntimeBackend;
+      model: string;
+      can_delegate?: boolean;
+      enabled?: boolean;
     }
-    if (!config.multi_agent.agents) {
-      config.multi_agent.agents = {};
+  > = {
+    'os-agent': {
+      name: 'OS Agent',
+      display_name: '🖥️ OS Agent',
+      trigger_prefix: '!os',
+      persona_file: '~/.mama/personas/os-agent.md',
+      tier: 1,
+      backend: runtimeBackend,
+      model: config.agent.model,
+      can_delegate: true,
+      enabled: true,
+    },
+    memory: {
+      name: 'Memory Agent',
+      display_name: '🧠 Memory',
+      trigger_prefix: '!memory',
+      persona_file: '~/.mama/personas/memory.md',
+      tier: 3,
+      backend: runtimeBackend,
+      model: config.agent.model,
+      can_delegate: false,
+      enabled: true,
+    },
+  };
+  let osAgentsAdded = false;
+  for (const [id, cfg] of Object.entries(osAgents)) {
+    if (!config.multi_agent.agents[id]) {
+      config.multi_agent.agents[id] = cfg;
+      osAgentsAdded = true;
     }
-    const osAgents: Record<
-      string,
-      {
-        name: string;
-        display_name: string;
-        trigger_prefix: string;
-        persona_file: string;
-        tier: 1 | 2 | 3;
-        backend: RuntimeBackend;
-        model: string;
-        can_delegate?: boolean;
-        enabled?: boolean;
-      }
-    > = {
-      'os-agent': {
-        name: 'OS Agent',
-        display_name: '🖥️ OS Agent',
-        trigger_prefix: '!os',
-        persona_file: '~/.mama/personas/os-agent.md',
-        tier: 1,
-        backend: runtimeBackend,
-        model: config.agent.model,
-        can_delegate: true,
-        enabled: true,
-      },
-      memory: {
-        name: 'Memory Agent',
-        display_name: '🧠 Memory',
-        trigger_prefix: '!memory',
-        persona_file: '~/.mama/personas/memory.md',
-        tier: 3,
-        backend: runtimeBackend,
-        model: config.agent.model,
-        can_delegate: false,
-        enabled: true,
-      },
-    };
-    let osAgentsAdded = false;
-    for (const [id, cfg] of Object.entries(osAgents)) {
-      if (!config.multi_agent.agents[id]) {
-        config.multi_agent.agents[id] = cfg;
-        osAgentsAdded = true;
-      }
+  }
+  // Persist to config.yaml so /api/agents sees them too
+  if (osAgentsAdded) {
+    try {
+      const { saveConfig } = await import('../config/config-manager.js');
+      await saveConfig(config);
+      console.log('✓ OS agents added to config.yaml');
+    } catch {
+      /* non-fatal — runtime config still has them */
     }
-    // Persist to config.yaml so /api/agents sees them too
-    if (osAgentsAdded) {
+  }
+
+  const agents = config.multi_agent.agents;
+  for (const [id, cfg] of Object.entries(agents)) {
+    if (!getLatestVersion(db, id)) {
+      let personaText: string | null = null;
       try {
-        const { saveConfig } = await import('../config/config-manager.js');
-        await saveConfig(config);
-        console.log('✓ OS agents added to config.yaml');
+        const pPath = expandPath(cfg.persona_file);
+        if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
       } catch {
-        /* non-fatal — runtime config still has them */
+        /* ignore */
       }
+      createAgentVersion(db, {
+        agent_id: id,
+        snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
+        persona_text: personaText,
+        change_note: 'Initial version (migrated from config.yaml)',
+      });
     }
-
-    const agents = config.multi_agent.agents;
-    for (const [id, cfg] of Object.entries(agents)) {
-      if (!getLatestVersion(db, id)) {
-        let personaText: string | null = null;
-        try {
-          const pPath = expandPath(cfg.persona_file);
-          if (existsSync(pPath)) personaText = readFileSync(pPath, 'utf-8');
-        } catch {
-          /* ignore */
-        }
-        createAgentVersion(db, {
-          agent_id: id,
-          snapshot: { model: cfg.model, tier: cfg.tier, backend: cfg.backend },
-          persona_text: personaText,
-          change_note: 'Initial version (migrated from config.yaml)',
-        });
-      }
-    }
-    console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
   }
+  console.log(`✓ Agent versions seeded (${Object.keys(agents).length} agents)`);
 
-  if (!vNext.enabled) {
-    await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
-  }
+  await startEmbeddingServerIfAvailable(messageRouter, sessionStore, graphHandler);
 
   // ── Phase 6: Cron Scheduler ───────────────────────────────────────────────
 
-  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config, { vNext });
+  const { scheduler, cronWorker, cronEmitter } = initCronScheduler(config);
 
   // ── Phase 7: Gateways ────────────────────────────────────────────────────
 
-  const gatewayInit = shouldSkipVNextFanout(vNext, 'connector_mode')
-    ? {
-        discordGateway: null,
-        slackGateway: null,
-        telegramGateway: null,
-        gateways: [],
-      }
-    : await initGateways(config, messageRouter, toolExecutor, agentLoop, runtimeBackend, db);
+  const gatewayInit = await initGateways(
+    config,
+    messageRouter,
+    toolExecutor,
+    agentLoop,
+    runtimeBackend,
+    db
+  );
   const { discordGateway, slackGateway, telegramGateway, gateways } = gatewayInit;
 
   // ── Phase 8: Gateway Wiring ──────────────────────────────────────────────
 
-  const { pluginLoader } = shouldSkipVNextFanout(vNext, 'connector_mode')
-    ? { pluginLoader: new PluginLoader({ pluginsDir: '/__mama_vnext_no_plugins__' }) }
-    : await wireGateways({
-        config,
-        messageRouter,
-        healthCheckService,
-        graphHandlerOptions,
-        db,
-        discordGateway,
-        slackGateway,
-        telegramGateway,
-        gateways,
-        agentLoop,
-        cronEmitter,
-      });
+  const { pluginLoader } = await wireGateways({
+    config,
+    messageRouter,
+    healthCheckService,
+    graphHandlerOptions,
+    db,
+    discordGateway,
+    slackGateway,
+    telegramGateway,
+    gateways,
+    agentLoop,
+    cronEmitter,
+  });
 
   if (graphHandlerOptions.applyMultiAgentConfig) {
     toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
@@ -2110,7 +975,6 @@ export async function runAgentLoop(
     fallbackMultiAgentConfig?.agents?.['wiki-agent']
   );
   if (
-    !shouldSkipVNextFanout(vNext, 'agent_config_mutation') &&
     fallbackMultiAgentConfig &&
     !toolExecutor.getAgentProcessManager() &&
     (fallbackMultiAgentConfig.enabled || hasSystemRunAgents)
@@ -2173,8 +1037,7 @@ export async function runAgentLoop(
     agentLoop,
     discordGateway,
     scheduler,
-    healthCheckService,
-    { vNext }
+    healthCheckService
   );
 
   // M2.4 freshness: the connector sink nudges the trigger loop when a poll indexes new rows. The
@@ -2184,7 +1047,7 @@ export async function runAgentLoop(
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
-    { vNext, nudge: () => triggerLoopNudge.current?.() }
+    { nudge: () => triggerLoopNudge.current?.() }
   );
   codeActRawConnectors = resolveCodeActRawConnectors(enabledConnectorNames);
 
@@ -2208,153 +1071,158 @@ export async function runAgentLoop(
     // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
     // failure is still surfaced LOUDLY below (console.error), never swallowed silently.
     try {
-    const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');
-    const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
-    const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
-    const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
-    const { askAgentCLI } = await import('../../operator/trigger-author.js');
-    const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
-    const { mkdirSync } = await import('node:fs');
-    const { dirname } = await import('node:path');
-    const { ReportScheduler, FileReportScheduleStore, parseReportHours } = await import(
-      '../../operator/report-scheduler.js'
-    );
-    const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } = await import(
-      '../../operator/report-run.js'
-    );
-    const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
+      const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');
+      const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
+      const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
+      const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
+      const { askAgentCLI } = await import('../../operator/trigger-author.js');
+      const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
+      const { mkdirSync } = await import('node:fs');
+      const { dirname } = await import('node:path');
+      const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
+        await import('../../operator/report-scheduler.js');
+      const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } =
+        await import('../../operator/report-run.js');
+      const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
 
-    const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
-    mkdirSync(dirname(triggerDbPath), { recursive: true });
-    const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
-    // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
-    // never source. No chat configured or no telegram gateway -> loop stays read-only.
-    const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
-    const reportOutput =
-      reportChatId && telegramGateway
-        ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
-        : undefined;
-    // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
-    // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
-    const fullReportHours = parseReportHours(process.env.MAMA_TRIGGER_LOOP_FULL_REPORT_HOURS || '');
-    const reportScheduler =
-      fullReportHours.length > 0 && reportOutput
-        ? new ReportScheduler(
-            fullReportHours,
-            new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
-          )
-        : undefined;
-    const triggerLoop = new OperatorTriggerLoop({
-      delta: new ConnectorDeltaRepo(
-        getAdapter(),
-        expandPath('~/.mama/operator/trigger-loop-cursors.json')
-      ),
-      memory: createMamaMemoryPort(),
-      registry: triggerRegistry,
-      askAgent: askAgentCLI,
-      // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
-      // session lanes) instead of the bare CLI - report tone comes from generation inputs.
-      // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
-      // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
-      // loop is isolated from chat and continuous across cadences (runWithContent honors
-      // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
-      // 'model_tool' executions are envelope-gated (gateway-tool-executor.ts:252-256) and
-      // issuance defaults to 'enabled' (envelope-bootstrap.ts:28-30), so each report carries a
-      // per-run scoped envelope (mirrors the code-act issuance at start.ts:1834-1865); without it
-      // every call is denied with code 'envelope_missing'. Then audit the gateway tools the agent
-      // actually EXECUTED: a full report that executed NO gateway gather tool is logged loudly
-      // (no-fallback), and every write (mama_save) is logged (observability).
-      reportAsk: createPersonaReportAsk({
-        issueEnvelope:
-          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
-            ? async () => {
-                const projectId = resolveReactiveProjectRoot(config, process.env);
-                const wallSeconds = Math.min(
-                  Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
-                  300
-                );
-                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
-                  agent_id: 'operator-report',
-                  instance_id: randomUUID(),
-                  // 'operator' is not a member of EnvelopeSource (envelope/types.ts is a closed
-                  // union); 'watch' is the daemon-internal source used by the mirrored code-act
-                  // issuance (start.ts:1834-1865). This field is issuing-source metadata only -
-                  // enforcement authorizes on scope.memory_scopes (which cover the operator:report
-                  // run below), never on envelope.source (gateway-tool-executor.ts:1421,1511,1590).
-                  source: 'watch',
-                  channel_id: 'report',
-                  trigger_context: { user_text: '<operator scheduled report>' },
-                  scope: {
-                    // Reads: the enabled raw connectors (kagemusha_* gathers) + memory scopes
-                    // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
-                    // send surface (constraint 2).
-                    project_refs: [{ kind: 'project' as const, id: projectId }],
-                    raw_connectors: codeActRawConnectors,
-                    memory_scopes: resolveCodeActMemoryScopes(
-                      deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
-                      getAdapter()
-                    ),
-                    allowed_destinations: [],
-                  },
-                  tier: 2, // write tier: the report may mama_save (matches code-act write tier)
-                  budget: { wall_seconds: wallSeconds },
-                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
-                });
+      const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
+      mkdirSync(dirname(triggerDbPath), { recursive: true });
+      const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+      // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
+      // never source. No chat configured or no telegram gateway -> loop stays read-only.
+      const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+      const reportOutput =
+        reportChatId && telegramGateway
+          ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
+          : undefined;
+      // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
+      // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
+      const fullReportHours = parseReportHours(
+        process.env.MAMA_TRIGGER_LOOP_FULL_REPORT_HOURS || ''
+      );
+      const reportScheduler =
+        fullReportHours.length > 0 && reportOutput
+          ? new ReportScheduler(
+              fullReportHours,
+              new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
+            )
+          : undefined;
+      const triggerLoop = new OperatorTriggerLoop({
+        delta: new ConnectorDeltaRepo(
+          getAdapter(),
+          expandPath('~/.mama/operator/trigger-loop-cursors.json')
+        ),
+        memory: createMamaMemoryPort(),
+        registry: triggerRegistry,
+        askAgent: askAgentCLI,
+        // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
+        // session lanes) instead of the bare CLI - report tone comes from generation inputs.
+        // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
+        // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
+        // loop is isolated from chat and continuous across cadences (runWithContent honors
+        // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
+        // 'model_tool' executions are envelope-gated (gateway-tool-executor.ts:252-256) and
+        // issuance defaults to 'enabled' (envelope-bootstrap.ts:28-30), so each report carries a
+        // per-run scoped envelope (mirrors the code-act issuance at start.ts:1834-1865); without it
+        // every call is denied with code 'envelope_missing'. Then audit the gateway tools the agent
+        // actually EXECUTED: a full report that executed NO gateway gather tool is logged loudly
+        // (no-fallback), and every write (mama_save) is logged (observability).
+        reportAsk: createPersonaReportAsk({
+          issueEnvelope:
+            envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
+              ? async () => {
+                  const projectId = resolveReactiveProjectRoot(config, process.env);
+                  const wallSeconds = Math.min(
+                    Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
+                    300
+                  );
+                  return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
+                    agent_id: 'operator-report',
+                    instance_id: randomUUID(),
+                    // 'operator' is not a member of EnvelopeSource (envelope/types.ts is a closed
+                    // union); 'watch' is the daemon-internal source used by the mirrored code-act
+                    // issuance (start.ts:1834-1865). This field is issuing-source metadata only -
+                    // enforcement authorizes on scope.memory_scopes (which cover the operator:report
+                    // run below), never on envelope.source (gateway-tool-executor.ts:1421,1511,1590).
+                    source: 'watch',
+                    channel_id: 'report',
+                    trigger_context: { user_text: '<operator scheduled report>' },
+                    scope: {
+                      // Reads: the enabled raw connectors (kagemusha_* gathers) + memory scopes
+                      // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
+                      // send surface (constraint 2).
+                      project_refs: [{ kind: 'project' as const, id: projectId }],
+                      raw_connectors: codeActRawConnectors,
+                      memory_scopes: resolveCodeActMemoryScopes(
+                        deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
+                        getAdapter()
+                      ),
+                      allowed_destinations: [],
+                    },
+                    tier: 2, // write tier: the report may mama_save (matches code-act write tier)
+                    budget: { wall_seconds: wallSeconds },
+                    expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+                  });
+                }
+              : undefined,
+          run: async (prompt, envelope) => {
+            const result = await agentLoop.runWithContent(
+              [{ type: 'text' as const, text: prompt }],
+              {
+                sessionKey: OPERATOR_REPORT_SESSION_KEY,
+                source: 'operator',
+                channelId: 'report',
+                ...(envelope ? { envelope } : {}),
               }
-            : undefined,
-        run: async (prompt, envelope) => {
-          const result = await agentLoop.runWithContent([{ type: 'text' as const, text: prompt }], {
-            sessionKey: OPERATOR_REPORT_SESSION_KEY,
-            source: 'operator',
-            channelId: 'report',
-            ...(envelope ? { envelope } : {}),
-          });
-          return { response: result.response, history: result.history };
+            );
+            return { response: result.response, history: result.history };
+          },
+          log: (line: string) => console.log(line),
+          fullReportTag: OPERATOR_FULL_REPORT_TAG,
+        }),
+        review: (trigger, context) => reviewTriggerCLI(trigger, context),
+        output: reportOutput,
+        reportScheduler,
+        // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
+        // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
+        // reports "quiet" whenever polling is between batches).
+        fullReportSelfGather: [
+          'kagemusha_overview() for room/task/message counts',
+          'kagemusha_tasks({ status: "needs_review" }) and kagemusha_tasks({ status: "blocked" }) for the task board state',
+          'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "24h ago" }) on the busiest 2-3',
+          'mama_recall(query) for memory relevant to what you find',
+        ],
+        config: {
+          tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
+          drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
+          authorEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_AUTHOR_EVERY || 30),
+          reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
+          authorWindowSize: 50,
+          reportEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REPORT_EVERY || 15),
+          nudgeDebounceMs: Number(process.env.MAMA_TRIGGER_LOOP_NUDGE_DEBOUNCE_MS || 15_000),
         },
-        log: (line: string) => console.log(line),
-        fullReportTag: OPERATOR_FULL_REPORT_TAG,
-      }),
-      review: (trigger, context) => reviewTriggerCLI(trigger, context),
-      output: reportOutput,
-      reportScheduler,
-      // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
-      // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
-      // reports "quiet" whenever polling is between batches).
-      fullReportSelfGather: [
-        'kagemusha_overview() for room/task/message counts',
-        'kagemusha_tasks({ status: "needs_review" }) and kagemusha_tasks({ status: "blocked" }) for the task board state',
-        'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "24h ago" }) on the busiest 2-3',
-        'mama_recall(query) for memory relevant to what you find',
-      ],
-      config: {
-        tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
-        drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
-        authorEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_AUTHOR_EVERY || 30),
-        reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
-        authorWindowSize: 50,
-        reportEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REPORT_EVERY || 15),
-        nudgeDebounceMs: Number(process.env.MAMA_TRIGGER_LOOP_NUDGE_DEBOUNCE_MS || 15_000),
-      },
-      log: (line) => console.log(line),
-    });
-    if (reportOutput) {
-      console.log('✓ Trigger loop owner-report leg enabled (telegram)');
-    }
-    if (reportScheduler) {
-      console.log(`✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`);
-    }
-    const stopTriggerLoop = triggerLoop.start();
-    // M2.4: point the connector sink's forwarder at this loop now that it exists.
-    triggerLoopNudge.current = () => triggerLoop.nudge();
-    gateways.push({
-      stop: async () => {
-        triggerLoopNudge.current = null;
-        stopTriggerLoop();
-        // Close the operator triggers.db handle (PR #119 review: was leaked on shutdown).
-        triggerRegistry.close();
-      },
-    });
-    console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
+        log: (line) => console.log(line),
+      });
+      if (reportOutput) {
+        console.log('✓ Trigger loop owner-report leg enabled (telegram)');
+      }
+      if (reportScheduler) {
+        console.log(
+          `✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`
+        );
+      }
+      const stopTriggerLoop = triggerLoop.start();
+      // M2.4: point the connector sink's forwarder at this loop now that it exists.
+      triggerLoopNudge.current = () => triggerLoop.nudge();
+      gateways.push({
+        stop: async () => {
+          triggerLoopNudge.current = null;
+          stopTriggerLoop();
+          // Close the operator triggers.db handle (PR #119 review: was leaked on shutdown).
+          triggerRegistry.close();
+        },
+      });
+      console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
     } catch (error) {
       console.error(
         '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
@@ -2394,7 +1262,6 @@ export async function runAgentLoop(
     graphHandler,
     getAdapter,
     sessionsDb: db,
-    vNext,
   });
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────
