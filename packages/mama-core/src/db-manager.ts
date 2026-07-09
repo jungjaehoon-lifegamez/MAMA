@@ -527,6 +527,7 @@ export async function insertDecisionWithEmbedding(decision: DecisionInput): Prom
     );
     let embedding: Float32Array | null = null;
     try {
+      // e5 passage role (default) - stored vector
       embedding = await generateEnhancedEmbedding({
         topic: decision.topic,
         decision: decision.decision,
@@ -1082,6 +1083,7 @@ export async function reindexEmbeddings(
 
   for (const row of decisions) {
     try {
+      // e5 passage role (default) - stored vector
       const embedding = await generateEnhancedEmbedding({
         topic: row.topic,
         decision: row.decision,
