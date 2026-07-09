@@ -39,12 +39,20 @@ function parsePollStateEntry(value: unknown): Date | null {
     iso = value;
   } else if (typeof value === 'object' && value !== null) {
     const legacy = (value as { lastPollTime?: unknown }).lastPollTime;
-    if (typeof legacy === 'string') iso = legacy;
+    if (typeof legacy === 'string') {
+      iso = legacy;
+    }
   }
-  if (iso === null) return null;
+  if (iso === null) {
+    return null;
+  }
   const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  if (date.getTime() > Date.now() + MAX_FUTURE_CURSOR_SKEW_MS) return null;
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+  if (date.getTime() > Date.now() + MAX_FUTURE_CURSOR_SKEW_MS) {
+    return null;
+  }
   return date;
 }
 
