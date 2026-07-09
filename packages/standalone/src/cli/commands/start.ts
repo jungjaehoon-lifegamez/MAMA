@@ -2194,6 +2194,50 @@ export async function runAgentLoop(
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });
   }
 
+  // ── Trigger loop (M1, flag-gated, additive): agent-evolved triggers on the live stream ──
+  // Runs ONLY with MAMA_TRIGGER_LOOP=1. Placed after initConnectors (which feeds
+  // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
+  if (process.env.MAMA_TRIGGER_LOOP === '1') {
+    const { OperatorTriggerLoop } = await import('../../operator/operator-trigger-loop.js');
+    const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
+    const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
+    const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
+    const { askAgentCLI } = await import('../../operator/trigger-author.js');
+    const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
+    const { mkdirSync } = await import('node:fs');
+    const { dirname } = await import('node:path');
+
+    const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
+    mkdirSync(dirname(triggerDbPath), { recursive: true });
+    const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+    const triggerLoop = new OperatorTriggerLoop({
+      delta: new ConnectorDeltaRepo(
+        getAdapter(),
+        expandPath('~/.mama/operator/trigger-loop-cursors.json')
+      ),
+      memory: createMamaMemoryPort(),
+      registry: triggerRegistry,
+      askAgent: askAgentCLI,
+      review: (trigger, context) => reviewTriggerCLI(trigger, context),
+      config: {
+        tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
+        drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
+        authorEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_AUTHOR_EVERY || 30),
+        reviewEveryNTicks: Number(process.env.MAMA_TRIGGER_LOOP_REVIEW_EVERY || 240),
+        authorWindowSize: 50,
+      },
+      log: (line) => console.log(line),
+    });
+    const stopTriggerLoop = triggerLoop.start();
+    gateways.push({
+      stop: () => {
+        stopTriggerLoop();
+        return Promise.resolve();
+      },
+    });
+    console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
+  }
+
   // ── Phase 10: API Server + Routes ────────────────────────────────────────
 
   const { apiServer, eventBus } = await initApiServer({
