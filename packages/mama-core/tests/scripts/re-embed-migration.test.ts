@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -43,8 +44,14 @@ describe('M5: reEmbedDatabase', () => {
     db.close();
   });
 
-  it('requires MAMA_DB_PATH in CLI mode (guarded separately)', () => {
-    // main() throws without MAMA_DB_PATH; covered by manual run in Task 6.
-    expect(EMBEDDING_PREFIX_SCHEME).toBe('e5-prefixed-v1');
+  it('CLI mode exits 1 with the MAMA_DB_PATH error when the env var is unset', () => {
+    // Real enforcement check: spawn the script with MAMA_DB_PATH stripped from the
+    // environment. It must refuse (exit 1) BEFORE opening any DB or loading a model.
+    const scriptPath = join(__dirname, '..', '..', 'scripts', 're-embed-migration.mjs');
+    const env = { ...process.env };
+    delete env.MAMA_DB_PATH;
+    const res = spawnSync(process.execPath, [scriptPath], { env, encoding: 'utf8', timeout: 20000 });
+    expect(res.status).toBe(1);
+    expect(res.stderr).toContain('MAMA_DB_PATH is required');
   });
 });
