@@ -162,6 +162,9 @@ export class SituationReporter {
     return [
       ...framing,
       'Reply in the language the owner uses on these channels if you can tell; otherwise English.',
+      // Local wall-clock, not UTC: the first live report stamped itself in UTC because the
+      // agent had no local time reference (Kagemusha injects local time the same way).
+      `Current local time: ${new Date().toLocaleString()}. Use LOCAL time in the report, never UTC.`,
       '',
       'Window (per channel; excerpts truncated):',
       ...(windowLines.length > 0 ? windowLines : ['- (no channel messages this window)']),
