@@ -48,6 +48,7 @@ export interface DatabaseAdapter {
   ) => Promise<VectorSearchResult[] | null> | VectorSearchResult[] | null;
   vectorSearchEnabled: boolean;
   reloadVectorCache?: () => void;
+  refreshDecisionStatusCache?: (rowid: number) => void;
   getDbPath?: () => string;
   dbPath?: string;
   constructor: { name: string };

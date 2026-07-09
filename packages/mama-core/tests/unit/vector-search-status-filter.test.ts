@@ -84,6 +84,25 @@ describe('Story R1: vectorSearch status pre-filter', () => {
     });
   });
 
+  describe('AC #3: a row promoted back to active becomes searchable without a full reload', () => {
+    it('refreshDecisionStatusCache re-includes a previously excluded row', () => {
+      const adapter = setupAdapter();
+      const rid = seedDecision(adapter, 'p1', 'stale', null, 1);
+      const excluded = ['superseded', 'quarantined', 'contradicted', 'stale'];
+
+      expect(adapter.vectorSearch(vec(1), 5, undefined, excluded)!.length).toBe(0);
+
+      // A promotion path flips the row back to active in SQL only - the cache
+      // refresh must make it searchable again without reloadVectorCache.
+      adapter.prepare(`UPDATE decisions SET status = 'active' WHERE id = 'p1'`).run();
+      adapter.refreshDecisionStatusCache(rid);
+
+      const after = adapter.vectorSearch(vec(1), 5, undefined, excluded);
+      expect(after!.map((r) => r.rowid)).toEqual([rid]);
+      adapter.disconnect();
+    });
+  });
+
   describe('AC #2: the status cache follows reloadVectorCache after status changes', () => {
     it('excludes a row that was superseded after the initial cache load', () => {
       const adapter = setupAdapter();

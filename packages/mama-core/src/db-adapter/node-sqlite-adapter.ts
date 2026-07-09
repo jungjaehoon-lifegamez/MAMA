@@ -201,6 +201,37 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
     this.loadVectorCache();
   }
 
+  // Re-read one decision's effective status into the cache. MUST be called after
+  // any status transition that can move a row OUT of an excluded state (e.g.
+  // promoteMemoryStatus staging->active): the vectorSearch pre-filter drops
+  // excluded rowids before the api post-filter ever sees them, so a stale
+  // excluded entry would make an active row unrecallable until restart.
+  refreshDecisionStatusCache(rowid: number): void {
+    if (!this.isConnected()) {
+      throw new Error('Database not connected');
+    }
+    if (!this.decisionsHasStatusColumns) {
+      this.refreshDecisionColumnInfo();
+    }
+    const cacheSelect = this.decisionsHasStatusColumns
+      ? 'SELECT topic, status, outcome FROM decisions WHERE rowid = ?'
+      : 'SELECT topic, NULL AS status, NULL AS outcome FROM decisions WHERE rowid = ?';
+    const row = this.prepare(cacheSelect).get(rowid) as
+      | { topic: string; status: string | null; outcome: string | null }
+      | undefined;
+    if (!row) {
+      this.statusCache.delete(rowid);
+      return;
+    }
+    this.topicCache.set(rowid, row.topic);
+    const effectiveStatus = row.status || row.outcome;
+    if (effectiveStatus) {
+      this.statusCache.set(rowid, effectiveStatus);
+    } else {
+      this.statusCache.delete(rowid);
+    }
+  }
+
   private refreshDecisionColumnInfo(): void {
     if (!this.db) return;
     const decisionCols = new Set(
@@ -405,28 +436,9 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
 
     const result = stmt.run(rowid, buffer);
 
-    // Keep in-memory caches in sync. The column flag is stamped at loadVectorCache
-    // time, which can predate runMigrations (connect-time load on a fresh DB) - so
-    // while it reads false, re-introspect before deciding the select shape.
+    // Keep in-memory caches in sync
     this.vectorCache.set(rowid, vec);
-    if (!this.decisionsHasStatusColumns) {
-      this.refreshDecisionColumnInfo();
-    }
-    const cacheSelect = this.decisionsHasStatusColumns
-      ? 'SELECT topic, status, outcome FROM decisions WHERE rowid = ?'
-      : 'SELECT topic, NULL AS status, NULL AS outcome FROM decisions WHERE rowid = ?';
-    const topicRow = this.prepare(cacheSelect).get(rowid) as
-      | { topic: string; status: string | null; outcome: string | null }
-      | undefined;
-    if (topicRow) {
-      this.topicCache.set(rowid, topicRow.topic);
-      const effectiveStatus = topicRow.status || topicRow.outcome;
-      if (effectiveStatus) {
-        this.statusCache.set(rowid, effectiveStatus);
-      } else {
-        this.statusCache.delete(rowid);
-      }
-    }
+    this.refreshDecisionStatusCache(rowid);
 
     return result;
   }
