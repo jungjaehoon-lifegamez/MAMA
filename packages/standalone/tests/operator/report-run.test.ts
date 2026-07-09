@@ -66,6 +66,18 @@ describe('report tool-use audit (M3-T1)', () => {
     expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
   });
 
+  it('SUCCESSFUL result whose nested payload mentions "success":false is NOT excluded (PR #119)', () => {
+    // e.g. a message text discussing a failure - root success is true, so it executed.
+    const history = [
+      ...exchange('kagemusha_messages', {
+        body: '{"success":true,"messages":[{"text":"the deploy returned \\"success\\":false yesterday"}]}',
+      }),
+    ];
+    const a = summarizeReportToolUse(history);
+    expect(a.gatherTools).toEqual(['kagemusha_messages']); // counted as executed
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
+  });
+
   it('full report with NO gather tool -> loud warning (no-fallback)', () => {
     const lines = formatReportToolAudit({ gatherTools: [], writeTools: [], all: [] }, true);
     expect(lines.join('\n')).toMatch(/NO gateway gather tools/);
