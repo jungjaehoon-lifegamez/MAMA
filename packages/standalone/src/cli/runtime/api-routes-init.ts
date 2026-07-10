@@ -524,8 +524,12 @@ This saves resources. Only compile when there is genuinely new information to do
     'Classify findings as MINOR or MAJOR. ' +
     'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
     'For MAJOR items: report to human via channel alert. ' +
-    'Do NOT save raw audit results or audit logs as mama_save decisions. ' +
-    'Only call mama_save when the audit produces a durable policy/remediation decision or reusable lesson; otherwise rely on validation sessions and agent_activity for the audit record.';
+    // Owner verdict 2026-07-10: hourly-audit self-notes are memory noise -- the two
+    // "durable policy" saves it produced were unscoped near-duplicates polluting
+    // global recall. The audit record lives in validation sessions + agent_activity;
+    // MAJOR findings reach the owner via the channel alert. No memory writes here.
+    'Do NOT call mama_save under any circumstances: the validation session and agent_activity ' +
+    'are the durable audit record, and repeated audits must not accumulate policy notes in memory.';
 
   const runConductorAudit = async () => {
     let auditSession: ValidationSessionRow | null = null;
