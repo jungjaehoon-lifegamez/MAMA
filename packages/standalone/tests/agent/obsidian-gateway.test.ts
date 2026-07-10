@@ -2,14 +2,19 @@ import { describe, it, expect } from 'vitest';
 
 /**
  * Build CLI arguments for the obsidian gateway tool.
- * Extracted here for unit testing — same logic used in GatewayToolExecutor.executeObsidian().
+ * Extracted here for unit testing -- same logic used in GatewayToolExecutor.executeObsidian():
+ * command first, then vault=<name> when a vault is configured (otherwise the CLI
+ * would target whatever vault the owner has focused), then key=value pairs.
  */
 function buildObsidianArgs(
-  vaultPath: string,
   command: string,
-  args?: Record<string, string>
+  args?: Record<string, string>,
+  vaultName?: string | null
 ): string[] {
-  const cliArgs = [vaultPath, command];
+  const cliArgs = [command];
+  if (vaultName) {
+    cliArgs.push(`vault=${vaultName}`);
+  }
   for (const [key, value] of Object.entries(args || {})) {
     if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
       cliArgs.push(key);
@@ -23,63 +28,73 @@ function buildObsidianArgs(
 describe('obsidian gateway tool', () => {
   describe('argument building', () => {
     it('builds search command with query and limit', () => {
-      const args = buildObsidianArgs('/vault', 'search', { query: 'KMS billing', limit: '5' });
-      expect(args).toEqual(['/vault', 'search', 'query=KMS billing', 'limit=5']);
+      const args = buildObsidianArgs('search', { query: 'KMS billing', limit: '5' });
+      expect(args).toEqual(['search', 'query=KMS billing', 'limit=5']);
+    });
+
+    it('pins the configured vault so writes never land in the focused vault', () => {
+      const args = buildObsidianArgs(
+        'append',
+        { path: 'daily/2026-07-10.md', content: 'entry' },
+        'mama-operator'
+      );
+      expect(args).toEqual([
+        'append',
+        'vault=mama-operator',
+        'path=daily/2026-07-10.md',
+        'content=entry',
+      ]);
+    });
+
+    it('omits vault targeting when no vault name is configured', () => {
+      const args = buildObsidianArgs('tags', undefined, null);
+      expect(args).toEqual(['tags']);
     });
 
     it('builds create command with silent flag', () => {
-      const args = buildObsidianArgs('/vault', 'create', {
-        name: 'projects/New-Page',
+      // Nested creates must use path= (the CLI rejects "/" in name=).
+      const args = buildObsidianArgs('create', {
+        path: 'lessons/process/new-page.md',
         content: '# New Page',
         silent: 'true',
       });
       expect(args).toEqual([
-        '/vault',
         'create',
-        'name=projects/New-Page',
+        'path=lessons/process/new-page.md',
         'content=# New Page',
         'silent',
       ]);
     });
 
     it('builds property:set command', () => {
-      const args = buildObsidianArgs('/vault', 'property:set', {
-        file: 'projects/KMS',
-        name: 'compiled_at',
-        value: '2026-04-09',
+      const args = buildObsidianArgs('property:set', {
+        file: 'lessons/clients/KMS',
+        name: 'last_verified',
+        value: '2026-07-10',
       });
       expect(args).toEqual([
-        '/vault',
         'property:set',
-        'file=projects/KMS',
-        'name=compiled_at',
-        'value=2026-04-09',
+        'file=lessons/clients/KMS',
+        'name=last_verified',
+        'value=2026-07-10',
       ]);
     });
 
     it('builds move command', () => {
-      const args = buildObsidianArgs('/vault', 'move', {
+      const args = buildObsidianArgs('move', {
         file: 'old-name',
-        to: 'projects/new-name',
+        to: 'lessons/process/new-name',
       });
-      expect(args).toEqual(['/vault', 'move', 'file=old-name', 'to=projects/new-name']);
-    });
-
-    it('builds tags:rename command', () => {
-      const args = buildObsidianArgs('/vault', 'tags:rename', {
-        old: 'meeting',
-        new: 'meetings',
-      });
-      expect(args).toEqual(['/vault', 'tags:rename', 'old=meeting', 'new=meetings']);
+      expect(args).toEqual(['move', 'file=old-name', 'to=lessons/process/new-name']);
     });
 
     it('handles empty args', () => {
-      const args = buildObsidianArgs('/vault', 'tags');
-      expect(args).toEqual(['/vault', 'tags']);
+      const args = buildObsidianArgs('tags');
+      expect(args).toEqual(['tags']);
     });
 
     it('handles overwrite boolean flag', () => {
-      const args = buildObsidianArgs('/vault', 'create', {
+      const args = buildObsidianArgs('create', {
         name: 'test',
         content: 'body',
         overwrite: 'true',

@@ -114,7 +114,16 @@ export class ObsidianWriter {
   }
 
   ensureDirectories(): void {
-    for (const sub of ['', 'projects', 'lessons', 'synthesis']) {
+    // v5 wiki layout: daily journal + lesson subfolders. writePage() still
+    // accepts any relative path, so legacy pages keep working.
+    for (const sub of [
+      '',
+      'daily',
+      'lessons',
+      'lessons/clients',
+      'lessons/process',
+      'lessons/system',
+    ]) {
       const dir = join(this.wikiPath, sub);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     }
