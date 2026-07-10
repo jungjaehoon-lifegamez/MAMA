@@ -7,9 +7,11 @@
  */
 
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 import { createApiServer } from '../../api/index.js';
 import type { ApiServer } from '../../api/index.js';
+import { createPersistentReportStore } from '../../api/report-persistence.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
 import {
   createContextCompileService,
@@ -114,6 +116,11 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
   const apiServer = createApiServer({
     scheduler,
     port: API_PORT,
+    // Daemon runtime is the ONLY place the persistent store is wired; the
+    // in-memory default keeps test call sites off the real ~/.mama.
+    reportStore: createPersistentReportStore({
+      filePath: join(homedir(), '.mama', 'report-slots.json'),
+    }),
     db,
     memoryDb: memoryDb as unknown as SQLiteDatabase,
     memoryAdapter: mamaCoreAdapter,
