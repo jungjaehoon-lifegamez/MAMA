@@ -415,20 +415,35 @@ This saves resources. Only publish when there is genuinely new information to re
     obsWriter.ensureDirectories();
     routesLogger.debug(`[Wiki Agent] Persona ensured, vault: ${obsWriter.getWikiPath()}`);
 
-    // Wire Obsidian vault path for CLI tool
+    // Wire Obsidian vault path for CLI tool. The wiki directory itself is what
+    // gets registered as an Obsidian vault (agent-facing paths like daily/... are
+    // relative to it), so the CLI vault name is the wiki path's basename.
     const fullWikiPath = obsWriter.getWikiPath();
-    toolExecutor.setObsidianVaultPath(fullWikiPath);
-    routesLogger.debug(`[Wiki Agent] Obsidian CLI vault: ${fullWikiPath}`);
+    const obsidianVaultName = path.basename(fullWikiPath);
+    toolExecutor.setObsidianVaultPath(fullWikiPath, obsidianVaultName);
+    routesLogger.debug(
+      `[Wiki Agent] Obsidian CLI vault: ${fullWikiPath} (vault=${obsidianVaultName})`
+    );
 
-    // Ensure Obsidian is running for CLI access (macOS only)
-    try {
-      const { execSync: execSyncChild } = await import('child_process');
-      execSyncChild('pgrep -x Obsidian || open -a Obsidian', {
-        timeout: 5000,
-        stdio: 'ignore',
-      });
-    } catch {
-      /* non-fatal: CLI will return error, agent falls back to wiki_publish */
+    // Ensure Obsidian is running with the wiki vault open (macOS only).
+    // NOTE: obsidian://open?vault= only opens vaults ALREADY registered in
+    // Obsidian; registering the wiki directory as a vault is a one-time manual
+    // setup step. If it is not registered, the CLI reports unavailable and the
+    // agent falls back to wiki_publish (direct file writes still work).
+    if (process.platform === 'darwin') {
+      try {
+        const { execFile: execFileChild } = await import('child_process');
+        execFileChild(
+          'open',
+          [`obsidian://open?vault=${encodeURIComponent(obsidianVaultName)}`],
+          { timeout: 5000 },
+          () => {
+            /* non-fatal: CLI will return error, agent falls back to wiki_publish */
+          }
+        );
+      } catch {
+        /* non-fatal */
+      }
     }
 
     // Wire wiki_publish tool to shared gateway executor (used by code-act path)
@@ -465,7 +480,7 @@ This saves resources. Only publish when there is genuinely new information to re
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 30).
 3. If NO substantive decisions exist since the last wiki compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
-4. If new substantive decisions exist → use obsidian("search") to check existing pages, then update or create pages as needed. Clean up duplicates.
+4. If new substantive material exists -> follow your persona: APPEND today's daily note (daily/YYYY-MM-DD.md, create with the section skeleton on first write of the day), then promote qualifying lesson candidates into lessons/ pages (search before create; update, never duplicate). Do NOT write per-task status pages.
 5. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
 
 This saves resources. Only compile when there is genuinely new information to document.`;

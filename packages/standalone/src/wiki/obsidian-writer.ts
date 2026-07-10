@@ -114,18 +114,22 @@ export class ObsidianWriter {
   }
 
   ensureDirectories(): void {
-    for (const sub of ['', 'projects', 'lessons', 'synthesis']) {
+    // v5 wiki layout: daily journal + lesson subfolders. writePage() still
+    // accepts any relative path, so legacy pages keep working.
+    for (const sub of [
+      '',
+      'daily',
+      'lessons',
+      'lessons/clients',
+      'lessons/process',
+      'lessons/system',
+    ]) {
       const dir = join(this.wikiPath, sub);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     }
-    const indexPath = join(this.wikiPath, 'index.md');
-    if (!existsSync(indexPath)) {
-      writeFileSync(indexPath, '# Wiki Index\n\nAuto-compiled by MAMA.\n\n## Pages\n\n', 'utf8');
-    }
-    const logPath = join(this.wikiPath, 'log.md');
-    if (!existsSync(logPath)) {
-      writeFileSync(logPath, '# Compilation Log\n\n', 'utf8');
-    }
+    // index.md/log.md are NOT bootstrapped here: in the v5 layout the agent owns
+    // the root (Home.md). updateIndex()/appendLog() create them on demand when
+    // the wiki_publish fallback path is actually used.
   }
 
   writePage(page: WikiPage): string {
