@@ -130,17 +130,15 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     onHeartbeat: async (prompt) => {
       try {
         const result = await agentLoop.run(prompt);
-        // Capture agent's text response and use it as the briefing slot
-        const { broadcastReportUpdate: broadcast } = await import('../../api/report-handler.js');
+        // Capture agent's text response and use it as the briefing slot,
+        // through the same single write path the report_publish tool uses.
+        const { createReportPublisher } = await import('../../api/report-handler.js');
         const agentText = result?.response || '';
         if (agentText.length > 50 && apiServer.reportStore) {
           // Wrap agent's analysis in styled HTML
           const briefingHtml = `<div style="font-family:Nunito,sans-serif;font-size:13px;color:#1A1A1A;line-height:1.6">${agentText.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</div>`;
-          apiServer.reportStore.update('briefing', briefingHtml, 0);
-          broadcast(apiServer.reportSseClients, {
-            slots: apiServer.reportStore.getAllSorted(),
-          });
-          console.log(`[Report] Agent briefing published (${agentText.length} chars)`);
+          const publish = createReportPublisher(apiServer.reportStore, apiServer.reportSseClients);
+          publish({ briefing: briefingHtml });
         }
         return { success: true };
       } catch (error) {

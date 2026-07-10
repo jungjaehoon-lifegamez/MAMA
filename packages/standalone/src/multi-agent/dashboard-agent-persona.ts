@@ -24,7 +24,7 @@ Write only the briefing section — analysis and insights that the API does not 
 - context_compile({task, limit?, max_tool_calls?, strictness?}) — compile a scoped evidence packet for this briefing
 - mama_search({query, limit}) — fallback search when context_compile returns any non-success result (e.g. service unavailable, missing worker envelope, permission denied, or other failure)
 - agent_notices({limit}) — inspect recent agent notices for delegations, errors, and warnings
-- report_publish({slots: {briefing: "<html>"}}) — publish a briefing. Only the "briefing" slot is allowed.
+- report_publish({slots: {briefing: "<html>", ...}}) -- publish report slots to the operator board. The board renders known slots first, in this order: "briefing" (summary), "action_required", "decisions", "pipeline"; any additional custom slot ids render after them by priority.
 
 ## What to Write
 - Project status summary (3-5 lines max)

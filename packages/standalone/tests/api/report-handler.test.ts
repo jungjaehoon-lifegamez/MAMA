@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   createReportStore,
+  createReportPublisher,
   broadcastReportUpdate,
   type ReportStore,
 } from '../../src/api/report-handler.js';
@@ -76,5 +77,56 @@ describe('broadcastReportUpdate', () => {
     expect(written).toHaveLength(2);
     expect(written[0]).toContain('event: report-update');
     expect(written[0]).toContain('"slot":"briefing"');
+  });
+});
+
+describe('createReportPublisher', () => {
+  it('publishes multiple slots and broadcasts one full snapshot', () => {
+    const store = createReportStore();
+    const written: string[] = [];
+    const clients = new Set<{ write: (d: string) => void }>([
+      { write: (d: string) => written.push(d) },
+    ]);
+    const publish = createReportPublisher(
+      store,
+      clients as unknown as Set<import('node:http').ServerResponse>
+    );
+
+    publish({ briefing: '<p>b</p>', action_required: '<p>a</p>' });
+
+    expect(store.get('briefing')?.html).toBe('<p>b</p>');
+    expect(store.get('action_required')?.html).toBe('<p>a</p>');
+    expect(written).toHaveLength(1);
+    expect(written[0]).toContain('"slots"');
+  });
+
+  it('skips an oversized slot loudly and keeps the rest', () => {
+    const store = createReportStore();
+    const publish = createReportPublisher(
+      store,
+      new Set() as unknown as Set<import('node:http').ServerResponse>
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    publish({ ok: '<p>x</p>', huge: 'x'.repeat(70_000) });
+
+    expect(store.get('ok')).toBeDefined();
+    expect(store.get('huge')).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('preserves an existing slot priority on republish', () => {
+    const store = createReportStore();
+    store.update('briefing', '<p>old</p>', 7);
+    const publish = createReportPublisher(
+      store,
+      new Set() as unknown as Set<import('node:http').ServerResponse>
+    );
+
+    publish({ briefing: '<p>new</p>' });
+
+    expect(store.get('briefing')?.html).toBe('<p>new</p>');
+    expect(store.get('briefing')?.priority).toBe(7);
   });
 });
