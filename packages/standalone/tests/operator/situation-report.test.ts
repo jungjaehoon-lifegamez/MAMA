@@ -5,13 +5,29 @@
  * Agent injected (vi.fn) - no real CLI. Synthetic data only.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { SituationReporter, OPERATOR_FULL_REPORT_TAG } from '../../src/operator/situation-report.js';
+import {
+  SituationReporter,
+  OPERATOR_FULL_REPORT_TAG,
+} from '../../src/operator/situation-report.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
-  return { id, channel: 'slack', channelId, userId: 'u1', role: 'user', content, createdAt: id * 100 };
+  return {
+    id,
+    channel: 'slack',
+    channelId,
+    userId: 'u1',
+    role: 'user',
+    content,
+    createdAt: id * 100,
+  };
 }
-function fire(triggerId: string, kind: string, channelId: string, recalled: { topic: string; content: string }[] = []) {
+function fire(
+  triggerId: string,
+  kind: string,
+  channelId: string,
+  recalled: { topic: string; content: string }[] = []
+) {
   return { triggerId, kind, channelId, recalled };
 }
 
@@ -30,13 +46,17 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const askAgent = vi.fn(async () => 'DIGEST: report-trigger fired on slack.');
     const send = vi.fn(async () => {});
     const r = new SituationReporter();
-    r.recordFire(fire('t1', 'weekly_report', 'slack:c1', [{ topic: 'report-cadence', content: 'Fridays' }]));
-    r.recordFire(fire('t1', 'weekly_report', 'slack:c1', [{ topic: 'report-cadence', content: 'Fridays' }]));
+    r.recordFire(
+      fire('t1', 'weekly_report', 'slack:c1', [{ topic: 'report-cadence', content: 'Fridays' }])
+    );
+    r.recordFire(
+      fire('t1', 'weekly_report', 'slack:c1', [{ topic: 'report-cadence', content: 'Fridays' }])
+    );
     r.recordAuthored(1);
     expect(await r.report(askAgent, { send }, 'digest')).toBe(true);
     const prompt = askAgent.mock.calls[0][0] as string;
-    expect(prompt).toContain('weekly_report');  // aggregate fire activity reaches the agent
-    expect(prompt).toContain('report-cadence');  // recalled memory reaches the agent
+    expect(prompt).toContain('weekly_report'); // aggregate fire activity reaches the agent
+    expect(prompt).toContain('report-cadence'); // recalled memory reaches the agent
     expect(send).toHaveBeenCalledWith('DIGEST: report-trigger fired on slack.');
     expect(await r.report(askAgent, { send }, 'digest')).toBe(false); // buffer cleared
     expect(send).toHaveBeenCalledTimes(1);
@@ -53,7 +73,9 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
 
   it('send failure propagates loudly (no-fallback), buffer preserved for retry', async () => {
     const askAgent = vi.fn(async () => 'digest');
-    const send = vi.fn(async () => { throw new Error('telegram down'); });
+    const send = vi.fn(async () => {
+      throw new Error('telegram down');
+    });
     const r = new SituationReporter();
     r.recordFire(fire('t1', 'k', 'c'));
     await expect(r.report(askAgent, { send }, 'digest')).rejects.toThrow('telegram down');
@@ -67,7 +89,11 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const askAgent = vi.fn(async () => 'situation');
     const send = vi.fn(async () => {});
     const r = new SituationReporter();
-    r.recordWindow([ev(1, 'slack:a', 'deploy is failing again'), ev(2, 'slack:b', 'lunch?'), ev(3, 'slack:a', 'still failing')]);
+    r.recordWindow([
+      ev(1, 'slack:a', 'deploy is failing again'),
+      ev(2, 'slack:b', 'lunch?'),
+      ev(3, 'slack:a', 'still failing'),
+    ]);
     expect(r.hasActivity()).toBe(true);
     expect(await r.report(askAgent, { send }, 'full')).toBe(true);
     const prompt = askAgent.mock.calls[0][0] as string;
@@ -87,10 +113,10 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     }
     await r.report(askAgent, { send }, 'full');
     const prompt = askAgent.mock.calls[0][0] as string;
-    expect(prompt).toContain('slack:a: 20 msg');   // exact count
-    expect(prompt).toContain('mark_020_');          // last excerpt kept
-    expect(prompt).not.toContain('mark_001_');      // early excerpts dropped (last-K only)
-    expect(prompt).not.toContain('y'.repeat(200));  // each excerpt truncated
+    expect(prompt).toContain('slack:a: 20 msg'); // exact count
+    expect(prompt).toContain('mark_020_'); // last excerpt kept
+    expect(prompt).not.toContain('mark_001_'); // early excerpts dropped (last-K only)
+    expect(prompt).not.toContain('y'.repeat(200)); // each excerpt truncated
   });
 
   it('digest keeps the NOTHING option (noise-only bar); full is a DUTY report without it (M2.1)', () => {
@@ -122,11 +148,30 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(plain.buildPrompt('full')).not.toContain('primary source');
   });
 
+  it('full mode injects board publish lines when configured; digest never does', () => {
+    const r = new SituationReporter({
+      boardPublishLines: ['BOARD: call report_publish with all four slots'],
+    });
+    r.recordWindow([ev(1, 'slack:a', 'hi')]);
+    expect(r.buildPrompt('full')).toContain('BOARD: call report_publish with all four slots');
+    expect(r.buildPrompt('digest')).not.toContain('report_publish');
+    // without the option nothing board-related is injected
+    const plain = new SituationReporter();
+    plain.recordWindow([ev(1, 'slack:a', 'hi')]);
+    expect(plain.buildPrompt('full')).not.toContain('report_publish');
+  });
+
   it('full mode fixes the report skeleton: 5 generic sections, owner language (M2.2)', () => {
     const r = new SituationReporter();
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full');
-    for (const section of ['Key situation', 'Action required', 'Decisions needed', 'Pipeline', 'Next actions']) {
+    for (const section of [
+      'Key situation',
+      'Action required',
+      'Decisions needed',
+      'Pipeline',
+      'Next actions',
+    ]) {
       expect(full).toContain(section);
     }
     expect(r.buildPrompt('digest')).not.toContain('Key situation'); // digest stays free-form short
@@ -150,7 +195,7 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     }
     const prompt = r.buildPrompt('full');
     expect(prompt).toContain('more channel(s)'); // collapsed tail
-    expect(prompt).toContain('ch:19');           // busiest channel shown
+    expect(prompt).toContain('ch:19'); // busiest channel shown
   });
 
   it('full self-gather teaches the tool_call protocol and forbids native gathering (M3 GAP1)', () => {
@@ -159,12 +204,12 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     });
     r.recordWindow([ev(1, 'slack:a', 'hi')]);
     const full = r.buildPrompt('full');
-    expect(full).toContain(OPERATOR_FULL_REPORT_TAG);            // machine frame tag present
-    expect(full).toContain('```tool_call');                     // protocol block shown
-    expect(full).toContain('"name":');                          // JSON block shape shown
-    expect(full).toMatch(/Do NOT read log files/i);             // anti-native directive
+    expect(full).toContain(OPERATOR_FULL_REPORT_TAG); // machine frame tag present
+    expect(full).toContain('```tool_call'); // protocol block shown
+    expect(full).toContain('"name":'); // JSON block shape shown
+    expect(full).toMatch(/Do NOT read log files/i); // anti-native directive
     expect(full).toContain('kagemusha_tasks({status:"needs_review"}) for the board'); // raw line kept
-    expect(full).toContain('primary source');                   // window is only a hint
+    expect(full).toContain('primary source'); // window is only a hint
     // digest stays protocol-free and tag-free
     const digest = r.buildPrompt('digest');
     expect(digest).not.toContain('```tool_call');

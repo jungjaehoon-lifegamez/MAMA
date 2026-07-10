@@ -1333,10 +1333,11 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET / - redirect to /viewer
+    // Route: GET / - redirect to the operator board (M7 phase 2: /ui is the
+    // default face; the legacy viewer stays reachable at /viewer)
     if (pathname === '/' && req.method === 'GET') {
-      console.log('[GraphHandler] Redirecting / to /viewer');
-      res.writeHead(302, { Location: '/viewer' });
+      console.log('[GraphHandler] Redirecting / to /ui');
+      res.writeHead(302, { Location: '/ui' });
       res.end();
       return true;
     }

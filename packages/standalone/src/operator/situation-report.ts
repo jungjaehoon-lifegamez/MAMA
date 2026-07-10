@@ -62,6 +62,13 @@ export interface SituationReporterOptions {
    * module stays generic. Digest mode never uses them (frequent + must stay light).
    */
   selfGatherLines?: string[];
+  /**
+   * Kagemusha dual-output mechanism: lines instructing the FULL report run to also
+   * publish the operator board slots (report_publish) before writing the text
+   * report. Injected from runtime wiring (board-slot-instructions.ts); digest mode
+   * never publishes the board.
+   */
+  boardPublishLines?: string[];
 }
 
 export class SituationReporter {
@@ -96,8 +103,12 @@ export class SituationReporter {
   /** Fold one fire into the aggregate; merge the memory it recalled (agent-query-driven). */
   recordFire(activity: FireActivity): void {
     const key = `${activity.triggerId}|${activity.channelId}`;
-    const agg =
-      this.fireAgg.get(key) ?? { kind: activity.kind, channelId: activity.channelId, count: 0, topics: new Set<string>() };
+    const agg = this.fireAgg.get(key) ?? {
+      kind: activity.kind,
+      channelId: activity.channelId,
+      count: 0,
+      topics: new Set<string>(),
+    };
     agg.count += 1;
     for (const r of activity.recalled) {
       agg.topics.add(r.topic);
@@ -121,7 +132,11 @@ export class SituationReporter {
    * Agent composes the report from the aggregate; sink delivers it. Returns true if a report was
    * sent, false if there was nothing to say or the agent suppressed it (NOTHING).
    */
-  async report(askAgent: AskAgent, output: Pick<OutputSink, 'send'>, mode: ReportMode): Promise<boolean> {
+  async report(
+    askAgent: AskAgent,
+    output: Pick<OutputSink, 'send'>,
+    mode: ReportMode
+  ): Promise<boolean> {
     // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
     if (mode !== 'full' && !this.hasActivity()) return false;
@@ -150,17 +165,23 @@ export class SituationReporter {
     const channels = [...this.windowByChannel.entries()].sort((a, b) => b[1].count - a[1].count);
     const shown = channels.slice(0, MAX_CHANNELS_IN_PROMPT);
     const windowLines = shown.map(
-      ([channelId, w]) => `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.join(' | ') || '(none)'}`
+      ([channelId, w]) =>
+        `- ${channelId}: ${w.count} msg(s); recent: ${w.excerpts.join(' | ') || '(none)'}`
     );
     if (channels.length > shown.length) {
       const restCount = channels.slice(shown.length).reduce((n, [, w]) => n + w.count, 0);
-      windowLines.push(`- (+${channels.length - shown.length} more channel(s), ${restCount} msg(s))`);
+      windowLines.push(
+        `- (+${channels.length - shown.length} more channel(s), ${restCount} msg(s))`
+      );
     }
 
     const fireLines = [...this.fireAgg.values()].map(
-      (f) => `- trigger "${f.kind}" fired ${f.count}x on ${f.channelId}; recalled: ${[...f.topics].join(', ') || '(none)'}`
+      (f) =>
+        `- trigger "${f.kind}" fired ${f.count}x on ${f.channelId}; recalled: ${[...f.topics].join(', ') || '(none)'}`
     );
-    const memoryLines = [...this.recalled.entries()].map(([topic, content]) => `- ${topic}: ${content}`);
+    const memoryLines = [...this.recalled.entries()].map(
+      ([topic, content]) => `- ${topic}: ${content}`
+    );
 
     // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
     // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
@@ -174,7 +195,7 @@ export class SituationReporter {
             "what recurred, what is new, and what needs the owner's attention. Plain language, no",
             'markdown tables. This scheduled report must ALWAYS arrive: if the window was quiet,',
             'say so in one or two lines instead of skipping.',
-            'Structure the report with these sections (render the headings in the owner\'s language;',
+            "Structure the report with these sections (render the headings in the owner's language;",
             'omit a section only when it is truly empty):',
             '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
             ...(this.opts.selfGatherLines && this.opts.selfGatherLines.length > 0
@@ -202,6 +223,9 @@ export class SituationReporter {
                   '"decision", with topic, decision, reasoning). Only save when it is genuinely',
                   'durable; skip the save otherwise. This is your judgement, not a requirement.',
                 ]
+              : []),
+            ...(this.opts.boardPublishLines && this.opts.boardPublishLines.length > 0
+              ? ['', ...this.opts.boardPublishLines]
               : []),
           ]
         : [
