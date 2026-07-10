@@ -505,8 +505,10 @@ export class GatewayToolExecutor {
   private wikiPublisher: WikiPagePublisher | null = null;
   private wikiPublishAdapter: WikiPublishAdapter | null = null;
   private obsidianVaultPath: string | null = null;
-  setObsidianVaultPath(vaultPath: string): void {
+  private obsidianVaultName: string | null = null;
+  setObsidianVaultPath(vaultPath: string, vaultName?: string): void {
     this.obsidianVaultPath = vaultPath;
+    this.obsidianVaultName = vaultName ?? null;
   }
   private agentEventBus: AgentEventBus | null = null;
   setAgentEventBus(bus: AgentEventBus): void {
@@ -3656,8 +3658,12 @@ export class GatewayToolExecutor {
     }
 
     // Obsidian CLI syntax: obsidian <command> key=value ... [flags]
-    // Vault is not passed as path — Obsidian uses the default/focused vault
+    // Without vault=<name> the CLI targets the FOCUSED vault, so wiki writes
+    // could land in whatever vault the owner has open. Pin it when configured.
     const cliArgs = [command];
+    if (this.obsidianVaultName) {
+      cliArgs.push(`vault=${this.obsidianVaultName}`);
+    }
     for (const [key, value] of Object.entries(args || {})) {
       if (value === 'true' && ['silent', 'overwrite', 'total'].includes(key)) {
         cliArgs.push(key);
