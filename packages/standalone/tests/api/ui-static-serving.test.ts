@@ -111,4 +111,10 @@ describe('/ui static serving', () => {
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toContain('text/html');
   });
+
+  it('redirects / to the operator board (the board is the default face)', async () => {
+    const res = await requestGraph('/');
+    expect(res.status).toBe(302);
+    expect(res.headers['location']).toBe('/ui');
+  });
 });
