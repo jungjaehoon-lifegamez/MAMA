@@ -17,6 +17,20 @@ import type { ReportSlot, ReportStore } from './report-handler.js';
 
 const WRITE_DEBOUNCE_MS = 250;
 
+// One process-exit hook flushes every store's pending debounced write, so a
+// publish landing right before a graceful stop (SIGTERM path) is not lost.
+// SIGKILL restarts still lose the window -- unavoidable, and self-healing on
+// the next publish.
+const pendingExitFlushes = new Set<() => void>();
+let exitHookInstalled = false;
+function installExitHook(): void {
+  if (exitHookInstalled) return;
+  exitHookInstalled = true;
+  process.on('exit', () => {
+    for (const flush of pendingExitFlushes) flush();
+  });
+}
+
 export function createPersistentReportStore(opts: { filePath: string }): ReportStore {
   const slots = new Map<string, ReportSlot>();
 
@@ -33,16 +47,29 @@ export function createPersistentReportStore(opts: { filePath: string }): ReportS
   }
 
   let writeTimer: ReturnType<typeof setTimeout> | null = null;
+  const writeSnapshot = (): void => {
+    try {
+      mkdirSync(dirname(opts.filePath), { recursive: true });
+      writeFileSync(opts.filePath, JSON.stringify(Object.fromEntries(slots)), 'utf-8');
+    } catch (err) {
+      console.warn(`[Report] failed to persist slots to ${opts.filePath}:`, err);
+    }
+  };
+
+  const flushPending = (): void => {
+    if (!writeTimer) return;
+    clearTimeout(writeTimer);
+    writeTimer = null;
+    writeSnapshot();
+  };
+  installExitHook();
+  pendingExitFlushes.add(flushPending);
+
   const scheduleWrite = (): void => {
     if (writeTimer) clearTimeout(writeTimer);
     writeTimer = setTimeout(() => {
       writeTimer = null;
-      try {
-        mkdirSync(dirname(opts.filePath), { recursive: true });
-        writeFileSync(opts.filePath, JSON.stringify(Object.fromEntries(slots)), 'utf-8');
-      } catch (err) {
-        console.warn(`[Report] failed to persist slots to ${opts.filePath}:`, err);
-      }
+      writeSnapshot();
     }, WRITE_DEBOUNCE_MS);
     // Never keep the daemon alive just to flush a board snapshot.
     writeTimer.unref?.();
