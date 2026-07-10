@@ -426,15 +426,20 @@ This saves resources. Only publish when there is genuinely new information to re
     );
 
     // Ensure Obsidian is running with the wiki vault open (macOS only)
-    try {
-      const { execFileSync: execFileSyncChild } = await import('child_process');
-      execFileSyncChild(
-        'open',
-        [`obsidian://open?vault=${encodeURIComponent(obsidianVaultName)}`],
-        { timeout: 5000, stdio: 'ignore' }
-      );
-    } catch {
-      /* non-fatal: CLI will return error, agent falls back to wiki_publish */
+    if (process.platform === 'darwin') {
+      try {
+        const { execFile: execFileChild } = await import('child_process');
+        execFileChild(
+          'open',
+          [`obsidian://open?vault=${encodeURIComponent(obsidianVaultName)}`],
+          { timeout: 5000 },
+          () => {
+            /* non-fatal: CLI will return error, agent falls back to wiki_publish */
+          }
+        );
+      } catch {
+        /* non-fatal */
+      }
     }
 
     // Wire wiki_publish tool to shared gateway executor (used by code-act path)
