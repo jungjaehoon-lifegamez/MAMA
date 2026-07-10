@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -p tsconfig.json --noEmit && vite build"
+    "bundle": "tsc -p tsconfig.json --noEmit && vite build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.80.7",
