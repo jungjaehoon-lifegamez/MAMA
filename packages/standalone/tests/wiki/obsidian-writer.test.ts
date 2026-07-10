@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -19,10 +19,16 @@ describe('ObsidianWriter', () => {
     rmSync(tempDir, { recursive: true, force: true });
   });
 
-  it('creates wiki directory if not exists', () => {
+  it('creates the v5 wiki layout without bootstrapping root index/log files', () => {
     const writer = new ObsidianWriter(tempDir, 'wiki');
     writer.ensureDirectories();
-    expect(readFileSync(join(wikiDir, 'index.md'), 'utf8')).toContain('# Wiki Index');
+    for (const sub of ['daily', 'lessons/clients', 'lessons/process', 'lessons/system']) {
+      expect(existsSync(join(wikiDir, sub))).toBe(true);
+    }
+    // The agent owns the vault root (Home.md); index.md/log.md appear on demand
+    // only when the wiki_publish fallback writes them.
+    expect(existsSync(join(wikiDir, 'index.md'))).toBe(false);
+    expect(existsSync(join(wikiDir, 'log.md'))).toBe(false);
   });
 
   it('writes a page with frontmatter', () => {

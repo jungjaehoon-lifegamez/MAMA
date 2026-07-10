@@ -425,7 +425,11 @@ This saves resources. Only publish when there is genuinely new information to re
       `[Wiki Agent] Obsidian CLI vault: ${fullWikiPath} (vault=${obsidianVaultName})`
     );
 
-    // Ensure Obsidian is running with the wiki vault open (macOS only)
+    // Ensure Obsidian is running with the wiki vault open (macOS only).
+    // NOTE: obsidian://open?vault= only opens vaults ALREADY registered in
+    // Obsidian; registering the wiki directory as a vault is a one-time manual
+    // setup step. If it is not registered, the CLI reports unavailable and the
+    // agent falls back to wiki_publish (direct file writes still work).
     if (process.platform === 'darwin') {
       try {
         const { execFile: execFileChild } = await import('child_process');
