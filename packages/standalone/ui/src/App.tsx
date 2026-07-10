@@ -1,12 +1,15 @@
 import { Routes, Route } from 'react-router-dom';
+import Layout from './components/Layout';
+import Board from './pages/Board';
+import Triggers from './pages/Triggers';
 
 export default function App() {
   return (
     <Routes>
-      <Route
-        index
-        element={<div className="p-4 text-text">MAMA Operator -- walking skeleton</div>}
-      />
+      <Route element={<Layout />}>
+        <Route index element={<Board />} />
+        <Route path="triggers" element={<Triggers />} />
+      </Route>
     </Routes>
   );
 }
