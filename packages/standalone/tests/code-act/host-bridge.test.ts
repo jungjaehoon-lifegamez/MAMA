@@ -72,6 +72,24 @@ describe('HostBridge', () => {
       expect(t3Names).not.toContain('Write');
     });
 
+    it('kagemusha query tools are read-only: available at tier 2 AND tier 3', () => {
+      // The dashboard agent (tier 2) reads real task lifecycle state through these;
+      // they are pure queries against the kagemusha bridge db, so tier 3 gets them too.
+      const bridge = new HostBridge(makeExecutor());
+      const queryTools = [
+        'kagemusha_overview',
+        'kagemusha_entities',
+        'kagemusha_tasks',
+        'kagemusha_messages',
+      ];
+      for (const tier of [2, 3] as const) {
+        const names = bridge.getAvailableFunctions(tier).map((f) => f.name);
+        for (const tool of queryTools) {
+          expect(names, `tier ${tier} should expose ${tool}`).toContain(tool);
+        }
+      }
+    });
+
     it('returns FunctionDescriptor shape', () => {
       const bridge = new HostBridge(makeExecutor());
       const [fn] = bridge.getAvailableFunctions(1);
