@@ -41,3 +41,126 @@ body {
   background-color: var(--color-bg);
   color: var(--color-text);
 }
+
+/* -- Board slot vocabulary -----------------------------------------------
+ * Agent-authored slot HTML uses these classes (single source of truth for
+ * the writing side: src/operator/board-slot-instructions.ts). Agents write
+ * structure; the board owns the look. */
+
+.report-summary {
+  margin-bottom: 12px;
+}
+.summary-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+.summary-stats {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.stat-highlight {
+  color: var(--color-agent);
+  font-weight: 700;
+}
+
+.report-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 4px 0 10px;
+}
+
+.report-card {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  margin-bottom: 8px;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.badge-danger {
+  color: var(--color-danger);
+  background: color-mix(in srgb, var(--color-danger) 12%, transparent);
+}
+.badge-warning {
+  color: color-mix(in srgb, var(--color-warning) 70%, black);
+  background: color-mix(in srgb, var(--color-warning) 16%, transparent);
+}
+.badge-info {
+  color: var(--color-agent);
+  background: var(--color-agent-light);
+}
+.badge-success {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+}
+.card-tags {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tag {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--color-surface-secondary);
+  color: var(--color-text-tertiary);
+}
+.tag-channel {
+  background: var(--color-agent-light);
+  color: var(--color-agent);
+}
+.card-action {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.card-action::before {
+  content: '\2192  ';
+  color: var(--color-agent);
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.report-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+.report-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+.report-table tr:last-child td {
+  border-bottom: none;
+}

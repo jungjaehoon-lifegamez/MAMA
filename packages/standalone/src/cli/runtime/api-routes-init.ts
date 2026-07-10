@@ -339,7 +339,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 20).
 3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
-4. If new substantive information exists → analyze it, write a new briefing, and publish via report_publish in the "briefing" slot.
+4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona.
 5. Do NOT call mama_save for the briefing; report_publish and agent_activity are the durable operational record.
 
 This saves resources. Only publish when there is genuinely new information to report.`;

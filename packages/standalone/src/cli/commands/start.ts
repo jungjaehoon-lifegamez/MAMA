@@ -1084,6 +1084,7 @@ export async function runAgentLoop(
       const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } =
         await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
+      const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
 
       const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
       mkdirSync(dirname(triggerDbPath), { recursive: true });
@@ -1192,6 +1193,9 @@ export async function runAgentLoop(
           'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
           'mama_recall(query) for memory relevant to what you find',
         ],
+        // Kagemusha dual output: the same scheduled run updates the /ui operator board
+        // slots via report_publish, then writes the plain-text owner report.
+        fullReportBoardLines: buildBoardPublishLines(),
         config: {
           tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
           drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),

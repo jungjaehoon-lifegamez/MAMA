@@ -14,7 +14,11 @@
  * injected so the pipeline is unit-testable.
  */
 
-import type { OperatorChannelEvent, OperatorMemoryPort, OutputSink } from './operator-interfaces.js';
+import type {
+  OperatorChannelEvent,
+  OperatorMemoryPort,
+  OutputSink,
+} from './operator-interfaces.js';
 import type { TriggerRecord } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
 import { matchTriggers } from './trigger-matcher.js';
@@ -66,6 +70,8 @@ export interface TriggerLoopDeps {
   reportScheduler?: ReportSchedule;
   /** M2.3: tool-call instructions for the FULL report so the agent self-gathers context. */
   fullReportSelfGather?: string[];
+  /** Kagemusha dual output: FULL report also publishes the operator board slots. */
+  fullReportBoardLines?: string[];
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -91,7 +97,10 @@ export class OperatorTriggerLoop {
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
-    this.fullReporter = new SituationReporter({ selfGatherLines: deps.fullReportSelfGather });
+    this.fullReporter = new SituationReporter({
+      selfGatherLines: deps.fullReportSelfGather,
+      boardPublishLines: deps.fullReportBoardLines,
+    });
   }
 
   async tick(): Promise<TickResult> {
@@ -200,7 +209,9 @@ export class OperatorTriggerLoop {
       if (fire) {
         fullReported = await this.fullReporter.report(reportAsk, output, 'full');
         reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
-        log(`[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`);
+        log(
+          `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
+        );
       }
     }
 
@@ -229,7 +240,9 @@ export class OperatorTriggerLoop {
     this.nudgeTimer = setTimeout(() => {
       this.nudgeTimer = null;
       if (this.running) {
-        this.deps.log('[trigger-loop] nudge: tick already running - skipped (deltas wait for next tick)');
+        this.deps.log(
+          '[trigger-loop] nudge: tick already running - skipped (deltas wait for next tick)'
+        );
         return;
       }
       this.running = true;
@@ -261,7 +274,9 @@ export class OperatorTriggerLoop {
       this.running = true;
       void this.tick()
         .catch((error: unknown) => {
-          log(`[trigger-loop] tick failed: ${error instanceof Error ? error.message : String(error)}`);
+          log(
+            `[trigger-loop] tick failed: ${error instanceof Error ? error.message : String(error)}`
+          );
         })
         .finally(() => {
           this.running = false;
