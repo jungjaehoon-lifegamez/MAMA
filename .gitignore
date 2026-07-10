@@ -110,3 +110,4 @@ packages/standalone/bench/results/*.json
 
 # PII patterns (local only, never commit)
 .pii-patterns
+/packages/standalone/public/ui/
