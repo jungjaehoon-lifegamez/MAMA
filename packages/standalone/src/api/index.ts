@@ -25,6 +25,7 @@ import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
 import { createSecurityMiddleware } from '../security/security-monitor.js';
 import { createReportRouter, createReportStore } from './report-handler.js';
+import { createOperatorRouter } from './operator-handler.js';
 import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
@@ -231,6 +232,12 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
+  // Lazy-opening router: touches ~/.mama/operator/triggers.db only on first
+  // /api/operator request, so createApiServer stays side-effect-free for tests.
+  app.use(
+    '/api/operator',
+    createOperatorRouter({ dbPath: join(homedir(), '.mama', 'operator', 'triggers.db') })
+  );
 
   if (memoryDb) {
     app.use(
