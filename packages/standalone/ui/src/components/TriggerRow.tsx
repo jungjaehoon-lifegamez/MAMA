@@ -32,7 +32,7 @@ export default function TriggerRow({
           <p className="text-[11px] text-text-tertiary">
             fired {trigger.fired} / ok {trigger.succeeded} / fail {trigger.failed} /{' '}
             {trigger.authoredBy} /{' '}
-            {new Date(trigger.createdAt).toLocaleDateString('ko-KR', {
+            {new Date(trigger.createdAt).toLocaleDateString(undefined, {
               month: 'short',
               day: 'numeric',
             })}

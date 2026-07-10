@@ -96,7 +96,7 @@ export default function Board() {
           <h1 className="text-base font-semibold text-text">Operator Board</h1>
           {lastUpdate && (
             <span className="text-[10px] text-text-tertiary">
-              {new Date(lastUpdate).toLocaleTimeString('ko-KR', {
+              {new Date(lastUpdate).toLocaleTimeString(undefined, {
                 hour: '2-digit',
                 minute: '2-digit',
               })}{' '}
