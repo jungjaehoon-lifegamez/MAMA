@@ -654,6 +654,10 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'mama_ingest',
   'report_publish',
   'wiki_publish',
+  // The Obsidian CLI is the tier-2 wiki agent's primary write path; without it
+  // the code-act sandbox never injects the function and every run silently
+  // degrades to the wiki_publish fallback.
+  'obsidian',
 ]);
 
 export class HostBridge {

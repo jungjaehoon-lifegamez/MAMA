@@ -8,10 +8,12 @@ describe('Wiki types', () => {
     expect(WIKI_PAGE_TYPES).toContain('lesson');
     expect(WIKI_PAGE_TYPES).toContain('synthesis');
     expect(WIKI_PAGE_TYPES).toContain('process');
+    expect(WIKI_PAGE_TYPES).toContain('daily');
   });
 
   it('validates page types', () => {
     expect(isValidPageType('entity')).toBe(true);
+    expect(isValidPageType('daily')).toBe(true);
     expect(isValidPageType('garbage')).toBe(false);
   });
 

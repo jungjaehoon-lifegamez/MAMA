@@ -1,4 +1,4 @@
-export const WIKI_PAGE_TYPES = ['entity', 'lesson', 'synthesis', 'process'] as const;
+export const WIKI_PAGE_TYPES = ['entity', 'lesson', 'synthesis', 'process', 'daily'] as const;
 export type WikiPageType = (typeof WIKI_PAGE_TYPES)[number];
 
 export function isValidPageType(type: string): type is WikiPageType {

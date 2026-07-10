@@ -92,7 +92,10 @@ create or update pages that mirror per-task progress ("X is in_progress").
 
 ## Fallback
 If obsidian() calls fail with "CLI unavailable", use wiki_publish for the same
-pages (path = the same relative path, e.g. "daily/2026-07-10.md").`;
+pages (path = the same relative path, e.g. "daily/2026-07-10.md").
+wiki_publish page type must be one of: entity, lesson, synthesis, process, daily.
+Use type "daily" for daily notes and "lesson" for lesson pages; do not probe
+other type values or create throwaway test pages.`;
 
 /**
  * Ensure persona file exists at ~/.mama/personas/wiki.md
