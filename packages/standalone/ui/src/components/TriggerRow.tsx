@@ -21,7 +21,10 @@ export default function TriggerRow({
       className={`px-4 py-3 border-b border-border last:border-b-0 ${disabled ? 'opacity-60' : ''}`}
     >
       <div className="flex items-center gap-3">
-        <span className="text-[11px] px-2 py-0.5 rounded-full bg-agent-light text-agent font-medium shrink-0">
+        <span
+          className="text-[11px] px-2 py-0.5 rounded-full bg-agent-light text-agent font-medium max-w-[40%] truncate"
+          title={trigger.kind}
+        >
           {trigger.kind}
         </span>
         <div className="flex-1 min-w-0">
