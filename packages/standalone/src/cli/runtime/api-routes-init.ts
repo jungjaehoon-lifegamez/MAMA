@@ -314,27 +314,17 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
   }
 
+  // report_publish is a core surface (feeds the /ui operator board), not a
+  // multi-agent feature: wire it unconditionally. All slot ids are accepted;
+  // size/count caps and loud logging live in createReportPublisher.
+  {
+    const { createReportPublisher } = await import('../../api/report-handler.js');
+    toolExecutor.setReportPublisher(
+      createReportPublisher(apiServer.reportStore, apiServer.reportSseClients)
+    );
+  }
+
   if (dashboardAgentConfigured) {
-    const { broadcastReportUpdate } = await import('../../api/report-handler.js');
-
-    // Wire report_publish tool to Dashboard Agent — only briefing slot
-    toolExecutor.setReportPublisher((slots) => {
-      for (const [slotId, html] of Object.entries(slots)) {
-        if (slotId !== 'briefing') continue; // only accept briefing slot
-        apiServer.reportStore.update(slotId, html, 0);
-      }
-      broadcastReportUpdate(apiServer.reportSseClients, {
-        slots: apiServer.reportStore.getAllSorted(),
-      });
-      routesLogger.debug(`[Report] Agent published briefing slot`);
-      eventBus.emit({
-        type: 'agent:action',
-        agent: 'dashboard-agent',
-        action: 'publish',
-        target: 'briefing',
-      });
-    });
-
     // ── Dashboard Agent ───────────────────────────────────────────────
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
     ensureDashboardPersona();
