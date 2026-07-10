@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { randomUUID } from 'node:crypto';
 import { PersistentClaudeProcess } from '../agent/persistent-cli-process.js';
 
 const CRON_SYSTEM_PROMPT = `You are a cron job executor. Execute the given task and return the result.
@@ -54,7 +55,8 @@ export class CronWorker {
   private ensureCLI(): PersistentClaudeProcess {
     if (!this.cli) {
       this.cli = new PersistentClaudeProcess({
-        sessionId: `cron-worker-${Date.now()}`,
+        // Claude CLI validates --session-id as a UUID; anything else fails every run
+        sessionId: randomUUID(),
         model: this.model,
         systemPrompt: this.systemPrompt,
         dangerouslySkipPermissions: true,
