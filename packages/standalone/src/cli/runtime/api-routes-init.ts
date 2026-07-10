@@ -344,33 +344,56 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
 This saves resources. Only publish when there is genuinely new information to report.`;
 
-    const runDashboardAgent = async () => {
+    // Owner-initiated refresh skips the NO_UPDATE delta gate: an explicit
+    // request means "rebuild the board now", not "tell me nothing changed".
+    const forcedDashboardPrompt = dashboardPrompt.replace(
+      /3\. If NO substantive decisions[^\n]*\n/,
+      '3. The owner explicitly requested a fresh board: do NOT reply NO_UPDATE. Rebuild and publish even if nothing changed since the last publish.\n'
+    );
+
+    const doDashboardRun = async (opts?: { force?: boolean }) => {
       const pm = toolExecutor.getAgentProcessManager();
       if (!pm) {
         routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
         return;
       }
       try {
-        routesLogger.debug('[Dashboard Agent] Checking for updates...');
-        const { noUpdate } = await executeValidatedRun('dashboard-agent', dashboardPrompt);
-        if (noUpdate) {
-          routesLogger.debug('[Dashboard Agent] No changes detected, skipped');
-        } else {
-          routesLogger.debug('[Dashboard Agent] Briefing published');
-        }
+        // console.log on run outcomes: the DebugLogger only surfaces warn/error in the
+        // daemon log, and a silent outcome reads as a hang from the outside.
+        console.log(
+          `[Dashboard Agent] run started${opts?.force ? ' (owner-forced, delta gate bypassed)' : ''}`
+        );
+        const { noUpdate } = await executeValidatedRun(
+          'dashboard-agent',
+          opts?.force ? forcedDashboardPrompt : dashboardPrompt
+        );
+        console.log(
+          noUpdate
+            ? '[Dashboard Agent] no changes detected, publish skipped'
+            : '[Dashboard Agent] board published'
+        );
       } catch (err) {
         routesLogger.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
       }
+    };
+
+    // Serialize ALL dashboard runs (boot, interval, manual) on one chain -- the shared
+    // agent process rejects concurrent requests, so unserialized triggers raced into
+    // 'Process is busy' errors (same pattern as CronWorker's executionQueue).
+    let dashboardRunChain: Promise<void> = Promise.resolve();
+    const runDashboardAgent = (opts?: { force?: boolean }): Promise<void> => {
+      dashboardRunChain = dashboardRunChain.then(() => doDashboardRun(opts));
+      return dashboardRunChain;
     };
 
     // First run after 10s (let connectors poll first), then every 30 min
     setTimeout(runDashboardAgent, 10_000);
     setInterval(runDashboardAgent, 30 * 60 * 1000);
 
-    // Manual trigger
+    // Manual trigger (owner-forced: bypasses the delta gate)
     apiServer.app.post('/api/report/agent-refresh', requireAuth, async (_req, res) => {
-      runDashboardAgent().catch(() => {});
-      res.json({ ok: true, message: 'Dashboard agent triggered' });
+      runDashboardAgent({ force: true }).catch(() => {});
+      res.json({ ok: true, message: 'Dashboard agent triggered (forced refresh)' });
     });
   } else {
     routesLogger.debug('[Dashboard Agent] Skipped; dashboard-agent is not configured');
