@@ -382,7 +382,9 @@ This saves resources. Only publish when there is genuinely new information to re
     // 'Process is busy' errors (same pattern as CronWorker's executionQueue).
     let dashboardRunChain: Promise<void> = Promise.resolve();
     const runDashboardAgent = (opts?: { force?: boolean }): Promise<void> => {
-      dashboardRunChain = dashboardRunChain.then(() => doDashboardRun(opts));
+      // Trailing catch keeps one failed link from poisoning every future run:
+      // a rejected chain would silently skip all subsequent .then() links.
+      dashboardRunChain = dashboardRunChain.then(() => doDashboardRun(opts)).catch(() => {});
       return dashboardRunChain;
     };
 
