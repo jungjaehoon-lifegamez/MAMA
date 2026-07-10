@@ -102,6 +102,14 @@ export class TriggerRegistry {
     return rows.map(rowToRecord);
   }
 
+  /** Every trigger regardless of status (owner tray view). id DESC breaks same-ms ties. */
+  listAll(): TriggerRecord[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM operator_triggers ORDER BY created_at DESC, id DESC`)
+      .all() as TriggerRow[];
+    return rows.map(rowToRecord);
+  }
+
   getById(id: string): TriggerRecord | null {
     const row = this.db.prepare(`SELECT * FROM operator_triggers WHERE id = ?`).get(id) as
       | TriggerRow
@@ -166,5 +174,6 @@ function rowToRecord(row: TriggerRow): TriggerRecord {
     updatedAt: row.updated_at,
     provenance: JSON.parse(row.provenance_json),
     stats: { fired: row.fired, succeeded: row.succeeded, failed: row.failed },
+    disabledReason: row.disabled_reason ?? undefined,
   };
 }
