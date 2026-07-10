@@ -106,7 +106,9 @@ const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
 // the MAMA_UI_DIR override works for tests without module-load ordering games.
 function getUiDirectory(): string {
   if (process.env.MAMA_UI_DIR) {
-    return process.env.MAMA_UI_DIR;
+    // resolve() drops trailing slashes; without it the `uiRoot + path.sep`
+    // traversal guard below would 404 every request for '/foo/bar/'-style values.
+    return path.resolve(process.env.MAMA_UI_DIR);
   }
   const candidateDirs = [
     path.join(process.cwd(), 'public', 'ui'),

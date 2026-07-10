@@ -104,4 +104,11 @@ describe('/ui static serving', () => {
     const res = await requestGraph('/ui');
     expect(res.headers['content-security-policy']).toContain("script-src 'self'");
   });
+
+  it('tolerates a trailing slash in MAMA_UI_DIR', async () => {
+    process.env.MAMA_UI_DIR = `${uiDir}/`;
+    const res = await requestGraph('/ui');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('text/html');
+  });
 });
