@@ -1,0 +1,43 @@
+@import 'tailwindcss';
+
+/* MAMA Operator theme tokens -- components must consume ONLY these tokens,
+ * never hardcoded hex in TSX (learning: mama-dual-color-system).
+ * Brand alignment with the legacy palette is a one-token swap on --color-agent. */
+@theme {
+  --color-bg: #f1f1f1;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f7f7f7;
+  --color-surface-selected: #f3f3f3;
+  --color-surface-secondary: #f7f7f7;
+
+  --color-sidebar: #ebebeb;
+  --color-sidebar-hover: #e0e0e0;
+  --color-sidebar-active: #fafafa;
+  --color-sidebar-border: #e3e3e3;
+
+  --color-agent: #6366f1;
+  --color-agent-hover: #4f46e5;
+  --color-agent-light: #eef2ff;
+
+  --color-text: #1a1a1a;
+  --color-text-secondary: #616161;
+  --color-text-tertiary: #8a8a8a;
+  --color-border: #e3e3e3;
+
+  --color-success: #047b5d;
+  --color-warning: #ffb800;
+  --color-danger: #d72c0d;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
