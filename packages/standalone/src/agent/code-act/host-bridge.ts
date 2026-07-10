@@ -636,6 +636,13 @@ export const READ_ONLY_TOOLS = new Set([
   'os_get_config',
   'pr_review_threads',
   'agent_notices',
+  // Kagemusha bridge queries: pure reads of the business-data db. Without these
+  // the tier-2 dashboard agent cannot see real task lifecycle state and falls
+  // back to guessing task status from message archaeology.
+  'kagemusha_overview',
+  'kagemusha_entities',
+  'kagemusha_tasks',
+  'kagemusha_messages',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
