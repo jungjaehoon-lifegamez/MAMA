@@ -464,7 +464,7 @@ This saves resources. Only publish when there is genuinely new information to re
     });
 
     // Wiki trigger via executeValidatedRun
-    const runWikiAgent = async () => {
+    const doWikiRun = async () => {
       if (!toolExecutor.getAgentProcessManager()) {
         routesLogger.warn('[Wiki Agent] AgentProcessManager not available yet');
         return;
@@ -496,6 +496,16 @@ This saves resources. Only compile when there is genuinely new information to do
       } catch (err) {
         routesLogger.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
       }
+    };
+
+    // Serialize ALL wiki runs (boot, event-driven, manual) on one chain -- the
+    // shared agent process rejects concurrent requests, so the boot run and a
+    // manual trigger raced into 'Process is busy' (same pattern as the
+    // dashboard agent's runDashboardAgent chain above).
+    let wikiRunChain: Promise<void> = Promise.resolve();
+    const runWikiAgent = (): Promise<void> => {
+      wikiRunChain = wikiRunChain.then(doWikiRun).catch(() => {});
+      return wikiRunChain;
     };
 
     // Event-driven: compile when extraction completes. Trailing-edge debounce so
