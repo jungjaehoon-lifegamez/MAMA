@@ -1218,8 +1218,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           },
           session: {
             sessionId: 'test-session',
-            channelId: '7026976631',
-            userId: '7026976631',
+            channelId: '5551000001',
+            userId: '5551000001',
             startedAt: new Date(),
           },
           capabilities: ['mama_add'],
@@ -1234,8 +1234,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(mockApi.ingestWithTrustedProvenance).toHaveBeenCalledWith(
           expect.objectContaining({
             scopes: expect.arrayContaining([
-              expect.objectContaining({ kind: 'channel', id: 'telegram:7026976631' }),
-              expect.objectContaining({ kind: 'user', id: '7026976631' }),
+              expect.objectContaining({ kind: 'channel', id: 'telegram:5551000001' }),
+              expect.objectContaining({ kind: 'user', id: '5551000001' }),
             ]),
           }),
           expect.objectContaining({
@@ -1267,8 +1267,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           },
           session: {
             sessionId: 'test-session',
-            channelId: '7026976631',
-            userId: '7026976631',
+            channelId: '5551000001',
+            userId: '5551000001',
             startedAt: new Date(),
           },
           capabilities: ['mama_add'],

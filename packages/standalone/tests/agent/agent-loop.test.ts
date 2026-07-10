@@ -171,8 +171,8 @@ describe('AgentLoop', () => {
     },
     session: {
       sessionId: 'telegram:session',
-      channelId: '7026976631',
-      userId: '7026976631',
+      channelId: '5551000001',
+      userId: '5551000001',
       startedAt: new Date(),
     },
     capabilities: ['mama_search', 'mama_recall', 'mama_load_checkpoint', 'Read', 'telegram_send'],
@@ -239,7 +239,7 @@ describe('AgentLoop', () => {
 
       await agentLoop.run('Hello', {
         source: 'telegram',
-        channelId: '7026976631',
+        channelId: '5551000001',
         agentContext: createChatBotContext(),
       });
 
@@ -288,7 +288,7 @@ describe('AgentLoop', () => {
 
       await agentLoop.run('Compile context', {
         source: 'telegram',
-        channelId: '7026976631',
+        channelId: '5551000001',
         agentContext: createChatBotContext(),
         envelope,
       });

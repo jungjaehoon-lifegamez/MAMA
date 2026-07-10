@@ -480,15 +480,15 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
+        channelId: '5551000001',
+        userId: '5551000001',
         text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
       });
 
       await vi.waitFor(() => {
         expect(mockSendMessage).toHaveBeenCalledWith(
           'telegram',
-          '7026976631',
+          '5551000001',
           expect.stringContaining('Memory saved')
         );
       });
@@ -513,15 +513,15 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
+        channelId: '5551000001',
+        userId: '5551000001',
         text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 DB로 사용하자. 이 규칙은 기억해.',
       });
 
       await vi.waitFor(() => {
         expect(mamaApi.upsertChannelSummary).toHaveBeenCalledWith(
           expect.objectContaining({
-            channelKey: 'telegram:7026976631',
+            channelKey: 'telegram:5551000001',
           })
         );
       });
@@ -546,8 +546,8 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
+        channelId: '5551000001',
+        userId: '5551000001',
         text: '앞으로 이 프로젝트에서는 PostgreSQL을 기본 데이터베이스로 사용하자. 이건 기억해 둬.',
       });
 
@@ -556,8 +556,8 @@ describe('MessageRouter', () => {
       });
 
       const prompt = sendMessage.mock.calls[0]?.[0] as string;
-      expect(prompt).toContain('channel:telegram:7026976631');
-      expect(prompt).toContain('user:7026976631');
+      expect(prompt).toContain('channel:telegram:5551000001');
+      expect(prompt).toContain('user:5551000001');
       expect(prompt).toContain('Candidates:');
       expect(prompt).toContain('kind=decision');
     });
@@ -581,8 +581,8 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
+        channelId: '5551000001',
+        userId: '5551000001',
         text: '고마워',
       });
 
@@ -607,8 +607,8 @@ describe('MessageRouter', () => {
 
       await customRouter.process({
         source: 'telegram',
-        channelId: '7026976631',
-        userId: '7026976631',
+        channelId: '5551000001',
+        userId: '5551000001',
         text: '앞으로 SQLite를 기본 DB로 쓰자. 기억해.',
       });
 
@@ -638,8 +638,8 @@ describe('MessageRouter', () => {
 
           await customRouter.process({
             source: 'telegram',
-            channelId: '7026976631',
-            userId: '7026976631',
+            channelId: '5551000001',
+            userId: '5551000001',
             text: 'Use SQLite as the default database going forward. Remember this.',
           });
 

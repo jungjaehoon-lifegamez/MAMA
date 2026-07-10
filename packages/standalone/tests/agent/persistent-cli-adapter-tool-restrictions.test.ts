@@ -3,7 +3,7 @@ import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js'
 
 describe('PersistentCLIAdapter tool restrictions', () => {
   it('should forward per-request allowed/disallowed tools to the process pool', async () => {
-    const adapter = new PersistentCLIAdapter({ sessionId: 'telegram:7026976631' });
+    const adapter = new PersistentCLIAdapter({ sessionId: 'telegram:5551000001' });
     const getProcess = vi.fn().mockResolvedValue({
       sendMessage: vi.fn().mockResolvedValue({
         response: 'ok',
@@ -23,7 +23,7 @@ describe('PersistentCLIAdapter tool restrictions', () => {
     });
 
     expect(getProcess).toHaveBeenCalledWith(
-      'telegram:7026976631',
+      'telegram:5551000001',
       expect.objectContaining({
         allowedTools: ['mama_search', 'Read', 'telegram_send'],
         disallowedTools: ['Bash', 'Write'],

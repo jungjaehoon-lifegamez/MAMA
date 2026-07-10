@@ -187,7 +187,7 @@ describe('ContextInjector', () => {
     it('should include channel summary when available', async () => {
       const mamaApi = createMockMamaApi(mockDecisions);
       mamaApi.getChannelSummary = async () => ({
-        channel_key: 'telegram:7026976631',
+        channel_key: 'telegram:5551000001',
         summary_markdown: '## Channel Summary\n- Current DB direction: PostgreSQL',
         updated_at: Date.now(),
       });
@@ -195,7 +195,7 @@ describe('ContextInjector', () => {
       const injector = new ContextInjector(mamaApi);
       const context = await injector.getSessionStartupContext({
         source: 'telegram',
-        channelId: '7026976631',
+        channelId: '5551000001',
       });
 
       expect(context).toContain('Channel Summary');

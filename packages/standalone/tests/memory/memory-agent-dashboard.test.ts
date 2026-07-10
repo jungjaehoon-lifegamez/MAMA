@@ -20,7 +20,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
               topic: 'redis_sqlite',
               timestamp: 1234,
               status: 'skipped',
-              channelKey: 'telegram:7026976631',
+              channelKey: 'telegram:5551000001',
             },
           ],
         },
@@ -36,14 +36,14 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
       );
       expect(payload.activeChannel).toEqual(
         expect.objectContaining({
-          channelKey: 'telegram:7026976631',
+          channelKey: 'telegram:5551000001',
           source: 'telegram',
-          channelId: '7026976631',
+          channelId: '5551000001',
         })
       );
       expect(payload.recentChannels).toEqual([
         expect.objectContaining({
-          channelKey: 'telegram:7026976631',
+          channelKey: 'telegram:5551000001',
         }),
       ]);
     });
@@ -64,13 +64,13 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
               topic: 'redis_sqlite',
               timestamp: 1234,
               status: 'skipped',
-              channelKey: 'telegram:7026976631',
+              channelKey: 'telegram:5551000001',
             },
           ],
         },
         channelSummaries: [
           {
-            channelKey: 'telegram:7026976631',
+            channelKey: 'telegram:5551000001',
             updatedAt: 5678,
           },
         ],
@@ -80,7 +80,7 @@ describe('Story: buildMemoryAgentDashboardPayload - Memory agent dashboard paylo
 
       expect(payload.activeChannel).toEqual(
         expect.objectContaining({
-          channelKey: 'telegram:7026976631',
+          channelKey: 'telegram:5551000001',
           lastActive: 5678,
         })
       );

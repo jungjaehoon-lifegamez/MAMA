@@ -42,7 +42,7 @@ export interface AgentPersonaConfig {
   /**
    * Optional dedicated Discord bot token for this agent
    * If provided, this agent will use its own bot instead of the main bot
-   * @example "MTQ2OTAyNTkxMTg2MDEwMTMzMg.xxx.yyy"
+   * @example "MTAwMDAwMDAwMDAwMDAwMDAwMA.GXXXXX.fake-example-token"
    */
   bot_token?: string;
 
