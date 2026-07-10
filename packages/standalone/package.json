@@ -12,7 +12,7 @@
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
     "build": "tsc && pnpm exec tsx scripts/generate-gateway-tools.ts && rm -rf public/viewer/js && tsc -p public/viewer/tsconfig.viewer.json && pnpm run build:ui",
-    "build:ui": "pnpm --dir ui run build",
+    "build:ui": "pnpm --dir ui run bundle",
     "dev:ui": "pnpm --dir ui run dev",
     "build:watch": "tsc --watch",
     "build:viewer": "rm -rf public/viewer/js && tsc -p public/viewer/tsconfig.viewer.json",

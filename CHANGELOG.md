@@ -6,6 +6,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Operator board (beta) at `/ui`** — New Kagemusha-style React viewer served next
+  to the legacy `/viewer`: agent-published report slots render live over SSE
+  (DOMPurify + `script-src 'self'` CSP), with trigger stat cards and an owner
+  veto tray backed by the new `/api/operator` endpoints. Report slots now
+  persist across daemon restarts (`~/.mama/report-slots.json`).
+- **Unconditional multi-slot report publishing** — `report_publish` is no longer
+  gated on the dashboard agent being configured and no longer drops every slot
+  except `briefing`; `createReportPublisher` is the single write path (64KB/slot,
+  24-slot caps, loud skips) reused by the heartbeat briefing writer.
 - **Message-router memory policy opt-ins** — Added `memory_policy.implicit_recall`
   and `memory_policy.implicit_legacy_context_search`, plus matching environment
   variable overrides, so startup-prompt memory recall and legacy context search
