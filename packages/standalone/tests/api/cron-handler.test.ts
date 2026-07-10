@@ -2,30 +2,38 @@
  * Unit tests for Cron API handler
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
-
-// The router's syncJobsToConfig persists scheduler state through the real
-// config-manager; without this mock every suite run rewrites the developer's
-// live ~/.mama/config.yaml (the daemon then keeps executing leftover jobs).
-vi.mock('../../src/cli/config/config-manager.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/cli/config/config-manager.js')>()),
-  loadConfig: vi.fn(async () => ({})),
-  saveConfig: vi.fn(async () => undefined),
-}));
-
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createCronRouter, InMemoryLogStore } from '../../src/api/cron-handler.js';
 import { errorHandler, notFoundHandler } from '../../src/api/error-handler.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
-import { saveConfig } from '../../src/cli/config/config-manager.js';
+import { loadConfig, saveConfig } from '../../src/cli/config/config-manager.js';
+import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 
 describe('Cron API', () => {
   let app: express.Express;
   let scheduler: CronScheduler;
   let logStore: InMemoryLogStore;
+  let testDir: string;
+  let originalHome: string | undefined;
 
-  beforeEach(() => {
+  // The router's syncJobsToConfig persists scheduler state through the real
+  // config-manager (~/.mama/config.yaml). Sandbox HOME so suite runs never
+  // touch the developer's live config (which left hourly "Test" jobs behind).
+  beforeEach(async () => {
+    testDir = join(
+      tmpdir(),
+      `mama-cron-handler-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    await mkdir(join(testDir, '.mama'), { recursive: true });
+    originalHome = process.env.HOME;
+    process.env.HOME = testDir;
+    await saveConfig(DEFAULT_CONFIG);
+
     scheduler = new CronScheduler();
     logStore = new InMemoryLogStore();
 
@@ -36,8 +44,14 @@ describe('Cron API', () => {
     app.use(errorHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     scheduler.shutdown();
+    if (originalHome !== undefined) {
+      process.env.HOME = originalHome;
+    } else {
+      delete process.env.HOME;
+    }
+    await rm(testDir, { recursive: true, force: true });
   });
 
   describe('GET /api/cron', () => {
@@ -463,10 +477,8 @@ describe('Cron API', () => {
     });
   });
 
-  describe('config persistence isolation', () => {
-    it('should persist created jobs through config-manager saveConfig', async () => {
-      vi.mocked(saveConfig).mockClear();
-
+  describe('config persistence', () => {
+    it('should round-trip the created job into config.yaml with the mapped shape', async () => {
       const res = await request(app).post('/api/cron').send({
         name: 'Persisted Job',
         cron_expr: '0 * * * *',
@@ -474,12 +486,18 @@ describe('Cron API', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(saveConfig).toHaveBeenCalledTimes(1);
-      const savedConfig = vi.mocked(saveConfig).mock.calls[0][0] as {
-        scheduling?: { jobs?: Array<{ name: string }> };
-      };
-      expect(savedConfig.scheduling?.jobs).toHaveLength(1);
-      expect(savedConfig.scheduling?.jobs?.[0].name).toBe('Persisted Job');
+
+      const persisted = (await loadConfig()) as Record<string, unknown>;
+      const scheduling = persisted.scheduling as { jobs?: unknown[] } | undefined;
+      expect(scheduling?.jobs).toEqual([
+        expect.objectContaining({
+          id: res.body.id,
+          name: 'Persisted Job',
+          cron: '0 * * * *',
+          prompt: 'do the thing',
+          enabled: true,
+        }),
+      ]);
     });
   });
 });

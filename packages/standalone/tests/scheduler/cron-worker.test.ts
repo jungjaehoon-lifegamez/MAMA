@@ -50,9 +50,10 @@ describe('CronWorker', () => {
 
       expect(PersistentClaudeProcess).toHaveBeenCalledWith(
         expect.objectContaining({
-          // Claude CLI rejects non-UUID --session-id values ("Invalid session ID")
+          // Claude CLI rejects non-UUID --session-id values ("Invalid session ID");
+          // randomUUID() emits v4: version nibble '4', variant nibble '8'-'b'
           sessionId: expect.stringMatching(
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
           ),
           model: 'claude-haiku-4-5-20251001',
           dangerouslySkipPermissions: true,
