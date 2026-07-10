@@ -5,16 +5,35 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+import { mkdir, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createCronRouter, InMemoryLogStore } from '../../src/api/cron-handler.js';
 import { errorHandler, notFoundHandler } from '../../src/api/error-handler.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
+import { loadConfig, saveConfig } from '../../src/cli/config/config-manager.js';
+import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
 
 describe('Cron API', () => {
   let app: express.Express;
   let scheduler: CronScheduler;
   let logStore: InMemoryLogStore;
+  let testDir: string;
+  let originalHome: string | undefined;
 
-  beforeEach(() => {
+  // The router's syncJobsToConfig persists scheduler state through the real
+  // config-manager (~/.mama/config.yaml). Sandbox HOME so suite runs never
+  // touch the developer's live config (which left hourly "Test" jobs behind).
+  beforeEach(async () => {
+    testDir = join(
+      tmpdir(),
+      `mama-cron-handler-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    await mkdir(join(testDir, '.mama'), { recursive: true });
+    originalHome = process.env.HOME;
+    process.env.HOME = testDir;
+    await saveConfig(DEFAULT_CONFIG);
+
     scheduler = new CronScheduler();
     logStore = new InMemoryLogStore();
 
@@ -25,8 +44,14 @@ describe('Cron API', () => {
     app.use(errorHandler);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     scheduler.shutdown();
+    if (originalHome !== undefined) {
+      process.env.HOME = originalHome;
+    } else {
+      delete process.env.HOME;
+    }
+    await rm(testDir, { recursive: true, force: true });
   });
 
   describe('GET /api/cron', () => {
@@ -449,6 +474,30 @@ describe('Cron API', () => {
         );
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe('config persistence', () => {
+    it('should round-trip the created job into config.yaml with the mapped shape', async () => {
+      const res = await request(app).post('/api/cron').send({
+        name: 'Persisted Job',
+        cron_expr: '0 * * * *',
+        prompt: 'do the thing',
+      });
+
+      expect(res.status).toBe(200);
+
+      const persisted = (await loadConfig()) as Record<string, unknown>;
+      const scheduling = persisted.scheduling as { jobs?: unknown[] } | undefined;
+      expect(scheduling?.jobs).toEqual([
+        expect.objectContaining({
+          id: res.body.id,
+          name: 'Persisted Job',
+          cron: '0 * * * *',
+          prompt: 'do the thing',
+          enabled: true,
+        }),
+      ]);
     });
   });
 });
