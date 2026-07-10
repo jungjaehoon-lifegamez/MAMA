@@ -84,7 +84,12 @@ export interface TriggerRecord {
   updatedAt: number;
   provenance: TriggerProvenance;
   stats: TriggerStats;
+  /** Owner/agent-supplied reason recorded by disable(); absent while active. */
+  disabledReason?: string;
 }
 
 /** Input to author a trigger. Server manages status/timestamps/stats. */
-export type CreateTriggerInput = Omit<TriggerRecord, 'status' | 'createdAt' | 'updatedAt' | 'stats'>;
+export type CreateTriggerInput = Omit<
+  TriggerRecord,
+  'status' | 'createdAt' | 'updatedAt' | 'stats' | 'disabledReason'
+>;

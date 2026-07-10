@@ -24,7 +24,8 @@ import { CronScheduler } from '../scheduler/index.js';
 import { SkillRegistry } from '../skills/skill-registry.js';
 import type { SystemHealthReport } from '../observability/health-check.js';
 import { createSecurityMiddleware } from '../security/security-monitor.js';
-import { createReportRouter, createReportStore } from './report-handler.js';
+import { createReportRouter, createReportStore, type ReportStore } from './report-handler.js';
+import { createOperatorRouter } from './operator-handler.js';
 import { createWikiRouter } from './wiki-handler.js';
 import { createIntelligenceRouter } from './intelligence-handler.js';
 import { createConnectorFeedRouter } from './connector-feed-handler.js';
@@ -70,6 +71,12 @@ export interface ApiServerOptions {
   onHeartbeat?: (prompt: string) => Promise<{ success: boolean; error?: string }>;
   /** Enable automatic process killing on port conflicts (default: false) */
   enableAutoKillPort?: boolean;
+  /**
+   * Report slot store (default: in-memory). The daemon runtime injects the
+   * persistent store; the in-memory default keeps every test call site free
+   * of real ~/.mama file writes.
+   */
+  reportStore?: ReportStore;
   /** Sessions database instance (for token tracking) */
   db?: SQLiteDatabase;
   /** Memory database instance (for intelligence queries — mama-memory.db) */
@@ -231,6 +238,12 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
+  // Lazy-opening router: touches ~/.mama/operator/triggers.db only on first
+  // /api/operator request, so createApiServer stays side-effect-free for tests.
+  app.use(
+    '/api/operator',
+    createOperatorRouter({ dbPath: join(homedir(), '.mama', 'operator', 'triggers.db') })
+  );
 
   if (memoryDb) {
     app.use(
@@ -272,7 +285,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
 
   // Mount report store (created early so intelligence router can reference it)
   const reportSseClients = new Set<ServerResponse>();
-  const reportStore = createReportStore();
+  const reportStore = options.reportStore ?? createReportStore();
 
   // Mount token router if database is available
   if (db) {

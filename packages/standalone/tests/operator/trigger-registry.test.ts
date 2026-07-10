@@ -77,4 +77,15 @@ describe('TriggerRegistry', () => {
   it('recordFire on unknown id throws (no-fallback)', () => {
     expect(() => reg.recordFire('nope')).toThrow();
   });
+
+  it('listAll returns active and disabled triggers, newest first, with disabledReason', () => {
+    reg.create(sampleInput('t6'));
+    reg.create(sampleInput('t7'));
+    reg.disable('t7', 'noisy');
+    const all = reg.listAll();
+    expect(all.map((r) => r.id)).toEqual(['t7', 't6']);
+    expect(all[0].status).toBe('disabled');
+    expect(all[0].disabledReason).toBe('noisy');
+    expect(all[1].disabledReason).toBeUndefined();
+  });
 });

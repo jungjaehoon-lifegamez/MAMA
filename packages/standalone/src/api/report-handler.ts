@@ -64,6 +64,42 @@ export function broadcastReportUpdate(
   }
 }
 
+const MAX_SLOT_BYTES = 65_536;
+const MAX_SLOTS_PER_PUBLISH = 24;
+
+/**
+ * The single write path for agent/heartbeat report publishing: store every slot
+ * (any slot id -- the board renders known slots first, then custom), broadcast
+ * one full snapshot. Oversized slots are skipped LOUDLY, never truncated
+ * silently (observability over restriction).
+ */
+export function createReportPublisher(
+  store: ReportStore,
+  sseClients: Set<ServerResponse>
+): (slots: Record<string, string>) => void {
+  return (slots) => {
+    const entries = Object.entries(slots);
+    if (entries.length > MAX_SLOTS_PER_PUBLISH) {
+      console.warn(
+        `[Report] publish carried ${entries.length} slots; keeping the first ${MAX_SLOTS_PER_PUBLISH}`
+      );
+    }
+    const published: string[] = [];
+    for (const [slotId, html] of entries.slice(0, MAX_SLOTS_PER_PUBLISH)) {
+      if (Buffer.byteLength(html, 'utf-8') > MAX_SLOT_BYTES) {
+        console.warn(`[Report] slot '${slotId}' exceeds ${MAX_SLOT_BYTES} bytes -- skipped`);
+        continue;
+      }
+      store.update(slotId, html, store.get(slotId)?.priority ?? 0);
+      published.push(slotId);
+    }
+    broadcastReportUpdate(sseClients, { slots: store.getAllSorted() });
+    if (published.length > 0) {
+      console.log(`[Report] published slots: ${published.join(', ')}`);
+    }
+  };
+}
+
 /**
  * Create an Express Router that exposes report slot CRUD + SSE stream.
  */

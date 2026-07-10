@@ -101,6 +101,48 @@ const SW_JS_PATH = path.join(VIEWER_DIR, 'sw.js');
 const MANIFEST_JSON_PATH = path.join(VIEWER_DIR, 'manifest.json');
 const VIEWER_ICON_DIR = path.join(VIEWER_DIR, 'icons');
 const VIEWER_FAVICON_PATH = path.join(VIEWER_DIR, '..', 'favicon.ico');
+
+// Operator viewer SPA (built from ui/ into public/ui/). Resolved per request so
+// the MAMA_UI_DIR override works for tests without module-load ordering games.
+function getUiDirectory(): string {
+  if (process.env.MAMA_UI_DIR) {
+    // resolve() drops trailing slashes; without it the `uiRoot + path.sep`
+    // traversal guard below would 404 every request for '/foo/bar/'-style values.
+    return path.resolve(process.env.MAMA_UI_DIR);
+  }
+  const candidateDirs = [
+    path.join(process.cwd(), 'public', 'ui'),
+    path.join(PACKAGE_ROOT_DIR, 'public', 'ui'),
+    path.join(__dirname, '../../public/ui'),
+    path.join(__dirname, '../../../public/ui'),
+    path.join(process.cwd(), 'packages', 'standalone', 'public', 'ui'),
+  ];
+  for (const candidate of candidateDirs) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  }
+  return path.join(process.cwd(), 'public', 'ui');
+}
+
+// serveStaticFile requires an explicit content type and only reads bytes (not
+// utf-8) for image/* or octet-stream -- fonts map to octet-stream for integrity.
+const UI_STATIC_MIME: Record<string, string> = {
+  '.html': 'text/html',
+  '.js': 'text/javascript',
+  '.css': 'text/css',
+  '.json': 'application/json',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'application/octet-stream',
+};
+
+// Agent-authored slot HTML renders inside this SPA. Two independent XSS layers:
+// DOMPurify at render (ui/src/api/report.ts) + this CSP on the document.
+const UI_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'";
+
 const DEFAULT_GRAPH_LIMIT = 300;
 const MAX_GRAPH_LIMIT = 2000;
 const GRAPH_PREVIEW_CHARS = 220;
@@ -1336,6 +1378,34 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
     // Route: GET/HEAD /favicon.ico - serve favicon
     if (pathname === '/favicon.ico' && (req.method === 'GET' || req.method === 'HEAD')) {
       serveStaticFile(res, VIEWER_FAVICON_PATH, 'image/x-icon');
+      return true;
+    }
+
+    // Route: GET/HEAD /ui/* - operator viewer SPA (public/ui, Vite build)
+    if (
+      (pathname === '/ui' || pathname.startsWith('/ui/')) &&
+      (req.method === 'GET' || req.method === 'HEAD')
+    ) {
+      const uiRoot = getUiDirectory();
+      // '/ui' and '/ui/' both mean the SPA shell; slicing '/ui/' yields '' which
+      // resolves to uiRoot itself and would fail the traversal guard below.
+      const rel =
+        pathname === '/ui' || pathname === '/ui/' ? 'index.html' : pathname.slice('/ui/'.length);
+      const resolved = path.resolve(uiRoot, rel);
+      if (!resolved.startsWith(uiRoot + path.sep)) {
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not found');
+        return true;
+      }
+      const isAsset = rel.startsWith('assets/');
+      const exists = fs.existsSync(resolved) && fs.statSync(resolved).isFile();
+      // Missing hashed assets must 404 (via serveStaticFile's ENOENT path) -- an
+      // index.html fallback would mask them as 200 text/html.
+      const target = exists || isAsset ? resolved : path.join(uiRoot, 'index.html');
+      const contentType = UI_STATIC_MIME[path.extname(target)] ?? 'application/octet-stream';
+      const extraHeaders: Record<string, string> =
+        contentType === 'text/html' ? { 'Content-Security-Policy': UI_CSP } : {};
+      serveStaticFile(res, target, contentType, extraHeaders);
       return true;
     }
 
