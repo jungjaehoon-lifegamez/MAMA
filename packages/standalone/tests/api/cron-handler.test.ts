@@ -2,12 +2,23 @@
  * Unit tests for Cron API handler
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
+
+// The router's syncJobsToConfig persists scheduler state through the real
+// config-manager; without this mock every suite run rewrites the developer's
+// live ~/.mama/config.yaml (the daemon then keeps executing leftover jobs).
+vi.mock('../../src/cli/config/config-manager.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/cli/config/config-manager.js')>()),
+  loadConfig: vi.fn(async () => ({})),
+  saveConfig: vi.fn(async () => undefined),
+}));
+
 import { createCronRouter, InMemoryLogStore } from '../../src/api/cron-handler.js';
 import { errorHandler, notFoundHandler } from '../../src/api/error-handler.js';
 import { CronScheduler } from '../../src/scheduler/index.js';
+import { saveConfig } from '../../src/cli/config/config-manager.js';
 
 describe('Cron API', () => {
   let app: express.Express;
@@ -449,6 +460,26 @@ describe('Cron API', () => {
         );
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe('config persistence isolation', () => {
+    it('should persist created jobs through config-manager saveConfig', async () => {
+      vi.mocked(saveConfig).mockClear();
+
+      const res = await request(app).post('/api/cron').send({
+        name: 'Persisted Job',
+        cron_expr: '0 * * * *',
+        prompt: 'do the thing',
+      });
+
+      expect(res.status).toBe(200);
+      expect(saveConfig).toHaveBeenCalledTimes(1);
+      const savedConfig = vi.mocked(saveConfig).mock.calls[0][0] as {
+        scheduling?: { jobs?: Array<{ name: string }> };
+      };
+      expect(savedConfig.scheduling?.jobs).toHaveLength(1);
+      expect(savedConfig.scheduling?.jobs?.[0].name).toBe('Persisted Job');
     });
   });
 });
