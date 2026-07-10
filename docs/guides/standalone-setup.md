@@ -515,7 +515,12 @@ Gateways:
 HTTP Server: http://localhost:3847
   Graph Viewer: http://localhost:3847/viewer
   Chat Shell: http://localhost:3847/viewer (floating overlay)
+  Operator Board (beta): http://localhost:3847/ui
 ```
+
+The Operator Board renders agent-published report slots live (SSE) with trigger
+stats and an owner veto tray. Agents feed it through the `report_publish` gateway
+tool; the heartbeat briefing fills the first slot automatically.
 
 ### Step 3: Test the Agent
 
