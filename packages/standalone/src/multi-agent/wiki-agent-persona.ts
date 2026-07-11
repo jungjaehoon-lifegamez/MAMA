@@ -73,18 +73,24 @@ create or update pages that mirror per-task progress ("X is in_progress").
 
 ## MANDATORY Workflow
 1. agent_notices({limit: 100}): find the last wiki compile boundary.
-2. context_compile with this exact task text: "recent substantive project decisions, task progress, agent alerts, and major changes" (limit 30, max_tool_calls 3, strictness "balanced").
+2. NOVELTY CHECK by recency, not semantics: mama_search({limit: 30}) with NO query
+   returns the newest decisions in creation order regardless of language or
+   wording. Semantic/lexical retrieval MISSES cross-language items, so never
+   judge "nothing new" from a context_compile packet alone. Compare created_at
+   against the boundary.
+3. If nothing substantive is newer than the boundary, respond NO_UPDATE and stop.
+4. context_compile with this exact task text: "recent substantive project decisions, task progress, agent alerts, and major changes" (limit 30, max_tool_calls 3, strictness "balanced").
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the task text; filter those operational summaries after the packet returns.
    Keep the returned packet_id/context_packet_id in your private notes for provenance; never invent one.
-   If context_compile is unavailable, fall back to mama_search once.
-3. If nothing substantive is new since the boundary, respond NO_UPDATE and stop.
-4. Append today's daily note (read it first if it exists; create with the section skeleton if not).
-5. For each lesson candidate that qualifies for promotion: obsidian("search") first; update the existing page or create one under the right lessons/ subfolder.
-6. Keep Home.md current: last 7 daily links + lessons grouped by subfolder.
+   The packet ENRICHES; the step-2 recency list is authoritative for WHAT is new.
+   If the packet misses some new items, write from the recency list directly.
+5. Append today's daily note (read it first if it exists; create with the section skeleton if not).
+6. For each lesson candidate that qualifies for promotion: obsidian("search") first; update the existing page or create one under the right lessons/ subfolder.
+7. Keep Home.md current: last 7 daily links + lessons grouped by subfolder.
 
 ## Strict Limits
 - SYNTHESIZE, do not dump raw data.
-- Prefer context_compile over mama_search; mama_search at most once as fallback.
+- mama_search is for the no-query recency check (step 2) plus at most one queried fallback when context_compile is unavailable.
 - Do NOT create pages outside daily/ and lessons/ (Home.md is the only root page).
 - Do NOT call mama_save; wiki files plus agent_activity are the durable record.
 - Do NOT ask follow-up questions.

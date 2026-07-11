@@ -475,13 +475,14 @@ This saves resources. Only publish when there is genuinely new information to re
         const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
 
 1. Use agent_notices({limit: 100}) to find the most recent wiki-agent compiled/publish/task_complete notice. Treat that as the last compilation boundary.
-2. Use context_compile first to find recent substantive decisions (limit 30, max_tool_calls 3, strictness "balanced").
+2. NOVELTY CHECK by recency, not semantics: call mama_search({limit: 30}) with NO query -- that returns the newest decisions in creation order regardless of language or wording (semantic/lexical search misses cross-language items, which caused missed compilations). Compare created_at against the boundary.
+3. If NO substantive decisions are newer than the boundary -> respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
+4. If new items exist, use context_compile first to gather supporting context (limit 30, max_tool_calls 3, strictness "balanced").
    Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
-   If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 30).
-3. If NO substantive decisions exist since the last wiki compilation → respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
-4. If new substantive material exists -> follow your persona: APPEND today's daily note (daily/YYYY-MM-DD.md, create with the section skeleton on first write of the day), then promote qualifying lesson candidates into lessons/ pages (search before create; update, never duplicate). Do NOT write per-task status pages.
-5. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
+   If the packet misses some of the new items from step 2 (it often will for cross-language content), write from the step-2 items directly -- the recency list is authoritative for WHAT is new; the packet only enriches.
+5. Then follow your persona: APPEND today's daily note (daily/YYYY-MM-DD.md, create with the section skeleton on first write of the day), then promote qualifying lesson candidates into lessons/ pages (search before create; update, never duplicate). Do NOT write per-task status pages.
+6. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
 
 This saves resources. Only compile when there is genuinely new information to document.`;
 
