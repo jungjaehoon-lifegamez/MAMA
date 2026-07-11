@@ -1,3 +1,8 @@
+> **ARCHIVED (2026-07-12):** The vNext primary-operator rebuild described here was
+> removed from the codebase. The operator trigger loop
+> (`packages/standalone/src/operator/`) is the shipped runtime. This document is
+> kept for design history only.
+
 # MAMA vNext Primary Operator Rebuild Plan
 
 Status: implementation through PR 17 merged; PR 18 is release-readiness documentation and smoke-gate alignment.

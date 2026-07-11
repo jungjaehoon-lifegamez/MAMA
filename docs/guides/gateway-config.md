@@ -93,9 +93,6 @@ This policy does not disable the older session-start context path for channel
 summaries, checkpoints, or recent decision snippets when those startup APIs are
 configured.
 
-For rollout status and smoke evidence requirements, see the
-[vNext Release Readiness Guide](vnext-release-readiness.md).
-
 ---
 
 ## Discord Gateway
