@@ -11,6 +11,7 @@ import { applyAgentMetricsResponseAverageMigration } from './migrations/agent-me
 import { applyAgentActivityValidationColumnsMigration } from './migrations/agent-activity-validation-columns.js';
 import { applyAgentActivityEnvelopeColumnsMigration } from './migrations/agent-activity-envelope-hash.js';
 import { applyAgentActivityGatewayCallIdMigration } from './migrations/agent-activity-gateway-call-id.js';
+import { applyAgentActivityToolNameMigration } from './migrations/agent-activity-tool-name.js';
 import { applyEnvelopeTablesMigration } from './migrations/envelope-tables.js';
 
 type DB = SQLiteDatabase;
@@ -46,6 +47,7 @@ export function initAgentTables(db: SQLiteDatabase): void {
   applyAgentActivityValidationColumnsMigration(db);
   applyAgentActivityEnvelopeColumnsMigration(db);
   applyAgentActivityGatewayCallIdMigration(db);
+  applyAgentActivityToolNameMigration(db);
   applyEnvelopeTablesMigration(db);
 }
 
@@ -253,6 +255,9 @@ export function compareVersionMetrics(
 // ── Activity Types ─────────────────────────────────────────────────────────
 
 export interface LogActivityInput {
+  /** Gateway tool name for gateway_tool_call rows (queryable, unlike input_summary). */
+  tool_name?: string;
+  normalized_tool_name?: string;
   agent_id: string;
   agent_version: number;
   type: string;
@@ -295,6 +300,8 @@ export interface ActivityRow {
   requested_scopes: string | null;
   envelope_scopes_snapshot: string | null;
   scope_mismatch: number;
+  tool_name: string | null;
+  normalized_tool_name: string | null;
   created_at: string;
 }
 
@@ -324,9 +331,10 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     INSERT INTO agent_activity (
       agent_id, agent_version, type, input_summary, output_summary, tokens_used,
       tools_called, duration_ms, score, details, error_message, run_id, execution_status, trigger_reason,
-      envelope_hash, gateway_call_id, requested_scopes, envelope_scopes_snapshot, scope_mismatch
+      envelope_hash, gateway_call_id, requested_scopes, envelope_scopes_snapshot, scope_mismatch,
+      tool_name, normalized_tool_name
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     input.agent_id,
@@ -347,7 +355,9 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.gatewayCallId ?? null,
     input.requestedScopes ? JSON.stringify(input.requestedScopes) : null,
     input.envelopeScopesSnapshot ? JSON.stringify(input.envelopeScopesSnapshot) : null,
-    Number(Boolean(input.scopeMismatch))
+    Number(Boolean(input.scopeMismatch)),
+    input.tool_name ?? null,
+    input.normalized_tool_name ?? null
   );
   return db
     .prepare('SELECT * FROM agent_activity WHERE id = ?')
