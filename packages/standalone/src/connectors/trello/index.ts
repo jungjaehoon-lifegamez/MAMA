@@ -44,7 +44,13 @@ export class TrelloConnector implements IConnector {
   /** boardId → (cardId → listName) */
   private lastCardStates: Map<string, Map<string, string>> = new Map();
 
-  private readonly stateFilePath = join(homedir(), '.mama', 'connectors', 'trello', 'trello-state.json');
+  private readonly stateFilePath = join(
+    homedir(),
+    '.mama',
+    'connectors',
+    'trello',
+    'trello-state.json'
+  );
 
   constructor(config: ConnectorConfig) {
     this.config = config;
@@ -57,7 +63,9 @@ export class TrelloConnector implements IConnector {
         for (const [board, cards] of Object.entries(data.lastCardStates ?? {})) {
           this.lastCardStates.set(board, new Map(Object.entries(cards as Record<string, string>)));
         }
-      } catch { /* ignore corrupt state */ }
+      } catch {
+        /* ignore corrupt state */
+      }
     }
   }
 
@@ -194,7 +202,9 @@ export class TrelloConnector implements IConnector {
                   boardId,
                   cardId: card.id,
                   listName: list.name,
-                  prevListName: prevList,
+                  // Omit when absent: the canonical raw-ref serializer rejects
+                  // undefined values ("undefined is not serializable at $.prevListName").
+                  ...(prevList !== undefined ? { prevListName: prevList } : {}),
                   cardName: card.name,
                   members: card.idMembers,
                 },
