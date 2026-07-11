@@ -1670,6 +1670,8 @@ export class GatewayToolExecutor {
         agent_version: 0,
         type: 'gateway_tool_call',
         input_summary: toolName,
+        tool_name: toolName,
+        normalized_tool_name: toolName,
         duration_ms: durationMs,
         execution_status: executionStatus,
         trigger_reason: 'gateway_tool_executor',
