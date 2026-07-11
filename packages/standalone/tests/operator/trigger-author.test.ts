@@ -8,7 +8,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
-import { authorTriggers, parseTriggerSpecs, validateTriggerSpec } from '../../src/operator/trigger-author.js';
+import {
+  authorTriggers,
+  parseTriggerSpecs,
+  validateTriggerSpec,
+} from '../../src/operator/trigger-author.js';
 import type { OperatorChannelEvent } from '../../src/operator/operator-interfaces.js';
 
 const cannedSpec = JSON.stringify([
@@ -22,7 +26,15 @@ const cannedSpec = JSON.stringify([
 ]);
 
 function ev(content: string, id = 1): OperatorChannelEvent {
-  return { id, channel: 'discord', channelId: 'c1', userId: 'u1', role: 'user', content, createdAt: id * 100 };
+  return {
+    id,
+    channel: 'discord',
+    channelId: 'c1',
+    userId: 'u1',
+    role: 'user',
+    content,
+    createdAt: id * 100,
+  };
 }
 
 describe('authorTriggers', () => {
@@ -36,7 +48,11 @@ describe('authorTriggers', () => {
   afterEach(() => reg.close());
 
   it('persists an agent-authored trigger with open kind/action (G3)', async () => {
-    const created = await authorTriggers([ev('rollback again'), ev('another rollback', 2)], reg, async () => cannedSpec);
+    const created = await authorTriggers(
+      [ev('rollback again'), ev('another rollback', 2)],
+      reg,
+      async () => cannedSpec
+    );
     expect(created).toHaveLength(1);
     expect(created[0].kind).toBe('weird_new_kind_the_agent_invented'); // arbitrary value accepted, not an enum
     expect(created[0].procedure[0].action).toBe('novel_action');
@@ -65,6 +81,66 @@ describe('authorTriggers', () => {
     expect(created).toHaveLength(0);
   });
 
+  it('rejects near-duplicates: keyword subset or >=0.6 Jaccard overlap in the same scope', async () => {
+    // Day-1 live data: 65% of fires were co-fires of overlapping triggers.
+    reg.create({
+      id: 'existing-wide',
+      kind: 'k',
+      memoryQuery: 'q',
+      match: { keywords: ['rollback', 'deploy', 'hotfix'], keywordMode: 'any', minConfidence: 0.7 },
+      procedure: [],
+      requiredEvidence: [],
+      authoredBy: 'agent',
+      provenance: { createdFrom: 'seed', note: '' },
+    });
+    // subset of existing-wide's keywords -> rejected
+    const subsetSpec = JSON.stringify([
+      {
+        kind: 'k2',
+        memoryQuery: 'q2',
+        match: { keywords: ['rollback', 'deploy'], keywordMode: 'any', minConfidence: 0.7 },
+        procedure: [{ action: 'a', description: 'd' }],
+        requiredEvidence: [],
+      },
+    ]);
+    expect(await authorTriggers([ev('x')], reg, async () => subsetSpec)).toHaveLength(0);
+
+    // high-overlap variant (3 shared of 4 union = 0.75) -> rejected
+    const overlapSpec = JSON.stringify([
+      {
+        kind: 'k3',
+        memoryQuery: 'q3',
+        match: {
+          keywords: ['rollback', 'deploy', 'hotfix', 'incident'],
+          keywordMode: 'any',
+          minConfidence: 0.7,
+        },
+        procedure: [{ action: 'a', description: 'd' }],
+        requiredEvidence: [],
+      },
+    ]);
+    expect(await authorTriggers([ev('x')], reg, async () => overlapSpec)).toHaveLength(0);
+
+    // disjoint keywords -> accepted
+    const disjointSpec = JSON.stringify([
+      {
+        kind: 'k4',
+        memoryQuery: 'q4',
+        match: { keywords: ['invoice', 'billing'], keywordMode: 'any', minConfidence: 0.7 },
+        procedure: [{ action: 'a', description: 'd' }],
+        requiredEvidence: [],
+      },
+    ]);
+    expect(await authorTriggers([ev('x')], reg, async () => disjointSpec)).toHaveLength(1);
+  });
+
+  it('author prompt warns against near-variants of existing triggers', async () => {
+    const { buildAuthorPrompt } = await import('../../src/operator/trigger-author.js');
+    const prompt = buildAuthorPrompt([ev('x')], reg.listActive());
+    expect(prompt).toContain('partial keyword overlap');
+    expect(prompt).toContain('proposing NOTHING over proposing a variant');
+  });
+
   it('parseTriggerSpecs extracts the JSON array even with surrounding prose', () => {
     const specs = parseTriggerSpecs(`Sure, here you go:\n${cannedSpec}\nHope that helps.`);
     expect(specs).toHaveLength(1);
@@ -83,7 +159,13 @@ describe('authorTriggers', () => {
     ).not.toThrow();
     expect(() => validateTriggerSpec({ kind: 'k' })).toThrow(); // missing required fields
     expect(() =>
-      validateTriggerSpec({ kind: '', memoryQuery: 'q', match: { keywords: [], keywordMode: 'any', minConfidence: 0.5 }, procedure: [], requiredEvidence: [] })
+      validateTriggerSpec({
+        kind: '',
+        memoryQuery: 'q',
+        match: { keywords: [], keywordMode: 'any', minConfidence: 0.5 },
+        procedure: [],
+        requiredEvidence: [],
+      })
     ).toThrow(); // empty kind + empty keywords = malformed shape
   });
 });
