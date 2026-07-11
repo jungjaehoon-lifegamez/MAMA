@@ -31,6 +31,30 @@ export function buildBoardHtmlVocabulary(): string[] {
   ];
 }
 
+/**
+ * Pipeline slot = item tracker projection (M8 Phase 3). Injected into EVERY
+ * board writer (dashboard persona, cron prompt, the trigger loop's full
+ * report) so both writers project the same tracker. D-day arithmetic uses the
+ * "Today is <date>" line each RUN PROMPT carries -- personas are static files
+ * and must never bake in a date.
+ */
+export function buildPipelineTrackerInstructions(): string[] {
+  return [
+    'The pipeline slot is an ITEM TRACKER, not a summary. Build it from',
+    'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
+    'projection source. Render one report-table with a row per open item:',
+    '  #id | title | status badge | assignee (or "unassigned") | D-day | source | latest event',
+    '- D-day: compute from the item\'s deadline against the run prompt\'s "Today is" date',
+    '  (D-3 = due in 3 days, D+2 = 2 days overdue). No deadline -> "-".',
+    '- Overdue -> badge-danger. Unassigned AND due within 7 days -> badge-warning with the',
+    '  literal word "unassigned" visible.',
+    '- Items with auto_created true and confirmed false render "(unconfirmed)" after the title',
+    '  so model-created items are visually distinct from owner-confirmed ones.',
+    '- done/cancelled items never appear.',
+    'When a briefing/action_required/decisions card refers to a tracked item, cite its #id.',
+  ];
+}
+
 /** Instruction block that makes a report run also publish the board slots. */
 export function buildBoardPublishLines(): string[] {
   return [
@@ -41,7 +65,7 @@ export function buildBoardPublishLines(): string[] {
     '- action_required: a report-section-title, then up to 5 cards; every card-action states the concrete next step.',
     '- decisions: cards for items waiting on an owner decision or confirmation; omit filler when none exist,',
     '  but still publish the slot with a one-line quiet note.',
-    '- pipeline: one report-table of workstreams with their current state.',
+    ...buildPipelineTrackerInstructions(),
     ...buildBoardHtmlVocabulary(),
     "Write all slot CONTENT in the owner's language (match the channels); keep each slot under 6KB.",
     'The plain-text report you write afterwards is a separate output: no HTML in it.',
