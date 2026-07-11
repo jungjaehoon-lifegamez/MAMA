@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type OperatorTask, type TaskPatch, type TaskStatus } from '../api/client';
 import TaskRow from '../components/TaskRow';
 import { updateTaskCache, type OperatorTasksCache } from '../lib/task-cache';
+import { scrollTaskHashIntoView } from '../lib/task-scroll';
 import {
   finishTaskMutation,
   startTaskMutation,
@@ -29,6 +30,7 @@ export default function Tasks() {
   const [now, setNow] = useState(() => Date.now());
   const [mutationStates, setMutationStates] = useState<TaskMutationState>(() => new Map());
   const queryClient = useQueryClient();
+  const scrolledHashRef = useRef<string | null>(null);
   const query = useQuery({
     queryKey: ['operatorTasks', selectedStatus],
     queryFn: () => api.listTasks({ status: selectedStatus ?? undefined, limit: 50 }),
@@ -44,7 +46,9 @@ export default function Tasks() {
         queryKey: ['operatorTasks'],
       });
       for (const [queryKey, cached] of cachedQueries) {
-        if (!cached) continue;
+        if (!cached) {
+          continue;
+        }
         const status = queryKey[1] as TaskStatus | null;
         queryClient.setQueryData(queryKey, updateTaskCache(cached, status, updated));
       }
@@ -63,9 +67,14 @@ export default function Tasks() {
   }, []);
 
   useEffect(() => {
-    if (!query.data?.tasks.length || !window.location.hash.startsWith('#task-')) return;
-    const target = document.getElementById(window.location.hash.slice(1));
-    target?.scrollIntoView({ block: 'center' });
+    if (!query.data?.tasks.length) {
+      return;
+    }
+    scrolledHashRef.current = scrollTaskHashIntoView(
+      window.location.hash,
+      scrolledHashRef.current,
+      (id) => document.getElementById(id)
+    );
   }, [query.data]);
 
   const patchTask = (task: OperatorTask, patch: TaskPatch) => {
