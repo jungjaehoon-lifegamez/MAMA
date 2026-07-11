@@ -161,6 +161,22 @@ describe('TrelloConnector', () => {
       expect(items[1]?.type).toBe('kanban_card');
     });
 
+    it('omits prevListName from metadata on first sight of a card', async () => {
+      // Regression: undefined metadata values blow up the canonical raw-ref
+      // serializer at poll time ("undefined is not serializable at $.prevListName").
+      const lists = [makeTrelloList('list1', 'Todo', [{ id: 'card1', name: 'Task A' }])];
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({ ok: true, json: vi.fn().mockResolvedValue(lists) })
+      );
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(1);
+      expect('prevListName' in (items[0]?.metadata ?? {})).toBe(false);
+      expect(Object.values(items[0]?.metadata ?? {})).not.toContain(undefined);
+    });
+
     it('sets source to "trello"', async () => {
       const lists = [makeTrelloList('list1', 'Todo', [{ id: 'card1', name: 'Task A' }])];
       vi.stubGlobal(

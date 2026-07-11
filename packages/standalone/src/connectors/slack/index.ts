@@ -131,7 +131,9 @@ export class SlackConnector implements IConnector {
               metadata: {
                 channelId,
                 ts: msg.ts as string,
-                threadTs: msg.thread_ts as string | undefined,
+                // Omit when absent: the canonical raw-ref serializer rejects
+                // undefined values ("undefined is not serializable at $.threadTs").
+                ...(msg.thread_ts ? { threadTs: msg.thread_ts as string } : {}),
               },
             });
           }
