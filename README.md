@@ -18,24 +18,31 @@ Context Compile V0. `context_compile` turns those pieces into one selected/rejec
 evidence packet for a task, and `mama_save` can attach that packet through trusted
 `context_packet_id` provenance.
 
-## vNext Release Readiness
+## The Operator Runtime
 
-The vNext primary-operator rebuild is in opt-in release hardening. PRs #98 through #115 rebuilt the
-runtime around one commit authority, source-linked writes, an operator review cockpit, synthetic
-end-to-end dogfood, and explicit gateway memory-policy opt-ins.
+The living center of MAMA OS is the **trigger loop**: an agent that authors its own triggers from
+recurring situations in your channels, fires them on future messages to recall the right memory,
+and folds everything into owner situation reports. The loop evolves itself — a review pass retires
+noisy triggers, and delivered reports that cite a fired trigger feed a success signal back into
+that trigger's stats.
 
-vNext is **not the default runtime yet**. The reviewed path has synthetic coverage, but default
-rollout still waits on migration guidance and real local smoke evidence that can be shared without
-private connector payloads, local paths, channel IDs, or internal project details.
+What runs continuously today:
 
-Current release decision:
-
-- **Opt-in only:** legacy runtime remains available.
-- **Memory policy default:** ordinary gateway turns do not inject implicit recall or legacy context
-  search unless `memory_policy` or `MAMA_MEMORY_POLICY_*` explicitly enables it.
-- **Next release gate:** finish the [vNext Release Readiness Guide](docs/guides/vnext-release-readiness.md),
-  run the real local smoke checklist, and pass the public-project privacy scans before any default
-  rollout decision.
+- **Trigger loop** — agent-authored triggers (keywords + memory query + procedure), deterministic
+  fire → recall → report, near-duplicate authoring gate, citation-based success circuit.
+- **Operator board at `/ui`** — a React viewer with four agent-published slots (briefing, action
+  required, decisions, pipeline) rendered live over SSE, plus a Triggers tab showing the loop's
+  own library. Task state comes from the real task ledger, never guessed from chat.
+- **Memory promotion** — every 6 hours a curation pass promotes durable judgments (pricing rules,
+  standing client preferences, process rules) from recent channel data into decisions. Task states
+  never become memories; the board owns those.
+- **Wiki compilation** — promoted decisions chain into an Obsidian wiki organized as an
+  append-only daily journal (`daily/YYYY-MM-DD.md`) plus lesson pages
+  (`lessons/clients|process|system`) that strengthen with evidence and get superseded, never
+  deleted.
+- **Hourly self-audit** — a conductor pass checks process health, databases, config, and security
+  posture, deduplicating alerts against a state file so the owner hears about a finding once, not
+  every hour.
 
 ## Target Workflow
 
@@ -105,9 +112,10 @@ context packets and downstream `context_packet_id` save provenance.
 MAMA OS is a local daemon that connects to your apps, reads continuously, and turns scattered records
 into scoped, auditable operating memory for agents and humans.
 
-The browser viewer is the live operating surface for that work: `Dashboard`, `Memory`, `Feed`,
-`Wiki`, `Agents`, `Logs`, and `Settings`, with a global chat shell layered on top instead of a
-separate chat tab.
+The **operator board at `/ui`** is the primary live surface: four agent-published report slots
+(briefing, action required, decisions, pipeline) updating over SSE, plus the trigger library. The
+legacy viewer at `/viewer` remains available with `Dashboard`, `Memory`, `Feed`, `Wiki`, `Agents`,
+`Logs`, and `Settings` tabs and a global chat shell.
 
 **Current building blocks and direction:**
 
@@ -265,9 +273,9 @@ npx @jungjaehoon/mama-os init
 mama start   # starts daemon at localhost:3847
 ```
 
-Web viewer at `http://localhost:3847/viewer`. The current Viewer ships `Dashboard`, `Memory`,
-`Feed`, `Wiki`, `Agents`, `Logs`, and `Settings`; chat opens from the floating shell instead of a
-dedicated tab. Connects to Discord, Slack, Telegram.
+Operator board at `http://localhost:3847/ui` (agent-published report slots + trigger library);
+legacy viewer at `http://localhost:3847/viewer` with `Dashboard`, `Memory`, `Feed`, `Wiki`,
+`Agents`, `Logs`, and `Settings` tabs. Connects to Discord, Slack, Telegram.
 
 > **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.13.0.
 
@@ -311,7 +319,7 @@ Anyone who installs MAMA OS and connects their apps gets:
   for a specific task before a worker saves memory or composes a report
 - **Decision evolution tracking** — Not just what was decided, but what it replaced, contradicted, and depended on
 - **Situation briefings** — Dashboard and situation agents summarize what changed, what is stale, and what needs attention
-- **Wiki organization** — Knowledge agents organize raw conversations into structured Obsidian pages
+- **Wiki organization** — The wiki agent keeps an Obsidian vault as an append-only daily journal plus durable lesson pages, compiled from promoted decisions
 - **93% retrieval accuracy** — 100-question LongMemEval tool-use sample against long conversation histories
 
 `mama_search` remains the broad candidate retriever. `context_compile` is now the task-shaped layer
@@ -319,17 +327,17 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                                                                                                             |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                      |
-| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                   |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                |
-| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                               |
-| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                       |
-| **Now**  | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance |
-| **Next** | v0.21   | vNext opt-in release readiness: migration guidance, real local smoke evidence, privacy gates, report composer hardening, packet retention policy, and search-quality feedback loops                                                               |
-|          | Later   | Domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                              |
-|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                       |
+| Phase    | Version | Focus                                                                                                                                                                                                                                                                                |
+| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                                                         |
+| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                                                      |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                                                   |
+| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                                                                  |
+| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                                                          |
+| **Done** | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance                                    |
+| **Now**  | v0.21   | The operator runtime: self-evolving trigger loop with a citation success circuit, `/ui` operator board (four live report slots + trigger library), task-truth from the real task ledger, wiki v5 daily journal + lessons, scheduled memory promotion, self-auditing with alert dedup |
+|          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                             |
+|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                          |
 
 ## Development
 
@@ -341,7 +349,7 @@ pnpm test     # 3000+ tests across all packages
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-_Last updated: 2026-07-04_
+_Last updated: 2026-07-12_
 
 ## License
 

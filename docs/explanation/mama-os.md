@@ -7,13 +7,18 @@
 
 ## What is MAMA OS?
 
-MAMA OS is the **unified web interface** for MAMA Standalone. The current Viewer is organized as
-seven tabs plus one global chat overlay:
+MAMA OS ships two browser surfaces. The **operator board at `/ui`** is the primary one: a React
+viewer with four agent-published report slots (briefing, action required, decisions, pipeline)
+updating live over SSE, plus a Triggers tab showing the trigger loop's own library. `/` redirects
+to `/ui`.
+
+The **legacy viewer at `/viewer`** remains available, organized as seven tabs plus one global chat
+overlay:
 
 1. **Dashboard** - System and project overview
 2. **Memory** - Decision graph and memory search
 3. **Feed** - Connector activity stream
-4. **Wiki** - Obsidian-backed document browsing
+4. **Wiki** - Obsidian-backed document browsing (the vault itself is organized as a daily journal plus lesson pages; see the wiki v5 layout)
 5. **Agents** - Managed-agent config, activity, validation, and history
 6. **Logs** - Runtime and daemon log inspection
 7. **Settings** - Gateway and runtime configuration
@@ -22,7 +27,7 @@ seven tabs plus one global chat overlay:
 Think of it as your **personal AI operating system** - accessible from any browser, optimized for
 mobile, and designed to keep you connected to your AI assistant wherever you are.
 
-**Access:** `http://localhost:3847/viewer` (when MAMA Standalone server is running)
+**Access:** `http://localhost:3847/ui` (operator board; `/` redirects here) or `http://localhost:3847/viewer` (legacy viewer)
 
 ---
 
@@ -59,7 +64,7 @@ MAMA OS **unifies everything** into a single Progressive Web App (PWA):
                       ↕ WebSocket
 ┌─────────────────────────────────────────────────┐
 │         MAMA Standalone Server (Node.js)         │
-│  • Autonomous agent loop                         │
+│  • Operator trigger loop (author/fire/report)    │
 │  • Gateway integrations (Discord, Slack, etc.)   │
 │  • SQLite + vector embeddings                    │
 │  • HTTP embedding server (port 3849)             │
