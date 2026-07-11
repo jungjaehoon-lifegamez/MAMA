@@ -300,6 +300,8 @@ export interface ActivityRow {
   requested_scopes: string | null;
   envelope_scopes_snapshot: string | null;
   scope_mismatch: number;
+  tool_name: string | null;
+  normalized_tool_name: string | null;
   created_at: string;
 }
 
