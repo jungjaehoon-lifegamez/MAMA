@@ -90,7 +90,8 @@ register({
   description:
     'Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.',
   category: 'os_monitoring',
-  params: 'slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }',
+  params:
+    'slots: { briefing?: html, action_required?: html, decisions?: html, pipeline?: html } -- partial maps allowed; only the given slots are updated',
 });
 register({
   name: 'wiki_publish',
@@ -307,6 +308,38 @@ register({
   description: 'Read raw messages from a specific channel (follow entities -> tasks -> messages)',
   category: 'business_data',
   params: 'channelId (required), since?, limit?, search?',
+});
+
+// Native task ledger (M8): operator-owned work items projected onto the board
+register({
+  name: 'task_list',
+  description:
+    'List operator work items from the native task ledger. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
+  category: 'os_monitoring',
+  params:
+    "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')",
+});
+register({
+  name: 'task_create',
+  description:
+    'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it.',
+  category: 'os_monitoring',
+  params:
+    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
+});
+register({
+  name: 'task_update',
+  description: 'Update a work item in the native task ledger by id.',
+  category: 'os_monitoring',
+  params:
+    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?',
+});
+register({
+  name: 'contract_no_update',
+  description:
+    'Record that a reconcile run judged NOTHING on the board or ledger affected. Silence becomes a verifiable judgment.',
+  category: 'os_monitoring',
+  params: 'reason (required), scope (required, e.g. "reconcile:slack:C001")',
 });
 
 // System tools

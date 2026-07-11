@@ -510,6 +510,13 @@ export class GatewayToolExecutor {
     this.obsidianVaultPath = vaultPath;
     this.obsidianVaultName = vaultName ?? null;
   }
+  private taskLedger: import('../operator/task-ledger.js').TaskLedger | null = null;
+  setTaskLedger(ledger: import('../operator/task-ledger.js').TaskLedger): void {
+    this.taskLedger = ledger;
+  }
+  getTaskLedger(): import('../operator/task-ledger.js').TaskLedger | null {
+    return this.taskLedger;
+  }
   private agentEventBus: AgentEventBus | null = null;
   setAgentEventBus(bus: AgentEventBus): void {
     this.agentEventBus = bus;
@@ -2290,6 +2297,72 @@ export class GatewayToolExecutor {
             );
           }
           return { success: true, messages: queryMessages(msgInput) };
+        }
+        case 'task_list': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const listInput = input as {
+            status?: string;
+            channel?: string;
+            search?: string;
+            limit?: number;
+            order?: string;
+          };
+          return {
+            success: true,
+            tasks: this.taskLedger.list({
+              status: listInput.status as never,
+              channel: listInput.channel,
+              search: listInput.search,
+              limit: listInput.limit,
+              order: (listInput.order as never) ?? 'deadline_priority',
+            }),
+          };
+        }
+        case 'task_create': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          return {
+            success: true,
+            task: this.taskLedger.create(input as never),
+          };
+        }
+        case 'task_update': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const { id: rawId, ...patch } = input as { id: unknown } & Record<string, unknown>;
+          // Agents routinely pass "12"; coerce, reject non-numeric with a typed error.
+          const id = typeof rawId === 'string' ? Number(rawId.trim()) : (rawId as number);
+          if (!Number.isInteger(id) || id <= 0) {
+            throw new AgentError(
+              `task_update requires a numeric id, got: ${String(rawId)}`,
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          return {
+            success: true,
+            task: this.taskLedger.update(id, patch as never),
+          };
+        }
+        case 'contract_no_update': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const { reason, scope } = input as { reason?: string; scope?: string };
+          if (!reason || !scope) {
+            throw new AgentError(
+              'contract_no_update requires both reason and scope',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          return { success: true, note: this.taskLedger.recordNoUpdate(scope, reason) };
         }
         case 'agent_notices': {
           const rawLimit = Number((input as { limit?: number }).limit);
