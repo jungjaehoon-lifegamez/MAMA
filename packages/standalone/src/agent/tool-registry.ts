@@ -335,6 +335,13 @@ register({
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?',
 });
 register({
+  name: 'schedule_upcoming',
+  description:
+    'Upcoming schedule from the calendar connector raw store: events within the next N days plus a one-line-per-event text digest. v1 limits: no recurrence expansion, no cancellation tracking; all-day events surface by date.',
+  category: 'os_monitoring',
+  params: 'days? (default 14, max 60)',
+});
+register({
   name: 'contract_no_update',
   description:
     'Record that a reconcile run judged NOTHING on the board or ledger affected. Silence becomes a verifiable judgment.',

@@ -331,7 +331,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
 
     // Dashboard cron: 30-min interval via AgentProcessManager
-    const dashboardPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
+    // Built PER RUN: the tracker's D-day arithmetic needs today's date, and a
+    // module-const prompt would freeze it (#134 lesson).
+    const buildDashboardPrompt =
+      () => `You are triggered on a schedule. Today is ${new Date().toISOString().slice(0, 10)}. Before writing anything, determine if an update is needed:
 
 1. Use agent_notices({limit: 50}) to find the most recent dashboard-agent publish/task_complete notice. Treat that as the last briefing boundary.
 2. Use context_compile first to find recent substantive decisions (limit 20, max_tool_calls 2, strictness "balanced").
@@ -339,17 +342,18 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 20).
 3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
-4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona.
+4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona. The pipeline slot is the item tracker projected from task_list (see your persona); compute D-day from today's date above.
 5. Do NOT call mama_save for the briefing; report_publish and agent_activity are the durable operational record.
 
 This saves resources. Only publish when there is genuinely new information to report.`;
 
     // Owner-initiated refresh skips the NO_UPDATE delta gate: an explicit
     // request means "rebuild the board now", not "tell me nothing changed".
-    const forcedDashboardPrompt = dashboardPrompt.replace(
-      /3\. If NO substantive decisions[^\n]*\n/,
-      '3. The owner explicitly requested a fresh board: do NOT reply NO_UPDATE. Rebuild and publish even if nothing changed since the last publish.\n'
-    );
+    const buildForcedDashboardPrompt = () =>
+      buildDashboardPrompt().replace(
+        /3\. If NO substantive decisions[^\n]*\n/,
+        '3. The owner explicitly requested a fresh board: do NOT reply NO_UPDATE. Rebuild and publish even if nothing changed since the last publish.\n'
+      );
 
     const doDashboardRun = async (opts?: { force?: boolean }) => {
       const pm = toolExecutor.getAgentProcessManager();
@@ -365,7 +369,7 @@ This saves resources. Only publish when there is genuinely new information to re
         );
         const { noUpdate } = await executeValidatedRun(
           'dashboard-agent',
-          opts?.force ? forcedDashboardPrompt : dashboardPrompt
+          opts?.force ? buildForcedDashboardPrompt() : buildDashboardPrompt()
         );
         console.log(
           noUpdate

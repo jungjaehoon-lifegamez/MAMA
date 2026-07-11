@@ -75,6 +75,7 @@ import type {
   AppendToolTraceInput,
 } from './types.js';
 import { AgentError } from './types.js';
+import SqliteDatabase from '../sqlite.js';
 import {
   handleSave,
   handleSearch,
@@ -2349,6 +2350,9 @@ export class GatewayToolExecutor {
             task: this.taskLedger.update(id, patch as never),
           };
         }
+        case 'schedule_upcoming': {
+          return this.executeScheduleUpcoming(input as { days?: number });
+        }
         case 'contract_no_update': {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
@@ -3712,6 +3716,73 @@ export class GatewayToolExecutor {
         error: `Failed to send to webchat: ${err instanceof Error ? err.message : String(err)}`,
       };
     }
+  }
+
+  /**
+   * schedule_upcoming (M8 P4): read the calendar connector's raw store and
+   * return events in [now, now+days] plus a compact text digest. Lazy readonly
+   * open (operator-handler pattern); prefers metadata JSON start when present.
+   * v1 limits (documented in the tool description): no recurrence expansion,
+   * no cancellation tracking.
+   */
+  private scheduleDb: import('../sqlite.js').SQLiteDatabase | null = null;
+  private executeScheduleUpcoming(input: { days?: number }): GatewayToolResult {
+    const rawDays = Number(input.days);
+    const days = Number.isFinite(rawDays) ? Math.max(1, Math.min(60, Math.floor(rawDays))) : 14;
+    const dbPath =
+      process.env.MAMA_CALENDAR_RAW_DB ??
+      join(homedir(), '.mama', 'connectors', 'calendar', 'raw.db');
+    if (!this.scheduleDb) {
+      if (!existsSync(dbPath)) {
+        return {
+          success: false,
+          error: 'Calendar connector raw store not found (is the calendar connector enabled?)',
+        } as GatewayToolResult;
+      }
+      // Wrapper takes only (path); this handle is used for reads only.
+      this.scheduleDb = new SqliteDatabase(dbPath);
+      this.scheduleDb.prepare('PRAGMA busy_timeout = 5000').get();
+    }
+    const now = Date.now();
+    const until = now + days * 86_400_000;
+    const rows = this.scheduleDb
+      .prepare(
+        `SELECT source_id, channel, content, timestamp, metadata
+         FROM raw_items
+         WHERE timestamp >= ? AND timestamp <= ?
+         ORDER BY timestamp ASC
+         LIMIT 50`
+      )
+      .all(now, until) as Array<{
+      source_id: string;
+      channel: string;
+      content: string;
+      timestamp: number;
+      metadata: string | null;
+    }>;
+    const events = rows.map((row) => {
+      let start = row.timestamp;
+      try {
+        const meta = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : null;
+        const metaStart = meta?.start ?? meta?.startTime ?? meta?.start_time;
+        if (typeof metaStart === 'string' || typeof metaStart === 'number') {
+          const parsed = new Date(metaStart).getTime();
+          if (Number.isFinite(parsed)) start = parsed;
+        }
+      } catch {
+        /* metadata is best-effort */
+      }
+      return {
+        title: (row.content ?? '').split('\n')[0]?.slice(0, 120) ?? '',
+        start: new Date(start).toISOString(),
+        channel: row.channel,
+      };
+    });
+    const text =
+      events.length === 0
+        ? `(no calendar events in the next ${days} days)`
+        : events.map((e) => `- ${e.start.slice(0, 16)} ${e.title} (${e.channel})`).join('\n');
+    return { success: true, events, text } as GatewayToolResult;
   }
 
   /**
