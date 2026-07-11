@@ -160,27 +160,34 @@ export class SituationReporter {
       return false;
     }
 
-    // Parse + strip the USED_TRIGGERS machine trailer (the owner never sees it),
-    // validate the ids against THIS window's fires (no hallucinated credit), and
-    // hand them to the wiring for 'succeeded' outcome recording.
+    // Parse + strip the USED_TRIGGERS machine trailer (the owner never sees it)
+    // and validate the ids against THIS window's fires (no hallucinated credit).
     const match = raw.match(USED_TRIGGERS_PATTERN);
     const text = raw.replace(USED_TRIGGERS_PATTERN, '').trim();
-    if (match && this.opts.recordTriggerUse) {
+    let cited: string[] = [];
+    if (match) {
       const windowIds = new Set([...this.fireAgg.values()].map((f) => f.triggerId));
-      const cited = match[1]
-        .split(',')
-        .map((id) => id.trim())
-        .filter((id) => id.length > 0 && id.toLowerCase() !== 'none' && windowIds.has(id));
-      if (cited.length > 0) {
-        this.opts.recordTriggerUse([...new Set(cited)]);
-      }
+      cited = [
+        ...new Set(
+          match[1]
+            .split(',')
+            .map((id) => id.trim())
+            .filter((id) => id.length > 0 && id.toLowerCase() !== 'none' && windowIds.has(id))
+        ),
+      ];
     }
     if (text === '') {
-      this.reset(); // trailer-only reply: nothing for the owner
+      this.reset(); // trailer-only reply: nothing was delivered, so no credit either
       return false;
     }
 
     await output.send(text); // throws loudly on failure; buffer kept for retry (no-fallback)
+    // Credit only AFTER a successful send: success means "cited in a DELIVERED
+    // report". Crediting before send would double-count on the retry path
+    // (send throws -> buffer kept -> next cadence re-cites the same fires).
+    if (cited.length > 0) {
+      this.opts.recordTriggerUse?.(cited);
+    }
     this.reset();
     return true;
   }
