@@ -57,7 +57,8 @@ mama start
 
 MAMA Mobile provides a web-based interface for:
 
-- **Viewer tabs:** Dashboard, Memory, Feed, Wiki, Agents, Logs, Settings
+- **Operator board:** `/ui` with four live report slots (briefing, action required, decisions, pipeline) and a Triggers tab
+- **Legacy viewer tabs:** Dashboard, Memory, Feed, Wiki, Agents, Logs, Settings
 - **Floating Chat:** Real-time chat with Claude Code via WebSocket
 
 Access both features at `http://localhost:3847/viewer`
