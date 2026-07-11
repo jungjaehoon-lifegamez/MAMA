@@ -66,6 +66,21 @@ describe('system agent unification', () => {
       expect(source).not.toContain('Use mama_search to find recent substantive decisions');
     });
 
+    it('wiki novelty check is recency-based, not semantic (cross-language gap)', async () => {
+      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
+        encoding: 'utf-8',
+      });
+      const { WIKI_AGENT_PERSONA } = await import('../../src/multi-agent/wiki-agent-persona.js');
+
+      // Lexical scoring against the English task text filtered out Korean-only
+      // decisions, so a fresh promotion was judged "nothing new". The novelty
+      // check must use the no-query mama_search recency list.
+      for (const text of [source, WIKI_AGENT_PERSONA]) {
+        expect(text).toContain('NOVELTY CHECK by recency, not semantics');
+        expect(text).toContain('mama_search({limit: 30}) with NO query');
+      }
+    });
+
     it('memory promotion run curates durable judgments and never task states', async () => {
       const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
         encoding: 'utf-8',
