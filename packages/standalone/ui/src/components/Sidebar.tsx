@@ -1,4 +1,13 @@
+import { useState } from 'react';
 import { NavLink } from 'react-router-dom';
+import {
+  applyTheme,
+  getStoredTheme,
+  resolveTheme,
+  THEME_STORAGE_KEY,
+  toggleTheme,
+  type Theme,
+} from '../lib/theme';
 
 interface NavItem {
   to: string;
@@ -23,6 +32,34 @@ const navItems: NavItem[] = [
 const legacyLinks = [{ href: '/viewer', label: 'Legacy viewer' }];
 
 export default function Sidebar() {
+  const [theme, setTheme] = useState<Theme>(() => {
+    const documentTheme = document.documentElement.dataset.theme;
+    if (documentTheme === 'light' || documentTheme === 'dark') {
+      return documentTheme;
+    }
+    let storedTheme: Theme | null = null;
+    try {
+      storedTheme = getStoredTheme(window.localStorage);
+    } catch {
+      storedTheme = null;
+    }
+    const prefersDark =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return resolveTheme(storedTheme, prefersDark);
+  });
+
+  const handleThemeToggle = () => {
+    const nextTheme = toggleTheme(theme);
+    applyTheme(nextTheme, document.documentElement);
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    } catch {
+      // The applied theme still works when storage is unavailable.
+    }
+    setTheme(nextTheme);
+  };
+
   const linkClass = ({ isActive }: { isActive: boolean }) =>
     `flex items-center gap-2 px-2 py-1.5 text-[13px] rounded-lg transition-all duration-150 ${
       isActive
@@ -42,7 +79,7 @@ export default function Sidebar() {
         <div className="px-3 pt-3 pb-1">
           <div className="flex items-center gap-2.5 px-2 mb-3">
             <div className="w-7 h-7 rounded-lg bg-agent flex items-center justify-center">
-              <span className="text-white text-xs font-bold">M</span>
+              <span className="text-on-agent text-xs font-bold">M</span>
             </div>
             <span className="text-[14px] font-semibold text-text tracking-tight">
               MAMA Operator
@@ -82,8 +119,36 @@ export default function Sidebar() {
             ))}
           </div>
         </nav>
-        <div className="px-4 py-3">
-          <div className="text-[10px] text-text-tertiary">MAMA Operator (beta)</div>
+        <div className="px-3 py-3 border-t border-sidebar-border">
+          <button
+            type="button"
+            onClick={handleThemeToggle}
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+            className="w-full flex items-center gap-2 px-2 py-1.5 text-[13px] rounded-lg text-text-secondary hover:text-text hover:bg-sidebar-hover transition-colors"
+          >
+            <svg
+              className="w-5 h-5 text-text-tertiary"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={1.5}
+              viewBox="0 0 24 24"
+              aria-hidden="true"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d={
+                  theme === 'dark'
+                    ? 'M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364 6.364-1.06-1.06M6.696 6.696l-1.06-1.06m12.728 0-1.06 1.06M6.696 17.304l-1.06 1.06M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z'
+                    : 'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z'
+                }
+              />
+            </svg>
+            <span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
+          </button>
+          <div className="px-2 pt-2 text-[10px] text-text-tertiary">
+            MAMA Operator (beta)
+          </div>
         </div>
       </aside>
 
@@ -107,6 +172,32 @@ export default function Sidebar() {
             )}
           </NavLink>
         ))}
+        <button
+          type="button"
+          onClick={handleThemeToggle}
+          aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+          className="flex flex-col items-center justify-center gap-0.5 py-1.5 text-[10px] text-text-tertiary"
+        >
+          <svg
+            className="w-5 h-5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.5}
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d={
+                theme === 'dark'
+                  ? 'M12 3v1.5m0 15V21m9-9h-1.5M4.5 12H3m15.364 6.364-1.06-1.06M6.696 6.696l-1.06-1.06m12.728 0-1.06 1.06M6.696 17.304l-1.06 1.06M16.5 12a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z'
+                  : 'M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z'
+              }
+            />
+          </svg>
+          <span>Theme</span>
+        </button>
       </nav>
     </>
   );
