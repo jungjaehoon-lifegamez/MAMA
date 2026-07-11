@@ -98,6 +98,36 @@ describe('system agent unification', () => {
     });
   });
 
+  describe('dashboard persona v12 (M8 P3)', () => {
+    it('adds RECONCILE RUN mode and the item-tracker pipeline projection', async () => {
+      const { DASHBOARD_AGENT_PERSONA } =
+        await import('../../src/multi-agent/dashboard-agent-persona.js');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('## RECONCILE RUN mode');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('RECONCILED');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('source_event_id');
+      // tracker projection from the NATIVE ledger
+      expect(DASHBOARD_AGENT_PERSONA).toContain(
+        'task_list({order: "deadline_priority", limit: 12})'
+      );
+      expect(DASHBOARD_AGENT_PERSONA).toContain('(unconfirmed)');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('unassigned');
+      // cron rules intact
+      expect(DASHBOARD_AGENT_PERSONA).toContain(
+        'Call report_publish exactly once, carrying all four slots'
+      );
+    });
+
+    it("cron prompt is built per run and carries today's date", async () => {
+      const { readFile } = await import('node:fs/promises');
+      const { join } = await import('node:path');
+      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
+        encoding: 'utf-8',
+      });
+      expect(source).toContain('const buildDashboardPrompt =');
+      expect(source).toContain('Today is ${new Date().toISOString().slice(0, 10)}');
+    });
+  });
+
   describe('memory persona promotion mode', () => {
     it('adds PROMOTION RUN mode with curation bias and keeps turn-audit rules', async () => {
       const { MEMORY_AGENT_PERSONA } =
