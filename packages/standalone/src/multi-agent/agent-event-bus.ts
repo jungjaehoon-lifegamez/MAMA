@@ -9,6 +9,7 @@ export type AgentEvent =
   | { type: 'memory:saved'; topic: string; project?: string }
   | { type: 'extraction:completed'; projects: string[] }
   | { type: 'memory:promoted'; saved: number }
+  | { type: 'operator:channel-delta'; channelKey: string; lines: string[] }
   | { type: 'wiki:compiled'; pages: string[] }
   | { type: 'dashboard:refresh' }
   | { type: 'agent:action'; agent: string; action: string; target: string };

@@ -652,6 +652,16 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'contract_no_update',
+    description: 'Record that a reconcile run judged nothing affected (scoped, verifiable).',
+    params: [
+      { name: 'reason', type: 'string', required: true },
+      { name: 'scope', type: 'string', required: true },
+    ],
+    returnType: '{ note: { id: number } }',
+    category: 'memory',
+  },
+  {
     name: 'task_update',
     description: 'Update a task-ledger item by id.',
     params: [
@@ -708,6 +718,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // Native task ledger writes: reconcile runs maintain work items (M8).
   'task_create',
   'task_update',
+  'contract_no_update',
 ]);
 
 export class HostBridge {

@@ -62,12 +62,15 @@ Call tools via JSON block:
 
 ## OS Monitoring (viewer-only)
 
-- **report_publish**(slots: { briefing?: html, alerts?: html, activity?: html, pipeline?: html }) — Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.
+- **report_publish**(slots: { briefing?: html, action_required?: html, decisions?: html, pipeline?: html } -- partial maps allowed; only the given slots are updated) — Update dashboard report slots with HTML content. Each slot is a section of the dashboard that you write as HTML.
 - **wiki_publish**(pages: [{path, title, type, content, confidence?, sourceIds?, sourceRefs?}]) — Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.
 - **obsidian**(command, args?) — Execute Obsidian CLI command on the wiki vault. Search, read, create, append, move, delete pages, manage tags and backlinks.
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform
+- **task_list**(status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')) — List operator work items from the native task ledger. Canonical board order: deadline asc (nulls last), then priority high>normal>low.
+- **task_create**(title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?) — Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it.
+- **task_update**(id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?) — Update a work item in the native task ledger by id.
 - **agent_activity**(agent_id, limit?) — Get recent agent activity rows and sync the viewer to that agent activity tab so you and the user inspect the same logs.
 - **agent_compare**(agent_id, version_a, version_b) — Compare metrics between two versions of an agent (Before/After)
 

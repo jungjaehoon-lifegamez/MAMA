@@ -773,6 +773,7 @@ export type GatewayToolName =
   | 'task_list'
   | 'task_create'
   | 'task_update'
+  | 'contract_no_update'
   // System tools
   | 'agent_notices'
   // Agent management tools (Managed Agents pattern)
