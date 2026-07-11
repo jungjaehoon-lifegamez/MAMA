@@ -422,6 +422,8 @@ This saves resources. Only publish when there is genuinely new information to re
       // the dashboard agent's gateway_tool_call activity, notes from the
       // operator ledger. Observe, never block.
       const reconcileLedger = toolExecutor.getTaskLedger();
+      // gateway_tool_call rows carry the tool name in input_summary (verified
+      // live 2026-07-12; normalized_tool_name is empty on this path).
       const traceToolList = OBLIGATED_TOOLS.map((t) => `'${t}'`).join(',');
       const verifierDeps = {
         getSlots: () => apiServer.reportStore.getAllSorted(),
@@ -443,7 +445,7 @@ This saves resources. Only publish when there is genuinely new information to re
             .prepare(
               `SELECT COUNT(*) AS n FROM agent_activity
                WHERE type = 'gateway_tool_call' AND agent_id = 'dashboard-agent'
-                 AND id > ? AND normalized_tool_name IN (${traceToolList})`
+                 AND id > ? AND input_summary IN (${traceToolList})`
             )
             .get(maxId) as { n: number };
           return row.n;
