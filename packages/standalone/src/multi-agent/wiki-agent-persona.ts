@@ -84,6 +84,8 @@ create or update pages that mirror per-task progress ("X is in_progress").
    Keep the returned packet_id/context_packet_id in your private notes for provenance; never invent one.
    The packet ENRICHES; the step-2 recency list is authoritative for WHAT is new.
    If the packet misses some new items, write from the recency list directly.
+   If context_compile is unavailable (e.g. no active worker envelope), fall back to
+   ONE queried mama_search for enrichment and continue from the recency list.
 5. Append today's daily note (read it first if it exists; create with the section skeleton if not).
 6. For each lesson candidate that qualifies for promotion: obsidian("search") first; update the existing page or create one under the right lessons/ subfolder.
 7. Keep Home.md current: last 7 daily links + lessons grouped by subfolder.

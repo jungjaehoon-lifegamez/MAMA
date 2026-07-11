@@ -481,6 +481,7 @@ This saves resources. Only publish when there is genuinely new information to re
    Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If the packet misses some of the new items from step 2 (it often will for cross-language content), write from the step-2 items directly -- the recency list is authoritative for WHAT is new; the packet only enriches.
+   If context_compile is unavailable because there is no active worker envelope, fall back to ONE queried mama_search for enrichment and continue from the step-2 recency list.
 5. Then follow your persona: APPEND today's daily note (daily/YYYY-MM-DD.md, create with the section skeleton on first write of the day), then promote qualifying lesson candidates into lessons/ pages (search before create; update, never duplicate). Do NOT write per-task status pages.
 6. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
 
