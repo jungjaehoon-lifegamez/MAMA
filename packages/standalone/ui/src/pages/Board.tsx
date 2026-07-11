@@ -1,26 +1,39 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import {
-  mergeReportEvent,
-  orderSlots,
-  type ReportSlot,
-  type SlotRecord,
-} from '../api/report';
+import { mergeReportEvent, orderSlots, type ReportSlot, type SlotRecord } from '../api/report';
 import { sanitizeReportHtml } from '../api/sanitize';
 import { connectReportSse } from '../api/client';
 import StatCard from '../components/StatCard';
 import { formatRelativeTime, getFreshnessClass } from '../lib/time';
+import { linkifyTaskReferences } from '../lib/task-links';
 
 type SseStatus = 'live' | 'reconnecting';
 
 function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
   const ref = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   useEffect(() => {
     if (!ref.current) return;
     ref.current.innerHTML = sanitizeReportHtml(slot.html);
-  }, [slot.html]);
+    if (slot.slotId !== 'pipeline') return;
+    linkifyTaskReferences(ref.current);
+    const handleClick = (event: MouseEvent) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      const target =
+        event.target instanceof Element ? event.target.closest('[data-task-id]') : null;
+      const taskId = target instanceof HTMLElement ? target.dataset.taskId : undefined;
+      if (!taskId || !/^\d+$/.test(taskId)) return;
+      event.preventDefault();
+      navigate(`/tasks#task-${taskId}`);
+    };
+    ref.current.addEventListener('click', handleClick);
+    return () => ref.current?.removeEventListener('click', handleClick);
+  }, [navigate, slot.html, slot.slotId]);
 
   return (
     <section
@@ -44,8 +57,8 @@ function EmptyState() {
     <div className="flex flex-col items-center justify-center h-full text-center px-6 py-16">
       <h2 className="text-lg font-semibold text-text mb-2">No reports published yet</h2>
       <p className="text-sm text-text-secondary max-w-md">
-        Slots appear here once an agent publishes them via report_publish. The heartbeat
-        briefing or the dashboard agent fills the first slot.
+        Slots appear here once an agent publishes them via report_publish. The heartbeat briefing or
+        the dashboard agent fills the first slot.
       </p>
     </div>
   );
@@ -143,11 +156,7 @@ export default function Board() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
             <StatCard label="Active triggers" value={summary?.triggers.active ?? '-'} />
             <StatCard label="Total fires" value={summary?.triggers.fired ?? '-'} />
-            <StatCard
-              label="Succeeded"
-              value={summary?.triggers.succeeded ?? '-'}
-              tone="success"
-            />
+            <StatCard label="Succeeded" value={summary?.triggers.succeeded ?? '-'} tone="success" />
             <StatCard
               label="Failed"
               value={summary?.triggers.failed ?? '-'}

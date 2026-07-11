@@ -23,6 +23,33 @@ export interface TriggerRow {
   disabledReason: string | null;
 }
 
+export type TaskStatus = 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled';
+
+export type TaskPriority = 'high' | 'normal' | 'low';
+
+export interface OperatorTask {
+  id: number;
+  title: string;
+  status: TaskStatus;
+  priority: TaskPriority;
+  assignee: string | null;
+  due_date: string | null;
+  source_channel: string | null;
+  latest_event: string | null;
+  auto_created: boolean;
+  confirmed: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface TaskPatch {
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  assignee?: string | null;
+  due_date?: string | null;
+  confirmed?: boolean;
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     headers: { 'content-type': 'application/json' },
@@ -38,6 +65,18 @@ export const api = {
   getReport: () => request<{ slots: ReportSlot[] }>('/api/report'),
   getOperatorSummary: () => request<OperatorSummary>('/api/operator/summary'),
   listTriggers: () => request<{ triggers: TriggerRow[] }>('/api/operator/triggers'),
+  listTasks: (filters: { status?: TaskStatus; source_channel?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams();
+    if (filters.status) params.set('status', filters.status);
+    if (filters.source_channel) params.set('source_channel', filters.source_channel);
+    params.set('limit', String(filters.limit ?? 50));
+    return request<{ tasks: OperatorTask[] }>(`/api/operator/tasks?${params.toString()}`);
+  },
+  updateTask: (id: number, patch: TaskPatch) =>
+    request<{ ok: true; task: OperatorTask }>(`/api/operator/tasks/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
   disableTrigger: async (id: string, reason: string): Promise<void> => {
     await request<{ ok: boolean }>(`/api/operator/triggers/${encodeURIComponent(id)}/disable`, {
       method: 'POST',
