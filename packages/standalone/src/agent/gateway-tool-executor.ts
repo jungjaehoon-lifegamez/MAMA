@@ -3745,21 +3745,32 @@ export class GatewayToolExecutor {
     }
     const now = Date.now();
     const until = now + days * 86_400_000;
-    const rows = this.scheduleDb
-      .prepare(
-        `SELECT source_id, channel, content, timestamp, metadata
-         FROM raw_items
-         WHERE timestamp >= ? AND timestamp <= ?
-         ORDER BY timestamp ASC
-         LIMIT 50`
-      )
-      .all(now, until) as Array<{
+    let rows: Array<{
       source_id: string;
       channel: string;
       content: string;
       timestamp: number;
       metadata: string | null;
     }>;
+    try {
+      rows = this.scheduleDb
+        .prepare(
+          `SELECT source_id, channel, content, timestamp, metadata
+           FROM raw_items
+           WHERE timestamp >= ? AND timestamp <= ?
+           ORDER BY timestamp ASC
+           LIMIT 50`
+        )
+        .all(now, until) as typeof rows;
+    } catch (err) {
+      // Corrupt/locked store or missing table: fail closed with a readable
+      // error and drop the cached handle so the next call can retry fresh.
+      this.scheduleDb = null;
+      return {
+        success: false,
+        error: `Calendar raw store unreadable: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
     const events = rows.map((row) => {
       let start = row.timestamp;
       try {
