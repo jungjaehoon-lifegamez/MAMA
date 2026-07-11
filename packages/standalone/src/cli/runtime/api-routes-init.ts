@@ -549,6 +549,13 @@ This saves resources. Only compile when there is genuinely new information to do
     'Classify findings as MINOR or MAJOR. ' +
     'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
     'For MAJOR items: report to human via channel alert. ' +
+    // Owner verdict 2026-07-11: the hourly audit re-sent the same MAJOR alert
+    // every run because each audit was stateless. Dedup against the previous
+    // audit before alerting.
+    'Alert dedup (MANDATORY): before alerting, fetch the previous audit result via ' +
+    'agent_notices and diff. Re-alert a MAJOR finding only if it is NEW, has ESCALATED, ' +
+    'or the last alert for the same finding is older than 24 hours; otherwise record it ' +
+    'in the audit session silently. Never alert MINOR findings to the owner. ' +
     // Owner verdict 2026-07-10: hourly-audit self-notes are memory noise -- the two
     // "durable policy" saves it produced were unscoped near-duplicates polluting
     // global recall. The audit record lives in validation sessions + agent_activity;
