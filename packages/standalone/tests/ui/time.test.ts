@@ -18,6 +18,11 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(now, now - 2 * 60 * 60_000)).toBe('2h ago');
     expect(formatRelativeTime(now, now - 3 * 24 * 60 * 60_000)).toBe('3d ago');
   });
+
+  it('returns unknown for non-finite timestamps', () => {
+    expect(formatRelativeTime(now, Number.NaN)).toBe('unknown');
+    expect(formatRelativeTime(now, Number.POSITIVE_INFINITY)).toBe('unknown');
+  });
 });
 
 describe('getFreshnessClass', () => {
@@ -39,6 +44,13 @@ describe('getFreshnessClass', () => {
   it('uses the warning style after six hours', () => {
     expect(getFreshnessClass(now, now - (6 * 60 * 60_000 + 1))).toBe(
       'bg-warning-soft text-warning-text'
+    );
+  });
+
+  it('uses the neutral style for non-finite timestamps', () => {
+    expect(getFreshnessClass(now, Number.NaN)).toBe('bg-surface-secondary text-text-tertiary');
+    expect(getFreshnessClass(now, Number.NEGATIVE_INFINITY)).toBe(
+      'bg-surface-secondary text-text-tertiary'
     );
   });
 });

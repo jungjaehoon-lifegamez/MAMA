@@ -43,7 +43,10 @@ export default function Sidebar() {
     } catch {
       storedTheme = null;
     }
-    return resolveTheme(storedTheme, window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const prefersDark =
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return resolveTheme(storedTheme, prefersDark);
   });
 
   const handleThemeToggle = () => {
