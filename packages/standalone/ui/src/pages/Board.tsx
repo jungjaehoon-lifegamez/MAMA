@@ -16,10 +16,11 @@ function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!ref.current) return;
-    ref.current.innerHTML = sanitizeReportHtml(slot.html);
+    const element = ref.current;
+    if (!element) return;
+    element.innerHTML = sanitizeReportHtml(slot.html);
     if (slot.slotId !== 'pipeline') return;
-    linkifyTaskReferences(ref.current);
+    linkifyTaskReferences(element);
     const handleClick = (event: MouseEvent) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
@@ -31,8 +32,8 @@ function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
       event.preventDefault();
       navigate(`/tasks#task-${taskId}`);
     };
-    ref.current.addEventListener('click', handleClick);
-    return () => ref.current?.removeEventListener('click', handleClick);
+    element.addEventListener('click', handleClick);
+    return () => element.removeEventListener('click', handleClick);
   }, [navigate, slot.html, slot.slotId]);
 
   return (
