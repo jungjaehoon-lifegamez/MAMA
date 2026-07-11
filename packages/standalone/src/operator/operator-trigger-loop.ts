@@ -92,14 +92,32 @@ export class OperatorTriggerLoop {
   private recentEvents: OperatorChannelEvent[] = [];
   private running = false;
   private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
-  private digest = new SituationReporter();
+  private digest: SituationReporter;
   private fullReporter: SituationReporter;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
+    // G2 success signal: when a sent report cites fired triggers (USED_TRIGGERS
+    // trailer, window-validated), record 'succeeded' on each. Uncited fires stay
+    // neutral; elimination still comes from the review pass. Detector-based fires
+    // carry the detector name as id and are not in the registry -- skip loudly.
+    const recordTriggerUse = (ids: string[]): void => {
+      for (const id of ids) {
+        try {
+          deps.registry.recordOutcome(id, 'succeeded');
+          deps.log(`[trigger-loop] outcome succeeded trigger=${id} (cited in owner report)`);
+        } catch (err) {
+          deps.log(
+            `[trigger-loop] outcome skip trigger=${id}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    };
+    this.digest = new SituationReporter({ recordTriggerUse });
     this.fullReporter = new SituationReporter({
       selfGatherLines: deps.fullReportSelfGather,
       boardPublishLines: deps.fullReportBoardLines,
+      recordTriggerUse,
     });
   }
 
