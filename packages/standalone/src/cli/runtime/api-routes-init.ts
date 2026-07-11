@@ -512,6 +512,10 @@ This saves resources. Only compile when there is genuinely new information to do
     // bursts of extraction:completed events coalesce into one wiki compile run.
     eventBus.onDebounced('extraction:completed', () => runWikiAgent(), 30_000);
 
+    // Promotion feeds the wiki: freshly promoted decisions are exactly the
+    // material daily notes and lessons compile from.
+    eventBus.onDebounced('memory:promoted', () => runWikiAgent(), 30_000);
+
     // Emit agent:action notices when wiki pages are compiled
     eventBus.on('wiki:compiled', (event) => {
       if (event.type === 'wiki:compiled') {
@@ -537,6 +541,84 @@ This saves resources. Only compile when there is genuinely new information to do
 
     routesLogger.info(
       '[Wiki Agent] Ready — triggers: extraction:completed event, POST /api/wiki/compile'
+    );
+  }
+
+  // -- Memory Promotion: scheduled observation->decision curation --
+  // Owner directive 2026-07-11: the decision layer starved after the 07-03/04
+  // backfill because nothing periodically judges connector-ingested business
+  // data (the M0 kill switch removed direct LLM extraction, and the memory
+  // agent only audits owner conversation turns). This pass has the memory
+  // agent promote DURABLE judgments only -- task states stay on the board.
+  const memoryAgentConfigured = hasEnabledAgentConfig('memory');
+  if (memoryAgentConfigured) {
+    const PROMOTION_INTERVAL_MS =
+      Math.max(1, Number(process.env.MAMA_MEMORY_PROMOTION_HOURS) || 6) * 60 * 60 * 1000;
+    const PROMOTION_INITIAL_DELAY_MS = 10 * 60 * 1000; // let connectors poll first
+
+    const buildPromotionPrompt = (nowIso: string): string =>
+      'PROMOTION RUN. You are curating durable business memory from recent data. ' +
+      `The current time is ${nowIso}.\n` +
+      '1. agent_notices({limit: 100}): find your latest promotion notice (action "promoted" ' +
+      'or "no_update") and treat it as the boundary; default to the last 24h when absent.\n' +
+      '2. kagemusha_entities({activeOnly: true}) to find the rooms active since the boundary, ' +
+      'then kagemusha_messages({channelId, since: <boundary ISO>}) on the busiest 3-4 rooms.\n' +
+      '3. For each candidate judgment, mama_search first to find the existing topic; reuse it ' +
+      'so the evolution chain stays intact.\n' +
+      '4. Promote at most 5 durable judgments per run via mama_save, following the PROMOTION RUN ' +
+      'rules in your persona (pricing/scope agreements, standing client preferences, process ' +
+      'rules, recurring risk patterns; NEVER task lifecycle states, greetings, or logistics). ' +
+      'Include scopes (the source channel, and the project when identifiable) and event_date.\n' +
+      '5. Finish with exactly PROMOTED <n> or NO_UPDATE.';
+
+    const doPromotionRun = async () => {
+      if (!toolExecutor.getAgentProcessManager()) {
+        routesLogger.warn('[Memory Promotion] AgentProcessManager not available yet');
+        return;
+      }
+      try {
+        const { response, noUpdate } = await executeValidatedRun(
+          'memory',
+          buildPromotionPrompt(new Date().toISOString()),
+          { requestTimeout: 600_000 }
+        );
+        const promotedMatch = response?.match(/PROMOTED\s+(\d+)/);
+        const saved = promotedMatch ? Number(promotedMatch[1]) : 0;
+        eventBus.emit({
+          type: 'agent:action',
+          agent: 'Memory Agent',
+          action: noUpdate || saved === 0 ? 'no_update' : 'promoted',
+          target: `promotion run: ${saved} saved`,
+        });
+        if (saved > 0) {
+          eventBus.emit({ type: 'memory:promoted', saved });
+          console.log(`[Memory Promotion] Promoted ${saved} durable judgments`);
+        } else {
+          routesLogger.debug('[Memory Promotion] Nothing qualified for promotion');
+        }
+      } catch (err) {
+        routesLogger.error('[Memory Promotion] Error:', err instanceof Error ? err.message : err);
+      }
+    };
+
+    // Serialize all promotion runs on one chain (same 'Process is busy' class
+    // as the dashboard and wiki agents).
+    let promotionRunChain: Promise<void> = Promise.resolve();
+    const runMemoryPromotion = (): Promise<void> => {
+      promotionRunChain = promotionRunChain.then(doPromotionRun).catch(() => {});
+      return promotionRunChain;
+    };
+
+    setTimeout(runMemoryPromotion, PROMOTION_INITIAL_DELAY_MS);
+    setInterval(runMemoryPromotion, PROMOTION_INTERVAL_MS);
+
+    apiServer.app.post('/api/memory/promote', requireAuth, (_req, res) => {
+      runMemoryPromotion().catch(() => {});
+      res.json({ ok: true, message: 'Memory promotion run triggered' });
+    });
+
+    console.log(
+      `[Memory Promotion] Ready: every ${PROMOTION_INTERVAL_MS / 3_600_000}h, POST /api/memory/promote`
     );
   }
 
