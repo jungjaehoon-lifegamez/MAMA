@@ -134,6 +134,28 @@ describe('SlackConnector', () => {
       expect(calls).not.toContain('C003');
     });
 
+    it('omits threadTs from metadata when the message has no thread_ts', async () => {
+      // Regression: undefined metadata values blow up the canonical raw-ref
+      // serializer at poll time ("undefined is not serializable at $.threadTs").
+      mockWebClient.conversations.history.mockResolvedValueOnce({
+        messages: [
+          { ts: '1700000001.000', user: 'U123', text: 'top-level message' },
+          { ts: '1700000002.000', user: 'U123', text: 'reply', thread_ts: '1700000001.000' },
+        ],
+      });
+      const connector = new SlackConnector(
+        makeConfig({ channels: { C001: { role: 'hub', name: 'general' } } })
+      );
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(2);
+      const topLevel = items.find((i) => i.content === 'top-level message');
+      const reply = items.find((i) => i.content === 'reply');
+      expect(topLevel && 'threadTs' in (topLevel.metadata ?? {})).toBe(false);
+      expect(reply?.metadata?.threadTs).toBe('1700000001.000');
+      expect(Object.values(topLevel?.metadata ?? {})).not.toContain(undefined);
+    });
+
     it('skips bot messages', async () => {
       mockWebClient.conversations.history.mockResolvedValueOnce({
         messages: [
