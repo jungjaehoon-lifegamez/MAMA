@@ -34,6 +34,7 @@ describe('TaskLedger', () => {
     expect(() => ledger.create({ title: '  ' })).toThrow(/title/);
     expect(() => ledger.create({ title: 'x', deadline: 'next friday' })).toThrow(/ISO date/);
     expect(() => ledger.create({ title: 'x', deadline: '2026-13-99' })).toThrow(/ISO date/);
+    expect(() => ledger.create({ title: 'x', deadline: '2026-02-30' })).toThrow(/ISO date/);
   });
 
   it('maps ISO deadline to UTC-midnight epoch ms for the OperatorTask interface', () => {
@@ -88,6 +89,12 @@ describe('TaskLedger', () => {
     const cleared = ledger.update(t.id, { deadline: null });
     expect(cleared.deadlineIso).toBeNull();
     expect(cleared.deadline).toBeNull();
+  });
+
+  it('assignee can be cleared with null', () => {
+    const t = ledger.create({ title: 'x', assignee: 'worker-a' });
+    const cleared = ledger.update(t.id, { assignee: null });
+    expect(cleared.assignee).toBeNull();
   });
 
   it('deadline_priority ordering: deadline asc nulls last, then priority, LIMIT after order', () => {

@@ -31,6 +31,7 @@ import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
 import { createUploadRouter } from '../../api/upload-handler.js';
+import { registerOperatorTaskRoutes } from '../../api/operator-tasks-handler.js';
 import { requireAuth, isAuthenticated, logUnauthorizedAttempt } from '../../api/auth-middleware.js';
 import type { OAuthManager } from '../../auth/index.js';
 import type { DiscordGateway } from '../../gateways/discord.js';
@@ -253,6 +254,10 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
+
+  registerOperatorTaskRoutes(apiServer.app, {
+    getTaskLedger: () => toolExecutor.getTaskLedger(),
+  });
 
   const hasEnabledAgentConfig = (agentId: string): boolean => {
     const agentConfig = config.multi_agent?.agents?.[agentId];

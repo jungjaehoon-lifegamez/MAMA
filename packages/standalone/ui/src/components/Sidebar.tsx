@@ -27,6 +27,11 @@ const navItems: NavItem[] = [
     label: 'Triggers',
     d: 'M13 10V3L4 14h7v7l9-11h-7z',
   },
+  {
+    to: '/tasks',
+    label: 'Tasks',
+    d: 'M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11',
+  },
 ];
 
 const legacyLinks = [{ href: '/viewer', label: 'Legacy viewer' }];
@@ -146,9 +151,7 @@ export default function Sidebar() {
             </svg>
             <span>{theme === 'dark' ? 'Light theme' : 'Dark theme'}</span>
           </button>
-          <div className="px-2 pt-2 text-[10px] text-text-tertiary">
-            MAMA Operator (beta)
-          </div>
+          <div className="px-2 pt-2 text-[10px] text-text-tertiary">MAMA Operator (beta)</div>
         </div>
       </aside>
 

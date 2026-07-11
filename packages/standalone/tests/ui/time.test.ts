@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRelativeTime, getFreshnessClass } from '../../ui/src/lib/time';
+import { formatDday, formatRelativeTime, getFreshnessClass } from '../../ui/src/lib/time';
 
 describe('formatRelativeTime', () => {
   const now = 10_000_000;
@@ -52,5 +52,28 @@ describe('getFreshnessClass', () => {
     expect(getFreshnessClass(now, Number.NEGATIVE_INFINITY)).toBe(
       'bg-surface-secondary text-text-tertiary'
     );
+  });
+});
+
+describe('formatDday', () => {
+  const localNoon = new Date(2026, 6, 12, 12).getTime();
+
+  it('returns a dash without a due date and for invalid dates', () => {
+    expect(formatDday(localNoon, null)).toBe('-');
+    expect(formatDday(localNoon, '2026-02-30')).toBe('-');
+    expect(formatDday(localNoon, 'not-a-date')).toBe('-');
+  });
+
+  it('formats today, future, and overdue dates', () => {
+    expect(formatDday(localNoon, '2026-07-12')).toBe('D-day');
+    expect(formatDday(localNoon, '2026-07-15')).toBe('D-3');
+    expect(formatDday(localNoon, '2026-07-10')).toBe('D+2');
+  });
+
+  it('handles month and year boundaries with UTC calendar arithmetic', () => {
+    const yearEnd = new Date(2026, 11, 31, 23, 30).getTime();
+    expect(formatDday(yearEnd, '2027-01-01')).toBe('D-1');
+    const monthStart = new Date(2026, 7, 1, 0, 30).getTime();
+    expect(formatDday(monthStart, '2026-07-31')).toBe('D+1');
   });
 });
