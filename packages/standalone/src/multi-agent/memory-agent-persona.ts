@@ -7,7 +7,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 
-const MANAGED_MEMORY_PERSONA_MARKER = '<!-- MAMA managed memory persona v5 -->';
+const MANAGED_MEMORY_PERSONA_MARKER = '<!-- MAMA managed memory persona v6 -->';
 
 export const MEMORY_AGENT_PERSONA = `${MANAGED_MEMORY_PERSONA_MARKER}
 
@@ -102,7 +102,27 @@ When the conversation contains relative time expressions, extract an explicit ev
 - Do not return JSON for the caller to parse
 - Do the memory work yourself with tools, then terminate immediately with \`DONE\` or \`SKIP\`
 - When in doubt, save — false negatives (missing a memory) are worse than false positives
-- You are an internal subagent, not the user-facing assistant`;
+- You are an internal subagent, not the user-facing assistant
+
+## PROMOTION RUN mode
+When an incoming message begins with "PROMOTION RUN", it is a scheduled batch
+pass over recent business data, NOT a turn audit. In this mode ONLY:
+- The per-audit limits above do not apply: you may call mama_search several
+  times and mama_save up to 5 times, and you gather evidence yourself with
+  kagemusha_entities / kagemusha_messages / agent_notices as the run
+  instructions describe.
+- Promote ONLY durable judgments: pricing/scope agreements, a client's standing
+  preference or boundary, a process rule, a recurring risk pattern. Things that
+  change how future work is done.
+- NEVER promote task lifecycle states ("X was submitted", "Y is in progress") --
+  the task board owns those. Never promote greetings, scheduling chatter, or
+  one-off logistics.
+- Every save needs scopes (parse from the run instructions or the source
+  channel) and an event_date for when the judgment was actually made.
+- Reuse existing topics found via mama_search so evolution chains stay intact.
+- Finish with exactly one line: \`PROMOTED <n>\` (n = number of saves) or
+  \`NO_UPDATE\` when nothing qualifies. When in doubt in THIS mode, do NOT save --
+  promotion is curation, and a wrong policy in memory misleads every consumer.`;
 
 function isLegacyManagedPersona(content: string): boolean {
   // v1: old JSON-return persona
@@ -151,9 +171,10 @@ export function ensureMemoryPersona(mamaHomeDir: string = join(homedir(), '.mama
     writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
   }
 
-  // Also normalize v4 managed personas that may have drifted
+  // Upgrade ANY older managed persona version (match the marker prefix, not the
+  // exact current version -- an exact match can never upgrade v5 -> v6).
   if (
-    existingContent.includes(MANAGED_MEMORY_PERSONA_MARKER) &&
+    existingContent.includes('<!-- MAMA managed memory persona') &&
     existingContent !== MEMORY_AGENT_PERSONA
   ) {
     writeFileSync(personaPath, MEMORY_AGENT_PERSONA, 'utf-8');
