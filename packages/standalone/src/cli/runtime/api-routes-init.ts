@@ -544,18 +544,24 @@ This saves resources. Only compile when there is genuinely new information to do
   const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
 
-  const auditPrompt =
+  // Owner verdict 2026-07-11: the hourly audit re-sent the same MAJOR alert every
+  // run because each audit was stateless. agent_notices does not carry audit
+  // findings (review feedback on #134), so dedup state lives in a JSON file the
+  // conductor reads/writes itself, and the current time is interpolated per run
+  // so the 24h comparison is grounded.
+  const buildAuditPrompt = (nowIso: string): string =>
     'Perform a system audit. Read ~/.mama/skills/audit-checklist.md and execute each step. ' +
     'Classify findings as MINOR or MAJOR. ' +
     'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
-    'For MAJOR items: report to human via channel alert. ' +
-    // Owner verdict 2026-07-11: the hourly audit re-sent the same MAJOR alert
-    // every run because each audit was stateless. Dedup against the previous
-    // audit before alerting.
-    'Alert dedup (MANDATORY): before alerting, fetch the previous audit result via ' +
-    'agent_notices and diff. Re-alert a MAJOR finding only if it is NEW, has ESCALATED, ' +
-    'or the last alert for the same finding is older than 24 hours; otherwise record it ' +
-    'in the audit session silently. Never alert MINOR findings to the owner. ' +
+    'For MAJOR items: report to human via channel alert, subject to the dedup rule below. ' +
+    `Alert dedup (MANDATORY): the current time is ${nowIso}. Read ~/.mama/state/audit-findings.json ` +
+    '(it may not exist on the first run). Re-alert a MAJOR finding only if it is NEW (no entry ' +
+    'with the same id), has ESCALATED, or its last_alerted_at is older than 24 hours compared to ' +
+    'the current time; otherwise stay silent about it. Never alert MINOR findings to the owner. ' +
+    'After the audit, Write ~/.mama/state/audit-findings.json with an array of every current ' +
+    'finding: {id (stable kebab-case slug), severity, first_seen, last_seen, last_alerted_at}. ' +
+    'Carry forward first_seen and last_alerted_at from the previous file; set last_alerted_at to ' +
+    'the current time only for findings you actually alerted this run. ' +
     // Owner verdict 2026-07-10: hourly-audit self-notes are memory noise -- the two
     // "durable policy" saves it produced were unscoped near-duplicates polluting
     // global recall. The audit record lives in validation sessions + agent_activity;
@@ -614,7 +620,7 @@ This saves resources. Only compile when there is genuinely new information to do
         source: 'system' as const,
         channelId: auditChannelId,
         userId: 'system',
-        text: auditPrompt,
+        text: buildAuditPrompt(new Date().toISOString()),
       });
 
       const auditDuration = Date.now() - auditStart;
