@@ -622,6 +622,51 @@ const TOOL_REGISTRY: ToolMeta[] = [
       '{ messages: Array<{ id: number; channel: string; author: string; content: string; timestamp: string }> }',
     category: 'memory',
   },
+  {
+    name: 'task_list',
+    description:
+      'List native task-ledger work items (order: deadline asc nulls-last, then priority).',
+    params: [
+      { name: 'status', type: 'string', required: false },
+      { name: 'channel', type: 'string', required: false },
+      { name: 'search', type: 'string', required: false },
+      { name: 'limit', type: 'number', required: false },
+    ],
+    returnType: '{ tasks: object[] }',
+    category: 'memory',
+  },
+  {
+    name: 'task_create',
+    description: 'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts.',
+    params: [
+      { name: 'title', type: 'string', required: true },
+      { name: 'status', type: 'string', required: false },
+      { name: 'priority', type: 'string', required: false },
+      { name: 'assignee', type: 'string', required: false },
+      { name: 'deadline', type: 'string', required: false, description: 'YYYY-MM-DD' },
+      { name: 'source_channel', type: 'string', required: false },
+      { name: 'source_event_id', type: 'string', required: false },
+      { name: 'latest_event', type: 'string', required: false },
+    ],
+    returnType: '{ task: object }',
+    category: 'memory',
+  },
+  {
+    name: 'task_update',
+    description: 'Update a task-ledger item by id.',
+    params: [
+      { name: 'id', type: 'number', required: true },
+      { name: 'title', type: 'string', required: false },
+      { name: 'status', type: 'string', required: false },
+      { name: 'priority', type: 'string', required: false },
+      { name: 'assignee', type: 'string', required: false },
+      { name: 'deadline', type: 'string', required: false },
+      { name: 'latest_event', type: 'string', required: false },
+      { name: 'confirmed', type: 'boolean', required: false },
+    ],
+    returnType: '{ task: object }',
+    category: 'memory',
+  },
 ];
 
 /** Read-only tool names for Tier 3 (strictest) */
@@ -643,6 +688,8 @@ export const READ_ONLY_TOOLS = new Set([
   'kagemusha_entities',
   'kagemusha_tasks',
   'kagemusha_messages',
+  // Native task ledger reads: the pipeline projection's source of truth.
+  'task_list',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
@@ -658,6 +705,9 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // the code-act sandbox never injects the function and every run silently
   // degrades to the wiki_publish fallback.
   'obsidian',
+  // Native task ledger writes: reconcile runs maintain work items (M8).
+  'task_create',
+  'task_update',
 ]);
 
 export class HostBridge {

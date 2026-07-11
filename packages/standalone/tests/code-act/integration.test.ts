@@ -146,7 +146,9 @@ describe('Code-Act Integration', () => {
     expect(fullPrompt).toContain('declare function mama_search');
     expect(fullPrompt).toContain('declare function Read');
     expect(fullPrompt).toContain('## Code-Act');
-    expect(fullPrompt.length).toBeLessThan(9000);
+    // Budget raised 9000 -> 9800 for the M8 native task-ledger tools
+    // (task_list/task_create/task_update add ~450 chars of tier-1 type defs).
+    expect(fullPrompt.length).toBeLessThan(9800);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {
