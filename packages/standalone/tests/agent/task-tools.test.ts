@@ -1,24 +1,22 @@
 /**
- * Gateway task-ledger tools (M8 Task 0.2): task_list / task_create / task_update
- * executor cases against a REAL in-memory TaskLedger -- proves the mechanism,
- * not substrings. Synthetic data only.
+ * Story M8-P0 -- Gateway task-ledger tools: task_list / task_create /
+ * task_update executor cases against a REAL in-memory TaskLedger and a REAL
+ * GatewayToolExecutor (no internal mocks; the task paths do not use mamaApi).
+ * Synthetic data only.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import Database from '../../src/sqlite.js';
-import type { MAMAApiInterface } from '../../src/agent/types.js';
 
 function makeExecutor(): { executor: GatewayToolExecutor; ledger: TaskLedger } {
-  const executor = new GatewayToolExecutor({
-    mamaApi: { save: vi.fn() } as unknown as MAMAApiInterface,
-  });
+  const executor = new GatewayToolExecutor();
   const ledger = new TaskLedger(new Database(':memory:'));
   executor.setTaskLedger(ledger);
   return { executor, ledger };
 }
 
-describe('gateway task ledger tools', () => {
+describe('Story M8-P0: native task ledger gateway tools', () => {
   let executor: GatewayToolExecutor;
   let ledger: TaskLedger;
 
@@ -26,66 +24,86 @@ describe('gateway task ledger tools', () => {
     ({ executor, ledger } = makeExecutor());
   });
 
-  it('fails closed when the ledger is not configured', async () => {
-    const bare = new GatewayToolExecutor({
-      mamaApi: { save: vi.fn() } as unknown as MAMAApiInterface,
+  describe('Acceptance Criteria: fail-closed wiring', () => {
+    it('fails closed when the ledger is not configured', async () => {
+      const bare = new GatewayToolExecutor();
+      const result = (await bare.execute('task_list', {})) as { success: boolean; error?: string };
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('not configured');
     });
-    const result = (await bare.execute('task_list', {})) as { success: boolean; error?: string };
-    expect(result.success).toBe(false);
-    expect(result.error).toContain('not configured');
   });
 
-  it('task_create -> task_list round-trip in canonical order', async () => {
-    await executor.execute('task_create', { title: 'later', deadline: '2026-09-01' });
-    await executor.execute('task_create', {
-      title: 'sooner',
-      deadline: '2026-07-20',
-      priority: 'high',
-      assignee: 'worker-a',
-      source_channel: 'slack:C001',
+  describe('Acceptance Criteria: create/list round-trip', () => {
+    it('task_create -> task_list round-trip in canonical order', async () => {
+      await executor.execute('task_create', { title: 'later', deadline: '2026-09-01' });
+      await executor.execute('task_create', {
+        title: 'sooner',
+        deadline: '2026-07-20',
+        priority: 'high',
+        assignee: 'worker-a',
+        source_channel: 'slack:C001',
+      });
+      const result = (await executor.execute('task_list', {})) as {
+        success: boolean;
+        tasks: Array<{ title: string; assignee: string | null }>;
+      };
+      expect(result.success).toBe(true);
+      expect(result.tasks.map((t) => t.title)).toEqual(['sooner', 'later']);
+      expect(result.tasks[0]?.assignee).toBe('worker-a');
     });
-    const result = (await executor.execute('task_list', {})) as {
-      success: boolean;
-      tasks: Array<{ title: string; assignee: string | null }>;
-    };
-    expect(result.success).toBe(true);
-    expect(result.tasks.map((t) => t.title)).toEqual(['sooner', 'later']);
-    expect(result.tasks[0]?.assignee).toBe('worker-a');
   });
 
-  it('task_update coerces a string id ("12" pattern) and patches the row', async () => {
-    const created = (await executor.execute('task_create', { title: 'x' })) as {
-      task: { id: number };
-    };
-    const result = (await executor.execute('task_update', {
-      id: String(created.task.id),
-      status: 'in_progress',
-      latest_event: 'started today',
-    })) as { success: boolean; task: { status: string; latestEvent: string } };
-    expect(result.success).toBe(true);
-    expect(result.task.status).toBe('in_progress');
-    expect(result.task.latestEvent).toBe('started today');
+  describe('Acceptance Criteria: update semantics', () => {
+    it('task_update coerces a string id ("12" pattern) and patches the row', async () => {
+      const created = (await executor.execute('task_create', { title: 'x' })) as {
+        task: { id: number };
+      };
+      const result = (await executor.execute('task_update', {
+        id: String(created.task.id),
+        status: 'in_progress',
+        latest_event: 'started today',
+      })) as { success: boolean; task: { status: string; latestEvent: string } };
+      expect(result.success).toBe(true);
+      expect(result.task.status).toBe('in_progress');
+      expect(result.task.latestEvent).toBe('started today');
+    });
+
+    it('task_update rejects a non-numeric id with a typed error', async () => {
+      await expect(executor.execute('task_update', { id: 'abc', status: 'done' })).rejects.toThrow(
+        /numeric id/
+      );
+    });
   });
 
-  it('task_update rejects a non-numeric id with a typed error', async () => {
-    await expect(executor.execute('task_update', { id: 'abc', status: 'done' })).rejects.toThrow(
-      /numeric id/
-    );
+  describe('Acceptance Criteria: idempotent create', () => {
+    it('task_create upserts on duplicate source key through the tool surface', async () => {
+      await executor.execute('task_create', {
+        title: 'review still',
+        source_channel: 'slack:C001',
+        source_event_id: 'ev-9',
+      });
+      await executor.execute('task_create', {
+        title: 'review still v2',
+        source_channel: 'slack:C001',
+        source_event_id: 'ev-9',
+        latest_event: 'resubmitted',
+      });
+      expect(ledger.list({})).toHaveLength(1);
+      expect(ledger.list({})[0]?.latestEvent).toBe('resubmitted');
+    });
   });
 
-  it('task_create upserts on duplicate source key through the tool surface', async () => {
-    await executor.execute('task_create', {
-      title: 'review still',
-      source_channel: 'slack:C001',
-      source_event_id: 'ev-9',
+  describe('Acceptance Criteria: contract_no_update note', () => {
+    it('records a scoped note and rejects missing fields', async () => {
+      const result = (await executor.execute('contract_no_update', {
+        reason: 'greeting only',
+        scope: 'reconcile:slack:C001',
+      })) as { success: boolean; note: { id: number } };
+      expect(result.success).toBe(true);
+      expect(ledger.maxNoUpdateId('reconcile:slack:C001')).toBe(result.note.id);
+      await expect(executor.execute('contract_no_update', { reason: 'x' })).rejects.toThrow(
+        /scope/
+      );
     });
-    await executor.execute('task_create', {
-      title: 'review still v2',
-      source_channel: 'slack:C001',
-      source_event_id: 'ev-9',
-      latest_event: 'resubmitted',
-    });
-    expect(ledger.list({})).toHaveLength(1);
-    expect(ledger.list({})[0]?.latestEvent).toBe('resubmitted');
   });
 });

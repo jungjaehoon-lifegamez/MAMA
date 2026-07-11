@@ -283,7 +283,9 @@ export class TaskLedger implements TaskSource {
         now,
         now
       );
-    return this.getById(Number(result.lastInsertRowid))!;
+    const created = this.getById(Number(result.lastInsertRowid));
+    if (!created) throw new Error('task_create: inserted row could not be read back');
+    return created;
   }
 
   update(id: number, patch: UpdateTaskInput): TaskRecord {

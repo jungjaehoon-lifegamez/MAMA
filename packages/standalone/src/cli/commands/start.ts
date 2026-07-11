@@ -1062,9 +1062,13 @@ export async function runAgentLoop(
   const operatorDbPath = expandPath('~/.mama/operator/triggers.db');
   mkdirSync(dirname(operatorDbPath), { recursive: true });
   const operatorDb = new Database(operatorDbPath);
-  {
+  try {
     const { TaskLedger } = await import('../../operator/task-ledger.js');
     toolExecutor.setTaskLedger(new TaskLedger(operatorDb));
+  } catch (err) {
+    // Fail loud, but do not leak the handle on a failed boot.
+    operatorDb.close();
+    throw err;
   }
   gateways.push({
     stop: async () => {

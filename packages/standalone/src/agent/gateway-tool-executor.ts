@@ -514,6 +514,9 @@ export class GatewayToolExecutor {
   setTaskLedger(ledger: import('../operator/task-ledger.js').TaskLedger): void {
     this.taskLedger = ledger;
   }
+  getTaskLedger(): import('../operator/task-ledger.js').TaskLedger | null {
+    return this.taskLedger;
+  }
   private agentEventBus: AgentEventBus | null = null;
   setAgentEventBus(bus: AgentEventBus): void {
     this.agentEventBus = bus;
