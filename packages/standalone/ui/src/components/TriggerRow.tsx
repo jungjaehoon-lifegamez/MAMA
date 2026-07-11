@@ -18,7 +18,7 @@ export default function TriggerRow({
 
   return (
     <div
-      className={`px-4 py-3 border-b border-border last:border-b-0 ${disabled ? 'opacity-60' : ''}`}
+      className={`px-4 py-3 border-b border-border last:border-b-0 ${disabled ? 'opacity-90' : ''}`}
     >
       <div className="flex items-center gap-3">
         <span

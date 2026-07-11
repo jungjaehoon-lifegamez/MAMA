@@ -18,6 +18,7 @@
   --color-agent: #6366f1;
   --color-agent-hover: #4f46e5;
   --color-agent-light: #eef2ff;
+  --color-on-agent: #ffffff;
 
   --color-text: #1a1a1a;
   --color-text-secondary: #616161;
@@ -27,8 +28,51 @@
   --color-success: #047b5d;
   --color-warning: #ffb800;
   --color-danger: #d72c0d;
+  --color-success-soft: #e7f5f0;
+  --color-success-text: #04664e;
+  --color-warning-soft: #fff4d6;
+  --color-warning-text: #805c00;
 
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+:root {
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --color-bg: #141414;
+  --color-surface: #1e1e1e;
+  --color-surface-hover: #292929;
+  --color-surface-selected: #303030;
+  --color-surface-secondary: #292929;
+
+  --color-sidebar: #191919;
+  --color-sidebar-hover: #282828;
+  --color-sidebar-active: #303030;
+  --color-sidebar-border: #343434;
+
+  --color-agent: #a5b4fc;
+  --color-agent-hover: #c7d2fe;
+  --color-agent-light: #2b315a;
+  --color-on-agent: #1a1a3a;
+
+  --color-text: #f5f5f5;
+  --color-text-secondary: #c4c4c4;
+  --color-text-tertiary: #9b9b9b;
+  --color-border: #3a3a3a;
+
+  --color-success: #5ee0b3;
+  --color-warning: #ffd166;
+  --color-danger: #ff8f7a;
+  --color-success-soft: #173b30;
+  --color-success-text: #7ce8c3;
+  --color-warning-soft: #4a3814;
+  --color-warning-text: #ffdb7d;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
 }
 
 html,
@@ -40,6 +84,7 @@ body,
 body {
   background-color: var(--color-bg);
   color: var(--color-text);
+  overflow-x: hidden;
 }
 
 /* -- Board slot vocabulary -----------------------------------------------
@@ -106,7 +151,7 @@ body {
   background: color-mix(in srgb, var(--color-danger) 12%, transparent);
 }
 .badge-warning {
-  color: color-mix(in srgb, var(--color-warning) 70%, black);
+  color: var(--color-warning-text);
   background: color-mix(in srgb, var(--color-warning) 16%, transparent);
 }
 .badge-info {
@@ -146,8 +191,16 @@ body {
 
 .report-table {
   width: 100%;
+  min-width: 640px;
   border-collapse: collapse;
   font-size: 12px;
+}
+
+.report-slot-content {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 .report-table th {
   text-align: left;
