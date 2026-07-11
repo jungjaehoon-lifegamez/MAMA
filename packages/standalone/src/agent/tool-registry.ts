@@ -334,6 +334,13 @@ register({
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?',
 });
+register({
+  name: 'contract_no_update',
+  description:
+    'Record that a reconcile run judged NOTHING on the board or ledger affected. Silence becomes a verifiable judgment.',
+  category: 'os_monitoring',
+  params: 'reason (required), scope (required, e.g. "reconcile:slack:C001")',
+});
 
 // System tools
 register({

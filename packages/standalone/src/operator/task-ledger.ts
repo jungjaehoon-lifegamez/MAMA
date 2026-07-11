@@ -108,6 +108,12 @@ function isoToEpochMs(iso: string | null): number | null {
   return Number.isNaN(ms) ? null : ms;
 }
 
+function assertEnum(value: string, allowed: readonly string[], field: string): void {
+  if (!allowed.includes(value)) {
+    throw new Error(`${field} must be one of ${allowed.join('|')}, got: ${value}`);
+  }
+}
+
 function assertIsoDate(value: string, field: string): void {
   if (!ISO_DATE_PATTERN.test(value) || isoToEpochMs(value) === null) {
     throw new Error(`${field} must be an ISO date (YYYY-MM-DD), got: ${value}`);
@@ -204,7 +210,8 @@ export class TaskLedger implements TaskSource {
           // LIMIT applies AFTER ordering so the true top-N is returned.
           `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, deadline ASC,
            CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, id ASC`;
-    const limit = Math.max(1, Math.min(200, Math.floor(filter.limit ?? 50)));
+    const rawLimit = Number(filter.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
     const rows = this.db
       .prepare(
         `SELECT * FROM operator_tasks
@@ -232,6 +239,8 @@ export class TaskLedger implements TaskSource {
     if (!input.title || input.title.trim() === '') {
       throw new Error('task title must be a non-empty string');
     }
+    if (input.status !== undefined) assertEnum(input.status, TASK_STATUSES, 'status');
+    if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
     if (input.deadline !== undefined) assertIsoDate(input.deadline, 'deadline');
     const now = Date.now();
 
@@ -240,7 +249,14 @@ export class TaskLedger implements TaskSource {
         .prepare(`SELECT * FROM operator_tasks WHERE source_channel = ? AND source_event_id = ?`)
         .get(input.source_channel, input.source_event_id) as TaskRow | undefined;
       if (existing) {
+        // Upsert carries every provided field EXCEPT title (the original naming
+        // stays stable across retries; movement and state updates flow through).
         return this.update(existing.id, {
+          ...(input.status !== undefined ? { status: input.status } : {}),
+          ...(input.priority !== undefined ? { priority: input.priority } : {}),
+          ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+          ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
+          ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
           ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
         });
       }
@@ -273,6 +289,8 @@ export class TaskLedger implements TaskSource {
   update(id: number, patch: UpdateTaskInput): TaskRecord {
     const existing = this.getById(id);
     if (!existing) throw new Error(`task_update: no task with id ${id}`);
+    if (patch.status !== undefined) assertEnum(patch.status, TASK_STATUSES, 'status');
+    if (patch.priority !== undefined) assertEnum(patch.priority, TASK_PRIORITIES, 'priority');
     if (patch.deadline !== undefined && patch.deadline !== null) {
       assertIsoDate(patch.deadline, 'deadline');
     }

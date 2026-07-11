@@ -2346,6 +2346,21 @@ export class GatewayToolExecutor {
             task: this.taskLedger.update(id, patch as never),
           };
         }
+        case 'contract_no_update': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const { reason, scope } = input as { reason?: string; scope?: string };
+          if (!reason || !scope) {
+            throw new AgentError(
+              'contract_no_update requires both reason and scope',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          return { success: true, note: this.taskLedger.recordNoUpdate(scope, reason) };
+        }
         case 'agent_notices': {
           const rawLimit = Number((input as { limit?: number }).limit);
           const limit = Number.isFinite(rawLimit)

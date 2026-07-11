@@ -70,6 +70,13 @@ export interface TriggerLoopDeps {
   reportScheduler?: ReportSchedule;
   /** M2.3: tool-call instructions for the FULL report so the agent self-gathers context. */
   fullReportSelfGather?: string[];
+  /**
+   * M8: board-reconcile feed. Invoked after commit with connector-qualified
+   * channelKey ("<connector>:<channelId>") and bounded delta excerpt lines
+   * (each carrying the event id so reconcile task writes can pass
+   * source_event_id). Absent -> no reconcile leg.
+   */
+  onChannelDelta?: (channelKey: string, lines: string[]) => void;
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
   config: TriggerLoopConfig;
@@ -166,6 +173,32 @@ export class OperatorTriggerLoop {
       }
     }
     delta.commit(events);
+
+    // M8: feed the board-reconcile leg AFTER commit (the loop's cursor is
+    // authoritative; reconcile is a freshness layer repaired by the 30-min cron).
+    if (this.deps.onChannelDelta && events.length > 0) {
+      const byChannel = new Map<string, OperatorChannelEvent[]>();
+      for (const event of events) {
+        const key = `${event.channel}:${event.channelId}`;
+        const bucket = byChannel.get(key) ?? [];
+        bucket.push(event);
+        byChannel.set(key, bucket);
+      }
+      for (const [channelKey, channelEvents] of byChannel) {
+        const lines = channelEvents
+          .slice(-10)
+          .map(
+            (e) => `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content.trim().slice(0, 200)}`
+          );
+        try {
+          this.deps.onChannelDelta(channelKey, lines);
+        } catch (err) {
+          log(
+            `[trigger-loop] onChannelDelta failed for ${channelKey}: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      }
+    }
 
     // Feed the drained window into the report accumulators (bounded per-channel) and keep the
     // author window. The digest reports on ALL channels seen, not only the ones that fired.
