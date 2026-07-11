@@ -23,7 +23,8 @@ records into scoped, auditable context for agents and humans.
 - **Operate inside envelopes** — Gateway and worker calls carry signed scope boundaries and audit rows
 - **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
 - **Search with evidence** — Strict memory search can reject vector-only noise and show which lexical, entity, scope, or graph signals confirmed a result
-- **Compile actionable knowledge** — Raw conversations become structured wiki pages with priorities, gaps, and suggested next steps
+- **Compile actionable knowledge** — Promoted decisions become an Obsidian wiki: an append-only daily journal plus durable lesson pages that strengthen with evidence
+- **Evolve their own triggers** — The operator loop authors triggers from recurring situations, fires them to recall the right memory, and scores them by whether delivered reports actually cite them
 - **Brief you proactively** — When you start working, relevant context from all sources is already there — you didn't ask for it
 
 ```
@@ -79,8 +80,8 @@ claude auth login   # or: codex login
 npx @jungjaehoon/mama-os init
 mama start
 
-# 3. Open the viewer
-open http://localhost:3847
+# 3. Open the operator board
+open http://localhost:3847/ui
 ```
 
 **Prerequisites:** Node.js >= 22.13.0, one authenticated backend CLI (Claude or Codex), 500MB disk space.
@@ -130,7 +131,14 @@ Agents delegate via `delegate()` with skill injection and automatic retry. Confi
 
 ## Viewer
 
-Web UI at `http://localhost:3847`. PWA-enabled for mobile (add to home screen).
+Web UI at `http://localhost:3847` (redirects to the operator board at `/ui`). PWA-enabled for
+mobile (add to home screen).
+
+**Operator board (`/ui`)** — the primary surface: four agent-published report slots (briefing,
+action required, decisions, pipeline) rendered live over SSE, plus a Triggers tab showing the
+trigger loop's library with an owner veto tray.
+
+**Legacy viewer (`/viewer`)** tabs:
 
 | Tab           | What it shows                                              |
 | ------------- | ---------------------------------------------------------- |

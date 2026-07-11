@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-07-12
+
+### Fixed
+
+- **vectorSearch superseded pre-filter** — Superseded history rows are filtered out of the
+  vector top-K before ranking, so current-truth results are no longer crowded out by their own
+  replaced versions; the adapter status cache stays in sync on status transitions
+
+## [1.8.0] - 2026-07-03
+
+### Added
+
+- **e5 query prefix scheme** — Search queries are embedded with the multilingual-e5 `query:`
+  prefix (documents keep `passage:`), fixing the anisotropy that made all-pairs similarity
+  cluster near 0.94; an embedding prefix-scheme guard plus migration 042 detect and mark legacy
+  vector stores
+- **Re-embed migration script** — CLI backfill re-embeds legacy vectors under the prefix scheme;
+  refuses to run without an explicit `MAMA_DB_PATH` and fails loud on empty wiki page text
+- **Embedding role threading** — The HTTP embedding server and client carry the query/passage
+  role end to end
+
 ## [1.7.0] - 2026-05-04
 
 ### Added
