@@ -8,6 +8,7 @@ function runThemeInit(options: {
   stored?: string | null;
   prefersDark?: boolean;
   storageThrows?: boolean;
+  supportsMatchMedia?: boolean;
 }): string | null {
   let theme: string | null = null;
   const matchMedia = () => ({ matches: options.prefersDark ?? false });
@@ -20,7 +21,7 @@ function runThemeInit(options: {
         return options.stored ?? null;
       },
     },
-    window: { matchMedia },
+    window: options.supportsMatchMedia === false ? {} : { matchMedia },
     document: {
       documentElement: {
         setAttribute: (name: string, value: string) => {
@@ -48,5 +49,9 @@ describe('theme-init.js', () => {
 
   it('uses the system preference when storage access throws', () => {
     expect(runThemeInit({ storageThrows: true, prefersDark: true })).toBe('dark');
+  });
+
+  it('falls back to light when matchMedia is unavailable', () => {
+    expect(runThemeInit({ stored: null, supportsMatchMedia: false })).toBe('light');
   });
 });

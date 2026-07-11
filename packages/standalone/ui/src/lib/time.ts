@@ -3,6 +3,9 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 export function getFreshnessClass(now: number, updatedAt: number): string {
+  if (!Number.isFinite(updatedAt)) {
+    return 'bg-surface-secondary text-text-tertiary';
+  }
   const age = Math.max(0, now - updatedAt);
   if (age < HOUR_MS) {
     return 'bg-agent-light text-agent';
@@ -14,6 +17,9 @@ export function getFreshnessClass(now: number, updatedAt: number): string {
 }
 
 export function formatRelativeTime(now: number, then: number): string {
+  if (!Number.isFinite(then)) {
+    return 'unknown';
+  }
   const elapsed = Math.max(0, now - then);
   if (elapsed < MINUTE_MS) {
     return 'just now';
