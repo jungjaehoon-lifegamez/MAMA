@@ -103,7 +103,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 
 **Key Features:**
 
-- Exposes 4 MCP tools: `save`, `search`, `update`, `load_checkpoint`
+- Exposes 5 MCP tools: `save`, `search`, `update`, `search_decisions_and_contracts`, `case_timeline_range` (`load_checkpoint` remains as an un-advertised compatibility path)
 - Stdio-based transport (no HTTP)
 - Shared across all MCP clients
 
@@ -341,7 +341,7 @@ Existing decisions remain valid across all package updates. SQLite schema change
 - Added Log Viewer v2 with real-time daemon log streaming
 - Added backend-specific AGENTS.md injection (AGENTS.claude.md, AGENTS.codex.md)
 - Added 3-tier tool permission enforcement for Code-Act API
-- 55 HTTP API endpoints (45 newly documented)
+- HTTP API endpoints for the operator board, viewer, chat, and programmatic access (see docs/reference/api.md)
 
 **Benefits:**
 

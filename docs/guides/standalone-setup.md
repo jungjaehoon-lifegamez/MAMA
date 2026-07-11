@@ -332,6 +332,15 @@ workspace:
   path: ~/.mama/workspace
   scripts: ~/.mama/workspace/scripts
   data: ~/.mama/workspace/data
+
+# Wiki (v5: Obsidian vault with a daily journal + lesson pages)
+# The wiki agent appends to daily/YYYY-MM-DD.md and maintains
+# lessons/{clients,process,system}. vaultPath + wikiDir must point at a
+# directory registered as an Obsidian vault (register it once in Obsidian).
+wiki:
+  enabled: true
+  vaultPath: /absolute/path/to/obsidian-vaults
+  wikiDir: my-operator-wiki
 ```
 
 ### Codex Backend Example
@@ -515,12 +524,16 @@ Gateways:
 HTTP Server: http://localhost:3847
   Graph Viewer: http://localhost:3847/viewer
   Chat Shell: http://localhost:3847/viewer (floating overlay)
-  Operator Board (beta): http://localhost:3847/ui
+  Operator Board: http://localhost:3847/ui
 ```
 
-The Operator Board renders agent-published report slots live (SSE) with trigger
-stats and an owner veto tray. Agents feed it through the `report_publish` gateway
-tool; the heartbeat briefing fills the first slot automatically.
+The Operator Board is the primary operating surface: four agent-published report
+slots (briefing, action required, decisions, pipeline) render live over SSE, with
+a Triggers tab showing the trigger loop's library and an owner veto tray. The
+dashboard agent publishes all four slots through the `report_publish` gateway
+tool on a 30-minute cadence, and the scheduled full report publishes the same
+slots. Task state on the board comes from the real task ledger, never guessed
+from chat.
 
 ### Step 3: Test the Agent
 
@@ -812,7 +825,6 @@ After successful setup:
 **Recommended reading:**
 
 - [Gateway Configuration Guide](gateway-config.md) - Detailed gateway setup
-- [vNext Release Readiness Guide](vnext-release-readiness.md) - Opt-in rollout and smoke gates
 - [Skills API Reference](../reference/skills-api.md) - Build custom skills
 - [Security Guide](security.md) - Secure your MAMA instance
 

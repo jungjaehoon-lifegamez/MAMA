@@ -17,7 +17,6 @@ Run this checklist in order for every release candidate.
 2. Align release-facing docs
    - Update [README](../../README.md)
    - Update [CHANGELOG](../../CHANGELOG.md)
-   - Update [vNext Release Readiness](../guides/vnext-release-readiness.md) when rollout gates change
    - Update operator/install docs when auth detection, setup flow, or CLI UX changed
    - Update roadmap/design docs for the affected release train
    - Remove or archive stale docs for deleted surfaces

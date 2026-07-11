@@ -6,11 +6,45 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Operator board (beta) at `/ui`** — New Kagemusha-style React viewer served next
+- **Operator board at `/ui`** — New Kagemusha-style React viewer served next
   to the legacy `/viewer`: agent-published report slots render live over SSE
   (DOMPurify + `script-src 'self'` CSP), with trigger stat cards and an owner
   veto tray backed by the new `/api/operator` endpoints. Report slots now
   persist across daemon restarts (`~/.mama/report-slots.json`).
+- **Task truth on the board** — The dashboard agent reads real task lifecycle
+  state (`pending`/`in_progress`/`review`/`done`) through the kagemusha bridge
+  query tools instead of guessing status from message archaeology. Badges map to
+  the actual status, and the kagemusha query tools are exposed to tier 2/3
+  code-act sandboxes.
+- **Four-slot board authoring** — The dashboard agent publishes all four slots
+  (briefing, action required, decisions, pipeline) in one `report_publish` call
+  using a shared card/badge HTML vocabulary; the scheduled full report publishes
+  the same slots (Kagemusha's dual-output mechanism).
+- **Wiki v5: daily journal + lessons** — The wiki's purpose narrowed to what the
+  board cannot do: an append-only daily note per day (`daily/YYYY-MM-DD.md` with
+  Progress/Decisions/Issues/Lesson-candidates sections, every bullet cited) and
+  durable lesson pages (`lessons/clients|process|system`) that accumulate
+  evidence on recurrence and get superseded instead of deleted. Obsidian CLI
+  calls are pinned with `vault=<name>` so wiki writes can never land in a
+  personal vault, and nested pages use the `path=` contract.
+- **Scheduled memory promotion** — A curation pass (default every 6h, manual
+  `POST /api/memory/promote`) has the memory agent promote durable judgments
+  (pricing/scope agreements, standing client preferences, process rules) from
+  recent channel data into decisions. Task lifecycle states never become
+  memories. A successful run emits `memory:promoted`, which triggers the wiki
+  compile — reviving the poll → promote → wiki chain.
+- **Trigger success circuit** — Owner reports now name the fired triggers they
+  actually drew on (machine trailer, stripped before delivery and validated
+  against the window); cited triggers earn a `succeeded` outcome only after the
+  report is delivered. Evolution is no longer elimination-only.
+- **Near-duplicate trigger gate** — The author pass rejects proposed triggers
+  whose keyword set is a subset/superset of an existing trigger's or overlaps at
+  Jaccard >= 0.6 in the same scope (day-1 live data showed 65% of fires were
+  co-fires of overlapping triggers).
+- **Audit alert dedup** — The hourly conductor audit diffs findings against
+  `~/.mama/state/audit-findings.json` and re-alerts a MAJOR finding only when it
+  is new, escalated, or 24h stale; MINOR findings never ping the owner, and the
+  audit never writes memory.
 - **Unconditional multi-slot report publishing** — `report_publish` is no longer
   gated on the dashboard agent being configured and no longer drops every slot
   except `briefing`; `createReportPublisher` is the single write path (64KB/slot,
@@ -25,15 +59,29 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- **vNext rollout decision** — Kept vNext opt-in after the synthetic dogfood
-  harness and operator cockpit landed; default rollout now waits on migration
-  docs and real local smoke evidence.
-- **README release status** — Updated the top-level README to describe the PR #115
-  state: vNext remains opt-in, gateway memory recall is policy-gated, and release
-  readiness now depends on migration guidance plus public-safe smoke evidence.
+- **Report attribution discipline** — Both report framings now state that a room
+  is never a person and a sender is never a room; unclear identity is written as
+  "(sender unclear)" instead of guessed.
+- **Wiki novelty check is recency-based** — The wiki decides "is anything new"
+  from the no-query recency list instead of a semantic packet, which silently
+  dropped cross-language items; `context_compile` stays for enrichment only.
 - **PII check branch-diff mode** — Added `scripts/check-pii.sh --base <ref>` so
   release-readiness PRs can scan committed branch diffs, not only staged pre-commit
   changes.
+
+### Removed
+
+- **vNext runtime stub** — The opt-in vNext rebuild was removed; the trigger
+  loop (agent-authored triggers, fire → recall → situation reports) is the
+  operator runtime. Earlier Unreleased notes about keeping vNext opt-in are
+  superseded by this removal.
+
+### Security
+
+- **Public-tree PII scrub and history rewrite** — Personal identifiers were
+  removed from the working tree and the entire git history was rewritten
+  (filter-repo) so the public repository carries no personal or project data;
+  personal configuration lives only under `~/.mama`.
 
 ## [0.20.1] / mama-core [1.7.0] / mama-os [0.20.1] - 2026-05-04
 

@@ -511,9 +511,11 @@ export MAMA_EMBEDDING_PORT="3849"
 
 ---
 
-## HTTP API Endpoints (v0.12.1)
+## HTTP API Endpoints
 
-MAMA OS provides **60 HTTP endpoints** for the web dashboard, mobile chat, and programmatic access.
+MAMA OS exposes HTTP endpoints for the operator board, legacy web dashboard, mobile chat, and
+programmatic access. The lists below cover the commonly used surfaces; the routers in
+`packages/standalone/src/api/` are the source of truth.
 
 **Base URL:** `http://localhost:3847` (configurable via `MAMA_SERVER_PORT`)
 
@@ -878,6 +880,37 @@ Send an image file to Discord (4-layer path security).
 Generate heartbeat report via agent and send to Discord.
 
 **Request:** `{ "channelId": "123456789", "reportType": "delta" }` (`delta` | `full`)
+
+#### Report slots (operator board)
+
+The same `/api/report` prefix also serves the operator board's report-slot store
+(`report-handler.ts`). Slots persist across daemon restarts at `~/.mama/report-slots.json`.
+
+- `GET /api/report/` — current slots (`{ slots: [{ slotId, html, priority, updatedAt }] }`)
+- `GET /api/report/events` — SSE stream (`text/event-stream`) of slot updates
+- `PUT /api/report/` — bulk-replace slots
+- `PUT /api/report/slots/:slotId` — upsert one slot
+- `DELETE /api/report/slots/:slotId` — remove one slot
+- `POST /api/report/agent-refresh` — owner-forced dashboard agent run (bypasses the delta gate)
+
+#### Operator endpoints
+
+The `/api/operator` router (`operator-handler.ts`) exposes the trigger loop's state to the
+`/ui` board:
+
+- `GET /api/operator/summary` — trigger counts (`active`, `disabled`, `fired`, `succeeded`, `failed`)
+- `GET /api/operator/triggers` — full trigger list with stats and provenance
+- `POST /api/operator/triggers/:id/disable` — owner veto (`{ reason }`)
+
+#### Memory promotion
+
+- `POST /api/memory/promote` — trigger a promotion run (memory agent curates durable judgments
+  from recent channel data; scheduled every 6h by default)
+
+#### Wiki
+
+- `POST /api/wiki/compile` — trigger a wiki compilation run (also fired automatically after a
+  promotion run saves decisions)
 
 #### POST /api/screenshot
 

@@ -27,16 +27,16 @@ Default rollout waits on:
 Release readiness is achieved only when the vNext-specific gates below and the standard release
 verification in [Release Process](../development/release-process.md) are true.
 
-| Gate                      | Status      | Evidence required                                                                |
-| ------------------------- | ----------- | -------------------------------------------------------------------------------- |
-| PR #115 merged            | Done        | GitHub PR #115 merged into `main`                                                |
-| vNext opt-in documented   | In progress | README, setup guide, gateway guide, architecture plan, changelog                 |
+| Gate                      | Status      | Evidence required                                                                 |
+| ------------------------- | ----------- | --------------------------------------------------------------------------------- |
+| PR #115 merged            | Done        | GitHub PR #115 merged into `main`                                                 |
+| vNext opt-in documented   | In progress | README, setup guide, gateway guide, architecture plan, changelog                  |
 | Migration path documented | Done        | See [Migration Path](#migration-path): enable flags, smoke-test, return to legacy |
-| Real local smoke evidence | Pending     | Redacted command output or synthetic-equivalent transcript with no private data  |
-| Privacy scans             | Per PR      | `./scripts/check-pii.sh --base origin/main`, `./scripts/check-pr-gitleaks.sh`    |
-| Dogfood gate              | Pending     | `MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os dogfood:vnext`        |
-| Release verification      | Pending     | `pnpm test`, `pnpm build`, plus any scoped smoke checks from the release process |
-| Review gate               | Pending     | Code review before PR, after PR comments, and before the next branch             |
+| Real local smoke evidence | Pending     | Redacted command output or synthetic-equivalent transcript with no private data   |
+| Privacy scans             | Per PR      | `./scripts/check-pii.sh --base origin/main`, `./scripts/check-pr-gitleaks.sh`     |
+| Dogfood gate              | Pending     | `MAMA_FORCE_TIER_3=true pnpm --filter @jungjaehoon/mama-os dogfood:vnext`         |
+| Release verification      | Pending     | `pnpm test`, `pnpm build`, plus any scoped smoke checks from the release process  |
+| Review gate               | Pending     | Code review before PR, after PR comments, and before the next branch              |
 
 ## Migration Path
 

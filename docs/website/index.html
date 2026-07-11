@@ -992,7 +992,7 @@
           <a href="#local">Local</a>
           <a href="#install">Install</a>
         </div>
-        <span class="nav-cta">v0.20.1</span>
+        <span class="nav-cta">v0.21</span>
         <button
           class="nav-toggle"
           type="button"
@@ -1235,11 +1235,12 @@
       <div class="container">
         <div class="section-head">
           <span class="eyebrow">Today and next</span>
-          <h2>v0.20 shipped the foundation. v0.20.1 hardens Context Compile.</h2>
+          <h2>v0.20 shipped the foundation. v0.21 ships the operator.</h2>
           <p>
             Substrate, agent surfaces, envelopes, decision evolution, and
-            <code style="font-family: var(--mono)">context_compile</code> are working today. The
-            patch release tightens the evidence packet, provenance, and Code-Act policy boundaries.
+            <code style="font-family: var(--mono)">context_compile</code> are the foundation. On
+            top of it now runs a self-evolving operator: agent-authored triggers, a live report
+            board, scheduled memory curation, and a wiki that reads like a journal.
           </p>
         </div>
         <div class="today-next">
@@ -1252,7 +1253,7 @@
             </p>
             <ul class="tn-list">
               <li>15 connectors and local ingestion</li>
-              <li>Viewer · Dashboard / Memory / Feed / Wiki / Agents / Logs</li>
+              <li>Operator board at /ui · four live report slots + trigger library (legacy viewer retained)</li>
               <li>Raw search and raw window APIs</li>
               <li>Graph, entity, and timeline APIs</li>
               <li>Worker situation packets</li>
@@ -1264,33 +1265,35 @@
             </ul>
           </article>
           <article class="tn-col planned">
-            <span class="badge">v0.20.1 · RELEASE CANDIDATE</span>
-            <h3>Context Compile hardening.</h3>
+            <span class="badge">v0.21 · THE OPERATOR RUNTIME</span>
+            <h3>A trigger loop that evolves itself.</h3>
             <p>
-              The agent's "what evidence did I read for this question?" becomes a first-class,
-              auditable artifact. Packet-backed saves preserve source refs, and Code-Act agents
-              cannot widen their configured tool policy at runtime.
+              The agent authors its own triggers from recurring situations, fires them to recall
+              the right memory, and reports to the owner. Delivered reports that cite a trigger
+              feed a success signal back; a review pass retires the noisy ones. Every six hours a
+              curation pass promotes durable judgments into memory, and promoted decisions compile
+              into an Obsidian wiki of daily journals and lessons.
             </p>
             <pre class="cc-code">
-context.compile(task, scope, range,
-                as_of, budget) → ContextPacket</pre
+author → fire → recall → report
+        ↑ cited in a delivered report → succeeded</pre
             >
             <div class="cc-cells">
               <div class="cc-cell selected">
-                <div class="label">Selected</div>
-                <div class="desc">refs the agent will read</div>
+                <div class="label">Board</div>
+                <div class="desc">four live slots, task truth from the ledger</div>
               </div>
               <div class="cc-cell rejected">
-                <div class="label">Rejected</div>
-                <div class="desc">noisy / duplicate refs (and why)</div>
+                <div class="label">Triggers</div>
+                <div class="desc">agent-authored, review-pruned, success-scored</div>
               </div>
               <div class="cc-cell missing">
-                <div class="label">Missing</div>
-                <div class="desc">context the agent could not reach</div>
+                <div class="label">Promotion</div>
+                <div class="desc">durable judgments only, never task states</div>
               </div>
               <div class="cc-cell caveats">
-                <div class="label">Caveats</div>
-                <div class="desc">conflicting · stale · single-source</div>
+                <div class="label">Wiki</div>
+                <div class="desc">daily journal + lessons in Obsidian</div>
               </div>
             </div>
           </article>
@@ -1343,7 +1346,7 @@ context.compile(task, scope, range,
         <div class="footer-brand">
           <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
-          <span class="footer-version">v0.20.1</span>
+          <span class="footer-version">v0.21</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA">GitHub</a>
@@ -1351,7 +1354,7 @@ context.compile(task, scope, range,
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues">Issues</a>
         </div>
         <p class="footer-legal">
-          MIT · Context Compile V0 · Local-first · AI provider independent.
+          MIT · Operator runtime · Local-first · AI provider independent.
         </p>
       </div>
     </footer>
