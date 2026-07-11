@@ -891,7 +891,8 @@ The same `/api/report` prefix also serves the operator board's report-slot store
 - `PUT /api/report/` — bulk-replace slots
 - `PUT /api/report/slots/:slotId` — upsert one slot
 - `DELETE /api/report/slots/:slotId` — remove one slot
-- `POST /api/report/agent-refresh` — owner-forced dashboard agent run (bypasses the delta gate)
+- `POST /api/report/agent-refresh` — owner-forced dashboard agent run, bypasses the delta gate
+  (registered by the runtime wiring in `api-routes-init.ts`, not by the report router)
 
 #### Operator endpoints
 
