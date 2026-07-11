@@ -53,6 +53,7 @@ export const api = {
 export function connectReportSse(handlers: {
   onUpdate: (data: unknown) => void;
   onOpen?: () => void;
+  onDown?: () => void;
 }): () => void {
   const es = new EventSource('/api/report/events');
   es.addEventListener('report-update', (ev) => {
@@ -64,6 +65,9 @@ export function connectReportSse(handlers: {
   });
   if (handlers.onOpen) {
     es.addEventListener('open', handlers.onOpen);
+  }
+  if (handlers.onDown) {
+    es.addEventListener('error', handlers.onDown);
   }
   return () => es.close();
 }
