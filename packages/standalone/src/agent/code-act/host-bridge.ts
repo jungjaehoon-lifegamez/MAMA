@@ -670,7 +670,12 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'status', type: 'string', required: false },
       { name: 'priority', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
-      { name: 'deadline', type: 'string', required: false },
+      {
+        name: 'deadline',
+        type: 'string | null',
+        required: false,
+        description: 'YYYY-MM-DD, or null to clear',
+      },
       { name: 'latest_event', type: 'string', required: false },
       { name: 'confirmed', type: 'boolean', required: false },
     ],
