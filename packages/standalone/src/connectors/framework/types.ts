@@ -66,6 +66,14 @@ export interface AuthRequirement {
   description: string;
 }
 
+/**
+ * Connector auth resolution (the ONLY implemented path):
+ *   config.auth.token ?? process.env[config.auth.tokenName ?? '<CONNECTOR>_TOKEN']
+ * Fields like `envFile` or `apiKeyName` found in older configs are NOT read by
+ * any connector -- put credentials in the daemon environment (e.g. sourced
+ * from ~/.mama/auth.env by start.sh) and point tokenName at them. Trello wants
+ * one variable in "apiKey:token" format.
+ */
 export interface ConnectorConfig {
   enabled: boolean;
   pollIntervalMinutes: number;

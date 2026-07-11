@@ -1223,6 +1223,7 @@ export async function runAgentLoop(
           'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
           'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
           'mama_recall(query) for memory relevant to what you find',
+          'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
         ],
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
