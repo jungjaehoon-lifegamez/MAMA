@@ -32,3 +32,24 @@ export function formatRelativeTime(now: number, then: number): string {
   }
   return `${Math.floor(elapsed / DAY_MS)}d ago`;
 }
+
+export function formatDday(now: number, dueDate: string | null): string {
+  if (!dueDate || !/^\d{4}-\d{2}-\d{2}$/.test(dueDate) || !Number.isFinite(now)) {
+    return '-';
+  }
+  const [year, month, day] = dueDate.split('-').map(Number);
+  const dueUtc = Date.UTC(year, month - 1, day);
+  const due = new Date(dueUtc);
+  if (
+    due.getUTCFullYear() !== year ||
+    due.getUTCMonth() !== month - 1 ||
+    due.getUTCDate() !== day
+  ) {
+    return '-';
+  }
+  const current = new Date(now);
+  const todayUtc = Date.UTC(current.getFullYear(), current.getMonth(), current.getDate());
+  const days = Math.round((dueUtc - todayUtc) / DAY_MS);
+  if (days === 0) return 'D-day';
+  return days > 0 ? `D-${days}` : `D+${Math.abs(days)}`;
+}

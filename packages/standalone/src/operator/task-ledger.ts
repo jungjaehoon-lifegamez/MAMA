@@ -68,7 +68,7 @@ export interface CreateTaskInput {
 export interface UpdateTaskInput {
   status?: TaskStatus;
   priority?: TaskPriority;
-  assignee?: string;
+  assignee?: string | null;
   deadline?: string | null;
   latest_event?: string;
   confirmed?: boolean;
@@ -115,7 +115,15 @@ function assertEnum(value: string, allowed: readonly string[], field: string): v
 }
 
 function assertIsoDate(value: string, field: string): void {
-  if (!ISO_DATE_PATTERN.test(value) || isoToEpochMs(value) === null) {
+  const match = ISO_DATE_PATTERN.exec(value);
+  if (!match) {
+    throw new Error(`${field} must be an ISO date (YYYY-MM-DD), got: ${value}`);
+  }
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const isRoundTrip =
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+  if (!isRoundTrip) {
     throw new Error(`${field} must be an ISO date (YYYY-MM-DD), got: ${value}`);
   }
 }
