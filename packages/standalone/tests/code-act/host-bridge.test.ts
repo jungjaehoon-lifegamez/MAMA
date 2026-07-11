@@ -84,6 +84,18 @@ describe('HostBridge', () => {
       expect(t3Names).not.toContain('Write');
     });
 
+    it('native task ledger: task_list read-only (tiers 2+3), writes tier-2 only', () => {
+      const bridge = new HostBridge(makeExecutor());
+      const t2 = bridge.getAvailableFunctions(2).map((f) => f.name);
+      const t3 = bridge.getAvailableFunctions(3).map((f) => f.name);
+      expect(t2).toContain('task_list');
+      expect(t2).toContain('task_create');
+      expect(t2).toContain('task_update');
+      expect(t3).toContain('task_list');
+      expect(t3).not.toContain('task_create');
+      expect(t3).not.toContain('task_update');
+    });
+
     it('kagemusha query tools are read-only: available at tier 2 AND tier 3', () => {
       // The dashboard agent (tier 2) reads real task lifecycle state through these;
       // they are pure queries against the kagemusha bridge db, so tier 3 gets them too.

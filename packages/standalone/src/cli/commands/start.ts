@@ -1088,7 +1088,12 @@ export async function runAgentLoop(
 
       const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
       mkdirSync(dirname(triggerDbPath), { recursive: true });
-      const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+      const operatorDb = new Database(triggerDbPath);
+      const triggerRegistry = new TriggerRegistry(operatorDb);
+      // Native task ledger (M8) shares the operator DB handle; the handle owner
+      // (the shutdown hook below) closes it once -- stores have no close().
+      const { TaskLedger } = await import('../../operator/task-ledger.js');
+      toolExecutor.setTaskLedger(new TaskLedger(operatorDb));
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
