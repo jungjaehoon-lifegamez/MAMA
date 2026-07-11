@@ -277,14 +277,33 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(send).toHaveBeenCalledWith('Quiet day.');
   });
 
-  it('trailer-only reply is treated as nothing to send', async () => {
+  it('trailer-only reply is treated as nothing to send and earns no credit', async () => {
     const askAgent = vi.fn(async () => 'USED_TRIGGERS: t1');
     const send = vi.fn(async () => {});
     const recordTriggerUse = vi.fn();
     const r = new SituationReporter({ recordTriggerUse });
     r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
     expect(await r.report(askAgent, { send }, 'digest')).toBe(false);
-    expect(recordTriggerUse).toHaveBeenCalledWith(['t1']);
+    // nothing was delivered to the owner -> no success credit
+    expect(recordTriggerUse).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('send failure earns no credit; the retry that delivers credits exactly once', async () => {
+    const askAgent = vi.fn(async () => 'Brief.\nUSED_TRIGGERS: t1');
+    const recordTriggerUse = vi.fn();
+    const r = new SituationReporter({ recordTriggerUse });
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+
+    const failingSend = vi.fn(async () => {
+      throw new Error('gateway down');
+    });
+    await expect(r.report(askAgent, { send: failingSend }, 'digest')).rejects.toThrow();
+    expect(recordTriggerUse).not.toHaveBeenCalled(); // no credit without delivery
+
+    const send = vi.fn(async () => {});
+    expect(await r.report(askAgent, { send }, 'digest')).toBe(true); // buffer kept -> retry
+    expect(recordTriggerUse).toHaveBeenCalledTimes(1);
+    expect(recordTriggerUse).toHaveBeenCalledWith(['t1']);
   });
 });
