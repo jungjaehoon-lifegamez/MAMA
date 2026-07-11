@@ -46,6 +46,7 @@ interface ChannelWindow {
 }
 
 interface FireAgg {
+  triggerId: string;
   kind: string;
   channelId: string;
   count: number;
@@ -69,7 +70,18 @@ export interface SituationReporterOptions {
    * never publishes the board.
    */
   boardPublishLines?: string[];
+  /**
+   * G2 success signal: called with the trigger ids the agent says it actually
+   * drew on for the sent report (parsed from the stripped USED_TRIGGERS
+   * trailer, validated against this window's fires). The wiring records
+   * 'succeeded' outcomes so evolution finally gets a positive signal instead
+   * of being elimination-only. Uncited fires stay NEUTRAL - not failures.
+   */
+  recordTriggerUse?: (triggerIds: string[]) => void;
 }
+
+/** Machine trailer the agent appends; stripped before the owner sees the report. */
+const USED_TRIGGERS_PATTERN = /\n?^USED_TRIGGERS:\s*(.*)\s*$/im;
 
 export class SituationReporter {
   private windowByChannel = new Map<string, ChannelWindow>();
@@ -104,6 +116,7 @@ export class SituationReporter {
   recordFire(activity: FireActivity): void {
     const key = `${activity.triggerId}|${activity.channelId}`;
     const agg = this.fireAgg.get(key) ?? {
+      triggerId: activity.triggerId,
       kind: activity.kind,
       channelId: activity.channelId,
       count: 0,
@@ -141,13 +154,40 @@ export class SituationReporter {
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
     if (mode !== 'full' && !this.hasActivity()) return false;
 
-    const text = (await askAgent(this.buildPrompt(mode))).trim();
-    if (text === '' || /^NOTHING\b/i.test(text)) {
+    const raw = (await askAgent(this.buildPrompt(mode))).trim();
+    if (raw === '' || /^NOTHING\b/i.test(raw)) {
       this.reset(); // agent judged nothing worth reporting - drop the buffer quietly
       return false;
     }
 
+    // Parse + strip the USED_TRIGGERS machine trailer (the owner never sees it)
+    // and validate the ids against THIS window's fires (no hallucinated credit).
+    const match = raw.match(USED_TRIGGERS_PATTERN);
+    const text = raw.replace(USED_TRIGGERS_PATTERN, '').trim();
+    let cited: string[] = [];
+    if (match) {
+      const windowIds = new Set([...this.fireAgg.values()].map((f) => f.triggerId));
+      cited = [
+        ...new Set(
+          match[1]
+            .split(',')
+            .map((id) => id.trim())
+            .filter((id) => id.length > 0 && id.toLowerCase() !== 'none' && windowIds.has(id))
+        ),
+      ];
+    }
+    if (text === '') {
+      this.reset(); // trailer-only reply: nothing was delivered, so no credit either
+      return false;
+    }
+
     await output.send(text); // throws loudly on failure; buffer kept for retry (no-fallback)
+    // Credit only AFTER a successful send: success means "cited in a DELIVERED
+    // report". Crediting before send would double-count on the retry path
+    // (send throws -> buffer kept -> next cadence re-cites the same fires).
+    if (cited.length > 0) {
+      this.opts.recordTriggerUse?.(cited);
+    }
     this.reset();
     return true;
   }
@@ -177,7 +217,7 @@ export class SituationReporter {
 
     const fireLines = [...this.fireAgg.values()].map(
       (f) =>
-        `- trigger "${f.kind}" fired ${f.count}x on ${f.channelId}; recalled: ${[...f.topics].join(', ') || '(none)'}`
+        `- trigger "${f.kind}" [id: ${f.triggerId}] fired ${f.count}x on ${f.channelId}; recalled: ${[...f.topics].join(', ') || '(none)'}`
     );
     const memoryLines = [...this.recalled.entries()].map(
       ([topic, content]) => `- ${topic}: ${content}`
@@ -238,6 +278,17 @@ export class SituationReporter {
 
     return [
       ...framing,
+      // Attribution discipline (owner feedback: the only quality complaint on day-1
+      // reports was merged sender/room identities).
+      'Attribute people and rooms EXACTLY as they appear in the source lines: a channel/room',
+      'name is never a person, and a sender is never a room. If you cannot tell who said',
+      'something, write "(sender unclear)" instead of guessing or merging names.',
+      // G2 success signal: machine trailer, stripped before delivery.
+      'After the report body, add ONE final line exactly in this form:',
+      'USED_TRIGGERS: <comma-separated ids of the fired triggers (from [id: ...] in the fire',
+      'activity below) whose fire or recalled memory you actually drew on>, or',
+      'USED_TRIGGERS: none if you drew on none. This line is machine-read and stripped',
+      'before the owner sees the report.',
       'Reply in the language the owner uses on these channels if you can tell; otherwise English.',
       // Local wall-clock, not UTC: the first live report stamped itself in UTC because the
       // agent had no local time reference (Kagemusha injects local time the same way).

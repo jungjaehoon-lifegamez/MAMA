@@ -239,4 +239,71 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     // digest never invites a write
     expect(r.buildPrompt('digest')).not.toContain('mama_save');
   });
+
+  // ---- G2 success circuit: USED_TRIGGERS citation -> recordTriggerUse ----
+  it('prompt exposes trigger ids, attribution discipline, and the USED_TRIGGERS trailer contract', () => {
+    const r = new SituationReporter();
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+    for (const mode of ['digest', 'full'] as const) {
+      const prompt = r.buildPrompt(mode);
+      expect(prompt).toContain('[id: t1]');
+      expect(prompt).toContain('USED_TRIGGERS:');
+      expect(prompt).toContain('never a room');
+      expect(prompt).toContain('(sender unclear)');
+    }
+  });
+
+  it('report strips the USED_TRIGGERS trailer and records only window-validated ids', async () => {
+    const askAgent = vi.fn(async () => 'Owner brief line.\nUSED_TRIGGERS: t1, t-unknown, none, t1');
+    const send = vi.fn(async () => {});
+    const used: string[][] = [];
+    const r = new SituationReporter({ recordTriggerUse: (ids) => used.push(ids) });
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+    expect(await r.report(askAgent, { send }, 'digest')).toBe(true);
+    // hallucinated ids filtered, duplicates collapsed, 'none' token ignored
+    expect(used).toEqual([['t1']]);
+    // the owner never sees the machine trailer
+    expect(send).toHaveBeenCalledWith('Owner brief line.');
+  });
+
+  it('USED_TRIGGERS: none records nothing and sends the body untouched', async () => {
+    const askAgent = vi.fn(async () => 'Quiet day.\nUSED_TRIGGERS: none');
+    const send = vi.fn(async () => {});
+    const recordTriggerUse = vi.fn();
+    const r = new SituationReporter({ recordTriggerUse });
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+    expect(await r.report(askAgent, { send }, 'digest')).toBe(true);
+    expect(recordTriggerUse).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledWith('Quiet day.');
+  });
+
+  it('trailer-only reply is treated as nothing to send and earns no credit', async () => {
+    const askAgent = vi.fn(async () => 'USED_TRIGGERS: t1');
+    const send = vi.fn(async () => {});
+    const recordTriggerUse = vi.fn();
+    const r = new SituationReporter({ recordTriggerUse });
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+    expect(await r.report(askAgent, { send }, 'digest')).toBe(false);
+    // nothing was delivered to the owner -> no success credit
+    expect(recordTriggerUse).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('send failure earns no credit; the retry that delivers credits exactly once', async () => {
+    const askAgent = vi.fn(async () => 'Brief.\nUSED_TRIGGERS: t1');
+    const recordTriggerUse = vi.fn();
+    const r = new SituationReporter({ recordTriggerUse });
+    r.recordFire(fire('t1', 'weekly_report', 'slack:c1'));
+
+    const failingSend = vi.fn(async () => {
+      throw new Error('gateway down');
+    });
+    await expect(r.report(askAgent, { send: failingSend }, 'digest')).rejects.toThrow();
+    expect(recordTriggerUse).not.toHaveBeenCalled(); // no credit without delivery
+
+    const send = vi.fn(async () => {});
+    expect(await r.report(askAgent, { send }, 'digest')).toBe(true); // buffer kept -> retry
+    expect(recordTriggerUse).toHaveBeenCalledTimes(1);
+    expect(recordTriggerUse).toHaveBeenCalledWith(['t1']);
+  });
 });
