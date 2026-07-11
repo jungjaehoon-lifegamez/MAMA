@@ -769,6 +769,11 @@ export type GatewayToolName =
   | 'kagemusha_entities'
   | 'kagemusha_tasks'
   | 'kagemusha_messages'
+  // Native task ledger (M8: operator-owned work items)
+  | 'task_list'
+  | 'task_create'
+  | 'task_update'
+  | 'contract_no_update'
   // System tools
   | 'agent_notices'
   // Agent management tools (Managed Agents pattern)

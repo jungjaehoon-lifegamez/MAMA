@@ -377,16 +377,21 @@ This saves resources. Only publish when there is genuinely new information to re
       }
     };
 
-    // Serialize ALL dashboard runs (boot, interval, manual) on one chain -- the shared
-    // agent process rejects concurrent requests, so unserialized triggers raced into
-    // 'Process is busy' errors (same pattern as CronWorker's executionQueue).
-    let dashboardRunChain: Promise<void> = Promise.resolve();
-    const runDashboardAgent = (opts?: { force?: boolean }): Promise<void> => {
-      // Trailing catch keeps one failed link from poisoning every future run:
-      // a rejected chain would silently skip all subsequent .then() links.
-      dashboardRunChain = dashboardRunChain.then(() => doDashboardRun(opts)).catch(() => {});
-      return dashboardRunChain;
+    // ONE board-writer queue: dashboard cron, manual refresh, AND reconcile runs
+    // all serialize here -- the shared agent process rejects concurrent requests
+    // ('Process is busy' class). Per-job rejection propagates to the caller
+    // while the chain itself survives (M8 review: a caller must be able to
+    // distinguish its own job's failure).
+    let boardWriterChain: Promise<void> = Promise.resolve();
+    const boardWriterQueue = {
+      push(job: () => Promise<void>): Promise<void> {
+        const jobPromise = boardWriterChain.then(job);
+        boardWriterChain = jobPromise.catch(() => {});
+        return jobPromise;
+      },
     };
+    const runDashboardAgent = (opts?: { force?: boolean }): Promise<void> =>
+      boardWriterQueue.push(() => doDashboardRun(opts)).catch(() => {});
 
     // First run after 10s (let connectors poll first), then every 30 min
     setTimeout(runDashboardAgent, 10_000);
@@ -397,6 +402,124 @@ This saves resources. Only publish when there is genuinely new information to re
       runDashboardAgent({ force: true }).catch(() => {});
       res.json({ ok: true, message: 'Dashboard agent triggered (forced refresh)' });
     });
+
+    // -- M8 board reconcile leg (freshness layer; default OFF, opt-in like
+    // MAMA_TRIGGER_LOOP). The trigger loop emits operator:channel-delta after
+    // committing its cursor; the 30-min cron above remains the repair pass.
+    if (process.env.MAMA_BOARD_RECONCILE === '1') {
+      const { buildReconcilePrompt, ReconcileScheduler } =
+        await import('../../operator/board-reconcile.js');
+      const { captureSnapshot, verifyAfterRun, OBLIGATED_TOOLS } =
+        await import('../../operator/action-verifier.js');
+      const kagemushaContext =
+        (process.env.MAMA_RECONCILE_TASK_CONTEXT ?? 'native') === 'kagemusha';
+
+      // Verifier deps (M8 Phase 2): run-bound signals only -- trace rows from
+      // the dashboard agent's gateway_tool_call activity, notes from the
+      // operator ledger. Observe, never block.
+      const reconcileLedger = toolExecutor.getTaskLedger();
+      const traceToolList = OBLIGATED_TOOLS.map((t) => `'${t}'`).join(',');
+      const verifierDeps = {
+        getSlots: () => apiServer.reportStore.getAllSorted(),
+        getLedgerHash: () => reconcileLedger?.payloadHash() ?? '',
+        getScopedNoteMaxId: (scope: string) => reconcileLedger?.maxNoUpdateId(scope) ?? 0,
+        getTraceMaxId: () => {
+          if (!sessionsDb) return 0;
+          const row = sessionsDb
+            .prepare(
+              `SELECT MAX(id) AS max_id FROM agent_activity
+               WHERE type = 'gateway_tool_call' AND agent_id = 'dashboard-agent'`
+            )
+            .get() as { max_id: number | null };
+          return row.max_id ?? 0;
+        },
+        countObligatedTraceRowsSince: (maxId: number) => {
+          if (!sessionsDb) return 0;
+          const row = sessionsDb
+            .prepare(
+              `SELECT COUNT(*) AS n FROM agent_activity
+               WHERE type = 'gateway_tool_call' AND agent_id = 'dashboard-agent'
+                 AND id > ? AND normalized_tool_name IN (${traceToolList})`
+            )
+            .get(maxId) as { n: number };
+          return row.n;
+        },
+      };
+
+      const reconcileScheduler = new ReconcileScheduler({
+        debounceMs: Number(process.env.MAMA_RECONCILE_DEBOUNCE_MS) || undefined,
+        maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
+        globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
+        log: (line) => console.log(line),
+        run: (channelKey, deltaLines) =>
+          boardWriterQueue.push(async () => {
+            const scope = `reconcile:${channelKey}`;
+            const before = captureSnapshot(verifierDeps, scope);
+            const prompt = buildReconcilePrompt({
+              channelKey,
+              deltaLines,
+              todayIso: new Date().toISOString().slice(0, 10),
+              kagemushaContext,
+            });
+            await executeValidatedRun('dashboard-agent', prompt, {
+              requestTimeout: 300_000,
+            });
+            const verdict = verifyAfterRun(verifierDeps, before, scope);
+            const outcome = verdict.verified ? 'reconcile_verified' : 'reconcile_unverified';
+            console.log(
+              `[reconcile] ${outcome} channel=${channelKey}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
+            );
+            try {
+              if (sessionsDb) {
+                logActivity(sessionsDb, {
+                  agent_id: 'dashboard-agent',
+                  agent_version: 0,
+                  type: outcome,
+                  input_summary: `reconcile ${channelKey}`,
+                  output_summary: verdict.effects.join('; '),
+                  execution_status: 'completed',
+                  trigger_reason: 'reconcile',
+                });
+              }
+            } catch {
+              /* telemetry only */
+            }
+            if (!verdict.verified) {
+              // Loud, never blocking (observability over restriction).
+              eventBus.emit({
+                type: 'agent:action',
+                agent: 'Dashboard Agent',
+                action: 'reconcile_unverified',
+                target: channelKey,
+              });
+            }
+          }),
+      });
+      eventBus.on('operator:channel-delta', (event) => {
+        if (event.type === 'operator:channel-delta') {
+          reconcileScheduler.enqueue(event.channelKey, event.lines);
+        }
+      });
+
+      // Manual reconcile: lines from the body, or the caller must supply them
+      // (no silent alternate data path -- M8 review #17).
+      apiServer.app.post('/api/operator/reconcile', requireAuth, (req, res) => {
+        const { channelKey, lines } = (req.body ?? {}) as {
+          channelKey?: string;
+          lines?: string[];
+        };
+        if (!channelKey || !Array.isArray(lines) || lines.length === 0) {
+          res.status(400).json({
+            ok: false,
+            error: 'channelKey and non-empty lines[] are required',
+          });
+          return;
+        }
+        reconcileScheduler.enqueue(channelKey, lines);
+        res.json({ ok: true, message: 'Reconcile queued (async; runs after debounce)' });
+      });
+      console.log('[reconcile] Board reconcile leg enabled (MAMA_BOARD_RECONCILE=1)');
+    }
   } else {
     routesLogger.debug('[Dashboard Agent] Skipped; dashboard-agent is not configured');
   }

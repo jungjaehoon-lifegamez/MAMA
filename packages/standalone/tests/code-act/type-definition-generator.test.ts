@@ -103,7 +103,8 @@ describe('TypeDefinitionGenerator', () => {
 
     it('stays within token budget for Tier 1', () => {
       const dts = TypeDefinitionGenerator.generate(1);
-      expect(dts.length).toBeLessThan(7200);
+      // Budget raised 7200 -> 8000 for the M8 native task-ledger tools.
+      expect(dts.length).toBeLessThan(8000);
     });
   });
 

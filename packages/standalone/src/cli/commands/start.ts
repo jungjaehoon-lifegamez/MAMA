@@ -26,7 +26,8 @@ import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { minimatch } from 'minimatch';
 import { UICommandQueue } from '../../api/ui-command-handler.js';
 import { initAgentTables, getLatestVersion, createAgentVersion } from '../../db/agent-store.js';
@@ -87,6 +88,9 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_ingest',
   'report_publish',
   'wiki_publish',
+  'task_create',
+  'task_update',
+  'contract_no_update',
 ]);
 
 function isTruthyEnvValue(value: string | undefined): boolean {
@@ -1045,6 +1049,36 @@ export async function runAgentLoop(
   // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
   // wake), which preserves today's behavior when MAMA_TRIGGER_LOOP is unset.
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
+  // M8: board-reconcile feed. The trigger loop is built BEFORE the event bus
+  // exists (initApiServer), so it emits through this mutable sink (same
+  // pattern as triggerLoopNudge above).
+  const channelDeltaSink: { current: ((channelKey: string, lines: string[]) => void) | null } = {
+    current: null,
+  };
+
+  // Operator DB + native task ledger (M8): wired UNCONDITIONALLY -- the task
+  // tools are standard gateway tools and must work even when the trigger loop
+  // is off (review finding on #142). Single handle, closed once at shutdown.
+  const operatorDbPath = expandPath('~/.mama/operator/triggers.db');
+  mkdirSync(dirname(operatorDbPath), { recursive: true });
+  const operatorDb = new Database(operatorDbPath);
+  try {
+    const { TaskLedger } = await import('../../operator/task-ledger.js');
+    toolExecutor.setTaskLedger(new TaskLedger(operatorDb));
+  } catch (err) {
+    // Fail loud, but do not leak the handle on a failed boot.
+    operatorDb.close();
+    throw err;
+  }
+  gateways.push({
+    stop: async () => {
+      try {
+        operatorDb.close();
+      } catch {
+        /* already closed */
+      }
+    },
+  });
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1077,8 +1111,6 @@ export async function runAgentLoop(
       const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
       const { askAgentCLI } = await import('../../operator/trigger-author.js');
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
-      const { mkdirSync } = await import('node:fs');
-      const { dirname } = await import('node:path');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
       const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } =
@@ -1086,9 +1118,7 @@ export async function runAgentLoop(
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
 
-      const triggerDbPath = expandPath('~/.mama/operator/triggers.db');
-      mkdirSync(dirname(triggerDbPath), { recursive: true });
-      const triggerRegistry = new TriggerRegistry(new Database(triggerDbPath));
+      const triggerRegistry = new TriggerRegistry(operatorDb);
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
       const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
@@ -1115,6 +1145,7 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
+        onChannelDelta: (channelKey, lines) => channelDeltaSink.current?.(channelKey, lines),
         askAgent: askAgentCLI,
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
@@ -1222,8 +1253,8 @@ export async function runAgentLoop(
         stop: async () => {
           triggerLoopNudge.current = null;
           stopTriggerLoop();
-          // Close the operator triggers.db handle (PR #119 review: was leaked on shutdown).
-          triggerRegistry.close();
+          // The shared operator DB handle is closed by the unconditional stop
+          // hook above (single owner); nothing to close here.
         },
       });
       console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
@@ -1251,6 +1282,9 @@ export async function runAgentLoop(
     envelopeAuthority: envelopeBootstrap.envelopeAuthority,
     contextCompileService,
   });
+
+  channelDeltaSink.current = (channelKey, lines) =>
+    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines });
 
   await registerApiRoutes({
     config,
