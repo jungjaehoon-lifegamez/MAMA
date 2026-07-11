@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-07-12
+
+The operator runtime release. Full details in the repository root CHANGELOG.md.
+
+### Added
+
+- **Self-evolving trigger loop** — The agent authors its own triggers from recurring channel
+  situations, fires them on future messages to recall memory, and folds everything into owner
+  situation reports. A near-duplicate gate blocks variant triggers at authoring time, a review
+  pass retires noisy ones, and a citation success circuit records `succeeded` when a delivered
+  report names the fired triggers it drew on (`USED_TRIGGERS` machine trailer, stripped before
+  the owner sees the report)
+- **Operator board at `/ui`** — React viewer with four agent-published report slots (briefing,
+  action required, decisions, pipeline) rendered live over SSE, a Triggers tab, and an owner veto
+  tray; report slots persist across restarts (`~/.mama/report-slots.json`); task state comes from
+  the real task ledger via the kagemusha bridge query tools, never guessed from chat
+- **Wiki v5: daily journal + lessons** — The wiki agent maintains an Obsidian vault as an
+  append-only daily note per day plus durable lesson pages (`lessons/clients|process|system`);
+  configured via the new `wiki:` config section; Obsidian CLI calls are pinned with `vault=<name>`
+- **Scheduled memory promotion** — Every 6h (configurable, `POST /api/memory/promote`) the memory
+  agent promotes durable judgments from recent channel data into decisions — never task states;
+  successful runs emit `memory:promoted`, which chains into wiki compilation
+- **Audit alert dedup** — The hourly conductor audit diffs findings against
+  `~/.mama/state/audit-findings.json`; a persistent finding alerts the owner once per 24h instead
+  of every hour, MINOR findings never alert, and the audit never writes memory
+
+### Security
+
+- **Public-tree PII scrub and history rewrite** — Personal identifiers removed from the tree and
+  the full git history rewritten; personal configuration lives only under `~/.mama`
+
 ## [0.20.1] - 2026-05-04
 
 ### Added
