@@ -29,7 +29,12 @@ export interface TriggerSpec {
   id?: string;
   kind: string;
   memoryQuery: string;
-  match: { keywords: string[]; keywordMode: 'any' | 'every'; scopeChannelIds?: string[]; minConfidence: number };
+  match: {
+    keywords: string[];
+    keywordMode: 'any' | 'every';
+    scopeChannelIds?: string[];
+    minConfidence: number;
+  };
   procedure: { action: string; description: string }[];
   requiredEvidence: string[];
 }
@@ -50,7 +55,10 @@ export async function authorTriggers(
   const specs = parseTriggerSpecs(answer); // throws on unparseable output (no-fallback)
 
   const created: TriggerRecord[] = [];
-  const seen = existing.map((t) => ({ keywords: t.match.keywords, scopeChannelIds: t.match.scopeChannelIds }));
+  const seen = existing.map((t) => ({
+    keywords: t.match.keywords,
+    scopeChannelIds: t.match.scopeChannelIds,
+  }));
   for (const spec of specs) {
     if (isDuplicate(spec, seen)) continue;
     const id = spec.id ?? deriveId(spec);
@@ -71,15 +79,23 @@ export async function authorTriggers(
   return created;
 }
 
-export function buildAuthorPrompt(events: OperatorChannelEvent[], existing: TriggerRecord[]): string {
+export function buildAuthorPrompt(
+  events: OperatorChannelEvent[],
+  existing: TriggerRecord[]
+): string {
   // English default. Personal phrasing overrides load from ~/.mama/operator/*.json (later refinement).
   const window = events.map((e) => `- [${e.channelId}] ${e.content}`).join('\n');
   const existingList =
     existing.length === 0
       ? '(none yet)'
-      : existing.map((t) => `- ${t.id}: keywords=[${t.match.keywords.join(', ')}] memoryQuery="${t.memoryQuery}"`).join('\n');
+      : existing
+          .map(
+            (t) =>
+              `- ${t.id}: keywords=[${t.match.keywords.join(', ')}] memoryQuery="${t.memoryQuery}"`
+          )
+          .join('\n');
   return [
-    'You maintain a personal operator\'s library of TRIGGERS. A trigger fires on future messages',
+    "You maintain a personal operator's library of TRIGGERS. A trigger fires on future messages",
     'that match its keywords and then recalls a memory to help the operator intervene proactively.',
     '',
     'Look at the recent messages below. Propose new triggers ONLY for situations that genuinely',
@@ -91,6 +107,11 @@ export function buildAuthorPrompt(events: OperatorChannelEvent[], existing: Trig
     '',
     'Existing triggers (do not duplicate these):',
     existingList,
+    '',
+    'A situation already covered by an existing trigger -- even with different wording or a',
+    'partial keyword overlap -- does NOT need a new trigger. Near-variants make several',
+    'triggers fire on the same message, which wastes recall and dilutes the report. Prefer',
+    'proposing NOTHING over proposing a variant of an existing trigger.',
     '',
     'Return ONLY a JSON array (no prose) of trigger objects with this shape:',
     '[{ "kind": string, "memoryQuery": string,',
@@ -119,31 +140,43 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   const nonEmptyString = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 
   if (!nonEmptyString(spec.kind)) throw new Error('trigger.kind must be a non-empty string');
-  if (!nonEmptyString(spec.memoryQuery)) throw new Error('trigger.memoryQuery must be a non-empty string');
+  if (!nonEmptyString(spec.memoryQuery))
+    throw new Error('trigger.memoryQuery must be a non-empty string');
 
   if (!isObject(spec.match)) throw new Error('trigger.match must be an object');
   const match = spec.match;
-  if (!Array.isArray(match.keywords) || match.keywords.length === 0 || !match.keywords.every(nonEmptyString)) {
+  if (
+    !Array.isArray(match.keywords) ||
+    match.keywords.length === 0 ||
+    !match.keywords.every(nonEmptyString)
+  ) {
     throw new Error('trigger.match.keywords must be a non-empty string[]');
   }
   if (match.keywordMode !== 'any' && match.keywordMode !== 'every') {
     throw new Error("trigger.match.keywordMode must be 'any' or 'every'");
   }
-  if (typeof match.minConfidence !== 'number') throw new Error('trigger.match.minConfidence must be a number');
+  if (typeof match.minConfidence !== 'number')
+    throw new Error('trigger.match.minConfidence must be a number');
   if (
     match.scopeChannelIds !== undefined &&
-    (!Array.isArray(match.scopeChannelIds) || !match.scopeChannelIds.every((c) => typeof c === 'string'))
+    (!Array.isArray(match.scopeChannelIds) ||
+      !match.scopeChannelIds.every((c) => typeof c === 'string'))
   ) {
     throw new Error('trigger.match.scopeChannelIds must be string[] when present');
   }
 
   if (
     !Array.isArray(spec.procedure) ||
-    !spec.procedure.every((p) => isObject(p) && typeof p.action === 'string' && typeof p.description === 'string')
+    !spec.procedure.every(
+      (p) => isObject(p) && typeof p.action === 'string' && typeof p.description === 'string'
+    )
   ) {
     throw new Error('trigger.procedure must be an array of {action, description}');
   }
-  if (!Array.isArray(spec.requiredEvidence) || !spec.requiredEvidence.every((e) => typeof e === 'string')) {
+  if (
+    !Array.isArray(spec.requiredEvidence) ||
+    !spec.requiredEvidence.every((e) => typeof e === 'string')
+  ) {
     throw new Error('trigger.requiredEvidence must be string[]');
   }
 
@@ -194,12 +227,30 @@ function normalizedKeywordSet(keywords: string[]): string {
   return [...new Set(keywords.map((k) => k.trim().toLocaleLowerCase()))].sort().join('|');
 }
 
-function isDuplicate(spec: TriggerSpec, seen: { keywords: string[]; scopeChannelIds?: string[] }[]): boolean {
-  const specKeys = normalizedKeywordSet(spec.match.keywords);
+/**
+ * Near-duplicate gate. Exact keyword-set equality alone let near-variants pile
+ * up: day-1 live data showed 65% of fires were co-fires of overlapping triggers
+ * on the same message. Within the same scope, a spec is a duplicate when its
+ * keyword set is a subset/superset of an existing trigger's, or the Jaccard
+ * overlap is >= 0.6. This is authoring HYGIENE (like the exact check before
+ * it), not outcome judgment -- keep/retire decisions stay with the agent (G2).
+ */
+function isDuplicate(
+  spec: TriggerSpec,
+  seen: { keywords: string[]; scopeChannelIds?: string[] }[]
+): boolean {
+  const specKeys = new Set(spec.match.keywords.map((k) => k.trim().toLowerCase()).filter(Boolean));
   const specScope = (spec.match.scopeChannelIds ?? []).slice().sort().join(',');
-  return seen.some(
-    (s) => normalizedKeywordSet(s.keywords) === specKeys && (s.scopeChannelIds ?? []).slice().sort().join(',') === specScope
-  );
+  return seen.some((s) => {
+    if ((s.scopeChannelIds ?? []).slice().sort().join(',') !== specScope) return false;
+    const seenKeys = new Set(s.keywords.map((k) => k.trim().toLowerCase()).filter(Boolean));
+    if (specKeys.size === 0 || seenKeys.size === 0) return false;
+    let shared = 0;
+    for (const k of specKeys) if (seenKeys.has(k)) shared += 1;
+    if (shared === specKeys.size || shared === seenKeys.size) return true; // subset either way
+    const jaccard = shared / (specKeys.size + seenKeys.size - shared);
+    return jaccard >= 0.6;
+  });
 }
 
 function deriveId(spec: TriggerSpec): string {
