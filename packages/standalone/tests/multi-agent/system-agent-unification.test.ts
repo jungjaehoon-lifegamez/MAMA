@@ -65,6 +65,64 @@ describe('system agent unification', () => {
       expect(source).toContain('fall back to mama_search');
       expect(source).not.toContain('Use mama_search to find recent substantive decisions');
     });
+
+    it('memory promotion run curates durable judgments and never task states', async () => {
+      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
+        encoding: 'utf-8',
+      });
+
+      // The prompt enters the persona's PROMOTION RUN mode and self-gathers.
+      expect(source).toContain('PROMOTION RUN. You are curating durable business memory');
+      expect(source).toContain('kagemusha_messages({channelId, since: <boundary ISO>})');
+      expect(source).toContain('Promote at most 5 durable judgments per run via mama_save');
+      expect(source).toContain('NEVER task lifecycle states');
+      expect(source).toContain('Finish with exactly PROMOTED <n> or NO_UPDATE');
+      // Promotion feeds the wiki chain.
+      expect(source).toContain("eventBus.onDebounced('memory:promoted'");
+      expect(source).toContain('/api/memory/promote');
+    });
+  });
+
+  describe('memory persona promotion mode', () => {
+    it('adds PROMOTION RUN mode with curation bias and keeps turn-audit rules', async () => {
+      const { MEMORY_AGENT_PERSONA } =
+        await import('../../src/multi-agent/memory-agent-persona.js');
+
+      expect(MEMORY_AGENT_PERSONA).toContain('## PROMOTION RUN mode');
+      expect(MEMORY_AGENT_PERSONA).toContain('mama_save up to 5 times');
+      expect(MEMORY_AGENT_PERSONA).toContain('NEVER promote task lifecycle states');
+      expect(MEMORY_AGENT_PERSONA).toContain('PROMOTED <n>');
+      // Opposite default biases: turn audit saves when in doubt, promotion does not.
+      expect(MEMORY_AGENT_PERSONA).toContain('When in doubt, save');
+      expect(MEMORY_AGENT_PERSONA).toContain('When in doubt in THIS mode, do NOT save');
+    });
+
+    it('upgrades a v5 managed memory persona to the current version', async () => {
+      const testDir = join(
+        tmpdir(),
+        `mama-memory-persona-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      );
+      const personaDir = join(testDir, 'personas');
+      const personaPath = join(personaDir, 'memory.md');
+      const { ensureMemoryPersona, MEMORY_AGENT_PERSONA } =
+        await import('../../src/multi-agent/memory-agent-persona.js');
+
+      await mkdir(personaDir, { recursive: true });
+      await writeFile(
+        personaPath,
+        '<!-- MAMA managed memory persona v5 -->\n\nOld turn-audit-only persona.',
+        'utf-8'
+      );
+
+      try {
+        ensureMemoryPersona(testDir);
+        const upgraded = await readFile(personaPath, 'utf-8');
+
+        expect(upgraded).toBe(MEMORY_AGENT_PERSONA);
+      } finally {
+        await rm(testDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe('process manager defaults', () => {
