@@ -4,7 +4,7 @@ export function countElementsWithClass(html: string | undefined, className: stri
   }
 
   const uncommentedHtml = html.replace(/<!--[\s\S]*?(?:-->|$)/g, '');
-  const elementPattern = /<[A-Za-z][A-Za-z0-9:-]*\b[^>]*>/g;
+  const elementPattern = /<[A-Za-z][A-Za-z0-9:-]*\b(?:[^>"']|"[^"]*"|'[^']*')*>/g;
   let count = 0;
 
   for (const match of uncommentedHtml.matchAll(elementPattern)) {

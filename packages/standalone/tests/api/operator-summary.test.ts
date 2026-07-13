@@ -35,6 +35,11 @@ describe('Story M9.4: Operator report summary', () => {
     expect(countActionRequiredCards('<div title="Use class=\'report-card\' here"></div>')).toBe(0);
   });
 
+  it('handles greater-than characters inside quoted attributes before the class attribute', () => {
+    const html = '<div data-info="foo > bar" class="report-card"></div>';
+    expect(countActionRequiredCards(html)).toBe(1);
+  });
+
   it('ignores malformed and non-element strings', () => {
     expect(countActionRequiredCards('class="report-card" < class="report-card">')).toBe(0);
   });
