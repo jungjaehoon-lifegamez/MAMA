@@ -430,20 +430,12 @@
           <span>MAMA</span>
         </a>
         <div class="mama-nav-items">
-          <button
-            class="mama-nav-item mama-nav-active"
-            data-tab="dashboard"
-            onclick="window.switchTab && window.switchTab('dashboard')"
-          >
-            <i data-lucide="layout-dashboard"></i>
-            <span>Dashboard</span>
-          </button>
           <a class="mama-nav-item" href="/ui" title="Operator Board (beta)">
             <i data-lucide="zap"></i>
             <span>Operator (beta)</span>
           </a>
           <button
-            class="mama-nav-item"
+            class="mama-nav-item mama-nav-active"
             data-tab="feed"
             onclick="window.switchTab && window.switchTab('feed')"
           >
@@ -1250,7 +1242,7 @@
                   <span
                     id="chat-tab-indicator"
                     class="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded-md font-medium"
-                    >Dashboard</span
+                    >Feed</span
                   >
                   <span
                     class="status-indicator w-1.5 h-1.5 rounded-full bg-gray-300 flex-shrink-0"
@@ -1478,14 +1470,6 @@
       <!-- Mobile Bottom Tab Bar -->
       <div id="mama-mobile-tabs">
         <button
-          class="mama-mobile-tab mama-nav-active"
-          data-tab="dashboard"
-          onclick="window.switchTab && window.switchTab('dashboard')"
-        >
-          <i data-lucide="layout-dashboard"></i>
-          <span>Home</span>
-        </button>
-        <button
           class="mama-mobile-tab"
           data-tab="chat"
           onclick="window.switchTab && window.switchTab('chat')"
@@ -1510,7 +1494,7 @@
           <span>Memory</span>
         </button>
         <button
-          class="mama-mobile-tab"
+          class="mama-mobile-tab mama-nav-active"
           data-tab="more"
           onclick="window.toggleMobileMore && window.toggleMobileMore()"
         >
@@ -2036,7 +2020,7 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
       };
 
       const STATE = {
-        currentTab: 'dashboard',
+        currentTab: 'feed',
         theme: 'dark',
         graphLoaded: false,
       };
@@ -2047,11 +2031,6 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         // Close mobile More menu if open
         const moreMenu = document.getElementById('mama-mobile-more');
         if (moreMenu) moreMenu.style.display = 'none';
-        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
-        const overflowTabs = ['feed', 'wiki', 'logs', 'settings'];
-        if (moreBtn) {
-          moreBtn.classList.toggle('mama-nav-active', overflowTabs.includes(tabName));
-        }
 
         // Also highlight the source tab in More menu if it was selected from there
         document.querySelectorAll('#mama-mobile-more .mama-mobile-tab').forEach((btn) => {
@@ -2073,6 +2052,11 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         document.querySelectorAll('#mama-mobile-tabs .mama-mobile-tab').forEach((btn) => {
           btn.classList.toggle('mama-nav-active', btn.dataset.tab === tabName);
         });
+        const moreBtn = document.querySelector('#mama-mobile-tabs [data-tab="more"]');
+        const overflowTabs = ['feed', 'wiki', 'logs', 'settings'];
+        if (moreBtn) {
+          moreBtn.classList.toggle('mama-nav-active', overflowTabs.includes(tabName));
+        }
 
         // Legacy: update any remaining [data-tab] buttons outside sidebar/mobile
         document.querySelectorAll('[data-tab]').forEach((btn) => {
@@ -3049,8 +3033,8 @@ export MAMA_AUTH_TOKEN="your-secure-token-here"</pre
         initTheme();
         // Initialize floating chat panel bindings (session init is lazy, on first open)
         chat.initFloating();
-        // Default to dashboard tab
-        switchTab('dashboard');
+        // Default to feed tab
+        switchTab('feed');
       });
 
       // Listen for postMessage from skill deployment
@@ -3124,7 +3108,7 @@ Be friendly and concise.`,
       };
 
       window.askContextHelp = function () {
-        const currentTab = STATE.currentTab || 'dashboard';
+        const currentTab = STATE.currentTab || 'feed';
         const prompt = TAB_HELP_PROMPTS[currentTab];
         if (!prompt) return;
 
