@@ -79,7 +79,7 @@ export interface ApiServerOptions {
   reportStore?: ReportStore;
   /** Sessions database instance (for token tracking) */
   db?: SQLiteDatabase;
-  /** Memory database instance (for intelligence queries — mama-memory.db) */
+  /** Memory database instance (for intelligence queries -- mama-memory.db) */
   memoryDb?: SQLiteDatabase;
   /** Transaction-capable mama-core adapter for worker situation packets */
   memoryAdapter?: AgentSituationRouterOptions['memoryAdapter'] &
@@ -235,6 +235,8 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     tracker: heartbeatTracker,
     onHeartbeat,
   });
+  const reportSseClients = new Set<ServerResponse>();
+  const reportStore = options.reportStore ?? createReportStore();
 
   app.use('/api/cron', cronRouter);
   app.use('/api/heartbeat', heartbeatRouter);
@@ -242,7 +244,10 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
   // /api/operator request, so createApiServer stays side-effect-free for tests.
   app.use(
     '/api/operator',
-    createOperatorRouter({ dbPath: join(homedir(), '.mama', 'operator', 'triggers.db') })
+    createOperatorRouter({
+      dbPath: join(homedir(), '.mama', 'operator', 'triggers.db'),
+      reportStore,
+    })
   );
 
   if (memoryDb) {
@@ -283,10 +288,6 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     );
   }
 
-  // Mount report store (created early so intelligence router can reference it)
-  const reportSseClients = new Set<ServerResponse>();
-  const reportStore = options.reportStore ?? createReportStore();
-
   // Mount token router if database is available
   if (db) {
     initTokenUsageTable(db);
@@ -321,7 +322,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
     app.use('/api/wiki', wikiRouter);
   }
 
-  // Connector status endpoint — reads connectors.json + runtime state
+  // Connector status endpoint -- reads connectors.json + runtime state
   app.get('/api/connectors/status', requireAuth, (_req, res) => {
     const configPath = join(homedir(), '.mama', 'connectors.json');
     let config: Record<
@@ -461,7 +462,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               cleanup();
               reject(err);
             });
-            // exclusive: false → SO_REUSEADDR, allows binding over TIME_WAIT sockets
+            // exclusive: false -> SO_REUSEADDR, allows binding over TIME_WAIT sockets
             candidate.listen({ port: attemptPort, host, exclusive: false }, () => {
               if (settled) return;
               settled = true;
@@ -471,7 +472,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                 actualPort = addr.port;
                 console.log(`API server listening on http://${host}:${actualPort}`);
                 if (host === '0.0.0.0') {
-                  console.warn('⚠️  WARNING: API server exposed to all interfaces!');
+                  console.warn('WARNING: API server exposed to all interfaces!');
                   console.warn('   Set MAMA_API_HOST=127.0.0.1 for local-only access');
                 }
                 resolve();
@@ -507,7 +508,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
             if (attempt === 0) {
               // First retry: show what's using the port
               console.error(
-                `\n❌ Port ${attemptPort} is already in use.\n\n` +
+                `\nPort ${attemptPort} is already in use.\n\n` +
                   `Options:\n` +
                   `1. Stop the process using port ${attemptPort}\n` +
                   `2. Use a different port: MAMA_API_PORT=<port> mama start\n` +
@@ -540,17 +541,17 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
                   throw new Error(`Invalid port number: ${attemptPort}`);
                 }
                 console.warn(
-                  `⚠️  AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
+                  `AUTO-KILL ENABLED: Attempting to kill process on port ${attemptPort}`
                 );
                 try {
                   // eslint-disable-next-line @typescript-eslint/no-require-imports
                   const { execSync } = require('child_process');
                   execSync(`kill -9 $(lsof -ti:${attemptPort})`, { timeout: 3000 });
-                  console.log(`✅ Process on port ${attemptPort} killed successfully`);
+                  console.log(`Process on port ${attemptPort} killed successfully`);
                   // Continue with current attempt instead of waiting
                   continue;
                 } catch (killError) {
-                  console.error(`❌ Failed to kill process on port ${attemptPort}:`, killError);
+                  console.error(`Failed to kill process on port ${attemptPort}:`, killError);
                   // Fall through to normal retry logic
                 }
               }
@@ -567,7 +568,7 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
               }
               const fallbackPort = attemptPort + 1;
               console.log(
-                `\n🔄 Port ${attemptPort} unavailable after ${MAX_RETRIES + 1} attempts. ` +
+                `\nPort ${attemptPort} unavailable after ${MAX_RETRIES + 1} attempts. ` +
                   `Trying fallback port ${fallbackPort}... (${fallbackCount}/${MAX_PORT_FALLBACK})`
               );
               attemptPort = fallbackPort;

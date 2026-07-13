@@ -1,6 +1,12 @@
 import type { ReportSlot } from './report';
 
 export interface OperatorSummary {
+  report: {
+    actionRequired: number;
+  };
+  tasks: {
+    unconfirmed: number;
+  };
   triggers: {
     active: number;
     disabled: number;

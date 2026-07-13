@@ -25,6 +25,15 @@ describe('TaskLedger', () => {
     expect(t.deadline).toBeNull();
   });
 
+  it('counts only open auto-created unconfirmed tasks', () => {
+    ledger.create({ title: 'open unconfirmed' });
+    ledger.create({ title: 'open confirmed', confirmed: true });
+    ledger.create({ title: 'done unconfirmed', status: 'done' });
+    ledger.create({ title: 'cancelled unconfirmed', status: 'cancelled' });
+
+    expect(ledger.countOpenUnconfirmed()).toBe(1);
+  });
+
   it('rejects invalid status and priority via CHECK', () => {
     expect(() => ledger.create({ title: 'x', status: 'doing' as never })).toThrow();
     expect(() => ledger.create({ title: 'x', priority: 'urgent' as never })).toThrow();

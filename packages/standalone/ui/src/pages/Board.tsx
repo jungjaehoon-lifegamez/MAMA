@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { mergeReportEvent, orderSlots, type ReportSlot, type SlotRecord } from '../api/report';
@@ -8,18 +8,41 @@ import { connectReportSse } from '../api/client';
 import StatCard from '../components/StatCard';
 import { formatRelativeTime, getFreshnessClass } from '../lib/time';
 import { linkifyTaskReferences } from '../lib/task-links';
+import {
+  COLLAPSED_SLOTS_STORAGE_KEY,
+  formatSlotLabel,
+  parseCollapsedSlots,
+  pruneCollapsedSlots,
+  serializeCollapsedSlots,
+  toggleCollapsedSlot,
+} from '../lib/slot-collapse';
 
 type SseStatus = 'live' | 'reconnecting';
 
-function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
+function SlotRenderer({
+  slot,
+  now,
+  collapsed,
+  onToggle,
+}: {
+  slot: ReportSlot;
+  now: number;
+  collapsed: boolean;
+  onToggle: (slotId: string) => void;
+}) {
   const ref = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const panelId = useId();
 
   useEffect(() => {
     const element = ref.current;
-    if (!element) return;
+    if (!element) {
+      return;
+    }
     element.innerHTML = sanitizeReportHtml(slot.html);
-    if (slot.slotId !== 'pipeline') return;
+    if (slot.slotId !== 'pipeline') {
+      return;
+    }
     linkifyTaskReferences(element);
     const handleClick = (event: MouseEvent) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
@@ -28,7 +51,9 @@ function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
       const target =
         event.target instanceof Element ? event.target.closest('[data-task-id]') : null;
       const taskId = target instanceof HTMLElement ? target.dataset.taskId : undefined;
-      if (!taskId || !/^\d+$/.test(taskId)) return;
+      if (!taskId || !/^\d+$/.test(taskId)) {
+        return;
+      }
       event.preventDefault();
       navigate(`/tasks#task-${taskId}`);
     };
@@ -41,14 +66,35 @@ function SlotRenderer({ slot, now }: { slot: ReportSlot; now: number }) {
       className="min-w-0 bg-surface rounded-xl border border-border shadow-[var(--shadow-xs)] p-4"
       data-slot={slot.slotId}
     >
-      <div className="flex justify-end mb-2">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 rounded-lg mb-2 text-left"
+        aria-expanded={!collapsed}
+        aria-controls={panelId}
+        onClick={() => onToggle(slot.slotId)}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <svg
+            className={`h-4 w-4 flex-shrink-0 text-text-tertiary transition-transform ${collapsed ? '' : 'rotate-90'}`}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+          <span className="truncate text-sm font-semibold text-text">
+            {formatSlotLabel(slot.slotId)}
+          </span>
+        </span>
         <span
-          className={`text-[10px] font-medium rounded-full px-2 py-0.5 ${getFreshnessClass(now, slot.updatedAt)}`}
+          className={`flex-shrink-0 text-[10px] font-medium rounded-full px-2 py-0.5 ${getFreshnessClass(now, slot.updatedAt)}`}
         >
           {formatRelativeTime(now, slot.updatedAt)}
         </span>
-      </div>
-      <div ref={ref} className="report-slot-content" />
+      </button>
+      <div id={panelId} ref={ref} className="report-slot-content" hidden={collapsed} />
     </section>
   );
 }
@@ -71,6 +117,14 @@ export default function Board() {
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
   const [sseStatus, setSseStatus] = useState<SseStatus>('reconnecting');
   const [now, setNow] = useState(() => Date.now());
+  const [collapsedSlots, setCollapsedSlots] = useState<Set<string>>(() => {
+    try {
+      return parseCollapsedSlots(window.localStorage.getItem(COLLAPSED_SLOTS_STORAGE_KEY));
+    } catch {
+      return new Set();
+    }
+  });
+  const queryClient = useQueryClient();
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +134,18 @@ export default function Board() {
         record[slot.slotId] = slot;
       }
       setSlots(record);
+      setCollapsedSlots((current) => {
+        const next = pruneCollapsedSlots(current, new Set(Object.keys(record)));
+        try {
+          window.localStorage.setItem(
+            COLLAPSED_SLOTS_STORAGE_KEY,
+            serializeCollapsedSlots(next)
+          );
+        } catch {
+          // Session state remains usable when storage is unavailable.
+        }
+        return next;
+      });
       const latest = Math.max(0, ...(data.slots ?? []).map((s) => s.updatedAt));
       if (latest > 0) setLastUpdate(latest);
     } catch {
@@ -104,15 +170,17 @@ export default function Board() {
       onUpdate: (data) => {
         setSlots((prev) => mergeReportEvent(prev, data));
         setLastUpdate(Date.now());
+        void queryClient.invalidateQueries({ queryKey: ['operatorSummary'] });
       },
       onOpen: () => {
         setSseStatus('live');
         void load();
+        void queryClient.invalidateQueries({ queryKey: ['operatorSummary'] });
       },
       onDown: () => setSseStatus('reconnecting'),
     });
     return disconnect;
-  }, [load]);
+  }, [load, queryClient]);
 
   const { data: summary } = useQuery({
     queryKey: ['operatorSummary'],
@@ -121,6 +189,22 @@ export default function Board() {
   });
 
   const ordered = orderSlots(slots);
+  const handleToggleSlot = useCallback((slotId: string) => {
+    setCollapsedSlots((current) => {
+      const next = toggleCollapsedSlot(current, slotId);
+      try {
+        window.localStorage.setItem(COLLAPSED_SLOTS_STORAGE_KEY, serializeCollapsedSlots(next));
+      } catch {
+        // Session state remains usable when storage is unavailable.
+      }
+      return next;
+    });
+  }, []);
+
+  const handleRefresh = useCallback(() => {
+    void load();
+    void queryClient.invalidateQueries({ queryKey: ['operatorSummary'] });
+  }, [load, queryClient]);
 
   return (
     <div className="flex flex-col h-full min-w-0">
@@ -145,7 +229,8 @@ export default function Board() {
           )}
         </div>
         <button
-          onClick={() => void load()}
+          type="button"
+          onClick={handleRefresh}
           className="text-xs px-3 py-1.5 rounded bg-surface-hover hover:bg-surface-selected text-text-secondary transition-colors"
         >
           Refresh
@@ -155,14 +240,22 @@ export default function Board() {
       <div className="flex-1 overflow-y-auto">
         <div className="p-4 max-w-4xl min-w-0 mx-auto">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <StatCard label="Active triggers" value={summary?.triggers.active ?? '-'} />
-            <StatCard label="Total fires" value={summary?.triggers.fired ?? '-'} />
-            <StatCard label="Succeeded" value={summary?.triggers.succeeded ?? '-'} tone="success" />
             <StatCard
-              label="Failed"
+              label="Action required"
+              value={summary?.report.actionRequired ?? '-'}
+              tone={summary && summary.report.actionRequired > 0 ? 'warning' : 'default'}
+            />
+            <StatCard
+              label="Unconfirmed tasks"
+              value={summary?.tasks.unconfirmed ?? '-'}
+              tone={summary && summary.tasks.unconfirmed > 0 ? 'warning' : 'default'}
+            />
+            <StatCard
+              label="Failed trigger runs"
               value={summary?.triggers.failed ?? '-'}
               tone={summary && summary.triggers.failed > 0 ? 'danger' : 'default'}
             />
+            <StatCard label="Active triggers" value={summary?.triggers.active ?? '-'} />
           </div>
 
           {loading ? (
@@ -174,7 +267,13 @@ export default function Board() {
           ) : (
             <div className="space-y-3">
               {ordered.map((slot) => (
-                <SlotRenderer key={slot.slotId} slot={slot} now={now} />
+                <SlotRenderer
+                  key={slot.slotId}
+                  slot={slot}
+                  now={now}
+                  collapsed={collapsedSlots.has(slot.slotId)}
+                  onToggle={handleToggleSlot}
+                />
               ))}
             </div>
           )}
