@@ -103,6 +103,7 @@ export default function Sidebar() {
                       stroke="currentColor"
                       strokeWidth={1.5}
                       viewBox="0 0 24 24"
+                      aria-hidden="true"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" d={link.d} />
                     </svg>
@@ -167,6 +168,7 @@ export default function Sidebar() {
                   stroke="currentColor"
                   strokeWidth={1.5}
                   viewBox="0 0 24 24"
+                  aria-hidden="true"
                 >
                   <path strokeLinecap="round" strokeLinejoin="round" d={link.d} />
                 </svg>

@@ -9,7 +9,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createOperatorRouter } from '../../src/api/operator-handler.js';
+import { createReportStore, type ReportStore } from '../../src/api/report-handler.js';
 import Database from '../../src/sqlite.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import type { CreateTriggerInput, TriggerRecord } from '../../src/operator/trigger-types.js';
 
@@ -62,6 +64,12 @@ type TriggerWire = Omit<TriggerRecord, 'stats' | 'disabledReason'> & {
 };
 
 interface SummaryResponse {
+  report: {
+    actionRequired: number;
+  };
+  tasks: {
+    unconfirmed: number;
+  };
   triggers: {
     active: number;
     disabled: number;
@@ -132,13 +140,18 @@ describe('Story M9.3: Operator trigger API', () => {
   let dbPath: string;
   let router: Router;
   let seedReg: TriggerRegistry;
+  let seedLedger: TaskLedger;
+  let reportStore: ReportStore;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'operator-api-'));
     dbPath = join(dir, 'triggers.db');
-    seedReg = new TriggerRegistry(new Database(dbPath));
+    const db = new Database(dbPath);
+    seedReg = new TriggerRegistry(db);
+    seedLedger = new TaskLedger(db);
+    reportStore = createReportStore();
 
-    router = createOperatorRouter({ dbPath });
+    router = createOperatorRouter({ dbPath, reportStore });
   });
 
   afterEach(() => {
@@ -154,16 +167,27 @@ describe('Story M9.3: Operator trigger API', () => {
       seedReg.recordOutcome('t1', 'failed');
       seedReg.create(sampleInput('t2'));
       seedReg.disable('t2', 'noisy');
+      seedLedger.create({ title: 'open unconfirmed' });
+      seedLedger.create({ title: 'done unconfirmed', status: 'done' });
+      reportStore.update(
+        'action_required',
+        '<div class="report-card">One</div><div class="note report-card">Two</div>',
+        1
+      );
 
       const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
 
       expect(res.status).toBe(200);
-      expect(res.body.triggers).toEqual({
-        active: 1,
-        disabled: 1,
-        fired: 3,
-        succeeded: 2,
-        failed: 1,
+      expect(res.body).toEqual({
+        report: { actionRequired: 2 },
+        tasks: { unconfirmed: 1 },
+        triggers: {
+          active: 1,
+          disabled: 1,
+          fired: 3,
+          succeeded: 2,
+          failed: 1,
+        },
       });
     });
 
@@ -171,12 +195,16 @@ describe('Story M9.3: Operator trigger API', () => {
       const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
 
       expect(res.status).toBe(200);
-      expect(res.body.triggers).toEqual({
-        active: 0,
-        disabled: 0,
-        fired: 0,
-        succeeded: 0,
-        failed: 0,
+      expect(res.body).toEqual({
+        report: { actionRequired: 0 },
+        tasks: { unconfirmed: 0 },
+        triggers: {
+          active: 0,
+          disabled: 0,
+          fired: 0,
+          succeeded: 0,
+          failed: 0,
+        },
       });
     });
   });

@@ -195,6 +195,19 @@ export class TaskLedger implements TaskSource {
     return this.list({ order: 'deadline_priority' });
   }
 
+  countOpenUnconfirmed(): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM operator_tasks
+         WHERE auto_created = 1
+           AND confirmed = 0
+           AND status NOT IN ('done', 'cancelled')`
+      )
+      .get() as { count: number };
+    return row.count;
+  }
+
   list(filter: ListTasksFilter = {}): TaskRecord[] {
     const where: string[] = [];
     const params: unknown[] = [];
