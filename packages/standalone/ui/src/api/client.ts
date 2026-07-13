@@ -10,13 +10,39 @@ export interface OperatorSummary {
   };
 }
 
-export interface TriggerRow {
+export type TriggerStatus = 'active' | 'disabled' | 'superseded';
+
+export type TriggerAuthor = 'agent' | 'seed';
+
+export interface TriggerMatch {
+  keywords: string[];
+  keywordMode: 'any' | 'every';
+  scopeChannelIds?: string[];
+  minConfidence: number;
+}
+
+export interface TriggerProcedureStep {
+  action: string;
+  description: string;
+}
+
+export interface TriggerProvenance {
+  createdFrom: string;
+  note: string;
+}
+
+export interface OperatorTrigger {
   id: string;
   kind: string;
   memoryQuery: string;
-  status: string;
-  authoredBy: string;
+  match: TriggerMatch;
+  procedure: TriggerProcedureStep[];
+  requiredEvidence: string[];
+  status: TriggerStatus;
+  authoredBy: TriggerAuthor;
   createdAt: number;
+  updatedAt: number;
+  provenance: TriggerProvenance;
   fired: number;
   succeeded: number;
   failed: number;
@@ -64,7 +90,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   getReport: () => request<{ slots: ReportSlot[] }>('/api/report'),
   getOperatorSummary: () => request<OperatorSummary>('/api/operator/summary'),
-  listTriggers: () => request<{ triggers: TriggerRow[] }>('/api/operator/triggers'),
+  listTriggers: () => request<{ triggers: OperatorTrigger[] }>('/api/operator/triggers'),
   listTasks: (filters: { status?: TaskStatus; source_channel?: string; limit?: number } = {}) => {
     const params = new URLSearchParams();
     if (filters.status) params.set('status', filters.status);
@@ -77,11 +103,15 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(patch),
     }),
-  disableTrigger: async (id: string, reason: string): Promise<void> => {
-    await request<{ ok: boolean }>(`/api/operator/triggers/${encodeURIComponent(id)}/disable`, {
-      method: 'POST',
-      body: JSON.stringify({ reason }),
-    });
+  disableTrigger: async (id: string, reason: string): Promise<OperatorTrigger> => {
+    const response = await request<{ ok: true; trigger: OperatorTrigger }>(
+      `/api/operator/triggers/${encodeURIComponent(id)}/disable`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      }
+    );
+    return response.trigger;
   },
 };
 
