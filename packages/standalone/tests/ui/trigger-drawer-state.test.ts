@@ -5,8 +5,8 @@ import {
   shouldShowModal,
 } from '../../ui/src/lib/trigger-drawer-state';
 
-describe('Trigger drawer state', () => {
-  describe('dialog opening', () => {
+describe('Story M9.3: Trigger drawer state', () => {
+  describe('AC #1: Opens only a closed dialog', () => {
     it('opens a dialog that is not already open', () => {
       expect(shouldShowModal(false)).toBe(true);
     });
@@ -16,7 +16,7 @@ describe('Trigger drawer state', () => {
     });
   });
 
-  describe('submission lock', () => {
+  describe('AC #2: Allows one submission until release', () => {
     it('allows only the first synchronous acquisition', () => {
       const lock = { current: false };
 

@@ -4,7 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import type { Request, Response, Router } from 'express';
+import type { Router } from 'express';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -39,9 +39,19 @@ interface TestRouteLayer {
     path: string;
     methods: Record<string, boolean>;
     stack: Array<{
-      handle: (req: Request, res: Response) => unknown;
+      handle: (req: TestRequest, res: TestResponse) => unknown;
     }>;
   };
+}
+
+interface TestRequest {
+  body?: unknown;
+  params: Record<string, string>;
+}
+
+interface TestResponse {
+  status(code: number): TestResponse;
+  json(payload: unknown): TestResponse;
 }
 
 type TriggerWire = Omit<TriggerRecord, 'stats' | 'disabledReason'> & {
@@ -76,12 +86,18 @@ async function invokeRoute<T>(
   path: string,
   options: { body?: unknown; params?: Record<string, string> } = {}
 ): Promise<{ status: number; body: T }> {
+  // Express does not expose its route stack in the public Router type. The sandbox blocks
+  // socket binding, so this test follows the existing in-process route pattern instead.
   const layers = (router as unknown as { stack: TestRouteLayer[] }).stack;
   const layer = layers.find(
     (candidate) => candidate.route?.path === path && candidate.route.methods[method]
   );
   if (!layer?.route) {
     throw new Error(`Test route not found: ${method.toUpperCase()} ${path}`);
+  }
+  const handler = layer.route.stack[0]?.handle;
+  if (!handler) {
+    throw new Error(`Test route has no handler: ${method.toUpperCase()} ${path}`);
   }
 
   let status = 200;
@@ -93,24 +109,25 @@ async function invokeRoute<T>(
       return response;
     },
     json(payload: unknown) {
+      // T is the expected wire contract; each test validates the payload at runtime.
       body = payload as T;
       didRespond = true;
       return response;
     },
-  } as unknown as Response;
+  } satisfies TestResponse;
   const request = {
     body: options.body,
     params: options.params ?? {},
-  } as Request;
+  } satisfies TestRequest;
 
-  await layer.route.stack[0].handle(request, response);
-  if (!didRespond) {
+  await handler(request, response);
+  if (!didRespond || body === undefined) {
     throw new Error(`Test route did not respond: ${method.toUpperCase()} ${path}`);
   }
-  return { status, body: body as T };
+  return { status, body };
 }
 
-describe('Operator API', () => {
+describe('Story M9.3: Operator trigger API', () => {
   let dir: string;
   let dbPath: string;
   let router: Router;
@@ -129,157 +146,173 @@ describe('Operator API', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('GET /summary aggregates trigger counters across statuses', async () => {
-    seedReg.create(sampleInput('t1'));
-    seedReg.recordOutcome('t1', 'succeeded');
-    seedReg.recordOutcome('t1', 'succeeded');
-    seedReg.recordOutcome('t1', 'failed');
-    seedReg.create(sampleInput('t2'));
-    seedReg.disable('t2', 'noisy');
+  describe('AC #1: Summary reports trigger status and outcome counters', () => {
+    it('GET /summary aggregates trigger counters across statuses', async () => {
+      seedReg.create(sampleInput('t1'));
+      seedReg.recordOutcome('t1', 'succeeded');
+      seedReg.recordOutcome('t1', 'succeeded');
+      seedReg.recordOutcome('t1', 'failed');
+      seedReg.create(sampleInput('t2'));
+      seedReg.disable('t2', 'noisy');
 
-    const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
+      const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
 
-    expect(res.status).toBe(200);
-    expect(res.body.triggers).toEqual({
-      active: 1,
-      disabled: 1,
-      fired: 3,
-      succeeded: 2,
-      failed: 1,
+      expect(res.status).toBe(200);
+      expect(res.body.triggers).toEqual({
+        active: 1,
+        disabled: 1,
+        fired: 3,
+        succeeded: 2,
+        failed: 1,
+      });
+    });
+
+    it('GET /summary returns zeros on an empty registry (fresh install)', async () => {
+      const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
+
+      expect(res.status).toBe(200);
+      expect(res.body.triggers).toEqual({
+        active: 0,
+        disabled: 0,
+        fired: 0,
+        succeeded: 0,
+        failed: 0,
+      });
     });
   });
 
-  it('GET /summary returns zeros on an empty registry (fresh install)', async () => {
-    const res = await invokeRoute<SummaryResponse>(router, 'get', '/summary');
-
-    expect(res.status).toBe(200);
-    expect(res.body.triggers).toEqual({
-      active: 0,
-      disabled: 0,
-      fired: 0,
-      succeeded: 0,
-      failed: 0,
-    });
-  });
-
-  it('GET /triggers lists the complete persisted contract newest first', async () => {
-    seedReg.create(sampleInput('t1'));
-    seedReg.recordFire('t1');
-    seedReg.create({
-      ...sampleInput('t2'),
-      kind: 'empty_match_trigger',
-      memoryQuery: 'synthetic empty match',
-      match: { keywords: [], keywordMode: 'any', minConfidence: 0.25 },
-      procedure: [],
-      requiredEvidence: [],
-      authoredBy: 'agent',
-      provenance: { createdFrom: 'synthetic-agent', note: '' },
-    });
-    seedReg.disable('t2', 'synthetic stored reason');
-
-    const res = await invokeRoute<TriggerListResponse>(router, 'get', '/triggers');
-
-    expect(res.status).toBe(200);
-    expect(res.body.triggers.map((t) => t.id)).toEqual(['t2', 't1']);
-    expect(res.body.triggers).toEqual([
-      {
-        id: 't2',
+  describe('AC #2: Trigger list preserves the persisted wire contract', () => {
+    it('GET /triggers lists the complete persisted contract newest first', async () => {
+      seedReg.create(sampleInput('t1'));
+      seedReg.recordFire('t1');
+      seedReg.create({
+        ...sampleInput('t2'),
         kind: 'empty_match_trigger',
         memoryQuery: 'synthetic empty match',
         match: { keywords: [], keywordMode: 'any', minConfidence: 0.25 },
         procedure: [],
         requiredEvidence: [],
-        status: 'disabled',
         authoredBy: 'agent',
-        createdAt: expect.any(Number),
-        updatedAt: expect.any(Number),
         provenance: { createdFrom: 'synthetic-agent', note: '' },
-        fired: 0,
-        succeeded: 0,
-        failed: 0,
-        disabledReason: 'synthetic stored reason',
-      },
-      {
-        id: 't1',
-        kind: 'recurring_report_request',
-        memoryQuery: 'weekly status report cadence',
-        match: {
-          keywords: ['report', 'status update'],
-          keywordMode: 'every',
-          scopeChannelIds: ['channel-synthetic-1', 'channel-synthetic-2'],
-          minConfidence: 0.7,
+      });
+      seedReg.disable('t2', 'synthetic stored reason');
+
+      const res = await invokeRoute<TriggerListResponse>(router, 'get', '/triggers');
+
+      expect(res.status).toBe(200);
+      expect(res.body.triggers.map((t) => t.id)).toEqual(['t2', 't1']);
+      expect(res.body.triggers).toEqual([
+        {
+          id: 't2',
+          kind: 'empty_match_trigger',
+          memoryQuery: 'synthetic empty match',
+          match: { keywords: [], keywordMode: 'any', minConfidence: 0.25 },
+          procedure: [],
+          requiredEvidence: [],
+          status: 'disabled',
+          authoredBy: 'agent',
+          createdAt: expect.any(Number),
+          updatedAt: expect.any(Number),
+          provenance: { createdFrom: 'synthetic-agent', note: '' },
+          fired: 0,
+          succeeded: 0,
+          failed: 0,
+          disabledReason: 'synthetic stored reason',
         },
-        procedure: [
-          { action: 'recall_and_surface', description: 'surface the cadence memory' },
-          { action: 'request_evidence', description: 'collect current report context' },
-        ],
-        requiredEvidence: ['current_message', 'recent_context'],
-        status: 'active',
-        authoredBy: 'seed',
-        createdAt: expect.any(Number),
-        updatedAt: expect.any(Number),
-        provenance: { createdFrom: 'synthetic-seed', note: 'synthetic fixture' },
-        fired: 1,
-        succeeded: 0,
-        failed: 0,
-        disabledReason: null,
-      },
-    ]);
+        {
+          id: 't1',
+          kind: 'recurring_report_request',
+          memoryQuery: 'weekly status report cadence',
+          match: {
+            keywords: ['report', 'status update'],
+            keywordMode: 'every',
+            scopeChannelIds: ['channel-synthetic-1', 'channel-synthetic-2'],
+            minConfidence: 0.7,
+          },
+          procedure: [
+            { action: 'recall_and_surface', description: 'surface the cadence memory' },
+            { action: 'request_evidence', description: 'collect current report context' },
+          ],
+          requiredEvidence: ['current_message', 'recent_context'],
+          status: 'active',
+          authoredBy: 'seed',
+          createdAt: expect.any(Number),
+          updatedAt: expect.any(Number),
+          provenance: { createdFrom: 'synthetic-seed', note: 'synthetic fixture' },
+          fired: 1,
+          succeeded: 0,
+          failed: 0,
+          disabledReason: null,
+        },
+      ]);
+    });
   });
 
-  it('POST /triggers/:id/disable stores the reason', async () => {
-    seedReg.create(sampleInput('t1'));
+  describe('AC #3: Owner veto disables a known trigger with a reason', () => {
+    it('POST /triggers/:id/disable stores the reason', async () => {
+      seedReg.create(sampleInput('t1'));
 
-    const res = await invokeRoute<DisableResponse>(router, 'post', '/triggers/:id/disable', {
-      body: { reason: 'synthetic reason' },
-      params: { id: 't1' },
-    });
+      const res = await invokeRoute<DisableResponse>(router, 'post', '/triggers/:id/disable', {
+        body: { reason: 'synthetic reason' },
+        params: { id: 't1' },
+      });
 
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({
-      ok: true,
-      trigger: {
-        id: 't1',
-        kind: 'recurring_report_request',
-        memoryQuery: 'weekly status report cadence',
-        match: {
-          keywords: ['report', 'status update'],
-          keywordMode: 'every',
-          scopeChannelIds: ['channel-synthetic-1', 'channel-synthetic-2'],
-          minConfidence: 0.7,
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        ok: true,
+        trigger: {
+          id: 't1',
+          kind: 'recurring_report_request',
+          memoryQuery: 'weekly status report cadence',
+          match: {
+            keywords: ['report', 'status update'],
+            keywordMode: 'every',
+            scopeChannelIds: ['channel-synthetic-1', 'channel-synthetic-2'],
+            minConfidence: 0.7,
+          },
+          procedure: [
+            { action: 'recall_and_surface', description: 'surface the cadence memory' },
+            { action: 'request_evidence', description: 'collect current report context' },
+          ],
+          requiredEvidence: ['current_message', 'recent_context'],
+          status: 'disabled',
+          authoredBy: 'seed',
+          createdAt: expect.any(Number),
+          updatedAt: expect.any(Number),
+          provenance: { createdFrom: 'synthetic-seed', note: 'synthetic fixture' },
+          fired: 0,
+          succeeded: 0,
+          failed: 0,
+          disabledReason: 'synthetic reason',
         },
-        procedure: [
-          { action: 'recall_and_surface', description: 'surface the cadence memory' },
-          { action: 'request_evidence', description: 'collect current report context' },
-        ],
-        requiredEvidence: ['current_message', 'recent_context'],
-        status: 'disabled',
-        authoredBy: 'seed',
-        createdAt: expect.any(Number),
-        updatedAt: expect.any(Number),
-        provenance: { createdFrom: 'synthetic-seed', note: 'synthetic fixture' },
-        fired: 0,
-        succeeded: 0,
-        failed: 0,
-        disabledReason: 'synthetic reason',
-      },
+      });
+      expect(seedReg.getById('t1')?.status).toBe('disabled');
     });
-    expect(seedReg.getById('t1')?.status).toBe('disabled');
-  });
 
-  it('POST disable without reason returns 400; unknown id returns 404', async () => {
-    seedReg.create(sampleInput('t1'));
+    it('POST disable without reason returns 400; unknown id returns 404', async () => {
+      seedReg.create(sampleInput('t1'));
 
-    const noReason = await invokeRoute<{ error: string }>(router, 'post', '/triggers/:id/disable', {
-      body: {},
-      params: { id: 't1' },
+      const noReason = await invokeRoute<{ error: string }>(
+        router,
+        'post',
+        '/triggers/:id/disable',
+        {
+          body: {},
+          params: { id: 't1' },
+        }
+      );
+      expect(noReason.status).toBe(400);
+
+      const unknown = await invokeRoute<{ error: string }>(
+        router,
+        'post',
+        '/triggers/:id/disable',
+        {
+          body: { reason: 'x' },
+          params: { id: 'nope' },
+        }
+      );
+      expect(unknown.status).toBe(404);
     });
-    expect(noReason.status).toBe(400);
-
-    const unknown = await invokeRoute<{ error: string }>(router, 'post', '/triggers/:id/disable', {
-      body: { reason: 'x' },
-      params: { id: 'nope' },
-    });
-    expect(unknown.status).toBe(404);
   });
 });
