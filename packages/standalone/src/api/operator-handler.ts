@@ -15,8 +15,11 @@ import { Router } from 'express';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import Database from '../sqlite.js';
+import { TaskLedger } from '../operator/task-ledger.js';
 import { TriggerRegistry } from '../operator/trigger-registry.js';
 import type { TriggerRecord } from '../operator/trigger-types.js';
+import type { ReportStore } from './report-handler.js';
+import { countActionRequiredCards } from './operator-summary.js';
 
 /** TriggerRecord nests counters (stats.*) -- flatten explicitly, never spread. */
 function toWire(t: TriggerRecord) {
@@ -39,21 +42,26 @@ function toWire(t: TriggerRecord) {
   };
 }
 
-export function createOperatorRouter(opts: { dbPath: string }): Router {
+export function createOperatorRouter(opts: { dbPath: string; reportStore: ReportStore }): Router {
   // Lazy open on first request: createApiServer mounts this router in ~30
   // existing tests that never call /api/operator -- an eager open would touch
   // the real ~/.mama path from every one of them (the PR #126 pollution class)
   // and crash on fresh installs where the parent directory does not exist yet.
-  let registry: TriggerRegistry | null = null;
-  const getRegistry = (): TriggerRegistry => {
-    if (!registry) {
+  let lazyState: { registry: TriggerRegistry; taskLedger: TaskLedger } | null = null;
+  const getLazyState = (): { registry: TriggerRegistry; taskLedger: TaskLedger } => {
+    if (!lazyState) {
       mkdirSync(dirname(opts.dbPath), { recursive: true });
       const db = new Database(opts.dbPath);
       db.prepare('PRAGMA busy_timeout = 5000').get();
-      registry = new TriggerRegistry(db);
+      lazyState = {
+        registry: new TriggerRegistry(db),
+        taskLedger: new TaskLedger(db),
+      };
     }
-    return registry;
+    return lazyState;
   };
+  const getRegistry = (): TriggerRegistry => getLazyState().registry;
+  const getTaskLedger = (): TaskLedger => getLazyState().taskLedger;
   const router = Router();
 
   router.get('/summary', (_req, res) => {
@@ -61,6 +69,12 @@ export function createOperatorRouter(opts: { dbPath: string }): Router {
     const active = all.filter((t) => t.status === 'active');
     const disabled = all.filter((t) => t.status === 'disabled');
     res.json({
+      report: {
+        actionRequired: countActionRequiredCards(opts.reportStore.get('action_required')?.html),
+      },
+      tasks: {
+        unconfirmed: getTaskLedger().countOpenUnconfirmed(),
+      },
       triggers: {
         active: active.length,
         disabled: disabled.length,
