@@ -1,86 +1,66 @@
-import { useState } from 'react';
-import type { TriggerRow as TriggerRowData } from '../api/client';
+import { useRef } from 'react';
+import type { OperatorTrigger, TriggerStatus } from '../api/client';
+import { formatRelativeTime } from '../lib/time';
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}...` : text;
+const STATUS_CLASSES: Record<TriggerStatus, string> = {
+  active: 'bg-success-soft text-success-text',
+  disabled: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
+  superseded: 'bg-warning-soft text-warning-text',
+};
+
+interface TriggerRowProps {
+  trigger: OperatorTrigger;
+  now: number;
+  onOpen: (id: string, opener: HTMLElement) => void;
 }
 
-export default function TriggerRow({
-  trigger,
-  onDisable,
-}: {
-  trigger: TriggerRowData;
-  onDisable: (id: string, reason: string) => void;
-}) {
-  const [confirming, setConfirming] = useState(false);
-  const [reason, setReason] = useState('');
-  const disabled = trigger.status !== 'active';
+export default function TriggerRow({ trigger, now, onOpen }: TriggerRowProps) {
+  const openButtonRef = useRef<HTMLButtonElement>(null);
+  const keywords = trigger.match.keywords.join(', ');
 
   return (
-    <div
-      className={`px-4 py-3 border-b border-border last:border-b-0 ${disabled ? 'opacity-90' : ''}`}
+    <tr
+      className="cursor-pointer border-b border-border last:border-0 hover:bg-surface-hover"
+      onClick={() => {
+        if (openButtonRef.current) {
+          onOpen(trigger.id, openButtonRef.current);
+        }
+      }}
     >
-      <div className="flex items-center gap-3">
-        <span
-          className="text-[11px] px-2 py-0.5 rounded-full bg-agent-light text-agent font-medium max-w-[40%] truncate"
-          title={trigger.kind}
+      <td className="min-w-64 px-3 py-3">
+        <button
+          ref={openButtonRef}
+          type="button"
+          aria-haspopup="dialog"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(trigger.id, event.currentTarget);
+          }}
+          className="block max-w-80 text-left text-sm font-medium text-agent-hover underline-offset-2 hover:underline dark:text-agent"
         >
           {trigger.kind}
+        </button>
+        <div className="mt-1 max-w-80 truncate text-[11px] text-text-secondary dark:text-text-tertiary">
+          {keywords || 'No keywords'}
+        </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3">
+        <span
+          className={`rounded-full px-2 py-1 text-xs font-medium ${STATUS_CLASSES[trigger.status]}`}
+        >
+          {trigger.status}
         </span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm text-text truncate">{truncate(trigger.memoryQuery, 80)}</p>
-          <p className="text-[11px] text-text-tertiary">
-            fired {trigger.fired} / ok {trigger.succeeded} / fail {trigger.failed} /{' '}
-            {trigger.authoredBy} /{' '}
-            {new Date(trigger.createdAt).toLocaleDateString(undefined, {
-              month: 'short',
-              day: 'numeric',
-            })}
-          </p>
-          {disabled && trigger.disabledReason && (
-            <p className="text-[11px] text-danger mt-0.5">
-              {trigger.status}: {trigger.disabledReason}
-            </p>
-          )}
-        </div>
-        {!disabled && !confirming && (
-          <button
-            onClick={() => setConfirming(true)}
-            className="shrink-0 px-3 py-1 text-xs font-medium rounded-full bg-surface-secondary text-text-tertiary hover:bg-danger/10 hover:text-danger transition-colors"
-          >
-            Disable
-          </button>
-        )}
-      </div>
-      {confirming && (
-        <div className="flex items-center gap-2 mt-2">
-          <input
-            autoFocus
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Reason (required)"
-            className="flex-1 px-2 py-1 text-xs bg-surface-selected rounded border border-border focus:outline-none focus:ring-1 focus:ring-agent"
-          />
-          <button
-            onClick={() => {
-              if (reason.trim()) onDisable(trigger.id, reason.trim());
-            }}
-            disabled={!reason.trim()}
-            className="px-3 py-1 text-xs font-medium rounded-full bg-danger/10 text-danger disabled:opacity-40 hover:opacity-80 transition-opacity"
-          >
-            Confirm
-          </button>
-          <button
-            onClick={() => {
-              setConfirming(false);
-              setReason('');
-            }}
-            className="px-3 py-1 text-xs font-medium rounded-full bg-surface-secondary text-text-tertiary hover:opacity-80"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-    </div>
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">{trigger.fired}</td>
+      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">
+        {trigger.succeeded} / {trigger.failed}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary dark:text-text-tertiary">
+        {formatRelativeTime(now, trigger.updatedAt)}
+      </td>
+      <td className="whitespace-nowrap px-3 py-3 text-xs text-text-secondary">
+        {trigger.authoredBy}
+      </td>
+    </tr>
   );
 }
