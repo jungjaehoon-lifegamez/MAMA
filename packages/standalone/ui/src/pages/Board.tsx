@@ -126,6 +126,17 @@ export default function Board() {
   });
   const queryClient = useQueryClient();
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        COLLAPSED_SLOTS_STORAGE_KEY,
+        serializeCollapsedSlots(collapsedSlots)
+      );
+    } catch {
+      // Session state remains usable when storage is unavailable.
+    }
+  }, [collapsedSlots]);
+
   const load = useCallback(async () => {
     try {
       const data = await api.getReport();
@@ -134,18 +145,7 @@ export default function Board() {
         record[slot.slotId] = slot;
       }
       setSlots(record);
-      setCollapsedSlots((current) => {
-        const next = pruneCollapsedSlots(current, new Set(Object.keys(record)));
-        try {
-          window.localStorage.setItem(
-            COLLAPSED_SLOTS_STORAGE_KEY,
-            serializeCollapsedSlots(next)
-          );
-        } catch {
-          // Session state remains usable when storage is unavailable.
-        }
-        return next;
-      });
+      setCollapsedSlots((current) => pruneCollapsedSlots(current, new Set(Object.keys(record))));
       const latest = Math.max(0, ...(data.slots ?? []).map((s) => s.updatedAt));
       if (latest > 0) setLastUpdate(latest);
     } catch {
@@ -190,15 +190,7 @@ export default function Board() {
 
   const ordered = orderSlots(slots);
   const handleToggleSlot = useCallback((slotId: string) => {
-    setCollapsedSlots((current) => {
-      const next = toggleCollapsedSlot(current, slotId);
-      try {
-        window.localStorage.setItem(COLLAPSED_SLOTS_STORAGE_KEY, serializeCollapsedSlots(next));
-      } catch {
-        // Session state remains usable when storage is unavailable.
-      }
-      return next;
-    });
+    setCollapsedSlots((current) => toggleCollapsedSlot(current, slotId));
   }, []);
 
   const handleRefresh = useCallback(() => {
