@@ -35,59 +35,63 @@ const fixtures = [
   trigger('old-trigger', 'legacy_cleanup', 'superseded', []),
 ];
 
-describe('filterTriggers', () => {
-  it('returns all triggers in original order for an empty query and all statuses', () => {
-    const result = filterTriggers(fixtures, '', 'all');
+describe('Story M9.3: Trigger filtering', () => {
+  describe('AC #1: Query matches only trigger kind and keywords', () => {
+    it('returns all triggers in original order for an empty query and all statuses', () => {
+      const result = filterTriggers(fixtures, '', 'all');
 
-    expect(result).toEqual(fixtures);
-    expect(result.map((item) => item.id)).toEqual([
-      'active-trigger',
-      'seed-trigger',
-      'old-trigger',
-    ]);
-  });
-
-  it('trims the query and matches kind substrings case-insensitively', () => {
-    expect(filterTriggers(fixtures, '  DAILY_s  ', 'all')).toEqual([fixtures[0]]);
-  });
-
-  it('matches a substring of any keyword case-insensitively', () => {
-    expect(filterTriggers(fixtures, 'BRIEF', 'all')).toEqual([fixtures[0]]);
-    expect(filterTriggers(fixtures, 'mort', 'all')).toEqual([fixtures[1]]);
-  });
-
-  it('does not search memory query, author, or provenance', () => {
-    const hiddenFields = trigger('hidden', 'visible_kind', 'active', ['visible-keyword'], {
-      memoryQuery: 'private-search-value',
-      authoredBy: 'seed',
-      provenance: { createdFrom: 'hidden-source', note: 'hidden-note' },
+      expect(result).toEqual(fixtures);
+      expect(result.map((item) => item.id)).toEqual([
+        'active-trigger',
+        'seed-trigger',
+        'old-trigger',
+      ]);
     });
 
-    expect(filterTriggers([hiddenFields], 'private-search', 'all')).toEqual([]);
-    expect(filterTriggers([hiddenFields], 'seed', 'all')).toEqual([]);
-    expect(filterTriggers([hiddenFields], 'hidden-source', 'all')).toEqual([]);
-    expect(filterTriggers([hiddenFields], 'hidden-note', 'all')).toEqual([]);
+    it('trims the query and matches kind substrings case-insensitively', () => {
+      expect(filterTriggers(fixtures, '  DAILY_s  ', 'all')).toEqual([fixtures[0]]);
+    });
+
+    it('matches a substring of any keyword case-insensitively', () => {
+      expect(filterTriggers(fixtures, 'BRIEF', 'all')).toEqual([fixtures[0]]);
+      expect(filterTriggers(fixtures, 'mort', 'all')).toEqual([fixtures[1]]);
+    });
+
+    it('does not search memory query, author, or provenance', () => {
+      const hiddenFields = trigger('hidden', 'visible_kind', 'active', ['visible-keyword'], {
+        memoryQuery: 'private-search-value',
+        authoredBy: 'seed',
+        provenance: { createdFrom: 'hidden-source', note: 'hidden-note' },
+      });
+
+      expect(filterTriggers([hiddenFields], 'private-search', 'all')).toEqual([]);
+      expect(filterTriggers([hiddenFields], 'seed', 'all')).toEqual([]);
+      expect(filterTriggers([hiddenFields], 'hidden-source', 'all')).toEqual([]);
+      expect(filterTriggers([hiddenFields], 'hidden-note', 'all')).toEqual([]);
+    });
   });
 
-  it.each(['active', 'disabled', 'superseded'] as const)(
-    'filters the %s status by exact equality',
-    (status) => {
-      expect(filterTriggers(fixtures, '', status).map((item) => item.status)).toEqual([status]);
-    }
-  );
+  describe('AC #2: Status and query filters compose without mutation', () => {
+    it.each(['active', 'disabled', 'superseded'] as const)(
+      'filters the %s status by exact equality',
+      (status) => {
+        expect(filterTriggers(fixtures, '', status).map((item) => item.status)).toEqual([status]);
+      }
+    );
 
-  it('composes status and query filters', () => {
-    expect(filterTriggers(fixtures, 'outage', 'disabled')).toEqual([fixtures[1]]);
-    expect(filterTriggers(fixtures, 'outage', 'active')).toEqual([]);
-  });
+    it('composes status and query filters', () => {
+      expect(filterTriggers(fixtures, 'outage', 'disabled')).toEqual([fixtures[1]]);
+      expect(filterTriggers(fixtures, 'outage', 'active')).toEqual([]);
+    });
 
-  it('handles empty keyword arrays without mutating inputs or records', () => {
-    const input = [...fixtures];
-    const before = JSON.stringify(input);
+    it('handles empty keyword arrays without mutating inputs or records', () => {
+      const input = [...fixtures];
+      const before = JSON.stringify(input);
 
-    expect(filterTriggers(input, 'legacy', 'all')).toEqual([fixtures[2]]);
-    expect(JSON.stringify(input)).toBe(before);
-    expect(input).toEqual(fixtures);
-    expect(input[2]).toBe(fixtures[2]);
+      expect(filterTriggers(input, 'legacy', 'all')).toEqual([fixtures[2]]);
+      expect(JSON.stringify(input)).toBe(before);
+      expect(input).toEqual(fixtures);
+      expect(input[2]).toBe(fixtures[2]);
+    });
   });
 });
