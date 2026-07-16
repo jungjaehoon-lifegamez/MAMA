@@ -22,7 +22,8 @@ import type { MAMAConfig } from '../config/types.js';
 import { expandPath } from '../config/config-manager.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
-import type { AgentContext, MAMAApiInterface } from '../../agent/types.js';
+import type { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import type { AgentContext } from '../../agent/types.js';
 import type { MessageRouter } from '../../gateways/message-router.js';
 import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
 import {
@@ -50,11 +51,16 @@ export interface MemoryAgentInitResult {
 export async function initMemoryAgent(
   oauthManager: OAuthManager,
   config: MAMAConfig,
-  mamaApi: MAMAApiShape,
+  // Task 7: the memory agent no longer carries a private executor built around
+  // this mamaApi - it shares the boot executor (already wired via setMamaApi),
+  // so the positional arg is retained for the call signature but unused here.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _mamaApi: MAMAApiShape,
   mamaApiClient: MamaApiClient,
   messageRouter: MessageRouter,
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _runtimeBackend: string
+  _runtimeBackend: string,
+  toolExecutor: GatewayToolExecutor
 ): Promise<MemoryAgentInitResult> {
   // getAdapter is used directly for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -96,21 +102,23 @@ export async function initMemoryAgent(
     const memoryModel =
       memoryAgentConfig?.model ||
       (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);
-    memoryAgentLoop = new AgentLoop(
-      oauthManager,
-      {
-        systemPrompt: memoryPersona,
-        model: memoryModel,
-        maxTurns: 3,
-        backend: memoryBackend,
-        toolsConfig: {
-          gateway: ['mama_search', 'mama_save'],
-          mcp: [],
-        },
+    memoryAgentLoop = new AgentLoop(oauthManager, {
+      systemPrompt: memoryPersona,
+      model: memoryModel,
+      maxTurns: 3,
+      backend: memoryBackend,
+      toolsConfig: {
+        gateway: ['mama_search', 'mama_save'],
+        mcp: [],
       },
-      undefined,
-      { mamaApi: mamaApi as MAMAApiInterface }
-    );
+      // Fold into the boot-wired shared executor (Task 7): the private twin
+      // existed ONLY to carry the initMamaCore mamaApi (now on the shared
+      // executor via setMamaApi), while the shared executor otherwise lazily
+      // built a second API/adapter stack against the same DB. The memory
+      // agent's tool restriction lives in toolsConfig + per-call context, not
+      // executor instance state, so sharing is safe (Task 1 per-call model).
+      executor: toolExecutor,
+    });
     memoryAgentLoop.setSessionKey('memory-agent:shared');
     let memoryBootstrapDelivered = false;
     let memoryBootstrapLock: Promise<void> | null = null;

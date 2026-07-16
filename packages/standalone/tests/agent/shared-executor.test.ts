@@ -60,4 +60,11 @@ describe('shared gateway executor (root fix for dual-wiring)', () => {
       error: expect.stringContaining('not available'),
     });
   });
+
+  it('setMamaApi wires the API onto an already-constructed executor', () => {
+    const shared = new GatewayToolExecutor({});
+    const fakeApi = { marker: 'initMamaCore-instance' } as never;
+    (shared as unknown as { setMamaApi(api: unknown): void }).setMamaApi(fakeApi);
+    expect((shared as unknown as { mamaApi: unknown }).mamaApi).toBe(fakeApi);
+  });
 });
