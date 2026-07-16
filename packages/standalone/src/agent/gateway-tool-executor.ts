@@ -898,6 +898,12 @@ export class GatewayToolExecutor {
     this.contextCompileService = service;
   }
 
+  /** Wire the shared MAMA API built at boot (initMamaCore) so the executor never
+   *  lazily constructs a second API/adapter stack against the same DB. */
+  setMamaApi(api: MAMAApiInterface): void {
+    this.mamaApi = api;
+  }
+
   /**
    * Initialize the MAMA API by importing from mcp-server package
    * Called lazily on first tool execution if not provided in constructor

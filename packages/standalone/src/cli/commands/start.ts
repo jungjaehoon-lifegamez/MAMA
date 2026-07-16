@@ -21,7 +21,11 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
-import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import type {
+  AgentContext,
+  GatewayToolExecutionContext,
+  MAMAApiInterface,
+} from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -631,6 +635,11 @@ export async function runAgentLoop(
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
 
   const { mamaApi, mamaApiClient, connectorExtractionFn } = await initMamaCore(config);
+  // Wire the boot MAMA API onto the shared executor so it never lazily builds a
+  // SECOND API/adapter stack against the same DB (initializeMAMAApi). This also
+  // lets the memory agent fold into the shared executor (Task 7) instead of
+  // carrying its own private instance just for this API.
+  toolExecutor.setMamaApi(mamaApi as MAMAApiInterface);
 
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -661,7 +670,8 @@ export async function runAgentLoop(
     mamaApi,
     mamaApiClient,
     messageRouter,
-    agentLoopBackend
+    agentLoopBackend,
+    toolExecutor
   );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
