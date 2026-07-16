@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 
 describe('Story BOUNDARY-6: stateless reports/anchor', () => {
-  describe('freshSession option (stateless lanes)', () => {
+  describe('AC #1: freshSession resets the pool session instead of reusing it', () => {
     it('resets the pool session instead of reusing it', async () => {
       const loop = new AgentLoop({} as never, { toolsConfig: { gateway: ['*'], mcp: [] } });
       const resetSession = vi.fn().mockReturnValue('fresh-id');

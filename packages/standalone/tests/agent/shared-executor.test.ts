@@ -6,7 +6,7 @@ const loopExecutor = (loop: AgentLoop): unknown =>
   (loop as unknown as { mcpExecutor: unknown }).mcpExecutor;
 
 describe('Story BOUNDARY-1: shared gateway executor', () => {
-  describe('shared gateway executor (root fix for dual-wiring)', () => {
+  describe('AC #1: persona loop uses the injected boot-wired executor and per-call tool blocks', () => {
     it('uses the injected executor instead of constructing its own', () => {
       const shared = new GatewayToolExecutor({});
       const loop = new AgentLoop({} as never, {

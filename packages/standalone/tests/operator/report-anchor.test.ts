@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { FileReportScheduleStore } from '../../src/operator/report-scheduler.js';
 
 describe('Story BOUNDARY-6: stateless reports/anchor', () => {
-  describe('report success anchor', () => {
+  describe('AC #1: the success anchor persists and survives the fired-hour write path', () => {
     const freshStore = () =>
       new FileReportScheduleStore(join(mkdtempSync(join(tmpdir(), 'anchor-')), 'state.json'));
 
