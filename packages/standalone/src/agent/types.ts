@@ -1047,6 +1047,13 @@ export interface AgentLoopOptions {
   disallowedTools?: string[];
 
   /**
+   * Native Claude Code built-in tool surface (--tools value). Pass-through to
+   * the PersistentCLIAdapter; '' disables all built-ins so gateway tools are the
+   * only surface. Consumed only by the claude backend; a no-op on codex-mcp.
+   */
+  builtinTools?: string;
+
+  /**
    * Enable Code-Act mode: LLM writes JS code blocks instead of tool_call blocks
    * Multiple tools composed in a single QuickJS sandbox execution
    * @default false

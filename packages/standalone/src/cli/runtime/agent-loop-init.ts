@@ -131,6 +131,15 @@ export function initMainAgentLoop(
       useCodeAct: options?.osAgentMode ? false : useCodeAct,
       toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
       disallowedTools: osAgentDisallowed,
+      // Gateway tools are the ONLY tool surface for the daemon persona
+      // (owner decision D2, 2026-07-16). MAMA_PERSONA_NATIVE_TOOLS=1 re-enables.
+      // NOTE: consumed only by the claude PersistentCLIAdapter branch - on a
+      // codex-mcp backend this option is a no-op (log below keeps that loud).
+      builtinTools:
+        process.env.MAMA_PERSONA_NATIVE_TOOLS === '1' ||
+        process.env.MAMA_PERSONA_NATIVE_TOOLS?.toLowerCase() === 'true'
+          ? undefined
+          : '',
       // Root fix (2026-07-16): share the boot-wired executor so every dependency
       // wiring reaches the persona lane by construction (no second private twin).
       executor: toolExecutor,
@@ -205,6 +214,11 @@ export function initMainAgentLoop(
     },
     undefined
   );
+  if (runtimeBackend !== 'claude') {
+    console.log(
+      '[agent-loop-init] builtinTools lockdown is a no-op on the codex backend (native-tool surface is claude CLI only)'
+    );
+  }
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
 
   // Build reasoning header for Discord
