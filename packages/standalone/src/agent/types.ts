@@ -1000,6 +1000,14 @@ export interface AgentLoopOptions {
   cliSessionId?: string;
 
   /**
+   * Start this run on a brand-new pool session (stateless lane). Used by the
+   * operator report lane: session context is a cache, not persistence - every
+   * run self-gathers and recalls, so carrying prior runs' gather dumps only
+   * grows the context until runs outlive their envelope TTL.
+   */
+  freshSession?: boolean;
+
+  /**
    * Skip permission prompts for CLI tool execution
    * WARNING: Security risk - enables autonomous tool execution without user approval
    * @default false

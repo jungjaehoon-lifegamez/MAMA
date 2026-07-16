@@ -61,8 +61,12 @@ export interface SituationReporterOptions {
    * (and which deleted its deterministic report builder for low quality). The lines
    * are injected from the runtime wiring (which knows the daemon's toolset); this
    * module stays generic. Digest mode never uses them (frequent + must stay light).
+   *
+   * A zero-arg provider is resolved at fire time (buildPrompt runs per report),
+   * so runtime wiring can inject freshly anchored gather lines (e.g. a delta
+   * `since=<last successful report>`) without rebuilding the reporter.
    */
-  selfGatherLines?: string[];
+  selfGatherLines?: string[] | (() => string[]);
   /**
    * Kagemusha dual-output mechanism: lines instructing the FULL report run to also
    * publish the operator board slots (report_publish) before writing the text
@@ -223,6 +227,14 @@ export class SituationReporter {
       ([topic, content]) => `- ${topic}: ${content}`
     );
 
+    // Resolve the gather lines BEFORE the length guard: a zero-arg PROVIDER's
+    // `.length` is its arity (0), so guarding on the raw opts value would compile
+    // cleanly and silently drop the ENTIRE gather block on every production report.
+    const gatherLines =
+      typeof this.opts.selfGatherLines === 'function'
+        ? this.opts.selfGatherLines()
+        : (this.opts.selfGatherLines ?? []);
+
     // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
     // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
     // and keeps NOTHING only for pure noise.
@@ -238,7 +250,7 @@ export class SituationReporter {
             "Structure the report with these sections (render the headings in the owner's language;",
             'omit a section only when it is truly empty):',
             '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
-            ...(this.opts.selfGatherLines && this.opts.selfGatherLines.length > 0
+            ...(gatherLines.length > 0
               ? [
                   '',
                   'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
@@ -248,7 +260,7 @@ export class SituationReporter {
                   '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
                   '```',
                   'Gather with these gateway tool calls:',
-                  ...this.opts.selfGatherLines.map((line) => `- ${line}`),
+                  ...gatherLines.map((line) => `- ${line}`),
                   'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
                   'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
                   'blocks in your reply text - do not search for them, and do not fall back to',

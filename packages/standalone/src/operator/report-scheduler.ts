@@ -17,12 +17,20 @@ import { dirname, join } from 'node:path';
 export interface ReportSchedule {
   shouldFire(now: Date): { fire: boolean; hourKey: string };
   markFired(hourKey: string): void;
+  /** Anchor timestamp (ISO) of the last SUCCESSFUL full report, for delta-scoped gathers. */
+  loadLastSuccess(): string | null;
+  /** Persist the anchor after a full report is delivered (failures must never advance it). */
+  markSuccess(iso: string): void;
 }
 
 /** Persist/restore the last-fired hour key (so a restart within the same hour does not re-send). */
 export interface ReportScheduleStore {
   load(): string | null;
   save(hourKey: string): void;
+  /** Anchor timestamp (ISO) of the last SUCCESSFUL full report; null before the first one. */
+  loadLastSuccess(): string | null;
+  /** Persist the success anchor (read-modify-write so it never clobbers the fired-hour key). */
+  markSuccess(iso: string): void;
 }
 
 /** Local-time "YYYY-MM-DD:HH" bucket. Two ticks in the same local hour share a key. */
@@ -70,6 +78,16 @@ export class ReportScheduler implements ReportSchedule {
     this.lastFiredHourKey = hourKey;
     this.store.save(hourKey);
   }
+
+  /** Anchor of the last SUCCESSFUL full report (delegates to the store). */
+  loadLastSuccess(): string | null {
+    return this.store.loadLastSuccess();
+  }
+
+  /** Persist the success anchor (delegates to the store; called ONLY on a delivered report). */
+  markSuccess(iso: string): void {
+    this.store.markSuccess(iso);
+  }
 }
 
 /** File-backed store under ~/.mama - mirrors ConnectorDeltaRepo's atomic cursor file. */
@@ -80,22 +98,53 @@ export class FileReportScheduleStore implements ReportScheduleStore {
     this.path = path;
   }
 
-  load(): string | null {
+  /** Read-parse the whole state object (throws on corrupt - no-fallback). Empty file -> {}. */
+  private readState(): { lastFiredHourKey?: unknown; lastSuccessIso?: unknown } {
     if (!existsSync(this.path)) {
-      return null;
+      return {};
     }
     const parsed: unknown = JSON.parse(readFileSync(this.path, 'utf8')); // throws on corrupt (no-fallback)
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
       throw new Error(`corrupt report-schedule state (not an object): ${this.path}`);
     }
-    const key = (parsed as { lastFiredHourKey?: unknown }).lastFiredHourKey;
+    return parsed as { lastFiredHourKey?: unknown; lastSuccessIso?: unknown };
+  }
+
+  /** Atomic full-object write (tmp+rename) - callers do read-modify-write to preserve sibling fields. */
+  private writeState(state: { lastFiredHourKey?: string; lastSuccessIso?: string }): void {
+    mkdirSync(dirname(this.path), { recursive: true });
+    const tmp = join(dirname(this.path), `.report-schedule.${process.pid}.tmp`);
+    writeFileSync(tmp, JSON.stringify(state), 'utf8');
+    renameSync(tmp, this.path); // atomic replace
+  }
+
+  load(): string | null {
+    const key = this.readState().lastFiredHourKey;
     return typeof key === 'string' ? key : null;
   }
 
   save(hourKey: string): void {
-    mkdirSync(dirname(this.path), { recursive: true });
-    const tmp = join(dirname(this.path), `.report-schedule.${process.pid}.tmp`);
-    writeFileSync(tmp, JSON.stringify({ lastFiredHourKey: hourKey }), 'utf8');
-    renameSync(tmp, this.path); // atomic replace
+    // Read-modify-write: markFired must NOT clobber the success anchor.
+    const state = this.readState();
+    this.writeState({
+      lastFiredHourKey: hourKey,
+      ...(typeof state.lastSuccessIso === 'string' ? { lastSuccessIso: state.lastSuccessIso } : {}),
+    });
+  }
+
+  loadLastSuccess(): string | null {
+    const iso = this.readState().lastSuccessIso;
+    return typeof iso === 'string' ? iso : null;
+  }
+
+  markSuccess(iso: string): void {
+    // Read-modify-write: advancing the anchor must NOT clobber the fired-hour key.
+    const state = this.readState();
+    this.writeState({
+      ...(typeof state.lastFiredHourKey === 'string'
+        ? { lastFiredHourKey: state.lastFiredHourKey }
+        : {}),
+      lastSuccessIso: iso,
+    });
   }
 }
