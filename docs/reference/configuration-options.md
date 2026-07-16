@@ -88,12 +88,14 @@ Complete reference for all MAMA configuration options.
 
 ## Environment Variables
 
-| Variable             | Override        | Example                            |
-| -------------------- | --------------- | ---------------------------------- |
-| `MAMA_DISABLE_HOOKS` | `disable_hooks` | `export MAMA_DISABLE_HOOKS=true`   |
-| `MAMA_DB_PATH`       | `db_path`       | `export MAMA_DB_PATH=/custom/path` |
-| `MAMA_FORCE_TIER_2`  | `force_tier_2`  | `export MAMA_FORCE_TIER_2=true`    |
-| `MAMA_DEBUG`         | `debug`         | `export MAMA_DEBUG=true`           |
+| Variable                    | Override        | Example                                                                                                                                                     |
+| --------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MAMA_DISABLE_HOOKS`        | `disable_hooks` | `export MAMA_DISABLE_HOOKS=true`                                                                                                                            |
+| `MAMA_DB_PATH`              | `db_path`       | `export MAMA_DB_PATH=/custom/path`                                                                                                                          |
+| `MAMA_FORCE_TIER_2`         | `force_tier_2`  | `export MAMA_FORCE_TIER_2=true`                                                                                                                             |
+| `MAMA_DEBUG`                | `debug`         | `export MAMA_DEBUG=true`                                                                                                                                    |
+| `MAMA_PERSONA_NATIVE_TOOLS` | — (env only)    | `export MAMA_PERSONA_NATIVE_TOOLS=1` — re-enable Claude Code built-in tools in main-persona sessions (default: blocked; gateway tools are the only surface) |
+| `MAMA_REPORT_WALL_SECONDS`  | — (env only)    | `export MAMA_REPORT_WALL_SECONDS=900` — operator report envelope budget in seconds (min 60, max 1800, default 900)                                          |
 
 **Priority:** Environment variables override config file.
 

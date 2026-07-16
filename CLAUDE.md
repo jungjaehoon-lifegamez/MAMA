@@ -322,13 +322,14 @@ MAMA OS agents must **operate only within the `.mama` scope**. Global settings m
 
 **Never modify the following in `persistent-cli-process.ts` + `claude-cli-wrapper.ts`:**
 
-| Setting             | Value                                      | Reason                                                                        |
-| ------------------- | ------------------------------------------ | ----------------------------------------------------------------------------- |
-| `cwd`               | `~/.mama/workspace`                        | Changing to `os.homedir()` causes `~/CLAUDE.md` to be injected every turn     |
-| `.git/HEAD`         | `~/.mama/workspace/.git/HEAD`              | git boundary blocks upward traversal for CLAUDE.md                            |
-| `--plugin-dir`      | `~/.mama/.empty-plugins` (empty directory) | Removing it causes global plugin skills to be injected redundantly every turn |
-| `--setting-sources` | `project,local` (excludes user)            | Including `user` loads enabledPlugins from `~/.claude/settings.json`          |
-| `--system-prompt`   | First turn only (persistent)               | No need for repeated injection in session persistence mode                    |
+| Setting             | Value                                      | Reason                                                                                                                                                   |
+| ------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cwd`               | `~/.mama/workspace`                        | Changing to `os.homedir()` causes `~/CLAUDE.md` to be injected every turn                                                                                |
+| `.git/HEAD`         | `~/.mama/workspace/.git/HEAD`              | git boundary blocks upward traversal for CLAUDE.md                                                                                                       |
+| `--plugin-dir`      | `~/.mama/.empty-plugins` (empty directory) | Removing it causes global plugin skills to be injected redundantly every turn                                                                            |
+| `--setting-sources` | `project,local` (excludes user)            | Including `user` loads enabledPlugins from `~/.claude/settings.json`                                                                                     |
+| `--system-prompt`   | First turn only (persistent)               | No need for repeated injection in session persistence mode                                                                                               |
+| `--tools`           | `""` for the main persona (gateway-only)   | Native built-ins cross with text-parsed gateway tools (hallucinated tool calls, unverifiable reports). Owner escape hatch: `MAMA_PERSONA_NATIVE_TOOLS=1` |
 
 **Prohibited actions:**
 
@@ -337,6 +338,7 @@ MAMA OS agents must **operate only within the `.mama` scope**. Global settings m
 - Adding `user` to `--setting-sources` (loads global plugins)
 - Adding the `--no-session-persistence` flag
 - Removing the `.git/HEAD` creation logic
+- Re-enabling native built-in tools for the main persona in source (env flag only)
 
 **Reason:** MAMA already includes persona + skills + gateway tools in `--system-prompt`. If Claude Code CLI reloads the same content from `~/CLAUDE.md` and global plugins, **thousands of tokens are wasted on duplication every turn**.
 
