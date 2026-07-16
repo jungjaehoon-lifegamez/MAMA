@@ -30,7 +30,6 @@ describe('runWithContent envelope guard', () => {
   const makeLoop = (): AgentLoop => {
     const loop = new AgentLoop({} as never, { toolsConfig: { gateway: ['*'], mcp: [] } });
     (loop as unknown as { agent: unknown }).agent = {
-      setSessionId: () => {},
       // usage is REQUIRED: agent-loop.ts:1271 reads response.usage.input_tokens
       // unconditionally - omitting it TypeErrors the chat-lane test.
       prompt: async () => ({

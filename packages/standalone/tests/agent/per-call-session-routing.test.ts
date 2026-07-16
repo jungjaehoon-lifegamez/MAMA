@@ -23,8 +23,8 @@ describe('per-call session routing (no shared mutation)', () => {
     };
 
     await Promise.all([
-      adapter.prompt('for-A', undefined, { sessionId: 'session-A' } as never),
-      adapter.prompt('for-B', undefined, { sessionId: 'session-B' } as never),
+      adapter.prompt('for-A', undefined, { sessionId: 'session-A' }),
+      adapter.prompt('for-B', undefined, { sessionId: 'session-B' }),
     ]);
 
     expect(processes.get('session-A')!.sendMessage).toHaveBeenCalledWith('for-A', undefined);

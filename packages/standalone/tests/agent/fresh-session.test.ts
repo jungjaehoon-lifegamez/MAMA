@@ -17,7 +17,6 @@ describe('freshSession option (stateless lanes)', () => {
       updateTokens: () => ({ totalTokens: 0, nearThreshold: false }),
     };
     (loop as unknown as { agent: unknown }).agent = {
-      setSessionId: () => {},
       prompt: vi.fn().mockResolvedValue({
         response: 'ok',
         toolUseBlocks: [],
