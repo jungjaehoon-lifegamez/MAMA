@@ -990,7 +990,9 @@ export class AgentLoop {
     };
 
     if (options?.cliSessionId) {
-      this.agent.setSessionId(options.cliSessionId);
+      // Session routing travels per prompt() call via resolvedCliSessionId - no
+      // shared-adapter mutation (setSessionId re-pointed channelKey/currentProcess
+      // across awaits, cross-wiring concurrent lanes).
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(sessionIsNew)})`
       );
@@ -1004,7 +1006,7 @@ export class AgentLoop {
       sessionIsNew = isNew;
       ownedSession = true;
       resolvedCliSessionId = cliSessionId;
-      this.agent.setSessionId(cliSessionId);
+      // Per-call routing via resolvedCliSessionId - no shared-adapter mutation.
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
       );
@@ -1183,6 +1185,7 @@ export class AgentLoop {
             model: options?.model,
             resumeSession: shouldResume,
             systemPrompt: perCallSystemPrompt,
+            sessionId: resolvedCliSessionId ?? undefined,
           });
           // Emit prompt latency metric
           this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
@@ -1218,13 +1221,16 @@ export class AgentLoop {
 
             // Reset session in pool so it creates a new one
             const newSessionId = this.sessionPool.resetSession(channelKey);
-            this.agent.setSessionId(newSessionId);
+            // Per-call routing: hand the new id to this prompt() and update the
+            // resolved id so later turns follow it - no shared-adapter mutation.
+            resolvedCliSessionId = newSessionId;
 
             // Retry with new session (--session-id instead of --resume)
             piResult = await this.agent.prompt(promptText, callbacks, {
               model: options?.model,
               resumeSession: false, // Force new session
               systemPrompt: perCallSystemPrompt,
+              sessionId: newSessionId,
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
