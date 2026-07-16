@@ -1,5 +1,26 @@
 # TODOS
 
+## Deferred from agent-boundary-repair round (2026-07-16)
+
+### Persona migration to the code-act MCP route
+
+- **What:** Move the main persona off text-parsed gateway tools onto the existing code-act MCP route (code-act-server → HostBridge → shared executor).
+- **Why:** Tool contract enforced at the protocol layer kills the tool-hallucination class structurally (Task 2's `--tools ""` mitigates it at the surface level).
+- **Context:** Exposure already exists — multi-agent pm processes use it today. Adoption for the conductor is its own round (prompt/persona rework).
+- **Depends on:** agent-boundary-repair branch merged.
+
+### Codex per-call model/resumeSession + codex report-thread reset
+
+- **What:** Decide deliberately whether codex should honor per-call `model`/`resumeSession` (Task 3 forwards ONLY systemPrompt on purpose — activating the others changes thread lifecycle, codex-mcp-process.ts thread wipe on `resumeSession === false`). Also implement a codex report-thread reset so Task 6's stateless guarantee holds there (freshSession is pool-level only on codex; the internal threadId persists — a loud log marks this today).
+- **Why:** Without it, a codex-backend deployment keeps the immortal report thread Task 6 killed on claude.
+- **Context:** Default deployments run claude; gap is latent, logged loudly.
+
+### Multi-agent pool getSharedProcess lane accumulation audit
+
+- **What:** Measure dashboard-cron/reconcile shared-process session growth over a week; apply the Task-6 stateless pattern if durations grow.
+- **Why:** Same unbounded-session disease the report lane had (146s→521s) may exist in the multi-agent pool lanes.
+- **Context:** `[Lane]`/duration logs in daemon.log are sufficient instrumentation; owner principle "session = cache, not persistence".
+
 ## Deferred from v0.19 Validation Session v1
 
 ### Fixed benchmark test sets for agent_test
