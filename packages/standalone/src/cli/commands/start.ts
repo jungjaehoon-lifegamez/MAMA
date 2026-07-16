@@ -621,6 +621,7 @@ export async function runAgentLoop(
     db,
     metricsStore,
     agentLoopBackend,
+    toolExecutor,
     {
       ...options,
       envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,

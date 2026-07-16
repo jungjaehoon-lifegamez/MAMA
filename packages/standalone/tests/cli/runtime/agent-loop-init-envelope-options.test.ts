@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AgentLoop } from '../../../src/agent/index.js';
+import { AgentLoop, GatewayToolExecutor } from '../../../src/agent/index.js';
 import type { AgentContext, AgentLoopOptions, ContentBlock } from '../../../src/agent/types.js';
 import type { MAMAConfig } from '../../../src/cli/config/types.js';
 import type { OAuthManager } from '../../../src/auth/index.js';
@@ -99,7 +99,8 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
         { getToken: vi.fn() } as unknown as OAuthManager,
         {} as SQLiteDatabase,
         null as MetricsStore | null,
-        'claude'
+        'claude',
+        new GatewayToolExecutor({})
       );
       const options = createOptions();
 
@@ -114,7 +115,8 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
         { getToken: vi.fn() } as unknown as OAuthManager,
         {} as SQLiteDatabase,
         null as MetricsStore | null,
-        'claude'
+        'claude',
+        new GatewayToolExecutor({})
       );
       const content: ContentBlock[] = [{ type: 'text', text: 'hello' }];
       const options = createOptions();

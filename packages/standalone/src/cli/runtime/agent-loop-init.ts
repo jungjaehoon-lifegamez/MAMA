@@ -21,6 +21,7 @@ import { join } from 'node:path';
 import type { MAMAConfig } from '../config/types.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
+import type { GatewayToolExecutor } from '../../agent/index.js';
 import type {
   AgentLoopOptions,
   ContentBlock as AgentContentBlock,
@@ -61,6 +62,7 @@ export function initMainAgentLoop(
   db: SQLiteDatabase,
   metricsStore: MetricsStore | null,
   runtimeBackend: 'claude' | 'codex-mcp',
+  toolExecutor: GatewayToolExecutor,
   options?: {
     osAgentMode?: boolean;
     envelopeIssuanceMode?: EnvelopeIssuanceMode;
@@ -129,6 +131,9 @@ export function initMainAgentLoop(
       useCodeAct: options?.osAgentMode ? false : useCodeAct,
       toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
       disallowedTools: osAgentDisallowed,
+      // Root fix (2026-07-16): share the boot-wired executor so every dependency
+      // wiring reaches the persona lane by construction (no second private twin).
+      executor: toolExecutor,
       useLanes: true, // Enable lane-based concurrency for Discord
       // SECURITY MODEL: MAMA OS is a headless daemon — no TTY for interactive permission prompts.
       // Permission enforcement is handled by MAMA's own RoleManager layer:
@@ -198,14 +203,7 @@ export function initMainAgentLoop(
         metricsStore?.record({ name, value, labels });
       },
     },
-    undefined,
-    {
-      mamaDbPath: config.database.path.replace(/^~/, homedir()),
-      envelopeIssuanceMode: options?.envelopeIssuanceMode ?? 'off',
-      metricsStore,
-      contextCompileService: options?.contextCompileService,
-      wikiPublishAdapter: options?.wikiPublishAdapter,
-    }
+    undefined
   );
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
 
