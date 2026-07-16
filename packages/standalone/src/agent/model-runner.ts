@@ -34,6 +34,14 @@ export interface PromptOptions {
   resumeSession?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
+  systemPrompt?: string;
+  /**
+   * Pool ROUTING key (SessionPool id) for THIS call, NOT the CLI --session-id.
+   * The pool spawns processes with its own randomUUID() so the CLI never
+   * reloads disk history. Routes this prompt to this session's process
+   * without mutating shared adapter state.
+   */
+  sessionId?: string;
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────

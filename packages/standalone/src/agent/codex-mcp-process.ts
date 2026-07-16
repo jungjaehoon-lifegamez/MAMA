@@ -243,7 +243,7 @@ export class CodexMCPProcess extends EventEmitter {
   async prompt(
     content: string,
     callbacks?: PromptCallbacks,
-    options?: { model?: string; resumeSession?: boolean }
+    options?: { model?: string; resumeSession?: boolean; systemPrompt?: string }
   ): Promise<PromptResult> {
     // Ensure process is running (retry once on failure)
     if (this.state === 'dead') {
@@ -303,8 +303,9 @@ export class CodexMCPProcess extends EventEmitter {
         if (this.options.sandbox) {
           args.sandbox = this.options.sandbox;
         }
-        if (this.options.systemPrompt) {
-          args['developer-instructions'] = this.options.systemPrompt;
+        const effectiveSystemPrompt = options?.systemPrompt ?? this.options.systemPrompt;
+        if (effectiveSystemPrompt) {
+          args['developer-instructions'] = effectiveSystemPrompt;
         }
         if (this.options.compactPrompt) {
           args['compact-prompt'] = this.options.compactPrompt;

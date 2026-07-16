@@ -9,11 +9,22 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import { OperatorTriggerLoop, type TickResult } from '../../src/operator/operator-trigger-loop.js';
-import type { OperatorChannelEvent, OperatorMemoryPort } from '../../src/operator/operator-interfaces.js';
+import type {
+  OperatorChannelEvent,
+  OperatorMemoryPort,
+} from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
-  return { id, channel: 'slack', channelId, userId: 'u1', role: 'user', content, createdAt: id * 100 };
+  return {
+    id,
+    channel: 'slack',
+    channelId,
+    userId: 'u1',
+    role: 'user',
+    content,
+    createdAt: id * 100,
+  };
 }
 
 function seedTrigger(reg: TriggerRegistry, id = 'tr1', keyword = 'report'): void {
@@ -73,7 +84,13 @@ describe('OperatorTriggerLoop', () => {
       registry: reg,
       askAgent: async () => '[]', // author proposes nothing by default
       review: async () => ({ action: 'kept' as const }),
-      config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 3, reviewEveryNTicks: 5, authorWindowSize: 10 },
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 3,
+        reviewEveryNTicks: 5,
+        authorWindowSize: 10,
+      },
       log: (line) => logs.push(line),
       ...over,
     });
@@ -104,7 +121,16 @@ describe('OperatorTriggerLoop', () => {
         },
       ])
     );
-    const loop = makeLoop({ askAgent, config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 2, reviewEveryNTicks: 99, authorWindowSize: 10 } });
+    const loop = makeLoop({
+      askAgent,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 2,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+    });
     delta.queue = [ev(1, 'ch-a', 'zzz again')];
     await loop.tick(); // tick 1: no author
     expect(askAgent).not.toHaveBeenCalled();
@@ -118,7 +144,16 @@ describe('OperatorTriggerLoop', () => {
     seedTrigger(reg, 'fired-one', 'report');
     seedTrigger(reg, 'silent-one', 'zzz');
     const review = vi.fn(async () => ({ action: 'retired' as const, reason: 'noisy' }));
-    const loop = makeLoop({ review, config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 2, authorWindowSize: 10 } });
+    const loop = makeLoop({
+      review,
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 2,
+        authorWindowSize: 10,
+      },
+    });
     delta.queue = [ev(1, 'ch-a', 'the report is late')]; // fires 'fired-one' only
     await loop.tick();
     await loop.tick(); // review tick
@@ -137,7 +172,14 @@ describe('OperatorTriggerLoop', () => {
     const loop = makeLoop({
       askAgent,
       output: { send },
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 2 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+        reportEveryNTicks: 2,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'the report is late')];
     await loop.tick(); // fire buffered
@@ -196,14 +238,21 @@ describe('OperatorTriggerLoop', () => {
     const loop = makeLoop({
       askAgent,
       output: { send },
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 2 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+        reportEveryNTicks: 2,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'the report is late'), ev(2, 'ch-b', 'unrelated chatter')];
-    await loop.tick();            // tick 1: fire on ch-a; window buffers ch-a + ch-b
+    await loop.tick(); // tick 1: fire on ch-a; window buffers ch-a + ch-b
     const r2 = await loop.tick(); // tick 2: digest
     expect(r2.reported).toBe(true);
     const digestPrompt = captured.find((p) => p.includes('Fire activity'))!;
-    expect(digestPrompt).toContain('ch-b');             // a NON-firing channel is in the window
+    expect(digestPrompt).toContain('ch-b'); // a NON-firing channel is in the window
     expect(digestPrompt).toContain('unrelated chatter');
     expect(digestPrompt).toContain('ch-a');
   });
@@ -211,13 +260,25 @@ describe('OperatorTriggerLoop', () => {
   it('scheduled full report: fires at a configured hour even with no trigger fires, marks the hour (M2)', async () => {
     const send = vi.fn(async () => {});
     const markFired = vi.fn();
+    const markSuccess = vi.fn();
     const askAgent = vi.fn(async () => 'FULL REPORT text');
-    const scheduler = { shouldFire: () => ({ fire: true, hourKey: '2026-07-09:08' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: true, hourKey: '2026-07-09:08' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
     const loop = makeLoop({
       askAgent,
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'some chatter'), ev(2, 'ch-b', 'more chatter')]; // window only, no trigger seeded
     const r = await loop.tick();
@@ -225,6 +286,9 @@ describe('OperatorTriggerLoop', () => {
     expect(r.fullReported).toBe(true);
     expect(send).toHaveBeenCalledWith('FULL REPORT text');
     expect(markFired).toHaveBeenCalledWith('2026-07-09:08');
+    // A DELIVERED report advances the delta anchor (fire-time ISO timestamp).
+    expect(markSuccess).toHaveBeenCalledTimes(1);
+    expect(markSuccess.mock.calls[0][0]).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 
   it('reports route through the persona agent (reportAsk) while authoring stays on askAgent (M2.2)', async () => {
@@ -233,13 +297,25 @@ describe('OperatorTriggerLoop', () => {
     const askAgent = vi.fn(async () => '[]'); // author/review path (bare CLI in prod)
     const reportAsk = vi.fn(async () => 'persona-composed report');
     const markFired = vi.fn();
-    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: true, hourKey: 'k' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
     const loop = makeLoop({
       askAgent,
       reportAsk,
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 1, reviewEveryNTicks: 99, authorWindowSize: 10, reportEveryNTicks: 1 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 1,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+        reportEveryNTicks: 1,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'the report is late')];
     const r = await loop.tick();
@@ -256,12 +332,23 @@ describe('OperatorTriggerLoop', () => {
     const send = vi.fn(async () => {});
     const markFired = vi.fn();
     const askAgent = vi.fn(async () => 'Scheduled report: quiet window.');
-    const scheduler = { shouldFire: () => ({ fire: true, hourKey: '2026-07-09:13' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: true, hourKey: '2026-07-09:13' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
     const loop = makeLoop({
       askAgent,
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
     });
     // NO events drained at all - the buffer is completely empty.
     const r = await loop.tick();
@@ -274,45 +361,86 @@ describe('OperatorTriggerLoop', () => {
   it('scheduled full report: agent NOTHING suppresses the send but still marks the hour (fire once)', async () => {
     const send = vi.fn();
     const markFired = vi.fn();
+    const markSuccess = vi.fn();
     const askAgent = vi.fn(async () => 'NOTHING');
-    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: true, hourKey: 'k' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
     const loop = makeLoop({
       askAgent,
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'chatter')];
     const r = await loop.tick();
     expect(r.fullReported).toBe(false);
     expect(send).not.toHaveBeenCalled();
     expect(markFired).toHaveBeenCalledWith('k');
+    // A NOTHING-suppressed report is NOT delivered -> the anchor must not advance.
+    expect(markSuccess).not.toHaveBeenCalled();
   });
 
   it('scheduled full report: send failure throws (no-fallback), hour NOT marked -> retries', async () => {
-    const send = vi.fn(async () => { throw new Error('telegram down'); });
+    const send = vi.fn(async () => {
+      throw new Error('telegram down');
+    });
     const markFired = vi.fn();
+    const markSuccess = vi.fn();
     const askAgent = vi.fn(async () => 'FULL');
-    const scheduler = { shouldFire: () => ({ fire: true, hourKey: 'k' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: true, hourKey: 'k' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess,
+    };
     const loop = makeLoop({
       askAgent,
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'chatter')];
     await expect(loop.tick()).rejects.toThrow('telegram down');
     expect(markFired).not.toHaveBeenCalled();
+    // Send threw before markFired/markSuccess -> the anchor never advances (retry next cadence).
+    expect(markSuccess).not.toHaveBeenCalled();
   });
 
   it('scheduled full report: not a configured hour -> no send, no mark', async () => {
     const send = vi.fn();
     const markFired = vi.fn();
-    const scheduler = { shouldFire: () => ({ fire: false, hourKey: 'k' }), markFired };
+    const scheduler = {
+      shouldFire: () => ({ fire: false, hourKey: 'k' }),
+      markFired,
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
     const loop = makeLoop({
       output: { send },
       reportScheduler: scheduler,
-      config: { tickMs: 1000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10 },
+      config: {
+        tickMs: 1000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
     });
     delta.queue = [ev(1, 'ch-a', 'chatter')];
     const r = await loop.tick();
@@ -325,7 +453,14 @@ describe('OperatorTriggerLoop', () => {
     vi.useFakeTimers();
     try {
       const loop = makeLoop({
-        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
       });
       const tickSpy = vi.spyOn(loop, 'tick');
       loop.nudge();
@@ -343,7 +478,14 @@ describe('OperatorTriggerLoop', () => {
     vi.useFakeTimers();
     try {
       const loop = makeLoop({
-        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
       });
       const tickSpy = vi.spyOn(loop, 'tick');
       loop.nudge();
@@ -361,13 +503,28 @@ describe('OperatorTriggerLoop', () => {
     vi.useFakeTimers();
     try {
       const loop = makeLoop({
-        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 5_000 },
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 5_000,
+        },
       });
       // First nudge-driven tick hangs, so `running` stays true across the second nudge window.
       let resolveFirst: () => void = () => {};
       const firstTick = new Promise<TickResult>((res) => {
         resolveFirst = () =>
-          res({ tick: 1, drained: 0, fires: 0, authored: 0, reviewed: 0, reported: false, fullReported: false });
+          res({
+            tick: 1,
+            drained: 0,
+            fires: 0,
+            authored: 0,
+            reviewed: 0,
+            reported: false,
+            fullReported: false,
+          });
       });
       const tickSpy = vi.spyOn(loop, 'tick').mockReturnValueOnce(firstTick);
       loop.nudge();
@@ -387,12 +544,19 @@ describe('OperatorTriggerLoop', () => {
     vi.useFakeTimers();
     try {
       const loop = makeLoop({
-        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
       });
       const tickSpy = vi.spyOn(loop, 'tick');
       const stop = loop.start(); // interval at 60s
-      loop.nudge();              // arm nudge at +15s
-      stop();                    // must clear both the interval AND the pending nudge
+      loop.nudge(); // arm nudge at +15s
+      stop(); // must clear both the interval AND the pending nudge
       await vi.advanceTimersByTimeAsync(15_000 + 60_000);
       expect(tickSpy).not.toHaveBeenCalled();
     } finally {
@@ -408,11 +572,18 @@ describe('OperatorTriggerLoop', () => {
       const forward = () => triggerLoopNudge.current?.();
       forward(); // the initial poll's sink fires before the loop is constructed -> safe no-op
       const loop = makeLoop({
-        config: { tickMs: 60_000, drainLimit: 50, authorEveryNTicks: 99, reviewEveryNTicks: 99, authorWindowSize: 10, nudgeDebounceMs: 15_000 },
+        config: {
+          tickMs: 60_000,
+          drainLimit: 50,
+          authorEveryNTicks: 99,
+          reviewEveryNTicks: 99,
+          authorWindowSize: 10,
+          nudgeDebounceMs: 15_000,
+        },
       });
       const tickSpy = vi.spyOn(loop, 'tick');
       triggerLoopNudge.current = () => loop.nudge(); // gated block binds it after start()
-      forward();                                     // a later poll batch -> reaches loop.nudge()
+      forward(); // a later poll batch -> reaches loop.nudge()
       await vi.advanceTimersByTimeAsync(15_000);
       expect(tickSpy).toHaveBeenCalledTimes(1);
     } finally {

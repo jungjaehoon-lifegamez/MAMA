@@ -162,6 +162,8 @@ type ActiveGatewayExecutionContext = {
   gatewayCallId?: string;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
+  /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
+  disallowedGatewayTools?: string[];
 };
 
 type ScopeAuditFields = {
@@ -594,6 +596,7 @@ export class GatewayToolExecutor {
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
       backgroundTasks: executionContext?.backgroundTasks,
+      disallowedGatewayTools: executionContext?.disallowedGatewayTools,
     };
   }
 
@@ -631,6 +634,8 @@ export class GatewayToolExecutor {
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
+      // Never merged from fallback - blocks are strictly per-call.
+      disallowedGatewayTools: active.disallowedGatewayTools,
     };
   }
 
@@ -891,6 +896,12 @@ export class GatewayToolExecutor {
 
   setContextCompileService(service: GatewayToolExecutorOptions['contextCompileService']): void {
     this.contextCompileService = service;
+  }
+
+  /** Wire the shared MAMA API built at boot (initMamaCore) so the executor never
+   *  lazily constructs a second API/adapter stack against the same DB. */
+  setMamaApi(api: MAMAApiInterface): void {
+    this.mamaApi = api;
   }
 
   /**
@@ -1740,8 +1751,10 @@ export class GatewayToolExecutor {
       );
     }
 
-    // Check structurally disallowed tools (e.g., OS agent can't use sub-agent tools)
-    if (this.disallowedGatewayTools.has(toolName)) {
+    // Structurally disallowed tools are per-call policy carried by the execution
+    // context (a shared executor serves many agents with different blocks).
+    const activeDisallowed = this.getExecutionState()?.disallowedGatewayTools;
+    if (activeDisallowed?.includes(toolName) || this.disallowedGatewayTools.has(toolName)) {
       return {
         success: false,
         error: `Tool "${toolName}" is not available. Use delegate() to assign this work to the appropriate sub-agent.`,

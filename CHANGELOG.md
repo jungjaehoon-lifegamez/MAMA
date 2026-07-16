@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+
+- Persona-lane agents (operator reports, chat) no longer fail with "Task ledger/Report publisher/... not configured" — the daemon persona now shares the boot-wired gateway executor (root fix for the dual-executor wiring class).
+- Main-persona CLI sessions no longer expose Claude Code native built-in tools; gateway tools are the only surface (`MAMA_PERSONA_NATIVE_TOOLS=1` re-enables).
+- System prompt for spawned/continued runs is now deterministic per call on BOTH backends (claude spawn, codex thread-start developer-instructions) — previously any lane's new process could inherit the last caller's prompt.
+- Operator report envelopes now budget the full multi-turn run (`MAMA_REPORT_WALL_SECONDS`, default 900s, min 60, max 1800); runs whose envelope expires mid-run abort loudly (operator lane) or log loudly (chat) instead of silently losing every end-of-run write.
+- Operator reports run STATELESS (fresh session per run) — the previous continuous session accumulated gather context until runs outlived their envelope (measured 146s→521s growth). The heavy message gather is delta-anchored at the last successful report (`report-schedule-state.json`).
+- Concurrent lanes can no longer cross-route prompts or wipe each other's pending tool results (per-call session routing replaces shared setSessionId mutation).
+- The memory agent shares the boot executor and the boot MAMA API instance (no second API/adapter stack against the same DB).
+
 ## [0.21.0] / mama-core [1.8.1] / mama-os [0.21.0] - 2026-07-12
 
 ### Added

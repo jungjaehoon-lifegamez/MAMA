@@ -124,12 +124,14 @@ export async function initGateways(
           discordGateway!.sendFile(channelId, imagePath, caption),
       };
 
+      // Root fix (2026-07-16): agentLoop now shares the boot-wired toolExecutor,
+      // so this single call wires discord_send onto the shared instance for BOTH
+      // the persona lane and the multi-agent/code-act lanes - no second call needed.
       agentLoop.setDiscordGateway(gatewayInterface);
 
       // Wire gateway tool executor to multi-agent handler
       const multiAgentDiscord = discordGateway.getMultiAgentHandler();
       if (multiAgentDiscord) {
-        toolExecutor.setDiscordGateway(gatewayInterface);
         multiAgentDiscord.setGatewayToolExecutor(toolExecutor);
         // Wire delegate dependencies so code-act sandbox can call delegate()
         toolExecutor.setAgentProcessManager(multiAgentDiscord.getProcessManager());
