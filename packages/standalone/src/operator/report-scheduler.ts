@@ -98,7 +98,7 @@ export class FileReportScheduleStore implements ReportScheduleStore {
     this.path = path;
   }
 
-  /** Read-parse the whole state object (throws on corrupt - no-fallback). Empty file -> {}. */
+  /** Read-parse the whole state object (throws on corrupt or zero-byte file - no-fallback). MISSING file -> {}. */
   private readState(): { lastFiredHourKey?: unknown; lastSuccessIso?: unknown } {
     if (!existsSync(this.path)) {
       return {};
