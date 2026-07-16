@@ -619,10 +619,14 @@ export class AgentLoop {
         JSON.stringify(this.toolsConfig.mcp)
     );
 
-    this.mcpExecutor = new GatewayToolExecutor(executorOptions);
-    if (this.disallowedTools?.length) {
-      this.mcpExecutor.setDisallowedGatewayTools(this.disallowedTools);
-    }
+    // Root fix (2026-07-16): the daemon persona shares the boot-wired executor so
+    // every dependency wiring (task ledger, report publisher, event bus, gateways,
+    // wiki, obsidian, ...) reaches persona lanes by construction. Constructing a
+    // second instance here is allowed ONLY for deliberately isolated loops
+    // (memory agent, mama run CLI) that own their dep set.
+    this.mcpExecutor = options.executor ?? new GatewayToolExecutor(executorOptions);
+    // Persona tool blocks are per-call policy, not executor state - a shared
+    // executor must never inherit one caller's blocks (see buildToolExecutionContext).
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.model = options.model!;
     this.onTurn = options.onTurn;
@@ -705,7 +709,19 @@ export class AgentLoop {
   }
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
-    return buildAgentToolExecutionContext(options);
+    const base = buildAgentToolExecutionContext(options);
+    if (!base) return null; // no context fields - out-of-scope loops keep today's semantics
+    return {
+      ...base,
+      // Persona blocks are per-call policy - never executor instance state.
+      disallowedGatewayTools: this.disallowedTools,
+      // Never let persona calls inherit the code-act route's fallback identity.
+      // 'conductor' matches the existing delegation-routing fallback
+      // (gateway-tool-executor.ts:653) so attribution is unchanged.
+      // (Persona lanes always pass source/channelId, so base is non-null for them
+      // and the disallowed list travels on every persona run.)
+      agentId: base.agentId || 'conductor',
+    };
   }
 
   /**

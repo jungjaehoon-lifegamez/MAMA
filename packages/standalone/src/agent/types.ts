@@ -13,6 +13,7 @@ import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { ContextCompileService } from './context-compile-service.js';
+import type { GatewayToolExecutor } from './gateway-tool-executor.js';
 import type {
   AppendToolTraceInput,
   BeginModelRunInput,
@@ -130,6 +131,8 @@ export type GatewayToolExecutionContext = {
   modelRunId?: string | null;
   gatewayCallId?: string;
   backgroundTasks?: BackgroundTaskRegistry;
+  /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
+  disallowedGatewayTools?: string[];
 };
 
 // ============================================================================
@@ -1075,6 +1078,15 @@ export interface AgentLoopOptions {
    * Called at key emission points: prompt latency, tool execution, errors
    */
   onMetric?: (name: string, value: number, labels?: Record<string, string>) => void;
+
+  /**
+   * Boot-wired GatewayToolExecutor to share. When provided, AgentLoop uses it
+   * and constructs nothing - every dependency wiring (task ledger, report
+   * publisher, event bus, gateways, wiki, obsidian, ...) reaches persona lanes
+   * by construction. Omit ONLY for deliberately isolated loops (memory agent,
+   * `mama run` CLI) that own their own dep set.
+   */
+  executor?: GatewayToolExecutor;
 }
 
 /**
