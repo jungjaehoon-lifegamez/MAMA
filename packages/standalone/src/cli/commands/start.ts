@@ -1209,6 +1209,11 @@ export async function runAgentLoop(
                 sessionKey: OPERATOR_REPORT_SESSION_KEY,
                 source: 'operator',
                 channelId: 'report',
+                // Stateless report lane: each run starts on a fresh session so the
+                // continuous session no longer accumulates every run's gather dumps
+                // (measured 146s -> 521s growth over 3 days). Continuity comes from
+                // the storage layer (self-gather + mama_recall + report store).
+                freshSession: true,
                 ...(envelope ? { envelope } : {}),
               }
             );
@@ -1223,10 +1228,12 @@ export async function runAgentLoop(
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
         // reports "quiet" whenever polling is between batches).
-        fullReportSelfGather: [
+        fullReportSelfGather: ({ lastSuccessIso }: { lastSuccessIso: string | null }) => [
           'kagemusha_overview() for room/task/message counts',
           'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-          'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+          lastSuccessIso
+            ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
+            : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
           'mama_recall(query) for memory relevant to what you find',
           'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
         ],

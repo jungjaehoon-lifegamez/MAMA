@@ -996,6 +996,26 @@ export class AgentLoop {
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(sessionIsNew)})`
       );
+    } else if (options?.freshSession) {
+      // Stateless lanes (operator reports): session context is a cache, not
+      // persistence - every run self-gathers and recalls; carrying prior runs'
+      // gather dumps only grows the context until runs outlive their envelope
+      // (measured 146s -> 521s over 3 days; owner decision 2026-07-16).
+      const cliSessionId = this.sessionPool.resetSession(channelKey);
+      sessionIsNew = true;
+      ownedSession = true;
+      resolvedCliSessionId = cliSessionId;
+      if (isCodex) {
+        // Codex MCP manages threadId internally and ignores external session ids
+        // (codex-mcp-process.ts:366-369) - the pool reset does NOT reset the codex
+        // thread, so the stateless guarantee does not hold there. Loud, not silent.
+        console.log(
+          '[AgentLoop] freshSession is a pool-level reset only on the codex backend - the codex thread persists (see TODO: codex report thread reset)'
+        );
+      }
+      console.log(
+        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (FRESH session - stateless lane)`
+      );
     } else {
       // Fallback: get session from pool (for direct AgentLoop usage)
       // getSession() returns immediately - if busy, we create a new session
