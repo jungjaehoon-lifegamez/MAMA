@@ -80,6 +80,7 @@ export class PersistentCLIAdapter implements IModelRunner {
       resumeSession?: boolean;
       allowedTools?: string[];
       disallowedTools?: string[];
+      systemPrompt?: string;
     }
   ): Promise<PromptResult> {
     // Get or create process for this channel
@@ -88,7 +89,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     // leading to "Prompt is too long" errors when accumulated context exceeds the window.
     this.currentProcess = await this.processPool.getProcess(this.channelKey, {
       model: options?.model || this.options.model,
-      systemPrompt: this.options.systemPrompt,
+      systemPrompt: options?.systemPrompt ?? this.options.systemPrompt,
       dangerouslySkipPermissions: this.options.dangerouslySkipPermissions,
       useGatewayTools: this.options.useGatewayTools,
       allowedTools: options?.allowedTools || this.options.allowedTools,
@@ -218,6 +219,8 @@ export class PersistentCLIAdapter implements IModelRunner {
    *
    * IMPORTANT: This only affects new processes. Existing processes keep their prompt.
    * To apply a new system prompt, call resetSession() after setSystemPrompt().
+   *
+   * @deprecated - mutates shared spawn state; pass systemPrompt per prompt() call
    */
   setSystemPrompt(prompt: string): void {
     this.options.systemPrompt = prompt;

@@ -76,16 +76,24 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
   async prompt(
     content: string,
     callbacks?: ClaudePromptCallbacks,
-    _options?: PromptOptions
+    options?: PromptOptions
   ): Promise<ClaudePromptResult> {
-    return this.sendMessage(content, callbacks);
+    // Narrowed on purpose: only systemPrompt is per-call plumbing (Task 3).
+    // model/resumeSession stay inert on codex - activating them is a separate,
+    // deliberate change (they alter thread lifecycle, codex-mcp-process.ts:261-266).
+    return this.sendMessage(
+      content,
+      callbacks,
+      options?.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : undefined
+    );
   }
 
   // ─── AgentRuntimeProcess.sendMessage() ─────────────────────────────────
 
   async sendMessage(
     content: string,
-    callbacks?: ClaudePromptCallbacks
+    callbacks?: ClaudePromptCallbacks,
+    options?: { systemPrompt?: string }
   ): Promise<ClaudePromptResult> {
     if (this.state === 'dead') {
       throw new Error('Process is dead');
@@ -107,7 +115,11 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
           }
         : undefined;
 
-      const result = await this.wrapper.prompt(content, codexCallbacks);
+      const result = await this.wrapper.prompt(
+        content,
+        codexCallbacks,
+        options?.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : undefined
+      );
 
       const normalized: ClaudePromptResult = {
         response: result.response,

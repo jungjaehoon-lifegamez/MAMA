@@ -1024,6 +1024,7 @@ export class AgentLoop {
         );
       }
 
+      let perCallSystemPrompt: string;
       if (options?.systemPrompt) {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
         const alreadyHasTools =
@@ -1089,12 +1090,14 @@ export class AgentLoop {
           );
         }
 
+        perCallSystemPrompt = effectivePrompt;
         console.log(
-          `[AgentLoop] Setting systemPrompt: ${effectivePrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+          `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
+            `(base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
-        this.agent.setSystemPrompt(effectivePrompt);
       } else {
-        console.log(`[AgentLoop] No systemPrompt in options, using default`);
+        perCallSystemPrompt = this.defaultSystemPrompt;
+        console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
       }
 
       // Reset StopContinuation state for this channel to prevent leaking
@@ -1154,6 +1157,7 @@ export class AgentLoop {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
+            systemPrompt: perCallSystemPrompt,
           });
           // Emit prompt latency metric
           this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
@@ -1195,6 +1199,7 @@ export class AgentLoop {
             piResult = await this.agent.prompt(promptText, callbacks, {
               model: options?.model,
               resumeSession: false, // Force new session
+              systemPrompt: perCallSystemPrompt,
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {

@@ -34,6 +34,7 @@ export interface PromptOptions {
   resumeSession?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
+  systemPrompt?: string;
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
