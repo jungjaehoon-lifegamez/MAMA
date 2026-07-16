@@ -1161,7 +1161,8 @@ export type AgentErrorCode =
   | 'NETWORK_ERROR'
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'
-  | 'INVALID_RESPONSE';
+  | 'INVALID_RESPONSE'
+  | 'ENVELOPE_EXPIRED';
 
 /**
  * Custom error class for agent loop errors

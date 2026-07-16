@@ -18,6 +18,7 @@ import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
 import {
   CodeActSandbox,
@@ -1114,6 +1115,30 @@ export class AgentLoop {
 
       while (turn < this.maxTurns) {
         turn++;
+
+        // A run whose envelope is (about to be) expired cannot commit ANY write -
+        // every gateway call from here on is denied '[expired]' (enforcer.ts:73).
+        if (options?.envelope && envelopeExpired(options.envelope, Date.now(), 30_000)) {
+          const envId = String(
+            (options.envelope as { instance_id?: string }).instance_id ?? 'unknown'
+          );
+          if (options?.source === 'operator') {
+            // Non-interactive lane: abort loudly now instead of burning doomed turns.
+            // The trigger loop keeps its digest buffer and retries next cadence.
+            throw new AgentError(
+              `Envelope ${envId} expired mid-run at turn ${turn}; aborting doomed run`,
+              'ENVELOPE_EXPIRED',
+              undefined,
+              false
+            );
+          }
+          // Interactive lanes (chat): never abort a live conversation - deliver the
+          // text; individual writes will be denied loudly by the enforcer as today.
+          console.error(
+            `[AgentLoop] envelope ${envId} expired mid-run (turn ${turn}, source ${options?.source ?? 'unknown'}); ` +
+              `subsequent gateway writes will be denied`
+          );
+        }
 
         // Emergency brake: prevent infinite loops
         if (turn >= EMERGENCY_MAX_TURNS) {

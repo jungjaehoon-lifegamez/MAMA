@@ -1165,9 +1165,13 @@ export async function runAgentLoop(
             envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
               ? async () => {
                   const projectId = resolveReactiveProjectRoot(config, process.env);
+                  // A report run is multi-turn (each turn may take up to agent_ms).
+                  // The TTL must cover the RUN, not one request - otherwise every
+                  // long gather structurally outlives its envelope and all
+                  // end-of-run writes die '[expired]' (9 observed pre-fix).
                   const wallSeconds = Math.min(
-                    Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
-                    300
+                    Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
+                    1800
                   );
                   return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
                     agent_id: 'operator-report',
