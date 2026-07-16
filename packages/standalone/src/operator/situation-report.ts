@@ -227,13 +227,17 @@ export class SituationReporter {
       ([topic, content]) => `- ${topic}: ${content}`
     );
 
-    // Resolve the gather lines BEFORE the length guard: a zero-arg PROVIDER's
-    // `.length` is its arity (0), so guarding on the raw opts value would compile
+    // Resolve the gather lines only for the FULL report - the digest framing never renders
+    // them, so a zero-arg PROVIDER must not be invoked (it may do real gather work) just to
+    // build a digest prompt. The guard below stays anchored on the RESOLVED array: a zero-arg
+    // provider's `.length` is its arity (0), so guarding on the raw opts value would compile
     // cleanly and silently drop the ENTIRE gather block on every production report.
     const gatherLines =
-      typeof this.opts.selfGatherLines === 'function'
-        ? this.opts.selfGatherLines()
-        : (this.opts.selfGatherLines ?? []);
+      mode === 'full'
+        ? typeof this.opts.selfGatherLines === 'function'
+          ? this.opts.selfGatherLines()
+          : (this.opts.selfGatherLines ?? [])
+        : [];
 
     // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
     // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing

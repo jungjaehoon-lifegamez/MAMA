@@ -13,31 +13,33 @@ const stubPool = (adapter: PersistentCLIAdapter) => {
   return getProcess;
 };
 
-describe('per-call system prompt (no shared mutation)', () => {
-  it('routes options.systemPrompt to getProcess for this call only', async () => {
-    const adapter = new PersistentCLIAdapter({ systemPrompt: 'SPAWN-DEFAULT' });
-    const getProcess = stubPool(adapter);
+describe('Story BOUNDARY-3: per-call system prompt', () => {
+  describe('per-call system prompt (no shared mutation)', () => {
+    it('routes options.systemPrompt to getProcess for this call only', async () => {
+      const adapter = new PersistentCLIAdapter({ systemPrompt: 'SPAWN-DEFAULT' });
+      const getProcess = stubPool(adapter);
 
-    await adapter.prompt('hello', undefined, {
-      systemPrompt: 'PER-CALL-PROMPT',
+      await adapter.prompt('hello', undefined, {
+        systemPrompt: 'PER-CALL-PROMPT',
+      });
+
+      expect(getProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ systemPrompt: 'PER-CALL-PROMPT' })
+      );
+      expect(adapter.getOptions().systemPrompt).toBe('SPAWN-DEFAULT');
     });
 
-    expect(getProcess).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ systemPrompt: 'PER-CALL-PROMPT' })
-    );
-    expect(adapter.getOptions().systemPrompt).toBe('SPAWN-DEFAULT');
-  });
+    it('falls back to the constructor systemPrompt when no per-call value given', async () => {
+      const adapter = new PersistentCLIAdapter({ systemPrompt: 'SPAWN-DEFAULT' });
+      const getProcess = stubPool(adapter);
 
-  it('falls back to the constructor systemPrompt when no per-call value given', async () => {
-    const adapter = new PersistentCLIAdapter({ systemPrompt: 'SPAWN-DEFAULT' });
-    const getProcess = stubPool(adapter);
+      await adapter.prompt('hello');
 
-    await adapter.prompt('hello');
-
-    expect(getProcess).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ systemPrompt: 'SPAWN-DEFAULT' })
-    );
+      expect(getProcess).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ systemPrompt: 'SPAWN-DEFAULT' })
+      );
+    });
   });
 });

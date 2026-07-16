@@ -9,21 +9,23 @@ const adapterOptions = (loop: AgentLoop): { tools?: string } =>
     }
   ).persistentCLI.getOptions();
 
-describe('persona native tool lockdown (builtinTools pass-through)', () => {
-  it('passes builtinTools through to the CLI adapter as the --tools value', () => {
-    const loop = new AgentLoop({} as never, {
-      backend: 'claude',
-      toolsConfig: { gateway: ['*'], mcp: [] },
-      builtinTools: '',
+describe('Story BOUNDARY-2: persona native tool lockdown', () => {
+  describe('persona native tool lockdown (builtinTools pass-through)', () => {
+    it('passes builtinTools through to the CLI adapter as the --tools value', () => {
+      const loop = new AgentLoop({} as never, {
+        backend: 'claude',
+        toolsConfig: { gateway: ['*'], mcp: [] },
+        builtinTools: '',
+      });
+      expect(adapterOptions(loop).tools).toBe('');
     });
-    expect(adapterOptions(loop).tools).toBe('');
-  });
 
-  it('leaves native tools untouched when builtinTools is not set', () => {
-    const loop = new AgentLoop({} as never, {
-      backend: 'claude',
-      toolsConfig: { gateway: ['*'], mcp: [] },
+    it('leaves native tools untouched when builtinTools is not set', () => {
+      const loop = new AgentLoop({} as never, {
+        backend: 'claude',
+        toolsConfig: { gateway: ['*'], mcp: [] },
+      });
+      expect(adapterOptions(loop).tools).toBeUndefined();
     });
-    expect(adapterOptions(loop).tools).toBeUndefined();
   });
 });

@@ -715,7 +715,9 @@ export class AgentLoop {
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
     const base = buildAgentToolExecutionContext(options);
-    if (!base) return null; // no context fields - out-of-scope loops keep today's semantics
+    if (!base) {
+      return null; // no context fields - out-of-scope loops keep today's semantics
+    }
     return {
       ...base,
       // Persona blocks are per-call policy - never executor instance state.
