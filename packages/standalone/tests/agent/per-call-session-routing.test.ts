@@ -11,7 +11,7 @@ const makeProcess = () => ({
 });
 
 describe('Story BOUNDARY-5: per-call session routing', () => {
-  describe('per-call session routing (no shared mutation)', () => {
+  describe('AC #1: sessionId routes each call to its own process without shared mutation', () => {
     it('routes concurrent prompts to their own sessions without cross-talk', async () => {
       const adapter = new PersistentCLIAdapter({ sessionId: 'constructor-key' });
       const processes = new Map<string, ReturnType<typeof makeProcess>>();

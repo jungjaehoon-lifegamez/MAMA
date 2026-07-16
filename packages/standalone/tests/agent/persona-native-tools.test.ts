@@ -10,7 +10,7 @@ const adapterOptions = (loop: AgentLoop): { tools?: string } =>
   ).persistentCLI.getOptions();
 
 describe('Story BOUNDARY-2: persona native tool lockdown', () => {
-  describe('persona native tool lockdown (builtinTools pass-through)', () => {
+  describe('AC #1: builtinTools option controls the CLI --tools surface', () => {
     it('passes builtinTools through to the CLI adapter as the --tools value', () => {
       const loop = new AgentLoop({} as never, {
         backend: 'claude',

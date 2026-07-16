@@ -14,7 +14,7 @@ const stubPool = (adapter: PersistentCLIAdapter) => {
 };
 
 describe('Story BOUNDARY-3: per-call system prompt', () => {
-  describe('per-call system prompt (no shared mutation)', () => {
+  describe('AC #1: systemPrompt travels per prompt() call without mutating shared adapter state', () => {
     it('routes options.systemPrompt to getProcess for this call only', async () => {
       const adapter = new PersistentCLIAdapter({ systemPrompt: 'SPAWN-DEFAULT' });
       const getProcess = stubPool(adapter);

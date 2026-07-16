@@ -3,7 +3,7 @@ import { envelopeExpired } from '../../src/envelope/run-guard.js';
 import { AgentLoop } from '../../src/agent/agent-loop.js';
 
 describe('Story BOUNDARY-4: envelope run guard', () => {
-  describe('envelopeExpired', () => {
+  describe('AC #1: envelopeExpired is fail-closed with margin support', () => {
     const base = Date.parse('2026-07-16T00:00:00Z');
     const env = { expires_at: '2026-07-16T00:05:00Z' };
 
@@ -24,7 +24,7 @@ describe('Story BOUNDARY-4: envelope run guard', () => {
     });
   });
 
-  describe('runWithContent envelope guard', () => {
+  describe('AC #2: expired envelopes abort operator runs and never abort chat', () => {
     const expiredEnvelope = { expires_at: '2020-01-01T00:00:00Z', instance_id: 'env-test' };
 
     const makeLoop = (): AgentLoop => {
