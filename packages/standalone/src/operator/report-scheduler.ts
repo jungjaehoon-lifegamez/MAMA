@@ -98,14 +98,32 @@ export class FileReportScheduleStore implements ReportScheduleStore {
     this.path = path;
   }
 
-  /** Read-parse the whole state object (throws on corrupt or zero-byte file - no-fallback). MISSING file -> {}. */
+  /**
+   * Read-parse the whole state object. MISSING file -> {} (silent, as today). A corrupt/empty
+   * or non-object state file is disposable bookkeeping: rather than throw and permanently break
+   * the report leg, reset LOUDLY and return {}. Worst case after a reset is one duplicate report
+   * plus a wide gather window - both self-heal on the next successful report.
+   */
   private readState(): { lastFiredHourKey?: unknown; lastSuccessIso?: unknown } {
     if (!existsSync(this.path)) {
       return {};
     }
-    const parsed: unknown = JSON.parse(readFileSync(this.path, 'utf8')); // throws on corrupt (no-fallback)
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(readFileSync(this.path, 'utf8'));
+    } catch (error) {
+      console.error(
+        '[report-scheduler] state file corrupt or unreadable - resetting schedule state:',
+        error
+      );
+      return {};
+    }
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-      throw new Error(`corrupt report-schedule state (not an object): ${this.path}`);
+      console.error(
+        '[report-scheduler] state file corrupt or unreadable - resetting schedule state:',
+        `not a plain object: ${this.path}`
+      );
+      return {};
     }
     return parsed as { lastFiredHourKey?: unknown; lastSuccessIso?: unknown };
   }
