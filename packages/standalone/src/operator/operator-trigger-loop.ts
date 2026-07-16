@@ -68,8 +68,12 @@ export interface TriggerLoopDeps {
   output?: Pick<OutputSink, 'send'>;
   /** Scheduled full-report cadence (real: ReportScheduler). Absent -> full leg off (M2). */
   reportScheduler?: ReportSchedule;
-  /** M2.3: tool-call instructions for the FULL report so the agent self-gathers context. */
-  fullReportSelfGather?: string[];
+  /**
+   * M2.3: tool-call instructions for the FULL report so the agent self-gathers context.
+   * A provider form receives the last successful report's anchor so the heavy gather
+   * can scope its delta (`since=<lastSuccessIso>`); it is resolved AT FIRE TIME.
+   */
+  fullReportSelfGather?: string[] | ((ctx: { lastSuccessIso: string | null }) => string[]);
   /**
    * M8: board-reconcile feed. Invoked after commit with connector-qualified
    * channelKey ("<connector>:<channelId>") and bounded delta excerpt lines
@@ -122,7 +126,16 @@ export class OperatorTriggerLoop {
     };
     this.digest = new SituationReporter({ recordTriggerUse });
     this.fullReporter = new SituationReporter({
-      selfGatherLines: deps.fullReportSelfGather,
+      // Wrap a provider into a zero-arg closure resolved AT FIRE TIME (buildPrompt
+      // calls it): the delta anchor is the last SUCCESSFUL full report, so a run
+      // that failed never widens the next window (defer, never drop).
+      selfGatherLines:
+        typeof deps.fullReportSelfGather === 'function'
+          ? () =>
+              (deps.fullReportSelfGather as (ctx: { lastSuccessIso: string | null }) => string[])({
+                lastSuccessIso: deps.reportScheduler?.loadLastSuccess() ?? null,
+              })
+          : (deps.fullReportSelfGather ?? []),
       boardPublishLines: deps.fullReportBoardLines,
       recordTriggerUse,
     });
@@ -258,8 +271,18 @@ export class OperatorTriggerLoop {
     if (output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
+        // Anchor = FIRE time, captured BEFORE the run: anchoring at completion would
+        // leave a gap (messages arriving while the run executes fall after the gather
+        // but before a completion-time anchor). Overlap is tolerable; gaps are not.
+        const firedAtIso = new Date().toISOString();
         fullReported = await this.fullReporter.report(reportAsk, output, 'full');
         reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
+        if (fullReported) {
+          // ONLY a delivered report advances the delta anchor. A NOTHING-suppressed
+          // report or a Task-4 ENVELOPE_EXPIRED abort must NOT advance it, so the
+          // next report's window still covers everything this run missed.
+          reportScheduler.markSuccess(firedAtIso);
+        }
         log(
           `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
         );

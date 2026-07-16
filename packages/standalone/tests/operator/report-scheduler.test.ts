@@ -3,7 +3,7 @@
  * Pure local-hour decision + persisted last-fired key (restart-safe, no double-send).
  * No agent, no loop. Ports the Kagemusha tickScheduledReports mechanism (LOCAL hours here).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +18,14 @@ import {
 function memStore(initial: string | null = null): ReportScheduleStore & { saved: string[] } {
   let key = initial;
   const saved: string[] = [];
-  return { saved, load: () => key, save: (k: string) => { key = k; saved.push(k); } };
+  return {
+    saved,
+    load: () => key,
+    save: (k: string) => {
+      key = k;
+      saved.push(k);
+    },
+  };
 }
 
 describe('parseReportHours', () => {
@@ -86,7 +93,10 @@ describe('ReportScheduler.shouldFire', () => {
 describe('FileReportScheduleStore', () => {
   let tmp: string;
   let path: string;
-  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'report-sched-')); path = join(tmp, 'state.json'); });
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'report-sched-'));
+    path = join(tmp, 'state.json');
+  });
   afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 
   it('load() -> null when absent; save/load round-trips; survives a fresh instance (restart)', () => {
@@ -97,8 +107,16 @@ describe('FileReportScheduleStore', () => {
     expect(store.load()).toBe('2026-07-09:08');
     expect(new FileReportScheduleStore(path).load()).toBe('2026-07-09:08');
   });
-  it('corrupt state throws loudly (no-fallback)', () => {
+  it('corrupt state resets LOUDLY instead of throwing (disposable bookkeeping)', () => {
+    // A corrupt schedule-state file must not permanently break the report leg: reset to {}
+    // and log loudly. Worst case after reset is one duplicate report + a wide gather window.
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
     writeFileSync(path, 'not json', 'utf8');
-    expect(() => new FileReportScheduleStore(path).load()).toThrow();
+    expect(new FileReportScheduleStore(path).load()).toBeNull();
+    expect(spy).toHaveBeenCalledWith(
+      '[report-scheduler] state file corrupt or unreadable - resetting schedule state:',
+      expect.anything()
+    );
+    spy.mockRestore();
   });
 });

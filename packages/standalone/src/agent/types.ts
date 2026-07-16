@@ -13,6 +13,7 @@ import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { ContextCompileService } from './context-compile-service.js';
+import type { GatewayToolExecutor } from './gateway-tool-executor.js';
 import type {
   AppendToolTraceInput,
   BeginModelRunInput,
@@ -130,6 +131,8 @@ export type GatewayToolExecutionContext = {
   modelRunId?: string | null;
   gatewayCallId?: string;
   backgroundTasks?: BackgroundTaskRegistry;
+  /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
+  disallowedGatewayTools?: string[];
 };
 
 // ============================================================================
@@ -997,6 +1000,14 @@ export interface AgentLoopOptions {
   cliSessionId?: string;
 
   /**
+   * Start this run on a brand-new pool session (stateless lane). Used by the
+   * operator report lane: session context is a cache, not persistence - every
+   * run self-gathers and recalls, so carrying prior runs' gather dumps only
+   * grows the context until runs outlive their envelope TTL.
+   */
+  freshSession?: boolean;
+
+  /**
    * Skip permission prompts for CLI tool execution
    * WARNING: Security risk - enables autonomous tool execution without user approval
    * @default false
@@ -1044,6 +1055,13 @@ export interface AgentLoopOptions {
   disallowedTools?: string[];
 
   /**
+   * Native Claude Code built-in tool surface (--tools value). Pass-through to
+   * the PersistentCLIAdapter; '' disables all built-ins so gateway tools are the
+   * only surface. Consumed only by the claude backend; a no-op on codex-mcp.
+   */
+  builtinTools?: string;
+
+  /**
    * Enable Code-Act mode: LLM writes JS code blocks instead of tool_call blocks
    * Multiple tools composed in a single QuickJS sandbox execution
    * @default false
@@ -1075,6 +1093,15 @@ export interface AgentLoopOptions {
    * Called at key emission points: prompt latency, tool execution, errors
    */
   onMetric?: (name: string, value: number, labels?: Record<string, string>) => void;
+
+  /**
+   * Boot-wired GatewayToolExecutor to share. When provided, AgentLoop uses it
+   * and constructs nothing - every dependency wiring (task ledger, report
+   * publisher, event bus, gateways, wiki, obsidian, ...) reaches persona lanes
+   * by construction. Omit ONLY for deliberately isolated loops (memory agent,
+   * `mama run` CLI) that own their own dep set.
+   */
+  executor?: GatewayToolExecutor;
 }
 
 /**
@@ -1142,7 +1169,8 @@ export type AgentErrorCode =
   | 'NETWORK_ERROR'
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'
-  | 'INVALID_RESPONSE';
+  | 'INVALID_RESPONSE'
+  | 'ENVELOPE_EXPIRED';
 
 /**
  * Custom error class for agent loop errors

@@ -80,27 +80,40 @@ export class PersistentCLIAdapter implements IModelRunner {
       resumeSession?: boolean;
       allowedTools?: string[];
       disallowedTools?: string[];
+      systemPrompt?: string;
+      // Pool ROUTING key (SessionPool id) for THIS call, NOT the CLI --session-id.
+      // The pool spawns processes with its own randomUUID() (persistent-cli-process.ts:1028)
+      // so the CLI never reloads disk history. Routes this prompt without mutating
+      // shared adapter state.
+      sessionId?: string;
     }
   ): Promise<PromptResult> {
     // Get or create process for this channel
-    // NOTE: Do NOT pass sessionId here. The pool generates fresh randomUUID() for --session-id.
-    // Passing the SessionPool UUID would cause Claude CLI to reload disk history on process restart,
-    // leading to "Prompt is too long" errors when accumulated context exceeds the window.
-    this.currentProcess = await this.processPool.getProcess(this.channelKey, {
+    // NOTE: Do NOT pass sessionId to the process opts. The pool generates fresh randomUUID()
+    // for --session-id. Passing the SessionPool UUID would cause Claude CLI to reload disk
+    // history on process restart, leading to "Prompt is too long" errors when accumulated
+    // context exceeds the window. options.sessionId is the pool ROUTING key only.
+    const channelKey = options?.sessionId ?? this.channelKey;
+    const proc = await this.processPool.getProcess(channelKey, {
       model: options?.model || this.options.model,
-      systemPrompt: this.options.systemPrompt,
+      systemPrompt: options?.systemPrompt ?? this.options.systemPrompt,
       dangerouslySkipPermissions: this.options.dangerouslySkipPermissions,
       useGatewayTools: this.options.useGatewayTools,
       allowedTools: options?.allowedTools || this.options.allowedTools,
       disallowedTools: options?.disallowedTools || this.options.disallowedTools,
       env: { MAMA_HOOK_FEATURES: 'rules,agents' },
     });
+    // Keep the legacy accessor pointing at the most recent process, but NEVER
+    // dereference this.currentProcess inside prompt() - concurrent calls race it.
+    this.currentProcess = proc;
 
-    // Check if we have pending tool results to send first
-    if (this.pendingToolResults.size > 0) {
+    // Pending tool results belong to the legacy single-channel path; only flush
+    // them when this call routes to that same channel - flushing them into an
+    // arbitrary per-call session would misdeliver them.
+    if (channelKey === this.channelKey && this.pendingToolResults.size > 0) {
       // Verify the process is still alive before sending stale tool results
       // If the process was replaced (e.g., crashed and restarted), pending results are invalid
-      if (!this.currentProcess.isAlive()) {
+      if (!proc.isAlive()) {
         console.warn(
           `[PersistentAdapter] Process not alive, discarding ${this.pendingToolResults.size} pending tool results`
         );
@@ -110,7 +123,7 @@ export class PersistentCLIAdapter implements IModelRunner {
         for (const [toolUseId, { result, isError }] of this.pendingToolResults) {
           try {
             console.log(`[PersistentAdapter] Sending pending tool_result: ${toolUseId}`);
-            await this.currentProcess.sendToolResult(toolUseId, result, isError);
+            await proc.sendToolResult(toolUseId, result, isError);
           } catch (err) {
             console.error(`[PersistentAdapter] Failed to send tool_result ${toolUseId}:`, err);
           }
@@ -124,7 +137,7 @@ export class PersistentCLIAdapter implements IModelRunner {
     this._requestCount++;
     this._lastRequestAt = startTime;
     try {
-      const result = await this.currentProcess.sendMessage(content, callbacks);
+      const result = await proc.sendMessage(content, callbacks);
       this._totalLatencyMs += Date.now() - startTime;
 
       // Track tool use blocks for potential tool result sending
@@ -203,6 +216,8 @@ export class PersistentCLIAdapter implements IModelRunner {
    * Note: This creates a new channel key, effectively switching channels.
    * The old process is kept alive for potential reuse.
    * Callers should use resetSession() if the old process is no longer needed to avoid orphan processes.
+   *
+   * @deprecated - per-call sessionId via prompt() options; this mutates shared adapter state
    */
   setSessionId(sessionId: string): void {
     this.options.sessionId = sessionId;
@@ -218,6 +233,8 @@ export class PersistentCLIAdapter implements IModelRunner {
    *
    * IMPORTANT: This only affects new processes. Existing processes keep their prompt.
    * To apply a new system prompt, call resetSession() after setSystemPrompt().
+   *
+   * @deprecated - mutates shared spawn state; pass systemPrompt per prompt() call
    */
   setSystemPrompt(prompt: string): void {
     this.options.systemPrompt = prompt;

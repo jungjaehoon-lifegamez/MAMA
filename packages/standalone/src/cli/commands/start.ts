@@ -21,7 +21,11 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
-import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import type {
+  AgentContext,
+  GatewayToolExecutionContext,
+  MAMAApiInterface,
+} from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -621,6 +625,7 @@ export async function runAgentLoop(
     db,
     metricsStore,
     agentLoopBackend,
+    toolExecutor,
     {
       ...options,
       envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
@@ -630,6 +635,11 @@ export async function runAgentLoop(
   // ── Phase 3: MAMA Core API ────────────────────────────────────────────────
 
   const { mamaApi, mamaApiClient, connectorExtractionFn } = await initMamaCore(config);
+  // Wire the boot MAMA API onto the shared executor so it never lazily builds a
+  // SECOND API/adapter stack against the same DB (initializeMAMAApi). This also
+  // lets the memory agent fold into the shared executor (Task 7) instead of
+  // carrying its own private instance just for this API.
+  toolExecutor.setMamaApi(mamaApi as MAMAApiInterface);
 
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -660,7 +670,8 @@ export async function runAgentLoop(
     mamaApi,
     mamaApiClient,
     messageRouter,
-    agentLoopBackend
+    agentLoopBackend,
+    toolExecutor
   );
 
   // ── Phase 5: Graph Handler + Embedding ────────────────────────────────────
@@ -1164,9 +1175,13 @@ export async function runAgentLoop(
             envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
               ? async () => {
                   const projectId = resolveReactiveProjectRoot(config, process.env);
+                  // A report run is multi-turn (each turn may take up to agent_ms).
+                  // The TTL must cover the RUN, not one request - otherwise every
+                  // long gather structurally outlives its envelope and all
+                  // end-of-run writes die '[expired]' (9 observed pre-fix).
                   const wallSeconds = Math.min(
-                    Math.max(Math.floor((config.timeouts?.agent_ms ?? 300_000) / 1000), 1),
-                    300
+                    Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
+                    1800
                   );
                   return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
                     agent_id: 'operator-report',
@@ -1204,6 +1219,11 @@ export async function runAgentLoop(
                 sessionKey: OPERATOR_REPORT_SESSION_KEY,
                 source: 'operator',
                 channelId: 'report',
+                // Stateless report lane: each run starts on a fresh session so the
+                // continuous session no longer accumulates every run's gather dumps
+                // (measured 146s -> 521s growth over 3 days). Continuity comes from
+                // the storage layer (self-gather + mama_recall + report store).
+                freshSession: true,
                 ...(envelope ? { envelope } : {}),
               }
             );
@@ -1218,10 +1238,12 @@ export async function runAgentLoop(
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
         // reports "quiet" whenever polling is between batches).
-        fullReportSelfGather: [
+        fullReportSelfGather: ({ lastSuccessIso }: { lastSuccessIso: string | null }) => [
           'kagemusha_overview() for room/task/message counts',
           'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-          'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+          lastSuccessIso
+            ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
+            : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
           'mama_recall(query) for memory relevant to what you find',
           'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
         ],

@@ -18,6 +18,7 @@ import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
 import type { IModelRunner } from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
+import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
 import {
   CodeActSandbox,
@@ -606,6 +607,10 @@ export class AgentLoop {
         useGatewayTools: useGatewayMode,
         // Structurally disallow specific tools (e.g., Bash/Read for restricted agents)
         disallowedTools: options.disallowedTools,
+        // Native built-ins cross with text-parsed gateway calls (hallucinated
+        // ToolSearch/Agent, native gathering that bypasses report verification).
+        // Callers opt in per loop; agent-loop-init locks down the main persona.
+        tools: options.builtinTools,
         // Pass configured timeout (default in PersistentCLI: 120s — too short for complex tasks)
         requestTimeout: options.timeoutMs,
       });
@@ -619,10 +624,14 @@ export class AgentLoop {
         JSON.stringify(this.toolsConfig.mcp)
     );
 
-    this.mcpExecutor = new GatewayToolExecutor(executorOptions);
-    if (this.disallowedTools?.length) {
-      this.mcpExecutor.setDisallowedGatewayTools(this.disallowedTools);
-    }
+    // Root fix (2026-07-16): the daemon persona shares the boot-wired executor so
+    // every dependency wiring (task ledger, report publisher, event bus, gateways,
+    // wiki, obsidian, ...) reaches persona lanes by construction. Constructing a
+    // second instance here is allowed ONLY for deliberately isolated loops
+    // (memory agent, mama run CLI) that own their dep set.
+    this.mcpExecutor = options.executor ?? new GatewayToolExecutor(executorOptions);
+    // Persona tool blocks are per-call policy, not executor state - a shared
+    // executor must never inherit one caller's blocks (see buildToolExecutionContext).
     this.maxTurns = options.maxTurns ?? DEFAULT_MAX_TURNS;
     this.model = options.model!;
     this.onTurn = options.onTurn;
@@ -705,7 +714,21 @@ export class AgentLoop {
   }
 
   private buildToolExecutionContext(options?: AgentLoopOptions): AgentToolExecutionContext | null {
-    return buildAgentToolExecutionContext(options);
+    const base = buildAgentToolExecutionContext(options);
+    if (!base) {
+      return null; // no context fields - out-of-scope loops keep today's semantics
+    }
+    return {
+      ...base,
+      // Persona blocks are per-call policy - never executor instance state.
+      disallowedGatewayTools: this.disallowedTools,
+      // Never let persona calls inherit the code-act route's fallback identity.
+      // 'conductor' matches the existing delegation-routing fallback
+      // (gateway-tool-executor.ts:653) so attribution is unchanged.
+      // (Persona lanes always pass source/channelId, so base is non-null for them
+      // and the disallowed list travels on every persona run.)
+      agentId: base.agentId || 'conductor',
+    };
   }
 
   /**
@@ -969,9 +992,31 @@ export class AgentLoop {
     };
 
     if (options?.cliSessionId) {
-      this.agent.setSessionId(options.cliSessionId);
+      // Session routing travels per prompt() call via resolvedCliSessionId - no
+      // shared-adapter mutation (setSessionId re-pointed channelKey/currentProcess
+      // across awaits, cross-wiring concurrent lanes).
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(sessionIsNew)})`
+      );
+    } else if (options?.freshSession) {
+      // Stateless lanes (operator reports): session context is a cache, not
+      // persistence - every run self-gathers and recalls; carrying prior runs'
+      // gather dumps only grows the context until runs outlive their envelope
+      // (measured 146s -> 521s over 3 days; owner decision 2026-07-16).
+      const cliSessionId = this.sessionPool.resetSession(channelKey);
+      sessionIsNew = true;
+      ownedSession = true;
+      resolvedCliSessionId = cliSessionId;
+      if (isCodex) {
+        // Codex MCP manages threadId internally and ignores external session ids
+        // (codex-mcp-process.ts:366-369) - the pool reset does NOT reset the codex
+        // thread, so the stateless guarantee does not hold there. Loud, not silent.
+        console.log(
+          '[AgentLoop] freshSession is a pool-level reset only on the codex backend - the codex thread persists (see TODO: codex report thread reset)'
+        );
+      }
+      console.log(
+        `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (FRESH session - stateless lane)`
       );
     } else {
       // Fallback: get session from pool (for direct AgentLoop usage)
@@ -983,7 +1028,7 @@ export class AgentLoop {
       sessionIsNew = isNew;
       ownedSession = true;
       resolvedCliSessionId = cliSessionId;
-      this.agent.setSessionId(cliSessionId);
+      // Per-call routing via resolvedCliSessionId - no shared-adapter mutation.
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (${sessionLabel(isNew)})`
       );
@@ -1004,6 +1049,7 @@ export class AgentLoop {
         );
       }
 
+      let perCallSystemPrompt: string;
       if (options?.systemPrompt) {
         // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
         const alreadyHasTools =
@@ -1069,12 +1115,14 @@ export class AgentLoop {
           );
         }
 
+        perCallSystemPrompt = effectivePrompt;
         console.log(
-          `[AgentLoop] Setting systemPrompt: ${effectivePrompt.length} chars (base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+          `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
+            `(base: ${options.systemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
         );
-        this.agent.setSystemPrompt(effectivePrompt);
       } else {
-        console.log(`[AgentLoop] No systemPrompt in options, using default`);
+        perCallSystemPrompt = this.defaultSystemPrompt;
+        console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
       }
 
       // Reset StopContinuation state for this channel to prevent leaking
@@ -1091,6 +1139,30 @@ export class AgentLoop {
 
       while (turn < this.maxTurns) {
         turn++;
+
+        // A run whose envelope is (about to be) expired cannot commit ANY write -
+        // every gateway call from here on is denied '[expired]' (enforcer.ts:73).
+        if (options?.envelope && envelopeExpired(options.envelope, Date.now(), 30_000)) {
+          const envId = String(
+            (options.envelope as { instance_id?: string }).instance_id ?? 'unknown'
+          );
+          if (options?.source === 'operator') {
+            // Non-interactive lane: abort loudly now instead of burning doomed turns.
+            // The trigger loop keeps its digest buffer and retries next cadence.
+            throw new AgentError(
+              `Envelope ${envId} expired mid-run at turn ${turn}; aborting doomed run`,
+              'ENVELOPE_EXPIRED',
+              undefined,
+              false
+            );
+          }
+          // Interactive lanes (chat): never abort a live conversation - deliver the
+          // text; individual writes will be denied loudly by the enforcer as today.
+          console.error(
+            `[AgentLoop] envelope ${envId} expired mid-run (turn ${turn}, source ${options?.source ?? 'unknown'}); ` +
+              `subsequent gateway writes will be denied`
+          );
+        }
 
         // Emergency brake: prevent infinite loops
         if (turn >= EMERGENCY_MAX_TURNS) {
@@ -1134,6 +1206,8 @@ export class AgentLoop {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
+            systemPrompt: perCallSystemPrompt,
+            sessionId: resolvedCliSessionId ?? undefined,
           });
           // Emit prompt latency metric
           this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
@@ -1169,12 +1243,16 @@ export class AgentLoop {
 
             // Reset session in pool so it creates a new one
             const newSessionId = this.sessionPool.resetSession(channelKey);
-            this.agent.setSessionId(newSessionId);
+            // Per-call routing: hand the new id to this prompt() and update the
+            // resolved id so later turns follow it - no shared-adapter mutation.
+            resolvedCliSessionId = newSessionId;
 
             // Retry with new session (--session-id instead of --resume)
             piResult = await this.agent.prompt(promptText, callbacks, {
               model: options?.model,
               resumeSession: false, // Force new session
+              systemPrompt: perCallSystemPrompt,
+              sessionId: newSessionId,
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
