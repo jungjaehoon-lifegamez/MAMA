@@ -758,6 +758,25 @@ export function hasSecurityAlertSender(): boolean {
 }
 
 /**
+ * Record-only security event: appends to the security log (durable trail,
+ * surfaced by the code audit) and NOTHING else - no incident/denylist/RDAP
+ * fabrication (PR #151 lesson), no alert cooldown consumption, no throw when
+ * no sender is registered. For tripwires whose job is observability.
+ */
+export function logSecurityEventOnly(event: SecurityEvent): void {
+  const normalized: SecurityEvent = {
+    ...event,
+    timestamp: event.timestamp || new Date().toISOString(),
+  };
+  logger.warn(`[SECURITY] ${normalized.message}`, normalized);
+  trackBackgroundTask(
+    appendSecurityLog(normalized).catch((error) => {
+      logger.error('Failed to append security event log', error);
+    })
+  );
+}
+
+/**
  * Deliver an alert through the registered sender WITHOUT the incident pipeline.
  *
  * recordSecurityEvent() preserves evidence, writes denylist candidates, and

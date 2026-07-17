@@ -17,23 +17,81 @@ export interface RoleManagerOptions {
 }
 
 /**
+ * Per-message trust context for role resolution. chatType is a runtime,
+ * per-message property (a locked allowlist alone cannot prove "owner":
+ * an allowlisted GROUP chat contains third parties).
+ */
+export interface SourceTrustContext {
+  channelId?: string;
+  chatType?: string;
+}
+
+/**
  * RoleManager handles role-based permission checks
  */
 export class RoleManager {
   private rolesConfig: RolesConfig;
+  /**
+   * Telegram owner-trust state, computed from config.telegram.allowed_chats
+   * at boot and re-computed whenever that config changes. Fail-closed: with
+   * no trust configured, telegram resolves to its normal (chat_bot) mapping.
+   */
+  private telegramOwnerChats: Set<string> = new Set();
 
   constructor(options: RoleManagerOptions = {}) {
     this.rolesConfig = options.rolesConfig ?? DEFAULT_ROLES;
   }
 
   /**
+   * Install the telegram inbound allowlist as the owner-trust anchor.
+   * An empty/undefined list clears trust (owner_console never resolves).
+   */
+  setTelegramTrust(allowedChats: string[] | undefined): void {
+    this.telegramOwnerChats = new Set((allowedChats ?? []).map((id) => String(id).trim()));
+  }
+
+  /**
    * Get the role configuration for a given source
    * @param source - Message source (e.g., "viewer", "discord", "telegram")
+   * @param trust - Per-message trust context (channelId, chatType)
    * @returns Role configuration for the source
    */
-  getRoleForSource(source: string): { roleName: string; role: RoleConfig } {
+  getRoleForSource(
+    source: string,
+    trust?: SourceTrustContext
+  ): { roleName: string; role: RoleConfig } {
     const normalizedSource = source.toLowerCase();
-    const roleName = this.rolesConfig.sourceMapping[normalizedSource];
+
+    // Trust-conditional escalation: telegram + allowlist locked + 1:1 DM from
+    // an allowlisted chat -> owner_console. Groups/supergroups NEVER escalate
+    // even when allowlisted (third parties in the room). Fail-closed: any
+    // missing piece (no trust, no chatType, undefined role) falls through to
+    // the normal transport mapping.
+    if (
+      normalizedSource === 'telegram' &&
+      this.telegramOwnerChats.size > 0 &&
+      trust?.chatType === 'private' &&
+      trust.channelId !== undefined &&
+      this.telegramOwnerChats.has(String(trust.channelId))
+    ) {
+      const ownerRole = this.rolesConfig.definitions['owner_console'];
+      if (ownerRole) {
+        return { roleName: 'owner_console', role: ownerRole };
+      }
+    }
+
+    let roleName = this.rolesConfig.sourceMapping[normalizedSource];
+
+    // Runtime trust boundary (review: audit-only detection is not enforcement):
+    // a static sourceMapping to owner_console would grant the owner surface to
+    // UNVERIFIED inbound. Downgrade loudly - owner_console resolves ONLY via
+    // the trust-conditional branch above.
+    if (roleName === 'owner_console') {
+      console.warn(
+        `[RoleManager] static owner_console mapping for source "${source}" downgraded to chat_bot - owner_console is granted per-message by trust checks only`
+      );
+      roleName = 'chat_bot';
+    }
 
     if (!roleName) {
       // Default to chat_bot for unknown sources (secure default)

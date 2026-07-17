@@ -32,6 +32,7 @@ import {
   serializeContextRefForProvenance,
 } from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
   GatewayToolName,
@@ -505,6 +506,9 @@ export class GatewayToolExecutor {
   private currentChannelId: string = '';
   private disallowedGatewayTools: Set<string> = new Set();
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
+  private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
+  private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
+    null;
   private wikiPublisher: WikiPagePublisher | null = null;
   private wikiPublishAdapter: WikiPublishAdapter | null = null;
   private obsidianVaultPath: string | null = null;
@@ -779,6 +783,14 @@ export class GatewayToolExecutor {
 
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
+  }
+  /** Forwarder hook for on-demand full reports (plan v6 S1-T3). */
+  setReportRequestHandler(fn: () => { accepted: boolean; reason?: string }): void {
+    this.reportRequestHandler = fn;
+  }
+  /** Read seam for the owner board slots (plan v6 S1-T4 artifact hub). */
+  setReportReader(fn: () => Record<string, { html: string; updatedAt?: string | null }>): void {
+    this.reportReader = fn;
   }
   setWikiPublisher(fn: WikiPagePublisher): void {
     this.wikiPublisher = fn;
@@ -2120,6 +2132,22 @@ export class GatewayToolExecutor {
       switch (toolName as GatewayToolName) {
         case 'mama_save': {
           const saveInput = input as SaveInput;
+          // Secret inviolability (plan v6 S1-T7): a secret saved as a
+          // "decision" would resurface later via mama_search/recall - the one
+          // leak path a chat-reachable tool has. Refuse loudly at the choke.
+          const saveSecretScan = scanMemoryWriteInput(
+            saveInput as unknown as Record<string, unknown>
+          );
+          if (!saveSecretScan.clean) {
+            console.warn(
+              `[Security] mama_save refused: secret-shaped content (${saveSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to save: content matches secret pattern(s): ${saveSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           const api = await getApi();
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
@@ -2193,11 +2221,34 @@ export class GatewayToolExecutor {
           return await this.handleMamaRecall(input as RecallInput);
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
-        case 'mama_update':
+        case 'mama_update': {
+          const updateSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
+          if (!updateSecretScan.clean) {
+            console.warn(
+              `[Security] mama_update refused: secret-shaped content (${updateSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to update: content matches secret pattern(s): ${updateSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           return await handleUpdate(await getApi(), input as UpdateInput);
+        }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
         case 'mama_add': {
+          const addSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
+          if (!addSecretScan.clean) {
+            console.warn(
+              `[Security] mama_add refused: secret-shaped content (${addSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to add: content matches secret pattern(s): ${addSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           const api = await getApi();
           return await this.handleMamaAdd(
             input as { content: string },
@@ -2207,6 +2258,17 @@ export class GatewayToolExecutor {
           );
         }
         case 'mama_ingest': {
+          const ingestSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
+          if (!ingestSecretScan.clean) {
+            console.warn(
+              `[Security] mama_ingest refused: secret-shaped content (${ingestSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to ingest: content matches secret pattern(s): ${ingestSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           const api = await getApi();
           return await this.handleMamaIngest(
             input as { content: string; scopes?: unknown },
@@ -2235,6 +2297,74 @@ export class GatewayToolExecutor {
             };
           }
           throw new AgentError('Report publisher not configured', 'TOOL_ERROR', undefined, false);
+        }
+        case 'report_request': {
+          // Owner intent -> the REAL report machinery. Fire-and-forget: the
+          // report runs on the operator lane and is delivered by the owner
+          // leg; awaiting ~260s here would block the chat turn (and the plan
+          // bans nested awaited lane runs).
+          if (!this.reportRequestHandler) {
+            return {
+              success: false,
+              code: 'report_leg_disabled',
+              error:
+                'Full-report machinery is not enabled (trigger loop off or report channel unset). ' +
+                'The scheduled report legs are inactive on this deployment.',
+            };
+          }
+          const started = this.reportRequestHandler();
+          if (!started.accepted) {
+            return {
+              success: false,
+              code: `report_${started.reason ?? 'unavailable'}`,
+              error:
+                started.reason === 'busy'
+                  ? 'The operator lane is busy (a report or tick is in progress). Retry shortly.'
+                  : 'Report machinery unavailable (no output sink).',
+            };
+          }
+          return {
+            success: true,
+            message:
+              'Full report started. It will be generated fresh (delta-anchored) and delivered to the owner channel - tell the owner it is on its way; do not fabricate its contents.',
+          };
+        }
+        case 'board_read': {
+          if (!this.reportReader) {
+            return {
+              success: false,
+              code: 'board_unavailable',
+              error: 'Report store not wired (board_read requires the API server report store).',
+            };
+          }
+          const slots = this.reportReader();
+          return { success: true, slots };
+        }
+        case 'audit_findings_read': {
+          const auditStatePath = join(
+            process.env.HOME || homedir(),
+            '.mama',
+            'state',
+            'audit-findings.json'
+          );
+          try {
+            const raw = readFileSync(auditStatePath, 'utf8');
+            return { success: true, findings: JSON.parse(raw) };
+          } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') {
+              return {
+                success: true,
+                findings: null,
+                message: 'No audit findings recorded yet (first audit has not run).',
+              };
+            }
+            return {
+              success: false,
+              code: 'audit_state_unreadable',
+              error: `Failed to read audit findings: ${error instanceof Error ? error.message : String(error)}`,
+            };
+          }
         }
         case 'wiki_publish': {
           const pagesInput = (
@@ -3130,8 +3260,10 @@ export class GatewayToolExecutor {
 
       await saveConfig(config);
 
-      // Update RoleManager with new config
+      // Update RoleManager with new config (trust anchor included: telegram
+      // allowed_chats may have changed alongside roles in the saved config)
       this.roleManager.updateRolesConfig(config.roles);
+      this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
 
       return {
         success: true,
@@ -3291,8 +3423,9 @@ export class GatewayToolExecutor {
 
         await saveConfig(config);
 
-        // Update RoleManager with new config
+        // Update RoleManager with new config (trust anchor included)
         this.roleManager.updateRolesConfig(config.roles);
+        this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
 
         const changes = [`model: ${model}`];
         if (maxTurns !== undefined) changes.push(`maxTurns: ${maxTurns}`);

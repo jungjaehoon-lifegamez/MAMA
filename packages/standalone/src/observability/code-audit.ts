@@ -66,6 +66,10 @@ export interface CodeAuditConfigView {
     enabled?: boolean;
     agents?: Record<string, { persona_file?: string; enabled?: boolean }>;
   };
+  roles?: {
+    sourceMapping?: Record<string, string>;
+    definitions?: Record<string, unknown>;
+  };
 }
 
 export interface CodeAuditOptions {
@@ -330,6 +334,58 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
         detail: 'Set telegram.allowed_chats in config.yaml to the owner chat id(s).',
       });
     }
+  }
+
+  // owner_console must ONLY resolve via trust-conditional escalation (locked
+  // allowlist + private DM). A static sourceMapping grants the owner surface
+  // to unverified inbound - that is the open-console failure class.
+  const sourceMapping = options.config?.roles?.sourceMapping ?? {};
+  const staticOwnerSources = Object.entries(sourceMapping)
+    .filter(([, roleName]) => roleName === 'owner_console')
+    .map(([source]) => source);
+  if (staticOwnerSources.length > 0) {
+    findings.push({
+      id: 'owner-console-static-mapping',
+      severity: 'MAJOR',
+      summary: `owner_console statically mapped to source(s): ${staticOwnerSources.join(', ')}`,
+      detail:
+        'Remove the mapping; owner_console is granted per-message by RoleManager trust checks only.',
+    });
+  } else {
+    passes.push('owner_console has no static source mapping');
+  }
+
+  // The trust escalation silently no-ops when the owner_console definition is
+  // missing from the RESOLVED roles config (an older persisted roles section
+  // that skipped the additive merge). Locked allowlist + missing definition =
+  // the flagship console is dead without a sound (review B1 class).
+  if (
+    Array.isArray(telegram?.allowed_chats) &&
+    telegram.allowed_chats.length > 0 &&
+    options.config?.roles?.definitions &&
+    !('owner_console' in options.config.roles.definitions)
+  ) {
+    findings.push({
+      id: 'owner-console-definition-missing',
+      severity: 'MAJOR',
+      summary: 'telegram allowlist is locked but roles.definitions lacks owner_console',
+      detail:
+        'Trust escalation falls through to chat_bot silently. The config loader should merge default definitions; check for a stale roles section.',
+    });
+  }
+
+  // Telegram group/supergroup ids are negative. An allowlisted group does not
+  // escalate (RoleManager requires chatType private) but signals a config
+  // misunderstanding worth flagging.
+  const groupChats = (telegram?.allowed_chats ?? []).filter((id) => String(id).startsWith('-'));
+  if (groupChats.length > 0) {
+    findings.push({
+      id: 'telegram-allowlist-group-chat',
+      severity: 'MINOR',
+      summary: `telegram.allowed_chats contains group chat id(s): ${groupChats.join(', ')}`,
+      detail:
+        'Group members are third parties; groups never receive owner_console, but review whether the allowlist entry is intended.',
+    });
   }
 
   // Dedup + alert per the 24h contract

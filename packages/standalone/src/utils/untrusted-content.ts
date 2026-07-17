@@ -30,3 +30,49 @@ export function wrapUntrustedContent(source: string, content: string): string {
     END_MARKER,
   ].join('\n');
 }
+
+/**
+ * Remove every untrusted-content block, leaving only the surrounding
+ * (owner-authored) text. Unambiguous because wrap-time neutralization
+ * guarantees each block terminates at its own END marker - wrapped content
+ * cannot escape its block.
+ *
+ * Consumers: the sensitive-request wall (owner text only - a forwarded
+ * phishing message must not trip it) and the save-candidate extractor
+ * (a "remember this" INSIDE forwarded content is data, not an instruction).
+ */
+export function stripUntrustedBlocks(
+  text: string,
+  options: { unterminated?: 'drop' | 'keep' } = {}
+): string {
+  if (!text.includes(OPEN_MARKER)) {
+    return text;
+  }
+  const unterminated = options.unterminated ?? 'drop';
+  let result = '';
+  let cursor = 0;
+  while (cursor < text.length) {
+    const open = text.indexOf(OPEN_MARKER, cursor);
+    if (open === -1) {
+      result += text.slice(cursor);
+      break;
+    }
+    result += text.slice(cursor, open);
+    const end = text.indexOf(END_MARKER, open);
+    if (end === -1) {
+      // Unterminated open marker. Legit wraps ALWAYS terminate (wrap-time END
+      // neutralization), so this is either corruption or a SPOOFED marker a
+      // sender typed to smuggle text past a strip-then-check consumer.
+      // - 'keep' (sensitive wall): treat the tail as author text so a spoofed
+      //   marker cannot bypass the wall.
+      // - 'drop' (save-candidate extractor): fail-safe direction is to NOT
+      //   extract candidates from unattributable text.
+      if (unterminated === 'keep') {
+        result += text.slice(open);
+      }
+      break;
+    }
+    cursor = end + END_MARKER.length;
+  }
+  return result;
+}
