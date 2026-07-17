@@ -8,14 +8,6 @@
  */
 
 import type { NormalizedItem, ChannelConfig } from '../connectors/framework/types.js';
-import { wrapUntrustedContent } from '../utils/untrusted-content.js';
-
-export interface HubContextEntry {
-  project: string;
-  workUnit?: string;
-  assignedTo?: string;
-  status?: string;
-}
 
 export interface ClassifiedItems {
   truth: NormalizedItem[]; // role=truth
@@ -275,15 +267,6 @@ export function buildProjectTruth(truthItems: NormalizedItem[]): ProjectTruth {
 }
 
 /**
- * Format a single NormalizedItem as a prompt line: "author(HH:MM): content"
- */
-function formatItemLine(item: NormalizedItem): string {
-  const hh = String(item.timestamp.getHours()).padStart(2, '0');
-  const mm = String(item.timestamp.getMinutes()).padStart(2, '0');
-  return `${item.author}(${hh}:${mm}): ${item.content}`;
-}
-
-/**
  * Group items by "${source}:${channel}" key.
  */
 export function groupByChannel(items: NormalizedItem[]): Map<string, NormalizedItem[]> {
@@ -295,139 +278,4 @@ export function groupByChannel(items: NormalizedItem[]): Map<string, NormalizedI
     groups.set(key, existing);
   }
   return groups;
-}
-
-/**
- * Build an LLM prompt for activity channel extraction (Pass 1).
- * Includes truth context as a header so the agent can identify changes relative to ground truth.
- *
- * @param activity - Activity NormalizedItems (hub + deliverable + reference)
- * @param truth - Ground-truth project state from Pass 0
- */
-export function buildActivityExtractionPrompt(
-  activity: NormalizedItem[],
-  truth: ProjectTruth
-): string {
-  let prompt = 'You are a project historian.\n';
-  prompt +=
-    'IMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n';
-  prompt += 'Current project state (from management docs / kanban):\n';
-
-  const truthEntries = Object.entries(truth.projects);
-  if (truthEntries.length === 0) {
-    prompt += '(none)\n';
-  } else {
-    for (const [projectName, project] of truthEntries) {
-      for (const [workUnit, state] of Object.entries(project.workUnits)) {
-        prompt += `- ${projectName}/${workUnit}: ${state.status}`;
-        if (state.assigned) prompt += `, assigned: ${state.assigned}`;
-        prompt += '\n';
-      }
-    }
-  }
-
-  prompt += '\nBelow is the cross-channel activity for this period.\n';
-  prompt += 'Extract changes relative to the ground truth:\n';
-  prompt += '- Status changes (in-progress → submitted, etc.)\n';
-  prompt += '- Deliverable uploads (file changes)\n';
-  prompt += '- Decisions / agreements\n';
-  prompt += '- Schedule changes\n';
-  prompt += '- Lessons learned / problem-resolution\n\n';
-  prompt += 'Ignore casual conversation, greetings, and small talk.\n\n';
-  prompt +=
-    'Return as a JSON array: [{project, work_unit, kind, topic, summary, reasoning, event_date, confidence}]\n';
-  prompt += 'If there is nothing to extract, return an empty array [].\n\n---\n';
-
-  // Add activity items grouped by source:channel
-  const grouped = groupByChannel(activity);
-  const activitySections: string[] = [];
-  for (const [channel, channelItems] of grouped) {
-    const lines = channelItems
-      .map((item) => {
-        const time = item.timestamp.toISOString().slice(11, 16);
-        return `${item.author}(${time}): ${item.content}`;
-      })
-      .join('\n');
-    activitySections.push(`### ${channel}\n${lines}`);
-  }
-  prompt += `\n${wrapUntrustedContent('connector-activity', activitySections.join('\n\n'))}\n`;
-
-  return prompt;
-}
-
-/**
- * Build an LLM prompt for spoke channel extraction (Pass 2).
- * Includes hub context so the agent can connect spoke messages to known projects.
- * Optionally includes project truth for richer context.
- *
- * @param items - Spoke NormalizedItems
- * @param hubContext - Active project context from Pass 1
- * @param truth - Optional ground-truth project state for richer context
- */
-export function buildSpokeExtractionPrompt(
-  items: NormalizedItem[],
-  hubContext: HubContextEntry[],
-  truth?: ProjectTruth
-): string {
-  const groups = groupByChannel(items);
-
-  const channelSections: string[] = [];
-  for (const [channelKey, channelItems] of groups.entries()) {
-    const lines = channelItems.map(formatItemLine).join('\n');
-    channelSections.push(`### Channel: ${channelKey}\n${lines}`);
-  }
-
-  const messagesBlock = channelSections.join('\n\n');
-
-  const hubContextLines = hubContext
-    .map((entry) => {
-      const parts: string[] = [`- Project: ${entry.project}`];
-      if (entry.workUnit) parts.push(`  Work unit: ${entry.workUnit}`);
-      if (entry.assignedTo) parts.push(`  Assigned: ${entry.assignedTo}`);
-      if (entry.status) parts.push(`  Status: ${entry.status}`);
-      return parts.join('\n');
-    })
-    .join('\n');
-
-  let prompt = `You are a historian.\nIMPORTANT: Write all summary and reasoning fields in the same language as the source messages.\n\n`;
-
-  // Include truth context if provided
-  if (truth && Object.keys(truth.projects).length > 0) {
-    prompt += 'Project truth state (from management docs / kanban):\n';
-    for (const [projectName, project] of Object.entries(truth.projects)) {
-      for (const [workUnit, state] of Object.entries(project.workUnits)) {
-        prompt += `- ${projectName}/${workUnit}: ${state.status}`;
-        if (state.assigned) prompt += `, assigned: ${state.assigned}`;
-        prompt += '\n';
-      }
-    }
-    prompt += '\n';
-  }
-
-  prompt += `Current active project context:\n${hubContextLines || '(none)'}
-
-Extract important tasks, decisions, lessons, and schedules from the spoke channel messages below.
-Where possible, connect them to the hub projects above.
-Ignore casual small talk unrelated to hub projects.
-
-Output format: respond with a JSON array only. Output only JSON, no other text.
-Schema for each item:
-[
-  {
-    "project": "project name (use the hub context project name if linkable)",
-    "work_unit": "work unit or feature name (optional)",
-    "assigned_to": "assignee name (optional)",
-    "kind": "task | decision | lesson | schedule",
-    "topic": "one-line title",
-    "summary": "summary (2-3 sentences)",
-    "reasoning": "why this item was extracted and evidence linking it to a hub project",
-    "event_date": "YYYY-MM-DD format (if a date can be inferred from messages, otherwise null)",
-    "confidence": 0.0~1.0
-  }
-]
-
-Messages:
-${wrapUntrustedContent('connector-spoke', messagesBlock)}`;
-
-  return prompt;
 }
