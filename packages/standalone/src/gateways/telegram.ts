@@ -15,6 +15,7 @@ import type { NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
 import type { MessageRouter, ProcessingResult } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 
@@ -291,6 +292,15 @@ export class TelegramGateway extends BaseGateway {
     }
     if (!text.trim()) return;
 
+    // Provenance labeling: a FORWARDED message is third-party content the
+    // owner relayed, not the owner speaking. Wrap it so downstream treats it
+    // as data (never instructions), the sensitive-request wall skips it, and
+    // the save-candidate extractor ignores directives inside it.
+    const isForwarded = Boolean(msg.forward_origin);
+    if (isForwarded) {
+      text = wrapUntrustedContent('telegram-forward', text);
+    }
+
     if (isGroup && this.botUsername) {
       const escaped = this.botUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       text = text.replace(new RegExp(`@${escaped}\\b`, 'gi'), '').trim();
@@ -318,6 +328,10 @@ export class TelegramGateway extends BaseGateway {
         username: msg.from.username,
         messageId: String(msg.message_id),
         chatType: msg.chat.type,
+        // Trusted provenance flag: downstream strips untrusted blocks ONLY
+        // when the GATEWAY wrapped them - sender-typed markers are not a
+        // security boundary (forgeable in-band data).
+        untrustedWrapped: isForwarded,
       },
     };
 

@@ -332,6 +332,22 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     toolExecutor.setReportPublisher(
       createReportPublisher(apiServer.reportStore, apiServer.reportSseClients)
     );
+    // S1-T4 artifact hub: the console READS the board it directs. Same store
+    // the publisher writes - the conductor's status answers cite these slots
+    // instead of re-deriving state from memory copies.
+    toolExecutor.setReportReader(() => {
+      const slots = apiServer.reportStore.getAll();
+      const projected: Record<string, { html: string; updatedAt?: string | null }> = {};
+      for (const [name, slot] of Object.entries(slots)) {
+        projected[name] = {
+          html: slot.html,
+          updatedAt: Number.isFinite(slot.updatedAt)
+            ? new Date(slot.updatedAt).toISOString()
+            : null,
+        };
+      }
+      return projected;
+    });
   }
 
   if (dashboardAgentConfigured) {
@@ -781,6 +797,7 @@ This saves resources. Only compile when there is genuinely new information to do
         config: {
           telegram: config.telegram,
           multi_agent: config.multi_agent,
+          roles: config.roles,
         },
         // Evaluated at audit time: gateway-wiring registers the sender only
         // for ACTIVE gateways, so a configured target on a dead gateway must

@@ -29,6 +29,7 @@ import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-pr
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
+import { ToolRegistry } from '../agent/tool-registry.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
@@ -44,6 +45,9 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
+import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
+import { logSecurityEventOnly } from '../security/security-monitor.js';
+import { buildReportCarryPrefix } from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -220,7 +224,6 @@ export class MessageRouter {
   private envelopeAuthority?: EnvelopeAuthority;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
-  private cachedGatewayToolsPrompt: string | null = null;
   private gatewayRegistry: GatewayRegistry | null = null;
   private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
   private memoryAuditQueue?: AuditTaskQueue;
@@ -484,7 +487,13 @@ export class MessageRouter {
    * Determines role based on message source and builds context
    */
   private createAgentContext(message: NormalizedMessage, sessionId: string): AgentContext {
-    const { roleName, role } = this.roleManager.getRoleForSource(message.source);
+    // Per-message trust context: chatType is runtime state (a locked allowlist
+    // alone cannot prove owner - allowlisted groups contain third parties).
+    const { roleName, role } = this.roleManager.getRoleForSource(message.source, {
+      channelId: message.channelId,
+      chatType:
+        typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
+    });
     const capabilities = this.roleManager.getCapabilities(role);
     const limitations = this.roleManager.getLimitations(role);
 
@@ -539,8 +548,42 @@ export class MessageRouter {
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
-    // Security: Block sensitive configuration requests from non-viewer sources
-    if (message.source !== 'viewer' && containsSensitiveRequest(message.text)) {
+    // Security: Block sensitive configuration requests from non-viewer sources.
+    // The wall applies to OWNER-authored text only: untrusted-wrapped blocks
+    // (forwarded third-party content) are stripped first - the owner forwarding
+    // a phishing message that merely mentions "api key" must reach the persona
+    // (as labeled data), not trip the wall. Sensitive patterns INSIDE wrapped
+    // content are tripwire-logged instead (S1-T7).
+    // Strip wrapped blocks ONLY when trusted gateway metadata says the gateway
+    // itself wrapped them (forwarded content). Sender-typed markers are
+    // forgeable in-band data and never a security boundary: without the flag
+    // the wall sees the FULL text ('keep' handles unterminated spoofs too).
+    const gatewayWrapped = message.metadata?.untrustedWrapped === true;
+    const ownerAuthoredText = gatewayWrapped
+      ? stripUntrustedBlocks(message.text, { unterminated: 'keep' })
+      : message.text;
+    const hasWrappedBlocks = gatewayWrapped && ownerAuthoredText !== message.text;
+    // Tripwire (record-only, never blocks): sensitive patterns INSIDE wrapped
+    // third-party content are observability signals, not walls.
+    if (
+      hasWrappedBlocks &&
+      containsSensitiveRequest(message.text) &&
+      !containsSensitiveRequest(ownerAuthoredText)
+    ) {
+      logSecurityEventOnly({
+        type: 'sensitive_content_in_forward',
+        severity: 'warn',
+        message: 'Sensitive pattern inside forwarded/wrapped content (tripwire, not blocked)',
+        details: { source: message.source, channelId: message.channelId },
+      });
+    }
+    if (message.source !== 'viewer' && containsSensitiveRequest(ownerAuthoredText)) {
+      logSecurityEventOnly({
+        type: 'sensitive_request_blocked',
+        severity: 'warn',
+        message: 'Sensitive configuration request blocked in chat',
+        details: { source: message.source, channelId: message.channelId },
+      });
       const securityResponse = `🔒 **Security Notice**
 
 For security reasons, token and API key configuration must be done through MAMA OS.
@@ -774,6 +817,13 @@ This protects your credentials from being exposed in chat logs.`;
         logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
       }
 
+      // Context carry (plan v6 S1-T4): owner console turns reference the last
+      // DELIVERED full report. User-message prefix is the only channel that
+      // reaches the model on EVERY turn including CONTINUE (per-call system
+      // prompts never reach a pooled CLI process).
+      const carryPrefix =
+        agentContext?.roleName === 'owner_console' ? buildReportCarryPrefix() : '';
+
       try {
         if (shouldResume) {
           const notices = this.memoryNoticeQueue.peek(channelKey);
@@ -841,7 +891,7 @@ This protects your credentials from being exposed in chat logs.`;
 
         // Add text content (with memory context, skill context, and page context)
         const pageCtx = this.getPageContextPrefix(message);
-        const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}`;
+        const effectiveMessageText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -870,7 +920,7 @@ This protects your credentials from being exposed in chat logs.`;
         this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       } else {
         const pageCtx = this.getPageContextPrefix(message);
-        const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}`;
+        const effectiveText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
@@ -1156,14 +1206,22 @@ ${historyContext}
     // See process() method for user-message injection.
 
     // Include gateway tools directly in system prompt (priority 1 protection)
-    // so they don't get truncated by PromptSizeMonitor as a separate layer
-    // Cache in production; re-read in dev for hot-reload of gateway-tools.md
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (!isProduction || this.cachedGatewayToolsPrompt === null) {
-      this.cachedGatewayToolsPrompt = getGatewayToolsPrompt() || '';
-    }
-    if (this.cachedGatewayToolsPrompt) {
-      prompt += `\n---\n\n${this.cachedGatewayToolsPrompt}\n`;
+    // so they don't get truncated by PromptSizeMonitor as a separate layer.
+    // Prompt-permission coherence: advertise ONLY the tools this role can
+    // execute - the previous role-agnostic single cache advertised the full
+    // catalog, teaching the model to call tools the executor then denied.
+    // getGatewayToolsPrompt keeps its own per-disallowed-key cache, and its
+    // per-bullet filter preserves the '## Gateway Tools' marker - AgentLoop
+    // must keep seeing that marker or it double-injects an UNFILTERED catalog
+    // (agent-loop alreadyHasTools check).
+    const disallowedForRole = agentContext
+      ? ToolRegistry.getValidToolNames().filter(
+          (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
+        )
+      : undefined;
+    const gatewayToolsPrompt = getGatewayToolsPrompt(disallowedForRole) || '';
+    if (gatewayToolsPrompt) {
+      prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
 
     return prompt;
@@ -1557,6 +1615,7 @@ INSTRUCTION:
     const userId = message?.userId;
     const candidates = extractSaveCandidates({
       userText,
+      gatewayWrapped: message?.metadata?.untrustedWrapped === true,
       botResponse,
       channelKey,
       source,
@@ -1567,7 +1626,11 @@ INSTRUCTION:
     });
     const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
     const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
-    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
+    // The cooldown rate-limits memory-agent invocations for ORDINARY chatter.
+    // Candidate-bearing turns are owner directives/decisions - discarding one
+    // because another arrived within 30s loses real instructions, so they
+    // bypass the cooldown (bounded by how fast an owner can type directives).
+    if (candidates.length === 0 && now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
       return;
     }
 

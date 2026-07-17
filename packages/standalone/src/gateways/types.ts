@@ -82,6 +82,9 @@ export interface MessageMetadata {
   attachments?: MessageAttachment[];
   /** Telegram chat type (private, group, supergroup, channel) */
   chatType?: string;
+  /** Set by the gateway when IT wrapped third-party (forwarded) content in
+   *  untrusted markers - the only provenance downstream trusts for stripping. */
+  untrustedWrapped?: boolean;
   /** Channel history context (OpenClaw-style) */
   historyContext?: string;
   /** Session ID (for WebSocket/viewer) */

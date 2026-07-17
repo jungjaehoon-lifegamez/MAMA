@@ -13,6 +13,7 @@ import yaml from 'js-yaml';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { isAuthenticated, logUnauthorizedAttempt } from './auth-middleware.js';
 import { getForwardedClientAddress } from '../security/trusted-proxy.js';
+import { DEFAULT_ROLES } from '../cli/config/types.js';
 import {
   handleGetAgents,
   handleGetAgent,
@@ -2878,39 +2879,12 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
         quiet_start: 23,
         quiet_end: 8,
       },
-      roles: config.roles || {
-        definitions: {
-          os_agent: {
-            model: 'claude-sonnet-4-6',
-            maxTurns: 20,
-            allowedTools: ['*'],
-            systemControl: true,
-            sensitiveAccess: true,
-          },
-          chat_bot: {
-            model: 'claude-sonnet-4-6',
-            maxTurns: 10,
-            allowedTools: [
-              'mama_search',
-              'mama_recall',
-              'context_compile',
-              'mama_load_checkpoint',
-              'Read',
-              'discord_send',
-            ],
-            blockedTools: ['Bash', 'Write', 'mama_save', 'mama_update'],
-            systemControl: false,
-            sensitiveAccess: false,
-          },
-        },
-        sourceMapping: {
-          viewer: 'os_agent',
-          discord: 'chat_bot',
-          telegram: 'chat_bot',
-          slack: 'chat_bot',
-          chatwork: 'chat_bot',
-        },
-      },
+      roles: config.roles
+        ? {
+            definitions: { ...DEFAULT_ROLES.definitions, ...config.roles.definitions },
+            sourceMapping: { ...DEFAULT_ROLES.sourceMapping, ...config.roles.sourceMapping },
+          }
+        : DEFAULT_ROLES,
       multi_agent: config.multi_agent
         ? {
             enabled: config.multi_agent.enabled || false,
@@ -3364,12 +3338,49 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
   return errors;
 }
 
+function canonicalRolesJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalRolesJson).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalRolesJson(v)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveMAMAConfig(config: Record<string, any>): void {
   const configDir = path.dirname(MAMA_CONFIG_PATH);
 
   if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
+  }
+
+  // Prune role entries identical to shipped defaults (review R3-m1): this UI
+  // save path bypasses config-manager.saveConfig, and without the prune it
+  // would freeze default definitions into config.yaml (B1 silent-death class).
+  if (config.roles && DEFAULT_ROLES) {
+    const definitions: Record<string, unknown> = {};
+    for (const [name, def] of Object.entries(config.roles.definitions ?? {})) {
+      const defaultDef = (DEFAULT_ROLES.definitions as Record<string, unknown>)[name];
+      if (!defaultDef || canonicalRolesJson(def) !== canonicalRolesJson(defaultDef)) {
+        definitions[name] = def;
+      }
+    }
+    const sourceMapping: Record<string, string> = {};
+    for (const [source, role] of Object.entries(config.roles.sourceMapping ?? {})) {
+      if ((DEFAULT_ROLES.sourceMapping as Record<string, string>)[source] !== role) {
+        sourceMapping[source] = role as string;
+      }
+    }
+    if (Object.keys(definitions).length === 0 && Object.keys(sourceMapping).length === 0) {
+      delete config.roles;
+    } else {
+      config.roles = { definitions, sourceMapping };
+    }
   }
 
   const content = yaml.dump(config, {

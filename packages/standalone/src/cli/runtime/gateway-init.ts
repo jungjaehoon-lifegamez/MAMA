@@ -28,6 +28,7 @@
 import type { MAMAConfig } from '../config/types.js';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import { getRoleManager } from '../../agent/role-manager.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import {
   DiscordGateway,
@@ -198,6 +199,11 @@ export async function initGateways(
       slackGateway = null;
     }
   }
+
+  // Owner-trust anchor for role resolution (owner_console): computed from the
+  // telegram inbound allowlist at boot; per-message chatType gating happens in
+  // RoleManager. Set regardless of gateway enablement (fail-closed on empty).
+  getRoleManager().setTelegramTrust(config.telegram?.allowed_chats);
 
   // Initialize Telegram gateway if enabled
   let telegramGateway: TelegramGateway | null = null;

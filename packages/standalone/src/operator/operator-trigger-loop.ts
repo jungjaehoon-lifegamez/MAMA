@@ -47,6 +47,13 @@ export interface TriggerLoopConfig {
    * ms later (Kagemusha fast-flush port). Default 15000. 0 == tick immediately on nudge.
    */
   nudgeDebounceMs?: number;
+  /**
+   * Scheduled full-report suppression window (ms, default 30min): if the last
+   * SUCCESSFUL full report (usually an on-demand one) is younger than this,
+   * the scheduled fire skips and consumes its hour instead of sending a
+   * near-empty duplicate.
+   */
+  fullReportMinIntervalMs?: number;
 }
 
 export interface TriggerLoopDeps {
@@ -83,6 +90,8 @@ export interface TriggerLoopDeps {
   onChannelDelta?: (channelKey: string, lines: string[]) => void;
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
+  /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
+  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -138,6 +147,7 @@ export class OperatorTriggerLoop {
           : (deps.fullReportSelfGather ?? []),
       boardPublishLines: deps.fullReportBoardLines,
       recordTriggerUse,
+      persistLastFullReport: deps.persistLastFullReport,
     });
   }
 
@@ -271,21 +281,37 @@ export class OperatorTriggerLoop {
     if (output && reportScheduler) {
       const { fire, hourKey } = reportScheduler.shouldFire(new Date());
       if (fire) {
-        // Anchor = FIRE time, captured BEFORE the run: anchoring at completion would
-        // leave a gap (messages arriving while the run executes fall after the gather
-        // but before a completion-time anchor). Overlap is tolerable; gaps are not.
-        const firedAtIso = new Date().toISOString();
-        fullReported = await this.fullReporter.report(reportAsk, output, 'full');
-        reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
-        if (fullReported) {
-          // ONLY a delivered report advances the delta anchor. A NOTHING-suppressed
-          // report or a Task-4 ENVELOPE_EXPIRED abort must NOT advance it, so the
-          // next report's window still covers everything this run missed.
-          reportScheduler.markSuccess(firedAtIso);
+        // On-demand merge suppression (plan v6 S1-T3): an owner-requested full
+        // report minutes before the scheduled hour makes the scheduled fire a
+        // near-empty duplicate. Skip-and-CONSUME (markFired) - the on-demand
+        // report WAS this hour's report; defer semantics would re-fire later
+        // ticks in the same hour.
+        const lastSuccess = reportScheduler.loadLastSuccess();
+        const minIntervalMs = config.fullReportMinIntervalMs ?? 30 * 60_000;
+        const sinceSuccessMs = lastSuccess ? Date.now() - Date.parse(lastSuccess) : Infinity;
+        if (Number.isFinite(sinceSuccessMs) && sinceSuccessMs < minIntervalMs) {
+          reportScheduler.markFired(hourKey);
+          log(
+            `[trigger-loop] tick ${tick}: full report skipped - last success ${lastSuccess} ` +
+              `within min interval (hour ${hourKey} consumed)`
+          );
+        } else {
+          // Anchor = FIRE time, captured BEFORE the run: anchoring at completion would
+          // leave a gap (messages arriving while the run executes fall after the gather
+          // but before a completion-time anchor). Overlap is tolerable; gaps are not.
+          const firedAtIso = new Date().toISOString();
+          fullReported = await this.fullReporter.report(reportAsk, output, 'full');
+          reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
+          if (fullReported) {
+            // ONLY a delivered report advances the delta anchor. A NOTHING-suppressed
+            // report or a Task-4 ENVELOPE_EXPIRED abort must NOT advance it, so the
+            // next report's window still covers everything this run missed.
+            reportScheduler.markSuccess(firedAtIso);
+          }
+          log(
+            `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
+          );
         }
-        log(
-          `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
-        );
       }
     }
 
@@ -304,6 +330,56 @@ export class OperatorTriggerLoop {
    * uncommitted deltas simply wait for the next tick. Pure timing assist: it only changes WHEN an
    * existing tick runs, never WHAT it does.
    */
+  /**
+   * On-demand full report (plan v6 S1-T3): the owner's "give me the full
+   * report" intent routed to the SAME machinery as the scheduled leg - same
+   * reporter, same anchor semantics, same serial guard. Host-code entry
+   * (gateway forwarder hook); the run itself is fire-and-forget so the chat
+   * turn that triggered it is never blocked (and never nests lane runs).
+   *
+   * Consume semantics: success marks the current hourKey fired, so a
+   * scheduled fire in the same hour does not duplicate; markSuccess advances
+   * the delta anchor exactly like a scheduled run.
+   */
+  startFullReport(): { accepted: boolean; reason?: 'busy' | 'unavailable' } {
+    const output = this.deps.output;
+    const reportScheduler = this.deps.reportScheduler;
+    if (!output) {
+      return { accepted: false, reason: 'unavailable' };
+    }
+    if (this.running) {
+      return { accepted: false, reason: 'busy' };
+    }
+    this.running = true;
+    const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
+    const firedAtIso = new Date().toISOString();
+    void this.fullReporter
+      .report(reportAsk, output, 'full')
+      .then((sent) => {
+        if (reportScheduler) {
+          const { hourKey } = reportScheduler.shouldFire(new Date());
+          reportScheduler.markFired(hourKey);
+          if (sent) {
+            reportScheduler.markSuccess(firedAtIso);
+          }
+        }
+        this.deps.log(
+          `[trigger-loop] on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
+        );
+      })
+      .catch((error: unknown) => {
+        this.deps.log(
+          `[trigger-loop] on-demand full report FAILED: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      })
+      .finally(() => {
+        this.running = false;
+      });
+    return { accepted: true };
+  }
+
   nudge(): void {
     if (this.nudgeTimer) return; // already armed - debounce collapses the burst
     const configured = this.deps.config.nudgeDebounceMs;
