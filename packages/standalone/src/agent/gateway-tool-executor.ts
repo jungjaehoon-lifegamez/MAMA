@@ -3130,8 +3130,10 @@ export class GatewayToolExecutor {
 
       await saveConfig(config);
 
-      // Update RoleManager with new config
+      // Update RoleManager with new config (trust anchor included: telegram
+      // allowed_chats may have changed alongside roles in the saved config)
       this.roleManager.updateRolesConfig(config.roles);
+      this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
 
       return {
         success: true,
@@ -3291,8 +3293,9 @@ export class GatewayToolExecutor {
 
         await saveConfig(config);
 
-        // Update RoleManager with new config
+        // Update RoleManager with new config (trust anchor included)
         this.roleManager.updateRolesConfig(config.roles);
+        this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
 
         const changes = [`model: ${model}`];
         if (maxTurns !== undefined) changes.push(`maxTurns: ${maxTurns}`);

@@ -66,6 +66,7 @@ export interface CodeAuditConfigView {
     enabled?: boolean;
     agents?: Record<string, { persona_file?: string; enabled?: boolean }>;
   };
+  roles?: { sourceMapping?: Record<string, string> };
 }
 
 export interface CodeAuditOptions {
@@ -330,6 +331,39 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
         detail: 'Set telegram.allowed_chats in config.yaml to the owner chat id(s).',
       });
     }
+  }
+
+  // owner_console must ONLY resolve via trust-conditional escalation (locked
+  // allowlist + private DM). A static sourceMapping grants the owner surface
+  // to unverified inbound - that is the open-console failure class.
+  const sourceMapping = options.config?.roles?.sourceMapping ?? {};
+  const staticOwnerSources = Object.entries(sourceMapping)
+    .filter(([, roleName]) => roleName === 'owner_console')
+    .map(([source]) => source);
+  if (staticOwnerSources.length > 0) {
+    findings.push({
+      id: 'owner-console-static-mapping',
+      severity: 'MAJOR',
+      summary: `owner_console statically mapped to source(s): ${staticOwnerSources.join(', ')}`,
+      detail:
+        'Remove the mapping; owner_console is granted per-message by RoleManager trust checks only.',
+    });
+  } else {
+    passes.push('owner_console has no static source mapping');
+  }
+
+  // Telegram group/supergroup ids are negative. An allowlisted group does not
+  // escalate (RoleManager requires chatType private) but signals a config
+  // misunderstanding worth flagging.
+  const groupChats = (telegram?.allowed_chats ?? []).filter((id) => String(id).startsWith('-'));
+  if (groupChats.length > 0) {
+    findings.push({
+      id: 'telegram-allowlist-group-chat',
+      severity: 'MINOR',
+      summary: `telegram.allowed_chats contains group chat id(s): ${groupChats.join(', ')}`,
+      detail:
+        'Group members are third parties; groups never receive owner_console, but review whether the allowlist entry is intended.',
+    });
   }
 
   // Dedup + alert per the 24h contract

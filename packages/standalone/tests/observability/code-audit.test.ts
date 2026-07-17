@@ -249,6 +249,36 @@ describe('Story SEC-3: deterministic code audit', () => {
     });
   });
 
+  describe('AC #13: owner_console guardrails (plan v6 S1-T1)', () => {
+    it('flags a static owner_console source mapping as MAJOR', async () => {
+      const report = await run({
+        config: { roles: { sourceMapping: { telegram: 'owner_console' } } },
+        alert: () => {},
+      });
+      const finding = report.findings.find((f) => f.id === 'owner-console-static-mapping');
+      expect(finding?.severity).toBe('MAJOR');
+    });
+
+    it('flags allowlisted group chat ids as MINOR and passes clean configs', async () => {
+      const flagged = await run({
+        config: { telegram: { enabled: true, allowed_chats: ['7777', '-100999'] } },
+      });
+      expect(flagged.findings.find((f) => f.id === 'telegram-allowlist-group-chat')?.severity).toBe(
+        'MINOR'
+      );
+
+      const clean = await run({
+        config: {
+          telegram: { enabled: true, allowed_chats: ['7777'] },
+          roles: { sourceMapping: { telegram: 'chat_bot' } },
+        },
+      });
+      expect(clean.findings.find((f) => f.id === 'owner-console-static-mapping')).toBeUndefined();
+      expect(clean.findings.find((f) => f.id === 'telegram-allowlist-group-chat')).toBeUndefined();
+      expect(clean.pass_items.join('\n')).toContain('owner_console has no static source mapping');
+    });
+  });
+
   describe('AC #9: missing persona files are INFO when multi-agent is disabled, MINOR when enabled', () => {
     it('grades by multi_agent.enabled', async () => {
       const config = {

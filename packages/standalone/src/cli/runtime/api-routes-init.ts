@@ -781,6 +781,7 @@ This saves resources. Only compile when there is genuinely new information to do
         config: {
           telegram: config.telegram,
           multi_agent: config.multi_agent,
+          roles: config.roles,
         },
         // Evaluated at audit time: gateway-wiring registers the sender only
         // for ACTIVE gateways, so a configured target on a dead gateway must
