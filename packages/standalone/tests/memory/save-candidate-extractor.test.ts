@@ -105,3 +105,53 @@ describe('Story: Extract save candidates', () => {
     });
   });
 });
+
+import { wrapUntrustedContent } from '../../src/utils/untrusted-content.js';
+
+// prettier-ignore
+const directiveKeywords = ['보고는 항상 한글로 작성해줘', '내일부터는 아침에 먼저 요약을 보내줘', '고객 채널에는 이모지 쓰지 마'];
+
+describe('Story OPS-1 / S1-T6: owner directive persistence', () => {
+  const base = {
+    botResponse: 'ok',
+    channelKey: 'telegram:5551000001',
+    source: 'telegram',
+    channelId: '5551000001',
+    userId: '5551000001',
+    projectId: '/repo',
+    createdAt: 1,
+  };
+
+  describe('AC #1: standing directives become preference candidates', () => {
+    it.each(directiveKeywords)('detects: %s', (utterance) => {
+      const candidates = extractSaveCandidates({ ...base, userText: utterance });
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0].kind).toBe('preference');
+    });
+
+    it('detects english standing directives', () => {
+      const candidates = extractSaveCandidates({
+        ...base,
+        userText: 'From now on send the summary before 9am.',
+      });
+      expect(candidates.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('AC #2: directives inside untrusted blocks are data, not instructions', () => {
+    it('produces zero candidates for a wrapped third-party directive', () => {
+      const wrapped = wrapUntrustedContent('telegram-forward', directiveKeywords[0]);
+      const candidates = extractSaveCandidates({ ...base, userText: wrapped });
+      expect(candidates).toEqual([]);
+    });
+
+    it('still extracts the owner text surrounding a wrapped block', () => {
+      const wrapped = wrapUntrustedContent('telegram-forward', 'noise');
+      const candidates = extractSaveCandidates({
+        ...base,
+        userText: `${directiveKeywords[0]}\n${wrapped}`,
+      });
+      expect(candidates).toHaveLength(1);
+    });
+  });
+});
