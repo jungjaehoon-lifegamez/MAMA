@@ -80,7 +80,18 @@ export class RoleManager {
       }
     }
 
-    const roleName = this.rolesConfig.sourceMapping[normalizedSource];
+    let roleName = this.rolesConfig.sourceMapping[normalizedSource];
+
+    // Runtime trust boundary (review: audit-only detection is not enforcement):
+    // a static sourceMapping to owner_console would grant the owner surface to
+    // UNVERIFIED inbound. Downgrade loudly - owner_console resolves ONLY via
+    // the trust-conditional branch above.
+    if (roleName === 'owner_console') {
+      console.warn(
+        `[RoleManager] static owner_console mapping for source "${source}" downgraded to chat_bot - owner_console is granted per-message by trust checks only`
+      );
+      roleName = 'chat_bot';
+    }
 
     if (!roleName) {
       // Default to chat_bot for unknown sources (secure default)

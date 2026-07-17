@@ -35,6 +35,15 @@ import type { SQLiteDatabase } from '../../sqlite.js';
 import { insertTokenUsage } from '../../api/index.js';
 import { getLatestVersion, upsertMetrics } from '../../db/agent-store.js';
 import { syncBuiltinSkills } from './utilities.js';
+import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+
+const { DebugLogger } = debugLogger as {
+  DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+  };
+};
+const initLogger = new DebugLogger('AgentLoopInit');
 
 // __dirname is available globally in CJS output (NodeNext compiles to CommonJS)
 declare const __dirname: string;
@@ -154,7 +163,7 @@ export function initMainAgentLoop(
       // The instance handler keeps only the log side effect for runs that
       // pass no per-call handler (operator report/worker lanes).
       onToolUse: (toolName, _input, result) => {
-        console.log(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
+        initLogger.info(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
       },
       onTokenUsage: (record) => {
         try {
@@ -203,8 +212,12 @@ export function initMainAgentLoop(
     autoRecallUsed: boolean
   ): string => {
     const parts: string[] = [];
-    if (autoRecallUsed) parts.push('📚 Memory');
-    if (toolsUsed.length > 0) parts.push(toolsUsed.join(', '));
+    if (autoRecallUsed) {
+      parts.push('📚 Memory');
+    }
+    if (toolsUsed.length > 0) {
+      parts.push(toolsUsed.join(', '));
+    }
     parts.push(`⏱️ ${turns} turns`);
     return `||${parts.join(' | ')}||`;
   };
@@ -239,7 +252,7 @@ export function initMainAgentLoop(
       } else if (resultObj?.success !== undefined) {
         reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
       }
-      console.log(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
+      initLogger.info(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
       options?.onToolUse?.(toolName, input, result);
     },
   });

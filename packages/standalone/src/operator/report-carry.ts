@@ -13,6 +13,7 @@
  */
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -35,22 +36,40 @@ export function persistLastFullReport(
 ): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = join(dirname(path), `.last-full-report.${process.pid}.tmp`);
+  // 0600: the carried report is owner operational data.
   writeFileSync(
     tmp,
-    JSON.stringify({ deliveredAt: deliveredAtIso, text } satisfies LastFullReport)
+    JSON.stringify({ deliveredAt: deliveredAtIso, text } satisfies LastFullReport),
+    {
+      mode: 0o600,
+    }
   );
   renameSync(tmp, path);
 }
 
 /** Load the last delivered full report; null when none exists or the file is unreadable. */
 export function loadLastFullReport(path: string = defaultCarryPath()): LastFullReport | null {
+  let raw: string;
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<LastFullReport>;
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    // Missing file is the normal no-report-yet state.
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<LastFullReport>;
     if (typeof parsed.deliveredAt !== 'string' || typeof parsed.text !== 'string') {
+      console.warn(`[report-carry] carry file has invalid shape, ignoring: ${path}`);
       return null;
     }
     return { deliveredAt: parsed.deliveredAt, text: parsed.text };
-  } catch {
+  } catch (error) {
+    // Corrupt state must be LOUD (repo rule), then fall back to no-carry.
+    console.warn(
+      `[report-carry] carry file corrupt, ignoring (${path}): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
     return null;
   }
 }
@@ -69,9 +88,14 @@ export function buildReportCarryPrefix(path: string = defaultCarryPath()): strin
     last.text.length > CARRY_SUMMARY_MAX_CHARS
       ? `${last.text.slice(0, CARRY_SUMMARY_MAX_CHARS)}\n[... truncated - full text was delivered to the owner channel]`
       : last.text;
+  // The report is agent-authored but SUMMARIZES third-party content; wrapping
+  // it keeps reproduced instructions inert across every future turn it rides.
   return (
     `[Operator context] The last FULL situation report was delivered at ${last.deliveredAt}.\n` +
     `If the owner asks for a report or current status, reference/refresh THIS instead of ` +
-    `reconstructing state from memory. Content:\n${summary}\n---\n`
+    `reconstructing state from memory. Content:\n${wrapUntrustedContent(
+      'operator-report-carry',
+      summary
+    )}\n---\n`
   );
 }

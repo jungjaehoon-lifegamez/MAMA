@@ -1143,13 +1143,16 @@ export async function runAgentLoop(
       const fullReportHours = parseReportHours(
         process.env.MAMA_TRIGGER_LOOP_FULL_REPORT_HOURS || ''
       );
-      const reportScheduler =
-        fullReportHours.length > 0 && reportOutput
-          ? new ReportScheduler(
-              fullReportHours,
-              new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
-            )
-          : undefined;
+      // Constructed whenever the report SINK exists, even with no scheduled
+      // hours (empty hours -> shouldFire never fires): on-demand reports
+      // (report_request) need the persistent anchor state to load and advance
+      // the delta window regardless of the scheduled leg (review PR#153).
+      const reportScheduler = reportOutput
+        ? new ReportScheduler(
+            fullReportHours,
+            new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
+          )
+        : undefined;
       const triggerLoop = new OperatorTriggerLoop({
         delta: new ConnectorDeltaRepo(
           getAdapter(),

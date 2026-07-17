@@ -16,7 +16,7 @@ const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
   { name: 'slack-token', pattern: new RegExp('\\bxox' + '[baprs]-[A-Za-z0-9-]{10,}\\b') },
   {
     name: 'telegram-bot-token',
-    pattern: new RegExp('\\b\\d{8,10}:' + 'AA[A-Za-z0-9_-]{30,}\\b'),
+    pattern: new RegExp('\\b\\d{8,12}:' + 'AA[A-Za-z0-9_-]{30,}\\b'),
   },
   { name: 'aws-access-key', pattern: new RegExp('\\bAKIA' + '[0-9A-Z]{16}\\b') },
   {
@@ -47,8 +47,15 @@ export function scanForSecrets(text: string): SecretScanResult {
  */
 export function scanMemoryWriteInput(input: Record<string, unknown>): SecretScanResult {
   const texts: string[] = [];
+  let truncated = false;
   const visit = (value: unknown, depth: number): void => {
-    if (depth > 4 || value === null || value === undefined) {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (depth > 4) {
+      // Fail CLOSED: an abnormally deep memory-write payload is refused, never
+      // silently under-scanned (a secret below the cap must not pass as clean).
+      truncated = true;
       return;
     }
     if (typeof value === 'string') {
@@ -68,5 +75,8 @@ export function scanMemoryWriteInput(input: Record<string, unknown>): SecretScan
     }
   };
   visit(input, 0);
+  if (truncated) {
+    return { clean: false, matches: ['scan-depth-limit-exceeded'] };
+  }
   return scanForSecrets(texts.join('\n'));
 }

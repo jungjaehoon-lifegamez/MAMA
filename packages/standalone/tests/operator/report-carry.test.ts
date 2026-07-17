@@ -47,7 +47,7 @@ describe('Story OPS-1 / S1-T4: report context carry', () => {
       const path = tempCarryPath();
       persistLastFullReport('2026-07-17T04:02:48.000Z', 'x'.repeat(5000), path);
       const prefix = buildReportCarryPrefix(path);
-      expect(prefix.length).toBeLessThan(1200);
+      expect(prefix.length).toBeLessThan(1600);
       expect(prefix).toContain('truncated');
     });
   });

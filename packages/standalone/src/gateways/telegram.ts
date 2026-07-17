@@ -296,7 +296,8 @@ export class TelegramGateway extends BaseGateway {
     // owner relayed, not the owner speaking. Wrap it so downstream treats it
     // as data (never instructions), the sensitive-request wall skips it, and
     // the save-candidate extractor ignores directives inside it.
-    if (msg.forward_origin) {
+    const isForwarded = Boolean(msg.forward_origin);
+    if (isForwarded) {
       text = wrapUntrustedContent('telegram-forward', text);
     }
 
@@ -327,6 +328,10 @@ export class TelegramGateway extends BaseGateway {
         username: msg.from.username,
         messageId: String(msg.message_id),
         chatType: msg.chat.type,
+        // Trusted provenance flag: downstream strips untrusted blocks ONLY
+        // when the GATEWAY wrapped them - sender-typed markers are not a
+        // security boundary (forgeable in-band data).
+        untrustedWrapped: isForwarded,
       },
     };
 

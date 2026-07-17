@@ -554,10 +554,15 @@ export class MessageRouter {
     // a phishing message that merely mentions "api key" must reach the persona
     // (as labeled data), not trip the wall. Sensitive patterns INSIDE wrapped
     // content are tripwire-logged instead (S1-T7).
-    // 'keep' for unterminated markers: a sender typing a bare open marker must
-    // NOT be able to smuggle a sensitive request past the wall (review M1).
-    const ownerAuthoredText = stripUntrustedBlocks(message.text, { unterminated: 'keep' });
-    const hasWrappedBlocks = ownerAuthoredText !== message.text;
+    // Strip wrapped blocks ONLY when trusted gateway metadata says the gateway
+    // itself wrapped them (forwarded content). Sender-typed markers are
+    // forgeable in-band data and never a security boundary: without the flag
+    // the wall sees the FULL text ('keep' handles unterminated spoofs too).
+    const gatewayWrapped = message.metadata?.untrustedWrapped === true;
+    const ownerAuthoredText = gatewayWrapped
+      ? stripUntrustedBlocks(message.text, { unterminated: 'keep' })
+      : message.text;
+    const hasWrappedBlocks = gatewayWrapped && ownerAuthoredText !== message.text;
     // Tripwire (record-only, never blocks): sensitive patterns INSIDE wrapped
     // third-party content are observability signals, not walls.
     if (
@@ -1610,6 +1615,7 @@ INSTRUCTION:
     const userId = message?.userId;
     const candidates = extractSaveCandidates({
       userText,
+      gatewayWrapped: message?.metadata?.untrustedWrapped === true,
       botResponse,
       channelKey,
       source,
@@ -1618,13 +1624,13 @@ INSTRUCTION:
       projectId: this.getRuntimeProjectId(),
       createdAt: now,
     });
-    // Known accepted risk (plan v6 S1-T6): a candidate-bearing turn arms this
-    // 30s cooldown, so a REAL directive within 30s of a previous candidate is
-    // swallowed. Owner directives rarely arrive back-to-back; a swallowed one
-    // is recoverable by re-stating (or direct mama_save on the owner console).
     const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
     const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
-    if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
+    // The cooldown rate-limits memory-agent invocations for ORDINARY chatter.
+    // Candidate-bearing turns are owner directives/decisions - discarding one
+    // because another arrived within 30s loses real instructions, so they
+    // bypass the cooldown (bounded by how fast an owner can type directives).
+    if (candidates.length === 0 && now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {
       return;
     }
 
