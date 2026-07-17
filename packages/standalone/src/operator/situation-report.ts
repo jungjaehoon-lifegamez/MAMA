@@ -17,6 +17,7 @@
  */
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
 import type { AskAgent } from './trigger-author.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 /**
  * Machine frame tag prepended to the FULL report prompt so the report-run wiring can tell a full
@@ -311,7 +312,10 @@ export class SituationReporter {
       `Current local time: ${new Date().toLocaleString()}. Use LOCAL time in the report, never UTC.`,
       '',
       'Window (per channel; excerpts truncated):',
-      ...(windowLines.length > 0 ? windowLines : ['- (no channel messages this window)']),
+      wrapUntrustedContent(
+        'connector-window',
+        windowLines.length > 0 ? windowLines.join('\n') : '- (no channel messages this window)'
+      ),
       '',
       `Triggers newly authored this window: ${this.authored}`,
       'Fire activity:',

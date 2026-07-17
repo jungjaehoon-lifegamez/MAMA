@@ -503,7 +503,10 @@ interface DenylistCandidate {
 }
 
 function getSecurityLogDir(): string {
-  return join(homedir(), '.mama', 'logs');
+  // MAMA_SECURITY_LOG_DIR redirects ALL security telemetry (events, incidents,
+  // denylist artifacts). Test suites MUST set this (tests/setup.ts does) so
+  // fixture events never pollute the live operator telemetry.
+  return process.env.MAMA_SECURITY_LOG_DIR || join(homedir(), '.mama', 'logs');
 }
 
 function getSecurityLogPath(): string {
@@ -750,6 +753,39 @@ export function setSecurityAlertSender(sender: SecurityAlertSender | null): void
   }
 }
 
+export function hasSecurityAlertSender(): boolean {
+  return alertSender !== null;
+}
+
+/**
+ * Deliver an alert through the registered sender WITHOUT the incident pipeline.
+ *
+ * recordSecurityEvent() preserves evidence, writes denylist candidates, and
+ * runs RDAP attribution - correct for real client events, but self-generated
+ * alerts (system audit findings) must not fabricate incident/denylist/WAF
+ * artifacts for a pseudo client. This path only appends the event to the
+ * security log (durable record) and AWAITS delivery so the caller can retry:
+ * it throws when no sender is registered or when the sender fails.
+ */
+export async function dispatchSecurityAlertDirect(event: SecurityEvent): Promise<void> {
+  const normalized: SecurityEvent = {
+    ...event,
+    timestamp: event.timestamp || new Date().toISOString(),
+  };
+
+  logger.warn(`[SECURITY] ${normalized.message}`, normalized);
+  trackBackgroundTask(
+    appendSecurityLog(normalized).catch((error) => {
+      logger.error('Failed to append security event log', error);
+    })
+  );
+
+  if (!alertSender) {
+    throw new Error('No security alert sender registered (MAMA_SECURITY_ALERT_CHANNELS unset?)');
+  }
+  await alertSender(normalized);
+}
+
 export function resetSecurityMonitorForTests(): void {
   banMap.clear();
   alertSender = null;
@@ -769,14 +805,12 @@ export async function flushSecurityMonitor(): Promise<void> {
 }
 
 export function formatSecurityAlert(event: SecurityEvent): string {
-  const incidentId = getIncidentId(event);
-  const incidentDir = join(getIncidentLogDir(), incidentId);
-  const lines = [
-    `🚨 [Security] ${event.message}`,
-    `type: ${event.type}`,
-    `severity: ${event.severity}`,
-    `client: ${event.clientAddress || event.remoteAddress || 'unknown'}`,
-  ];
+  const client = event.clientAddress || event.remoteAddress;
+  const lines = [`🚨 [Security] ${event.message}`, `type: ${event.type}`];
+  lines.push(`severity: ${event.severity}`);
+  if (client) {
+    lines.push(`client: ${client}`);
+  }
 
   if (event.path) {
     lines.push(`path: ${event.path}`);
@@ -790,11 +824,19 @@ export function formatSecurityAlert(event: SecurityEvent): string {
   if (event.details && Object.keys(event.details).length > 0) {
     lines.push(`details: ${JSON.stringify(event.details)}`);
   }
-  lines.push(`evidence: ${join(incidentDir, 'incident.json')}`);
-  lines.push(`abuse_draft: ${join(incidentDir, 'abuse-report.md')}`);
-  lines.push(`denylist: ${getDenylistJsonPath()}`);
-  lines.push(`cloudflare_csv: ${getCloudflareCustomListCsvPath()}`);
-  lines.push(`cloudflare_waf: ${getCloudflareWafExpressionPath()}`);
+
+  // Incident artifacts exist only for client-attributed events that went
+  // through the evidence pipeline; self-generated alerts (system audit) have
+  // no client and must not point the owner at files that were never written.
+  if (client) {
+    const incidentId = getIncidentId(event);
+    const incidentDir = join(getIncidentLogDir(), incidentId);
+    lines.push(`evidence: ${join(incidentDir, 'incident.json')}`);
+    lines.push(`abuse_draft: ${join(incidentDir, 'abuse-report.md')}`);
+    lines.push(`denylist: ${getDenylistJsonPath()}`);
+    lines.push(`cloudflare_csv: ${getCloudflareCustomListCsvPath()}`);
+    lines.push(`cloudflare_waf: ${getCloudflareWafExpressionPath()}`);
+  }
 
   return lines.join('\n');
 }
