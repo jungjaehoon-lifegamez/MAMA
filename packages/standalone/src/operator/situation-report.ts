@@ -83,6 +83,12 @@ export interface SituationReporterOptions {
    * of being elimination-only. Uncited fires stay NEUTRAL - not failures.
    */
   recordTriggerUse?: (triggerIds: string[]) => void;
+  /**
+   * Context carry (plan v6 S1-T4): called with (deliveredAtIso, reportText)
+   * after a FULL report is successfully delivered. Runtime wiring persists it
+   * so the owner console can reference the latest report per chat turn.
+   */
+  persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
 }
 
 /** Machine trailer the agent appends; stripped before the owner sees the report. */
@@ -192,6 +198,22 @@ export class SituationReporter {
     // (send throws -> buffer kept -> next cadence re-cites the same fires).
     if (cited.length > 0) {
       this.opts.recordTriggerUse?.(cited);
+    }
+    // Context carry (plan v6 S1-T4): persist the DELIVERED full report so the
+    // chat console can reference "the report you just got" instead of
+    // fabricating one. Same success condition as the delta anchor.
+    if (mode === 'full') {
+      try {
+        this.opts.persistLastFullReport?.(new Date().toISOString(), text);
+      } catch (error) {
+        // Carry is derived state - persistence failure must not fail the
+        // delivered report, but it must be loud.
+        console.warn(
+          `[situation-report] failed to persist last full report for context carry: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
     }
     this.reset();
     return true;

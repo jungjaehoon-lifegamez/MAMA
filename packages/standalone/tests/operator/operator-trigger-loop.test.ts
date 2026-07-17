@@ -591,3 +591,161 @@ describe('OperatorTriggerLoop', () => {
     }
   });
 });
+
+describe('Story OPS-1 / S1-T3: on-demand full report + scheduled suppression', () => {
+  function fakeScheduler(
+    overrides: Partial<{
+      fire: boolean;
+      hourKey: string;
+      lastSuccess: string | null;
+    }> = {}
+  ) {
+    const state = {
+      fired: [] as string[],
+      success: [] as string[],
+    };
+    return {
+      state,
+      shouldFire: () => ({
+        fire: overrides.fire ?? false,
+        hourKey: overrides.hourKey ?? '2026-07-17:13',
+      }),
+      markFired: (hourKey: string) => {
+        state.fired.push(hourKey);
+      },
+      loadLastSuccess: () => overrides.lastSuccess ?? null,
+      markSuccess: (iso: string) => {
+        state.success.push(iso);
+      },
+    };
+  }
+
+  function makeLoopWith(over: Record<string, unknown>, logs: string[]) {
+    const delta = new FakeDelta();
+    const reg = new TriggerRegistry(new Database(':memory:'));
+    return new OperatorTriggerLoop({
+      delta,
+      memory: fakeMem(),
+      registry: reg,
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 3,
+        reviewEveryNTicks: 5,
+        authorWindowSize: 10,
+      },
+      log: (line: string) => logs.push(line),
+      ...over,
+    });
+  }
+
+  describe('AC #1: startFullReport routes through the real machinery', () => {
+    it('sends, consumes the hour, and advances the anchor on success', async () => {
+      const logs: string[] = [];
+      const scheduler = fakeScheduler({ hourKey: '2026-07-17:14' });
+      const sent: string[] = [];
+      const loop = makeLoopWith(
+        {
+          reportScheduler: scheduler,
+          output: {
+            send: async (text: string) => {
+              sent.push(text);
+            },
+          },
+          reportAsk: async () => 'on-demand situation summary\nUSED_TRIGGERS: none',
+        },
+        logs
+      );
+
+      const started = loop.startFullReport();
+      expect(started.accepted).toBe(true);
+      await vi.waitFor(() => {
+        expect(sent.length).toBe(1);
+      });
+      await vi.waitFor(() => {
+        expect(scheduler.state.fired).toEqual(['2026-07-17:14']);
+        expect(scheduler.state.success.length).toBe(1);
+      });
+      expect(logs.join('\n')).toContain('on-demand full report SENT');
+    });
+
+    it('reports busy while another run holds the loop and unavailable without a sink', () => {
+      const logs: string[] = [];
+      const noSink = makeLoopWith({}, logs);
+      expect(noSink.startFullReport()).toEqual({ accepted: false, reason: 'unavailable' });
+
+      const scheduler = fakeScheduler();
+      const withSink = makeLoopWith(
+        {
+          reportScheduler: scheduler,
+          output: { send: async () => {} },
+          reportAsk: () => new Promise<string>(() => {}), // parks forever
+        },
+        logs
+      );
+      expect(withSink.startFullReport().accepted).toBe(true);
+      expect(withSink.startFullReport()).toEqual({ accepted: false, reason: 'busy' });
+    });
+  });
+
+  describe('AC #2: scheduled fire is suppressed-and-consumed inside the min interval', () => {
+    it('skips the scheduled run when the last success is fresh', async () => {
+      const logs: string[] = [];
+      const recentIso = new Date(Date.now() - 5 * 60_000).toISOString();
+      const scheduler = fakeScheduler({
+        fire: true,
+        hourKey: '2026-07-17:13',
+        lastSuccess: recentIso,
+      });
+      const sent: string[] = [];
+      const loop = makeLoopWith(
+        {
+          reportScheduler: scheduler,
+          output: {
+            send: async (text: string) => {
+              sent.push(text);
+            },
+          },
+          reportAsk: async () => 'should not be called for the scheduled leg',
+        },
+        logs
+      );
+
+      await loop.tick();
+      expect(scheduler.state.fired).toEqual(['2026-07-17:13']);
+      expect(scheduler.state.success).toEqual([]);
+      expect(sent).toEqual([]);
+      expect(logs.join('\n')).toContain('full report skipped - last success');
+    });
+
+    it('fires normally when the last success is stale', async () => {
+      const logs: string[] = [];
+      const staleIso = new Date(Date.now() - 2 * 60 * 60_000).toISOString();
+      const scheduler = fakeScheduler({
+        fire: true,
+        hourKey: '2026-07-17:13',
+        lastSuccess: staleIso,
+      });
+      const sent: string[] = [];
+      const loop = makeLoopWith(
+        {
+          reportScheduler: scheduler,
+          output: {
+            send: async (text: string) => {
+              sent.push(text);
+            },
+          },
+          reportAsk: async () => 'scheduled situation summary\nUSED_TRIGGERS: none',
+        },
+        logs
+      );
+
+      await loop.tick();
+      expect(sent.length).toBe(1);
+      expect(scheduler.state.fired).toEqual(['2026-07-17:13']);
+      expect(scheduler.state.success.length).toBe(1);
+    });
+  });
+});
