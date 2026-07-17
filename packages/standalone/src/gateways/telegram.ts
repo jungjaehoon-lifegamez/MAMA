@@ -15,6 +15,7 @@ import type { NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
 import type { MessageRouter, ProcessingResult } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 
@@ -290,6 +291,14 @@ export class TelegramGateway extends BaseGateway {
       text = `[sticker: ${msg.sticker.emoji || '😊'}]`;
     }
     if (!text.trim()) return;
+
+    // Provenance labeling: a FORWARDED message is third-party content the
+    // owner relayed, not the owner speaking. Wrap it so downstream treats it
+    // as data (never instructions), the sensitive-request wall skips it, and
+    // the save-candidate extractor ignores directives inside it.
+    if (msg.forward_origin) {
+      text = wrapUntrustedContent('telegram-forward', text);
+    }
 
     if (isGroup && this.botUsername) {
       const escaped = this.botUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
