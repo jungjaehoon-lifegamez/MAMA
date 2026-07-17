@@ -91,7 +91,22 @@ const DEFAULT_TOOLS_CONFIG = {
 const SOURCE_GLOBAL_LANES: Record<string, string> = {
   viewer: 'viewer',
   system: 'system',
+  // Operator work (scheduled reports, briefed worker runs) serializes among
+  // itself but must not block owner chat on 'main': a 260s full report was
+  // measurably blocking chat replies before this lane existed. Safe only
+  // because per-run state is scoped (RunScope), not instance state.
+  operator: 'operator',
 };
+
+/**
+ * Per-run mutable state threaded through a single runWithContentInternal
+ * invocation. MUST stay run-local: with the operator global lane, a report or
+ * worker run legally overlaps chat turns on the same AgentLoop instance.
+ */
+interface RunScope {
+  streamCallbacks?: StreamCallbacks;
+  tier: 1 | 2 | 3;
+}
 
 function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
   if (pattern === '*') {
@@ -405,8 +420,11 @@ export class AgentLoop {
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
   private preCompactInjected = false;
-  private currentStreamCallbacks?: StreamCallbacks;
-  private currentTier: 1 | 2 | 3 = 1;
+  // Per-run state (stream callbacks, tier) lives in a RunScope threaded through
+  // runWithContentInternal -> executeTools -> executeCodeAct, NEVER on the
+  // instance: concurrent runs on separate global lanes (operator report/worker
+  // overlapping owner chat) would steal each other's callbacks and leak tiers
+  // if these were instance fields.
   private readonly disallowedTools?: string[];
 
   constructor(
@@ -926,7 +944,7 @@ export class AgentLoop {
       throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
-    this.currentStreamCallbacks = options?.streamCallbacks;
+    const runScope: RunScope = { streamCallbacks: options?.streamCallbacks, tier: 1 };
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
@@ -949,15 +967,10 @@ export class AgentLoop {
       backgroundTasks
     );
 
-    // Track current tier for code-act execution and prompt sizing.
+    // Track this run's tier for code-act execution and prompt sizing.
     if (options?.agentContext) {
       const rawTier = options.agentContext.tier ?? 1;
-      this.currentTier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as
-        | 1
-        | 2
-        | 3;
-    } else {
-      this.currentTier = 1;
+      runScope.tier = (rawTier === 1 || rawTier === 2 || rawTier === 3 ? rawTier : 1) as 1 | 2 | 3;
     }
 
     // Infinite loop prevention
@@ -1064,10 +1077,7 @@ export class AgentLoop {
               options.agentContext?.role.allowedTools,
               options.agentContext?.role.blockedTools
             );
-            const typeDefs = TypeDefinitionGenerator.generate(
-              this.currentTier,
-              allowedGatewayTools
-            );
+            const typeDefs = TypeDefinitionGenerator.generate(runScope.tier, allowedGatewayTools);
             const codeActBackend =
               this.backend === 'codex' || this.backend === 'codex-mcp'
                 ? 'codex-mcp'
@@ -1176,7 +1186,7 @@ export class AgentLoop {
 
         let response: ClaudeResponse;
 
-        const ext = this.currentStreamCallbacks;
+        const ext = runScope.streamCallbacks;
         const callbacks = {
           onDelta: (text: string) => {
             ext?.onDelta?.(text);
@@ -1479,7 +1489,8 @@ export class AgentLoop {
           const toolResults = await this.executeTools(
             response.content,
             options?.stopAfterSuccessfulTools ?? [],
-            toolExecutionContext
+            toolExecutionContext,
+            runScope
           );
 
           // Add tool results to history
@@ -1568,7 +1579,6 @@ export class AgentLoop {
       if (ownedSession) {
         this.sessionPool.releaseSession(channelKey);
       }
-      this.currentStreamCallbacks = undefined;
     }
   }
 
@@ -1629,7 +1639,8 @@ export class AgentLoop {
   private async executeTools(
     content: ContentBlock[],
     stopAfterSuccessfulTools: string[] = [],
-    executionContext: AgentToolExecutionContext | null = null
+    executionContext: AgentToolExecutionContext | null = null,
+    runScope: RunScope = { tier: 1 }
   ): Promise<ToolResultBlock[]> {
     const modelToolContext = withExecutionSurface(executionContext, 'model_tool');
     const reactiveInternalContext = withExecutionSurface(executionContext, 'reactive_internal');
@@ -1644,10 +1655,7 @@ export class AgentLoop {
       let isError = false;
 
       // Notify stream: tool execution starting
-      this.currentStreamCallbacks?.onToolUse?.(
-        toolUse.name,
-        toolUse.input as Record<string, unknown>
-      );
+      runScope.streamCallbacks?.onToolUse?.(toolUse.name, toolUse.input as Record<string, unknown>);
 
       const toolStart = Date.now();
       try {
@@ -1657,7 +1665,7 @@ export class AgentLoop {
           const codeInput = toolUse.input as Record<string, unknown> | undefined;
           const code = typeof codeInput?.code === 'string' ? codeInput.code : '';
           const codeActResult = code
-            ? await this.executeCodeAct(code, this.currentTier, modelToolContext)
+            ? await this.executeCodeAct(code, runScope.tier, modelToolContext, runScope)
             : {
                 success: false,
                 error: {
@@ -1672,7 +1680,7 @@ export class AgentLoop {
             isError = true;
           }
           this.onToolUse?.(toolUse.name, toolUse.input, codeActResult);
-          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
+          runScope.streamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         } else {
           // PreToolUse: search MAMA for contracts before Write operations
           let contractContext = '';
@@ -1714,7 +1722,7 @@ export class AgentLoop {
           );
 
           // Notify stream: tool completed (check actual status)
-          this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
+          runScope.streamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         }
         // Emit tool execution metric
         this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
@@ -1733,7 +1741,7 @@ export class AgentLoop {
         });
 
         // Notify stream: tool completed with error
-        this.currentStreamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
+        runScope.streamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, true);
       }
 
       results.push({
@@ -1866,7 +1874,8 @@ export class AgentLoop {
   private async executeCodeAct(
     code: string,
     tier: 1 | 2 | 3 = 1,
-    executionContext: AgentToolExecutionContext | null = null
+    executionContext: AgentToolExecutionContext | null = null,
+    runScope: RunScope = { tier: 1 }
   ): Promise<ExecutionResult> {
     try {
       const sandbox = new CodeActSandbox();
@@ -1875,7 +1884,7 @@ export class AgentLoop {
       bridge.onToolUse = (toolName, input, result) => {
         if (result === undefined) {
           // Tool starting — surface to stream
-          this.currentStreamCallbacks?.onToolUse?.(toolName, input as Record<string, unknown>);
+          runScope.streamCallbacks?.onToolUse?.(toolName, input as Record<string, unknown>);
         }
         if (result !== undefined) {
           // Tool completed — notify callback
@@ -1885,7 +1894,7 @@ export class AgentLoop {
             result !== null &&
             'success' in result &&
             !(result as { success: boolean }).success;
-          this.currentStreamCallbacks?.onToolComplete?.(
+          runScope.streamCallbacks?.onToolComplete?.(
             toolName,
             `code_act_sub_${Date.now()}`,
             isError
