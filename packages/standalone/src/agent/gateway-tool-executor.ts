@@ -2319,7 +2319,7 @@ export class GatewayToolExecutor {
               code: `report_${started.reason ?? 'unavailable'}`,
               error:
                 started.reason === 'busy'
-                  ? 'A report or operator tick is already running - the report will reflect it; retry shortly if nothing arrives.'
+                  ? 'The operator lane is busy (a report or tick is in progress). Retry shortly.'
                   : 'Report machinery unavailable (no output sink).',
             };
           }

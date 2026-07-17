@@ -360,6 +360,41 @@ export async function loadConfig(): Promise<MAMAConfig> {
  *
  * @param config - Configuration object to save
  */
+/**
+ * Prune role entries that are byte-identical to the shipped defaults before
+ * persisting (review R2-M1): load->mutate->save flows would otherwise FREEZE
+ * default definitions into config.yaml, silently shadowing every future
+ * default change (the B1 silent-death class at field level). Only the user's
+ * actual customizations are persisted; defaults re-merge at load time.
+ */
+function pruneDefaultRolesForSave(config: MAMAConfig): MAMAConfig {
+  const defaults = DEFAULT_CONFIG.roles;
+  if (!config.roles || !defaults) {
+    return config;
+  }
+  const definitions: Record<string, unknown> = {};
+  for (const [name, def] of Object.entries(config.roles.definitions ?? {})) {
+    const defaultDef = defaults.definitions[name];
+    if (!defaultDef || JSON.stringify(def) !== JSON.stringify(defaultDef)) {
+      definitions[name] = def;
+    }
+  }
+  const sourceMapping: Record<string, string> = {};
+  for (const [source, role] of Object.entries(config.roles.sourceMapping ?? {})) {
+    if (defaults.sourceMapping[source] !== role) {
+      sourceMapping[source] = role;
+    }
+  }
+  if (Object.keys(definitions).length === 0 && Object.keys(sourceMapping).length === 0) {
+    const { roles: _roles, ...rest } = config;
+    return rest as MAMAConfig;
+  }
+  return {
+    ...config,
+    roles: { definitions, sourceMapping },
+  } as MAMAConfig;
+}
+
 export async function saveConfig(config: MAMAConfig): Promise<void> {
   const configPath = getConfigPath();
   const configDir = dirname(configPath);
@@ -369,7 +404,7 @@ export async function saveConfig(config: MAMAConfig): Promise<void> {
     await mkdir(configDir, { recursive: true });
   }
 
-  const content = yaml.dump(config, {
+  const content = yaml.dump(pruneDefaultRolesForSave(config), {
     indent: 2,
     lineWidth: 120,
     noRefs: true,

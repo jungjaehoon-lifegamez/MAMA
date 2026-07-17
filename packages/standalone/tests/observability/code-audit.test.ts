@@ -249,6 +249,33 @@ describe('Story SEC-3: deterministic code audit', () => {
     });
   });
 
+  describe('AC #14: locked allowlist with missing owner_console definition is MAJOR (B1 class)', () => {
+    it('flags the silent-death config shape', async () => {
+      const report = await run({
+        config: {
+          telegram: { enabled: true, allowed_chats: ['7777'] },
+          roles: { definitions: { chat_bot: {} }, sourceMapping: {} },
+        },
+        alert: () => {},
+      });
+      expect(
+        report.findings.find((f) => f.id === 'owner-console-definition-missing')?.severity
+      ).toBe('MAJOR');
+    });
+
+    it('passes when the definition is present', async () => {
+      const report = await run({
+        config: {
+          telegram: { enabled: true, allowed_chats: ['7777'] },
+          roles: { definitions: { chat_bot: {}, owner_console: {} }, sourceMapping: {} },
+        },
+      });
+      expect(
+        report.findings.find((f) => f.id === 'owner-console-definition-missing')
+      ).toBeUndefined();
+    });
+  });
+
   describe('AC #13: owner_console guardrails (plan v6 S1-T1)', () => {
     it('flags a static owner_console source mapping as MAJOR', async () => {
       const report = await run({

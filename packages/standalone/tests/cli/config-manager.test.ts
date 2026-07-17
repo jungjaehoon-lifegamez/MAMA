@@ -569,3 +569,60 @@ describe('ConfigManager', () => {
     });
   });
 });
+
+describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
+  it('gains new default definitions while preserving user customizations (AC #1)', async () => {
+    const config = {
+      version: 1,
+      agent: { model: 'test-model', max_turns: 5, timeout: 60000 },
+      database: { path: '~/.test/db.sqlite' },
+      logging: { level: 'debug', file: '~/.test/logs/test.log' },
+      roles: {
+        definitions: {
+          chat_bot: {
+            model: 'custom-model',
+            allowedTools: ['mama_search'],
+            blockedTools: ['Bash'],
+            allowedPaths: [],
+            systemControl: false,
+            sensitiveAccess: false,
+          },
+        },
+        sourceMapping: { telegram: 'chat_bot' },
+      },
+    } as unknown as MAMAConfig;
+
+    await saveConfig(config);
+    const loaded = await loadConfig();
+
+    // Customization preserved
+    expect(loaded.roles?.definitions.chat_bot?.model).toBe('custom-model');
+    // New default definition gained (the B1 silent-death fix)
+    expect(loaded.roles?.definitions.owner_console).toBeDefined();
+    expect(loaded.roles?.definitions.owner_console?.allowedTools).toContain('kagemusha_tasks');
+    // Default mappings still resolve
+    expect(loaded.roles?.sourceMapping.viewer).toBe('os_agent');
+  });
+
+  it('prunes default-identical role entries at save so defaults never freeze (R2-M1)', async () => {
+    const base = {
+      version: 1,
+      agent: { model: 'test-model', max_turns: 5, timeout: 60000 },
+      database: { path: '~/.test/db.sqlite' },
+      logging: { level: 'debug', file: '~/.test/logs/test.log' },
+    } as unknown as MAMAConfig;
+
+    // Simulate a load->save round trip: loadConfig injects merged defaults.
+    await saveConfig(base);
+    const loaded = await loadConfig();
+    expect(loaded.roles?.definitions.owner_console).toBeDefined();
+    await saveConfig(loaded);
+
+    // The persisted file must NOT contain the frozen default definitions.
+    const { readFile } = await import('node:fs/promises');
+    const { getConfigPath } = await import('../../src/cli/config/config-manager.js');
+    const raw = await readFile(getConfigPath(), 'utf-8');
+    expect(raw).not.toContain('owner_console');
+    expect(raw).not.toContain('os_agent');
+  });
+});

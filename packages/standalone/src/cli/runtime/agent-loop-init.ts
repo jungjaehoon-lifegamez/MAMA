@@ -70,8 +70,6 @@ export function initMainAgentLoop(
     wikiPublishAdapter?: GatewayToolExecutorOptions['wikiPublishAdapter'];
   }
 ): AgentLoopInitResult {
-  // Reasoning collector for Discord display
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const mamaHome = join(homedir(), '.mama');
 
   // Sync built-in skills on every start (non-destructive — skips existing files)

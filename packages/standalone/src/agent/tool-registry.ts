@@ -545,7 +545,7 @@ export class ToolRegistry {
       utility: 'Utility',
       browser: 'Browser (Playwright)',
       os_management: 'OS Management (viewer-only)',
-      os_monitoring: 'OS Monitoring (viewer-only)',
+      os_monitoring: 'OS Monitoring & Operator Console',
       pr_review: 'PR Review',
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
