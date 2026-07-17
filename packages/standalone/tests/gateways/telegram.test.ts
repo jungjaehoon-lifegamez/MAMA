@@ -240,6 +240,10 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     text,
   });
 
+  // Typed access to the private handler without `any` (per coding guidelines).
+  const handler = (g: TelegramGateway) =>
+    g as unknown as { handleMessage(msg: ReturnType<typeof makeMessage>): Promise<void> };
+
   describe('AC #1: message from non-allowlisted chat is dropped with a loud warning', () => {
     it('does not emit message_received and warns', async () => {
       const gateway = new TelegramGateway({
@@ -252,8 +256,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       gateway.onEvent((e) => received.push(e.type));
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (gateway as any).handleMessage(makeMessage(9999, 42, 'hello'));
+      await handler(gateway).handleMessage(makeMessage(9999, 42, 'hello'));
 
       expect(received).not.toContain('message_received');
       expect(warnSpy.mock.calls.flat().join('\n')).toContain('non-allowlisted chat 9999');
@@ -272,12 +275,9 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       await gateway.start();
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (gateway as any).handleMessage(makeMessage(9999, 42, 'first', 1));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (gateway as any).handleMessage(makeMessage(9999, 42, 'second unique', 2));
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (gateway as any).handleMessage(makeMessage(8888, 43, 'other chat', 3));
+      await handler(gateway).handleMessage(makeMessage(9999, 42, 'first', 1));
+      await handler(gateway).handleMessage(makeMessage(9999, 42, 'second unique', 2));
+      await handler(gateway).handleMessage(makeMessage(8888, 43, 'other chat', 3));
 
       const warns = warnSpy.mock.calls.flat().join('\n');
       expect(warns.match(/non-allowlisted chat 9999/g)).toHaveLength(1);
@@ -298,8 +298,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       const received: string[] = [];
       gateway.onEvent((e) => received.push(e.type));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (gateway as any).handleMessage(makeMessage(7777, 42, 'hello'));
+      await handler(gateway).handleMessage(makeMessage(7777, 42, 'hello'));
 
       expect(received).toContain('message_received');
       await gateway.stop();

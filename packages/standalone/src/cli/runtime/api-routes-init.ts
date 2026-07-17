@@ -775,7 +775,7 @@ This saves resources. Only compile when there is genuinely new information to do
   const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
 
-  const runSystemAudit = async (): Promise<CodeAuditReport | null> => {
+  const doSystemAudit = async (): Promise<CodeAuditReport | null> => {
     try {
       const report = await runCodeAudit({
         config: {
@@ -823,6 +823,17 @@ This saves resources. Only compile when there is genuinely new information to do
       );
       return null;
     }
+  };
+
+  // Serialize scheduled and manual runs (same pattern as the memory-promotion
+  // chain above): overlapping audits would read the same prior state, alert
+  // twice, and race the audit-findings.json write. doSystemAudit never
+  // rejects, so chaining on the previous run is sufficient.
+  let auditRunChain: Promise<CodeAuditReport | null> = Promise.resolve(null);
+  const runSystemAudit = (): Promise<CodeAuditReport | null> => {
+    const next = auditRunChain.then(doSystemAudit);
+    auditRunChain = next;
+    return next;
   };
 
   setTimeout(() => {
