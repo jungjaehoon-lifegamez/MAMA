@@ -503,7 +503,10 @@ interface DenylistCandidate {
 }
 
 function getSecurityLogDir(): string {
-  return join(homedir(), '.mama', 'logs');
+  // MAMA_SECURITY_LOG_DIR redirects ALL security telemetry (events, incidents,
+  // denylist artifacts). Test suites MUST set this (tests/setup.ts does) so
+  // fixture events never pollute the live operator telemetry.
+  return process.env.MAMA_SECURITY_LOG_DIR || join(homedir(), '.mama', 'logs');
 }
 
 function getSecurityLogPath(): string {

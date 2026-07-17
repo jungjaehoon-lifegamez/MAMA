@@ -143,6 +143,18 @@ export class TelegramGateway extends BaseGateway {
       this.botUsername = this.bot.botInfo.username || '';
       console.log(`Telegram bot logged in as @${this.botUsername}`);
 
+      if (this.config.allowedChats && this.config.allowedChats.length > 0) {
+        console.log(
+          `[Telegram] Inbound allowlist active: ${this.config.allowedChats.length} chat(s)`
+        );
+      } else {
+        console.warn(
+          '[Telegram] SECURITY WARNING: telegram.allowed_chats is not set - this bot accepts ' +
+            'messages from ANY Telegram user who finds it. Set telegram.allowed_chats in ' +
+            '~/.mama/config.yaml to restrict inbound access.'
+        );
+      }
+
       this.connected = true;
       this.lastError = null;
 
@@ -233,7 +245,12 @@ export class TelegramGateway extends BaseGateway {
 
     // Allowed chats filter
     if (this.config.allowedChats && this.config.allowedChats.length > 0) {
-      if (!this.config.allowedChats.includes(String(msg.chat.id))) return;
+      if (!this.config.allowedChats.includes(String(msg.chat.id))) {
+        console.warn(
+          `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from?.id ?? 'unknown'})`
+        );
+        return;
+      }
     }
 
     // Group chat filtering

@@ -8,6 +8,7 @@
  */
 
 import type { NormalizedItem, ChannelConfig } from '../connectors/framework/types.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 export interface HubContextEntry {
   project: string;
@@ -339,13 +340,17 @@ export function buildActivityExtractionPrompt(
 
   // Add activity items grouped by source:channel
   const grouped = groupByChannel(activity);
+  const activitySections: string[] = [];
   for (const [channel, channelItems] of grouped) {
-    prompt += `\n### ${channel}\n`;
-    for (const item of channelItems) {
-      const time = item.timestamp.toISOString().slice(11, 16);
-      prompt += `${item.author}(${time}): ${item.content}\n`;
-    }
+    const lines = channelItems
+      .map((item) => {
+        const time = item.timestamp.toISOString().slice(11, 16);
+        return `${item.author}(${time}): ${item.content}`;
+      })
+      .join('\n');
+    activitySections.push(`### ${channel}\n${lines}`);
   }
+  prompt += `\n${wrapUntrustedContent('connector-activity', activitySections.join('\n\n'))}\n`;
 
   return prompt;
 }
@@ -422,7 +427,7 @@ Schema for each item:
 ]
 
 Messages:
-${messagesBlock}`;
+${wrapUntrustedContent('connector-spoke', messagesBlock)}`;
 
   return prompt;
 }
