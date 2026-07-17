@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.1] / mama-core [1.8.1] / mama-os [0.22.1] - 2026-07-17
+
+### Security
+
+- **Telegram inbound allowlist** — the bot no longer silently accepts messages
+  from any Telegram user when `telegram.allowed_chats` is unset: startup emits a
+  loud SECURITY WARNING, dropped messages from non-allowlisted chats are logged
+  (rate-capped per chat), and the deterministic audit flags an open inbound as
+  MAJOR.
+- **Untrusted-content wrapping** — connector-derived text (third-party chat
+  messages) now embeds into operator report prompts and history-extractor
+  passes inside explicit untrusted-content delimiters with a treat-as-data
+  preamble (indirect prompt-injection mitigation).
+- **Parse-error sanitization** — config parse failures reported by the audit
+  carry only the first line of the error (js-yaml exceptions embed config
+  source snippets, which must never reach alert payloads).
+
+### Fixed
+
+- **Hourly audit is deterministic code, not an LLM loop** — lands the
+  2026-04-22 read-only code-audit decision: read-only checks (config parse, WAL
+  and log sizes, health endpoint, persona files, alert-channel hygiene), 24h
+  MAJOR-alert dedup preserved, MINOR never alerted, no auto-fix, no shell.
+  MAJOR alerts flow through a direct dispatch path that cannot fabricate
+  incident/denylist/RDAP artifacts, awaits delivery, and retries on the next
+  run after total delivery failure. `POST /api/conductor/audit` returns the
+  full report (runs in ~100ms vs the prior 150-210s LLM burn per hour).
+- **Security telemetry test pollution** — `MAMA_SECURITY_LOG_DIR` redirects all
+  security telemetry (events, incidents, denylist artifacts); the test suite
+  pins it plus `MAMA_SECURITY_ENRICHMENT=false`, so fixture events (TEST-NET
+  IPs, `test-session`) never land in live logs or generate live RDAP lookups
+  again.
+- Security alert sender now propagates total delivery failure (all targets
+  rejected) instead of resolving silently; alert messages no longer reference
+  incident artifact paths for self-generated events that never wrote them.
+
 ## [0.22.0] / mama-core [1.8.1] / mama-os [0.22.0] - 2026-07-16
 
 ### Fixed
