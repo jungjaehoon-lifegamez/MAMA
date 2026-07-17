@@ -99,6 +99,28 @@ function getStaticRoute(message: NormalizedMessage): StaticRoute {
   return route;
 }
 
+/**
+ * Owner-console trust at the ENVELOPE layer (plan v6 S1-T2b): same condition
+ * as RoleManager's escalation (telegram + allowed_chats locked + 1:1 DM from
+ * an allowlisted chat), derived independently from config so the envelope
+ * never depends on RoleManager singleton state. Both layers fail closed;
+ * kagemusha_* tools pass only when BOTH agree.
+ */
+function isOwnerConsoleMessage(message: NormalizedMessage, config: MAMAConfig): boolean {
+  if (message.source !== 'telegram') {
+    return false;
+  }
+  const allowed = config.telegram?.allowed_chats;
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    return false;
+  }
+  const chatType =
+    typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined;
+  return (
+    chatType === 'private' && allowed.map((id) => String(id).trim()).includes(message.channelId)
+  );
+}
+
 function homeFromEnv(env: EnvLike): string {
   const home = env.HOME;
   return home && home.trim() ? home : homedir();
@@ -167,10 +189,18 @@ export function getReactiveRoutePolicy(
     projectId,
   }) as MemoryScope[];
 
+  // Owner console reads business state through the kagemusha bridge; the
+  // reactive telegram envelope must widen its raw-connector scope for the
+  // verified-owner DM or the enforcer denies kagemusha_messages even after
+  // the role layer allows it (connector_out_of_scope).
+  const rawConnectors = isOwnerConsoleMessage(message, config)
+    ? [...route.rawConnectors, 'kagemusha']
+    : [...route.rawConnectors];
+
   return {
     source,
     projectRefs: [{ kind: 'project', id: projectId }],
-    rawConnectors: [...route.rawConnectors],
+    rawConnectors,
     memoryScopes,
     allowedDestinations: route.allowedDestinations(message),
     reactiveBudgetSeconds: reactiveBudgetSeconds(config),

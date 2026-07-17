@@ -301,3 +301,42 @@ describe('reactive envelope route policy', () => {
     ).toBe(300);
   });
 });
+
+describe('Story OPS-1 / S1-T2b: owner-console kagemusha scope widening', () => {
+  const ownerConfig = () =>
+    makeConfig({
+      telegram: { enabled: true, token: 't', allowed_chats: ['7777'] },
+    } as unknown as Partial<MAMAConfig>);
+
+  const ownerMessage = (channelId: string, chatType?: string): NormalizedMessage => ({
+    source: 'telegram',
+    channelId,
+    userId: 'telegram:user',
+    text: 'status?',
+    metadata: chatType ? { chatType } : {},
+  });
+
+  it('adds kagemusha to rawConnectors for a verified-owner DM', () => {
+    const policy = getReactiveRoutePolicy(ownerMessage('7777', 'private'), ownerConfig(), {
+      HOME: '/tmp/home',
+    });
+    expect(policy.rawConnectors).toContain('telegram');
+    expect(policy.rawConnectors).toContain('kagemusha');
+  });
+
+  it('fails closed for groups, non-allowlisted chats, missing chatType, and unlocked config', () => {
+    const cases: Array<[NormalizedMessage, MAMAConfig]> = [
+      [ownerMessage('7777', 'group'), ownerConfig()],
+      [ownerMessage('9999', 'private'), ownerConfig()],
+      [ownerMessage('7777'), ownerConfig()],
+      [
+        ownerMessage('7777', 'private'),
+        makeConfig({ telegram: { enabled: true, token: 't' } } as unknown as Partial<MAMAConfig>),
+      ],
+    ];
+    for (const [message, config] of cases) {
+      const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' });
+      expect(policy.rawConnectors).toEqual(['telegram']);
+    }
+  });
+});
