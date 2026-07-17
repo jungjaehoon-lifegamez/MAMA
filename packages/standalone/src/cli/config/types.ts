@@ -133,8 +133,6 @@ export const DEFAULT_ROLES: RolesConfig = {
         'task_update',
         'schedule_upcoming',
         'obsidian',
-        'agent_activity',
-        'agent_get',
         'Read',
         'board_read',
         'audit_findings_read',

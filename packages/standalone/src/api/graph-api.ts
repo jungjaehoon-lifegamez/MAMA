@@ -2879,7 +2879,12 @@ async function handleGetConfigRequest(_req: IncomingMessage, res: ServerResponse
         quiet_start: 23,
         quiet_end: 8,
       },
-      roles: config.roles || DEFAULT_ROLES,
+      roles: config.roles
+        ? {
+            definitions: { ...DEFAULT_ROLES.definitions, ...config.roles.definitions },
+            sourceMapping: { ...DEFAULT_ROLES.sourceMapping, ...config.roles.sourceMapping },
+          }
+        : DEFAULT_ROLES,
       multi_agent: config.multi_agent
         ? {
             enabled: config.multi_agent.enabled || false,
@@ -3333,6 +3338,19 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
   return errors;
 }
 
+function canonicalRolesJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalRolesJson).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalRolesJson(v)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function saveMAMAConfig(config: Record<string, any>): void {
   const configDir = path.dirname(MAMA_CONFIG_PATH);
@@ -3348,7 +3366,7 @@ function saveMAMAConfig(config: Record<string, any>): void {
     const definitions: Record<string, unknown> = {};
     for (const [name, def] of Object.entries(config.roles.definitions ?? {})) {
       const defaultDef = (DEFAULT_ROLES.definitions as Record<string, unknown>)[name];
-      if (!defaultDef || JSON.stringify(def) !== JSON.stringify(defaultDef)) {
+      if (!defaultDef || canonicalRolesJson(def) !== canonicalRolesJson(defaultDef)) {
         definitions[name] = def;
       }
     }

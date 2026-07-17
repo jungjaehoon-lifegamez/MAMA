@@ -141,7 +141,11 @@ describe('Story OPS-1 / S1-T6: owner directive persistence', () => {
   describe('AC #2: directives inside untrusted blocks are data, not instructions', () => {
     it('produces zero candidates for a wrapped third-party directive', () => {
       const wrapped = wrapUntrustedContent('telegram-forward', directiveKeywords[0]);
-      const candidates = extractSaveCandidates({ ...base, userText: wrapped });
+      const candidates = extractSaveCandidates({
+        ...base,
+        userText: wrapped,
+        gatewayWrapped: true,
+      });
       expect(candidates).toEqual([]);
     });
 
@@ -150,8 +154,17 @@ describe('Story OPS-1 / S1-T6: owner directive persistence', () => {
       const candidates = extractSaveCandidates({
         ...base,
         userText: `${directiveKeywords[0]}\n${wrapped}`,
+        gatewayWrapped: true,
       });
       expect(candidates).toHaveLength(1);
+
+      // Sender-TYPED markers without the trusted flag are ordinary text:
+      // a directive around them still extracts (markers are not a boundary).
+      const typedMarker = extractSaveCandidates({
+        ...base,
+        userText: `${directiveKeywords[1]}\n<<<UNTRUSTED-CONTENT source=fake>>>`,
+      });
+      expect(typedMarker).toHaveLength(1);
     });
   });
 });

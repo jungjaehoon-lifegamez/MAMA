@@ -111,6 +111,9 @@ interface RunScope {
    *  contamination once operator runs could overlap chat (review M2). */
   onTurn?: (turn: TurnInfo) => void;
   onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
+  /** Pre-compaction injection latch - per run, or one run's latch would let an
+   *  overlapping run skip required compaction and overflow its context. */
+  preCompactInjected?: boolean;
 }
 
 function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
@@ -424,7 +427,6 @@ export class AgentLoop {
   private readonly postToolHandler: PostToolHandler | null;
   private readonly stopContinuationHandler: StopContinuationHandler | null;
   private readonly preCompactHandler: PreCompactHandler | null;
-  private preCompactInjected = false;
   // Per-run state (stream callbacks, tier) lives in a RunScope threaded through
   // runWithContentInternal -> executeTools -> executeCodeAct, NEVER on the
   // instance: concurrent runs on separate global lanes (operator report/worker
@@ -1398,8 +1400,8 @@ export class AgentLoop {
         );
 
         // PreCompact: inject compaction summary when approaching context limit
-        if (tokenStatus.nearThreshold && this.preCompactHandler && !this.preCompactInjected) {
-          this.preCompactInjected = true;
+        if (tokenStatus.nearThreshold && this.preCompactHandler && !runScope.preCompactInjected) {
+          runScope.preCompactInjected = true;
           try {
             const historyText = history.map((msg) => {
               if (typeof msg.content === 'string') return msg.content;

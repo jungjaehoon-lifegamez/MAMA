@@ -367,6 +367,19 @@ export async function loadConfig(): Promise<MAMAConfig> {
  * default change (the B1 silent-death class at field level). Only the user's
  * actual customizations are persisted; defaults re-merge at load time.
  */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'undefined';
+}
+
 function pruneDefaultRolesForSave(config: MAMAConfig): MAMAConfig {
   const defaults = DEFAULT_CONFIG.roles;
   if (!config.roles || !defaults) {
@@ -375,7 +388,7 @@ function pruneDefaultRolesForSave(config: MAMAConfig): MAMAConfig {
   const definitions: Record<string, unknown> = {};
   for (const [name, def] of Object.entries(config.roles.definitions ?? {})) {
     const defaultDef = defaults.definitions[name];
-    if (!defaultDef || JSON.stringify(def) !== JSON.stringify(defaultDef)) {
+    if (!defaultDef || canonicalJson(def) !== canonicalJson(defaultDef)) {
       definitions[name] = def;
     }
   }

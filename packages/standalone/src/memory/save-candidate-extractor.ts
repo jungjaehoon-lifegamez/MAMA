@@ -24,9 +24,9 @@ const PREFERENCE_PATTERNS = [
   // Owner directive / standing-preference forms (plan v6 S1-T6): the live
   // gap that let a standing report-language instruction evaporate -
   // "always/from now on do X" style directives are durable preferences.
-  /\b(?:always|from now on|going forward)\b[^\n]{0,60}/i,
-  /항상\s*\S+/, // Korean: always-directive
-  /(?:부터는|앞으로는)\s*\S+/, // Korean: from-now-on directive
+  /\b(?:always|from now on|going forward)\b[^\n]{0,60}\b(?:do|send|use|write|reply|report|include|translate|convert|keep)\b/i,
+  /항상[^\n]{0,50}(?:해줘|해라|하세요|해야|할것|줘|로 (?:작성|보고|답변|회신))/, // Korean: always + imperative
+  /(?:부터는|앞으로는)[^\n]{0,50}(?:해줘|해라|하세요|해야|할것|줘|보내줘|올려줘)/, // Korean: from-now-on + imperative
   /(?:하지\s*마|쓰지\s*마|보내지\s*마)[^\n]{0,40}/, // Korean: prohibition directive
 ];
 
@@ -62,6 +62,9 @@ const IGNORE_PATTERNS = [/^\s*(thanks|thank you|고마워|감사|좋네|오케�
 
 export interface SaveCandidateExtractionInput {
   userText: string;
+  /** True ONLY when the gateway itself wrapped untrusted blocks (trusted
+   *  provenance). Sender-typed markers are data, not a boundary. */
+  gatewayWrapped?: boolean;
   botResponse: string;
   channelKey: string;
   source: string;
@@ -107,8 +110,11 @@ function buildCandidateId(channelKey: string, text: string, createdAt: number): 
 
 export function extractSaveCandidates(input: SaveCandidateExtractionInput): SaveCandidate[] {
   // Untrusted-wrapped blocks (forwarded/polled third-party content) are DATA:
-  // a "remember this" inside them must never become a save candidate.
-  const text = stripUntrustedBlocks(input.userText).trim();
+  // a "remember this" inside them must never become a save candidate. Strip
+  // ONLY gateway-wrapped blocks - sender-typed markers are ordinary text.
+  const text = (
+    input.gatewayWrapped ? stripUntrustedBlocks(input.userText) : input.userText
+  ).trim();
   if (!text) {
     return [];
   }

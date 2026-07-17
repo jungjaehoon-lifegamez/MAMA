@@ -44,7 +44,7 @@ export interface WorkerRunInput {
   input: string;
 }
 
-const KIND_PATTERN = /^[a-z][a-z0-9-]*$/;
+const KIND_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 export function buildWorkerSessionKey(kind: string): string {
   return `operator:worker:${kind}`;
