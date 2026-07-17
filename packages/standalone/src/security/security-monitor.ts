@@ -805,14 +805,12 @@ export async function flushSecurityMonitor(): Promise<void> {
 }
 
 export function formatSecurityAlert(event: SecurityEvent): string {
-  const incidentId = getIncidentId(event);
-  const incidentDir = join(getIncidentLogDir(), incidentId);
-  const lines = [
-    `🚨 [Security] ${event.message}`,
-    `type: ${event.type}`,
-    `severity: ${event.severity}`,
-    `client: ${event.clientAddress || event.remoteAddress || 'unknown'}`,
-  ];
+  const client = event.clientAddress || event.remoteAddress;
+  const lines = [`🚨 [Security] ${event.message}`, `type: ${event.type}`];
+  lines.push(`severity: ${event.severity}`);
+  if (client) {
+    lines.push(`client: ${client}`);
+  }
 
   if (event.path) {
     lines.push(`path: ${event.path}`);
@@ -826,11 +824,19 @@ export function formatSecurityAlert(event: SecurityEvent): string {
   if (event.details && Object.keys(event.details).length > 0) {
     lines.push(`details: ${JSON.stringify(event.details)}`);
   }
-  lines.push(`evidence: ${join(incidentDir, 'incident.json')}`);
-  lines.push(`abuse_draft: ${join(incidentDir, 'abuse-report.md')}`);
-  lines.push(`denylist: ${getDenylistJsonPath()}`);
-  lines.push(`cloudflare_csv: ${getCloudflareCustomListCsvPath()}`);
-  lines.push(`cloudflare_waf: ${getCloudflareWafExpressionPath()}`);
+
+  // Incident artifacts exist only for client-attributed events that went
+  // through the evidence pipeline; self-generated alerts (system audit) have
+  // no client and must not point the owner at files that were never written.
+  if (client) {
+    const incidentId = getIncidentId(event);
+    const incidentDir = join(getIncidentLogDir(), incidentId);
+    lines.push(`evidence: ${join(incidentDir, 'incident.json')}`);
+    lines.push(`abuse_draft: ${join(incidentDir, 'abuse-report.md')}`);
+    lines.push(`denylist: ${getDenylistJsonPath()}`);
+    lines.push(`cloudflare_csv: ${getCloudflareCustomListCsvPath()}`);
+    lines.push(`cloudflare_waf: ${getCloudflareWafExpressionPath()}`);
+  }
 
   return lines.join('\n');
 }
