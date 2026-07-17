@@ -230,3 +230,86 @@ describe('TelegramGateway - sticker send fallback', () => {
     expect(mockApi.sendMessage).toHaveBeenCalled();
   });
 });
+
+describe('Story SEC-1: telegram inbound allowlist', () => {
+  const makeMessage = (chatId: number, userId: number, text: string, messageId = 1) => ({
+    message_id: messageId,
+    date: 1700000000,
+    chat: { id: chatId, type: 'private' as const },
+    from: { id: userId, is_bot: false, first_name: 'u', username: `user${userId}` },
+    text,
+  });
+
+  describe('AC #1: message from non-allowlisted chat is dropped with a loud warning', () => {
+    it('does not emit message_received and warns', async () => {
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        messageRouter: mockMessageRouter,
+        config: { allowedChats: ['7777'] },
+      });
+      await gateway.start();
+      const received: string[] = [];
+      gateway.onEvent((e) => received.push(e.type));
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (gateway as any).handleMessage(makeMessage(9999, 42, 'hello'));
+
+      expect(received).not.toContain('message_received');
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain('non-allowlisted chat 9999');
+      warnSpy.mockRestore();
+      await gateway.stop();
+    });
+  });
+
+  describe('AC #2: message from allowlisted chat is processed', () => {
+    it('emits message_received', async () => {
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        messageRouter: mockMessageRouter,
+        config: { allowedChats: ['7777'] },
+      });
+      await gateway.start();
+      const received: string[] = [];
+      gateway.onEvent((e) => received.push(e.type));
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (gateway as any).handleMessage(makeMessage(7777, 42, 'hello'));
+
+      expect(received).toContain('message_received');
+      await gateway.stop();
+    });
+  });
+
+  describe('AC #3: start() without allowlist logs a SECURITY WARNING', () => {
+    it('warns loudly when allowedChats is empty', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        messageRouter: mockMessageRouter,
+      });
+      await gateway.start();
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain('SECURITY WARNING');
+      warnSpy.mockRestore();
+      await gateway.stop();
+    });
+  });
+
+  describe('AC #4: start() with allowlist logs active state, no warning', () => {
+    it('logs allowlist size and does not warn', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        messageRouter: mockMessageRouter,
+        config: { allowedChats: ['7777', '8888'] },
+      });
+      await gateway.start();
+      expect(logSpy.mock.calls.flat().join('\n')).toContain('Inbound allowlist active: 2 chat(s)');
+      expect(warnSpy.mock.calls.flat().join('\n')).not.toContain('SECURITY WARNING');
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+      await gateway.stop();
+    });
+  });
+});

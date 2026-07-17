@@ -39,7 +39,9 @@ import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
-import { API_PORT, EMBEDDING_PORT } from './utilities.js';
+import { API_PORT, EMBEDDING_PORT, parseSecurityAlertTargets } from './utilities.js';
+import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
+import { recordSecurityEvent } from '../../security/security-monitor.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -758,175 +760,80 @@ This saves resources. Only compile when there is genuinely new information to do
     );
   }
 
-  // ── Conductor Audit — hourly system health check ──────────────────────
+  // -- System Audit: hourly deterministic code checks ---------------------
+  // Owner decision 2026-04-22 (mama_conductor_audit_code_based_read_only),
+  // landed 2026-07-17: the audit is fact collection and recording executed by
+  // CODE - no LLM invocation, no auto-fix, no broad filesystem access. The
+  // prior hourly LLM audit violated that decision and the 2026-05-14
+  // no-shell-autofix rule, and lost its tools entirely to the persona
+  // lockdown (--tools ""). The 24h alert-dedup contract (owner verdict
+  // 2026-07-11) is preserved inside runCodeAudit; MAJOR findings flow through
+  // recordSecurityEvent to the configured security alert sender.
   const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
 
-  // Owner verdict 2026-07-11: the hourly audit re-sent the same MAJOR alert every
-  // run because each audit was stateless. agent_notices does not carry audit
-  // findings (review feedback on #134), so dedup state lives in a JSON file the
-  // conductor reads/writes itself, and the current time is interpolated per run
-  // so the 24h comparison is grounded.
-  const buildAuditPrompt = (nowIso: string): string =>
-    'Perform a system audit. Read ~/.mama/skills/audit-checklist.md and execute each step. ' +
-    'Classify findings as MINOR or MAJOR. ' +
-    'For MINOR items: execute the auto-fix command immediately (Bash curl). Do NOT just report — fix it. ' +
-    'For MAJOR items: report to human via channel alert, subject to the dedup rule below. ' +
-    `Alert dedup (MANDATORY): the current time is ${nowIso}. Read ~/.mama/state/audit-findings.json ` +
-    '(it may not exist on the first run). Re-alert a MAJOR finding only if it is NEW (no entry ' +
-    'with the same id), has ESCALATED, or its last_alerted_at is older than 24 hours compared to ' +
-    'the current time; otherwise stay silent about it. Never alert MINOR findings to the owner. ' +
-    'After the audit, Write ~/.mama/state/audit-findings.json with an array of every current ' +
-    'finding: {id (stable kebab-case slug), severity, first_seen, last_seen, last_alerted_at}. ' +
-    'Carry forward first_seen and last_alerted_at from the previous file; set last_alerted_at to ' +
-    'the current time only for findings you actually alerted this run. ' +
-    // Owner verdict 2026-07-10: hourly-audit self-notes are memory noise -- the two
-    // "durable policy" saves it produced were unscoped near-duplicates polluting
-    // global recall. The audit record lives in validation sessions + agent_activity;
-    // MAJOR findings reach the owner via the channel alert. No memory writes here.
-    'Do NOT call mama_save under any circumstances: the validation session and agent_activity ' +
-    'are the durable audit record, and repeated audits must not accumulate policy notes in memory.';
+  const securityAlertConfigured = parseSecurityAlertTargets(config).length > 0;
 
-  const runConductorAudit = async () => {
-    let auditSession: ValidationSessionRow | null = null;
-    let auditVersion = 0;
-    const auditStart = Date.now();
+  const runSystemAudit = async (): Promise<CodeAuditReport | null> => {
     try {
-      routesLogger.debug('[Conductor Audit] Starting hourly audit...');
-
-      try {
-        const ver = sessionsDb ? getLatestVersion(sessionsDb, 'conductor') : null;
-        auditVersion = ver?.version ?? 0;
-        auditSession =
-          validationService?.startSession('conductor', auditVersion, 'audit', {
-            goal: 'hourly system audit',
-          }) ?? null;
-      } catch (bootstrapErr) {
-        routesLogger.warn('[Conductor Audit] Failed to initialize audit telemetry:', bootstrapErr);
-        auditVersion = 0;
-        auditSession = null;
-      }
-
-      if (sessionsDb) {
-        try {
-          const startRow = logActivity(sessionsDb, {
-            agent_id: 'conductor',
-            agent_version: auditVersion,
-            type: 'audit_start',
-            input_summary: 'Hourly system audit',
-            run_id: auditSession?.id,
-            execution_status: 'started',
-            trigger_reason: 'audit',
+      const report = await runCodeAudit({
+        config: {
+          telegram: config.telegram,
+          multi_agent: config.multi_agent,
+        },
+        securityAlertConfigured,
+        alert: (finding, reason) => {
+          recordSecurityEvent({
+            type: 'system_audit_finding',
+            severity: 'critical',
+            message: `[Audit/${reason}] ${finding.summary}`,
+            // path carries the finding id so the alert-cooldown fingerprint
+            // distinguishes findings instead of collapsing them all into one.
+            clientAddress: 'system-audit',
+            path: finding.id,
+            details: { findingId: finding.id, detail: finding.detail ?? null },
           });
-          if (auditSession) {
-            try {
-              validationService?.recordRun(auditSession.id, { activityId: startRow.id });
-            } catch (telemetryErr) {
-              routesLogger.warn(
-                '[Conductor Audit] Failed to link startup activity to validation session:',
-                telemetryErr
-              );
-            }
-          }
-        } catch (telemetryErr) {
-          routesLogger.warn('[Conductor Audit] Failed to write startup telemetry:', telemetryErr);
-        }
-      }
-
-      const auditChannelId = `conductor-audit-${Date.now()}`;
-      await messageRouter.process({
-        source: 'system' as const,
-        channelId: auditChannelId,
-        userId: 'system',
-        text: buildAuditPrompt(new Date().toISOString()),
+        },
       });
-
-      const auditDuration = Date.now() - auditStart;
-      try {
-        if (sessionsDb) {
-          const activityRow = logActivity(sessionsDb, {
-            agent_id: 'conductor',
-            agent_version: auditVersion,
-            type: 'audit_complete',
-            input_summary: 'Hourly system audit',
-            duration_ms: auditDuration,
-            run_id: auditSession?.id,
-            execution_status: 'completed',
-            trigger_reason: 'audit',
-          });
-          if (auditSession) {
-            validationService?.recordRun(auditSession.id, { activityId: activityRow.id });
-          }
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[Conductor Audit] Failed to write completion telemetry:', telemetryErr);
+      const majors = report.findings.filter((f) => f.severity === 'MAJOR').length;
+      const minors = report.findings.filter((f) => f.severity === 'MINOR').length;
+      routesLogger.info(
+        `[System Audit] ${report.pass_items.length} pass, ${majors} MAJOR, ${minors} MINOR, ` +
+          `alerted=[${report.alerted.join(',')}] in ${report.duration_ms}ms`
+      );
+      if (report.alert_delivery_failures.length > 0) {
+        routesLogger.error(
+          '[System Audit] Alert delivery failures:',
+          report.alert_delivery_failures.join('; ')
+        );
       }
-
-      try {
-        if (auditSession && validationService) {
-          validationService.finalizeSession(auditSession.id, {
-            execution_status: 'completed',
-            metrics: { duration_ms: auditDuration },
-          });
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[Conductor Audit] Failed to finalize validation session:', telemetryErr);
-      }
-
-      routesLogger.debug('[Conductor Audit] Audit complete');
+      return report;
     } catch (err) {
-      const auditDuration = Date.now() - auditStart;
-      try {
-        if (sessionsDb) {
-          const failRow = logActivity(sessionsDb, {
-            agent_id: 'conductor',
-            agent_version: auditVersion,
-            type: 'audit_failed',
-            input_summary: 'Hourly system audit failed',
-            error_message: err instanceof Error ? err.message : String(err),
-            duration_ms: auditDuration,
-            run_id: auditSession?.id,
-            execution_status: 'failed',
-            trigger_reason: 'audit',
-          });
-          if (auditSession) {
-            validationService?.recordRun(auditSession.id, { activityId: failRow.id });
-          }
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[Conductor Audit] Failed to write failure telemetry:', telemetryErr);
-      }
-      try {
-        if (auditSession && validationService) {
-          validationService.finalizeSession(auditSession.id, {
-            execution_status: 'failed',
-            error_message: err instanceof Error ? err.message : String(err),
-            metrics: { duration_ms: auditDuration },
-          });
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[Conductor Audit] Failed to finalize failed session:', telemetryErr);
-      }
       routesLogger.error(
-        '[Conductor Audit] Failed:',
+        '[System Audit] Failed:',
         err instanceof Error ? err.message : String(err)
       );
+      return null;
     }
   };
 
   setTimeout(() => {
-    runConductorAudit();
-    setInterval(runConductorAudit, AUDIT_INTERVAL_MS);
+    void runSystemAudit();
+    setInterval(() => void runSystemAudit(), AUDIT_INTERVAL_MS);
   }, AUDIT_INITIAL_DELAY_MS);
 
-  // Manual trigger
+  // Manual trigger returns the full report (read-only, no LLM, fast)
   apiServer.app.post('/api/conductor/audit', requireAuth, async (_req, res) => {
-    runConductorAudit().catch(() => {});
-    res.json({ ok: true, message: 'Conductor audit triggered' });
+    const report = await runSystemAudit();
+    if (report) {
+      res.json({ ok: true, mode: 'code', report });
+    } else {
+      res.status(500).json({ ok: false, error: 'audit failed - see daemon.log' });
+    }
   });
 
   routesLogger.info(
-    '[Conductor Audit] Ready — runs every 60 min, POST /api/conductor/audit for manual trigger'
+    '[System Audit] Ready - deterministic code checks every 60 min, POST /api/conductor/audit for manual run'
   );
 
   // ── Memory Agent stats API ────────────────────────────────────────────

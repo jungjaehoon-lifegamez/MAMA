@@ -1,5 +1,19 @@
 # TODOS
 
+## Deferred from security-utility round (2026-07-17)
+
+### Surface memory provenance at recall time
+
+- **What:** Recall/search results should display source provenance (e.g. `connector-raw-evidence` + channel scope) so agents and owners can weight externally-derived memories differently from owner decisions.
+- **Why:** Save-side provenance already exists (mama-core provenance.ts, connector ingest stamps source_type; gateway saves carry trusted-write evidence), but nothing surfaces it on recall - an injected "fact" from an external channel reads identically to an owner decision.
+- **Context:** Cross-package change (mama-core recall payload + standalone recall-bundle-formatter). Untrusted-content wrapping at prompt seams (SEC-4) covers the input side this round.
+
+### Untrusted wrapping for gateway gather-tool RESULTS
+
+- **What:** Wrap connector-content tool results (kagemusha_messages, channel_history/recent/search) in untrusted-content markers when they are fed back into the agent conversation.
+- **Why:** SEC-4 wrapped code-built prompts (situation report window, history-extractor passes); tool RESULTS during self-gather are the remaining unwrapped external-text seam.
+- **Context:** Needs care with token budgets and code-act JSON result shapes; single formatting point per route in agent-loop/code-act bridge.
+
 ## Deferred from agent-boundary-repair round (2026-07-16)
 
 ### Persona migration to the code-act MCP route
