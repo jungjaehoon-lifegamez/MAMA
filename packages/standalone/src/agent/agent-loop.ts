@@ -1064,9 +1064,12 @@ export class AgentLoop {
 
       let perCallSystemPrompt: string;
       if (options?.systemPrompt) {
-        // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter)
+        // Skip gateway tools if already embedded in systemPrompt (e.g. by MessageRouter).
+        // '# Gateway Tools' matches both the doc's H1 title and any H2 form -
+        // before this, only the '## Code-Act' section header (gateway-tools.md:87)
+        // was accidentally keeping router-built prompts from double-injection.
         const alreadyHasTools =
-          options.systemPrompt.includes('## Gateway Tools') ||
+          options.systemPrompt.includes('# Gateway Tools') ||
           options.systemPrompt.includes('# Code Execution') ||
           options.systemPrompt.includes('## Code-Act');
         let gatewayToolsPrompt = '';

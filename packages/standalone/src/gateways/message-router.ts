@@ -29,6 +29,7 @@ import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-pr
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
+import { ToolRegistry } from '../agent/tool-registry.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
@@ -220,7 +221,6 @@ export class MessageRouter {
   private envelopeAuthority?: EnvelopeAuthority;
   private roleManager: RoleManager;
   private promptEnhancer: PromptEnhancer;
-  private cachedGatewayToolsPrompt: string | null = null;
   private gatewayRegistry: GatewayRegistry | null = null;
   private memoryAgentProcessManager?: MemoryAgentProcessManagerLike;
   private memoryAuditQueue?: AuditTaskQueue;
@@ -1162,14 +1162,22 @@ ${historyContext}
     // See process() method for user-message injection.
 
     // Include gateway tools directly in system prompt (priority 1 protection)
-    // so they don't get truncated by PromptSizeMonitor as a separate layer
-    // Cache in production; re-read in dev for hot-reload of gateway-tools.md
-    const isProduction = process.env.NODE_ENV === 'production';
-    if (!isProduction || this.cachedGatewayToolsPrompt === null) {
-      this.cachedGatewayToolsPrompt = getGatewayToolsPrompt() || '';
-    }
-    if (this.cachedGatewayToolsPrompt) {
-      prompt += `\n---\n\n${this.cachedGatewayToolsPrompt}\n`;
+    // so they don't get truncated by PromptSizeMonitor as a separate layer.
+    // Prompt-permission coherence: advertise ONLY the tools this role can
+    // execute - the previous role-agnostic single cache advertised the full
+    // catalog, teaching the model to call tools the executor then denied.
+    // getGatewayToolsPrompt keeps its own per-disallowed-key cache, and its
+    // per-bullet filter preserves the '## Gateway Tools' marker - AgentLoop
+    // must keep seeing that marker or it double-injects an UNFILTERED catalog
+    // (agent-loop alreadyHasTools check).
+    const disallowedForRole = agentContext
+      ? ToolRegistry.getValidToolNames().filter(
+          (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
+        )
+      : undefined;
+    const gatewayToolsPrompt = getGatewayToolsPrompt(disallowedForRole) || '';
+    if (gatewayToolsPrompt) {
+      prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
 
     return prompt;
