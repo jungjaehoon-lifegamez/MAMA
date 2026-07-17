@@ -8,6 +8,8 @@
 
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -28,6 +30,10 @@ describe('Story SEC-3: deterministic code audit', () => {
   let mamaDir: string;
 
   beforeEach(() => {
+    // Connector tests stubGlobal('fetch') and not all of them unstub; under
+    // the singleFork full-suite run a leaked stub would hijack the real local
+    // http server used by the AC #12 health checks.
+    vi.unstubAllGlobals();
     mamaDir = makeMamaDir();
   });
 
@@ -189,6 +195,57 @@ describe('Story SEC-3: deterministic code audit', () => {
       expect(warnSpy.mock.calls.flat().join('\n')).toContain('audit state file is corrupt');
       expect(alerts).toContain('config-parse-config.json');
       warnSpy.mockRestore();
+    });
+  });
+
+  describe('AC #12: health endpoint is validated structurally, not by substring', () => {
+    const serveOnce = async (
+      statusCode: number,
+      body: string
+    ): Promise<{ url: string; close: () => Promise<void> }> => {
+      const server = http.createServer((_req, res) => {
+        res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+        res.end(body);
+      });
+      await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+      const port = (server.address() as AddressInfo).port;
+      return {
+        url: `http://127.0.0.1:${port}/health`,
+        close: () => new Promise((resolve) => server.close(() => resolve())),
+      };
+    };
+
+    const healthFindingFor = async (statusCode: number, body: string) => {
+      const srv = await serveOnce(statusCode, body);
+      try {
+        const report = await run({ healthUrl: srv.url });
+        return report.findings.find((f) => f.id === 'health-endpoint');
+      } finally {
+        await srv.close();
+      }
+    };
+
+    it('passes on 200 {"status":"ok"}', async () => {
+      expect(await healthFindingFor(200, '{"status":"ok","timestamp":1}')).toBeUndefined();
+    });
+
+    it('flags MAJOR on 200 with a non-ok status field', async () => {
+      expect((await healthFindingFor(200, '{"status":"degraded"}'))?.severity).toBe('MAJOR');
+    });
+
+    it('flags MAJOR on 200 with a malformed JSON body', async () => {
+      expect((await healthFindingFor(200, 'ok but not json'))?.severity).toBe('MAJOR');
+    });
+
+    it('flags MAJOR on non-200 even with an ok body', async () => {
+      expect((await healthFindingFor(500, '{"status":"ok"}'))?.severity).toBe('MAJOR');
+    });
+
+    it('flags MAJOR when the endpoint is unreachable', async () => {
+      const srv = await serveOnce(200, '{}');
+      await srv.close();
+      const report = await run({ healthUrl: srv.url });
+      expect(report.findings.find((f) => f.id === 'health-endpoint')?.severity).toBe('MAJOR');
     });
   });
 

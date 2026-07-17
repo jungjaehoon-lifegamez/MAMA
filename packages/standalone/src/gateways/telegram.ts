@@ -170,7 +170,9 @@ export class TelegramGateway extends BaseGateway {
           if (now - ts > MESSAGE_CONTENT_DEDUP_TTL_MS) this.recentMessageSignatures.delete(key);
         }
         for (const [key, ts] of this.rejectedChatWarnAt) {
-          if (now - ts > REJECTED_CHAT_WARN_INTERVAL_MS) this.rejectedChatWarnAt.delete(key);
+          if (now - ts > REJECTED_CHAT_WARN_INTERVAL_MS) {
+            this.rejectedChatWarnAt.delete(key);
+          }
         }
       }, 60_000);
 

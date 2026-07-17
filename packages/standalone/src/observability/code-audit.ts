@@ -16,8 +16,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import http from 'node:http';
+import { basename, dirname, join } from 'node:path';
 import * as yaml from 'js-yaml';
 
 export type AuditSeverity = 'INFO' | 'MINOR' | 'MAJOR';
@@ -103,13 +102,23 @@ function fileSize(path: string): number | null {
   }
 }
 
+/**
+ * First line of a parse error only, length-capped. js-yaml's YAMLException
+ * message embeds a source snippet of the malformed file; config files hold
+ * tokens, so the snippet must never travel into alert payloads.
+ */
+function sanitizeParseError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.split('\n')[0].slice(0, 200);
+}
+
 function checkParseable(
   path: string,
   kind: 'yaml' | 'json',
   findings: AuditFinding[],
   passes: string[]
 ): void {
-  const name = path.split('/').slice(-1)[0];
+  const name = basename(path);
   if (!existsSync(path)) {
     passes.push(`${name}: absent (nothing to validate)`);
     return;
@@ -127,7 +136,7 @@ function checkParseable(
       id: `config-parse-${name}`,
       severity: 'MAJOR',
       summary: `${name} is not valid ${kind.toUpperCase()}`,
-      detail: error instanceof Error ? error.message : String(error),
+      detail: sanitizeParseError(error),
     });
   }
 }
@@ -141,7 +150,7 @@ function checkFileSizeLimit(
   passes: string[]
 ): void {
   const size = fileSize(path);
-  const name = path.split('/').slice(-1)[0];
+  const name = basename(path);
   if (size === null) {
     passes.push(`${name}: absent`);
     return;
@@ -164,25 +173,32 @@ async function checkHealthEndpoint(
   findings: AuditFinding[],
   passes: string[]
 ): Promise<void> {
-  const outcome = await new Promise<{ ok: boolean; detail: string }>((resolve) => {
-    const req = http.get(url, { timeout: 3_000 }, (res) => {
-      let body = '';
-      res.on('data', (chunk) => {
-        body += chunk;
-      });
-      res.on('end', () => {
-        const ok = res.statusCode === 200 && body.includes('"ok"');
-        resolve({ ok, detail: `HTTP ${res.statusCode} ${body.slice(0, 120)}` });
-      });
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ ok: false, detail: 'timeout after 3s' });
-    });
-    req.on('error', (error) => {
-      resolve({ ok: false, detail: error.message });
-    });
-  });
+  let outcome: { ok: boolean; detail: string };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const body = await res.text();
+    let structurallyOk = false;
+    try {
+      const parsed = JSON.parse(body) as { status?: unknown };
+      structurallyOk = parsed.status === 'ok';
+    } catch {
+      structurallyOk = false;
+    }
+    outcome = {
+      ok: res.status === 200 && structurallyOk,
+      detail: `HTTP ${res.status} ${body.slice(0, 120)}`,
+    };
+  } catch (error) {
+    const aborted = error instanceof Error && error.name === 'AbortError';
+    outcome = {
+      ok: false,
+      detail: aborted ? 'timeout after 3s' : error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (outcome.ok) {
     passes.push(`health endpoint: ${outcome.detail}`);
@@ -204,9 +220,14 @@ async function readState(stateFilePath: string): Promise<StoredFinding[]> {
   let raw: string;
   try {
     raw = await readFile(stateFilePath, 'utf8');
-  } catch {
-    // Missing file is the normal first run.
-    return [];
+  } catch (error) {
+    // Missing file is the normal first run. Anything else (EACCES, EIO) is a
+    // real system problem: fail the audit run loudly instead of silently
+    // resetting dedup history - the subsequent state write would fail anyway.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return [];
+    }
+    throw error;
   }
   try {
     const parsed = JSON.parse(raw) as { findings?: StoredFinding[] };
