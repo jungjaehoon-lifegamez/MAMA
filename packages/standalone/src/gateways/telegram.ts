@@ -21,6 +21,7 @@ import type { PlatformAdapter } from './tool-status-tracker.js';
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
 const MESSAGE_CONTENT_DEDUP_TTL_MS = 5_000;
+const REJECTED_CHAT_WARN_INTERVAL_MS = 60_000;
 const TYPING_INTERVAL_MS = 4_000;
 
 const EMOTION_EMOJI: Record<string, string[]> = {
@@ -86,6 +87,7 @@ export class TelegramGateway extends BaseGateway {
   // Dedup maps
   private recentMessageIds = new Map<string, number>();
   private recentMessageSignatures = new Map<string, number>();
+  private rejectedChatWarnAt = new Map<string, number>();
 
   // Dedup cleanup timer
   private dedupCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -246,9 +248,15 @@ export class TelegramGateway extends BaseGateway {
     // Allowed chats filter
     if (this.config.allowedChats && this.config.allowedChats.length > 0) {
       if (!this.config.allowedChats.includes(String(msg.chat.id))) {
-        console.warn(
-          `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from?.id ?? 'unknown'})`
-        );
+        // Rate-cap the warn per chat so a stranger cannot grow daemon.log
+        // one line per unique message.
+        const lastWarn = this.rejectedChatWarnAt.get(String(msg.chat.id)) ?? 0;
+        if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
+          this.rejectedChatWarnAt.set(String(msg.chat.id), now);
+          console.warn(
+            `[Telegram] Dropped message from non-allowlisted chat ${msg.chat.id} (user ${msg.from?.id ?? 'unknown'})`
+          );
+        }
         return;
       }
     }

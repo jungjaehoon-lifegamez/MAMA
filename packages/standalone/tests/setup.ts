@@ -12,10 +12,13 @@ process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS ||= 'true';
 // ~/.mama/logs during tests: fixture events (test-session, TEST-NET IPs) once
 // drowned real signal 30:1 there.
 process.env.MAMA_SECURITY_LOG_DIR ||= mkdtempSync(join(tmpdir(), 'mama-test-security-'));
+// Tests must never perform live RDAP lookups for fixture IPs.
+process.env.MAMA_SECURITY_ENRICHMENT ||= 'false';
 
 beforeEach(() => {
   process.env.MAMA_FORCE_TIER_3 ||= 'true';
   process.env.MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS ||= 'true';
   process.env.MAMA_SECURITY_LOG_DIR ||= mkdtempSync(join(tmpdir(), 'mama-test-security-'));
+  process.env.MAMA_SECURITY_ENRICHMENT ||= 'false';
   resetConfigCache(true);
 });

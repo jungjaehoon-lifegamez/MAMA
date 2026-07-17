@@ -149,6 +149,49 @@ describe('Story SEC-3: deterministic code audit', () => {
     });
   });
 
+  describe('AC #10: cross-version severity regrade escalates immediately', () => {
+    it('alerts with reason "escalated" when a stored lower-severity id is now MAJOR, even inside 24h', async () => {
+      // Simulate a previous release that graded this finding MINOR and
+      // alerted... never (MINOR is never alerted). The current release
+      // grades the same id MAJOR: it must alert NOW, not after 24h.
+      writeFileSync(join(mamaDir, 'config.json'), '{broken');
+      writeFileSync(
+        join(mamaDir, 'state', 'audit-findings.json'),
+        JSON.stringify({
+          findings: [
+            {
+              id: 'config-parse-config.json',
+              severity: 'MINOR',
+              first_seen: '2026-07-01',
+              last_seen: NOW.toISOString(),
+              last_alerted_at: NOW.toISOString(),
+            },
+          ],
+        })
+      );
+      const alerts: Array<[string, string]> = [];
+      const report = await run(
+        { alert: (f, r) => void alerts.push([f.id, r]) },
+        new Date(NOW.getTime() + 60 * 60 * 1000)
+      );
+      expect(alerts).toEqual([['config-parse-config.json', 'escalated']]);
+      expect(report.alerted).toContain('config-parse-config.json');
+    });
+  });
+
+  describe('AC #11: corrupt state file resets loudly, not silently', () => {
+    it('warns and treats the run as first-run', async () => {
+      writeFileSync(join(mamaDir, 'state', 'audit-findings.json'), '{not json');
+      writeFileSync(join(mamaDir, 'config.json'), '{broken');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const alerts: string[] = [];
+      await run({ alert: (f) => void alerts.push(f.id) });
+      expect(warnSpy.mock.calls.flat().join('\n')).toContain('audit state file is corrupt');
+      expect(alerts).toContain('config-parse-config.json');
+      warnSpy.mockRestore();
+    });
+  });
+
   describe('AC #9: missing persona files are INFO when multi-agent is disabled, MINOR when enabled', () => {
     it('grades by multi_agent.enabled', async () => {
       const config = {
