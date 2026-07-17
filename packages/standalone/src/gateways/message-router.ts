@@ -45,6 +45,7 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
+import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -545,8 +546,14 @@ export class MessageRouter {
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
-    // Security: Block sensitive configuration requests from non-viewer sources
-    if (message.source !== 'viewer' && containsSensitiveRequest(message.text)) {
+    // Security: Block sensitive configuration requests from non-viewer sources.
+    // The wall applies to OWNER-authored text only: untrusted-wrapped blocks
+    // (forwarded third-party content) are stripped first - the owner forwarding
+    // a phishing message that merely mentions "api key" must reach the persona
+    // (as labeled data), not trip the wall. Sensitive patterns INSIDE wrapped
+    // content are tripwire-logged instead (S1-T7).
+    const ownerAuthoredText = stripUntrustedBlocks(message.text);
+    if (message.source !== 'viewer' && containsSensitiveRequest(ownerAuthoredText)) {
       const securityResponse = `🔒 **Security Notice**
 
 For security reasons, token and API key configuration must be done through MAMA OS.
