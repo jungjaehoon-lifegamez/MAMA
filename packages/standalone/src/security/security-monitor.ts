@@ -753,6 +753,39 @@ export function setSecurityAlertSender(sender: SecurityAlertSender | null): void
   }
 }
 
+export function hasSecurityAlertSender(): boolean {
+  return alertSender !== null;
+}
+
+/**
+ * Deliver an alert through the registered sender WITHOUT the incident pipeline.
+ *
+ * recordSecurityEvent() preserves evidence, writes denylist candidates, and
+ * runs RDAP attribution - correct for real client events, but self-generated
+ * alerts (system audit findings) must not fabricate incident/denylist/WAF
+ * artifacts for a pseudo client. This path only appends the event to the
+ * security log (durable record) and AWAITS delivery so the caller can retry:
+ * it throws when no sender is registered or when the sender fails.
+ */
+export async function dispatchSecurityAlertDirect(event: SecurityEvent): Promise<void> {
+  const normalized: SecurityEvent = {
+    ...event,
+    timestamp: event.timestamp || new Date().toISOString(),
+  };
+
+  logger.warn(`[SECURITY] ${normalized.message}`, normalized);
+  trackBackgroundTask(
+    appendSecurityLog(normalized).catch((error) => {
+      logger.error('Failed to append security event log', error);
+    })
+  );
+
+  if (!alertSender) {
+    throw new Error('No security alert sender registered (MAMA_SECURITY_ALERT_CHANNELS unset?)');
+  }
+  await alertSender(normalized);
+}
+
 export function resetSecurityMonitorForTests(): void {
   banMap.clear();
   alertSender = null;

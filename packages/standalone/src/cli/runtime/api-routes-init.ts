@@ -39,9 +39,12 @@ import type { SlackGateway } from '../../gateways/slack.js';
 import type { MAMAConfig } from '../config/types.js';
 import type { MAMAApiShape } from './types.js';
 import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
-import { API_PORT, EMBEDDING_PORT, parseSecurityAlertTargets } from './utilities.js';
+import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
-import { recordSecurityEvent } from '../../security/security-monitor.js';
+import {
+  dispatchSecurityAlertDirect,
+  hasSecurityAlertSender,
+} from '../../security/security-monitor.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 
@@ -768,11 +771,9 @@ This saves resources. Only compile when there is genuinely new information to do
   // no-shell-autofix rule, and lost its tools entirely to the persona
   // lockdown (--tools ""). The 24h alert-dedup contract (owner verdict
   // 2026-07-11) is preserved inside runCodeAudit; MAJOR findings flow through
-  // recordSecurityEvent to the configured security alert sender.
+  // dispatchSecurityAlertDirect to the configured security alert sender.
   const AUDIT_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
   const AUDIT_INITIAL_DELAY_MS = 5 * 60 * 1000; // 5 min after startup
-
-  const securityAlertConfigured = parseSecurityAlertTargets(config).length > 0;
 
   const runSystemAudit = async (): Promise<CodeAuditReport | null> => {
     try {
@@ -781,15 +782,22 @@ This saves resources. Only compile when there is genuinely new information to do
           telegram: config.telegram,
           multi_agent: config.multi_agent,
         },
-        securityAlertConfigured,
-        alert: (finding, reason) => {
-          recordSecurityEvent({
+        // Evaluated at audit time: gateway-wiring registers the sender only
+        // for ACTIVE gateways, so a configured target on a dead gateway must
+        // not report a false PASS.
+        securityAlertConfigured: hasSecurityAlertSender(),
+        // Direct dispatch, NOT recordSecurityEvent: audit findings are
+        // self-generated and must not fabricate incident/denylist/RDAP
+        // artifacts for a pseudo client. dispatchSecurityAlertDirect awaits
+        // delivery and throws on failure, so runCodeAudit keeps
+        // last_alerted_at null and retries on the next run (fail loud).
+        alert: async (finding, reason) => {
+          await dispatchSecurityAlertDirect({
             type: 'system_audit_finding',
             severity: 'critical',
             message: `[Audit/${reason}] ${finding.summary}`,
             // path carries the finding id so the alert-cooldown fingerprint
             // distinguishes findings instead of collapsing them all into one.
-            clientAddress: 'system-audit',
             path: finding.id,
             details: { findingId: finding.id, detail: finding.detail ?? null },
           });

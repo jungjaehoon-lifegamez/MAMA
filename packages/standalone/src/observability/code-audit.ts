@@ -201,11 +201,25 @@ function expandHome(p: string): string {
 }
 
 async function readState(stateFilePath: string): Promise<StoredFinding[]> {
+  let raw: string;
   try {
-    const raw = await readFile(stateFilePath, 'utf8');
+    raw = await readFile(stateFilePath, 'utf8');
+  } catch {
+    // Missing file is the normal first run.
+    return [];
+  }
+  try {
     const parsed = JSON.parse(raw) as { findings?: StoredFinding[] };
     return Array.isArray(parsed.findings) ? parsed.findings : [];
-  } catch {
+  } catch (error) {
+    // Corrupt state is NOT silent: dedup history is lost, so every current
+    // MAJOR re-alerts as new. Over-alerting is the safe direction, but the
+    // owner must be able to see why.
+    console.warn(
+      `[code-audit] audit state file is corrupt, resetting dedup history (${stateFilePath}): ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
     return [];
   }
 }
@@ -314,6 +328,10 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
       if (!prior) {
         reason = 'new';
       } else if (SEVERITY_RANK[finding.severity] > SEVERITY_RANK[prior.severity]) {
+        // Reachable across checklist_version upgrades: when a check's grading
+        // changes (e.g. a MINOR becomes MAJOR in a new release), the stored
+        // lower severity escalates and must alert immediately instead of
+        // waiting out a 24h window stamped under the old grading.
         reason = 'escalated';
       } else if (
         !prior.last_alerted_at ||
