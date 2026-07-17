@@ -40,15 +40,33 @@ export function scanForSecrets(text: string): SecretScanResult {
 }
 
 /**
- * Scan every string field of a memory-write input. Returns the offending
- * pattern names; caller refuses the write loudly when non-empty.
+ * Scan every string reachable in a memory-write input (nested objects and
+ * arrays included, depth-capped): open_files arrays, scope ids, and source
+ * objects are persisted too and must not smuggle secrets past a top-level
+ * scan (review m1).
  */
 export function scanMemoryWriteInput(input: Record<string, unknown>): SecretScanResult {
   const texts: string[] = [];
-  for (const value of Object.values(input)) {
+  const visit = (value: unknown, depth: number): void => {
+    if (depth > 4 || value === null || value === undefined) {
+      return;
+    }
     if (typeof value === 'string') {
       texts.push(value);
+      return;
     }
-  }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item, depth + 1);
+      }
+      return;
+    }
+    if (typeof value === 'object') {
+      for (const item of Object.values(value as Record<string, unknown>)) {
+        visit(item, depth + 1);
+      }
+    }
+  };
+  visit(input, 0);
   return scanForSecrets(texts.join('\n'));
 }

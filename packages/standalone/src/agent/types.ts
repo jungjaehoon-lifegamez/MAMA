@@ -763,6 +763,9 @@ export type GatewayToolName =
   | 'delegate'
   // Report slots
   | 'report_publish'
+  | 'report_request'
+  | 'board_read'
+  | 'audit_findings_read'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI

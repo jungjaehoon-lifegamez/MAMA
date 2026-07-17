@@ -7,7 +7,7 @@
  * incidents (PR #151 lesson).
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { scanForSecrets, scanMemoryWriteInput } from '../../src/memory/secret-filter.js';
@@ -83,13 +83,18 @@ describe('Story OPS-1 / S1-T7: secret inviolability', () => {
 
       const eventsPath = join(String(dir), 'security-events.jsonl');
       expect(readFileSync(eventsPath, 'utf8')).toContain('tripwire record-only proof');
-      const incidentsFor = join(String(dir), 'security-incidents');
-      if (existsSync(incidentsFor)) {
-        // Other tests may create incidents; ours must not have added one for
-        // this event type.
-        const listing = readFileSync(eventsPath, 'utf8');
-        expect(listing).toContain('sensitive_request_blocked');
-      }
+      // Incident-count proof: record-only must not add ANY incident dir.
+      const incidentsDir = join(String(dir), 'security-incidents');
+      const countBefore = existsSync(incidentsDir) ? readdirSync(incidentsDir).length : 0;
+      logSecurityEventOnly({
+        type: 'sensitive_request_blocked',
+        severity: 'warn',
+        message: 'tripwire record-only proof 2',
+        details: { source: 'telegram' },
+      });
+      await flushSecurityMonitor();
+      const countAfter = existsSync(incidentsDir) ? readdirSync(incidentsDir).length : 0;
+      expect(countAfter).toBe(countBefore);
     });
   });
 });

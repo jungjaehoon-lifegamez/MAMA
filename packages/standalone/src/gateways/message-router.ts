@@ -47,6 +47,7 @@ import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-f
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
+import { buildReportCarryPrefix } from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -553,7 +554,9 @@ export class MessageRouter {
     // a phishing message that merely mentions "api key" must reach the persona
     // (as labeled data), not trip the wall. Sensitive patterns INSIDE wrapped
     // content are tripwire-logged instead (S1-T7).
-    const ownerAuthoredText = stripUntrustedBlocks(message.text);
+    // 'keep' for unterminated markers: a sender typing a bare open marker must
+    // NOT be able to smuggle a sensitive request past the wall (review M1).
+    const ownerAuthoredText = stripUntrustedBlocks(message.text, { unterminated: 'keep' });
     const hasWrappedBlocks = ownerAuthoredText !== message.text;
     // Tripwire (record-only, never blocks): sensitive patterns INSIDE wrapped
     // third-party content are observability signals, not walls.
@@ -809,6 +812,13 @@ This protects your credentials from being exposed in chat logs.`;
         logger.info(`New CLI session (full: ${systemPrompt.length} chars)`);
       }
 
+      // Context carry (plan v6 S1-T4): owner console turns reference the last
+      // DELIVERED full report. User-message prefix is the only channel that
+      // reaches the model on EVERY turn including CONTINUE (per-call system
+      // prompts never reach a pooled CLI process).
+      const carryPrefix =
+        agentContext?.roleName === 'owner_console' ? buildReportCarryPrefix() : '';
+
       try {
         if (shouldResume) {
           const notices = this.memoryNoticeQueue.peek(channelKey);
@@ -876,7 +886,7 @@ This protects your credentials from being exposed in chat logs.`;
 
         // Add text content (with memory context, skill context, and page context)
         const pageCtx = this.getPageContextPrefix(message);
-        const effectiveMessageText = `${pageCtx}${memoryPrefix}${skillPrefix}${messageText || ''}`;
+        const effectiveMessageText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${messageText || ''}`;
         if (effectiveMessageText) {
           contentBlocks.push({ type: 'text', text: effectiveMessageText });
         }
@@ -905,7 +915,7 @@ This protects your credentials from being exposed in chat logs.`;
         this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       } else {
         const pageCtx = this.getPageContextPrefix(message);
-        const effectiveText = `${pageCtx}${memoryPrefix}${skillPrefix}${message.text}`;
+        const effectiveText = `${pageCtx}${carryPrefix}${memoryPrefix}${skillPrefix}${message.text}`;
         const conductorStart = Date.now();
         const result = await this.agentLoop.run(effectiveText, options);
         response = result.response;
@@ -1608,6 +1618,10 @@ INSTRUCTION:
       projectId: this.getRuntimeProjectId(),
       createdAt: now,
     });
+    // Known accepted risk (plan v6 S1-T6): a candidate-bearing turn arms this
+    // 30s cooldown, so a REAL directive within 30s of a previous candidate is
+    // swallowed. Owner directives rarely arrive back-to-back; a swallowed one
+    // is recoverable by re-stating (or direct mama_save on the owner console).
     const cooldownKey = `${source}:${channelId}:${userId ?? 'anonymous'}`;
     const lastExtractTime = this.memoryAuditCooldowns.get(cooldownKey) ?? 0;
     if (now - lastExtractTime < MessageRouter.EXTRACT_COOLDOWN_MS) {

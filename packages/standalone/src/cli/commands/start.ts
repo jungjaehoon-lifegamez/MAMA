@@ -1124,6 +1124,7 @@ export async function runAgentLoop(
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
+      const { persistLastFullReport } = await import('../../operator/report-carry.js');
       const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } =
         await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
@@ -1250,6 +1251,9 @@ export async function runAgentLoop(
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
+        // S1-T4 context carry: the delivered FULL report persists so the owner
+        // console references it per turn instead of fabricating status.
+        persistLastFullReport: (iso, text) => persistLastFullReport(iso, text),
         config: {
           tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
           drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
@@ -1272,6 +1276,9 @@ export async function runAgentLoop(
       const stopTriggerLoop = triggerLoop.start();
       // M2.4: point the connector sink's forwarder at this loop now that it exists.
       triggerLoopNudge.current = () => triggerLoop.nudge();
+      // S1-T3: owner-intent forwarder - report_request routes to the SAME
+      // report machinery (fresh session, delta anchor, consume semantics).
+      toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
       gateways.push({
         stop: async () => {
           triggerLoopNudge.current = null;

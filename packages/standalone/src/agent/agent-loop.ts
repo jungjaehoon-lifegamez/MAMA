@@ -106,6 +106,11 @@ const SOURCE_GLOBAL_LANES: Record<string, string> = {
 interface RunScope {
   streamCallbacks?: StreamCallbacks;
   tier: 1 | 2 | 3;
+  /** Per-run turn/tool observers (options-first; instance handlers are the
+   *  shared fallback). Instance-only handlers caused cross-run reasoning-log
+   *  contamination once operator runs could overlap chat (review M2). */
+  onTurn?: (turn: TurnInfo) => void;
+  onToolUse?: (toolName: string, input: unknown, result: unknown) => void;
 }
 
 function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
@@ -316,7 +321,7 @@ export function getGatewayToolsPrompt(disallowed?: string[]): string {
 
   if (!disallowed?.length) return _gatewayToolsCache;
 
-  const cacheKey = disallowed.sort().join(',');
+  const cacheKey = [...disallowed].sort().join(',');
   let filtered = _filteredCache.get(cacheKey);
   if (!filtered) {
     filtered = _gatewayToolsCache;
@@ -944,7 +949,12 @@ export class AgentLoop {
       throw new AgentError('Agent loop is stopping', 'AGENT_STOPPED', undefined, false);
     }
 
-    const runScope: RunScope = { streamCallbacks: options?.streamCallbacks, tier: 1 };
+    const runScope: RunScope = {
+      streamCallbacks: options?.streamCallbacks,
+      tier: 1,
+      onTurn: options?.onTurn ?? this.onTurn,
+      onToolUse: options?.onToolUse ?? this.onToolUse,
+    };
     const history: Message[] = [];
     const totalUsage = { input_tokens: 0, output_tokens: 0 };
     let turn = 0;
@@ -1424,7 +1434,7 @@ export class AgentLoop {
         });
 
         // Notify turn callback
-        this.onTurn?.({
+        runScope.onTurn?.({
           turn,
           role: 'assistant',
           content: response.content,
@@ -1503,7 +1513,7 @@ export class AgentLoop {
           });
 
           // Notify turn callback for tool results
-          this.onTurn?.({
+          runScope.onTurn?.({
             turn,
             role: 'user',
             content: toolResults,
@@ -1682,7 +1692,7 @@ export class AgentLoop {
           if (!codeActResult.success) {
             isError = true;
           }
-          this.onToolUse?.(toolUse.name, toolUse.input, codeActResult);
+          runScope.onToolUse?.(toolUse.name, toolUse.input, codeActResult);
           runScope.streamCallbacks?.onToolComplete?.(toolUse.name, toolUse.id, isError);
         } else {
           // PreToolUse: search MAMA for contracts before Write operations
@@ -1714,7 +1724,7 @@ export class AgentLoop {
           }
 
           // Notify tool use callback
-          this.onToolUse?.(toolUse.name, toolUse.input, toolResult);
+          runScope.onToolUse?.(toolUse.name, toolUse.input, toolResult);
 
           // PostToolUse: auto-extract contracts (fire-and-forget)
           this.postToolHandler?.processInBackground(
@@ -1737,7 +1747,7 @@ export class AgentLoop {
         result = error instanceof Error ? error.message : String(error);
 
         // Notify tool use callback with error
-        this.onToolUse?.(toolUse.name, toolUse.input, { error: result });
+        runScope.onToolUse?.(toolUse.name, toolUse.input, { error: result });
         this.onMetric?.('tool_duration_ms', Date.now() - toolStart, {
           tool: toolUse.name,
           error: 'true',
@@ -1891,7 +1901,7 @@ export class AgentLoop {
         }
         if (result !== undefined) {
           // Tool completed — notify callback
-          this.onToolUse?.(toolName, input, result);
+          runScope.onToolUse?.(toolName, input, result);
           const isError =
             typeof result === 'object' &&
             result !== null &&

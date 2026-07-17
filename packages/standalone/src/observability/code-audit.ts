@@ -66,7 +66,10 @@ export interface CodeAuditConfigView {
     enabled?: boolean;
     agents?: Record<string, { persona_file?: string; enabled?: boolean }>;
   };
-  roles?: { sourceMapping?: Record<string, string> };
+  roles?: {
+    sourceMapping?: Record<string, string>;
+    definitions?: Record<string, unknown>;
+  };
 }
 
 export interface CodeAuditOptions {
@@ -350,6 +353,25 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
     });
   } else {
     passes.push('owner_console has no static source mapping');
+  }
+
+  // The trust escalation silently no-ops when the owner_console definition is
+  // missing from the RESOLVED roles config (an older persisted roles section
+  // that skipped the additive merge). Locked allowlist + missing definition =
+  // the flagship console is dead without a sound (review B1 class).
+  if (
+    Array.isArray(telegram?.allowed_chats) &&
+    telegram.allowed_chats.length > 0 &&
+    options.config?.roles?.definitions &&
+    !('owner_console' in options.config.roles.definitions)
+  ) {
+    findings.push({
+      id: 'owner-console-definition-missing',
+      severity: 'MAJOR',
+      summary: 'telegram allowlist is locked but roles.definitions lacks owner_console',
+      detail:
+        'Trust escalation falls through to chat_bot silently. The config loader should merge default definitions; check for a stale roles section.',
+    });
   }
 
   // Telegram group/supergroup ids are negative. An allowlisted group does not

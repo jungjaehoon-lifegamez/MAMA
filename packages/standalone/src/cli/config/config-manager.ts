@@ -433,7 +433,17 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
       ...DEFAULT_CONFIG.logging,
       ...config.logging,
     },
-    roles: config.roles ?? DEFAULT_CONFIG.roles,
+    // Roles merge is ADDITIVE on definitions: a persisted config written by an
+    // older version lacks newer role definitions (owner_console), and a plain
+    // override would silently disable trust-conditional escalation on every
+    // real deployment. User-defined roles and sourceMapping still win.
+    roles:
+      config.roles && DEFAULT_CONFIG.roles
+        ? {
+            definitions: { ...DEFAULT_CONFIG.roles.definitions, ...config.roles.definitions },
+            sourceMapping: { ...DEFAULT_CONFIG.roles.sourceMapping, ...config.roles.sourceMapping },
+          }
+        : (config.roles ?? DEFAULT_CONFIG.roles),
     use_claude_cli: config.use_claude_cli ?? DEFAULT_CONFIG.use_claude_cli,
     discord: config.discord ?? DEFAULT_CONFIG.discord,
     slack: config.slack ?? DEFAULT_CONFIG.slack,

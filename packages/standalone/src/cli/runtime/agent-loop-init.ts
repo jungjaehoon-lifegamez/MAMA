@@ -71,10 +71,7 @@ export function initMainAgentLoop(
   }
 ): AgentLoopInitResult {
   // Reasoning collector for Discord display
-  let reasoningLog: string[] = [];
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  let turnCount = 0;
-  let autoRecallUsed = false;
   const mamaHome = join(homedir(), '.mama');
 
   // Sync built-in skills on every start (non-destructive — skips existing files)
@@ -154,32 +151,12 @@ export function initMainAgentLoop(
       dangerouslySkipPermissions: config.multi_agent?.dangerouslySkipPermissions ?? true,
       sessionKey: 'default', // Will be updated per message
       systemPrompt: systemPrompt + (osCapabilities ? '\n\n---\n\n' + osCapabilities : ''),
-      // Collect reasoning for Discord display
-      onTurn: (turn) => {
-        turnCount++;
-        if (Array.isArray(turn.content)) {
-          for (const block of turn.content) {
-            if (block.type === 'tool_use') {
-              reasoningLog.push(`🔧 ${block.name}`);
-            }
-          }
-        }
-      },
+      // Per-run reasoning collection moved to per-call options (review M2:
+      // shared closure state contaminated overlapping operator/chat runs).
+      // The instance handler keeps only the log side effect for runs that
+      // pass no per-call handler (operator report/worker lanes).
       onToolUse: (toolName, _input, result) => {
-        // Track tool name (for Code-Act sandbox calls that bypass onTurn)
-        if (!reasoningLog.includes(`🔧 ${toolName}`)) {
-          reasoningLog.push(`🔧 ${toolName}`);
-        }
-        // Add tool result summary
-        const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
-        if (resultObj?.error) {
-          reasoningLog.push(`  ❌ ${resultObj.error}`);
-        } else if (resultObj?.results && Array.isArray(resultObj.results)) {
-          reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
-        } else if (resultObj?.success !== undefined) {
-          reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
-        }
-        console.log(`[Tool] ${toolName} → ${JSON.stringify(result).slice(0, 80)}`);
+        console.log(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
       },
       onTokenUsage: (record) => {
         try {
@@ -222,7 +199,11 @@ export function initMainAgentLoop(
   console.log('✓ Lane-based concurrency enabled (reasoning collection)');
 
   // Build reasoning header for Discord
-  const buildReasoningHeader = (turns: number, toolsUsed: string[]): string => {
+  const buildReasoningHeader = (
+    turns: number,
+    toolsUsed: string[],
+    autoRecallUsed: boolean
+  ): string => {
     const parts: string[] = [];
     if (autoRecallUsed) parts.push('📚 Memory');
     if (toolsUsed.length > 0) parts.push(toolsUsed.join(', '));
@@ -230,14 +211,50 @@ export function initMainAgentLoop(
     return `||${parts.join(' | ')}||`;
   };
 
+  // Per-call reasoning collectors (review M2): each request collects into its
+  // OWN array via per-call options - overlapping operator/chat runs on the
+  // same AgentLoop can no longer contaminate each other's reasoning headers.
+  const withReasoningCollectors = (
+    options: AgentLoopOptions | undefined,
+    reasoningLog: string[]
+  ): AgentLoopOptions => ({
+    ...(options ?? {}),
+    onTurn: (turn) => {
+      if (Array.isArray(turn.content)) {
+        for (const block of turn.content) {
+          if (block.type === 'tool_use') {
+            reasoningLog.push(`🔧 ${block.name}`);
+          }
+        }
+      }
+      options?.onTurn?.(turn);
+    },
+    onToolUse: (toolName, input, result) => {
+      if (!reasoningLog.includes(`🔧 ${toolName}`)) {
+        reasoningLog.push(`🔧 ${toolName}`);
+      }
+      const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
+      if (resultObj?.error) {
+        reasoningLog.push(`  ❌ ${resultObj.error}`);
+      } else if (resultObj?.results && Array.isArray(resultObj.results)) {
+        reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
+      } else if (resultObj?.success !== undefined) {
+        reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
+      }
+      console.log(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
+      options?.onToolUse?.(toolName, input, result);
+    },
+  });
+
   // Create AgentLoopClient wrapper (adapts AgentLoopResult -> { response })
   // Also sets session key for lane-based concurrency and includes reasoning
   const agentLoopClient: AgentLoopClient = {
     run: async (prompt: string, options?: AgentLoopOptions) => {
-      // Reset reasoning log for new request
-      reasoningLog = [];
-      turnCount = 0;
-      autoRecallUsed = false;
+      // Per-call reasoning state (review M2: module-level state crossed runs
+      // once operator lanes could overlap chat).
+      const reasoningLog: string[] = [];
+      let autoRecallUsed = false;
+      const callOptions = withReasoningCollectors(options, reasoningLog);
 
       // Set session key for lane-based concurrency
       if (options?.source && options?.channelId) {
@@ -245,11 +262,11 @@ export function initMainAgentLoop(
         agentLoop.setSessionKey(sessionKey);
       }
 
-      if (runtimeBackend === 'codex-mcp' && options) {
+      if (runtimeBackend === 'codex-mcp') {
         // Override role-based model selection for Codex-MCP backend
-        options.model = config.agent.model;
+        callOptions.model = config.agent.model;
       }
-      const result = await agentLoop.run(prompt, options);
+      const result = await agentLoop.run(prompt, callOptions);
 
       // Check if auto-recall was used (by checking if relevant-memories was in the history)
       if (result.history && result.history.length > 0) {
@@ -269,16 +286,17 @@ export function initMainAgentLoop(
       // Always prepend reasoning header
       const header = buildReasoningHeader(
         result.turns,
-        reasoningLog.filter((l) => l.startsWith('🔧'))
+        reasoningLog.filter((l) => l.startsWith('🔧')),
+        autoRecallUsed
       );
       const response = `${header}\n${result.response}`;
       return { response };
     },
     runWithContent: async (content: GatewayContentBlock[], options?: AgentLoopOptions) => {
-      // Reset reasoning log for new request
-      reasoningLog = [];
-      turnCount = 0;
-      autoRecallUsed = false;
+      // Per-call reasoning state (review M2).
+      const reasoningLog: string[] = [];
+      let autoRecallUsed = false;
+      const callOptions = withReasoningCollectors(options, reasoningLog);
 
       // Set session key for lane-based concurrency
       if (options?.source && options?.channelId) {
@@ -287,13 +305,13 @@ export function initMainAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-      if (runtimeBackend === 'codex-mcp' && options) {
+      if (runtimeBackend === 'codex-mcp') {
         // Override role-based model selection for Codex-MCP backend
-        options.model = config.agent.model;
+        callOptions.model = config.agent.model;
       }
       const result = await agentLoop.runWithContent(
         content as unknown as AgentContentBlock[],
-        options
+        callOptions
       );
 
       // Check if auto-recall was used
@@ -314,7 +332,8 @@ export function initMainAgentLoop(
       // Always prepend reasoning header
       const header = buildReasoningHeader(
         result.turns,
-        reasoningLog.filter((l) => l.startsWith('🔧'))
+        reasoningLog.filter((l) => l.startsWith('🔧')),
+        autoRecallUsed
       );
       const response = `${header}\n${result.response}`;
       return { response };
