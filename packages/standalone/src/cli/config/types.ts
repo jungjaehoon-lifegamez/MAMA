@@ -112,6 +112,41 @@ export const DEFAULT_ROLES: RolesConfig = {
       systemControl: false,
       sensitiveAccess: false,
     },
+    // Owner console: granted ONLY when the telegram inbound is verified-owner
+    // (allowed_chats locked AND the message is a 1:1 DM from an allowlisted
+    // chat). Read/query surface is wide; execution (Bash/Write), system
+    // control, and delegation stay blocked - secrets remain structurally
+    // unreachable regardless of what the model is asked.
+    owner_console: {
+      model: 'claude-sonnet-4-6',
+      maxTurns: 10,
+      allowedTools: [
+        'mama_search',
+        'mama_recall',
+        'context_compile',
+        'kagemusha_overview',
+        'kagemusha_entities',
+        'kagemusha_tasks',
+        'kagemusha_messages',
+        'task_list',
+        'task_create',
+        'task_update',
+        'schedule_upcoming',
+        'obsidian',
+        'agent_activity',
+        'agent_get',
+        'Read',
+        'board_read',
+        'audit_findings_read',
+        'report_request',
+        'mama_save',
+        'mama_update',
+      ],
+      blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],
+      allowedPaths: ['~/.mama/workspace/**'],
+      systemControl: false,
+      sensitiveAccess: false,
+    },
   },
   sourceMapping: {
     viewer: 'os_agent',

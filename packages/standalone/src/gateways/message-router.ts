@@ -484,7 +484,13 @@ export class MessageRouter {
    * Determines role based on message source and builds context
    */
   private createAgentContext(message: NormalizedMessage, sessionId: string): AgentContext {
-    const { roleName, role } = this.roleManager.getRoleForSource(message.source);
+    // Per-message trust context: chatType is runtime state (a locked allowlist
+    // alone cannot prove owner - allowlisted groups contain third parties).
+    const { roleName, role } = this.roleManager.getRoleForSource(message.source, {
+      channelId: message.channelId,
+      chatType:
+        typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
+    });
     const capabilities = this.roleManager.getCapabilities(role);
     const limitations = this.roleManager.getLimitations(role);
 
