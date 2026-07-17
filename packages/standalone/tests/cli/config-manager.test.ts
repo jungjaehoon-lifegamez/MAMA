@@ -571,6 +571,32 @@ describe('ConfigManager', () => {
 });
 
 describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
+  // CRITICAL isolation (R2-B1): saveConfig resolves '~' via os.homedir(), which
+  // honors $HOME on POSIX. Without this override these tests OVERWRITE the real
+  // ~/.mama/config.yaml on every run (including pre-commit). Same pattern as
+  // the ConfigManager describe above - that block's beforeEach does not apply here.
+  let rolesTestDir: string;
+  let rolesOriginalHome: string | undefined;
+
+  beforeEach(async () => {
+    rolesTestDir = join(
+      tmpdir(),
+      `mama-roles-test-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    );
+    await mkdir(rolesTestDir, { recursive: true });
+    rolesOriginalHome = process.env.HOME;
+    process.env.HOME = rolesTestDir;
+  });
+
+  afterEach(async () => {
+    if (rolesOriginalHome !== undefined) {
+      process.env.HOME = rolesOriginalHome;
+    } else {
+      delete process.env.HOME;
+    }
+    await rm(rolesTestDir, { recursive: true, force: true });
+  });
+
   it('gains new default definitions while preserving user customizations (AC #1)', async () => {
     const config = {
       version: 1,
