@@ -46,6 +46,7 @@ import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
+import { logSecurityEventOnly } from '../security/security-monitor.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
 import { EnvelopeAuthority } from '../envelope/index.js';
 import {
@@ -553,7 +554,28 @@ export class MessageRouter {
     // (as labeled data), not trip the wall. Sensitive patterns INSIDE wrapped
     // content are tripwire-logged instead (S1-T7).
     const ownerAuthoredText = stripUntrustedBlocks(message.text);
+    const hasWrappedBlocks = ownerAuthoredText !== message.text;
+    // Tripwire (record-only, never blocks): sensitive patterns INSIDE wrapped
+    // third-party content are observability signals, not walls.
+    if (
+      hasWrappedBlocks &&
+      containsSensitiveRequest(message.text) &&
+      !containsSensitiveRequest(ownerAuthoredText)
+    ) {
+      logSecurityEventOnly({
+        type: 'sensitive_content_in_forward',
+        severity: 'warn',
+        message: 'Sensitive pattern inside forwarded/wrapped content (tripwire, not blocked)',
+        details: { source: message.source, channelId: message.channelId },
+      });
+    }
     if (message.source !== 'viewer' && containsSensitiveRequest(ownerAuthoredText)) {
+      logSecurityEventOnly({
+        type: 'sensitive_request_blocked',
+        severity: 'warn',
+        message: 'Sensitive configuration request blocked in chat',
+        details: { source: message.source, channelId: message.channelId },
+      });
       const securityResponse = `🔒 **Security Notice**
 
 For security reasons, token and API key configuration must be done through MAMA OS.

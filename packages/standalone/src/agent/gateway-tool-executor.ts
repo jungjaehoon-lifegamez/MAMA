@@ -32,6 +32,7 @@ import {
   serializeContextRefForProvenance,
 } from '@jungjaehoon/mama-core';
 import { recordSecurityEvent } from '../security/security-monitor.js';
+import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import type {
   GatewayToolName,
@@ -2120,6 +2121,22 @@ export class GatewayToolExecutor {
       switch (toolName as GatewayToolName) {
         case 'mama_save': {
           const saveInput = input as SaveInput;
+          // Secret inviolability (plan v6 S1-T7): a secret saved as a
+          // "decision" would resurface later via mama_search/recall - the one
+          // leak path a chat-reachable tool has. Refuse loudly at the choke.
+          const saveSecretScan = scanMemoryWriteInput(
+            saveInput as unknown as Record<string, unknown>
+          );
+          if (!saveSecretScan.clean) {
+            console.warn(
+              `[Security] mama_save refused: secret-shaped content (${saveSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to save: content matches secret pattern(s): ${saveSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           const api = await getApi();
           let trustedOptions: TrustedMemoryWriteOptions | undefined;
           let effectiveSaveInput = saveInput;
@@ -2193,8 +2210,20 @@ export class GatewayToolExecutor {
           return await this.handleMamaRecall(input as RecallInput);
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
-        case 'mama_update':
+        case 'mama_update': {
+          const updateSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
+          if (!updateSecretScan.clean) {
+            console.warn(
+              `[Security] mama_update refused: secret-shaped content (${updateSecretScan.matches.join(', ')})`
+            );
+            return {
+              success: false,
+              code: 'secret_material_refused',
+              error: `Refusing to update: content matches secret pattern(s): ${updateSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
+            };
+          }
           return await handleUpdate(await getApi(), input as UpdateInput);
+        }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
         case 'mama_add': {
