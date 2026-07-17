@@ -143,6 +143,15 @@ export async function wireGateways(params: {
           });
         }
       });
+
+      // Total delivery failure must propagate: awaited callers (system audit)
+      // treat a resolved sender as "alert delivered" and defer retry 24h.
+      // Partial delivery counts as delivered - the owner saw it somewhere.
+      if (results.length > 0 && results.every((result) => result.status === 'rejected')) {
+        throw new Error(
+          `Security alert delivery failed on all ${results.length} configured target(s)`
+        );
+      }
     });
   } else {
     setSecurityAlertSender(null);

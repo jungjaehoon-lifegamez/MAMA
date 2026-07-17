@@ -169,6 +169,9 @@ export class TelegramGateway extends BaseGateway {
         for (const [key, ts] of this.recentMessageSignatures) {
           if (now - ts > MESSAGE_CONTENT_DEDUP_TTL_MS) this.recentMessageSignatures.delete(key);
         }
+        for (const [key, ts] of this.rejectedChatWarnAt) {
+          if (now - ts > REJECTED_CHAT_WARN_INTERVAL_MS) this.rejectedChatWarnAt.delete(key);
+        }
       }, 60_000);
 
       this.emitEvent({
@@ -210,6 +213,7 @@ export class TelegramGateway extends BaseGateway {
       this.stickerCache.clear();
       this.stickerSetLoaded = false;
     }
+    this.rejectedChatWarnAt.clear();
     this.connected = false;
     this.emitEvent({
       type: 'disconnected',

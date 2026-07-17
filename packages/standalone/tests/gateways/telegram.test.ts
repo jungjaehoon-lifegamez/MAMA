@@ -262,6 +262,31 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     });
   });
 
+  describe('AC #1b: dropped-chat warning is rate-capped per chat', () => {
+    it('warns once per chat within the cap window, per-chat independently', async () => {
+      const gateway = new TelegramGateway({
+        token: 'test-bot-token',
+        messageRouter: mockMessageRouter,
+        config: { allowedChats: ['7777'] },
+      });
+      await gateway.start();
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (gateway as any).handleMessage(makeMessage(9999, 42, 'first', 1));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (gateway as any).handleMessage(makeMessage(9999, 42, 'second unique', 2));
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (gateway as any).handleMessage(makeMessage(8888, 43, 'other chat', 3));
+
+      const warns = warnSpy.mock.calls.flat().join('\n');
+      expect(warns.match(/non-allowlisted chat 9999/g)).toHaveLength(1);
+      expect(warns.match(/non-allowlisted chat 8888/g)).toHaveLength(1);
+      warnSpy.mockRestore();
+      await gateway.stop();
+    });
+  });
+
   describe('AC #2: message from allowlisted chat is processed', () => {
     it('emits message_received', async () => {
       const gateway = new TelegramGateway({
