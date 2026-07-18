@@ -1159,7 +1159,14 @@ export async function runAgentLoop(
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
-        const runOptions: Record<string, unknown> = {};
+        // Worker prompt forces the TEXT-gateway tool path (shadow-gate §8.2:
+        // the spawn-default persona prompt routes tools through code-act,
+        // where per-run envelope/capture overrides cannot reach).
+        const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
+        const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
+        const runOptions: Record<string, unknown> = {
+          systemPrompt: buildWorkerSystemPrompt(getGatewayToolsPrompt()),
+        };
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
           // 'on' before a rollback) would run LIVE with no capture seam
