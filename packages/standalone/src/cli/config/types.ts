@@ -137,6 +137,8 @@ export const DEFAULT_ROLES: RolesConfig = {
         'board_read',
         'audit_findings_read',
         'report_request',
+        'workorder_request',
+        'workorder_status',
         'mama_save',
         'mama_update',
       ],

@@ -22,16 +22,21 @@
 
 import type { ContentBlock } from '../agent/types.js';
 
+/** Identity fields workerRun owns - never overridable by callers (plan E7/G3). */
+export interface WorkerIdentityOptions {
+  sessionKey: string;
+  source: string;
+  channelId: string;
+  freshSession: boolean;
+}
+
+export type WorkerRunnerOptions = WorkerIdentityOptions & Record<string, unknown>;
+
 /** Minimal surface of AgentLoop.runWithContent that workerRun needs (DI seam). */
 export interface WorkerRunner {
   runWithContent(
     content: ContentBlock[],
-    options: {
-      sessionKey: string;
-      source: string;
-      channelId: string;
-      freshSession: boolean;
-    }
+    options: WorkerRunnerOptions
   ): Promise<{ response: string }>;
 }
 
@@ -42,6 +47,13 @@ export interface WorkerRunInput {
   brief: string;
   /** The work order payload the worker acts on. */
   input: string;
+  /**
+   * Extra run options (e.g. the Stage-2 shadow capture-publisher override).
+   * Applied BEFORE the identity fields - identity always wins (plan E7/G3:
+   * an override must never move a worker onto another lane or reset another
+   * lane's fresh-session pool).
+   */
+  runOptions?: Record<string, unknown>;
 }
 
 const KIND_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -57,7 +69,7 @@ export function buildWorkerSessionKey(kind: string): string {
  */
 export async function workerRun(
   runner: WorkerRunner,
-  { kind, brief, input }: WorkerRunInput
+  { kind, brief, input, runOptions }: WorkerRunInput
 ): Promise<string> {
   if (!KIND_PATTERN.test(kind)) {
     throw new Error(`[worker-run] invalid worker kind "${kind}" (expected kebab-case)`);
@@ -72,6 +84,8 @@ export async function workerRun(
   const prompt = `${brief.trim()}\n\n---\n\nWork order:\n${input.trim()}`;
 
   const result = await runner.runWithContent([{ type: 'text', text: prompt }], {
+    // runOptions FIRST: identity fields below always win (plan E7/G3).
+    ...(runOptions ?? {}),
     sessionKey: buildWorkerSessionKey(kind),
     // freshSession pool reset keys on source+channelId (agent-loop.ts) -
     // both MUST be explicit per call or another lane's pool entry gets reset.

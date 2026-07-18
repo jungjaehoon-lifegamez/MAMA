@@ -374,6 +374,35 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
     });
   }
 
+  // Stage-2 (plan B7): a CUSTOMIZED persisted owner_console definition freezes
+  // its allowedTools at save time - new default tools (workorder_request/
+  // status class) silently never reach it. Observe-only: warn the owner, no
+  // forced merge (observability over restriction).
+  const persistedOwnerConsole = options.config?.roles?.definitions?.owner_console as
+    | { allowedTools?: string[] }
+    | undefined;
+  if (persistedOwnerConsole?.allowedTools && !persistedOwnerConsole.allowedTools.includes('*')) {
+    // Wildcard allowlists cover everything - flagging them for "missing"
+    // default tools would be a false positive (PR bot round).
+    const { DEFAULT_ROLES } = await import('../cli/config/types.js');
+    const defaultTools = DEFAULT_ROLES.definitions?.owner_console?.allowedTools ?? [];
+    const missing = defaultTools.filter(
+      (tool) => !persistedOwnerConsole.allowedTools?.includes(tool)
+    );
+    if (missing.length > 0) {
+      findings.push({
+        id: 'owner-console-stale-allowlist',
+        severity: 'MAJOR',
+        summary: `persisted owner_console.allowedTools lacks current default tool(s): ${missing.join(', ')}`,
+        detail:
+          'A customized owner_console definition does not receive new default tools. ' +
+          'Add them to the persisted definition (or delete it to re-adopt defaults).',
+      });
+    } else {
+      passes.push('owner_console allowlist covers all current default tools');
+    }
+  }
+
   // Telegram group/supergroup ids are negative. An allowlisted group does not
   // escalate (RoleManager requires chatType private) but signals a config
   // misunderstanding worth flagging.

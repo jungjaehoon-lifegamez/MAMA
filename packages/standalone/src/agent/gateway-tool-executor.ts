@@ -165,6 +165,8 @@ type ActiveGatewayExecutionContext = {
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
+  /** Stage-2 shadow seam: per-run report_publish override (never from fallback). */
+  reportPublisherOverride?: (slots: Record<string, string>) => void;
 };
 
 type ScopeAuditFields = {
@@ -507,6 +509,9 @@ export class GatewayToolExecutor {
   private disallowedGatewayTools: Set<string> = new Set();
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
+  private workOrderRequestHandler:
+    | ((kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string })
+    | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
   private wikiPublisher: WikiPagePublisher | null = null;
@@ -601,6 +606,7 @@ export class GatewayToolExecutor {
       gatewayCallId: executionContext?.gatewayCallId,
       backgroundTasks: executionContext?.backgroundTasks,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
+      reportPublisherOverride: executionContext?.reportPublisherOverride,
     };
   }
 
@@ -640,6 +646,9 @@ export class GatewayToolExecutor {
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - blocks are strictly per-call.
       disallowedGatewayTools: active.disallowedGatewayTools,
+      // Never merged from fallback - a lingering global capture override
+      // would swallow LIVE publishes (Stage-2 shadow seam).
+      reportPublisherOverride: active.reportPublisherOverride,
     };
   }
 
@@ -787,6 +796,12 @@ export class GatewayToolExecutor {
   /** Forwarder hook for on-demand full reports (plan v6 S1-T3). */
   setReportRequestHandler(fn: () => { accepted: boolean; reason?: string }): void {
     this.reportRequestHandler = fn;
+  }
+  /** Forwarder hook for owner-issued workorders (Stage-2 S2-T4; enqueue+ack only). */
+  setWorkOrderRequestHandler(
+    fn: (kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string }
+  ): void {
+    this.workOrderRequestHandler = fn;
   }
   /** Read seam for the owner board slots (plan v6 S1-T4 artifact hub). */
   setReportReader(fn: () => Record<string, { html: string; updatedAt?: string | null }>): void {
@@ -2287,8 +2302,12 @@ export class GatewayToolExecutor {
               false
             );
           }
-          if (this.reportPublisher) {
-            this.reportPublisher(slotsInput);
+          // Stage-2 shadow seam: a per-run capture override takes precedence
+          // over the global singleton (capture runs never touch the live store).
+          const activePublisher =
+            this.getExecutionState().reportPublisherOverride ?? this.reportPublisher;
+          if (activePublisher) {
+            activePublisher(slotsInput);
             const slotNames = Object.keys(slotsInput);
 
             return {
@@ -2328,6 +2347,54 @@ export class GatewayToolExecutor {
             message:
               'Full report started. It will be generated fresh (delta-anchored) and delivered to the owner channel - tell the owner it is on its way; do not fabricate its contents.',
           };
+        }
+        case 'workorder_request': {
+          // Owner intent -> a priority workorder. Enqueue + ack ONLY - the
+          // run happens on the operator lane later; awaiting it here would
+          // block the chat turn (plan B6: issue tools are enqueue+ack only).
+          const requestedKind = (input as { kind?: string }).kind;
+          if (
+            requestedKind !== 'board' &&
+            requestedKind !== 'wiki' &&
+            requestedKind !== 'memory-curation'
+          ) {
+            return {
+              success: false,
+              code: 'invalid_workorder_kind',
+              error: `kind must be one of board|wiki|memory-curation, got: ${String(requestedKind)}`,
+            };
+          }
+          if (!this.workOrderRequestHandler) {
+            return {
+              success: false,
+              code: 'workorder_machinery_disabled',
+              error:
+                'Stage-2 workorders are not enabled on this deployment (MAMA_STAGE2_WORKORDERS=off).',
+            };
+          }
+          const enqueued = this.workOrderRequestHandler(requestedKind);
+          if (!enqueued.accepted) {
+            return {
+              success: false,
+              code: `workorder_${enqueued.reason ?? 'unavailable'}`,
+              error: `Workorder enqueue failed: ${enqueued.reason ?? 'unknown'}`,
+            };
+          }
+          return {
+            success: true,
+            message:
+              'Workorder enqueued at priority high. It will run on the operator lane shortly - tell the owner it is queued; do not wait for it or fabricate its result.',
+          };
+        }
+        case 'workorder_status': {
+          if (!this.taskLedger) {
+            return {
+              success: false,
+              code: 'ledger_unavailable',
+              error: 'Task ledger is not wired on this deployment.',
+            };
+          }
+          return { success: true, data: { kinds: this.taskLedger.workOrderStats() } };
         }
         case 'board_read': {
           if (!this.reportReader) {
@@ -2424,7 +2491,16 @@ export class GatewayToolExecutor {
             search?: string;
             limit?: number;
           };
-          return { success: true, tasks: queryTasks(taskInput) };
+          // Vocabulary annotation (Stage-2 S2-T7): this source's status set
+          // differs from the native ledger's - an empty result for an
+          // out-of-vocabulary status (e.g. 'blocked') is a vocabulary miss,
+          // not evidence the work disappeared. Observe-only.
+          return {
+            success: true,
+            tasks: queryTasks(taskInput),
+            vocabularyNote:
+              "Statuses in this source: pending|in_progress|review|done|completed|cancelled|dismissed|active. 'blocked' does NOT exist here - if memory mentions blocked work, compare vocabularies instead of reporting a contradiction.",
+          };
         }
         case 'kagemusha_messages': {
           const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');

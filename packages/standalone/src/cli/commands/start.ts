@@ -1073,16 +1073,30 @@ export async function runAgentLoop(
   const operatorDbPath = expandPath('~/.mama/operator/triggers.db');
   mkdirSync(dirname(operatorDbPath), { recursive: true });
   const operatorDb = new Database(operatorDbPath);
+  let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
   try {
     const { TaskLedger } = await import('../../operator/task-ledger.js');
-    toolExecutor.setTaskLedger(new TaskLedger(operatorDb));
+    taskLedger = new TaskLedger(operatorDb);
+    toolExecutor.setTaskLedger(taskLedger);
   } catch (err) {
     // Fail loud, but do not leak the handle on a failed boot.
     operatorDb.close();
     throw err;
   }
+  // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
+  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
+  // registerApiRoutes (which registers the per-kind completion hooks) and
+  // started AFTER it - the boot invariant below enforces that ordering.
+  const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
+  const stage2Flag = readStage2Flag();
+  let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
+    null;
+
   gateways.push({
     stop: async () => {
+      // Consumer stop BEFORE db close (same gateway = ordered; parallel
+      // gateways would race an in-flight tick into "database is not open").
+      await workOrderConsumer?.stop().catch(() => {});
       try {
         operatorDb.close();
       } catch {
@@ -1090,6 +1104,141 @@ export async function runAgentLoop(
       }
     },
   });
+  if (stage2Flag !== 'off') {
+    const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
+    const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
+    // Seed missing default briefs (user edits win) BEFORE the consumer exists -
+    // a normal install must never hit the brief-missing fail path.
+    ensureBriefs();
+    const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
+    const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
+      await import('../../operator/workorder-publishers.js');
+
+    // Shadow harness (kill-list at cutover): board capture publisher.
+    const shadowCapture =
+      stage2Flag === 'shadow'
+        ? (await import('../../operator/shadow-capture.js')).createShadowCapture()
+        : null;
+
+    // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
+    // block - the consumer runs with the loop off, so its terminal alarms
+    // must too. Chat id: MAMA_OPS_ALERT_CHAT, falling back to the loop's
+    // report chat var.
+    const opsAlertChat =
+      process.env.MAMA_OPS_ALERT_CHAT || process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+    const opsAlarm = {
+      configured: Boolean(opsAlertChat && telegramGateway),
+      send: async (line: string) => {
+        if (telegramGateway && opsAlertChat) await telegramGateway.sendMessage(opsAlertChat, line);
+      },
+    };
+    if (!opsAlarm.configured) {
+      console.log(
+        '[stage2] ops alarm sink unconfigured - terminal workorder alarms are LOG-ONLY ' +
+          '(set MAMA_OPS_ALERT_CHAT or MAMA_TRIGGER_LOOP_REPORT_CHAT)'
+      );
+    }
+
+    // AgentLoopClient.runWithContent is optional in its type; a missing method
+    // is a boot-order fault and must throw, not no-op (WorkerRunner adapter).
+    const workerRunner: import('../../operator/worker-run.js').WorkerRunner = {
+      runWithContent: async (content, options) => {
+        if (!agentLoopClient.runWithContent) {
+          throw new Error('[stage2] agentLoopClient.runWithContent unavailable');
+        }
+        return agentLoopClient.runWithContent(
+          content as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[0],
+          options as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[1]
+        );
+      },
+    };
+    workOrderConsumer = new WorkOrderConsumer({
+      ledger: taskLedger,
+      runner: workerRunner,
+      loadBrief: (kind) => loadBrief(kind),
+      noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
+      opsAlarm,
+      runOptionsFor: (wo) => {
+        if (stage2Flag === 'shadow') {
+          // Shadow ≡ board only. A non-board order here (e.g. enqueued at
+          // 'on' before a rollback) would run LIVE with no capture seam
+          // while its legacy path also runs - refuse it (throw -> fail
+          // policy; review N4 defense-in-depth behind the boot cleanup).
+          if (wo.workKind !== 'board') {
+            throw new Error(`[stage2] shadow is board-only - refusing live ${wo.workKind} run`);
+          }
+          // A shadow board run without the capture publisher would publish
+          // LIVE - refuse the run instead (throw -> failWorkOrder, plan T4).
+          if (!shadowCapture) {
+            throw new Error('[stage2] shadow capture publisher missing - refusing live publish');
+          }
+          return { reportPublisherOverride: shadowCapture.publisher };
+        }
+        return undefined;
+      },
+      onEvent: (event) => {
+        // Telemetry replacement for executeValidatedRun's task_start/complete
+        // rows (plan E4): the ledger row is the durable record; agent_activity
+        // keeps the operational trace queryable.
+        try {
+          logWorkOrderActivity(db, {
+            agent_id: `workorder-${event.workKind}`,
+            agent_version: 0,
+            type: `workorder_${event.type}`,
+            input_summary: `#${event.workOrderId}`,
+            output_summary: event.reason ?? '',
+            execution_status: 'completed',
+            trigger_reason: 'workorder-consumer',
+          });
+        } catch {
+          /* telemetry only */
+        }
+      },
+    });
+    // (Consumer stop is folded into the operator-DB gateway above - ordering.)
+
+    // Owner-issued workorders (workorder_request tool): enqueue+ack only.
+    // Wired here - NOT inside any trigger-loop block (plan C11 class).
+    toolExecutor.setWorkOrderRequestHandler((kind) => {
+      // Shadow invariant (plan B1/C2): shadow ≡ board only. A wiki/promotion
+      // workorder at shadow would run LIVE (no capture seam) while its legacy
+      // path also runs - the exact double-execution shadow exists to prevent.
+      if (stage2Flag === 'shadow' && kind !== 'board') {
+        console.warn(`[stage2] workorder_request(${kind}) rejected: shadow is board-only`);
+        return { accepted: false, reason: 'shadow-board-only' };
+      }
+      try {
+        const now = Date.now();
+        let idempotencyKey: string;
+        let payload: Record<string, unknown>;
+        if (kind === 'board') {
+          idempotencyKey = boardManualKey(now);
+          payload = { mode: 'full', force: true };
+        } else if (kind === 'wiki') {
+          idempotencyKey = wikiBatchKey('manual', now);
+          payload = { batchId: `${now}-manual`, events: ['manual'] };
+        } else {
+          idempotencyKey = promotionManualKey(now);
+          payload = { scheduledAt: new Date(now).toISOString() };
+        }
+        validateWorkOrderPayload(kind, payload);
+        const wo = taskLedger.enqueueWorkOrder({
+          workKind: kind,
+          idempotencyKey,
+          input: payload,
+          priority: 'high',
+        });
+        console.log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
+        return { accepted: true };
+      } catch (err) {
+        console.error(
+          `[stage2] owner workorder enqueue failed (${kind}):`,
+          err instanceof Error ? err.message : err
+        );
+        return { accepted: false, reason: 'enqueue-failed' };
+      }
+    });
+  }
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1333,7 +1482,44 @@ export async function runAgentLoop(
     graphHandler,
     getAdapter,
     sessionsDb: db,
+    workOrderConsumer: workOrderConsumer ?? undefined,
   });
+
+  // ── Stage-2 boot pass (plan S2-T3): hooks are registered above inside
+  // registerApiRoutes; recovery/cleanup run here, then the consumer starts.
+  if (stage2Flag === 'off') {
+    // Rollback cleanup (plan D3): open system rows -> cancelled, ONE summary
+    // line, no per-row alarms - a rollback is not a failure.
+    const cancelled = taskLedger.cancelOpenWorkOrders('flag-off');
+    if (cancelled > 0) {
+      console.log(`[stage2] flag=off: cancelled ${cancelled} open workorder(s) (rollback cleanup)`);
+    }
+  } else {
+    // Boot invariant (plan C13/G7): flag != off ⇒ consumer exists, hooks are
+    // already registered, and start() succeeds - violation kills the boot.
+    if (!workOrderConsumer) {
+      throw new Error('[stage2] boot invariant violated: flag != off but consumer not constructed');
+    }
+    if (stage2Flag === 'shadow') {
+      // on->shadow rollback cleanup (review N4): non-board orders enqueued
+      // at 'on' must never be consumed LIVE under shadow. Cancelled (not
+      // failed) - a rollback is not a failure; one summary line.
+      const cancelled = taskLedger.cancelOpenWorkOrders('shadow-board-only', [
+        'wiki',
+        'memory-curation',
+      ]);
+      if (cancelled > 0) {
+        console.log(
+          `[stage2] shadow: cancelled ${cancelled} non-board workorder(s) (rollback cleanup)`
+        );
+      }
+    }
+    workOrderConsumer.bootRecover();
+    workOrderConsumer.start();
+    if (!workOrderConsumer.isStarted()) {
+      throw new Error('[stage2] boot invariant violated: consumer failed to start');
+    }
+  }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────
 

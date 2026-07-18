@@ -108,6 +108,20 @@ register({
   params: 'no params',
 });
 register({
+  name: 'workorder_request',
+  description:
+    'Enqueue a priority workorder (board refresh, wiki compile, or memory curation) for the system worker lane. Enqueue-and-ack ONLY: the run happens later on the operator lane - reply with a short ack, never wait for or fabricate its result.',
+  category: 'os_monitoring',
+  params: 'kind (board|wiki|memory-curation)',
+});
+register({
+  name: 'workorder_status',
+  description:
+    'Read per-kind workorder status: last run time/result, failed count, and the latest failure reason. The owner-visible surface for "did the system run / did anything fail" questions.',
+  category: 'os_monitoring',
+  params: 'no params',
+});
+register({
   name: 'audit_findings_read',
   description:
     'Read the latest deterministic system-audit findings and pass items (state file projection).',
@@ -320,7 +334,8 @@ register({
 });
 register({
   name: 'kagemusha_tasks',
-  description: 'Query tasks by room, status, priority, or text search',
+  description:
+    'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
   category: 'business_data',
   params: 'sourceRoom?, status?, priority?, search?, limit?',
 });
@@ -335,7 +350,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List operator work items from the native task ledger. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
+    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')",
@@ -343,14 +358,15 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it.',
+    'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
     'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
 });
 register({
   name: 'task_update',
-  description: 'Update a work item in the native task ledger by id.',
+  description:
+    'Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.',
   category: 'os_monitoring',
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?',

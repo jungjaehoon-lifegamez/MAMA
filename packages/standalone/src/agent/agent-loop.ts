@@ -349,7 +349,8 @@ export function buildAgentToolExecutionContext(
       options.envelope === undefined &&
       options.sourceTurnId === undefined &&
       options.sourceMessageRef === undefined &&
-      options.modelRunId === undefined)
+      options.modelRunId === undefined &&
+      options.reportPublisherOverride === undefined)
   ) {
     return null;
   }
@@ -374,6 +375,9 @@ export function buildAgentToolExecutionContext(
   }
   if (options.modelRunId !== undefined) {
     context.modelRunId = options.modelRunId;
+  }
+  if (options.reportPublisherOverride !== undefined) {
+    context.reportPublisherOverride = options.reportPublisherOverride;
   }
   return context;
 }
