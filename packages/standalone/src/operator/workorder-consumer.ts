@@ -247,6 +247,11 @@ export class WorkOrderConsumer {
       }
     }
 
+    // Shadow-gate diagnostics (§8.2): the worker's actual output decides
+    // whether the tool path works - log a bounded head, never the full body.
+    this.log(
+      `[workorder-consumer] ${wo.workKind}#${wo.id} response head: ${response.slice(0, 200).replace(/\n/g, ' | ')}`
+    );
     this.deps.ledger.completeWorkOrder(wo.id);
     this.emitEvent({ type: 'complete', workKind: wo.workKind, workOrderId: wo.id });
     this.log(`[workorder-consumer] completed ${wo.workKind}#${wo.id}`);
