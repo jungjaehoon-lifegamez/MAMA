@@ -626,6 +626,9 @@ This saves resources. Only publish when there is genuinely new information to re
                 '[stage2] reconcile enqueue failed:',
                 err instanceof Error ? err.message : err
               );
+              // REJECT so ReconcileScheduler restores pendingLines - a
+              // resolved failure silently drops this delta (PR bot round).
+              return Promise.reject(err instanceof Error ? err : new Error(String(err)));
             }
             return Promise.resolve();
           }

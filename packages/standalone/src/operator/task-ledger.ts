@@ -531,7 +531,9 @@ export class TaskLedger implements TaskSource {
    */
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord {
     assertEnum(order.workKind, WORKORDER_KINDS, 'workKind');
-    if (order.priority !== undefined) assertEnum(order.priority, TASK_PRIORITIES, 'priority');
+    if (order.priority !== undefined) {
+      assertEnum(order.priority, TASK_PRIORITIES, 'priority');
+    }
     if (!order.idempotencyKey || order.idempotencyKey.trim() === '') {
       throw new Error('enqueueWorkOrder: idempotencyKey must be non-empty');
     }
@@ -543,7 +545,9 @@ export class TaskLedger implements TaskSource {
            AND status IN ('pending','in_progress')`
       )
       .get(channel, order.idempotencyKey) as TaskRow | undefined;
-    if (open) return this.rowToWorkOrder(open);
+    if (open) {
+      return this.rowToWorkOrder(open);
+    }
 
     const attempts =
       typeof order.input.attempts === 'number' && order.input.attempts >= 1
@@ -576,6 +580,7 @@ export class TaskLedger implements TaskSource {
    * pending -> in_progress. Single serial consumer; transaction for atomicity.
    */
   claimNextWorkOrder(): WorkOrderRecord | null {
+    let claimedId: number | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const row = this.db
@@ -587,15 +592,41 @@ export class TaskLedger implements TaskSource {
            LIMIT 1`
         )
         .get() as TaskRow | undefined;
-      if (!row) {
-        this.db.exec('COMMIT');
-        return null;
+      if (row) {
+        this.db
+          .prepare(`UPDATE operator_tasks SET status = 'in_progress', updated_at = ? WHERE id = ?`)
+          .run(Date.now(), row.id);
+        claimedId = row.id;
       }
-      this.db
-        .prepare(`UPDATE operator_tasks SET status = 'in_progress', updated_at = ? WHERE id = ?`)
-        .run(Date.now(), row.id);
       this.db.exec('COMMIT');
-      return this.getWorkOrderById(row.id);
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    // Read-back OUTSIDE the try: a throw here (corrupt payload) must not
+    // trigger ROLLBACK after COMMIT (PR bot round - masked error class).
+    return claimedId === null ? null : this.getWorkOrderById(claimedId);
+  }
+
+  /**
+   * Atomic fail-and-requeue (PR bot round): the failure mark and the
+   * replacement row commit together - a crash between the two would lose
+   * the retry (the old row terminal, the new one never inserted). The
+   * replacement can only be inserted AFTER the old row leaves the partial
+   * unique index, hence one transaction, not two calls.
+   */
+  requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.transitionWorkOrder(wo.id, 'failed', reason);
+      const replacement = this.enqueueWorkOrder({
+        workKind: wo.workKind,
+        idempotencyKey: wo.idempotencyKey,
+        input: { ...wo.payload, attempts: wo.payload.attempts + 1 },
+        priority: wo.priority,
+      });
+      this.db.exec('COMMIT');
+      return replacement;
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
@@ -636,7 +667,9 @@ export class TaskLedger implements TaskSource {
   cancelOpenWorkOrders(reason: string, onlyKinds?: WorkOrderKind[]): number {
     // An explicit empty scope means "cancel nothing", never "cancel all"
     // (review F2 - the fall-through would silently widen a scoped call).
-    if (onlyKinds !== undefined && onlyKinds.length === 0) return 0;
+    if (onlyKinds !== undefined && onlyKinds.length === 0) {
+      return 0;
+    }
     const kindFilter =
       onlyKinds && onlyKinds.length > 0
         ? ` AND source_channel IN (${onlyKinds.map(() => '?').join(',')})`
@@ -725,15 +758,24 @@ export class TaskLedger implements TaskSource {
         `workorder ${row.id}: corrupt payload JSON (${error instanceof Error ? error.message : String(error)})`
       );
     }
-    const attempts =
-      typeof payload.attempts === 'number' && payload.attempts >= 1 ? payload.attempts : 1;
+    // Strict reads (PR bot round): silently normalizing corrupt ownership or
+    // retry metadata would mask a real fault - every row here was written by
+    // enqueueWorkOrder, which guarantees both fields.
+    if (typeof payload.attempts !== 'number' || payload.attempts < 1) {
+      throw new Error(
+        `workorder ${row.id}: invalid attempts in payload (${String(payload.attempts)})`
+      );
+    }
+    if (!row.source_event_id) {
+      throw new Error(`workorder ${row.id}: missing idempotency key (source_event_id)`);
+    }
     return {
       id: row.id,
       workKind: workKind as WorkOrderKind,
       status: row.status as TaskStatus,
       priority: row.priority as TaskPriority,
-      idempotencyKey: row.source_event_id ?? '',
-      payload: { ...payload, attempts },
+      idempotencyKey: row.source_event_id,
+      payload: { ...payload, attempts: payload.attempts },
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

@@ -301,43 +301,47 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
  * Story S2-T4: shadow run-options injection (capture publisher seam).
  */
 describe('Story S2-T4: shadow runOptions injection', () => {
-  it('threads runOptionsFor output into the runner options', async () => {
-    const ctx = makeDeps();
-    let captured: Record<string, unknown> = {};
-    ctx.deps.runner = {
-      runWithContent: async (_content, options) => {
-        captured = options as Record<string, unknown>;
-        return { response: 'ok' };
-      },
-    };
-    const capturePublisher = (): void => {};
-    ctx.deps.runOptionsFor = (wo) =>
-      wo.workKind === 'board' ? { reportPublisherOverride: capturePublisher } : undefined;
-    const consumer = new WorkOrderConsumer(ctx.deps);
-    ctx.ledger.enqueueWorkOrder({
-      workKind: 'board',
-      idempotencyKey: 'k',
-      input: { mode: 'full' },
+  describe('AC #1: capture publisher threading', () => {
+    it('threads runOptionsFor output into the runner options', async () => {
+      const ctx = makeDeps();
+      let captured: Record<string, unknown> = {};
+      ctx.deps.runner = {
+        runWithContent: async (_content, options) => {
+          captured = options as Record<string, unknown>;
+          return { response: 'ok' };
+        },
+      };
+      const capturePublisher = (): void => {};
+      ctx.deps.runOptionsFor = (wo) =>
+        wo.workKind === 'board' ? { reportPublisherOverride: capturePublisher } : undefined;
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(captured.reportPublisherOverride).toBe(capturePublisher);
+      expect(captured.channelId).toBe('worker:board'); // identity intact
     });
-    await consumer.tick();
-    expect(captured.reportPublisherOverride).toBe(capturePublisher);
-    expect(captured.channelId).toBe('worker:board'); // identity intact
   });
 
-  it('a runOptionsFor throw fails the order - never a live publish fallback', async () => {
-    const ctx = makeDeps();
-    ctx.deps.runOptionsFor = () => {
-      throw new Error('shadow capture publisher missing');
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-    ctx.ledger.enqueueWorkOrder({
-      workKind: 'board',
-      idempotencyKey: 'k',
-      input: { mode: 'full' },
+  describe('AC #2: refusal instead of live-publish fallback', () => {
+    it('a runOptionsFor throw fails the order - never a live publish fallback', async () => {
+      const ctx = makeDeps();
+      ctx.deps.runOptionsFor = () => {
+        throw new Error('shadow capture publisher missing');
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      const failed = ctx.events.find((e) => e.type === 'failed');
+      expect(failed?.reason).toContain('shadow capture publisher missing');
     });
-    await consumer.tick();
-    const failed = ctx.events.find((e) => e.type === 'failed');
-    expect(failed?.reason).toContain('shadow capture publisher missing');
   });
 });
 
@@ -345,29 +349,31 @@ describe('Story S2-T4: shadow runOptions injection', () => {
  * Story S2-T3 (review round 1): sink-unconfigured degradation.
  */
 describe('Story S2-T3: unconfigured ops alarm sink', () => {
-  it('exhaustion with an unconfigured sink is log-only (loud) and still notices the owner', async () => {
-    const ctx = makeDeps();
-    ctx.deps.opsAlarm = {
-      configured: false,
-      send: async () => {
-        throw new Error('must never be called');
-      },
-    };
-    ctx.deps.runner = {
-      runWithContent: async () => {
-        throw new Error('boom');
-      },
-    };
-    const consumer = new WorkOrderConsumer(ctx.deps);
-    ctx.ledger.enqueueWorkOrder({
-      workKind: 'board',
-      idempotencyKey: 'k',
-      input: { mode: 'full' },
-    });
-    await consumer.tick();
+  describe('AC #1: log-only degradation', () => {
+    it('exhaustion with an unconfigured sink is log-only (loud) and still notices the owner', async () => {
+      const ctx = makeDeps();
+      ctx.deps.opsAlarm = {
+        configured: false,
+        send: async () => {
+          throw new Error('must never be called');
+        },
+      };
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new Error('boom');
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
 
-    expect(ctx.logs.some((l) => l.includes('log-only'))).toBe(true);
-    expect(ctx.notices).toHaveLength(1); // passive surface still fires
+      expect(ctx.logs.some((l) => l.includes('log-only'))).toBe(true);
+      expect(ctx.notices).toHaveLength(1); // passive surface still fires
+    });
   });
 });
 
@@ -375,28 +381,30 @@ describe('Story S2-T3: unconfigured ops alarm sink', () => {
  * Story S2-T3 (review round 2 N1): stop() must await the REAL tick.
  */
 describe('Story S2-T3: graceful stop under skipped firings (N1)', () => {
-  it('skipped timer firings do not overwrite the tracked tick; stop awaits the run', async () => {
-    const ctx = makeDeps();
-    let release: () => void = () => {};
-    ctx.deps.runner = {
-      runWithContent: () =>
-        new Promise((resolve) => {
-          release = () => resolve({ response: 'done' });
-        }),
-    };
-    ctx.deps.tickMs = 5;
-    const consumer = new WorkOrderConsumer(ctx.deps);
-    ctx.ledger.enqueueWorkOrder({
-      workKind: 'board',
-      idempotencyKey: 'k',
-      input: { mode: 'full' },
+  describe('AC #1: stop awaits the real tick', () => {
+    it('skipped timer firings do not overwrite the tracked tick; stop awaits the run', async () => {
+      const ctx = makeDeps();
+      let release: () => void = () => {};
+      ctx.deps.runner = {
+        runWithContent: () =>
+          new Promise((resolve) => {
+            release = () => resolve({ response: 'done' });
+          }),
+      };
+      ctx.deps.tickMs = 5;
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      consumer.start();
+      await new Promise((r) => setTimeout(r, 30)); // several firings hit the guard
+      setTimeout(() => release(), 10);
+      await consumer.stop();
+      // With the N1 bug, stop() awaited a 'skipped' promise and resolved before
+      // the run finished - this assertion fails then.
+      expect(ctx.events.some((e) => e.type === 'complete')).toBe(true);
     });
-    consumer.start();
-    await new Promise((r) => setTimeout(r, 30)); // several firings hit the guard
-    setTimeout(() => release(), 10);
-    await consumer.stop();
-    // With the N1 bug, stop() awaited a 'skipped' promise and resolved before
-    // the run finished - this assertion fails then.
-    expect(ctx.events.some((e) => e.type === 'complete')).toBe(true);
   });
 });

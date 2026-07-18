@@ -32,6 +32,8 @@ export interface WorkOrderLedgerPort {
   claimNextWorkOrder(): WorkOrderRecord | null;
   completeWorkOrder(id: number): void;
   failWorkOrder(id: number, reason: string): void;
+  /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
+  requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
   listStaleClaims(): WorkOrderRecord[];
   countPendingWorkOrders(): number;
@@ -184,7 +186,15 @@ export class WorkOrderConsumer {
   }
 
   private async runOne(wo: WorkOrderRecord): Promise<void> {
-    const brief = this.deps.loadBrief(wo.workKind);
+    let brief: string | null;
+    try {
+      brief = this.deps.loadBrief(wo.workKind);
+    } catch (err) {
+      // I/O errors (permissions etc.) must fail THIS order, not abort the
+      // whole tick with a stranded claim (PR bot round).
+      this.handleFailure(wo, `brief-load-failed: ${errMessage(err)}`);
+      return;
+    }
     if (!brief || !brief.trim()) {
       this.log(`[workorder-consumer] brief missing for '${wo.workKind}' - failing #${wo.id}`);
       this.handleFailure(wo, 'brief-missing');
@@ -241,25 +251,22 @@ export class WorkOrderConsumer {
    * retries-exhausted with an owner alarm.
    */
   private handleFailure(wo: WorkOrderRecord, reason: string): void {
-    this.deps.ledger.failWorkOrder(wo.id, reason);
-    this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
-    this.log(`[workorder-consumer] failed ${wo.workKind}#${wo.id}: ${reason}`);
-
     const maxAttempts = WORKORDER_MAX_ATTEMPTS[wo.workKind];
     if (wo.payload.attempts < maxAttempts) {
-      const requeued = this.deps.ledger.enqueueWorkOrder({
-        workKind: wo.workKind,
-        idempotencyKey: wo.idempotencyKey,
-        input: { ...wo.payload, attempts: wo.payload.attempts + 1 },
-        priority: wo.priority,
-      });
+      // Atomic fail+requeue (PR bot round): a crash between separate fail and
+      // enqueue calls would silently lose the retry.
+      const requeued = this.deps.ledger.requeueWorkOrder(wo, reason);
+      this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
       this.emitEvent({ type: 'requeued', workKind: wo.workKind, workOrderId: requeued.id });
       this.log(
-        `[workorder-consumer] requeued ${wo.workKind}#${wo.id} -> #${requeued.id} (attempt ${wo.payload.attempts + 1}/${maxAttempts})`
+        `[workorder-consumer] failed ${wo.workKind}#${wo.id} (${reason}) -> requeued #${requeued.id} (attempt ${wo.payload.attempts + 1}/${maxAttempts})`
       );
       return;
     }
 
+    this.deps.ledger.failWorkOrder(wo.id, reason);
+    this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
+    this.log(`[workorder-consumer] failed ${wo.workKind}#${wo.id}: ${reason}`);
     this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });
     this.alarm(
       wo.workKind,

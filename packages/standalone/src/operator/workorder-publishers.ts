@@ -35,7 +35,9 @@ export type PublishAction = 'legacy' | 'enqueue' | 'both';
  */
 export function readStage2Flag(env: NodeJS.ProcessEnv = process.env): Stage2Flag {
   const raw = (env[STAGE2_FLAG_ENV] ?? '').trim();
-  if (raw === '') return 'off';
+  if (raw === '') {
+    return 'off';
+  }
   if ((STAGE2_FLAGS as readonly string[]).includes(raw)) return raw as Stage2Flag;
   throw new Error(
     `${STAGE2_FLAG_ENV} must be one of ${STAGE2_FLAGS.join('|')} (or unset), got: '${raw}'`
@@ -77,7 +79,12 @@ export function boardManualKey(now: number): string {
 }
 
 export function boardReconcileKey(channelKey: string, now: number): string {
-  return `board:reconcile:${channelKey}:${Math.floor(now / BOARD_SLOT_MS)}`;
+  // Timestamp, not slot (PR bot round): distinct reconciles for one channel
+  // can fire within a 30-min window carrying DIFFERENT deltas - a slot key
+  // would dedup the later one against the open earlier row and drop its
+  // delta. The ReconcileScheduler's debounce is the coalescing layer; each
+  // scheduler fire is its own occurrence.
+  return `board:reconcile:${channelKey}:${now}`;
 }
 
 export function wikiBatchKey(trigger: string, now: number): string {
@@ -140,6 +147,9 @@ export function validateWorkOrderPayload(
         `workorder payload (board): mode must be 'full'|'reconcile', got: ${String(mode)}`
       );
     }
+    if (payload.force !== undefined && typeof payload.force !== 'boolean') {
+      throw new Error(`workorder payload (board): force must be a boolean`);
+    }
     if (mode === 'reconcile') {
       if (typeof payload.channelKey !== 'string' || payload.channelKey === '') {
         throw new Error(`workorder payload (board reconcile): channelKey required`);
@@ -147,13 +157,19 @@ export function validateWorkOrderPayload(
       if (!Array.isArray(payload.deltaLines) || payload.deltaLines.length === 0) {
         throw new Error(`workorder payload (board reconcile): non-empty deltaLines[] required`);
       }
+    } else if (payload.channelKey !== undefined || payload.deltaLines !== undefined) {
+      // Reconcile-only fields on a full run signal a caller bug - loud.
+      throw new Error(`workorder payload (board full): channelKey/deltaLines are reconcile-only`);
     }
   } else if (kind === 'wiki') {
     if (typeof payload.batchId !== 'string' || payload.batchId === '') {
       throw new Error(`workorder payload (wiki): batchId required`);
     }
-    if (!Array.isArray(payload.events)) {
-      throw new Error(`workorder payload (wiki): events[] required`);
+    if (
+      !Array.isArray(payload.events) ||
+      payload.events.some((entry) => typeof entry !== 'string')
+    ) {
+      throw new Error(`workorder payload (wiki): events[] of strings required`);
     }
   } else {
     if (typeof payload.scheduledAt !== 'string' || payload.scheduledAt === '') {

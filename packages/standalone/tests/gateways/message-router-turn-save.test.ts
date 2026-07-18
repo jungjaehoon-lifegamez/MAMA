@@ -63,25 +63,27 @@ import { OPERATOR_BROADCAST_NOTICE_KEY } from '../../src/gateways/message-router
 describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
   const source = readFileSync(join(__dirname, '../../src/gateways/message-router.ts'), 'utf-8');
 
-  it('write and read sides share OPERATOR_BROADCAST_NOTICE_KEY', () => {
-    expect(OPERATOR_BROADCAST_NOTICE_KEY).toBe('operator:broadcast');
-    // Writer: the host-code accessor.
-    expect(source).toMatch(
-      /enqueueOperatorNotice[\s\S]{0,400}enqueue\(OPERATOR_BROADCAST_NOTICE_KEY/
-    );
-    // Reader: the broadcast peek is OWNER-GATED (review N3 - a non-owner or
-    // group turn must neither see internal ops state nor drain it away).
-    expect(source).toMatch(
-      /'owner_console'\s*\n?\s*\?\s*this\.memoryNoticeQueue\.peek\(OPERATOR_BROADCAST_NOTICE_KEY\)/
-    );
-    // Drains are PER-QUEUE by their own peeked counts (review N2 - a combined
-    // count over-drained one queue, dropping mid-turn notices undisplayed).
-    expect(source).toMatch(/drain\(channelKey, pendingChannelNoticeCount\)/);
-    expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount\)/);
-    // Bare (count-less) broadcast drain must not come back.
-    expect(source).not.toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)[^,]/);
-    // The dead-letter key must not come back.
-    expect(source).not.toMatch(/enqueueOperatorNotice[\s\S]{0,400}'memory-agent:shared'/);
+  describe('AC #1: broadcast key write/read coherence', () => {
+    it('write and read sides share OPERATOR_BROADCAST_NOTICE_KEY', () => {
+      expect(OPERATOR_BROADCAST_NOTICE_KEY).toBe('operator:broadcast');
+      // Writer: the host-code accessor.
+      expect(source).toMatch(
+        /enqueueOperatorNotice[\s\S]{0,400}enqueue\(OPERATOR_BROADCAST_NOTICE_KEY/
+      );
+      // Reader: the broadcast peek is OWNER-GATED (review N3 - a non-owner or
+      // group turn must neither see internal ops state nor drain it away).
+      expect(source).toMatch(
+        /'owner_console'\s*\n?\s*\?\s*this\.memoryNoticeQueue\.peek\(OPERATOR_BROADCAST_NOTICE_KEY\)/
+      );
+      // Drains are PER-QUEUE by their own peeked counts (review N2 - a combined
+      // count over-drained one queue, dropping mid-turn notices undisplayed).
+      expect(source).toMatch(/drain\(channelKey, pendingChannelNoticeCount\)/);
+      expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount\)/);
+      // Bare (count-less) broadcast drain must not come back.
+      expect(source).not.toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)[^,]/);
+      // The dead-letter key must not come back.
+      expect(source).not.toMatch(/enqueueOperatorNotice[\s\S]{0,400}'memory-agent:shared'/);
+    });
   });
 });
 
@@ -93,19 +95,21 @@ describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
 describe('Story S2-T3: shadow rollback wiring coherence (N4/F1)', () => {
   const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
 
-  it('boot pass cancels non-board orders BEFORE bootRecover, and runOptionsFor refuses non-board at shadow', () => {
-    // (a) scoped cleanup call with exactly the non-board kinds...
-    expect(startSource).toMatch(
-      /cancelOpenWorkOrders\('shadow-board-only',\s*\[\s*'wiki',\s*'memory-curation',?\s*\]\)/
-    );
-    // (b) ...ordered before bootRecover in the same boot pass.
-    const cleanupIdx = startSource.indexOf("cancelOpenWorkOrders('shadow-board-only'");
-    const recoverIdx = startSource.indexOf('workOrderConsumer.bootRecover()');
-    expect(cleanupIdx).toBeGreaterThan(-1);
-    expect(recoverIdx).toBeGreaterThan(cleanupIdx);
-    // (c) defense-in-depth: non-board runs refused at shadow inside runOptionsFor.
-    expect(startSource).toMatch(
-      /workKind !== 'board'[\s\S]{0,200}shadow is board-only - refusing live/
-    );
+  describe('AC #1: shadow rollback wiring', () => {
+    it('boot pass cancels non-board orders BEFORE bootRecover, and runOptionsFor refuses non-board at shadow', () => {
+      // (a) scoped cleanup call with exactly the non-board kinds...
+      expect(startSource).toMatch(
+        /cancelOpenWorkOrders\('shadow-board-only',\s*\[\s*'wiki',\s*'memory-curation',?\s*\]\)/
+      );
+      // (b) ...ordered before bootRecover in the same boot pass.
+      const cleanupIdx = startSource.indexOf("cancelOpenWorkOrders('shadow-board-only'");
+      const recoverIdx = startSource.indexOf('workOrderConsumer.bootRecover()');
+      expect(cleanupIdx).toBeGreaterThan(-1);
+      expect(recoverIdx).toBeGreaterThan(cleanupIdx);
+      // (c) defense-in-depth: non-board runs refused at shadow inside runOptionsFor.
+      expect(startSource).toMatch(
+        /workKind !== 'board'[\s\S]{0,200}shadow is board-only - refusing live/
+      );
+    });
   });
 });

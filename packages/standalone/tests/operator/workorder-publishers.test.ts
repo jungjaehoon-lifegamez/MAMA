@@ -68,10 +68,12 @@ describe('Story S2-T2: publisher gate', () => {
       expect(boardManualKey(t)).not.toBe(boardManualKey(t + 1));
     });
 
-    it('reconcile keys scope per channel per slot; wiki/promotion keys well-formed', () => {
+    it('reconcile keys are per-fire occurrences; wiki/promotion keys well-formed', () => {
       const t = 1_700_000_000_000;
       expect(boardReconcileKey('slack:C1', t)).not.toBe(boardReconcileKey('slack:C2', t));
-      expect(boardReconcileKey('slack:C1', t)).toBe(boardReconcileKey('slack:C1', t + 1000));
+      // Timestamp key (PR bot round): distinct fires carry distinct deltas -
+      // a slot key would dedup the later one away. Debounce coalesces.
+      expect(boardReconcileKey('slack:C1', t)).not.toBe(boardReconcileKey('slack:C1', t + 1000));
       expect(wikiBatchKey('extraction:completed', t)).toContain('extraction:completed');
       expect(promotionKey(t)).toBe(promotionKey(t + 60 * 60 * 1000)); // same 6h slot
     });

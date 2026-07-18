@@ -10,7 +10,7 @@
  * skip). Seeding of packaged defaults is ensureBriefs() (S2-T5).
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
@@ -117,7 +117,11 @@ export function ensureBriefs(homeDir: string = homedir()): WorkOrderKind[] {
   for (const kind of WORKORDER_KINDS) {
     const path = briefPath(kind, homeDir);
     if (!existsSync(path)) {
-      writeFileSync(path, buildDefaultBrief(kind), 'utf-8');
+      // tmp+rename (PR bot round): a partial direct write would read as a
+      // user-owned brief on the next boot and never be repaired.
+      const tmpPath = `${path}.tmp`;
+      writeFileSync(tmpPath, buildDefaultBrief(kind), 'utf-8');
+      renameSync(tmpPath, path);
       seeded.push(kind);
       console.log(`[stage2] seeded default brief: ${path}`);
     }

@@ -381,7 +381,9 @@ export async function runCodeAudit(options: CodeAuditOptions = {}): Promise<Code
   const persistedOwnerConsole = options.config?.roles?.definitions?.owner_console as
     | { allowedTools?: string[] }
     | undefined;
-  if (persistedOwnerConsole?.allowedTools) {
+  if (persistedOwnerConsole?.allowedTools && !persistedOwnerConsole.allowedTools.includes('*')) {
+    // Wildcard allowlists cover everything - flagging them for "missing"
+    // default tools would be a false positive (PR bot round).
     const { DEFAULT_ROLES } = await import('../cli/config/types.js');
     const defaultTools = DEFAULT_ROLES.definitions?.owner_console?.allowedTools ?? [];
     const missing = defaultTools.filter(
