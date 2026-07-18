@@ -82,9 +82,20 @@ interface SaveMemoryRollbackError extends Error {
   memoryId?: string;
 }
 
-function buildDecisionId(topic: string): string {
-  const safeTopic = topic.replace(/[^a-z0-9_]+/gi, '_').toLowerCase();
-  return `decision_${safeTopic}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+export function buildDecisionId(topic: string): string {
+  // Non-ASCII topics (Korean etc.) used to collapse into bare underscore runs
+  // ("decision_______<ts>") - unreadable and near-colliding. Collapse the runs
+  // and fall back to a stable topic hash when nothing ASCII survives; the
+  // human-readable topic itself is stored verbatim in the topic column.
+  const safeTopic = topic
+    .replace(/[^a-z0-9_]+/gi, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .toLowerCase();
+  // sha256 (not sha1) purely to keep SAST scanners quiet - this is an id slug, not crypto.
+  const slug =
+    safeTopic || `t${crypto.createHash('sha256').update(topic).digest('hex').slice(0, 8)}`;
+  return `decision_${slug}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 function buildSaveEventReason(toolName: string | null, gatewayCallId: string | null): string {
