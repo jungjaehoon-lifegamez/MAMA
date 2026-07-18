@@ -21,7 +21,7 @@ Call tools via JSON block:
 
 - **kagemusha_overview**((none)) — Get overview: room/task/message counts across all channels
 - **kagemusha_entities**(channel?, activeOnly?, limit?) — List people and project channels with activity stats
-- **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search
+- **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).
 - **kagemusha_messages**(channelId (required), since?, limit?, search?) — Read raw messages from a specific channel (follow entities -> tasks -> messages)
 
 ## Utility
@@ -73,7 +73,7 @@ Call tools via JSON block:
 - **os_list_bots**() — List configured bot platforms and status
 - **os_restart_bot**() — Restart a bot platform
 - **os_stop_bot**() — Stop a bot platform
-- **task_list**(status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')) — List operator work items from the native task ledger. Canonical board order: deadline asc (nulls last), then priority high>normal>low.
+- **task_list**(status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')) — List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Canonical board order: deadline asc (nulls last), then priority high>normal>low.
 - **task_create**(title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?) — Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.
 - **task_update**(id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?) — Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.
 - **schedule_upcoming**(days? (default 14, max 60)) — Upcoming schedule from the calendar connector raw store: events within the next N days plus a one-line-per-event text digest. v1 limits: no recurrence expansion, no cancellation tracking; all-day events surface by date.

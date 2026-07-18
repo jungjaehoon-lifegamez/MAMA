@@ -334,7 +334,8 @@ register({
 });
 register({
   name: 'kagemusha_tasks',
-  description: 'Query tasks by room, status, priority, or text search',
+  description:
+    'Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).',
   category: 'business_data',
   params: 'sourceRoom?, status?, priority?, search?, limit?',
 });
@@ -349,7 +350,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List operator work items from the native task ledger. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
+    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')",

@@ -2491,7 +2491,16 @@ export class GatewayToolExecutor {
             search?: string;
             limit?: number;
           };
-          return { success: true, tasks: queryTasks(taskInput) };
+          // Vocabulary annotation (Stage-2 S2-T7): this source's status set
+          // differs from the native ledger's - an empty result for an
+          // out-of-vocabulary status (e.g. 'blocked') is a vocabulary miss,
+          // not evidence the work disappeared. Observe-only.
+          return {
+            success: true,
+            tasks: queryTasks(taskInput),
+            vocabularyNote:
+              "Statuses in this source: pending|in_progress|review|done|completed|cancelled|dismissed|active. 'blocked' does NOT exist here - if memory mentions blocked work, compare vocabularies instead of reporting a contradiction.",
+          };
         }
         case 'kagemusha_messages': {
           const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');

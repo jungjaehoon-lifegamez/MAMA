@@ -1241,6 +1241,13 @@ ${historyContext}
     if (agentContext?.platform === 'viewer') {
       prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
     }
+    if (agentContext?.roleName === 'owner_console') {
+      // Store canonicity (Stage-2 S2-T7): two task stores exist with different
+      // vocabularies - the agent must never present their mismatch as data.
+      prompt += `
+- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.
+- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+    }
     prompt += '\n';
 
     if (enhanced?.keywordInstructions) {
