@@ -129,7 +129,13 @@ export class WorkOrderConsumer {
     }
     const tickMs = this.deps.tickMs ?? DEFAULT_TICK_MS;
     this.timer = setInterval(() => {
-      this.activeTick = this.tick();
+      // Only track a REAL tick: during a long run subsequent firings resolve
+      // 'skipped' instantly and would OVERWRITE activeTick - stop() would
+      // then await the skipped promise while the true tick still runs and
+      // the DB closes under it (round-2 review N1).
+      if (!this.consuming) {
+        this.activeTick = this.tick();
+      }
     }, tickMs);
     this.timer.unref?.();
     this.log(`[workorder-consumer] started (tick every ${tickMs}ms)`);

@@ -370,3 +370,33 @@ describe('Story S2-T3: unconfigured ops alarm sink', () => {
     expect(ctx.notices).toHaveLength(1); // passive surface still fires
   });
 });
+
+/**
+ * Story S2-T3 (review round 2 N1): stop() must await the REAL tick.
+ */
+describe('Story S2-T3: graceful stop under skipped firings (N1)', () => {
+  it('skipped timer firings do not overwrite the tracked tick; stop awaits the run', async () => {
+    const ctx = makeDeps();
+    let release: () => void = () => {};
+    ctx.deps.runner = {
+      runWithContent: () =>
+        new Promise((resolve) => {
+          release = () => resolve({ response: 'done' });
+        }),
+    };
+    ctx.deps.tickMs = 5;
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'k',
+      input: { mode: 'full' },
+    });
+    consumer.start();
+    await new Promise((r) => setTimeout(r, 30)); // several firings hit the guard
+    setTimeout(() => release(), 10);
+    await consumer.stop();
+    // With the N1 bug, stop() awaited a 'skipped' promise and resolved before
+    // the run finished - this assertion fails then.
+    expect(ctx.events.some((e) => e.type === 'complete')).toBe(true);
+  });
+});

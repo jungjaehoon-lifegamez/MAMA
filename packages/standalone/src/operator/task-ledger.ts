@@ -628,18 +628,24 @@ export class TaskLedger implements TaskSource {
   }
 
   /**
-   * Flag-off boot cleanup (plan D3): open system rows -> cancelled. A rollback
-   * is not a failure - excluded from failed counters/alarms; caller logs ONE
-   * summary line with the returned count.
+   * Boot cleanup (plan D3 + review N4): open system rows -> cancelled. A
+   * rollback is not a failure - excluded from failed counters/alarms; caller
+   * logs ONE summary line with the returned count. `onlyKinds` scopes the
+   * cancellation (shadow rollback cancels non-board orders only).
    */
-  cancelOpenWorkOrders(reason: string): number {
+  cancelOpenWorkOrders(reason: string, onlyKinds?: WorkOrderKind[]): number {
+    const kindFilter =
+      onlyKinds && onlyKinds.length > 0
+        ? ` AND source_channel IN (${onlyKinds.map(() => '?').join(',')})`
+        : '';
+    const kindParams = (onlyKinds ?? []).map((kind) => `${WORKORDER_CHANNEL_PREFIX}${kind}`);
     const result = this.db
       .prepare(
         `UPDATE operator_tasks
          SET status = 'cancelled', latest_event = ?, updated_at = ?
-         WHERE kind = 'system' AND status IN ('pending','in_progress')`
+         WHERE kind = 'system' AND status IN ('pending','in_progress')${kindFilter}`
       )
-      .run(reason, Date.now());
+      .run(reason, Date.now(), ...kindParams);
     return result.changes;
   }
 

@@ -834,7 +834,8 @@ This protects your credentials from being exposed in chat logs.`;
     // keep using CLI conversation state and only prepend queued audit notices.
     let memoryPrefix = '';
     let pendingNotices = false;
-    let pendingNoticeCount = 0;
+    let pendingChannelNoticeCount = 0;
+    let pendingBroadcastNoticeCount = 0;
     try {
       const envelope = this.buildReactiveEnvelope(message);
       const options: AgentLoopOptions = {
@@ -871,13 +872,20 @@ This protects your credentials from being exposed in chat logs.`;
           // Per-channel notices PLUS the operator broadcast key: host-code
           // alarms (workorder failures) have no conversation channel at
           // enqueue time - without the broadcast read they dead-letter
-          // (Stage-2 review M1).
-          const notices = [
-            ...this.memoryNoticeQueue.peek(channelKey),
-            ...this.memoryNoticeQueue.peek(OPERATOR_BROADCAST_NOTICE_KEY),
-          ];
+          // (Stage-2 review M1). Broadcast is OWNER-ONLY (review N3: a
+          // non-owner/group turn must neither see internal ops state nor
+          // drain the queue away from the owner), and the two queues are
+          // peeked/drained by their OWN counts (review N2: a combined count
+          // over-drained one queue, dropping mid-turn notices undisplayed).
+          const channelNotices = this.memoryNoticeQueue.peek(channelKey);
+          const broadcastNotices =
+            agentContext?.roleName === 'owner_console'
+              ? this.memoryNoticeQueue.peek(OPERATOR_BROADCAST_NOTICE_KEY)
+              : [];
+          const notices = [...channelNotices, ...broadcastNotices];
           pendingNotices = notices.length > 0;
-          pendingNoticeCount = notices.length;
+          pendingChannelNoticeCount = channelNotices.length;
+          pendingBroadcastNoticeCount = broadcastNotices.length;
           memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
           if (memoryPrefix) {
             memoryPrefix = `${memoryPrefix}\n\n`;
@@ -1007,8 +1015,14 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       if (shouldResume && pendingNotices) {
-        this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
-        this.memoryNoticeQueue.drain(OPERATOR_BROADCAST_NOTICE_KEY);
+        // Drain each queue by ITS OWN peeked count - notices enqueued while
+        // the agent run was in flight stay for the next turn (review N2).
+        if (pendingChannelNoticeCount > 0) {
+          this.memoryNoticeQueue.drain(channelKey, pendingChannelNoticeCount);
+        }
+        if (pendingBroadcastNoticeCount > 0) {
+          this.memoryNoticeQueue.drain(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount);
+        }
       }
     } catch (error) {
       const durationMs = Date.now() - startTime;

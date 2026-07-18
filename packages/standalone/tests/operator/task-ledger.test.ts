@@ -449,3 +449,36 @@ describe('Story S2-T1: review round 1 hardening', () => {
     expect(board?.lastStatus).toBe('cancelled');
   });
 });
+
+/**
+ * Story S2-T1 (review round 2 N4): kind-scoped rollback cancellation.
+ */
+describe('Story S2-T1: shadow rollback cleanup (N4)', () => {
+  it('cancelOpenWorkOrders(onlyKinds) cancels non-board orders and leaves board intact', () => {
+    const db4: SQLiteDatabase = new Database(':memory:');
+    const ledger4 = new TaskLedger(db4);
+    const board = ledger4.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'b',
+      input: { mode: 'full' },
+    });
+    ledger4.enqueueWorkOrder({
+      workKind: 'wiki',
+      idempotencyKey: 'w',
+      input: { batchId: 'x', events: [] },
+    });
+    ledger4.enqueueWorkOrder({
+      workKind: 'memory-curation',
+      idempotencyKey: 'm',
+      input: { scheduledAt: 'now' },
+    });
+
+    const cancelled = ledger4.cancelOpenWorkOrders('shadow-board-only', [
+      'wiki',
+      'memory-curation',
+    ]);
+    expect(cancelled).toBe(2);
+    expect(ledger4.claimNextWorkOrder()?.id).toBe(board.id); // board survived
+    expect(ledger4.claimNextWorkOrder()).toBeNull(); // nothing else claimable
+  });
+});

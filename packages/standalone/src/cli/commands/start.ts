@@ -1159,7 +1159,14 @@ export async function runAgentLoop(
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: (wo) => {
-        if (stage2Flag === 'shadow' && wo.workKind === 'board') {
+        if (stage2Flag === 'shadow') {
+          // Shadow ≡ board only. A non-board order here (e.g. enqueued at
+          // 'on' before a rollback) would run LIVE with no capture seam
+          // while its legacy path also runs - refuse it (throw -> fail
+          // policy; review N4 defense-in-depth behind the boot cleanup).
+          if (wo.workKind !== 'board') {
+            throw new Error(`[stage2] shadow is board-only - refusing live ${wo.workKind} run`);
+          }
           // A shadow board run without the capture publisher would publish
           // LIVE - refuse the run instead (throw -> failWorkOrder, plan T4).
           if (!shadowCapture) {
@@ -1492,6 +1499,20 @@ export async function runAgentLoop(
     // already registered, and start() succeeds - violation kills the boot.
     if (!workOrderConsumer) {
       throw new Error('[stage2] boot invariant violated: flag != off but consumer not constructed');
+    }
+    if (stage2Flag === 'shadow') {
+      // on->shadow rollback cleanup (review N4): non-board orders enqueued
+      // at 'on' must never be consumed LIVE under shadow. Cancelled (not
+      // failed) - a rollback is not a failure; one summary line.
+      const cancelled = taskLedger.cancelOpenWorkOrders('shadow-board-only', [
+        'wiki',
+        'memory-curation',
+      ]);
+      if (cancelled > 0) {
+        console.log(
+          `[stage2] shadow: cancelled ${cancelled} non-board workorder(s) (rollback cleanup)`
+        );
+      }
     }
     workOrderConsumer.bootRecover();
     workOrderConsumer.start();

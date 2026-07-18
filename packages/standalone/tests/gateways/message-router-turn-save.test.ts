@@ -69,9 +69,17 @@ describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
     expect(source).toMatch(
       /enqueueOperatorNotice[\s\S]{0,400}enqueue\(OPERATOR_BROADCAST_NOTICE_KEY/
     );
-    // Readers: resumed-turn peek AND the drain after delivery.
-    expect(source).toMatch(/peek\(OPERATOR_BROADCAST_NOTICE_KEY\)/);
-    expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)/);
+    // Reader: the broadcast peek is OWNER-GATED (review N3 - a non-owner or
+    // group turn must neither see internal ops state nor drain it away).
+    expect(source).toMatch(
+      /'owner_console'\s*\n?\s*\?\s*this\.memoryNoticeQueue\.peek\(OPERATOR_BROADCAST_NOTICE_KEY\)/
+    );
+    // Drains are PER-QUEUE by their own peeked counts (review N2 - a combined
+    // count over-drained one queue, dropping mid-turn notices undisplayed).
+    expect(source).toMatch(/drain\(channelKey, pendingChannelNoticeCount\)/);
+    expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount\)/);
+    // Bare (count-less) broadcast drain must not come back.
+    expect(source).not.toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)[^,]/);
     // The dead-letter key must not come back.
     expect(source).not.toMatch(/enqueueOperatorNotice[\s\S]{0,400}'memory-agent:shared'/);
   });
