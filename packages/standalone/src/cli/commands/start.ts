@@ -1103,7 +1103,10 @@ export async function runAgentLoop(
     null;
   if (stage2Flag !== 'off') {
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
-    const { loadBrief } = await import('../../operator/briefs.js');
+    const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
+    // Seed missing default briefs (user edits win) BEFORE the consumer exists -
+    // a normal install must never hit the brief-missing fail path.
+    ensureBriefs();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
     const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
       await import('../../operator/workorder-publishers.js');
