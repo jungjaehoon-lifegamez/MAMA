@@ -58,6 +58,26 @@ export interface WorkerRunInput {
 
 const KIND_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
+/**
+ * Worker-specific system prompt (shadow-gate finding §8.2): the spawn-default
+ * persona prompt carries code-act sandbox instructions, so worker tool calls
+ * went through POST /api/code-act - a server-side surface the per-run
+ * execution-context seam (envelope, capture override) cannot reach. A custom
+ * systemPrompt REPLACES the persona layers entirely (agent-loop.ts:484-486),
+ * so workers advertise ONLY the text-gateway tool syntax and every call flows
+ * through the in-process path where the seam works.
+ */
+export function buildWorkerSystemPrompt(gatewayToolsPrompt: string): string {
+  return [
+    'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
+    'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
+    'blocks documented below - no other execution mechanism exists in this session.',
+    'Do not ask questions; finish with the exact final line your brief specifies.',
+    '',
+    gatewayToolsPrompt.trim(),
+  ].join('\n');
+}
+
 export function buildWorkerSessionKey(kind: string): string {
   return `operator:worker:${kind}`;
 }
