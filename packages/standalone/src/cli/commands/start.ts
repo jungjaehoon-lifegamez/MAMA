@@ -1158,7 +1158,8 @@ export async function runAgentLoop(
       loadBrief: (kind) => loadBrief(kind),
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
-      runOptionsFor: (wo) => {
+      runOptionsFor: async (wo) => {
+        const runOptions: Record<string, unknown> = {};
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
           // 'on' before a rollback) would run LIVE with no capture seam
@@ -1172,9 +1173,47 @@ export async function runAgentLoop(
           if (!shadowCapture) {
             throw new Error('[stage2] shadow capture publisher missing - refusing live publish');
           }
-          return { reportPublisherOverride: shadowCapture.publisher };
+          runOptions.reportPublisherOverride = shadowCapture.publisher;
         }
-        return undefined;
+        // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
+        // 'model_tool' executions are envelope-gated, and workerRun is a new
+        // caller class with no issuer - without this, every worker tool call
+        // (incl. report_publish) dies 'envelope_missing'. Mirrors the report
+        // lane's issuance (createPersonaReportAsk wiring below); issuance
+        // failure rejects -> failWorkOrder (no envelope-less fallback run).
+        if (envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off') {
+          const projectId = resolveReactiveProjectRoot(config, process.env);
+          const wallSeconds = Math.min(
+            Math.max(Number(process.env.MAMA_REPORT_WALL_SECONDS) || 900, 60),
+            1800
+          );
+          runOptions.envelope = await envelopeBootstrap.envelopeAuthority.buildAndPersist({
+            agent_id: `workorder-${wo.workKind}`,
+            instance_id: randomUUID(),
+            // 'watch' = daemon-internal issuing source (closed EnvelopeSource
+            // union; enforcement authorizes on scope, never on source).
+            source: 'watch',
+            channel_id: `worker:${wo.workKind}`,
+            trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
+            scope: {
+              project_refs: [{ kind: 'project' as const, id: projectId }],
+              raw_connectors: codeActRawConnectors,
+              memory_scopes: resolveCodeActMemoryScopes(
+                deriveMemoryScopes({
+                  source: 'operator',
+                  channelId: `worker:${wo.workKind}`,
+                  projectId,
+                }),
+                getAdapter()
+              ),
+              allowed_destinations: [],
+            },
+            tier: 2,
+            budget: { wall_seconds: wallSeconds },
+            expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+          });
+        }
+        return Object.keys(runOptions).length > 0 ? runOptions : undefined;
       },
       onEvent: (event) => {
         // Telemetry replacement for executeValidatedRun's task_start/complete
