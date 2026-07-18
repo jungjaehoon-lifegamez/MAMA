@@ -95,6 +95,7 @@ export class WorkOrderConsumer {
   private readonly lastAlarmAt = new Map<WorkOrderKind, number>();
   private timer: NodeJS.Timeout | null = null;
   private consuming = false;
+  private activeTick: Promise<unknown> | null = null;
 
   constructor(deps: WorkOrderConsumerDeps) {
     this.deps = deps;
@@ -128,7 +129,7 @@ export class WorkOrderConsumer {
     }
     const tickMs = this.deps.tickMs ?? DEFAULT_TICK_MS;
     this.timer = setInterval(() => {
-      void this.tick();
+      this.activeTick = this.tick();
     }, tickMs);
     this.timer.unref?.();
     this.log(`[workorder-consumer] started (tick every ${tickMs}ms)`);
@@ -138,10 +139,16 @@ export class WorkOrderConsumer {
     return this.timer !== null;
   }
 
-  stop(): void {
+  /** Graceful: awaits an in-flight tick so shutdown does not race the
+   *  operator-DB close into "database is not open" noise (review m4). */
+  async stop(): Promise<void> {
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
+    }
+    if (this.activeTick) {
+      await this.activeTick.catch(() => {});
+      this.activeTick = null;
     }
   }
 

@@ -3,6 +3,9 @@
  * ledger. Synthetic data only; in-memory sqlite.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 
@@ -366,5 +369,83 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(board?.failedCount).toBe(0);
       expect(board?.lastRunAt).toBeNull();
     });
+  });
+});
+
+/**
+ * Story S2-T1 (review round 1): race, namespace reservation, sequence fidelity.
+ */
+describe('Story S2-T1: review round 1 hardening', () => {
+  it('AC #5: two file-DB connections construct concurrently without corrupting the schema', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mama-ledger-race-'));
+    const dbPath = join(dir, 'triggers.db');
+    try {
+      // Legacy shape first so BOTH connections run the upgrade path.
+      const seed = new Database(dbPath);
+      seed.exec(`
+        CREATE TABLE operator_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','in_progress','review','blocked','done','cancelled')),
+          priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('high','normal','low')),
+          assignee TEXT, deadline TEXT, source_channel TEXT, source_event_id TEXT,
+          latest_event TEXT, auto_created INTEGER NOT NULL DEFAULT 1,
+          confirmed INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+        );
+        INSERT INTO operator_tasks (title, created_at, updated_at) VALUES ('legacy', 1, 1);
+      `);
+      seed.close();
+
+      const connA = new Database(dbPath);
+      const connB = new Database(dbPath);
+      const ledgerA = new TaskLedger(connA); // boot connection: rebuilds
+      const ledgerB = new TaskLedger(connB); // lazy connection: guard re-check must no-op
+
+      // Single coherent schema: exactly one operator_tasks table, one row survived,
+      // and both connections operate on it.
+      expect(ledgerA.list()).toHaveLength(1);
+      const created = ledgerB.create({ title: 'via lazy connection' });
+      expect(ledgerA.getById(created.id)?.title).toBe('via lazy connection');
+
+      // Sequence fidelity (review m2): exactly ONE sqlite_sequence row - the
+      // old INSERT OR REPLACE appended a duplicate that made SQLite read the
+      // LOWER seq (latent id reuse).
+      const seqRows = connA
+        .prepare(`SELECT COUNT(*) AS n FROM sqlite_sequence WHERE name = 'operator_tasks'`)
+        .get() as { n: number };
+      expect(seqRows.n).toBe(1);
+
+      connA.close();
+      connB.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("AC #6: the 'workorder:' source_channel namespace is reserved (review m3)", () => {
+    const db2: SQLiteDatabase = new Database(':memory:');
+    const ledger2 = new TaskLedger(db2);
+    // Deterministic slot keys are public knowledge (OSS) - an owner row on a
+    // workorder (channel,event) pair would DoS that schedule slot's INSERT.
+    expect(() =>
+      ledger2.create({
+        title: 'squat',
+        source_channel: 'workorder:board',
+        source_event_id: 'board:full:12345',
+      })
+    ).toThrow(/reserved for system workorders/);
+  });
+
+  it('AC #7: cancelled rows never count as failures in workOrderStats (plan D3)', () => {
+    const db3: SQLiteDatabase = new Database(':memory:');
+    const ledger3 = new TaskLedger(db3);
+    ledger3.enqueueWorkOrder({ workKind: 'board', idempotencyKey: 'k1', input: { mode: 'full' } });
+    const cancelled = ledger3.cancelOpenWorkOrders('flag-off');
+    expect(cancelled).toBe(1);
+    const board = ledger3.workOrderStats().find((s) => s.workKind === 'board');
+    expect(board?.failedCount).toBe(0);
+    expect(board?.lastStatus).toBe('cancelled');
   });
 });

@@ -69,6 +69,10 @@ const { DebugLogger } = debugLogger as {
 };
 const logger = new DebugLogger('MessageRouter');
 
+/** Channel-less host alarms (workorder failures) park here; every resumed
+ *  owner turn reads this key in addition to its own channel key. */
+export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
+
 /**
  * Agent Loop interface for message processing
  */
@@ -415,11 +419,12 @@ export class MessageRouter {
    * Host-code enqueue into the owner notice surface (Stage-2 workorder
    * failures). The queue stays router-owned; this is the accessor plan C5
    * requires - the consumer lives in start.ts host code and cannot reach the
-   * private field. Delivered on the owner's next chat turn (severity high
-   * passes shouldDeliverAuditNotice).
+   * private field. Keyed under the operator BROADCAST key: host alarms have
+   * no conversation channel, and per-channel keys would dead-letter (review
+   * M1). Delivered on the owner's next resumed chat turn on ANY channel.
    */
   enqueueOperatorNotice(summary: string): void {
-    this.memoryNoticeQueue.enqueue('memory-agent:shared', {
+    this.memoryNoticeQueue.enqueue(OPERATOR_BROADCAST_NOTICE_KEY, {
       type: 'memory_warning',
       severity: 'high',
       summary,
@@ -863,7 +868,14 @@ This protects your credentials from being exposed in chat logs.`;
 
       try {
         if (shouldResume) {
-          const notices = this.memoryNoticeQueue.peek(channelKey);
+          // Per-channel notices PLUS the operator broadcast key: host-code
+          // alarms (workorder failures) have no conversation channel at
+          // enqueue time - without the broadcast read they dead-letter
+          // (Stage-2 review M1).
+          const notices = [
+            ...this.memoryNoticeQueue.peek(channelKey),
+            ...this.memoryNoticeQueue.peek(OPERATOR_BROADCAST_NOTICE_KEY),
+          ];
           pendingNotices = notices.length > 0;
           pendingNoticeCount = notices.length;
           memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
@@ -996,6 +1008,7 @@ This protects your credentials from being exposed in chat logs.`;
 
       if (shouldResume && pendingNotices) {
         this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
+        this.memoryNoticeQueue.drain(OPERATOR_BROADCAST_NOTICE_KEY);
       }
     } catch (error) {
       const durationMs = Date.now() - startTime;

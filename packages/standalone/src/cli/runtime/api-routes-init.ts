@@ -547,31 +547,10 @@ This saves resources. Only publish when there is genuinely new information to re
       // (agent_activity has NO channel_id column; json_extract is the only
       // schema-supported key; agent_id re-keying is a green-test trap).
       if (workOrderConsumer) {
+        const { buildWorkerTraceQueries } = await import('../../operator/workorder-hooks.js');
         const workerVerifierDeps = {
           ...verifierDeps,
-          getTraceMaxId: () => {
-            if (!sessionsDb) return 0;
-            const row = sessionsDb
-              .prepare(
-                `SELECT MAX(id) AS max_id FROM agent_activity
-                 WHERE type = 'gateway_tool_call'
-                   AND json_extract(details, '$.channel_id') = 'worker:board'`
-              )
-              .get() as { max_id: number | null };
-            return row.max_id ?? 0;
-          },
-          countObligatedTraceRowsSince: (maxId: number) => {
-            if (!sessionsDb) return 0;
-            const row = sessionsDb
-              .prepare(
-                `SELECT COUNT(*) AS n FROM agent_activity
-                 WHERE type = 'gateway_tool_call'
-                   AND json_extract(details, '$.channel_id') = 'worker:board'
-                   AND id > ? AND (normalized_tool_name IN (${traceToolList}) OR input_summary IN (${traceToolList}))`
-              )
-              .get(maxId) as { n: number };
-            return row.n;
-          },
+          ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
         };
         workOrderConsumer.registerHook('board', {
           before: (wo) => {
@@ -845,14 +824,9 @@ This saves resources. Only compile when there is genuinely new information to do
     // Stage-2 wiki completion hook (plan E4): outcome reading only - the
     // wiki:compiled events flow through the wikiPublisher independently.
     if (workOrderConsumer) {
+      const { buildWikiAfterHook } = await import('../../operator/workorder-hooks.js');
       workOrderConsumer.registerHook('wiki', {
-        after: (_wo, response) => {
-          if (response.includes('NO_UPDATE')) {
-            routesLogger.debug('[stage2] wiki worker: no changes detected');
-          } else {
-            routesLogger.debug('[stage2] wiki worker: compilation complete');
-          }
-        },
+        after: buildWikiAfterHook((line) => routesLogger.debug(line)),
       });
     }
 
@@ -986,22 +960,14 @@ This saves resources. Only compile when there is genuinely new information to do
     // its event emissions are the wiki ingress chain's second link - losing
     // them in the workorder conversion would silently sever memory:promoted.
     if (workOrderConsumer) {
+      const { buildPromotionAfterHook } = await import('../../operator/workorder-hooks.js');
       workOrderConsumer.registerHook('memory-curation', {
-        after: (_wo, response) => {
-          const promotedMatch = response.match(/PROMOTED\s+(\d+)/);
-          const saved = promotedMatch ? Number(promotedMatch[1]) : 0;
-          const noUpdate = response.includes('NO_UPDATE');
-          eventBus.emit({
-            type: 'agent:action',
-            agent: 'Memory Agent',
-            action: noUpdate || saved === 0 ? 'no_update' : 'promoted',
-            target: `promotion run: ${saved} saved`,
-          });
-          if (saved > 0) {
-            eventBus.emit({ type: 'memory:promoted', saved });
-            console.log(`[stage2] promotion worker: promoted ${saved} durable judgments`);
-          }
-        },
+        after: buildPromotionAfterHook({
+          emitAgentAction: (action, target) =>
+            eventBus.emit({ type: 'agent:action', agent: 'Memory Agent', action, target }),
+          emitMemoryPromoted: (saved) => eventBus.emit({ type: 'memory:promoted', saved }),
+          log: (line) => console.log(line),
+        }),
       });
     }
 

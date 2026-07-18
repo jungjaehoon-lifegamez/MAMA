@@ -1083,16 +1083,6 @@ export async function runAgentLoop(
     operatorDb.close();
     throw err;
   }
-  gateways.push({
-    stop: async () => {
-      try {
-        operatorDb.close();
-      } catch {
-        /* already closed */
-      }
-    },
-  });
-
   // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
   // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
   // registerApiRoutes (which registers the per-kind completion hooks) and
@@ -1101,6 +1091,19 @@ export async function runAgentLoop(
   const stage2Flag = readStage2Flag();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
+
+  gateways.push({
+    stop: async () => {
+      // Consumer stop BEFORE db close (same gateway = ordered; parallel
+      // gateways would race an in-flight tick into "database is not open").
+      await workOrderConsumer?.stop().catch(() => {});
+      try {
+        operatorDb.close();
+      } catch {
+        /* already closed */
+      }
+    },
+  });
   if (stage2Flag !== 'off') {
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
     const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
@@ -1185,11 +1188,18 @@ export async function runAgentLoop(
         }
       },
     });
-    gateways.push({ stop: async () => workOrderConsumer?.stop() });
+    // (Consumer stop is folded into the operator-DB gateway above - ordering.)
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
     toolExecutor.setWorkOrderRequestHandler((kind) => {
+      // Shadow invariant (plan B1/C2): shadow ≡ board only. A wiki/promotion
+      // workorder at shadow would run LIVE (no capture seam) while its legacy
+      // path also runs - the exact double-execution shadow exists to prevent.
+      if (stage2Flag === 'shadow' && kind !== 'board') {
+        console.warn(`[stage2] workorder_request(${kind}) rejected: shadow is board-only`);
+        return { accepted: false, reason: 'shadow-board-only' };
+      }
       try {
         const now = Date.now();
         let idempotencyKey: string;

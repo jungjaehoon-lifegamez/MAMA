@@ -81,8 +81,12 @@ function validatePatchBody(body: unknown): UpdateTaskInput {
 
   const patch: UpdateTaskInput = {};
   if ('status' in input) {
-    if (typeof input.status !== 'string' || !TASK_STATUSES.includes(input.status as TaskStatus)) {
-      throw new Error(`status must be one of ${TASK_STATUSES.join('|')}`);
+    // 'failed' is system-only (Stage-2): reject it HERE with a clean 400 and
+    // never advertise it - otherwise the enum message offers a value the
+    // ledger guard then rejects as a 500.
+    const ownerStatuses: readonly string[] = TASK_STATUSES.filter((s) => s !== 'failed');
+    if (typeof input.status !== 'string' || !ownerStatuses.includes(input.status)) {
+      throw new Error(`status must be one of ${ownerStatuses.join('|')}`);
     }
     patch.status = input.status as TaskStatus;
   }

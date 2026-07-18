@@ -340,3 +340,33 @@ describe('Story S2-T4: shadow runOptions injection', () => {
     expect(failed?.reason).toContain('shadow capture publisher missing');
   });
 });
+
+/**
+ * Story S2-T3 (review round 1): sink-unconfigured degradation.
+ */
+describe('Story S2-T3: unconfigured ops alarm sink', () => {
+  it('exhaustion with an unconfigured sink is log-only (loud) and still notices the owner', async () => {
+    const ctx = makeDeps();
+    ctx.deps.opsAlarm = {
+      configured: false,
+      send: async () => {
+        throw new Error('must never be called');
+      },
+    };
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new Error('boom');
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'k',
+      input: { mode: 'full' },
+    });
+    await consumer.tick();
+
+    expect(ctx.logs.some((l) => l.includes('log-only'))).toBe(true);
+    expect(ctx.notices).toHaveLength(1); // passive surface still fires
+  });
+});

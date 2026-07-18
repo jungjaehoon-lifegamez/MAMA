@@ -287,9 +287,17 @@ export class TaskLedger implements TaskSource {
           ALTER TABLE operator_tasks_new RENAME TO operator_tasks;
         `);
         if (seqRow) {
-          this.db
-            .prepare(`INSERT OR REPLACE INTO sqlite_sequence (name, seq) VALUES (?, ?)`)
-            .run('operator_tasks', seqRow.seq);
+          // sqlite_sequence has NO unique key on name - INSERT OR REPLACE
+          // would APPEND a duplicate row (review m2). UPDATE first; insert
+          // only when the rename left no row behind.
+          const updated = this.db
+            .prepare(`UPDATE sqlite_sequence SET seq = ? WHERE name = 'operator_tasks'`)
+            .run(seqRow.seq);
+          if (updated.changes === 0) {
+            this.db
+              .prepare(`INSERT INTO sqlite_sequence (name, seq) VALUES ('operator_tasks', ?)`)
+              .run(seqRow.seq);
+          }
         }
       }
 
@@ -393,6 +401,15 @@ export class TaskLedger implements TaskSource {
     if (input.status !== undefined) assertEnum(input.status, TASK_STATUSES, 'status');
     if (input.status === 'failed') {
       throw new Error(`task_create: 'failed' is a system-only status`);
+    }
+    // Namespace reservation (review m3): the occurrence keys are deterministic
+    // (epoch slots, readable from OSS source) - an agent-created owner row on
+    // a 'workorder:' (channel,event) pair would collide with the system
+    // INSERT via the shared unique index and DoS that schedule slot.
+    if (input.source_channel?.startsWith(WORKORDER_CHANNEL_PREFIX)) {
+      throw new Error(
+        `task_create: source_channel namespace '${WORKORDER_CHANNEL_PREFIX}*' is reserved for system workorders`
+      );
     }
     if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
     if (input.deadline !== undefined) assertIsoDate(input.deadline, 'deadline');

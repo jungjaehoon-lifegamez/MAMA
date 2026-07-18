@@ -49,3 +49,30 @@ describe('Story SMALLFIX-2: agentSavedInTurn', () => {
     });
   });
 });
+
+/**
+ * Story S2-T3 (review M1): operator notices must use the SAME key on the
+ * write and read sides - the original defect parked host alarms under a key
+ * no owner turn ever peeked (dead-letter). Source-coherence check: both the
+ * accessor and the resumed-turn peek/drain reference the exported constant.
+ */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { OPERATOR_BROADCAST_NOTICE_KEY } from '../../src/gateways/message-router.js';
+
+describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
+  const source = readFileSync(join(__dirname, '../../src/gateways/message-router.ts'), 'utf-8');
+
+  it('write and read sides share OPERATOR_BROADCAST_NOTICE_KEY', () => {
+    expect(OPERATOR_BROADCAST_NOTICE_KEY).toBe('operator:broadcast');
+    // Writer: the host-code accessor.
+    expect(source).toMatch(
+      /enqueueOperatorNotice[\s\S]{0,400}enqueue\(OPERATOR_BROADCAST_NOTICE_KEY/
+    );
+    // Readers: resumed-turn peek AND the drain after delivery.
+    expect(source).toMatch(/peek\(OPERATOR_BROADCAST_NOTICE_KEY\)/);
+    expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)/);
+    // The dead-letter key must not come back.
+    expect(source).not.toMatch(/enqueueOperatorNotice[\s\S]{0,400}'memory-agent:shared'/);
+  });
+});
