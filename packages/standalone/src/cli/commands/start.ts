@@ -1073,9 +1073,11 @@ export async function runAgentLoop(
   const operatorDbPath = expandPath('~/.mama/operator/triggers.db');
   mkdirSync(dirname(operatorDbPath), { recursive: true });
   const operatorDb = new Database(operatorDbPath);
+  let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
   try {
     const { TaskLedger } = await import('../../operator/task-ledger.js');
-    toolExecutor.setTaskLedger(new TaskLedger(operatorDb));
+    taskLedger = new TaskLedger(operatorDb);
+    toolExecutor.setTaskLedger(taskLedger);
   } catch (err) {
     // Fail loud, but do not leak the handle on a failed boot.
     operatorDb.close();
@@ -1090,6 +1092,79 @@ export async function runAgentLoop(
       }
     },
   });
+
+  // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
+  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
+  // registerApiRoutes (which registers the per-kind completion hooks) and
+  // started AFTER it - the boot invariant below enforces that ordering.
+  const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
+  const stage2Flag = readStage2Flag();
+  let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
+    null;
+  if (stage2Flag !== 'off') {
+    const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
+    const { loadBrief } = await import('../../operator/briefs.js');
+    const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
+
+    // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
+    // block - the consumer runs with the loop off, so its terminal alarms
+    // must too. Chat id: MAMA_OPS_ALERT_CHAT, falling back to the loop's
+    // report chat var.
+    const opsAlertChat =
+      process.env.MAMA_OPS_ALERT_CHAT || process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+    const opsAlarm = {
+      configured: Boolean(opsAlertChat && telegramGateway),
+      send: async (line: string) => {
+        if (telegramGateway && opsAlertChat) await telegramGateway.sendMessage(opsAlertChat, line);
+      },
+    };
+    if (!opsAlarm.configured) {
+      console.log(
+        '[stage2] ops alarm sink unconfigured - terminal workorder alarms are LOG-ONLY ' +
+          '(set MAMA_OPS_ALERT_CHAT or MAMA_TRIGGER_LOOP_REPORT_CHAT)'
+      );
+    }
+
+    // AgentLoopClient.runWithContent is optional in its type; a missing method
+    // is a boot-order fault and must throw, not no-op (WorkerRunner adapter).
+    const workerRunner: import('../../operator/worker-run.js').WorkerRunner = {
+      runWithContent: async (content, options) => {
+        if (!agentLoopClient.runWithContent) {
+          throw new Error('[stage2] agentLoopClient.runWithContent unavailable');
+        }
+        return agentLoopClient.runWithContent(
+          content as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[0],
+          options as Parameters<NonNullable<typeof agentLoopClient.runWithContent>>[1]
+        );
+      },
+    };
+    workOrderConsumer = new WorkOrderConsumer({
+      ledger: taskLedger,
+      runner: workerRunner,
+      loadBrief: (kind) => loadBrief(kind),
+      noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
+      opsAlarm,
+      onEvent: (event) => {
+        // Telemetry replacement for executeValidatedRun's task_start/complete
+        // rows (plan E4): the ledger row is the durable record; agent_activity
+        // keeps the operational trace queryable.
+        try {
+          logWorkOrderActivity(db, {
+            agent_id: `workorder-${event.workKind}`,
+            agent_version: 0,
+            type: `workorder_${event.type}`,
+            input_summary: `#${event.workOrderId}`,
+            output_summary: event.reason ?? '',
+            execution_status: 'completed',
+            trigger_reason: 'workorder-consumer',
+          });
+        } catch {
+          /* telemetry only */
+        }
+      },
+    });
+    gateways.push({ stop: async () => workOrderConsumer?.stop() });
+  }
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1333,7 +1408,30 @@ export async function runAgentLoop(
     graphHandler,
     getAdapter,
     sessionsDb: db,
+    workOrderConsumer: workOrderConsumer ?? undefined,
   });
+
+  // ── Stage-2 boot pass (plan S2-T3): hooks are registered above inside
+  // registerApiRoutes; recovery/cleanup run here, then the consumer starts.
+  if (stage2Flag === 'off') {
+    // Rollback cleanup (plan D3): open system rows -> cancelled, ONE summary
+    // line, no per-row alarms - a rollback is not a failure.
+    const cancelled = taskLedger.cancelOpenWorkOrders('flag-off');
+    if (cancelled > 0) {
+      console.log(`[stage2] flag=off: cancelled ${cancelled} open workorder(s) (rollback cleanup)`);
+    }
+  } else {
+    // Boot invariant (plan C13/G7): flag != off ⇒ consumer exists, hooks are
+    // already registered, and start() succeeds - violation kills the boot.
+    if (!workOrderConsumer) {
+      throw new Error('[stage2] boot invariant violated: flag != off but consumer not constructed');
+    }
+    workOrderConsumer.bootRecover();
+    workOrderConsumer.start();
+    if (!workOrderConsumer.isStarted()) {
+      throw new Error('[stage2] boot invariant violated: consumer failed to start');
+    }
+  }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────
 

@@ -54,6 +54,7 @@ import {
   promotionManualKey,
 } from '../../operator/workorder-publishers.js';
 import type { WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
+import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
 import {
   dispatchSecurityAlertDirect,
   hasSecurityAlertSender,
@@ -93,6 +94,8 @@ export interface RegisterApiRoutesParams {
   };
   /** Sessions DB for validation */
   sessionsDb?: SQLiteDatabase;
+  /** Stage-2 consumer: per-kind completion hooks register here (started by start.ts AFTER this returns). */
+  workOrderConsumer?: WorkOrderConsumer;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -110,6 +113,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     graphHandler,
     getAdapter,
     sessionsDb,
+    workOrderConsumer,
   } = params;
 
   // ── Stage-2 publisher gate (plan S2-T2) ───────────────────────────────
@@ -536,6 +540,92 @@ This saves resources. Only publish when there is genuinely new information to re
         },
       };
 
+      // Stage-2 board completion hook (plan D1/E3/G1): the consumer wraps
+      // reconcile workorders with the SAME bracket the legacy closure owns,
+      // but trace rows from worker runs carry the worker's identity, not
+      // agent_id='dashboard-agent' - the re-key goes through details JSON
+      // (agent_activity has NO channel_id column; json_extract is the only
+      // schema-supported key; agent_id re-keying is a green-test trap).
+      if (workOrderConsumer) {
+        const workerVerifierDeps = {
+          ...verifierDeps,
+          getTraceMaxId: () => {
+            if (!sessionsDb) return 0;
+            const row = sessionsDb
+              .prepare(
+                `SELECT MAX(id) AS max_id FROM agent_activity
+                 WHERE type = 'gateway_tool_call'
+                   AND json_extract(details, '$.channel_id') = 'worker:board'`
+              )
+              .get() as { max_id: number | null };
+            return row.max_id ?? 0;
+          },
+          countObligatedTraceRowsSince: (maxId: number) => {
+            if (!sessionsDb) return 0;
+            const row = sessionsDb
+              .prepare(
+                `SELECT COUNT(*) AS n FROM agent_activity
+                 WHERE type = 'gateway_tool_call'
+                   AND json_extract(details, '$.channel_id') = 'worker:board'
+                   AND id > ? AND (normalized_tool_name IN (${traceToolList}) OR input_summary IN (${traceToolList}))`
+              )
+              .get(maxId) as { n: number };
+            return row.n;
+          },
+        };
+        workOrderConsumer.registerHook('board', {
+          before: (wo) => {
+            if (wo.payload.mode !== 'reconcile') return null;
+            return captureSnapshot(
+              workerVerifierDeps,
+              `reconcile:${String(wo.payload.channelKey)}`
+            );
+          },
+          after: (wo, response, beforeState) => {
+            if (wo.payload.mode !== 'reconcile' || !beforeState) {
+              // FULL runs are not bracket-verified (plan: reconcile mode only).
+              if (response.includes('NO_UPDATE')) {
+                console.log('[stage2] board worker: no changes detected, publish skipped');
+              }
+              return;
+            }
+            const scope = `reconcile:${String(wo.payload.channelKey)}`;
+            const verdict = verifyAfterRun(
+              workerVerifierDeps,
+              beforeState as ReturnType<typeof captureSnapshot>,
+              scope
+            );
+            const outcome = verdict.verified ? 'reconcile_verified' : 'reconcile_unverified';
+            console.log(
+              `[stage2] ${outcome} channel=${String(wo.payload.channelKey)}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
+            );
+            try {
+              if (sessionsDb) {
+                logActivity(sessionsDb, {
+                  agent_id: 'workorder-board',
+                  agent_version: 0,
+                  type: outcome,
+                  input_summary: `reconcile ${String(wo.payload.channelKey)}`,
+                  output_summary: verdict.effects.join('; '),
+                  execution_status: 'completed',
+                  trigger_reason: 'workorder',
+                });
+              }
+            } catch {
+              /* telemetry only */
+            }
+            if (!verdict.verified) {
+              eventBus.emit({
+                type: 'agent:action',
+                agent: 'Dashboard Agent',
+                action: 'reconcile_unverified',
+                target: String(wo.payload.channelKey),
+              });
+            }
+          },
+        });
+      }
+
       const reconcileScheduler = new ReconcileScheduler({
         debounceMs: Number(process.env.MAMA_RECONCILE_DEBOUNCE_MS) || undefined,
         maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
@@ -752,6 +842,20 @@ This saves resources. Only compile when there is genuinely new information to do
       }
     };
 
+    // Stage-2 wiki completion hook (plan E4): outcome reading only - the
+    // wiki:compiled events flow through the wikiPublisher independently.
+    if (workOrderConsumer) {
+      workOrderConsumer.registerHook('wiki', {
+        after: (_wo, response) => {
+          if (response.includes('NO_UPDATE')) {
+            routesLogger.debug('[stage2] wiki worker: no changes detected');
+          } else {
+            routesLogger.debug('[stage2] wiki worker: compilation complete');
+          }
+        },
+      });
+    }
+
     // Serialize ALL wiki runs (boot, event-driven, manual) on one chain -- the
     // shared agent process rejects concurrent requests, so the boot run and a
     // manual trigger raced into 'Process is busy' (same pattern as the
@@ -877,6 +981,29 @@ This saves resources. Only compile when there is genuinely new information to do
         routesLogger.error('[Memory Promotion] Error:', err instanceof Error ? err.message : err);
       }
     };
+
+    // Stage-2 promotion completion hook (plan E4): the PROMOTED <n> parse and
+    // its event emissions are the wiki ingress chain's second link - losing
+    // them in the workorder conversion would silently sever memory:promoted.
+    if (workOrderConsumer) {
+      workOrderConsumer.registerHook('memory-curation', {
+        after: (_wo, response) => {
+          const promotedMatch = response.match(/PROMOTED\s+(\d+)/);
+          const saved = promotedMatch ? Number(promotedMatch[1]) : 0;
+          const noUpdate = response.includes('NO_UPDATE');
+          eventBus.emit({
+            type: 'agent:action',
+            agent: 'Memory Agent',
+            action: noUpdate || saved === 0 ? 'no_update' : 'promoted',
+            target: `promotion run: ${saved} saved`,
+          });
+          if (saved > 0) {
+            eventBus.emit({ type: 'memory:promoted', saved });
+            console.log(`[stage2] promotion worker: promoted ${saved} durable judgments`);
+          }
+        },
+      });
+    }
 
     // Serialize all promotion runs on one chain (same 'Process is busy' class
     // as the dashboard and wiki agents).

@@ -593,6 +593,15 @@ export class TaskLedger implements TaskSource {
     this.transitionWorkOrder(id, 'failed', reason);
   }
 
+  countPendingWorkOrders(): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count FROM operator_tasks WHERE kind = 'system' AND status = 'pending'`
+      )
+      .get() as { count: number };
+    return row.count;
+  }
+
   /** In-progress system rows at boot = crash artifacts (single serial consumer). */
   listStaleClaims(): WorkOrderRecord[] {
     const rows = this.db

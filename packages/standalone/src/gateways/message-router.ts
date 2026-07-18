@@ -412,6 +412,24 @@ export class MessageRouter {
   }
 
   /**
+   * Host-code enqueue into the owner notice surface (Stage-2 workorder
+   * failures). The queue stays router-owned; this is the accessor plan C5
+   * requires - the consumer lives in start.ts host code and cannot reach the
+   * private field. Delivered on the owner's next chat turn (severity high
+   * passes shouldDeliverAuditNotice).
+   */
+  enqueueOperatorNotice(summary: string): void {
+    this.memoryNoticeQueue.enqueue('memory-agent:shared', {
+      type: 'memory_warning',
+      severity: 'high',
+      summary,
+      evidence: [],
+      recommended_action: 'recheck',
+      relevant_memories: [],
+    });
+  }
+
+  /**
    * Public API for auditing a conversation via the memory agent.
    * Used by the /api/mama/audit-conversation endpoint for benchmarking.
    * Bypasses cooldown and candidate detection — caller provides conversation + optional candidates.

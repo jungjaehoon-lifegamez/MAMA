@@ -1,0 +1,298 @@
+/**
+ * Story S2-T3: workorder consumer - serial consumption, retry policy, alarms,
+ * completion hooks. Real in-memory TaskLedger; fake runner/alarm sinks.
+ * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
+ */
+import { describe, it, expect, beforeEach } from 'vitest';
+import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { TaskLedger } from '../../src/operator/task-ledger.js';
+import {
+  WorkOrderConsumer,
+  type WorkOrderConsumerDeps,
+  type WorkOrderConsumerEvent,
+} from '../../src/operator/workorder-consumer.js';
+
+function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
+  deps: WorkOrderConsumerDeps;
+  ledger: TaskLedger;
+  notices: string[];
+  activeSends: string[];
+  events: WorkOrderConsumerEvent[];
+  logs: string[];
+} {
+  const db: SQLiteDatabase = new Database(':memory:');
+  const ledger = new TaskLedger(db);
+  const notices: string[] = [];
+  const activeSends: string[] = [];
+  const events: WorkOrderConsumerEvent[] = [];
+  const logs: string[] = [];
+  const deps: WorkOrderConsumerDeps = {
+    ledger,
+    runner: {
+      runWithContent: async () => ({ response: 'ok done' }),
+    },
+    loadBrief: () => 'You are a test worker. Do the work.',
+    noticeOwner: (summary) => notices.push(summary),
+    opsAlarm: { configured: true, send: async (line) => void activeSends.push(line) },
+    onEvent: (event) => events.push(event),
+    log: (line) => logs.push(line),
+    ...overrides,
+  };
+  return { deps, ledger, notices, activeSends, events, logs };
+}
+
+describe('Story S2-T3: WorkOrderConsumer', () => {
+  let ctx: ReturnType<typeof makeDeps>;
+
+  beforeEach(() => {
+    ctx = makeDeps();
+  });
+
+  describe('AC #1: enqueue -> consume -> complete e2e', () => {
+    it('drains pending workorders serially and marks them done', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const a = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:1',
+        input: { mode: 'full' },
+      });
+      const b = ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:1',
+        input: { batchId: 'b1', events: [] },
+      });
+
+      expect(await consumer.tick()).toBe('drained');
+      const stats = ctx.ledger.workOrderStats();
+      expect(stats.find((s) => s.workKind === 'board')?.lastStatus).toBe('done');
+      expect(stats.find((s) => s.workKind === 'wiki')?.lastStatus).toBe('done');
+      expect(ctx.events.filter((e) => e.type === 'complete').map((e) => e.workOrderId)).toEqual([
+        a.id,
+        b.id,
+      ]);
+    });
+
+    it('serializes: one claim awaited at a time (claim order respected)', async () => {
+      const order: string[] = [];
+      ctx.deps.runner = {
+        runWithContent: async (content) => {
+          order.push(String((content[0] as { text: string }).text.includes('"mode":"full"')));
+          await new Promise((r) => setTimeout(r, 5));
+          return { response: 'done' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k1',
+        input: { mode: 'full' },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'k2',
+        input: { batchId: 'b', events: [] },
+        priority: 'high',
+      });
+      // high-priority wiki claims first despite later enqueue
+      await consumer.tick();
+      expect(order).toEqual(['false', 'true']);
+    });
+  });
+
+  describe('AC #2: overlapping ticks skip (re-entrancy guard, plan G4)', () => {
+    it('a tick during a long run returns skipped', async () => {
+      let release: () => void = () => {};
+      ctx.deps.runner = {
+        runWithContent: () =>
+          new Promise((resolve) => {
+            release = () => resolve({ response: 'done' });
+          }),
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k1',
+        input: { mode: 'full' },
+      });
+
+      const first = consumer.tick();
+      expect(await consumer.tick()).toBe('skipped'); // overlapping firing
+      release();
+      expect(await first).toBe('drained');
+    });
+  });
+
+  describe('AC #3: retry policy (plan G5/M4)', () => {
+    it('wiki requeues once (attempts 2) then exhausts with an active alarm', async () => {
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new Error('worker blew up');
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:batch-9',
+        input: { batchId: 'b9', events: [] },
+      });
+
+      await consumer.tick(); // attempt 1 fails -> requeued (fresh row, attempts 2)
+      const requeued = ctx.events.find((e) => e.type === 'requeued');
+      expect(requeued).toBeDefined();
+      expect(ctx.activeSends).toHaveLength(0); // not exhausted yet
+
+      await consumer.tick(); // attempt 2 fails -> exhausted -> alarm
+      expect(ctx.events.some((e) => e.type === 'exhausted')).toBe(true);
+      expect(ctx.activeSends).toHaveLength(1);
+      expect(ctx.activeSends[0]).toContain('retries exhausted');
+      expect(ctx.notices).toHaveLength(1);
+    });
+
+    it('board fails once and exhausts immediately (next publish cycle self-heals)', async () => {
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new Error('boom');
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(ctx.events.some((e) => e.type === 'requeued')).toBe(false);
+      expect(ctx.events.some((e) => e.type === 'exhausted')).toBe(true);
+    });
+
+    it('missing brief fails the order loudly (never a silent skip)', async () => {
+      ctx.deps.loadBrief = () => null;
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      const failed = ctx.events.find((e) => e.type === 'failed');
+      expect(failed?.reason).toBe('brief-missing');
+    });
+  });
+
+  describe('AC #4: boot recovery routes stale claims through the retry policy', () => {
+    it('stale wiki claim alarms AND requeues; stale board claim alarms without requeue', () => {
+      const wiki = ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'w',
+        input: { batchId: 'b', events: [] },
+      });
+      ctx.ledger.claimNextWorkOrder(); // wiki in_progress (crash artifact)
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.bootRecover();
+
+      expect(ctx.events.some((e) => e.type === 'stale-claim' && e.workOrderId === wiki.id)).toBe(
+        true
+      );
+      expect(ctx.activeSends.some((l) => l.includes('stale claim'))).toBe(true);
+      expect(ctx.events.some((e) => e.type === 'requeued')).toBe(true); // wiki retries once
+    });
+  });
+
+  describe('AC #5: alarm dedup per kind (6h)', () => {
+    it('second exhaustion within the window is log-only', async () => {
+      let clock = 1_000_000;
+      ctx.deps.now = () => clock;
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new Error('boom');
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k1',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      clock += 60_000; // 1 min later, same kind fails again
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k2',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+
+      expect(ctx.activeSends).toHaveLength(1); // deduped
+      expect(ctx.logs.some((l) => l.includes('alarm deduped'))).toBe(true);
+
+      clock += 7 * 60 * 60 * 1000; // past the window
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k3',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      expect(ctx.activeSends).toHaveLength(2);
+    });
+  });
+
+  describe('AC #6: completion hooks (plan D1/E4)', () => {
+    it('before state flows to after; after-hook errors are loud but never fail the run', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const seen: unknown[] = [];
+      consumer.registerHook('board', {
+        before: () => ({ marker: 42 }),
+        after: (_wo, response, beforeState) => {
+          seen.push(beforeState, response);
+          throw new Error('verification hiccup');
+        },
+      });
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+
+      expect(seen[0]).toEqual({ marker: 42 });
+      expect(ctx.logs.some((l) => l.includes('after-hook error'))).toBe(true);
+      expect(ctx.events.some((e) => e.type === 'complete' && e.workOrderId === wo.id)).toBe(true);
+    });
+
+    it('a broken before-hook fails the order (never strands the claim)', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        before: () => {
+          throw new Error('snapshot store gone');
+        },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'k',
+        input: { mode: 'full' },
+      });
+      await consumer.tick();
+      const failed = ctx.events.find((e) => e.type === 'failed');
+      expect(failed?.reason).toContain('before-hook');
+    });
+
+    it('duplicate hook registration throws', () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('wiki', {});
+      expect(() => consumer.registerHook('wiki', {})).toThrow(/already registered/);
+    });
+  });
+
+  describe('AC #7: start/stop lifecycle', () => {
+    it('start twice throws; isStarted reflects state', () => {
+      const consumer = new WorkOrderConsumer({ ...ctx.deps, tickMs: 3_600_000 });
+      expect(consumer.isStarted()).toBe(false);
+      consumer.start();
+      expect(consumer.isStarted()).toBe(true);
+      expect(() => consumer.start()).toThrow(/already started/);
+      consumer.stop();
+      expect(consumer.isStarted()).toBe(false);
+    });
+  });
+});
