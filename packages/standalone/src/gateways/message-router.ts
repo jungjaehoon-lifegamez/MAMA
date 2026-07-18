@@ -69,6 +69,10 @@ const { DebugLogger } = debugLogger as {
 };
 const logger = new DebugLogger('MessageRouter');
 
+/** Channel-less host alarms (workorder failures) park here; every resumed
+ *  owner turn reads this key in addition to its own channel key. */
+export const OPERATOR_BROADCAST_NOTICE_KEY = 'operator:broadcast';
+
 /**
  * Agent Loop interface for message processing
  */
@@ -409,6 +413,25 @@ export class MessageRouter {
 
   getMemoryAgentStats() {
     return { ...this.memoryAgentStats };
+  }
+
+  /**
+   * Host-code enqueue into the owner notice surface (Stage-2 workorder
+   * failures). The queue stays router-owned; this is the accessor plan C5
+   * requires - the consumer lives in start.ts host code and cannot reach the
+   * private field. Keyed under the operator BROADCAST key: host alarms have
+   * no conversation channel, and per-channel keys would dead-letter (review
+   * M1). Delivered on the owner's next resumed chat turn on ANY channel.
+   */
+  enqueueOperatorNotice(summary: string): void {
+    this.memoryNoticeQueue.enqueue(OPERATOR_BROADCAST_NOTICE_KEY, {
+      type: 'memory_warning',
+      severity: 'high',
+      summary,
+      evidence: [],
+      recommended_action: 'recheck',
+      relevant_memories: [],
+    });
   }
 
   /**
@@ -811,7 +834,8 @@ This protects your credentials from being exposed in chat logs.`;
     // keep using CLI conversation state and only prepend queued audit notices.
     let memoryPrefix = '';
     let pendingNotices = false;
-    let pendingNoticeCount = 0;
+    let pendingChannelNoticeCount = 0;
+    let pendingBroadcastNoticeCount = 0;
     try {
       const envelope = this.buildReactiveEnvelope(message);
       const options: AgentLoopOptions = {
@@ -845,9 +869,23 @@ This protects your credentials from being exposed in chat logs.`;
 
       try {
         if (shouldResume) {
-          const notices = this.memoryNoticeQueue.peek(channelKey);
+          // Per-channel notices PLUS the operator broadcast key: host-code
+          // alarms (workorder failures) have no conversation channel at
+          // enqueue time - without the broadcast read they dead-letter
+          // (Stage-2 review M1). Broadcast is OWNER-ONLY (review N3: a
+          // non-owner/group turn must neither see internal ops state nor
+          // drain the queue away from the owner), and the two queues are
+          // peeked/drained by their OWN counts (review N2: a combined count
+          // over-drained one queue, dropping mid-turn notices undisplayed).
+          const channelNotices = this.memoryNoticeQueue.peek(channelKey);
+          const broadcastNotices =
+            agentContext?.roleName === 'owner_console'
+              ? this.memoryNoticeQueue.peek(OPERATOR_BROADCAST_NOTICE_KEY)
+              : [];
+          const notices = [...channelNotices, ...broadcastNotices];
           pendingNotices = notices.length > 0;
-          pendingNoticeCount = notices.length;
+          pendingChannelNoticeCount = channelNotices.length;
+          pendingBroadcastNoticeCount = broadcastNotices.length;
           memoryPrefix = notices.map((notice) => formatAuditNotice(notice)).join('\n\n');
           if (memoryPrefix) {
             memoryPrefix = `${memoryPrefix}\n\n`;
@@ -977,7 +1015,14 @@ This protects your credentials from being exposed in chat logs.`;
       }
 
       if (shouldResume && pendingNotices) {
-        this.memoryNoticeQueue.drain(channelKey, pendingNoticeCount);
+        // Drain each queue by ITS OWN peeked count - notices enqueued while
+        // the agent run was in flight stay for the next turn (review N2).
+        if (pendingChannelNoticeCount > 0) {
+          this.memoryNoticeQueue.drain(channelKey, pendingChannelNoticeCount);
+        }
+        if (pendingBroadcastNoticeCount > 0) {
+          this.memoryNoticeQueue.drain(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount);
+        }
       }
     } catch (error) {
       const durationMs = Date.now() - startTime;
@@ -1222,6 +1267,13 @@ ${historyContext}
     prompt += `\n## Instructions\n- Be concise. Save important decisions.${hasHistory ? '' : ' Greet naturally.'}`;
     if (agentContext?.platform === 'viewer') {
       prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
+    }
+    if (agentContext?.roleName === 'owner_console') {
+      // Store canonicity (Stage-2 S2-T7): two task stores exist with different
+      // vocabularies - the agent must never present their mismatch as data.
+      prompt += `
+- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.
+- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
     }
     prompt += '\n';
 

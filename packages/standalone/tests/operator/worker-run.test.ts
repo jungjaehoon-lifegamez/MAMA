@@ -88,3 +88,41 @@ describe('Story OPS-0: workerRun primitive', () => {
     });
   });
 });
+
+/**
+ * Story S2-T4: runOptions passthrough - identity fields always win (plan E7/G3).
+ */
+describe('Story S2-T4: workerRun runOptions merge order', () => {
+  it('passes extra run options through but never lets them override identity', async () => {
+    let captured: Record<string, unknown> = {};
+    const runner = {
+      runWithContent: async (
+        _content: unknown,
+        options: Record<string, unknown>
+      ): Promise<{ response: string }> => {
+        captured = options;
+        return { response: 'ok' };
+      },
+    };
+    const override = (): void => {};
+    await workerRun(runner as never, {
+      kind: 'board',
+      brief: 'brief text',
+      input: 'work',
+      runOptions: {
+        reportPublisherOverride: override,
+        // Hostile/buggy override attempts - identity must win:
+        sessionKey: 'chat:main:hijack',
+        source: 'telegram',
+        channelId: 'other-lane',
+        freshSession: false,
+      },
+    });
+
+    expect(captured.reportPublisherOverride).toBe(override);
+    expect(captured.sessionKey).toBe('operator:worker:board');
+    expect(captured.source).toBe('operator');
+    expect(captured.channelId).toBe('worker:board');
+    expect(captured.freshSession).toBe(true);
+  });
+});

@@ -42,6 +42,20 @@ import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
+  readStage2Flag,
+  resolvePublishAction,
+  resolveReconcileAction,
+  validateWorkOrderPayload,
+  boardFullKey,
+  boardManualKey,
+  boardReconcileKey,
+  wikiBatchKey,
+  promotionKey,
+  promotionManualKey,
+} from '../../operator/workorder-publishers.js';
+import type { WorkOrderKind, TaskPriority } from '../../operator/task-ledger.js';
+import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
+import {
   dispatchSecurityAlertDirect,
   hasSecurityAlertSender,
 } from '../../security/security-monitor.js';
@@ -80,6 +94,8 @@ export interface RegisterApiRoutesParams {
   };
   /** Sessions DB for validation */
   sessionsDb?: SQLiteDatabase;
+  /** Stage-2 consumer: per-kind completion hooks register here (started by start.ts AFTER this returns). */
+  workOrderConsumer?: WorkOrderConsumer;
 }
 
 export async function registerApiRoutes(params: RegisterApiRoutesParams): Promise<void> {
@@ -97,7 +113,30 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     graphHandler,
     getAdapter,
     sessionsDb,
+    workOrderConsumer,
   } = params;
+
+  // ── Stage-2 publisher gate (plan S2-T2) ───────────────────────────────
+  // Throws at boot on a malformed flag value (no-fallback: a typo must not
+  // silently revert a believed-active migration to legacy).
+  const stage2Flag = readStage2Flag();
+  if (stage2Flag !== 'off') {
+    console.log(`[stage2] workorder publishers active (flag=${stage2Flag})`);
+  }
+  const enqueueWorkOrderOrThrow = (
+    workKind: WorkOrderKind,
+    idempotencyKey: string,
+    payload: Record<string, unknown>,
+    priority?: TaskPriority
+  ): void => {
+    const ledger = toolExecutor.getTaskLedger();
+    if (!ledger) {
+      throw new Error(`[stage2] TaskLedger unavailable - cannot enqueue ${workKind} workorder`);
+    }
+    validateWorkOrderPayload(workKind, payload);
+    const wo = ledger.enqueueWorkOrder({ workKind, idempotencyKey, input: payload, priority });
+    console.log(`[stage2] enqueued workorder ${workKind}#${wo.id} key=${idempotencyKey}`);
+  };
 
   // ── Validation Session Service ────────────────────────────────────────
   const validationService = sessionsDb ? new ValidationSessionService(sessionsDb) : null;
@@ -382,6 +421,29 @@ This saves resources. Only publish when there is genuinely new information to re
       );
 
     const doDashboardRun = async (opts?: { force?: boolean }) => {
+      // Stage-2 gate at the FUNCTION level: schedule, boot, manual REST all
+      // funnel here, so this single gate covers every entry path (plan F4).
+      const boardAction = resolvePublishAction(stage2Flag, 'board');
+      if (boardAction !== 'legacy') {
+        try {
+          const now = Date.now();
+          enqueueWorkOrderOrThrow(
+            'board',
+            opts?.force ? boardManualKey(now) : boardFullKey(now),
+            { mode: 'full', ...(opts?.force ? { force: true } : {}) },
+            opts?.force ? 'high' : undefined
+          );
+        } catch (err) {
+          routesLogger.error(
+            '[stage2] board enqueue failed:',
+            err instanceof Error ? err.message : err
+          );
+        }
+        // 'enqueue' (on): legacy stops - an enqueue failure must NOT silently
+        // fall back to a legacy run; the next occurrence retries.
+        // 'both' (shadow): legacy keeps publishing live below.
+        if (boardAction === 'enqueue') return;
+      }
       const pm = toolExecutor.getAgentProcessManager();
       if (!pm) {
         routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
@@ -478,13 +540,99 @@ This saves resources. Only publish when there is genuinely new information to re
         },
       };
 
+      // Stage-2 board completion hook (plan D1/E3/G1): the consumer wraps
+      // reconcile workorders with the SAME bracket the legacy closure owns,
+      // but trace rows from worker runs carry the worker's identity, not
+      // agent_id='dashboard-agent' - the re-key goes through details JSON
+      // (agent_activity has NO channel_id column; json_extract is the only
+      // schema-supported key; agent_id re-keying is a green-test trap).
+      if (workOrderConsumer) {
+        const { buildWorkerTraceQueries } = await import('../../operator/workorder-hooks.js');
+        const workerVerifierDeps = {
+          ...verifierDeps,
+          ...buildWorkerTraceQueries(sessionsDb, 'worker:board'),
+        };
+        workOrderConsumer.registerHook('board', {
+          before: (wo) => {
+            if (wo.payload.mode !== 'reconcile') return null;
+            return captureSnapshot(
+              workerVerifierDeps,
+              `reconcile:${String(wo.payload.channelKey)}`
+            );
+          },
+          after: (wo, response, beforeState) => {
+            if (wo.payload.mode !== 'reconcile' || !beforeState) {
+              // FULL runs are not bracket-verified (plan: reconcile mode only).
+              if (response.includes('NO_UPDATE')) {
+                console.log('[stage2] board worker: no changes detected, publish skipped');
+              }
+              return;
+            }
+            const scope = `reconcile:${String(wo.payload.channelKey)}`;
+            const verdict = verifyAfterRun(
+              workerVerifierDeps,
+              beforeState as ReturnType<typeof captureSnapshot>,
+              scope
+            );
+            const outcome = verdict.verified ? 'reconcile_verified' : 'reconcile_unverified';
+            console.log(
+              `[stage2] ${outcome} channel=${String(wo.payload.channelKey)}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
+            );
+            try {
+              if (sessionsDb) {
+                logActivity(sessionsDb, {
+                  agent_id: 'workorder-board',
+                  agent_version: 0,
+                  type: outcome,
+                  input_summary: `reconcile ${String(wo.payload.channelKey)}`,
+                  output_summary: verdict.effects.join('; '),
+                  execution_status: 'completed',
+                  trigger_reason: 'workorder',
+                });
+              }
+            } catch {
+              /* telemetry only */
+            }
+            if (!verdict.verified) {
+              eventBus.emit({
+                type: 'agent:action',
+                agent: 'Dashboard Agent',
+                action: 'reconcile_unverified',
+                target: String(wo.payload.channelKey),
+              });
+            }
+          },
+        });
+      }
+
       const reconcileScheduler = new ReconcileScheduler({
         debounceMs: Number(process.env.MAMA_RECONCILE_DEBOUNCE_MS) || undefined,
         maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
         globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
         log: (line) => console.log(line),
-        run: (channelKey, deltaLines) =>
-          boardWriterQueue.push(async () => {
+        run: (channelKey, deltaLines) => {
+          // Stage-2: at 'on' the reconcile leg becomes a board workorder (its
+          // bracket verification moves to the consumer's completion hook);
+          // shadow/off keep the legacy bracket-verified path (plan C1).
+          if (resolveReconcileAction(stage2Flag) === 'enqueue') {
+            try {
+              enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
+                mode: 'reconcile',
+                channelKey,
+                deltaLines,
+              });
+            } catch (err) {
+              routesLogger.error(
+                '[stage2] reconcile enqueue failed:',
+                err instanceof Error ? err.message : err
+              );
+              // REJECT so ReconcileScheduler restores pendingLines - a
+              // resolved failure silently drops this delta (PR bot round).
+              return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+            }
+            return Promise.resolve();
+          }
+          return boardWriterQueue.push(async () => {
             const scope = `reconcile:${channelKey}`;
             const before = captureSnapshot(verifierDeps, scope);
             const prompt = buildReconcilePrompt({
@@ -525,7 +673,8 @@ This saves resources. Only publish when there is genuinely new information to re
                 target: channelKey,
               });
             }
-          }),
+          });
+        },
       });
       eventBus.on('operator:channel-delta', (event) => {
         if (event.type === 'operator:channel-delta') {
@@ -619,7 +768,27 @@ This saves resources. Only publish when there is genuinely new information to re
     });
 
     // Wiki trigger via executeValidatedRun
-    const doWikiRun = async () => {
+    const doWikiRun = async (trigger: string) => {
+      // Stage-2 gate (function level, plan F4). Wiki never enters shadow
+      // (resolvePublishAction returns 'legacy' there) - its Obsidian writes
+      // have no capture seam.
+      if (resolvePublishAction(stage2Flag, 'wiki') === 'enqueue') {
+        try {
+          const now = Date.now();
+          enqueueWorkOrderOrThrow(
+            'wiki',
+            wikiBatchKey(trigger, now),
+            { batchId: `${now}-${trigger}`, events: [trigger] },
+            trigger === 'manual' ? 'high' : undefined
+          );
+        } catch (err) {
+          routesLogger.error(
+            '[stage2] wiki enqueue failed:',
+            err instanceof Error ? err.message : err
+          );
+        }
+        return;
+      }
       if (!toolExecutor.getAgentProcessManager()) {
         routesLogger.warn('[Wiki Agent] AgentProcessManager not available yet');
         return;
@@ -655,23 +824,36 @@ This saves resources. Only compile when there is genuinely new information to do
       }
     };
 
+    // Stage-2 wiki completion hook (plan E4): outcome reading only - the
+    // wiki:compiled events flow through the wikiPublisher independently.
+    if (workOrderConsumer) {
+      const { buildWikiAfterHook } = await import('../../operator/workorder-hooks.js');
+      workOrderConsumer.registerHook('wiki', {
+        after: buildWikiAfterHook((line) => routesLogger.debug(line)),
+      });
+    }
+
     // Serialize ALL wiki runs (boot, event-driven, manual) on one chain -- the
     // shared agent process rejects concurrent requests, so the boot run and a
     // manual trigger raced into 'Process is busy' (same pattern as the
     // dashboard agent's runDashboardAgent chain above).
     let wikiRunChain: Promise<void> = Promise.resolve();
-    const runWikiAgent = (): Promise<void> => {
-      wikiRunChain = wikiRunChain.then(doWikiRun).catch(() => {});
+    const runWikiAgent = (trigger: string): Promise<void> => {
+      wikiRunChain = wikiRunChain.then(() => doWikiRun(trigger)).catch(() => {});
       return wikiRunChain;
     };
 
     // Event-driven: compile when extraction completes. Trailing-edge debounce so
     // bursts of extraction:completed events coalesce into one wiki compile run.
-    eventBus.onDebounced('extraction:completed', () => runWikiAgent(), 30_000);
+    eventBus.onDebounced(
+      'extraction:completed',
+      () => runWikiAgent('extraction:completed'),
+      30_000
+    );
 
     // Promotion feeds the wiki: freshly promoted decisions are exactly the
     // material daily notes and lessons compile from.
-    eventBus.onDebounced('memory:promoted', () => runWikiAgent(), 30_000);
+    eventBus.onDebounced('memory:promoted', () => runWikiAgent('memory:promoted'), 30_000);
 
     // Emit agent:action notices when wiki pages are compiled
     eventBus.on('wiki:compiled', (event) => {
@@ -689,12 +871,12 @@ This saves resources. Only compile when there is genuinely new information to do
 
     // Manual trigger API
     apiServer.app.post('/api/wiki/compile', requireAuth, async (_req, res) => {
-      runWikiAgent().catch(() => {});
+      runWikiAgent('manual').catch(() => {});
       res.json({ ok: true, message: 'Wiki compilation triggered' });
     });
 
     // First run after 15s (let connectors and dashboard agent go first)
-    setTimeout(runWikiAgent, 15_000);
+    setTimeout(() => runWikiAgent('boot'), 15_000);
 
     routesLogger.info(
       '[Wiki Agent] Ready — triggers: extraction:completed event, POST /api/wiki/compile'
@@ -728,7 +910,26 @@ This saves resources. Only compile when there is genuinely new information to do
       'Include scopes (the source channel, and the project when identifiable) and event_date.\n' +
       '5. Finish with exactly PROMOTED <n> or NO_UPDATE.';
 
-    const doPromotionRun = async () => {
+    const doPromotionRun = async (opts?: { manual?: boolean }) => {
+      // Stage-2 gate (function level, plan F4). Promotion never enters shadow
+      // - its mama_save writes have no capture seam.
+      if (resolvePublishAction(stage2Flag, 'memory-curation') === 'enqueue') {
+        try {
+          const now = Date.now();
+          enqueueWorkOrderOrThrow(
+            'memory-curation',
+            opts?.manual ? promotionManualKey(now) : promotionKey(now),
+            { scheduledAt: new Date(now).toISOString() },
+            opts?.manual ? 'high' : undefined
+          );
+        } catch (err) {
+          routesLogger.error(
+            '[stage2] promotion enqueue failed:',
+            err instanceof Error ? err.message : err
+          );
+        }
+        return;
+      }
       if (!toolExecutor.getAgentProcessManager()) {
         routesLogger.warn('[Memory Promotion] AgentProcessManager not available yet');
         return;
@@ -758,19 +959,34 @@ This saves resources. Only compile when there is genuinely new information to do
       }
     };
 
+    // Stage-2 promotion completion hook (plan E4): the PROMOTED <n> parse and
+    // its event emissions are the wiki ingress chain's second link - losing
+    // them in the workorder conversion would silently sever memory:promoted.
+    if (workOrderConsumer) {
+      const { buildPromotionAfterHook } = await import('../../operator/workorder-hooks.js');
+      workOrderConsumer.registerHook('memory-curation', {
+        after: buildPromotionAfterHook({
+          emitAgentAction: (action, target) =>
+            eventBus.emit({ type: 'agent:action', agent: 'Memory Agent', action, target }),
+          emitMemoryPromoted: (saved) => eventBus.emit({ type: 'memory:promoted', saved }),
+          log: (line) => console.log(line),
+        }),
+      });
+    }
+
     // Serialize all promotion runs on one chain (same 'Process is busy' class
     // as the dashboard and wiki agents).
     let promotionRunChain: Promise<void> = Promise.resolve();
-    const runMemoryPromotion = (): Promise<void> => {
-      promotionRunChain = promotionRunChain.then(doPromotionRun).catch(() => {});
+    const runMemoryPromotion = (opts?: { manual?: boolean }): Promise<void> => {
+      promotionRunChain = promotionRunChain.then(() => doPromotionRun(opts)).catch(() => {});
       return promotionRunChain;
     };
 
-    setTimeout(runMemoryPromotion, PROMOTION_INITIAL_DELAY_MS);
-    setInterval(runMemoryPromotion, PROMOTION_INTERVAL_MS);
+    setTimeout(() => runMemoryPromotion(), PROMOTION_INITIAL_DELAY_MS);
+    setInterval(() => runMemoryPromotion(), PROMOTION_INTERVAL_MS);
 
     apiServer.app.post('/api/memory/promote', requireAuth, (_req, res) => {
-      runMemoryPromotion().catch(() => {});
+      runMemoryPromotion({ manual: true }).catch(() => {});
       res.json({ ok: true, message: 'Memory promotion run triggered' });
     });
 

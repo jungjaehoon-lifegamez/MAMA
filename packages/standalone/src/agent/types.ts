@@ -133,6 +133,12 @@ export type GatewayToolExecutionContext = {
   backgroundTasks?: BackgroundTaskRegistry;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
+  /**
+   * Stage-2 shadow seam: report_publish resolves this INSTEAD of the global
+   * reportPublisher singleton when set (capture runs must never touch the
+   * live report store). Strictly per-run - never merged from fallback state.
+   */
+  reportPublisherOverride?: (slots: Record<string, string>) => void;
 };
 
 // ============================================================================
@@ -766,6 +772,8 @@ export type GatewayToolName =
   | 'report_request'
   | 'board_read'
   | 'audit_findings_read'
+  | 'workorder_request'
+  | 'workorder_status'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI
@@ -975,6 +983,8 @@ export interface AgentLoopOptions {
    * Provides platform, role, and permission information
    */
   agentContext?: AgentContext;
+  /** Stage-2 shadow seam: per-run report_publish override (see GatewayToolExecutionContext). */
+  reportPublisherOverride?: (slots: Record<string, string>) => void;
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)

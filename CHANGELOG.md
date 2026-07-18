@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added — Stage 2: workorder ownership (trigger-loop → operator transfer)
+
+- **Durable workorder ledger** — the system runs (board/wiki/memory promotion)
+  now flow through `operator_tasks` workorder rows (`kind='system'`, payload,
+  per-occurrence idempotency keys) instead of fire-and-forget timers: a failed
+  or crashed run leaves a requeueable row, never silent loss. Guarded copy-swap
+  migration (BEGIN IMMEDIATE, sequence preserved, busy_timeout on both
+  construction sites); owner surfaces (board/REST/gateway/badge/verifier hash)
+  are kind-filtered and tamper-guarded (system rows host-managed; `failed`
+  rejected externally).
+- **Single consumer** — `workorder-consumer.ts`: dedicated 60s host-code timer
+  (independent of `MAMA_TRIGGER_LOOP`), serial claim→await→next with tick
+  re-entrancy guard, per-kind retry policy (wiki retries once; board/promotion
+  self-heal on the next cycle), boot recovery for crash-stale claims, and a
+  3-surface failure alarm (loud log + owner notice queue + active telegram via
+  `MAMA_OPS_ALERT_CHAT`, per-kind 6h dedup). Per-kind completion hooks re-home
+  the legacy post-run effects (board reconcile bracket verification re-keyed to
+  the worker identity, promotion `PROMOTED` parse → `memory:promoted` chain,
+  wiki NO_UPDATE reading).
+- **Tri-state migration flag** — `MAMA_STAGE2_WORKORDERS=off|shadow|on`;
+  `shadow` dual-runs the board only with a capture publisher
+  (`reportPublisherOverride` threaded through the full execution-context chain;
+  capture runs can never touch the live report store).
+- **Owner visibility tools** — `workorder_request` (enqueue+ack, priority
+  high) and `workorder_status` (per-kind last run/failures) on the owner
+  console; code-audit warns when a customized persisted `owner_console`
+  definition lacks new default tools.
+- **Briefs** — worker procedure knowledge seeded to `~/.mama/briefs/`
+  (`ensureBriefs()`, user edits win, no auto-upgrade — agent/user-owned after
+  seeding); missing brief fails the workorder loudly.
+- **Store canonicity** — owner-console instructions + tool descriptions now
+  declare kagemusha as read-only project-task truth vs the native ledger, and
+  `kagemusha_tasks` results carry a status-vocabulary annotation (no more
+  "blocked tasks are missing" hallucinated contradictions).
+
 ## [0.22.1] / mama-core [1.8.1] / mama-os [0.22.1] - 2026-07-17
 
 ### Security
