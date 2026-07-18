@@ -151,5 +151,5 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.21 — Operator runtime: self-evolving trigger loop, `/ui` operator board, wiki v5 daily journal + lessons, scheduled memory promotion
+**Status:** MAMA OS v0.23 — Operator runtime: self-evolving trigger loop, `/ui` operator board, wiki v5 daily journal + lessons, scheduled memory promotion
 **Last Updated:** 2026-07-12
