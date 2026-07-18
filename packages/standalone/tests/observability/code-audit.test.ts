@@ -276,6 +276,45 @@ describe('Story SEC-3: deterministic code audit', () => {
     });
   });
 
+  describe('AC #15: stale persisted owner_console allowlist is MAJOR (Stage-2 B7)', () => {
+    it('flags a customized definition missing current default tools', async () => {
+      const report = await run({
+        config: {
+          roles: {
+            definitions: {
+              owner_console: { allowedTools: ['mama_search', 'board_read'] },
+            },
+            sourceMapping: {},
+          },
+        },
+      });
+      const finding = report.findings.find((f) => f.id === 'owner-console-stale-allowlist');
+      expect(finding?.severity).toBe('MAJOR');
+      expect(finding?.summary).toContain('workorder_request');
+    });
+
+    it('passes when the persisted allowlist covers all defaults (and skips when unpersisted)', async () => {
+      const { DEFAULT_ROLES } = await import('../../src/cli/config/types.js');
+      const full = DEFAULT_ROLES.definitions?.owner_console?.allowedTools ?? [];
+      const covered = await run({
+        config: {
+          roles: {
+            definitions: { owner_console: { allowedTools: [...full] } },
+            sourceMapping: {},
+          },
+        },
+      });
+      expect(
+        covered.findings.find((f) => f.id === 'owner-console-stale-allowlist')
+      ).toBeUndefined();
+
+      const unpersisted = await run({ config: { roles: { definitions: {}, sourceMapping: {} } } });
+      expect(
+        unpersisted.findings.find((f) => f.id === 'owner-console-stale-allowlist')
+      ).toBeUndefined();
+    });
+  });
+
   describe('AC #13: owner_console guardrails (plan v6 S1-T1)', () => {
     it('flags a static owner_console source mapping as MAJOR', async () => {
       const report = await run({

@@ -1105,6 +1105,14 @@ export async function runAgentLoop(
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
     const { loadBrief } = await import('../../operator/briefs.js');
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
+    const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
+      await import('../../operator/workorder-publishers.js');
+
+    // Shadow harness (kill-list at cutover): board capture publisher.
+    const shadowCapture =
+      stage2Flag === 'shadow'
+        ? (await import('../../operator/shadow-capture.js')).createShadowCapture()
+        : null;
 
     // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
     // block - the consumer runs with the loop off, so its terminal alarms
@@ -1144,6 +1152,17 @@ export async function runAgentLoop(
       loadBrief: (kind) => loadBrief(kind),
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
+      runOptionsFor: (wo) => {
+        if (stage2Flag === 'shadow' && wo.workKind === 'board') {
+          // A shadow board run without the capture publisher would publish
+          // LIVE - refuse the run instead (throw -> failWorkOrder, plan T4).
+          if (!shadowCapture) {
+            throw new Error('[stage2] shadow capture publisher missing - refusing live publish');
+          }
+          return { reportPublisherOverride: shadowCapture.publisher };
+        }
+        return undefined;
+      },
       onEvent: (event) => {
         // Telemetry replacement for executeValidatedRun's task_start/complete
         // rows (plan E4): the ledger row is the durable record; agent_activity
@@ -1164,6 +1183,41 @@ export async function runAgentLoop(
       },
     });
     gateways.push({ stop: async () => workOrderConsumer?.stop() });
+
+    // Owner-issued workorders (workorder_request tool): enqueue+ack only.
+    // Wired here - NOT inside any trigger-loop block (plan C11 class).
+    toolExecutor.setWorkOrderRequestHandler((kind) => {
+      try {
+        const now = Date.now();
+        let idempotencyKey: string;
+        let payload: Record<string, unknown>;
+        if (kind === 'board') {
+          idempotencyKey = boardManualKey(now);
+          payload = { mode: 'full', force: true };
+        } else if (kind === 'wiki') {
+          idempotencyKey = wikiBatchKey('manual', now);
+          payload = { batchId: `${now}-manual`, events: ['manual'] };
+        } else {
+          idempotencyKey = promotionManualKey(now);
+          payload = { scheduledAt: new Date(now).toISOString() };
+        }
+        validateWorkOrderPayload(kind, payload);
+        const wo = taskLedger.enqueueWorkOrder({
+          workKind: kind,
+          idempotencyKey,
+          input: payload,
+          priority: 'high',
+        });
+        console.log(`[stage2] owner workorder enqueued: ${kind}#${wo.id}`);
+        return { accepted: true };
+      } catch (err) {
+        console.error(
+          `[stage2] owner workorder enqueue failed (${kind}):`,
+          err instanceof Error ? err.message : err
+        );
+        return { accepted: false, reason: 'enqueue-failed' };
+      }
+    });
   }
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,

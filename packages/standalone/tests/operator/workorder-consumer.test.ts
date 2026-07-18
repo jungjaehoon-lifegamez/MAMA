@@ -296,3 +296,47 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
   });
 });
+
+/**
+ * Story S2-T4: shadow run-options injection (capture publisher seam).
+ */
+describe('Story S2-T4: shadow runOptions injection', () => {
+  it('threads runOptionsFor output into the runner options', async () => {
+    const ctx = makeDeps();
+    let captured: Record<string, unknown> = {};
+    ctx.deps.runner = {
+      runWithContent: async (_content, options) => {
+        captured = options as Record<string, unknown>;
+        return { response: 'ok' };
+      },
+    };
+    const capturePublisher = (): void => {};
+    ctx.deps.runOptionsFor = (wo) =>
+      wo.workKind === 'board' ? { reportPublisherOverride: capturePublisher } : undefined;
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'k',
+      input: { mode: 'full' },
+    });
+    await consumer.tick();
+    expect(captured.reportPublisherOverride).toBe(capturePublisher);
+    expect(captured.channelId).toBe('worker:board'); // identity intact
+  });
+
+  it('a runOptionsFor throw fails the order - never a live publish fallback', async () => {
+    const ctx = makeDeps();
+    ctx.deps.runOptionsFor = () => {
+      throw new Error('shadow capture publisher missing');
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+    ctx.ledger.enqueueWorkOrder({
+      workKind: 'board',
+      idempotencyKey: 'k',
+      input: { mode: 'full' },
+    });
+    await consumer.tick();
+    const failed = ctx.events.find((e) => e.type === 'failed');
+    expect(failed?.reason).toContain('shadow capture publisher missing');
+  });
+});

@@ -108,6 +108,20 @@ register({
   params: 'no params',
 });
 register({
+  name: 'workorder_request',
+  description:
+    'Enqueue a priority workorder (board refresh, wiki compile, or memory curation) for the system worker lane. Enqueue-and-ack ONLY: the run happens later on the operator lane - reply with a short ack, never wait for or fabricate its result.',
+  category: 'os_monitoring',
+  params: 'kind (board|wiki|memory-curation)',
+});
+register({
+  name: 'workorder_status',
+  description:
+    'Read per-kind workorder status: last run time/result, failed count, and the latest failure reason. The owner-visible surface for "did the system run / did anything fail" questions.',
+  category: 'os_monitoring',
+  params: 'no params',
+});
+register({
   name: 'audit_findings_read',
   description:
     'Read the latest deterministic system-audit findings and pass items (state file projection).',

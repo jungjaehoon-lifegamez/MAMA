@@ -67,6 +67,12 @@ export interface WorkOrderConsumerDeps {
   opsAlarm: OpsAlarmSink;
   /** Telemetry seam (agent_activity / eventBus) - optional. */
   onEvent?: (event: WorkOrderConsumerEvent) => void;
+  /**
+   * Per-order extra run options (Stage-2 shadow: the board capture-publisher
+   * override). A THROW here fails the order loudly - at shadow, a missing
+   * capture publisher must never fall through to a live publish (plan T4 AC).
+   */
+  runOptionsFor?: (wo: WorkOrderRecord) => Record<string, unknown> | undefined;
   log?: (line: string) => void;
   tickMs?: number;
   now?: () => number;
@@ -190,6 +196,9 @@ export class WorkOrderConsumer {
         kind: wo.workKind,
         brief,
         input: JSON.stringify(wo.payload),
+        // Inside the try: a runOptionsFor throw (e.g. shadow capture publisher
+        // missing) fails the order instead of running with the live publisher.
+        runOptions: this.deps.runOptionsFor?.(wo),
       });
     } catch (err) {
       this.handleFailure(wo, errMessage(err));
