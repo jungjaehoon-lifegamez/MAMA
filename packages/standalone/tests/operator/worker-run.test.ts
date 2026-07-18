@@ -9,6 +9,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildWorkerSessionKey,
+  buildWorkerSystemPrompt,
   workerRun,
   type WorkerRunner,
 } from '../../src/operator/worker-run.js';
@@ -124,5 +125,18 @@ describe('Story S2-T4: workerRun runOptions merge order', () => {
     expect(captured.source).toBe('operator');
     expect(captured.channelId).toBe('worker:board');
     expect(captured.freshSession).toBe(true);
+  });
+});
+
+/**
+ * Story S2 shadow-gate §8.2: worker system prompt forces the text-gateway path.
+ */
+describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
+  it('carries the gateway tools doc and excludes code-act instructions', () => {
+    const prompt = buildWorkerSystemPrompt('# Gateway Tools\n\nCall tools via JSON block: ...');
+    expect(prompt).toContain('# Gateway Tools');
+    expect(prompt).toContain('ONE work order');
+    expect(prompt).not.toMatch(/code-?act/i);
+    expect(prompt).not.toMatch(/sandbox/i);
   });
 });
