@@ -151,10 +151,10 @@ pnpm vitest run tests/commands/
 
 ### Hook Performance
 
-- **UserPromptSubmit:** Target <1200ms (~150ms actual with HTTP embedding server; only active hook)
-- **PreToolUse/PostToolUse:** Disabled (scripts retained for future use)
-- **Token budget:** 40 tokens (teaser format for UserPromptSubmit)
-- **HTTP Embedding Server:** Port 3847, model stays in memory for fast embedding requests
+- **Active hooks (plugin.json):** SessionStart, PreToolUse (matcher: Read), PostToolUse (matchers: Write/Edit), PreCompact. UserPromptSubmit is NOT wired.
+- **Timing:** PreToolUse/PostToolUse 5s timeout, SessionStart 15s, PreCompact 10s; keep hook work well under those budgets
+- **Token budget:** teaser format (~40 tokens) for frequent hooks
+- **HTTP Embedding Server:** Port 3849 (3847 is the API/UI port), model stays in memory for fast embedding requests
 
 ### MCP Tool Schema
 
@@ -164,9 +164,11 @@ All tools follow standard MCP patterns:
 - Error handling with typed error codes
 - Result format: `{ success: boolean, data?: any, error?: string }`
 
-**Scope-aware tools:** `save_decision`, `recall_decision`, `suggest_decision`, `list_decisions`, `ingest_conversation` accept optional `scopes` parameter (`[{kind: 'project'|'user'|'channel'|'global', id: string}]`) for memory isolation per project/channel.
+**Advertised MCP tools (packages/mcp-server/src/server.js):** `save`, `search`, `update`, `search_decisions_and_contracts`, `case_timeline_range` (`load_checkpoint` remains as an unadvertised compatibility alias).
 
-**Temporal tracking:** `save_decision` and `ingest_conversation` accept optional `event_date` (ISO 8601 YYYY-MM-DD) for recording when events occurred vs. when saved.
+**Scope-aware:** save/search accept optional `scopes` (`[{kind: 'project'|'user'|'channel'|'global', id: string}]`) for memory isolation per project/channel.
+
+**Temporal tracking:** `save` accepts optional `event_date` (ISO 8601 YYYY-MM-DD) for recording when events occurred vs. when saved.
 
 ## Release & Deployment
 
@@ -183,7 +185,11 @@ git commit -m "chore(release): bump mama-os to vX.Y.Z"
 git tag vX.Y.Z
 git push origin main --tags
 
-# 3. Create GitHub Release (triggers GitHub Actions auto-publish)
+# 3. Create GitHub Release (cosmetic - the TAG PUSH above is what triggers
+#    .github/workflows/publish.yml; see docs/development/release-process.md,
+#    the authoritative flow. If the release touches mama-core, publish
+#    mama-core FIRST: publish.yml rewrites workspace:* deps to ^<repo core
+#    version>, so an unpublished core version breaks every user install.)
 gh release create vX.Y.Z --title "vX.Y.Z" --notes "See CHANGELOG.md"
 
 # 4. Verify
@@ -266,6 +272,33 @@ Once saved:
 - Config schema changes
 - Important function signature changes
 - Architecture pattern decisions
+
+## Operator Runtime & Owner Console (v0.23)
+
+The MAMA OS daemon runs an OPERATOR identity alongside chat:
+
+- **Lanes:** chat runs on the `main` global lane; ALL operator work (scheduled
+  reports + workers) serializes on the separate `operator` global lane
+  (`SOURCE_GLOBAL_LANES`, agent-loop.ts) so long runs never block owner replies.
+- **Owner console:** `owner_console` role resolves ONLY via trust-conditional
+  escalation - telegram + `telegram.allowed_chats` locked + 1:1 private DM
+  (RoleManager). `allowed_chats` is therefore the OWNER TRUST ANCHOR: every
+  allowlisted chat's private DM gets the owner surface. Static sourceMapping to
+  owner_console is downgraded at runtime and flagged by the code audit.
+- **Artifact hub tools:** `board_read`, `audit_findings_read`, `report_request`
+  (fire-and-forget into the real report machinery), `workorder_request` /
+  `workorder_status` (Stage 2).
+- **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
+  callers only, never from inside an active lane run (deadlock seal).
+- **Stage 2 workorder pipeline** (`MAMA_STAGE2_WORKORDERS=off|shadow|on`, default
+  off = legacy persona runs): publishers enqueue occurrence-keyed workorders into
+  the TaskLedger (`operator_tasks`, kind='system' rows, host-managed); a single
+  unconditional consumer claims serially and runs briefed workerRuns; briefs live
+  in `~/.mama/briefs/brief-<kind>.md` (seeded on boot, user edits win). `shadow`
+  dual-runs the BOARD only against a capture store. Malformed flag values fail
+  the boot (no-fallback).
+- **Memory-write secret filter:** `mama_save`/`mama_update`/`mama_add`/
+  `mama_ingest` REFUSE secret-shaped content (`secret_material_refused`).
 
 ## Connector Framework (v0.17)
 

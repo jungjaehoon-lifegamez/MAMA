@@ -282,14 +282,14 @@ grep -A 5 "slack:" ~/.mama/config.yaml
      telegram:
        enabled: true
        token: '123456789:ABCdefGHI...'
-       allowed_chat_ids:
-         - 987654321 # Your chat ID
+       allowed_chats:
+         - '987654321' # Your chat ID (quoted - compared as a string)
    ```
 
 3. **Get your chat ID:**
    - Message @userinfobot on Telegram
    - Copy your ID
-   - Add to `allowed_chat_ids` in config
+   - Add to `allowed_chats` in config
 
 4. **Check bot token:**
    - Message @BotFather

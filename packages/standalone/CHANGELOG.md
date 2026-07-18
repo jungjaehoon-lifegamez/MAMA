@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-07-18
+
+The owner-console + workorder-ownership release: trust-conditional
+`owner_console` role (telegram allowlist DM), artifact-hub tools
+(`board_read`/`audit_findings_read`/`report_request`/`workorder_request`/
+`workorder_status`), report context carry, memory-write secret filter,
+forwarded-message provenance, and the flag-gated Stage-2 durable workorder
+pipeline (`MAMA_STAGE2_WORKORDERS`, default off = no behavior change).
+Full details in the repository root CHANGELOG.md.
+
+## [0.22.1] - 2026-07-17
+
+Security-utility round: telegram inbound allowlist warning + drop logging,
+untrusted-content wrapping for connector-derived text, deterministic hourly
+code audit (no LLM loop), security-telemetry purge. Full details in the
+repository root CHANGELOG.md.
+
+## [0.22.0] - 2026-07-16
+
+Operator console groundwork and daemon persona boundary repair. Full details
+in the repository root CHANGELOG.md.
+
 ## [0.21.0] - 2026-07-12
 
 The operator runtime release. Full details in the repository root CHANGELOG.md.

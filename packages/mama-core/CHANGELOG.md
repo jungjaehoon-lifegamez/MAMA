@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-07-18
+
+- `buildDecisionId` exported; Korean/non-ASCII topics now produce stable
+  hashed slugs (`decision_t<hash>_...`) instead of bare underscore runs;
+  existing decision ids are untouched.
+
 ## [1.8.1] - 2026-07-12
 
 ### Fixed

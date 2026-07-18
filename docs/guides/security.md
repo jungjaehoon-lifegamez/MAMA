@@ -63,6 +63,34 @@ To route alerts to chat, set:
 export MAMA_SECURITY_ALERT_CHANNELS="discord:CHANNEL_ID,slack:C123456"
 ```
 
+## Owner Console Trust Model (v0.22+)
+
+The `owner_console` role is the widest chat surface MAMA grants, and it is
+resolved per message by trust checks — never by static configuration:
+
+- **Escalation conditions (ALL required):** telegram gateway + a non-empty
+  `telegram.allowed_chats` allowlist + the message arrives in an allowlisted
+  chat's **1:1 private DM**. Groups/supergroups never escalate. A static
+  `roles.sourceMapping` entry pointing at `owner_console` is downgraded at
+  runtime and flagged as MAJOR by the deterministic code audit.
+- **`allowed_chats` is therefore the owner trust anchor** — every listed chat's
+  DM gets owner powers (artifact reads: `board_read`, `audit_findings_read`,
+  `workorder_status`; work issuance: `report_request`, `workorder_request`;
+  memory writes: `mama_save`, `mama_update`; task creation). List only chats
+  you trust with owner-level access. An empty allowlist disables the owner
+  console entirely and startup warns loudly that inbound is open.
+- **Memory-write secret filter:** `mama_save` / `mama_update` / `mama_add` /
+  `mama_ingest` REFUSE content matching secret shapes (API keys, bot tokens,
+  long credentials) with `code: secret_material_refused` — secrets never enter
+  memory, even when the owner pastes them. This is a behavior change visible to
+  users who previously saved such content.
+- **Forwarded-message provenance:** telegram forwards and connector-derived
+  third-party text are wrapped in untrusted-content delimiters before reaching
+  any prompt, so injected instructions inside them are treated as data.
+- **Tool advertising is role-filtered:** each role's system prompt advertises
+  only the tools that role can actually execute, so a prompt-injected tool name
+  outside the role's allowlist fails both advertisement and execution.
+
 ## Envelope Threat Model and Posture
 
 M1R covers Reactive runtime issuance, gateway audit logging, and memory-scope

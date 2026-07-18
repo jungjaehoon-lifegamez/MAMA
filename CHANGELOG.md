@@ -2,7 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.23.0] / mama-core [1.9.0] / mama-os [0.23.0] - 2026-07-18
+
+### Added — Owner console (PR #153, Stage 0+1)
+
+- **`owner_console` role with trust-conditional escalation** — granted per
+  message ONLY when telegram + `allowed_chats` locked + 1:1 private DM all
+  hold; groups never escalate; a static sourceMapping to owner_console is
+  downgraded at runtime and flagged MAJOR by the code audit. `allowed_chats`
+  is now the owner trust anchor (documented in the security guide).
+- **Artifact hub tools** — `board_read` and `audit_findings_read` let the
+  owner console answer status questions from operational artifacts instead of
+  stale memory; `report_request` routes owner intent into the REAL report
+  machinery (fire-and-forget on the operator lane, consume-the-hour semantics).
+- **Report context carry** — the last delivered full report persists (0600,
+  atomic) and is injected into owner-console turns, so the chat agent knows
+  what its own system last reported.
+- **Owner directive persistence** — directives stated in owner chat are
+  detected and saved as memory with imperative-form Korean patterns
+  (config-externalizable keywords).
+- **`workerRun` primitive + `operator` global lane** — briefed fresh-session
+  lane runs for host code; all operator work (reports + workers) serializes
+  away from the chat lane. Per-run state moved off instance fields (RunScope).
+- **Role-filtered tool advertising** — each role's prompt advertises exactly
+  the tools it can execute (advertised set == executable set, tested).
+
+### Security — PR #153
+
+- **Memory-write secret inviolability** — `mama_save`/`mama_update`/
+  `mama_add`/`mama_ingest` refuse secret-shaped content (API keys, bot
+  tokens, credentials) with `secret_material_refused`; shape-based scanner
+  with a fail-closed recursion depth cap; patterns assembled at runtime so no
+  secret shapes exist at rest.
+- **Forwarded-message provenance** — telegram forwards are wrapped as
+  untrusted content with a trusted gateway metadata flag (in-band markers are
+  never a trust boundary); the extractor and sensitive-wall strip gated on
+  that flag.
+- **Sensitive-config wall + tripwires** — sensitive config questions from
+  non-owner surfaces are walled with record-only telemetry
+  (observability-over-restriction; no incident-pipeline pollution).
+- **Config roles hygiene** — additive default-role merge at load + prune-at-
+  save (canonical compare) in both config-manager and graph-api paths, so
+  persisted roles neither disable new defaults nor freeze old ones.
+
+### Fixed — PR #154 (live-proven small repairs)
+
+- **Korean topic slugs** — `buildDecisionId` collapses underscore runs and
+  falls back to a stable topic hash for pure-non-ASCII topics (was
+  `decision_______<ts>` unreadable/near-colliding ids).
+- **Dual-save dedup** — when the chat agent already persisted memory in a turn
+  (gateway `mama_save` in the reasoning header), the extractor safety net
+  skips instead of writing a duplicate record.
 
 ### Added — Stage 2: workorder ownership (trigger-loop → operator transfer)
 
@@ -38,6 +88,17 @@ All notable changes to this project will be documented in this file.
   declare kagemusha as read-only project-task truth vs the native ledger, and
   `kagemusha_tasks` results carry a status-vocabulary annotation (no more
   "blocked tasks are missing" hallucinated contradictions).
+
+### Upgrade notes
+
+- `MAMA_STAGE2_WORKORDERS` unset = `off` = **zero behavior change**; a
+  malformed value **fails the boot** (no-fallback by design). Briefs are
+  seeded to `~/.mama/briefs/` only when the flag is `shadow|on`.
+- The `operator_tasks` table is migrated in place on first boot (guarded
+  copy-swap inside a transaction; idempotent across the daemon's two DB
+  connections).
+- Users who previously saved API keys/tokens into memory will now see
+  `secret_material_refused` — intentional (secrets never enter memory).
 
 ## [0.22.1] / mama-core [1.8.1] / mama-os [0.22.1] - 2026-07-17
 
