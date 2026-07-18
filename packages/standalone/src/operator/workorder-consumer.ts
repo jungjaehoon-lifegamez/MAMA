@@ -70,11 +70,16 @@ export interface WorkOrderConsumerDeps {
   /** Telemetry seam (agent_activity / eventBus) - optional. */
   onEvent?: (event: WorkOrderConsumerEvent) => void;
   /**
-   * Per-order extra run options (Stage-2 shadow: the board capture-publisher
-   * override). A THROW here fails the order loudly - at shadow, a missing
-   * capture publisher must never fall through to a live publish (plan T4 AC).
+   * Per-order extra run options (Stage-2: per-run envelope issuance + the
+   * shadow capture-publisher override). May be async - envelope issuance
+   * persists to the DB. A THROW/REJECT here fails the order loudly - at
+   * shadow, a missing capture publisher must never fall through to a live
+   * publish (plan T4 AC), and a run without an envelope would have every
+   * model_tool call denied 'envelope_missing'.
    */
-  runOptionsFor?: (wo: WorkOrderRecord) => Record<string, unknown> | undefined;
+  runOptionsFor?: (
+    wo: WorkOrderRecord
+  ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
   log?: (line: string) => void;
   tickMs?: number;
   now?: () => number;
@@ -215,13 +220,15 @@ export class WorkOrderConsumer {
 
     let response: string;
     try {
+      // Inside the try: a runOptionsFor throw/reject (shadow capture publisher
+      // missing, envelope issuance failure) fails the order instead of running
+      // with the live publisher / without an envelope.
+      const runOptions = await this.deps.runOptionsFor?.(wo);
       response = await workerRun(this.deps.runner, {
         kind: wo.workKind,
         brief,
         input: JSON.stringify(wo.payload),
-        // Inside the try: a runOptionsFor throw (e.g. shadow capture publisher
-        // missing) fails the order instead of running with the live publisher.
-        runOptions: this.deps.runOptionsFor?.(wo),
+        runOptions,
       });
     } catch (err) {
       this.handleFailure(wo, errMessage(err));
