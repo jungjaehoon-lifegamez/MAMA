@@ -152,3 +152,219 @@ describe('TaskLedger', () => {
     expect(() => ledger.recordNoUpdate('', 'x')).toThrow(/scope/);
   });
 });
+
+/**
+ * Story S2-T1: workorder extension of the ledger (Stage 2).
+ * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
+ */
+describe('Story S2-T1: TaskLedger workorder extension', () => {
+  let db: SQLiteDatabase;
+  let ledger: TaskLedger;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    ledger = new TaskLedger(db);
+  });
+
+  describe('AC #1: migration is idempotent and upgrades legacy schemas safely', () => {
+    it('double construction on the same db is harmless', () => {
+      ledger.create({ title: 'owner task' });
+      const again = new TaskLedger(db);
+      expect(again.list()).toHaveLength(1);
+    });
+
+    it('upgrades a pre-Stage2 table: columns, failed CHECK, sequence, index predicate', () => {
+      const legacy = new Database(':memory:');
+      legacy.exec(`
+        CREATE TABLE operator_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          title TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+            CHECK (status IN ('pending','in_progress','review','blocked','done','cancelled')),
+          priority TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('high','normal','low')),
+          assignee TEXT,
+          deadline TEXT,
+          source_channel TEXT,
+          source_event_id TEXT,
+          latest_event TEXT,
+          auto_created INTEGER NOT NULL DEFAULT 1,
+          confirmed INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_operator_tasks_source
+          ON operator_tasks(source_channel, source_event_id)
+          WHERE source_event_id IS NOT NULL;
+        INSERT INTO operator_tasks (title, created_at, updated_at) VALUES ('old row', 1, 1);
+      `);
+      const upgraded = new TaskLedger(legacy);
+
+      // Old row survives with kind defaulted to owner; id sequence preserved.
+      const rows = upgraded.list();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.kind).toBe('owner');
+      const next = upgraded.create({ title: 'new row' });
+      expect(next.id).toBeGreaterThan(rows[0]!.id);
+
+      // 'failed' is accepted by the rebuilt CHECK (via the internal workorder path).
+      const wo = upgraded.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:slot-1',
+        input: {},
+      });
+      upgraded.claimNextWorkOrder();
+      upgraded.failWorkOrder(wo.id, 'test-fail');
+
+      // Terminal keyed row frees the slot (new index predicate) - fresh insert works.
+      const again = upgraded.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:slot-1',
+        input: {},
+      });
+      expect(again.id).not.toBe(wo.id);
+    });
+  });
+
+  describe('AC #2: kind filters hide system rows from every owner surface', () => {
+    it('list/getById/countOpenUnconfirmed/payloadHash exclude system workorders', () => {
+      const owner = ledger.create({ title: 'owner task' });
+      const hashBefore = ledger.payloadHash();
+      const wo = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:batch-1',
+        input: { events: [] },
+      });
+
+      expect(ledger.list().map((t) => t.id)).toEqual([owner.id]);
+      expect(ledger.getById(wo.id)).toBeNull();
+      expect(ledger.countOpenUnconfirmed()).toBe(1);
+      expect(ledger.payloadHash()).toBe(hashBefore); // system enqueue must not shake the hash
+      expect(ledger.getTasks()).toHaveLength(1);
+    });
+  });
+
+  describe('AC #3: tamper guards on all four mutation paths', () => {
+    it('external update cannot touch a system row', () => {
+      const wo = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:slot-2',
+        input: {},
+      });
+      expect(() => ledger.update(wo.id, { status: 'done' })).toThrow(/system workorder/);
+    });
+
+    it("external create/update reject the system-only 'failed' status", () => {
+      const t = ledger.create({ title: 'owner' });
+      expect(() => ledger.update(t.id, { status: 'failed' as never })).toThrow(/system-only/);
+      expect(() => ledger.create({ title: 'x', status: 'failed' as never })).toThrow(/system-only/);
+    });
+
+    it('owner upsert probe cannot reach a system row (kind-scoped SELECT)', () => {
+      ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'key-shared',
+        input: {},
+      });
+      // Same (channel, event) pair from the external surface: probe misses the
+      // system row and the unique index rejects the insert - loud, not silent.
+      expect(() =>
+        ledger.create({
+          title: 'imposter',
+          source_channel: 'workorder:board',
+          source_event_id: 'key-shared',
+        })
+      ).toThrow();
+    });
+  });
+
+  describe('AC #4: workorder API - dedup, claim ordering, transitions, cleanup', () => {
+    it('dedups open keyed rows, reinserts after terminal', () => {
+      const a = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:0800',
+        input: { mode: 'full' },
+      });
+      const dup = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:0800',
+        input: { mode: 'full' },
+      });
+      expect(dup.id).toBe(a.id);
+
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(a.id);
+      const fresh = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:full:0800',
+        input: { mode: 'full' },
+      });
+      expect(fresh.id).not.toBe(a.id);
+      expect(fresh.payload.attempts).toBe(1);
+    });
+
+    it('claims priority high>normal>low then id ASC (CASE, not lexicographic)', () => {
+      const low = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'w-low',
+        input: {},
+        priority: 'low',
+      });
+      const normal = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'b-normal',
+        input: {},
+      });
+      const high = ledger.enqueueWorkOrder({
+        workKind: 'memory-curation',
+        idempotencyKey: 'm-high',
+        input: {},
+        priority: 'high',
+      });
+
+      expect(ledger.claimNextWorkOrder()?.id).toBe(high.id);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(normal.id);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(low.id);
+      expect(ledger.claimNextWorkOrder()).toBeNull();
+    });
+
+    it('transitions guard against wrong states', () => {
+      const wo = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'b-1',
+        input: {},
+      });
+      expect(() => ledger.completeWorkOrder(wo.id)).toThrow(/expected in_progress/);
+      ledger.claimNextWorkOrder();
+      ledger.completeWorkOrder(wo.id);
+      expect(() => ledger.failWorkOrder(wo.id, 'late')).toThrow(/expected in_progress/);
+    });
+
+    it('boot helpers: stale claims listed, open rows cancelled with count', () => {
+      const a = ledger.enqueueWorkOrder({ workKind: 'board', idempotencyKey: 'b-2', input: {} });
+      ledger.enqueueWorkOrder({ workKind: 'wiki', idempotencyKey: 'w-2', input: {} });
+      ledger.claimNextWorkOrder(); // a -> in_progress (crash artifact)
+
+      const stale = ledger.listStaleClaims();
+      expect(stale.map((w) => w.id)).toEqual([a.id]);
+
+      const cancelled = ledger.cancelOpenWorkOrders('flag-off');
+      expect(cancelled).toBe(2); // pending wiki + in_progress board
+      expect(ledger.listStaleClaims()).toHaveLength(0);
+    });
+
+    it('workOrderStats reports per-kind last run and failed counts', () => {
+      const wo = ledger.enqueueWorkOrder({ workKind: 'wiki', idempotencyKey: 'w-3', input: {} });
+      ledger.claimNextWorkOrder();
+      ledger.failWorkOrder(wo.id, 'brief missing');
+
+      const stats = ledger.workOrderStats();
+      const wiki = stats.find((s) => s.workKind === 'wiki');
+      expect(wiki?.failedCount).toBe(1);
+      expect(wiki?.lastStatus).toBe('failed');
+      expect(wiki?.lastFailureReason).toBe('brief missing');
+      const board = stats.find((s) => s.workKind === 'board');
+      expect(board?.failedCount).toBe(0);
+      expect(board?.lastRunAt).toBeNull();
+    });
+  });
+});
