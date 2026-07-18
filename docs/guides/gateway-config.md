@@ -462,9 +462,17 @@ gateways:
 
 **How it works:**
 
-- If `allowed_chats` is empty or not set: Bot responds to anyone
+- If `allowed_chats` is empty or not set: Bot responds to anyone — and startup
+  emits a loud SECURITY WARNING. The owner console is DISABLED in this state.
 - If `allowed_chats` has IDs: Bot only responds to those chat IDs
-- Unauthorized chats are silently ignored
+- Unauthorized chats are dropped with a rate-capped warning in the daemon log
+
+**⚠️ `allowed_chats` is the OWNER TRUST ANCHOR (v0.22+):** any allowlisted
+chat's 1:1 private DM is granted the `owner_console` role — a wide operational
+surface (board/audit/workorder reads, `report_request`/`workorder_request`,
+`mama_save`/`mama_update`, task creation). Only list chats you trust with
+owner-level access. Group/supergroup IDs (negative numbers) never escalate,
+but listing a teammate's private chat gives THAT person the owner console.
 
 ### Example Configurations
 
@@ -491,6 +499,12 @@ gateways:
       - '222222222' # Bob
       - '333333333' # Charlie
 ```
+
+> **Warning:** every ID listed here gets the `owner_console` role in their own
+> 1:1 DM with the bot (see above). A "team bot" allowlist is an OWNER list, not
+> a mere access list — Alice, Bob, and Charlie can each read operational
+> artifacts and write memory. If teammates should chat without owner powers,
+> run a separate bot for them instead of widening this list.
 
 **Public bot (anyone can use):**
 

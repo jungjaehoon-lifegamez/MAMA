@@ -63,7 +63,9 @@ MAMA OS has full system access — so security is not optional, it's foundationa
   the fact without exposing prompt bodies or hidden connector payloads.
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode for unknown sources, bulk extraction limits. Built from a real incident, not theory.
 - **Intrusion detection** — Honeypot traps for scanner probes (`.git`, `.env`, `wp-login.php`), per-IP suspicion scoring, automatic tarpit delays, and IP deny-listing when thresholds are exceeded.
-- **Agent permission tiers** — Tier 1 (full access), Tier 2 (read-only), Tier 3 (scoped read-only). Each agent only gets the tools it needs.
+- **Agent permission tiers** — Tier 1 (full access), Tier 2 (read + memory write), Tier 3 (read-only). Each agent only gets the tools it needs.
+- **Owner console (v0.22+)** — the `owner_console` role is granted ONLY in an allowlisted telegram chat's 1:1 DM (`telegram.allowed_chats` is the trust anchor). It reads operational artifacts (`board_read`, `audit_findings_read`, `workorder_status`) and issues work (`report_request`, `workorder_request`) fire-and-forget; memory writes refuse secret-shaped content.
+- **Stage-2 workorder pipeline (v0.23, flag-gated)** — `MAMA_STAGE2_WORKORDERS=off|shadow|on` converts the scheduled board/wiki/memory-promotion runs into durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Default `off` = unchanged behavior.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts itself down gracefully rather than operating in a compromised state.
 
 These aren't theoretical protections. The prompt injection defense was built after a real attack where an adversary injected a fake "server failure" message into a monitored channel, causing the AI agent to voluntarily expose system configuration. The IP banning system has blocked actual intrusion attempts in production.

@@ -20,13 +20,13 @@
 │         │        │            │                   │           │
 │         │        │   ┌────────▼───────────────────┘           │
 │         │        │   │  MCP Server (stdio)        │           │
-│         └────────┴──▶│  4 Tools: save/search/     │           │
-│                      │  update/load_checkpoint    │           │
+│         └────────┴──▶│  5 Tools: save/search/     │           │
+│                      │  update/contracts/timeline │           │
 │                      └──────┬──────────┬──────────┘           │
 │                             │          │                      │
 │            ┌────────────────▼──┐  ┌────▼──────────────────┐   │
 │            │ SQLite + pure-TS  │  │ HTTP Embedding Server │   │
-│            │ cosine similarity │  │ :3847 (model in mem)  │   │
+│            │ cosine similarity │  │ :3849 (model in mem)  │   │
 │            │ mama-memory.db    │  └───────────────────────┘   │
 │            └───────────────────┘                              │
 │                                                               │
@@ -62,13 +62,13 @@
 ### MCP Server
 
 - **Transport:** stdio (local process)
-- **Tools:** 4 (save, search, update, load_checkpoint)
+- **Tools:** 5 advertised (save, search, update, search_decisions_and_contracts, case_timeline_range); `load_checkpoint` kept as an unadvertised compatibility alias
 - **Performance:** <100ms p99 latency
 
 ### Database (SQLite + pure-TS cosine similarity)
 
 - **Decisions table:** topic, decision, reasoning, confidence, outcome, kind, status, summary
-- **Embeddings:** 384-dimensional vectors (multilingual-e5-small, q8) with in-memory cache
+- **Embeddings:** 1024-dimensional vectors (multilingual-e5-large, q8) with in-memory cache
 - **Graph:** supersedes/builds_on/debates/synthesizes edges
 - **Memory scopes:** project/channel/user/global isolation via memory_scopes + memory_scope_bindings
 - **Truth projection:** memory_truth table for recall filtering (preserves history, surfaces current truth)
@@ -77,7 +77,7 @@
 
 ### Embeddings
 
-- **Model:** Xenova/multilingual-e5-small (~113MB, quantized q8)
+- **Model:** Xenova/multilingual-e5-large (~560MB, quantized q8, 1024-dim)
 - **Tier 1:** Transformers.js (ONNX runtime)
 - **Tier 2:** Disabled (fallback to exact match)
 
@@ -107,20 +107,53 @@ CronScheduler ──► CronWorker (Haiku CLI) ──► EventEmitter
                                          Discord  Slack  Viewer
 ```
 
-### Hooks
+### Operator Runtime (MAMA OS)
 
-- **UserPromptSubmit:** Automatic semantic search via HTTP embedding server
-- **PreToolUse:** MCP search + contract-only injection + Reasoning Summary
-- **PostToolUse:** Contract extraction + save guidance with structured reasoning
+The daemon runs an operator identity alongside chat (v0.22-v0.23):
+
+- **Lanes:** chat serializes on the `main` global lane; ALL operator work
+  (scheduled situation reports, workers) serializes on a separate `operator`
+  global lane - long runs never block owner replies.
+- **Trigger loop** (`MAMA_TRIGGER_LOOP=1`): agent-evolved triggers on the live
+  connector stream + scheduled full situation reports (configurable local
+  hours) delivered to the owner channel.
+- **Owner console:** the `owner_console` role resolves ONLY via trust-conditional
+  escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
+  operational artifacts (board, audit findings, workorder status) and can issue
+  work (`report_request`, `workorder_request`) - fire-and-forget, host code runs it.
+- **Stage-2 workorder pipeline** (`MAMA_STAGE2_WORKORDERS`, default off):
+  scheduled system runs (board / wiki / memory promotion) convert from direct
+  persona timers into durable, occurrence-keyed workorders in the operator task
+  ledger, consumed serially by one host-code consumer that launches briefed
+  `workerRun`s on the operator lane. Procedure knowledge lives in
+  `~/.mama/briefs/brief-<kind>.md`.
+
+```
+publishers (schedule/boot/REST/events/reconcile)
+    ↓ enqueue (occurrence-keyed, deduped)
+operator_tasks ledger (kind='system')
+    ↓ claim (serial, priority)
+WorkOrderConsumer ──► workerRun(brief + payload) on 'operator' lane
+    ↓ completion hooks (verification, event re-emission)
+board / wiki / memory artifacts
+```
+
+### Hooks (Claude Code plugin)
+
+- **SessionStart:** checkpoint + recent-decision bootstrap into the session
+- **PreToolUse (Read):** related-decision injection when reading matching files
+- **PostToolUse (Write/Edit):** contract extraction + save guidance
+- **PreCompact:** checkpoint safety net before context compaction
+- (UserPromptSubmit is not wired in the current plugin manifest)
 
 ---
 
 ## Data Flow
 
 ```
-User Prompt
+File Read (plugin session)
     ↓
-UserPromptSubmit Hook
+PreToolUse Hook
     ↓
 Semantic Search (Tier 1) or Exact Match (Tier 2)
     ↓

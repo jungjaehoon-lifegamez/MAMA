@@ -223,6 +223,10 @@ MAMA OS has full system access via the backend CLI — so security is foundation
 - **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
 - **Agent permission tiers** — Tier 1 gets full runtime tools, Tier 2 can write scoped
   memory, and Tier 3 stays strictly read-only. Each agent gets only the tools it needs.
+- **Owner-console trust model (v0.22+)** — Telegram inbound requires an explicit `allowed_chats`
+  allowlist (boot warns loudly when open); the `owner_console` role is granted only in an
+  allowlisted chat's 1:1 DM, memory writes refuse secret-shaped content, and forwarded/third-party
+  text is wrapped as untrusted before it reaches any prompt.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts down gracefully rather than operating compromised.
 
 See the full [Security Guide](docs/guides/security.md) for Cloudflare Zero Trust setup, token authentication, threat scenarios, and Code-Act sandbox isolation.
@@ -247,9 +251,9 @@ open-source components.
 
 | Package                                          | Version | Description                                           |
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.22.1  | Always-on runtime, envelopes, connectors, worker APIs |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.23.0  | Always-on runtime, envelopes, connectors, worker APIs |
 | [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code and any MCP client |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.8.1   | Core memory, provenance, raw refs, graph, embeddings  |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.9.0   | Core memory, provenance, raw refs, graph, embeddings  |
 | [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
@@ -327,17 +331,18 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                                                                                                                                                |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                                                         |
-| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                                                      |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                                                   |
-| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                                                                  |
-| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                                                          |
-| **Done** | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance                                    |
-| **Now**  | v0.21   | The operator runtime: self-evolving trigger loop with a citation success circuit, `/ui` operator board (four live report slots + trigger library), task-truth from the real task ledger, wiki v5 daily journal + lessons, scheduled memory promotion, self-auditing with alert dedup |
-|          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                             |
-|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                          |
+| Phase    | Version | Focus                                                                                                                                                                                                                                                                                                                                                     |
+| -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                                                                                                                              |
+| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                                                                                                                           |
+| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                                                                                                                        |
+| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                                                                                                                                       |
+| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                                                                                                                               |
+| **Done** | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance                                                                                                         |
+| **Done** | v0.21   | The operator runtime: self-evolving trigger loop with a citation success circuit, `/ui` operator board (four live report slots + trigger library), task-truth from the real task ledger, wiki v5 daily journal + lessons, scheduled memory promotion, self-auditing with alert dedup                                                                      |
+| **Now**  | v0.23   | The owner console + workorder ownership: trust-conditional `owner_console` role (telegram allowlist DM), artifact-hub tools (board/audit/workorder status, on-demand reports), memory-write secret filter, untrusted-content provenance, and the Stage-2 durable workorder pipeline (flag-gated) that moves board/wiki/memory runs onto the operator lane |
+|          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                                                                                                  |
+|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                                                                                               |
 
 ## Development
 

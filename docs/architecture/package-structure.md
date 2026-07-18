@@ -1,6 +1,6 @@
 # Package Structure
 
-MAMA uses a four-package monorepo architecture with shared core modules to eliminate code duplication and enable independent package updates.
+MAMA uses a multi-package monorepo (mama-core, mcp-server, standalone/mama-os, claude-code-plugin, memorybench) with shared core modules to eliminate code duplication and enable independent package updates.
 
 ## Architecture Overview
 
@@ -88,7 +88,7 @@ All packages depend on `mama-core` using pnpm workspace dependencies (`workspace
 **Dependencies:**
 
 - `@huggingface/transformers` - Local embeddings
-- `node:sqlite` - Built-in SQLite runtime (Node.js 22+)
+- `better-sqlite3` - SQLite runtime (shared across packages)
 - Pure-TS cosine similarity for vector search
 
 **Distribution:** npm (`@jungjaehoon/mama-core`)
@@ -256,10 +256,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.8.1 (stable API)
+- **mama-core:** 1.9.0 (stable API)
 - **mama-server:** 1.14.0 (follows MAMA version)
 - **claude-code-plugin:** 1.10.0 (follows MAMA version)
-- **mama-os:** 0.22.1 (standalone agent)
+- **mama-os:** 0.23.0 (standalone agent)
 
 ## Distribution Strategy
 
@@ -311,7 +311,7 @@ npx @jungjaehoon/mama-os
 
 ### 2. Code Reuse
 
-All packages share mama-core to eliminate duplication. The shared runtime lives in mama-core, including the SQLite layer (`node:sqlite`) and embedding stack (`transformers.js`).
+All packages share mama-core to eliminate duplication. The shared runtime lives in mama-core, including the SQLite layer (`better-sqlite3`) and embedding stack (`transformers.js`).
 
 ### 3. Independent Updates
 

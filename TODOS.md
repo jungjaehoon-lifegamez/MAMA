@@ -63,3 +63,9 @@
 - **Cons:** 의존성이 많아서 추출이 복잡 (agent context, retry, skills, raw store, sessions DB, process manager, history injection)
 - **Context:** v0.19 validation 구현 시 리팩토링 없이 sessionService.recordRun() 호출만 추가하기로 결정. 별도 브랜치에서 진행.
 - **Depends on:** validation_session v1 완료
+
+### 문서 부채 (2026-07-18 릴리즈 감사에서 이연 - 3렌즈 감사 결과)
+
+- **What:** v0.23 릴리즈 차단분은 수정 완료. 이연분: developer-playbook.md(2025-11 스냅숏 - mama-plugin 경로/384차원/구 툴명/데드 링크), deployment-architecture.md("4 packages", 워크플로 이름 불일치), docs/guides/deployment.md(e5-small 기본값), testing.md("134 tests"), code-standards.md(구 트리), hooks.md(384차원 예시 + SessionStart/PreCompact 미문서), code-act-sandbox.md + security.md Code-Act 섹션의 샌드박스 툴 표(host-bridge TOOL_REGISTRY와 불일치), reference/api.md에 operator task 라우트 3종 추가, configuration-options.md에 MAMA_TRIGGER_LOOP\* 패밀리/MAMA_BOARD_RECONCILE 행, AGENTS.md 전면 재생성(GitHub Packages/wave-swarm 중심 등 5+ 거짓), entity-substrate-runbook.md 포트 라벨.
+- **At-cutover (Stage 2 on 전환 시 함께):** README/standalone README/mama-os.md/package-structure.md의 "상주 타이머 인격 런" 기술을 워크오더 파이프라인 기술로 전환.
+- **Why:** 오늘 기준 거짓인 사용자 대면 사실층은 v0.23 준비 PR에서 수정했고, 나머지는 저빈도 개발 문서라 릴리즈 비차단 판정.
