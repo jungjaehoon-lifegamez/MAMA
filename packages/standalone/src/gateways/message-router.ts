@@ -192,6 +192,15 @@ function stripGatewayDecorations(text: string): string {
 }
 
 /**
+ * True when the agent persisted memory during THIS turn (gateway mama_save in
+ * the reasoning header) - the extractor safety net then skips to avoid the
+ * dual-save duplicate proven live on 2026-07-17.
+ */
+export function agentSavedInTurn(response: string): boolean {
+  return /\u{1F527} mama_save\b/u.test(response);
+}
+
+/**
  * Check if message contains sensitive configuration request
  */
 function containsSensitiveRequest(text: string): boolean {
@@ -928,8 +937,17 @@ This protects your credentials from being exposed in chat logs.`;
         this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
       }
 
-      // Auto-extract facts from conversation (fire-and-forget, non-blocking)
-      if (response && message.text) {
+      // Auto-extract facts from conversation (fire-and-forget, non-blocking).
+      // Dual-save dedup: when the agent ALREADY persisted memory during this
+      // turn (gateway mama_save in the reasoning header), the extractor safety
+      // net would save the same instruction twice (proven live 2026-07-17:
+      // decision_* + mem_* duplicates for one directive). The in-turn save is
+      // the agent's judgment; the net exists for turns where it did not act.
+      const agentSavedThisTurn = agentSavedInTurn(response);
+      if (agentSavedThisTurn) {
+        logger.info('[memory-agent] extraction skipped - agent saved in-turn (dual-save dedup)');
+      }
+      if (response && message.text && !agentSavedThisTurn) {
         const rawAssistantText = stripGatewayDecorations(response);
         void (async () => {
           try {
