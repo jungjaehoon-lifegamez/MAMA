@@ -196,8 +196,18 @@ function stripGatewayDecorations(text: string): string {
  * the reasoning header) - the extractor safety net then skips to avoid the
  * dual-save duplicate proven live on 2026-07-17.
  */
-export function agentSavedInTurn(response: string): boolean {
-  return /\u{1F527} mama_save\b/u.test(response);
+export function agentSavedInTurn(response: string | null | undefined): boolean {
+  if (!response) {
+    return false;
+  }
+  // Only the reasoning header (first '||...||' line) counts - a prose mention
+  // of the marker in the body must not suppress the extractor safety net.
+  const newline = response.indexOf('\n');
+  const headerLine = newline === -1 ? response : response.slice(0, newline);
+  if (!headerLine.startsWith('||')) {
+    return false;
+  }
+  return /\u{1F527} mama_save\b/u.test(headerLine);
 }
 
 /**

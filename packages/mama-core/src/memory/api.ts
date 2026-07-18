@@ -92,7 +92,9 @@ export function buildDecisionId(topic: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '')
     .toLowerCase();
-  const slug = safeTopic || `t${crypto.createHash('sha1').update(topic).digest('hex').slice(0, 8)}`;
+  // sha256 (not sha1) purely to keep SAST scanners quiet - this is an id slug, not crypto.
+  const slug =
+    safeTopic || `t${crypto.createHash('sha256').update(topic).digest('hex').slice(0, 8)}`;
   return `decision_${slug}_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
