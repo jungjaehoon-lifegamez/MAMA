@@ -84,3 +84,28 @@ describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
     expect(source).not.toMatch(/enqueueOperatorNotice[\s\S]{0,400}'memory-agent:shared'/);
   });
 });
+
+/**
+ * Story S2-T3 (review round 3 F1): the start.ts N4 wiring is closure-bound -
+ * pin it with the same source-coherence pattern so a silent revert of the
+ * shadow rollback hunk fails a test.
+ */
+describe('Story S2-T3: shadow rollback wiring coherence (N4/F1)', () => {
+  const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+
+  it('boot pass cancels non-board orders BEFORE bootRecover, and runOptionsFor refuses non-board at shadow', () => {
+    // (a) scoped cleanup call with exactly the non-board kinds...
+    expect(startSource).toMatch(
+      /cancelOpenWorkOrders\('shadow-board-only',\s*\[\s*'wiki',\s*'memory-curation',?\s*\]\)/
+    );
+    // (b) ...ordered before bootRecover in the same boot pass.
+    const cleanupIdx = startSource.indexOf("cancelOpenWorkOrders('shadow-board-only'");
+    const recoverIdx = startSource.indexOf('workOrderConsumer.bootRecover()');
+    expect(cleanupIdx).toBeGreaterThan(-1);
+    expect(recoverIdx).toBeGreaterThan(cleanupIdx);
+    // (c) defense-in-depth: non-board runs refused at shadow inside runOptionsFor.
+    expect(startSource).toMatch(
+      /workKind !== 'board'[\s\S]{0,200}shadow is board-only - refusing live/
+    );
+  });
+});

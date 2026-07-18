@@ -634,6 +634,9 @@ export class TaskLedger implements TaskSource {
    * cancellation (shadow rollback cancels non-board orders only).
    */
   cancelOpenWorkOrders(reason: string, onlyKinds?: WorkOrderKind[]): number {
+    // An explicit empty scope means "cancel nothing", never "cancel all"
+    // (review F2 - the fall-through would silently widen a scoped call).
+    if (onlyKinds !== undefined && onlyKinds.length === 0) return 0;
     const kindFilter =
       onlyKinds && onlyKinds.length > 0
         ? ` AND source_channel IN (${onlyKinds.map(() => '?').join(',')})`
