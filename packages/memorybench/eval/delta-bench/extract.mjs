@@ -1,19 +1,34 @@
-// extract.mjs - build the temporal-truth QA set and the raw-context corpus
-// from a MAMA decisions DB. Read-only: opens the DB with { readonly: true },
+// extract.mjs - build the temporal-truth + lineage QA sets and the raw-context
+// corpus from a MAMA decisions DB. Read-only: opens the DB with { readonly: true },
 // never calls initDB, never writes to the source DB.
 //
+// Two QA types (select via --types, default both):
+//   truth   - which option is the CURRENT decision on a topic (answer = newest
+//             version; distractors = superseded versions of the same topic)
+//   lineage - which statement describes why a topic's decision was revised
+//             (answer = the newest version's reasoning; distractors = OTHER
+//             topics' revision reasonings - real text, never generated)
+//
 // Usage:
-//   MAMA_DB_PATH=/path/to/mama-memory.db node extract.mjs --out ./out [--seed 20260719] [--max-items 40]
+//   MAMA_DB_PATH=/path/to/mama-memory.db node extract.mjs --out ./out \
+//     [--seed 20260719] [--max-items 40] [--types truth,lineage]
 //
 // Outputs (in --out dir):
-//   qa-set.json   - [{ id, topic, question, options[], answerLabel, ... }]
+//   qa-set.json   - [{ id, qaType, topic, question, options[], answerLabel, ... }]
 //   corpus.json   - all decision rows, chronological (for the raw-context condition)
 //   meta.json     - counts and filter stats
 
 import fs from "node:fs"
 import path from "node:path"
 import { createRequire } from "node:module"
-import { buildChains, buildQaItem, mulberry32, normalizeCreatedAt } from "./lib.mjs"
+import {
+  buildChains,
+  buildLineageItem,
+  buildQaItem,
+  chainRevisionReasoning,
+  mulberry32,
+  normalizeCreatedAt,
+} from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
 const Database = require("better-sqlite3")
@@ -44,6 +59,19 @@ const seed = Number(arg("seed", "20260719"))
 const maxItems = Number(arg("max-items", "40"))
 if (!Number.isFinite(seed) || !Number.isFinite(maxItems)) {
   fail("--seed/--max-items must be numbers.")
+}
+const VALID_TYPES = new Set(["truth", "lineage"])
+const types = arg("types", "truth,lineage")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean)
+if (types.length === 0) {
+  fail("--types must name at least one of: truth, lineage.")
+}
+for (const t of types) {
+  if (!VALID_TYPES.has(t)) {
+    fail(`Unknown QA type "${t}" (valid: truth, lineage).`)
+  }
 }
 
 fs.mkdirSync(outDir, { recursive: true })
@@ -92,16 +120,49 @@ const shuffled = chains
   .map((x) => x.c)
 const picked = shuffled.slice(0, maxItems).sort((a, b) => a.topic.localeCompare(b.topic))
 
-const qaSet = []
-for (const chain of picked) {
-  // Per-item seed derived from the global seed + topic for stable option order.
-  let topicSeed = seed
-  for (const ch of chain.topic) {
-    topicSeed = (topicSeed * 31 + ch.charCodeAt(0)) >>> 0
+// Distractor pool for lineage items: every chain's revision reasoning (drawn
+// from the FULL chain set, not just the sampled ones, so the pool of real
+// cross-topic rationales stays rich even with a small --max-items).
+const lineagePool = []
+for (const chain of chains) {
+  const reasoning = chainRevisionReasoning(chain)
+  if (reasoning) {
+    lineagePool.push({ topic: chain.topic, reasoning })
   }
-  const item = buildQaItem(chain, topicSeed)
-  if (item) {
-    qaSet.push(item)
+}
+
+// Per-topic seed derived from the global seed + topic for stable option order.
+function topicSeedFor(topic) {
+  let s = seed
+  for (const ch of topic) {
+    s = (s * 31 + ch.charCodeAt(0)) >>> 0
+  }
+  return s
+}
+
+// Emit truth then lineage per topic so the two types interleave in file order
+// (a small --limit at run time then still exercises both types).
+const qaSet = []
+let truthItems = 0
+let lineageItems = 0
+let excludedLineageChains = 0
+for (const chain of picked) {
+  const topicSeed = topicSeedFor(chain.topic)
+  if (types.includes("truth")) {
+    const item = buildQaItem(chain, topicSeed)
+    if (item) {
+      qaSet.push(item)
+      truthItems += 1
+    }
+  }
+  if (types.includes("lineage")) {
+    const item = buildLineageItem(chain, lineagePool, topicSeed)
+    if (item) {
+      qaSet.push(item)
+      lineageItems += 1
+    } else {
+      excludedLineageChains += 1
+    }
   }
 }
 if (qaSet.length === 0) {
@@ -123,11 +184,18 @@ const meta = {
   db: path.resolve(dbPath),
   extractedAt: new Date().toISOString(),
   seed,
+  types,
   totals: {
     decisionRows: rows.length,
     droppedBadTimestamp,
     chains: chains.length,
     qaItems: qaSet.length,
+    truthItems,
+    lineageItems,
+    // Sampled chains that yielded no lineage item (reasoning missing/short/not
+    // distinct, or no distinct cross-topic distractor available).
+    excludedLineageChains,
+    lineagePoolSize: lineagePool.length,
     corpusRows: corpus.length,
   },
   chainLengthHistogram: qaSet.reduce((h, q) => {
@@ -141,5 +209,6 @@ fs.writeFileSync(path.join(outDir, "corpus.json"), JSON.stringify(corpus))
 fs.writeFileSync(path.join(outDir, "meta.json"), JSON.stringify(meta, null, 2))
 
 console.log(
-  `[delta-bench:extract] rows=${rows.length} chains=${chains.length} qaItems=${qaSet.length} -> ${outDir}`
+  `[delta-bench:extract] rows=${rows.length} chains=${chains.length} ` +
+    `qaItems=${qaSet.length} (truth=${truthItems} lineage=${lineageItems}) -> ${outDir}`
 )
