@@ -1609,7 +1609,9 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
         rows.map((r) => r.topic).filter((t): t is string => typeof t === 'string' && t.length > 0)
       ),
     ];
-    if (topics.length === 0) return rows;
+    if (topics.length === 0) {
+      return rows;
+    }
     const adapter = getAdapter();
     const placeholders = topics.map(() => '?').join(',');
     // Supersession is scope-isolated (mirrors the save-path same-topic lookup):
@@ -1644,10 +1646,22 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
     }
     // created_at mixes epoch seconds, epoch ms, and TEXT datetimes in live DBs.
     const toMs = (v: number | string | null): number => {
-      if (typeof v === 'number' && Number.isFinite(v)) return v > 1e12 ? v : v * 1000;
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        return v > 1e12 ? v : v * 1000;
+      }
       if (typeof v === 'string') {
-        if (/^\d+$/.test(v.trim())) return toMs(Number(v.trim()));
-        const parsed = Date.parse(v.includes('T') ? v : v.trim().replace(' ', 'T') + 'Z');
+        const trimmed = v.trim();
+        if (/^\d+$/.test(trimmed)) {
+          return toMs(Number(trimmed));
+        }
+        // Stamp UTC only when the text carries no timezone marker: appending
+        // 'Z' to a value that already ends in 'Z' or an offset yields NaN, and
+        // a bare T-form datetime would otherwise parse as ambiguous local time.
+        const formatted = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
+        const hasTz = formatted.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(formatted);
+        const parsed = Date.parse(hasTz ? formatted : formatted + 'Z');
+        // Unparseable rows are skipped per-row by the caller (NaN), never
+        // thrown: one legacy bad timestamp must not blank the whole annotation.
         return Number.isFinite(parsed) ? parsed : NaN;
       }
       return NaN;
@@ -1655,7 +1669,9 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
     const newestByTopic = new Map<string, { ms: number; id: string }>();
     for (const row of all) {
       const ms = toMs(row.created_at);
-      if (!Number.isFinite(ms)) continue;
+      if (!Number.isFinite(ms)) {
+        continue;
+      }
       const cur = newestByTopic.get(row.topic);
       // Deterministic tiebreak on equal timestamps: higher id wins (ids embed
       // their creation ms, so lexicographic order is stable and monotonic-ish).
@@ -1665,7 +1681,9 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
     }
     return rows.map((r) => {
       const newest = typeof r.topic === 'string' ? newestByTopic.get(r.topic) : undefined;
-      if (!newest) return r;
+      if (!newest) {
+        return r;
+      }
       return { ...r, superseded_by_newer: newest.id !== r.id };
     });
   } catch (err) {

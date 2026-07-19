@@ -17,6 +17,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { createRequire } from "node:module"
+import { fileURLToPath } from "node:url"
 
 const require = createRequire(import.meta.url)
 
@@ -49,7 +50,7 @@ if (liveDbs.includes(resolved)) {
   fail(`MAMA_DB_PATH points at a LIVE DB (${resolved}). Copy it first.`)
 }
 
-const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..")
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..")
 const distDir = path.join(repoRoot, "packages/mama-core/dist")
 const { initDB } = require(path.join(distDir, "db-manager.js"))
 const mama = require(path.join(distDir, "mama-api.js"))

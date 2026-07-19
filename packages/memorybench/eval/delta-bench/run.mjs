@@ -22,6 +22,7 @@ import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
+import { fileURLToPath } from "node:url"
 import { approxTokens, parseChoice, renderOptions, scoreResults } from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
@@ -47,6 +48,9 @@ const conditions = arg("conditions", "vanilla,raw,mama")
 const limit = Number(arg("limit", "40"))
 const model = arg("model", null)
 const timeoutS = Number(arg("timeout-s", "600"))
+if (!Number.isFinite(limit) || !Number.isFinite(timeoutS)) {
+  fail("--limit/--timeout-s must be numbers.")
+}
 
 const VALID_CONDITIONS = new Set(["vanilla", "raw", "mama", "oracle"])
 for (const c of conditions) {
@@ -92,7 +96,7 @@ if (conditions.includes("mama")) {
   if (!fs.existsSync(resolved)) {
     fail(`MAMA_DB_PATH not found: ${resolved}`)
   }
-  const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..")
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../..")
   const distDir = path.join(repoRoot, "packages/mama-core/dist")
   const { initDB } = require(path.join(distDir, "db-manager.js"))
   mamaApi = require(path.join(distDir, "mama-api.js"))

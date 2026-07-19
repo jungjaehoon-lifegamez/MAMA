@@ -6,7 +6,9 @@
 // into the live DB before test HOME isolation landed (2026-07-17).
 const EXCLUDED_TOPIC_PATTERNS = [
   /^(alpha|beta|auth_strategy|database_choice|dummy)$/i,
-  /test/i,
+  // Token-anchored so legitimate topics that merely contain the substring
+  // "test" (e.g. "latest_pricing", "fastest_path") are not dropped.
+  /(^|_)test(ing|s)?(_|$)/i,
   /^memory_scopes/i,
   /^session_greeting$/i,
 ]
@@ -37,7 +39,11 @@ export function normalizeCreatedAt(v) {
     if (/^\d+$/.test(trimmed)) {
       return normalizeCreatedAt(Number(trimmed))
     }
-    const parsed = Date.parse(trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T") + "Z")
+    // Stamp UTC only when the text carries no timezone marker: appending "Z" to
+    // a value that already ends in "Z" or an offset would produce NaN.
+    const formatted = trimmed.includes("T") ? trimmed : trimmed.replace(" ", "T")
+    const hasTz = formatted.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(formatted)
+    const parsed = Date.parse(hasTz ? formatted : formatted + "Z")
     return Number.isFinite(parsed) ? parsed : null
   }
   return null
