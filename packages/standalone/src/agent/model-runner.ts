@@ -42,6 +42,12 @@ export interface PromptOptions {
    * without mutating shared adapter state.
    */
   sessionId?: string;
+  /**
+   * Per-call CLI request timeout (ms) applied when this call spawns a fresh
+   * pooled process. Undefined leaves the pool's construction-time default in
+   * place, so only callers that opt in (operator worker runs) are affected.
+   */
+  requestTimeout?: number;
 }
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
