@@ -48,7 +48,7 @@ const limit = Number(arg("limit", "40"))
 const model = arg("model", null)
 const timeoutS = Number(arg("timeout-s", "600"))
 
-const VALID_CONDITIONS = new Set(["vanilla", "raw", "mama"])
+const VALID_CONDITIONS = new Set(["vanilla", "raw", "mama", "oracle"])
 for (const c of conditions) {
   if (!VALID_CONDITIONS.has(c)) {
     fail(`Unknown condition "${c}".`)
@@ -101,7 +101,9 @@ if (conditions.includes("mama")) {
 
 const PREAMBLE =
   "You answer a multiple-choice question about the CURRENT state of a decision. " +
-  'Reply with the single option letter only (e.g. "B"). No explanation.'
+  // NOTE: never put a concrete example letter here - an earlier version used
+  // '(e.g. "B")' and every condition answered "B" for 80%+ of items.
+  "Reply with exactly one option letter and nothing else. No explanation."
 
 function corpusBlock() {
   return corpus.map((r) => `[${r.iso}] ${r.topic}: ${r.decision}`).join("\n")
@@ -144,12 +146,32 @@ async function buildPrompt(condition, item) {
       `<memory>\n${JSON.stringify(hits, null, 1)}\n</memory>\n\n${qa}`
     )
   }
+  if (condition === "oracle") {
+    // Ceiling condition: the context a CORRECT truth projection would return -
+    // the topic's current decision, explicitly marked current. Near-100% by
+    // construction; quantifies the prize for fixing retrieval + projection.
+    const hit = {
+      topic: item.topic,
+      decision: item.options.find((o) => o.label === item.answerLabel).text,
+      status: "current",
+      created_at: item.currentCreatedAt ? new Date(item.currentCreatedAt).toISOString() : null,
+    }
+    return (
+      `${PREAMBLE}\n\nBelow is what the memory system returned for this question:\n\n` +
+      `<memory>\n${JSON.stringify([hit], null, 1)}\n</memory>\n\n${qa}`
+    )
+  }
   throw new Error(`unreachable condition ${condition}`)
 }
 
 function callClaude(prompt) {
   return new Promise((resolve, reject) => {
-    const args = ["-p", "--output-format", "text"]
+    // --setting-sources project: exclude user-level settings so the user's
+    // OWN MAMA plugin SessionStart hook does not inject live memory ("Recent
+    // Decisions") into every bench call. Without this the experiment measuring
+    // MAMA memory is contaminated BY MAMA memory (observed: verbatim-match
+    // oracle items flipping to wrong answers).
+    const args = ["-p", "--output-format", "text", "--setting-sources", "project"]
     if (model) {
       args.push("--model", model)
     }
