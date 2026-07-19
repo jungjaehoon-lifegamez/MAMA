@@ -1590,6 +1590,110 @@ async function saveWithTrustedProvenance(
   return saveInternal(params, options);
 }
 
+/**
+ * Annotate suggest results with topic currency. MAMA semantics treat topic
+ * reuse as supersession, so a result row is stale when the DB holds a newer
+ * decision row for the same topic - even when its status column still says
+ * 'active' (historical chains predate status maintenance). Surfacing
+ * `superseded_by_newer` lets consumers (and LLMs) tell current truth from
+ * superseded history; delta-bench measured 80% -> 92.5% answer accuracy when
+ * the current row is explicitly marked.
+ */
+function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
+  rows: T[],
+  scopes?: Array<{ kind: string; id: string }>
+): Array<T & { superseded_by_newer?: boolean }> {
+  try {
+    const topics = [
+      ...new Set(
+        rows.map((r) => r.topic).filter((t): t is string => typeof t === 'string' && t.length > 0)
+      ),
+    ];
+    if (topics.length === 0) {
+      return rows;
+    }
+    const adapter = getAdapter();
+    const placeholders = topics.map(() => '?').join(',');
+    // Supersession is scope-isolated (mirrors the save-path same-topic lookup):
+    // a newer row for the same topic in ANOTHER project/channel must not mark
+    // this scope's current truth as stale. When the search ran scoped, the
+    // currency comparison is restricted to the same scopes. Rows with an
+    // excluded status (quarantined etc.) never count as "the newer truth".
+    const statusFilter =
+      "AND (d.status IS NULL OR d.status NOT IN ('superseded','quarantined','contradicted','stale'))";
+    type CurrencyRow = { id: string; topic: string; created_at: number | string | null };
+    let all: CurrencyRow[];
+    if (scopes && scopes.length > 0) {
+      const scopePairs = scopes.flatMap((s) => [s.kind, s.id]);
+      const scopePlaceholders = scopes
+        .map(() => '(ms.kind = ? AND ms.external_id = ?)')
+        .join(' OR ');
+      all = adapter
+        .prepare(
+          `SELECT DISTINCT d.id, d.topic, d.created_at
+           FROM decisions d
+           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+           JOIN memory_scopes ms ON ms.id = msb.scope_id
+           WHERE d.topic IN (${placeholders}) AND (${scopePlaceholders}) ${statusFilter}`
+        )
+        .all(...topics, ...scopePairs) as CurrencyRow[];
+    } else {
+      all = adapter
+        .prepare(
+          `SELECT id, topic, created_at FROM decisions d WHERE topic IN (${placeholders}) ${statusFilter}`
+        )
+        .all(...topics) as CurrencyRow[];
+    }
+    // created_at mixes epoch seconds, epoch ms, and TEXT datetimes in live DBs.
+    const toMs = (v: number | string | null): number => {
+      if (typeof v === 'number' && Number.isFinite(v)) {
+        return v > 1e12 ? v : v * 1000;
+      }
+      if (typeof v === 'string') {
+        const trimmed = v.trim();
+        if (/^\d+$/.test(trimmed)) {
+          return toMs(Number(trimmed));
+        }
+        // Stamp UTC only when the text carries no timezone marker: appending
+        // 'Z' to a value that already ends in 'Z' or an offset yields NaN, and
+        // a bare T-form datetime would otherwise parse as ambiguous local time.
+        const formatted = trimmed.includes('T') ? trimmed : trimmed.replace(' ', 'T');
+        const hasTz = formatted.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(formatted);
+        const parsed = Date.parse(hasTz ? formatted : formatted + 'Z');
+        // Unparseable rows are skipped per-row by the caller (NaN), never
+        // thrown: one legacy bad timestamp must not blank the whole annotation.
+        return Number.isFinite(parsed) ? parsed : NaN;
+      }
+      return NaN;
+    };
+    const newestByTopic = new Map<string, { ms: number; id: string }>();
+    for (const row of all) {
+      const ms = toMs(row.created_at);
+      if (!Number.isFinite(ms)) {
+        continue;
+      }
+      const cur = newestByTopic.get(row.topic);
+      // Deterministic tiebreak on equal timestamps: higher id wins (ids embed
+      // their creation ms, so lexicographic order is stable and monotonic-ish).
+      if (!cur || ms > cur.ms || (ms === cur.ms && row.id > cur.id)) {
+        newestByTopic.set(row.topic, { ms, id: row.id });
+      }
+    }
+    return rows.map((r) => {
+      const newest = typeof r.topic === 'string' ? newestByTopic.get(r.topic) : undefined;
+      if (!newest) {
+        return r;
+      }
+      return { ...r, superseded_by_newer: newest.id !== r.id };
+    });
+  } catch (err) {
+    // Annotation is additive - a failure must degrade to unannotated results,
+    // never break the search itself. But it is logged loudly, not swallowed.
+    logWarn(`[mama.suggest] topic-currency annotation failed: ${String(err)}`);
+    return rows;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function suggest(userQuestion: string, options: SuggestFunctionOptions = {}): Promise<any> {
   if (!userQuestion || typeof userQuestion !== 'string') {
@@ -1796,7 +1900,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: limitedResults,
+        results: annotateTopicCurrency(limitedResults, options.scopes),
         ...diagnosticsResponse,
         meta: {
           count: limitedResults.length,
@@ -1864,7 +1968,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: limitedRows,
+        results: annotateTopicCurrency(limitedRows, options.scopes),
         ...diagnosticsResponse,
         meta: {
           count: limitedRows.length,
@@ -4039,6 +4143,7 @@ export {
   save,
   saveWithTrustedProvenance,
   suggest,
+  annotateTopicCurrency,
   saveMemory,
   saveMemoryWithTrustedProvenance,
   recallMemory,
