@@ -2,20 +2,25 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import {
   buildChains,
+  buildLineageItem,
   buildQaItem,
+  chainRevisionReasoning,
   isExcludedTopic,
   mulberry32,
   normalizeCreatedAt,
   parseChoice,
+  reasoningHead,
+  renderLineageBlock,
   renderOptions,
   scoreResults,
   seededShuffle,
 } from "./lib.mjs"
 
 const LONG = "a decision text that is comfortably longer than the forty character minimum"
+const LONG_REASON = "we switched because the earlier rationale no longer held under new load"
 
-function row(id, topic, decision, created_at) {
-  return { id, topic, decision, created_at, reasoning: null, status: "active", kind: "decision" }
+function row(id, topic, decision, created_at, reasoning = null) {
+  return { id, topic, decision, created_at, reasoning, status: "active", kind: "decision" }
 }
 
 test("isExcludedTopic drops known fixture-pollution topics", () => {
@@ -68,6 +73,7 @@ test("buildQaItem marks the newest row as the answer and priors as distractors",
     ],
   }
   const item = buildQaItem(chain, 42)
+  assert.equal(item.qaType, "truth")
   assert.equal(item.options.length, 3)
   const answer = item.options.find((o) => o.label === item.answerLabel)
   assert.equal(answer.decisionId, "d3")
@@ -145,4 +151,162 @@ test("scoreResults computes accuracy, stale and invalid rates per condition", ()
   assert.equal(raw.accuracy, 0.5)
   assert.equal(raw.invalidRate, 0.5)
   assert.equal(raw.approxTokensPerItem, 10000)
+})
+
+test("chainRevisionReasoning returns the newest version's reasoning when it qualifies", () => {
+  const chain = {
+    topic: "cadence",
+    rows: [
+      row(
+        "d1",
+        "cadence",
+        `${LONG} v1`,
+        100,
+        "original rationale for the first cadence choice here"
+      ),
+      row("d2", "cadence", `${LONG} v2`, 200, LONG_REASON),
+    ],
+  }
+  assert.equal(chainRevisionReasoning(chain), LONG_REASON)
+})
+
+test("chainRevisionReasoning rejects short, missing, single-version, and duplicate reasonings", () => {
+  // too short
+  assert.equal(
+    chainRevisionReasoning({
+      topic: "t",
+      rows: [
+        row("a", "t", `${LONG} v1`, 100, "long enough prior reasoning here to pass"),
+        row("b", "t", `${LONG} v2`, 200, "too short"),
+      ],
+    }),
+    null
+  )
+  // missing on current
+  assert.equal(
+    chainRevisionReasoning({
+      topic: "t",
+      rows: [row("a", "t", `${LONG} v1`, 100, LONG_REASON), row("b", "t", `${LONG} v2`, 200, null)],
+    }),
+    null
+  )
+  // single version
+  assert.equal(
+    chainRevisionReasoning({ topic: "t", rows: [row("a", "t", `${LONG} v1`, 100, LONG_REASON)] }),
+    null
+  )
+  // current reasoning duplicates a prior version's reasoning (no delta)
+  assert.equal(
+    chainRevisionReasoning({
+      topic: "t",
+      rows: [
+        row("a", "t", `${LONG} v1`, 100, LONG_REASON),
+        row("b", "t", `${LONG} v2`, 200, `  ${LONG_REASON.toUpperCase()}  `),
+      ],
+    }),
+    null
+  )
+})
+
+test("buildLineageItem: answer is the chain reasoning, distractors are other topics, deterministic", () => {
+  const chain = {
+    topic: "cadence",
+    rows: [
+      row("d1", "cadence", `${LONG} v1`, 100, "first cadence rationale that is plenty long here"),
+      row("d2", "cadence", `${LONG} v2`, 200, LONG_REASON),
+    ],
+  }
+  const pool = [
+    { topic: "cadence", reasoning: LONG_REASON }, // own topic - must be excluded
+    {
+      topic: "budget",
+      reasoning: "budget was reallocated to the new priority workstream this quarter",
+    },
+    {
+      topic: "vendor",
+      reasoning: "the incumbent vendor missed the reliability targets three months running",
+    },
+    {
+      topic: "schema",
+      reasoning: "the denormalized shape made the hot query path far too slow to ship",
+    },
+  ]
+  const item = buildLineageItem(chain, pool, 42)
+  assert.equal(item.qaType, "lineage")
+  assert.equal(item.id, "lineage_cadence")
+  assert.equal(item.options.length, 4) // 1 answer + 3 distractors
+  const answer = item.options.find((o) => o.label === item.answerLabel)
+  assert.equal(answer.text, LONG_REASON)
+  // No distractor is drawn from the chain's own topic.
+  assert.ok(
+    item.options.every(
+      (o) =>
+        o.text === LONG_REASON || pool.some((p) => p.topic !== "cadence" && p.reasoning === o.text)
+    )
+  )
+  // Deterministic for a fixed seed.
+  const again = buildLineageItem(chain, pool, 42)
+  assert.deepEqual(
+    again.options.map((o) => o.text),
+    item.options.map((o) => o.text)
+  )
+  assert.equal(again.answerLabel, item.answerLabel)
+})
+
+test("buildLineageItem dedups identical distractor reasonings and returns null with no pool", () => {
+  const chain = {
+    topic: "cadence",
+    rows: [
+      row("d1", "cadence", `${LONG} v1`, 100, "prior cadence reasoning long enough to count"),
+      row("d2", "cadence", `${LONG} v2`, 200, LONG_REASON),
+    ],
+  }
+  const dupPool = [
+    { topic: "a", reasoning: "the same shared rationale text repeated across two topics here" },
+    { topic: "b", reasoning: "the same shared rationale text repeated across two topics here" },
+  ]
+  const item = buildLineageItem(chain, dupPool, 5)
+  const texts = item.options.map((o) => o.text)
+  assert.equal(new Set(texts).size, texts.length) // deduped
+  assert.equal(item.options.length, 2) // answer + one unique distractor
+  // Empty pool (only own topic available) -> no item.
+  assert.equal(buildLineageItem(chain, [{ topic: "cadence", reasoning: LONG_REASON }], 5), null)
+})
+
+test("reasoningHead collapses whitespace, truncates, and handles empties", () => {
+  assert.equal(reasoningHead("  a   b\n c  "), "a b c")
+  assert.equal(reasoningHead(""), "no reasoning recorded")
+  assert.equal(reasoningHead(null), "no reasoning recorded")
+  const long = "x".repeat(200)
+  const head = reasoningHead(long, 50)
+  assert.ok(head.length <= 53) // 50 chars + ellipsis
+  assert.ok(head.endsWith("..."))
+})
+
+test("renderLineageBlock shows prior reasoning heads and CURRENT decision", () => {
+  const rows = [
+    row(
+      "d1",
+      "cadence",
+      "the very first cadence decision was daily",
+      100,
+      "chose daily to stay tightly in sync early on"
+    ),
+    row(
+      "d2",
+      "cadence",
+      "cadence moved to twice a week to cut noise",
+      200,
+      "daily was too noisy so we spaced it out here"
+    ),
+    row("d3", "cadence", "the current cadence is a weekly digest only", 300, LONG_REASON),
+  ]
+  const block = renderLineageBlock("cadence", rows)
+  assert.ok(block.startsWith("cadence: v1 ("))
+  assert.ok(block.includes("v2 ("))
+  assert.ok(block.includes("CURRENT: the current cadence is a weekly digest only"))
+  // The current version surfaces its decision, not its reasoning.
+  assert.ok(!block.includes(LONG_REASON))
+  // Empty chain is handled.
+  assert.equal(renderLineageBlock("t", []), "t: (no history)")
 })

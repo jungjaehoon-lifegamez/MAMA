@@ -14,6 +14,12 @@ const EXCLUDED_TOPIC_PATTERNS = [
 ]
 
 const MIN_DECISION_CHARS = 40
+// Lineage (L-type) items answer with a real `reasoning` string; require it to be
+// substantial so the QA is not decided by a one-word rationale.
+const MIN_REASONING_CHARS = 40
+// Head length for a reasoning shown inside a rendered lineage block. Long enough
+// to identify the rationale, short enough that the block stays compact.
+const REASONING_HEAD_CHARS = 120
 const MAX_DISTRACTORS = 3
 const OPTION_LABELS = ["A", "B", "C", "D"]
 
@@ -158,6 +164,7 @@ export function buildQaItem(chain, seed) {
   const answer = options.find((o) => o.isCurrent)
   return {
     id: `delta_${chain.topic}`,
+    qaType: "truth",
     topic: chain.topic,
     chainLength: rows.length,
     currentDecisionId: current.id,
@@ -170,6 +177,132 @@ export function buildQaItem(chain, seed) {
     options,
     answerLabel: answer.label,
   }
+}
+
+/**
+ * The revision rationale of a chain = the newest version's `reasoning`.
+ * MAMA semantics: the newest row is the current truth, so its reasoning is why
+ * the topic ended up at its current decision (the "why it was revised" answer).
+ * Returns the trimmed reasoning, or null when the chain does not qualify:
+ *  - fewer than 2 versions
+ *  - current reasoning missing or shorter than MIN_REASONING_CHARS
+ *  - current reasoning not distinct (normalized) from every prior version's
+ *    reasoning (no real reasoning delta - would be a trivial or duplicate item)
+ */
+export function chainRevisionReasoning(chain) {
+  const rows = chain && chain.rows
+  if (!rows || rows.length < 2) {
+    return null
+  }
+  const current = rows[rows.length - 1]
+  const reasoning = (current.reasoning || "").trim()
+  if (reasoning.length < MIN_REASONING_CHARS) {
+    return null
+  }
+  const currentNorm = normalizeText(reasoning)
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (normalizeText(rows[i].reasoning || "") === currentNorm) {
+      return null
+    }
+  }
+  return reasoning
+}
+
+/**
+ * Build one lineage (L-type) multiple-choice item from a chain.
+ * Answer = this chain's revision rationale (the newest version's reasoning).
+ * Distractors = OTHER topics' revision rationales - real reasoning text drawn
+ * from distractorPool ([{ topic, reasoning }]), never generated. The chain's own
+ * topic is excluded and duplicate normalized texts are deduped. Option order is
+ * a seeded shuffle so the answer position carries no signal. Deterministic given
+ * seed. Returns null when the chain fails the reasoning filters or the pool has
+ * no distinct distractor.
+ */
+export function buildLineageItem(chain, distractorPool, seed) {
+  const answerReasoning = chainRevisionReasoning(chain)
+  if (!answerReasoning) {
+    return null
+  }
+  const rows = chain.rows
+  const current = rows[rows.length - 1]
+  const answerNorm = normalizeText(answerReasoning)
+  const rand = mulberry32(seed)
+  const seen = new Set([answerNorm])
+  const pool = (distractorPool || []).filter((d) => d.topic !== chain.topic)
+  const shuffledPool = seededShuffle(pool, rand)
+  const distractors = []
+  for (const cand of shuffledPool) {
+    const text = (cand.reasoning || "").trim()
+    const norm = normalizeText(text)
+    if (norm.length === 0 || seen.has(norm)) {
+      continue
+    }
+    seen.add(norm)
+    distractors.push(text)
+    if (distractors.length >= MAX_DISTRACTORS) {
+      break
+    }
+  }
+  if (distractors.length === 0) {
+    return null
+  }
+  const optionRows = seededShuffle(
+    [
+      { text: answerReasoning, isAnswer: true },
+      ...distractors.map((text) => ({ text, isAnswer: false })),
+    ],
+    rand
+  )
+  const options = optionRows.map((row, idx) => ({
+    label: OPTION_LABELS[idx],
+    text: row.text.trim(),
+    isAnswer: row.isAnswer,
+  }))
+  const answer = options.find((o) => o.isAnswer)
+  return {
+    id: `lineage_${chain.topic}`,
+    qaType: "lineage",
+    topic: chain.topic,
+    chainLength: rows.length,
+    currentDecisionId: current.id,
+    currentCreatedAt: current.created_at,
+    // Full topic chain (oldest -> newest) so the oracle can render it perfectly
+    // offline; the mama-lineage condition re-fetches the same chain from the DB.
+    lineageChain: rows.map((r) => ({ decision: r.decision, reasoning: r.reasoning })),
+    question:
+      `Topic: "${chain.topic}"\n` +
+      "Which statement describes why this topic's decision was revised? " +
+      "Answer with the option letter only.",
+    options,
+    answerLabel: answer.label,
+  }
+}
+
+/** Collapse whitespace and truncate a reasoning to a short head for a lineage block. */
+export function reasoningHead(text, max = REASONING_HEAD_CHARS) {
+  const clean = (text || "").replace(/\s+/g, " ").trim()
+  if (clean.length === 0) {
+    return "no reasoning recorded"
+  }
+  return clean.length <= max ? clean : clean.slice(0, max).trimEnd() + "..."
+}
+
+/**
+ * Render a topic's full chain as an R2 lineage block (the reasoning-precompute
+ * prototype under test):
+ *   <topic>: v1 (<reasoning head>) -> v2 (<reasoning head>) -> CURRENT: <decision>
+ * Prior versions surface their reasoning heads; the current version surfaces its
+ * decision. rows must be oldest -> newest (each { decision, reasoning }).
+ */
+export function renderLineageBlock(topic, rows) {
+  if (!rows || rows.length === 0) {
+    return `${topic}: (no history)`
+  }
+  const priors = rows.slice(0, -1)
+  const current = rows[rows.length - 1]
+  const parts = priors.map((r, i) => `v${i + 1} (${reasoningHead(r.reasoning)})`)
+  parts.push(`CURRENT: ${(current.decision || "").replace(/\s+/g, " ").trim()}`)
+  return `${topic}: ${parts.join(" -> ")}`
 }
 
 /** Render the options block appended to every condition prompt. */

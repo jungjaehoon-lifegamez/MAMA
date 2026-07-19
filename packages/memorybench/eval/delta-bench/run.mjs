@@ -1,21 +1,29 @@
-// run.mjs - run the 3-condition delta experiment over a QA set.
+// run.mjs - run the delta experiment over a QA set (truth + lineage items).
 //
 // Conditions:
-//   vanilla - question only (floor reference; near-chance by construction)
-//   raw     - full chronological decision dump in context (what "just use long
-//             context" actually looks like), then the question
-//   mama    - whatever mama.suggest() returns for the topic query (the real
-//             MCP search runtime path, including its retrieval imperfections)
+//   vanilla      - question only (floor reference; near-chance by construction)
+//   raw          - full chronological decision dump in context (what "just use
+//                  long context" actually looks like), then the question
+//   mama         - whatever mama.suggest() returns for the topic query (the real
+//                  MCP search runtime path, including its retrieval imperfections)
+//   mama-lineage - mama.suggest() results grouped by topic, each topic's FULL
+//                  chain re-fetched from the DB copy and rendered as a lineage
+//                  block (v1 (reasoning head) -> ... -> CURRENT: decision). This
+//                  rendering is the R2 reasoning-precompute prototype under test.
+//   oracle       - the context a CORRECT projection WOULD return (ceiling): for
+//                  truth items the current decision marked current; for lineage
+//                  items the asked chain rendered perfectly.
 //
-// Model calls go through the Claude CLI (`claude -p`, prompt on stdin) - no
-// API keys. Results append to <out>/results.jsonl (safe to re-run; answered
-// (condition,item) pairs are skipped).
+// Both QA types run under every condition. Model calls go through the Claude CLI
+// (`claude -p`, prompt on stdin) - no API keys. Results append to
+// <out>/results.jsonl (safe to re-run; answered (condition,item) pairs skipped).
 //
 // Usage:
-//   node run.mjs --qa <dir> --out <dir>/results [--conditions vanilla,raw,mama]
+//   node run.mjs --qa <dir> --out <dir>/results
+//                [--conditions vanilla,raw,mama,mama-lineage,oracle]
 //                [--limit 40] [--model <model>] [--timeout-s 600]
-//   The mama condition additionally requires MAMA_DB_PATH pointing to a COPY
-//   of a MAMA DB - live DB paths are refused.
+//   The mama and mama-lineage conditions additionally require MAMA_DB_PATH
+//   pointing to a COPY of a MAMA DB - live DB paths are refused.
 
 import fs from "node:fs"
 import os from "node:os"
@@ -23,7 +31,14 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
-import { approxTokens, parseChoice, renderOptions, scoreResults } from "./lib.mjs"
+import {
+  approxTokens,
+  normalizeCreatedAt,
+  parseChoice,
+  renderLineageBlock,
+  renderOptions,
+  scoreResults,
+} from "./lib.mjs"
 
 const require = createRequire(import.meta.url)
 
@@ -45,6 +60,7 @@ const outDir = arg("out", path.join(qaDir, "results"))
 const conditions = arg("conditions", "vanilla,raw,mama")
   .split(",")
   .map((s) => s.trim())
+  .filter(Boolean)
 const limit = Number(arg("limit", "40"))
 const model = arg("model", null)
 const timeoutS = Number(arg("timeout-s", "600"))
@@ -52,7 +68,7 @@ if (!Number.isFinite(limit) || !Number.isFinite(timeoutS)) {
   fail("--limit/--timeout-s must be numbers.")
 }
 
-const VALID_CONDITIONS = new Set(["vanilla", "raw", "mama", "oracle"])
+const VALID_CONDITIONS = new Set(["vanilla", "raw", "mama", "mama-lineage", "oracle"])
 for (const c of conditions) {
   if (!VALID_CONDITIONS.has(c)) {
     fail(`Unknown condition "${c}".`)
@@ -78,12 +94,18 @@ if (fs.existsSync(resultsPath)) {
   }
 }
 
-// --- mama condition setup (real MCP search runtime path) ---
+// --- mama / mama-lineage condition setup (real MCP search runtime path) ---
+// Both conditions call mama.suggest(); mama-lineage additionally re-fetches each
+// returned topic's full chain from a read-only handle on the DB copy.
+const needsSuggest = conditions.includes("mama") || conditions.includes("mama-lineage")
+const needsLineageDb = conditions.includes("mama-lineage")
+const KIND_FILTER = "('decision', 'preference', 'constraint', 'lesson', 'fact')"
 let mamaApi = null
-if (conditions.includes("mama")) {
+let lineageDb = null
+if (needsSuggest) {
   const dbPath = process.env.MAMA_DB_PATH
   if (!dbPath) {
-    fail("mama condition requires MAMA_DB_PATH (a COPY of a MAMA DB).")
+    fail("mama/mama-lineage conditions require MAMA_DB_PATH (a COPY of a MAMA DB).")
   }
   const resolved = path.resolve(dbPath)
   const liveDbs = [
@@ -101,6 +123,38 @@ if (conditions.includes("mama")) {
   const { initDB } = require(path.join(distDir, "db-manager.js"))
   mamaApi = require(path.join(distDir, "mama-api.js"))
   await initDB()
+  if (needsLineageDb) {
+    const Database = require("better-sqlite3")
+    lineageDb = new Database(resolved, { readonly: true, fileMustExist: true })
+  }
+}
+
+// Fetch a topic's full chain from the DB copy, oldest -> newest, using the same
+// JS timestamp normalization as extract (SQL ORDER BY created_at is unreliable
+// across the seconds/ms/TEXT encodings the live DBs mix).
+const chainCache = new Map()
+function fetchChain(topic) {
+  if (chainCache.has(topic)) {
+    return chainCache.get(topic)
+  }
+  const raw = lineageDb
+    .prepare(
+      `SELECT id, topic, decision, reasoning, created_at
+       FROM decisions
+       WHERE topic = ? AND kind IN ${KIND_FILTER}`
+    )
+    .all(topic)
+  const rows = []
+  for (const r of raw) {
+    const ts = normalizeCreatedAt(r.created_at)
+    if (ts === null) {
+      continue
+    }
+    rows.push({ ...r, created_at: ts })
+  }
+  rows.sort((a, b) => a.created_at - b.created_at || String(a.id).localeCompare(String(b.id)))
+  chainCache.set(topic, rows)
+  return rows
 }
 
 const PREAMBLE =
@@ -135,7 +189,9 @@ async function buildPrompt(condition, item) {
     const res = await mamaApi.suggest(query, { limit: 5 })
     if (!res || !Array.isArray(res.results)) {
       throw new Error(
-        `suggest() returned unexpected shape for "${query}": ${JSON.stringify(res).slice(0, 200)}`
+        // Guard: JSON.stringify(undefined) === undefined, so slice() would throw
+        // a TypeError and mask the real "unexpected shape" error.
+        `suggest() returned unexpected shape for "${query}": ${String(JSON.stringify(res)).slice(0, 200)}`
       )
     }
     const hits = res.results.map((r) => ({
@@ -153,10 +209,51 @@ async function buildPrompt(condition, item) {
       `<memory>\n${JSON.stringify(hits, null, 1)}\n</memory>\n\n${qa}`
     )
   }
+  if (condition === "mama-lineage") {
+    // R2 prototype: take mama.suggest()'s topics, then re-fetch each returned
+    // topic's FULL chain from the DB copy and render it as a lineage block. The
+    // rendering (not the flat hit list) is what the model sees. Retrieval
+    // imperfection carries through: if suggest misses the asked topic, its
+    // lineage never reaches the model.
+    const query = item.topic.replace(/_/g, " ")
+    const res = await mamaApi.suggest(query, { limit: 5 })
+    if (!res || !Array.isArray(res.results)) {
+      throw new Error(
+        // Guard: JSON.stringify(undefined) === undefined, so slice() would throw
+        // a TypeError and mask the real "unexpected shape" error.
+        `suggest() returned unexpected shape for "${query}": ${String(JSON.stringify(res)).slice(0, 200)}`
+      )
+    }
+    const topics = []
+    const seenTopics = new Set()
+    for (const r of res.results) {
+      if (!r.topic || seenTopics.has(r.topic)) {
+        continue
+      }
+      seenTopics.add(r.topic)
+      topics.push(r.topic)
+    }
+    const blocks = topics
+      .map((t) => renderLineageBlock(t, fetchChain(t)))
+      .filter((b) => b && !b.endsWith("(no history)"))
+    const lineage = blocks.length ? blocks.join("\n\n") : "(no matching topics found)"
+    return (
+      `${PREAMBLE}\n\nBelow is the decision lineage the memory system rendered for this question:\n\n` +
+      `<lineage>\n${lineage}\n</lineage>\n\n${qa}`
+    )
+  }
   if (condition === "oracle") {
-    // Ceiling condition: the context a CORRECT truth projection would return -
-    // the topic's current decision, explicitly marked current. Near-100% by
-    // construction; quantifies the prize for fixing retrieval + projection.
+    // Ceiling condition: the context a CORRECT projection would return.
+    if (item.qaType === "lineage") {
+      // The asked chain rendered perfectly (guaranteed present, unlike the
+      // retrieval-gated mama-lineage condition).
+      const block = renderLineageBlock(item.topic, item.lineageChain || [])
+      return (
+        `${PREAMBLE}\n\nBelow is the decision lineage the memory system rendered for this question:\n\n` +
+        `<lineage>\n${block}\n</lineage>\n\n${qa}`
+      )
+    }
+    // Truth items: the topic's current decision, explicitly marked current.
     const hit = {
       topic: item.topic,
       decision: item.options.find((o) => o.label === item.answerLabel).text,
@@ -231,6 +328,7 @@ for (const condition of conditions) {
       record = {
         itemId: item.id,
         topic: item.topic,
+        qaType: item.qaType,
         condition,
         choice,
         answerLabel: item.answerLabel,
@@ -244,6 +342,7 @@ for (const condition of conditions) {
       record = {
         itemId: item.id,
         topic: item.topic,
+        qaType: item.qaType,
         condition,
         choice: null,
         answerLabel: item.answerLabel,
@@ -263,12 +362,35 @@ for (const condition of conditions) {
   }
 }
 
-const summary = scoreResults(results.filter((r) => conditions.includes(r.condition)))
-fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify({ summary, results }, null, 2))
-console.log("\n=== delta-bench summary ===")
-for (const s of summary) {
-  console.log(
-    `${s.condition.padEnd(8)} n=${s.n} accuracy=${s.accuracy} stale=${s.staleRate} invalid=${s.invalidRate} ~tokens/item=${s.approxTokensPerItem}`
-  )
+if (lineageDb) {
+  lineageDb.close()
 }
-console.log(`report: ${path.join(outDir, "report.json")}`)
+
+const scored = results.filter((r) => conditions.includes(r.condition))
+const summary = scoreResults(scored)
+// Per-type breakdown: the whole point of the lineage extension is comparing
+// mama vs mama-lineage separately for truth and lineage questions.
+const qaTypes = [...new Set(scored.map((r) => r.qaType).filter(Boolean))].sort()
+const summaryByType = {}
+for (const t of qaTypes) {
+  summaryByType[t] = scoreResults(scored.filter((r) => r.qaType === t))
+}
+fs.writeFileSync(
+  path.join(outDir, "report.json"),
+  JSON.stringify({ summary, summaryByType, results }, null, 2)
+)
+
+function printSummary(rows) {
+  for (const s of rows) {
+    console.log(
+      `${s.condition.padEnd(12)} n=${s.n} accuracy=${s.accuracy} stale=${s.staleRate} invalid=${s.invalidRate} ~tokens/item=${s.approxTokensPerItem}`
+    )
+  }
+}
+console.log("\n=== delta-bench summary (all items) ===")
+printSummary(summary)
+for (const t of qaTypes) {
+  console.log(`\n=== delta-bench summary (${t}) ===`)
+  printSummary(summaryByType[t])
+}
+console.log(`\nreport: ${path.join(outDir, "report.json")}`)
