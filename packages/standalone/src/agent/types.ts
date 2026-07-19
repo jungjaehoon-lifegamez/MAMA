@@ -962,6 +962,13 @@ export interface AgentLoopOptions {
   maxTokens?: number;
   /** Request timeout in milliseconds (mapped to Codex CLI `timeoutMs`) */
   timeoutMs?: number;
+  /**
+   * Per-run override for the CLI request timeout (ms), threaded to the model
+   * runner for THIS run only. Unlike `timeoutMs` (fixed at construction on the
+   * shared boot executor), this lets a single long run (operator worker gather
+   * runs) lift the request bound without touching chat runs on the same pool.
+   */
+  requestTimeoutMs?: number;
   /** Claude model to use (must be provided via config) */
   model?: string;
   /** Callback for each turn */
