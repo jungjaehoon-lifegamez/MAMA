@@ -816,6 +816,10 @@ export class NodeSQLiteAdapter extends DatabaseAdapter {
       }
 
       this.exec(`
+        CREATE INDEX IF NOT EXISTS idx_decisions_topic
+          ON decisions(topic)
+      `);
+      this.exec(`
         CREATE INDEX IF NOT EXISTS idx_decisions_envelope_hash
           ON decisions(envelope_hash)
       `);
