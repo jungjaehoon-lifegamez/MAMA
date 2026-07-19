@@ -33,6 +33,26 @@ items → chance ≈ 47%.
      failures (current present but unmarked next to stale versions;
      conditional accuracy when present: 80% vs oracle 92.5% when marked)
 
+## Repair round 1 (same day) — measured gap close
+
+After fixing the three retrieval defects in mama-core (fusion scale inversion
+where graph-expansion hits outscored the entire primary RRF range; missing
+topic-field weighting; no current/superseded marking in suggest results):
+
+| metric                       | before    | after                      |
+| ---------------------------- | --------- | -------------------------- |
+| topicHit@5                   | 57.5%     | 82.5%                      |
+| currentPresent@5             | 50.0%     | 77.5%                      |
+| **mama end-to-end accuracy** | **57.5%** | **75.0%** (~2.2k tok/item) |
+
+mama now sits 7.5pp under raw (82.5% @ 79k tok) at 1/36 the tokens, with
+17.5pp of ceiling headroom left (oracle 92.5%). Remaining misses: 6 retrieval,
+4 choice. An Opus adversarial review then caught a scope-blindness defect in
+the currency marking (topic collisions across projects/channels would mark
+in-scope truth stale) - fixed with scope-restricted comparison, deterministic
+tiebreaks, word-boundary topic matching, and a topic index, with metrics
+unchanged after hardening.
+
 ## Fix list this measures (re-run after each)
 
 1. Retrieval: query-side e5 prefix omission + lexical/topic matching (a topic

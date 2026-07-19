@@ -522,10 +522,14 @@ export function topicAffinityBoost(
     return 0;
   }
   const topicText = topic.toLowerCase().replace(/_/g, ' ');
+  // Word-boundary matching (exact word or stem-prefix), not raw substring:
+  // "sent" must not match inside "consent" - a spurious all-tokens match would
+  // vault an unrelated topic over the whole BM25 range.
+  const topicWords = topicText.split(' ');
   let topicMatches = 0;
   for (const token of tokens) {
     const stem = stemToken(token);
-    if (topicText.includes(token) || topicText.includes(stem)) {
+    if (topicWords.some((word) => word === token || word.startsWith(stem))) {
       topicMatches += 1;
     }
   }

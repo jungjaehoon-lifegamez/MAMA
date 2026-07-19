@@ -1600,7 +1600,8 @@ async function saveWithTrustedProvenance(
  * the current row is explicitly marked.
  */
 function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
-  rows: T[]
+  rows: T[],
+  scopes?: Array<{ kind: string; id: string }>
 ): Array<T & { superseded_by_newer?: boolean }> {
   try {
     const topics = [
@@ -1611,9 +1612,36 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
     if (topics.length === 0) return rows;
     const adapter = getAdapter();
     const placeholders = topics.map(() => '?').join(',');
-    const all = adapter
-      .prepare(`SELECT id, topic, created_at FROM decisions WHERE topic IN (${placeholders})`)
-      .all(...topics) as Array<{ id: string; topic: string; created_at: number | string | null }>;
+    // Supersession is scope-isolated (mirrors the save-path same-topic lookup):
+    // a newer row for the same topic in ANOTHER project/channel must not mark
+    // this scope's current truth as stale. When the search ran scoped, the
+    // currency comparison is restricted to the same scopes. Rows with an
+    // excluded status (quarantined etc.) never count as "the newer truth".
+    const statusFilter =
+      "AND (d.status IS NULL OR d.status NOT IN ('superseded','quarantined','contradicted','stale'))";
+    type CurrencyRow = { id: string; topic: string; created_at: number | string | null };
+    let all: CurrencyRow[];
+    if (scopes && scopes.length > 0) {
+      const scopePairs = scopes.flatMap((s) => [s.kind, s.id]);
+      const scopePlaceholders = scopes
+        .map(() => '(ms.kind = ? AND ms.external_id = ?)')
+        .join(' OR ');
+      all = adapter
+        .prepare(
+          `SELECT DISTINCT d.id, d.topic, d.created_at
+           FROM decisions d
+           JOIN memory_scope_bindings msb ON msb.memory_id = d.id
+           JOIN memory_scopes ms ON ms.id = msb.scope_id
+           WHERE d.topic IN (${placeholders}) AND (${scopePlaceholders}) ${statusFilter}`
+        )
+        .all(...topics, ...scopePairs) as CurrencyRow[];
+    } else {
+      all = adapter
+        .prepare(
+          `SELECT id, topic, created_at FROM decisions d WHERE topic IN (${placeholders}) ${statusFilter}`
+        )
+        .all(...topics) as CurrencyRow[];
+    }
     // created_at mixes epoch seconds, epoch ms, and TEXT datetimes in live DBs.
     const toMs = (v: number | string | null): number => {
       if (typeof v === 'number' && Number.isFinite(v)) return v > 1e12 ? v : v * 1000;
@@ -1629,7 +1657,11 @@ function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
       const ms = toMs(row.created_at);
       if (!Number.isFinite(ms)) continue;
       const cur = newestByTopic.get(row.topic);
-      if (!cur || ms > cur.ms) newestByTopic.set(row.topic, { ms, id: row.id });
+      // Deterministic tiebreak on equal timestamps: higher id wins (ids embed
+      // their creation ms, so lexicographic order is stable and monotonic-ish).
+      if (!cur || ms > cur.ms || (ms === cur.ms && row.id > cur.id)) {
+        newestByTopic.set(row.topic, { ms, id: row.id });
+      }
     }
     return rows.map((r) => {
       const newest = typeof r.topic === 'string' ? newestByTopic.get(r.topic) : undefined;
@@ -1850,7 +1882,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: annotateTopicCurrency(limitedResults),
+        results: annotateTopicCurrency(limitedResults, options.scopes),
         ...diagnosticsResponse,
         meta: {
           count: limitedResults.length,
@@ -1918,7 +1950,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: annotateTopicCurrency(limitedRows),
+        results: annotateTopicCurrency(limitedRows, options.scopes),
         ...diagnosticsResponse,
         meta: {
           count: limitedRows.length,

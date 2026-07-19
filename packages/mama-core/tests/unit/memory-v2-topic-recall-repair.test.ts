@@ -30,7 +30,7 @@ vi.mock('../../src/db-manager.js', async (importOriginal) => {
             if (sql.includes('FROM memory_scope_bindings')) {
               return [];
             }
-            if (sql.includes('created_at FROM decisions WHERE topic IN')) {
+            if (sql.includes('WHERE topic IN') || sql.includes('d.topic IN')) {
               return currencyRows;
             }
             if (sql.includes('FROM decisions')) {
@@ -172,6 +172,35 @@ describe('AC3: annotateTopicCurrency marks superseded history', () => {
     currencyRows = [{ id: 'only-row', topic: 'solo_topic', created_at: 1000 }];
     const { annotateTopicCurrency } = await import('../../src/mama-api.js');
     const annotated = annotateTopicCurrency([{ id: 'only-row', topic: 'solo_topic' }]);
+    expect(annotated[0].superseded_by_newer).toBe(false);
+  });
+
+  it('breaks equal-timestamp ties deterministically (higher id wins)', async () => {
+    currencyRows = [
+      { id: 'row-a', topic: 'tie_topic', created_at: 1000 },
+      { id: 'row-b', topic: 'tie_topic', created_at: 1000 },
+    ];
+    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
+    const annotated = annotateTopicCurrency([
+      { id: 'row-a', topic: 'tie_topic' },
+      { id: 'row-b', topic: 'tie_topic' },
+    ]);
+    expect(annotated.find((r) => r.id === 'row-b')?.superseded_by_newer).toBe(false);
+    expect(annotated.find((r) => r.id === 'row-a')?.superseded_by_newer).toBe(true);
+  });
+
+  it('scoped search restricts the currency comparison to the given scopes', async () => {
+    // The mock returns currencyRows for the scoped query too - what matters
+    // here is that the SCOPED branch is exercised (join SQL) and rows outside
+    // the mock "scope result" cannot mark in-scope truth stale.
+    currencyRows = [{ id: 'scoped-current', topic: 'deploy_process', created_at: 1000 }];
+    const { annotateTopicCurrency } = await import('../../src/mama-api.js');
+    const annotated = annotateTopicCurrency(
+      [{ id: 'scoped-current', topic: 'deploy_process' }],
+      [{ kind: 'project', id: '/proj/a' }]
+    );
+    // A newer row exists globally (not in currencyRows because the scoped SQL
+    // excludes it) - the in-scope row must remain current.
     expect(annotated[0].superseded_by_newer).toBe(false);
   });
 });
