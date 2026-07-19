@@ -1089,6 +1089,11 @@ export async function runAgentLoop(
   // started AFTER it - the boot invariant below enforces that ordering.
   const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
   const stage2Flag = readStage2Flag();
+  // Validate the worker-run timeout override at boot (no-fallback): a malformed
+  // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
+  // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
+  const { resolveWorkerRequestTimeoutMs } = await import('../../operator/worker-run.js');
+  resolveWorkerRequestTimeoutMs();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
 

@@ -1237,6 +1237,9 @@ export class AgentLoop {
             resumeSession: shouldResume,
             systemPrompt: perCallSystemPrompt,
             sessionId: resolvedCliSessionId ?? undefined,
+            // Per-run request timeout (operator worker runs); undefined leaves
+            // the pool's construction-time default untouched (chat).
+            requestTimeout: options?.requestTimeoutMs,
           });
           // Emit prompt latency metric
           this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
@@ -1282,6 +1285,8 @@ export class AgentLoop {
               resumeSession: false, // Force new session
               systemPrompt: perCallSystemPrompt,
               sessionId: newSessionId,
+              // Carry the per-run timeout onto the reset session too.
+              requestTimeout: options?.requestTimeoutMs,
             });
             // Prepend reset notice so user knows context was lost
             if (isPromptTooLong && piResult.response) {
