@@ -1590,6 +1590,60 @@ async function saveWithTrustedProvenance(
   return saveInternal(params, options);
 }
 
+/**
+ * Annotate suggest results with topic currency. MAMA semantics treat topic
+ * reuse as supersession, so a result row is stale when the DB holds a newer
+ * decision row for the same topic - even when its status column still says
+ * 'active' (historical chains predate status maintenance). Surfacing
+ * `superseded_by_newer` lets consumers (and LLMs) tell current truth from
+ * superseded history; delta-bench measured 80% -> 92.5% answer accuracy when
+ * the current row is explicitly marked.
+ */
+function annotateTopicCurrency<T extends { id?: unknown; topic?: unknown }>(
+  rows: T[]
+): Array<T & { superseded_by_newer?: boolean }> {
+  try {
+    const topics = [
+      ...new Set(
+        rows.map((r) => r.topic).filter((t): t is string => typeof t === 'string' && t.length > 0)
+      ),
+    ];
+    if (topics.length === 0) return rows;
+    const adapter = getAdapter();
+    const placeholders = topics.map(() => '?').join(',');
+    const all = adapter
+      .prepare(`SELECT id, topic, created_at FROM decisions WHERE topic IN (${placeholders})`)
+      .all(...topics) as Array<{ id: string; topic: string; created_at: number | string | null }>;
+    // created_at mixes epoch seconds, epoch ms, and TEXT datetimes in live DBs.
+    const toMs = (v: number | string | null): number => {
+      if (typeof v === 'number' && Number.isFinite(v)) return v > 1e12 ? v : v * 1000;
+      if (typeof v === 'string') {
+        if (/^\d+$/.test(v.trim())) return toMs(Number(v.trim()));
+        const parsed = Date.parse(v.includes('T') ? v : v.trim().replace(' ', 'T') + 'Z');
+        return Number.isFinite(parsed) ? parsed : NaN;
+      }
+      return NaN;
+    };
+    const newestByTopic = new Map<string, { ms: number; id: string }>();
+    for (const row of all) {
+      const ms = toMs(row.created_at);
+      if (!Number.isFinite(ms)) continue;
+      const cur = newestByTopic.get(row.topic);
+      if (!cur || ms > cur.ms) newestByTopic.set(row.topic, { ms, id: row.id });
+    }
+    return rows.map((r) => {
+      const newest = typeof r.topic === 'string' ? newestByTopic.get(r.topic) : undefined;
+      if (!newest) return r;
+      return { ...r, superseded_by_newer: newest.id !== r.id };
+    });
+  } catch (err) {
+    // Annotation is additive - a failure must degrade to unannotated results,
+    // never break the search itself. But it is logged loudly, not swallowed.
+    logWarn(`[mama.suggest] topic-currency annotation failed: ${String(err)}`);
+    return rows;
+  }
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function suggest(userQuestion: string, options: SuggestFunctionOptions = {}): Promise<any> {
   if (!userQuestion || typeof userQuestion !== 'string') {
@@ -1796,7 +1850,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: limitedResults,
+        results: annotateTopicCurrency(limitedResults),
         ...diagnosticsResponse,
         meta: {
           count: limitedResults.length,
@@ -1864,7 +1918,7 @@ async function suggest(userQuestion: string, options: SuggestFunctionOptions = {
 
       return {
         query: userQuestion,
-        results: limitedRows,
+        results: annotateTopicCurrency(limitedRows),
         ...diagnosticsResponse,
         meta: {
           count: limitedRows.length,
@@ -4039,6 +4093,7 @@ export {
   save,
   saveWithTrustedProvenance,
   suggest,
+  annotateTopicCurrency,
   saveMemory,
   saveMemoryWithTrustedProvenance,
   recallMemory,

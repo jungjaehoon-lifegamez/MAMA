@@ -140,6 +140,9 @@ async function buildPrompt(condition, item) {
       reasoning: r.reasoning,
       confidence: r.confidence,
       created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      // Topic-currency marking from the repaired pipeline: true = a newer
+      // decision exists for this topic (this row is superseded history).
+      superseded_by_newer: r.superseded_by_newer ?? null,
     }))
     return (
       `${PREAMBLE}\n\nBelow is what the memory system returned for this question:\n\n` +
