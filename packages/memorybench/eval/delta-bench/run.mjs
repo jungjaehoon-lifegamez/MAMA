@@ -189,7 +189,9 @@ async function buildPrompt(condition, item) {
     const res = await mamaApi.suggest(query, { limit: 5 })
     if (!res || !Array.isArray(res.results)) {
       throw new Error(
-        `suggest() returned unexpected shape for "${query}": ${JSON.stringify(res).slice(0, 200)}`
+        // Guard: JSON.stringify(undefined) === undefined, so slice() would throw
+        // a TypeError and mask the real "unexpected shape" error.
+        `suggest() returned unexpected shape for "${query}": ${String(JSON.stringify(res)).slice(0, 200)}`
       )
     }
     const hits = res.results.map((r) => ({
@@ -217,7 +219,9 @@ async function buildPrompt(condition, item) {
     const res = await mamaApi.suggest(query, { limit: 5 })
     if (!res || !Array.isArray(res.results)) {
       throw new Error(
-        `suggest() returned unexpected shape for "${query}": ${JSON.stringify(res).slice(0, 200)}`
+        // Guard: JSON.stringify(undefined) === undefined, so slice() would throw
+        // a TypeError and mask the real "unexpected shape" error.
+        `suggest() returned unexpected shape for "${query}": ${String(JSON.stringify(res)).slice(0, 200)}`
       )
     }
     const topics = []
