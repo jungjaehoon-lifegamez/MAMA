@@ -506,6 +506,38 @@ function looksEntityLike(query: string): boolean {
   return /\b[A-Z][A-Za-z0-9_-]{2,}\b/.test(query) || /[#/][A-Za-z0-9_-]{2,}/.test(query);
 }
 
+/**
+ * Boost for how strongly a query matches a record's TOPIC (identity field).
+ * Scaled to dominate normalized BM25 scores (0-1 range): a query whose every
+ * token hits the topic is topic-anchored and must outrank body-text matches
+ * (delta-bench: before this, a topic string failed to surface its own rows in
+ * top-5 for 42.5% of chains - present in the candidate pool, buried by rank).
+ */
+export function topicAffinityBoost(
+  topic: string,
+  tokens: string[],
+  normalizedQuery: string
+): number {
+  if (tokens.length === 0) {
+    return 0;
+  }
+  const topicText = topic.toLowerCase().replace(/_/g, ' ');
+  // Word-boundary matching (exact word or stem-prefix), not raw substring:
+  // "sent" must not match inside "consent" - a spurious all-tokens match would
+  // vault an unrelated topic over the whole BM25 range.
+  const topicWords = topicText.split(' ');
+  let topicMatches = 0;
+  for (const token of tokens) {
+    const stem = stemToken(token);
+    if (topicWords.some((word) => word === token || word.startsWith(stem))) {
+      topicMatches += 1;
+    }
+  }
+  const allTokensInTopic = topicMatches === tokens.length;
+  const exact = topicText === normalizedQuery;
+  return (exact ? 1 : 0) + (allTokensInTopic ? 2 : 0) + (topicMatches / tokens.length) * 0.5;
+}
+
 function buildLexicalCandidates(
   records: MemoryRecord[],
   query: string
@@ -530,7 +562,11 @@ function buildLexicalCandidates(
         return count + 1;
       }, 0);
       const phraseBoost = haystack.includes(normalizedQuery) ? 2 : 0;
-      const score = tokenMatches + phraseBoost;
+      // Topic is the identity field: a hit there must outweigh a hit buried in
+      // a long decision text. Scale the shared 0-1 affinity boost up to this
+      // scorer's integer range so a full topic match dominates.
+      const topicBoost = topicAffinityBoost(record.topic, tokens, normalizedQuery) * 5;
+      const score = tokenMatches + phraseBoost + topicBoost;
       return { memory: record, score };
     })
     .filter((candidate) => candidate.score > 0)
@@ -1429,6 +1465,20 @@ export async function recallMemory(
       // FTS5 not available — fall through to in-memory lexical
     }
 
+    // Topic-affinity rescore for FTS5 candidates: the OR-joined FTS query
+    // floods the pool with body-text matches and plain BM25 buries rows whose
+    // TOPIC matches the query (observed: target row present at rank 26/50 in
+    // the pool, cut by the limit-5 slice). RRF consumes this array's ORDER,
+    // so rescoring must happen before fusion.
+    if (lexicalCandidates.length > 0) {
+      const boostTokens = getLexicalQueryTokens(query);
+      const boostQuery = query.toLowerCase();
+      for (const candidate of lexicalCandidates) {
+        candidate.score += topicAffinityBoost(candidate.memory.topic, boostTokens, boostQuery);
+      }
+      lexicalCandidates.sort((left, right) => right.score - left.score);
+    }
+
     // Fallback: in-memory lexical if FTS5 returned nothing
     if (lexicalCandidates.length === 0) {
       let lexicalRecords = await loadLexical();
@@ -2106,13 +2156,23 @@ export async function recallMemory(
         ];
       });
       diagnostics.candidate_counts.graph_expanded = bundle.graph_context.expanded.length;
+      // Graph-expanded hits are supporting context for the primary matches -
+      // they must never OUTRANK them. The previous score ((graph_rank)*0.1,
+      // typically 0.05-0.095) sat far above the entire RRF range (<=~0.018),
+      // so expansion hits displaced every primary hit from the fused top-N
+      // (delta-bench root cause: top-5 filled with related-but-wrong topics
+      // while the queried topic's own rows were cut). Scale them into a band
+      // strictly below the weakest primary hit, ordered by graph rank.
+      const minPrimaryScore =
+        fusedHits.length > 0 ? Math.min(...fusedHits.map((hit) => hit.fused_rank_score)) : 0.002;
       fusedHits = [
         ...fusedHits,
         ...bundle.graph_context.expanded.map((record) => ({
           source_type: 'decision' as const,
           source_id: record.id,
           record,
-          fused_rank_score: (record.confidence ?? 0.5) * 0.1,
+          fused_rank_score:
+            minPrimaryScore * 0.9 * Math.min(1, Math.max(0.1, record.confidence ?? 0.5)),
           retrieval_diagnostics: record.retrieval_diagnostics,
         })),
       ].sort((left, right) => right.fused_rank_score - left.fused_rank_score);
