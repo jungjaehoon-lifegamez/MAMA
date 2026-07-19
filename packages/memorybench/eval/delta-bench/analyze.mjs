@@ -84,6 +84,7 @@ for (const item of qaSet) {
   diags.push({
     itemId: item.id,
     topic: item.topic,
+    qaType: item.qaType || "truth",
     optionCount: item.options.length,
     topicHit: topicRows.length > 0,
     currentPresent: currentIdx >= 0,
@@ -98,38 +99,90 @@ for (const item of qaSet) {
   })
 }
 
-// Chance baseline from actual option counts.
-const chance = diags.reduce((s, d) => s + 1 / d.optionCount, 0) / diags.length
-
-const retrievalStats = {
-  items: diags.length,
-  chanceAccuracy: +chance.toFixed(4),
-  topicHitRate: +(diags.filter((d) => d.topicHit).length / diags.length).toFixed(4),
-  currentPresentRate: +(diags.filter((d) => d.currentPresent).length / diags.length).toFixed(4),
-  currentRank1Rate: +(diags.filter((d) => d.currentRank === 1).length / diags.length).toFixed(4),
-  meanStaleInTop5: +(diags.reduce((s, d) => s + d.staleInTop5, 0) / diags.length).toFixed(2),
+// Retrieval diagnostics over a set of diags (what mama.suggest put in front of
+// the model). currentPresent/rank are truth-oriented but stay informative for
+// lineage items (the current row anchors the topic's chain).
+function computeRetrievalStats(subset) {
+  if (subset.length === 0) {
+    return { items: 0 }
+  }
+  const chance = subset.reduce((s, d) => s + 1 / d.optionCount, 0) / subset.length
+  return {
+    items: subset.length,
+    chanceAccuracy: +chance.toFixed(4),
+    topicHitRate: +(subset.filter((d) => d.topicHit).length / subset.length).toFixed(4),
+    currentPresentRate: +(subset.filter((d) => d.currentPresent).length / subset.length).toFixed(4),
+    currentRank1Rate: +(subset.filter((d) => d.currentRank === 1).length / subset.length).toFixed(
+      4
+    ),
+    meanStaleInTop5: +(subset.reduce((s, d) => s + d.staleInTop5, 0) / subset.length).toFixed(2),
+  }
 }
 
-// mama miss decomposition.
-const mamaMisses = diags.filter((d) => d.conditions.mama && !d.conditions.mama.correct)
-const missRetrieval = mamaMisses.filter((d) => !d.currentPresent).length
-const missChoice = mamaMisses.filter((d) => d.currentPresent).length
+// Per-condition accuracy over a set of diags (uses the correctness joined from
+// results.jsonl). Covers every condition present, including mama-lineage.
+function conditionAccuracy(subset) {
+  const acc = {}
+  for (const d of subset) {
+    for (const [c, r] of Object.entries(d.conditions)) {
+      if (!acc[c]) {
+        acc[c] = { n: 0, correct: 0 }
+      }
+      acc[c].n += 1
+      if (r.correct) {
+        acc[c].correct += 1
+      }
+    }
+  }
+  return Object.fromEntries(
+    Object.entries(acc).map(([c, s]) => [
+      c,
+      { n: s.n, correct: s.correct, accuracy: s.n ? +(s.correct / s.n).toFixed(4) : null },
+    ])
+  )
+}
+
+// mama miss decomposition (retrieval failure vs choice failure) over a subset.
+function mamaMissDecomposition(subset) {
+  const misses = subset.filter((d) => d.conditions.mama && !d.conditions.mama.correct)
+  return {
+    misses: misses.length,
+    retrievalFailure: misses.filter((d) => !d.currentPresent).length,
+    choiceFailureWithCurrentPresent: misses.filter((d) => d.currentPresent).length,
+  }
+}
+
+const qaTypes = [...new Set(diags.map((d) => d.qaType))].sort()
+const byType = {}
+for (const t of qaTypes) {
+  const subset = diags.filter((d) => d.qaType === t)
+  byType[t] = {
+    retrievalStats: computeRetrievalStats(subset),
+    conditionAccuracy: conditionAccuracy(subset),
+    mamaMissDecomposition: mamaMissDecomposition(subset),
+  }
+}
 
 const out = {
-  retrievalStats,
-  mamaMissDecomposition: {
-    misses: mamaMisses.length,
-    retrievalFailure: missRetrieval,
-    choiceFailureWithCurrentPresent: missChoice,
-  },
+  retrievalStats: computeRetrievalStats(diags),
+  conditionAccuracy: conditionAccuracy(diags),
+  mamaMissDecomposition: mamaMissDecomposition(diags),
+  byType,
   items: diags,
 }
 fs.writeFileSync(path.join(resultsDir, "analysis.json"), JSON.stringify(out, null, 2))
 
-console.log("=== retrieval diagnostics (mama.suggest top-5) ===")
-console.log(JSON.stringify(retrievalStats, null, 2))
-console.log("=== mama miss decomposition ===")
+console.log("=== retrieval diagnostics (mama.suggest top-5, all items) ===")
+console.log(JSON.stringify(out.retrievalStats, null, 2))
+console.log("=== condition accuracy (all items) ===")
+console.log(JSON.stringify(out.conditionAccuracy, null, 2))
+console.log("=== mama miss decomposition (all items) ===")
 console.log(
-  `misses=${mamaMisses.length} retrievalFailure(current absent)=${missRetrieval} choiceFailure(current present)=${missChoice}`
+  `misses=${out.mamaMissDecomposition.misses} retrievalFailure(current absent)=${out.mamaMissDecomposition.retrievalFailure} choiceFailure(current present)=${out.mamaMissDecomposition.choiceFailureWithCurrentPresent}`
 )
-console.log(`analysis: ${path.join(resultsDir, "analysis.json")}`)
+for (const t of qaTypes) {
+  console.log(`\n=== per-type: ${t} ===`)
+  console.log("retrieval:", JSON.stringify(byType[t].retrievalStats))
+  console.log("accuracy:", JSON.stringify(byType[t].conditionAccuracy))
+}
+console.log(`\nanalysis: ${path.join(resultsDir, "analysis.json")}`)
