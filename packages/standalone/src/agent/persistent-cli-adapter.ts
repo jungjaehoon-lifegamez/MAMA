@@ -86,6 +86,8 @@ export class PersistentCLIAdapter implements IModelRunner {
       // so the CLI never reloads disk history. Routes this prompt without mutating
       // shared adapter state.
       sessionId?: string;
+      // Per-call request timeout (ms) for a freshly spawned pooled process.
+      requestTimeout?: number;
     }
   ): Promise<PromptResult> {
     // Get or create process for this channel
@@ -101,6 +103,9 @@ export class PersistentCLIAdapter implements IModelRunner {
       useGatewayTools: this.options.useGatewayTools,
       allowedTools: options?.allowedTools || this.options.allowedTools,
       disallowedTools: options?.disallowedTools || this.options.disallowedTools,
+      // Coalesce to the adapter default so an absent per-call value never nulls
+      // out the pool's construction-time requestTimeout (chat runs keep it).
+      requestTimeout: options?.requestTimeout ?? this.options.requestTimeout,
       env: { MAMA_HOOK_FEATURES: 'rules,agents' },
     });
     // Keep the legacy accessor pointing at the most recent process, but NEVER

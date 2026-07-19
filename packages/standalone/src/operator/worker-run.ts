@@ -58,6 +58,39 @@ export interface WorkerRunInput {
 
 const KIND_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
+/** Env override for the worker-run per-request CLI timeout, in whole seconds. */
+export const WORKER_TIMEOUT_ENV = 'MAMA_WORKER_TIMEOUT_SECONDS';
+
+/**
+ * Default worker request timeout: 600s. Worker gather runs (board/wiki briefs)
+ * are long single model turns that overrun the 300s chat request bound - live
+ * shadow evidence killed 8 of 31 orders mid-run at 300s ("CLI error: Request
+ * timeout"). 600s is the plan's original per-kind number, un-dropped by that
+ * evidence.
+ */
+export const DEFAULT_WORKER_TIMEOUT_SECONDS = 600;
+
+/**
+ * Resolve the worker-run per-request CLI timeout in ms. Unset/empty -> the
+ * 600s default; any other value MUST be a positive integer number of seconds.
+ * A malformed value throws (no silent fallback: a typo must not quietly revert
+ * workers to the 300s bound this raise exists to lift). Mirrors the
+ * MAMA_STAGE2_WORKORDERS tri-state precedent (workorder-publishers.ts).
+ */
+export function resolveWorkerRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env[WORKER_TIMEOUT_ENV] ?? '').trim();
+  if (raw === '') {
+    return DEFAULT_WORKER_TIMEOUT_SECONDS * 1000;
+  }
+  const seconds = Number(raw);
+  if (!Number.isInteger(seconds) || seconds <= 0) {
+    throw new Error(
+      `${WORKER_TIMEOUT_ENV} must be a positive integer number of seconds (or unset), got: '${raw}'`
+    );
+  }
+  return seconds * 1000;
+}
+
 /**
  * Worker-specific system prompt (shadow-gate finding §8.2): the spawn-default
  * persona prompt carries code-act sandbox instructions, so worker tool calls
@@ -104,7 +137,12 @@ export async function workerRun(
   const prompt = `${brief.trim()}\n\n---\n\nWork order:\n${input.trim()}`;
 
   const result = await runner.runWithContent([{ type: 'text', text: prompt }], {
-    // runOptions FIRST: identity fields below always win (plan E7/G3).
+    // Raised per-run CLI request timeout for long gather runs. Placed BEFORE
+    // runOptions so an explicit caller override still wins; identity fields
+    // below always win (plan E7/G3). Chat runs never route through workerRun,
+    // so their request bound is untouched.
+    requestTimeoutMs: resolveWorkerRequestTimeoutMs(),
+    // runOptions: identity fields below always win (plan E7/G3).
     ...(runOptions ?? {}),
     sessionKey: buildWorkerSessionKey(kind),
     // freshSession pool reset keys on source+channelId (agent-loop.ts) -
