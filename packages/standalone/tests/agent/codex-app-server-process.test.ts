@@ -3,6 +3,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  symlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -148,7 +149,7 @@ const mode = ${JSON.stringify(mode)};
 const capture = ${JSON.stringify(capture)};
 fs.appendFileSync(capture, JSON.stringify({argv:process.argv.slice(2),home:process.env.HOME,codexHome:process.env.CODEX_HOME,secret:process.env.TEST_SECRET,pid:process.pid})+'\\n');
 if (${JSON.stringify(secret)}) process.stderr.write(${JSON.stringify(secret)}+'\\n');
-const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+const send = value => { const wire = mode === 'no-jsonrpc' ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'jsonrpc')) : value; process.stdout.write(JSON.stringify(wire)+'\\n'); };
 let thread = 'thread-1';
 let turn = 0;
 const fullTurn = (id,status='inProgress',error=null) => ({...${JSON.stringify(turnFixture)},id,status,error,completedAt:status==='inProgress'?null:2,durationMs:status==='inProgress'?null:1});
@@ -160,7 +161,7 @@ rl.on('line', line => {
   if (message.method === 'initialize') {
     if (mode === 'init-timeout') return;
     if (mode === 'null-json') return process.stdout.write('null\\n');
-    if (mode === 'missing-jsonrpc') return send({id:message.id,result:{}});
+    if (mode === 'bad-jsonrpc') return send({jsonrpc:'1.0',id:message.id,result:{}});
     if (mode === 'combined-shape') return send({jsonrpc:'2.0',id:message.id,method:'bad',result:{}});
     if (mode === 'version-only') return send({jsonrpc:'2.0'});
     if (mode === 'result-no-id') return send({jsonrpc:'2.0',result:{}});
@@ -169,6 +170,7 @@ rl.on('line', line => {
     if (mode === 'bad-response') return send({jsonrpc:'2.0',id:message.id});
     if (mode === 'rpc-error') return send({jsonrpc:'2.0',id:message.id,error:{code:-32000,message:'rpc boom'}});
     const initialized=${JSON.stringify(initializeResponse)};
+    if (mode === 'canonical-home') initialized.codexHome = fs.realpathSync(process.env.CODEX_HOME);
     send({jsonrpc:'2.0',id:message.id,result:initialized});
     if (mode === 'unknown-response') setTimeout(()=>send({jsonrpc:'2.0',id:999,result:{}}),5);
     return;
@@ -406,9 +408,27 @@ describe('Story: Codex app-server process', () => {
     expect(third.getStatus()).toMatchObject({ running: false, pendingRequestCount: 0 });
   });
 
+  it('accepts the actual Codex 0.144 wire shape without a jsonrpc member', async () => {
+    const item = fixture('no-jsonrpc');
+    const runner = new CodexAppServerProcess(item.options);
+    await expect(runner.prompt('hi')).resolves.toMatchObject({ response: 'hello' });
+    await runner.stop();
+  });
+
+  it('accepts a canonical CODEX_HOME returned for an equivalent symlink path', async () => {
+    const item = fixture('canonical-home');
+    const realHome = join(item.root, 'real-managed-codex');
+    const aliasHome = join(item.root, 'alias-managed-codex');
+    mkdirSync(realHome);
+    symlinkSync(realHome, aliasHome, 'dir');
+    const runner = new CodexAppServerProcess({ ...item.options, codexHome: aliasHome });
+    await expect(runner.prompt('hi')).resolves.toMatchObject({ response: 'hello' });
+    await runner.stop();
+  });
+
   it.each([
     'null-json',
-    'missing-jsonrpc',
+    'bad-jsonrpc',
     'combined-shape',
     'version-only',
     'result-no-id',
