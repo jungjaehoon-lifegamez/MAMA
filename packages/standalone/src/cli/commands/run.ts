@@ -4,7 +4,7 @@
  * Run a single prompt through the agent loop (for testing)
  */
 
-import { loadConfig, configExists } from '../config/config-manager.js';
+import { initConfig, configExists } from '../config/config-manager.js';
 import { OAuthManager, getClaudeCodeAuthStatus } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 
@@ -34,7 +34,7 @@ export async function runCommand(options: RunOptions): Promise<void> {
   // Load config
   let config;
   try {
-    config = await loadConfig();
+    config = await initConfig();
   } catch (error) {
     console.error(
       `Failed to load configuration: ${error instanceof Error ? error.message : String(error)}\n`
@@ -118,6 +118,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
     console.error(
       `\n❌ Execution failed: ${error instanceof Error ? error.message : String(error)}\n`
     );
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    await agentLoop.stop();
   }
 }
