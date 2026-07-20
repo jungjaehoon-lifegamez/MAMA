@@ -745,6 +745,13 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
   }
 
+  if (
+    config.agent.codex_transport &&
+    !['app-server', 'mcp'].includes(config.agent.codex_transport)
+  ) {
+    errors.push('agent.codex_transport must be "app-server" or "mcp"');
+  }
+
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {
     errors.push('agent.max_turns must be between 1 and 100');
   }

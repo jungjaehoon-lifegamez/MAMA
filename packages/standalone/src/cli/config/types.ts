@@ -221,6 +221,8 @@ export interface AgentConfig {
   tools?: ToolsConfig;
   /** Codex home directory for configuration/cache */
   codex_home?: string;
+  /** Codex communication transport. Defaults to app-server. */
+  codex_transport?: 'app-server' | 'mcp';
   /** Codex working directory */
   codex_cwd?: string;
   /** Codex sandbox mode */

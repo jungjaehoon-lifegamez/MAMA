@@ -340,6 +340,7 @@ export interface MultiAgentRuntimeOptions {
   codexCwd?: string;
   /** Explicit Codex binary/command path (for codex-mcp backend) */
   codexCommand?: string;
+  codexTransport?: 'app-server' | 'mcp';
   /** Codex sandbox mode (for codex-mcp backend) */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
 }

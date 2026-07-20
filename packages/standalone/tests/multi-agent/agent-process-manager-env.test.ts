@@ -95,13 +95,17 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn().mockResolvedValue('# Test Persona\nYou are a test agent.'),
 }));
 
-vi.mock('fs', () => ({
-  existsSync: vi.fn().mockReturnValue(true),
-  readFileSync: vi.fn(() => readFileSyncValue),
-  writeFileSync: vi.fn((path: string, data: string) => {
-    writeFileSyncCalls.push({ path, data });
-  }),
-}));
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn().mockReturnValue(true),
+    readFileSync: vi.fn(() => readFileSyncValue),
+    writeFileSync: vi.fn((path: string, data: string) => {
+      writeFileSyncCalls.push({ path, data });
+    }),
+  };
+});
 
 // Now import modules that depend on mocked child_process
 import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
@@ -432,11 +436,11 @@ describe('AgentProcessManager env vars by tier', () => {
       manager = new AgentProcessManager(config, {}, { model: 'claude-sonnet-4-6' });
 
       const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
-      const runtimeOptions = (
-        runner as unknown as { wrapper: { options: { mcpConfigPath?: string } } }
-      ).wrapper.options;
+      const runtimeOptions = runner as unknown as { options: { mcpConfigPath?: string } };
 
-      expect(runtimeOptions.mcpConfigPath).toContain('code-act-only-mcp-config-dashboard.json');
+      expect(runtimeOptions.options.mcpConfigPath).toContain(
+        'code-act-only-mcp-config-dashboard.json'
+      );
     });
 
     it('fails closed for Code-Act-only agents when the MCP config is invalid', async () => {

@@ -444,7 +444,9 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
   process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
   if (backend === 'codex' || backend === 'codex-mcp') {
-    console.log('✓ Codex-MCP backend (OAuth handled by Codex login)');
+    console.log(
+      `✓ Codex backend (${config.agent.codex_transport ?? 'app-server'} transport; authentication handled by Codex login)`
+    );
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }

@@ -541,6 +541,27 @@ describe('ConfigManager', () => {
       ).toContain('agent.backend must be "claude", "codex", or "codex-mcp"');
     });
 
+    it('should accept supported Codex transports and reject unsupported values', () => {
+      for (const codexTransport of ['app-server', 'mcp'] as const) {
+        expect(
+          validateConfig({
+            ...DEFAULT_CONFIG,
+            agent: { ...DEFAULT_CONFIG.agent, codex_transport: codexTransport },
+          })
+        ).toHaveLength(0);
+      }
+
+      expect(
+        validateConfig({
+          ...DEFAULT_CONFIG,
+          agent: {
+            ...DEFAULT_CONFIG.agent,
+            codex_transport: 'stdio' as 'app-server',
+          },
+        })
+      ).toContain('agent.codex_transport must be "app-server" or "mcp"');
+    });
+
     it('should detect invalid log level', () => {
       const config = {
         ...DEFAULT_CONFIG,

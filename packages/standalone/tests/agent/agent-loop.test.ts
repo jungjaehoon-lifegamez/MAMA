@@ -496,6 +496,23 @@ describe('AgentLoop', () => {
       );
     });
 
+    it('routes Codex prompts with the stable source/channel key', async () => {
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex-mcp', model: 'gpt-5.4', systemPrompt: 'base prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('hello', { source: 'discord', channelId: 'channel-1' });
+
+      expect(persistentPromptMock).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Object),
+        expect.objectContaining({ sessionKey: 'default:default', resumeSession: true })
+      );
+    });
+
     it('restores the default system prompt when a message override is cleared', () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),

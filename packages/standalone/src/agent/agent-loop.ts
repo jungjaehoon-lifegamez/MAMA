@@ -612,6 +612,7 @@ export class AgentLoop {
         mkdirSync(workspaceDir, { recursive: true });
       }
       this.agent = new CodexRuntimeProcess({
+        transport: options.codexTransport,
         model: options.model,
         cwd: workspaceDir,
         sandbox: 'workspace-write',
@@ -1036,14 +1037,6 @@ export class AgentLoop {
       sessionIsNew = true;
       ownedSession = true;
       resolvedCliSessionId = cliSessionId;
-      if (isCodex) {
-        // Codex MCP manages threadId internally and ignores external session ids
-        // (codex-mcp-process.ts:366-369) - the pool reset does NOT reset the codex
-        // thread, so the stateless guarantee does not hold there. Loud, not silent.
-        console.log(
-          '[AgentLoop] freshSession is a pool-level reset only on the codex backend - the codex thread persists (see TODO: codex report thread reset)'
-        );
-      }
       console.log(
         `[AgentLoop] [${isCodex ? 'codex' : 'claude'}] ${channelKey} (FRESH session - stateless lane)`
       );
@@ -1227,7 +1220,9 @@ export class AgentLoop {
         let piResult;
         // Claude: First turn → --session-id (inject system prompt), subsequent → --resume
         // Codex: resumeSession only controls threadId reset (false=new thread, true=continue)
-        const shouldResume = !sessionIsNew || turn > 1;
+        const shouldResume = isCodex
+          ? !(options?.freshSession === true && turn === 1)
+          : !sessionIsNew || turn > 1;
         // Both Claude PersistentCLI and Codex MCP preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
         const promptStart = Date.now();
@@ -1236,6 +1231,7 @@ export class AgentLoop {
             model: options?.model,
             resumeSession: shouldResume,
             systemPrompt: perCallSystemPrompt,
+            sessionKey: channelKey,
             sessionId: resolvedCliSessionId ?? undefined,
             // Per-run request timeout (operator worker runs); undefined leaves
             // the pool's construction-time default untouched (chat).
@@ -1265,7 +1261,7 @@ export class AgentLoop {
             errorMessage.includes('context window') ||
             errorMessage.includes('context_length_exceeded');
 
-          if (isSessionNotFound || isSessionInUse || isPromptTooLong) {
+          if (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong)) {
             const reason = isSessionNotFound
               ? 'not found in CLI'
               : isSessionInUse
@@ -1284,6 +1280,7 @@ export class AgentLoop {
               model: options?.model,
               resumeSession: false, // Force new session
               systemPrompt: perCallSystemPrompt,
+              sessionKey: channelKey,
               sessionId: newSessionId,
               // Carry the per-run timeout onto the reset session too.
               requestTimeout: options?.requestTimeoutMs,
