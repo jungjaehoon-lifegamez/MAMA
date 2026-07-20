@@ -779,9 +779,11 @@ This protects your credentials from being exposed in chat logs.`;
       );
     }
     const roleMaxTurns = agentContext.role.maxTurns;
-    const sessionPolicyFingerprint = isNewCliSession
-      ? this.buildSessionPolicyFingerprint(agentContext, enhanced, roleModel)
-      : undefined;
+    const sessionPolicyFingerprint = this.buildSessionPolicyFingerprint(
+      agentContext,
+      enhanced,
+      roleModel
+    );
 
     // Determine if we should resume an existing CLI session
     // - New CLI session: start with --session-id (inject full system prompt)
