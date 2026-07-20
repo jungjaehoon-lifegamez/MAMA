@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   statSync,
   writeFileSync,
@@ -461,7 +462,7 @@ export class CodexAppServerProcess {
     ) {
       throw new Error('Codex app-server initialize returned a malformed response');
     }
-    if (resolve(initializeResponse.codexHome) !== this.options.codexHome) {
+    if (realpathSync(initializeResponse.codexHome) !== realpathSync(this.options.codexHome)) {
       throw new Error('Codex app-server initialize returned an unexpected CODEX_HOME');
     }
     this.notify('initialized');
@@ -667,7 +668,9 @@ export class CodexAppServerProcess {
       void this.shutdown(error);
       return;
     }
-    if (message.jsonrpc !== '2.0') {
+    // Codex 0.144 accepts JSON-RPC 2.0 requests but omits the `jsonrpc`
+    // member from its responses and notifications on the stdio wire.
+    if (message.jsonrpc !== undefined && message.jsonrpc !== '2.0') {
       const error = new Error('Codex app-server emitted a malformed protocol message');
       this.failAll(error);
       void this.shutdown(error);
