@@ -1,0 +1,710 @@
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { CodexAppServerProcess } from '../../src/agent/codex-app-server-process.js';
+
+const roots: string[] = [];
+
+interface FixtureTurn {
+  id: string;
+  items: unknown[];
+  itemsView: 'full';
+  status: 'completed' | 'interrupted' | 'failed' | 'inProgress';
+  error: { message: string; codexErrorInfo: null; additionalDetails: string | null } | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  durationMs: number | null;
+}
+
+interface FixtureThread {
+  id: string;
+  sessionId: string;
+  forkedFromId: string | null;
+  parentThreadId: string | null;
+  preview: string;
+  ephemeral: boolean;
+  modelProvider: string;
+  createdAt: number;
+  updatedAt: number;
+  recencyAt: number | null;
+  status: { type: 'idle' };
+  path: string | null;
+  cwd: string;
+  cliVersion: string;
+  source: 'appServer';
+  threadSource: string | null;
+  agentNickname: string | null;
+  agentRole: string | null;
+  gitInfo: null;
+  name: string | null;
+  turns: FixtureTurn[];
+}
+
+interface FixtureInitializeResponse {
+  userAgent: string;
+  codexHome: string;
+  platformFamily: string;
+  platformOs: string;
+}
+
+interface FixtureThreadResponse {
+  thread: FixtureThread;
+  model: string;
+  modelProvider: string;
+  serviceTier: string | null;
+  cwd: string;
+  instructionSources: string[];
+  approvalPolicy: 'never';
+  approvalsReviewer: 'user';
+  sandbox: Record<string, unknown>;
+  reasoningEffort: string | null;
+}
+
+function fixtureTurn(): FixtureTurn {
+  return {
+    id: '',
+    items: [],
+    itemsView: 'full',
+    status: 'inProgress',
+    error: null,
+    startedAt: 1,
+    completedAt: null,
+    durationMs: null,
+  };
+}
+
+function fixtureThread(root: string): FixtureThread {
+  return {
+    id: '',
+    sessionId: 'session-1',
+    forkedFromId: null,
+    parentThreadId: null,
+    preview: '',
+    ephemeral: false,
+    modelProvider: 'openai',
+    createdAt: 1,
+    updatedAt: 1,
+    recencyAt: 1,
+    status: { type: 'idle' },
+    path: null,
+    cwd: root,
+    cliVersion: '0.144.0',
+    source: 'appServer',
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    turns: [],
+  };
+}
+
+function fixture(
+  mode = 'success',
+  secret = ''
+): {
+  root: string;
+  command: string;
+  capture: string;
+  options: ConstructorParameters<typeof CodexAppServerProcess>[0];
+} {
+  const root = mkdtempSync(join(tmpdir(), 'mama-codex-process-'));
+  roots.push(root);
+  const command = join(root, 'fake-codex.mjs');
+  const capture = join(root, 'capture.ndjson');
+  const codexHome = join(root, 'managed-codex');
+  const initializeResponse: FixtureInitializeResponse = {
+    userAgent: 'fake',
+    codexHome,
+    platformFamily: 'unix',
+    platformOs: 'macos',
+  };
+  const threadFixture = fixtureThread(root);
+  const turnFixture = fixtureTurn();
+  const responseFixture: Omit<FixtureThreadResponse, 'thread' | 'model' | 'cwd' | 'sandbox'> = {
+    modelProvider: 'openai',
+    serviceTier: null,
+    instructionSources: [],
+    approvalPolicy: 'never',
+    approvalsReviewer: 'user',
+    reasoningEffort: null,
+  };
+  writeFileSync(
+    command,
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+import readline from 'node:readline';
+const mode = ${JSON.stringify(mode)};
+const capture = ${JSON.stringify(capture)};
+fs.appendFileSync(capture, JSON.stringify({argv:process.argv.slice(2),home:process.env.HOME,codexHome:process.env.CODEX_HOME,secret:process.env.TEST_SECRET,pid:process.pid})+'\\n');
+if (${JSON.stringify(secret)}) process.stderr.write(${JSON.stringify(secret)}+'\\n');
+const send = value => process.stdout.write(JSON.stringify(value)+'\\n');
+let thread = 'thread-1';
+let turn = 0;
+const fullTurn = (id,status='inProgress',error=null) => ({...${JSON.stringify(turnFixture)},id,status,error,completedAt:status==='inProgress'?null:2,durationMs:status==='inProgress'?null:1});
+const fullThread = id => ({...${JSON.stringify(threadFixture)},id});
+const rl = readline.createInterface({input:process.stdin});
+rl.on('line', line => {
+  const message = JSON.parse(line);
+  fs.appendFileSync(capture, JSON.stringify(message)+'\\n');
+  if (message.method === 'initialize') {
+    if (mode === 'init-timeout') return;
+    if (mode === 'null-json') return process.stdout.write('null\\n');
+    if (mode === 'missing-jsonrpc') return send({id:message.id,result:{}});
+    if (mode === 'combined-shape') return send({jsonrpc:'2.0',id:message.id,method:'bad',result:{}});
+    if (mode === 'version-only') return send({jsonrpc:'2.0'});
+    if (mode === 'result-no-id') return send({jsonrpc:'2.0',result:{}});
+    if (mode === 'error-no-id') return send({jsonrpc:'2.0',error:{code:-1,message:'bad'}});
+    if (mode === 'id-only') return send({jsonrpc:'2.0',id:message.id});
+    if (mode === 'bad-response') return send({jsonrpc:'2.0',id:message.id});
+    if (mode === 'rpc-error') return send({jsonrpc:'2.0',id:message.id,error:{code:-32000,message:'rpc boom'}});
+    const initialized=${JSON.stringify(initializeResponse)};
+    send({jsonrpc:'2.0',id:message.id,result:initialized});
+    if (mode === 'unknown-response') setTimeout(()=>send({jsonrpc:'2.0',id:999,result:{}}),5);
+    return;
+  }
+  const threadResult = (id,params) => { const sandbox=params.sandbox === 'workspace-write'?{type:'workspaceWrite',writableRoots:[params.cwd],networkAccess:false,excludeTmpdirEnvVar:false,excludeSlashTmp:false}:params.sandbox === 'read-only'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}; const result={...${JSON.stringify(responseFixture)},thread:fullThread(id),model:mode === 'bad-policy'?'unexpected-model':params.model,cwd:params.cwd,instructionSources:fs.existsSync(${JSON.stringify(join(root, 'bad-source'))})?['/outside/AGENTS.md']:[],sandbox}; if(mode==='bad-thread-schema') delete result.thread.sessionId; return result; };
+  if (message.method === 'thread/start') return send({jsonrpc:'2.0',id:message.id,result:threadResult(thread,message.params)});
+  if (message.method === 'thread/resume') return send({jsonrpc:'2.0',id:message.id,result:threadResult(message.params.threadId,message.params)});
+  if (message.method === 'turn/start') {
+    if (mode === 'timeout') return;
+    if (mode === 'timeout-once' && !fs.existsSync(${JSON.stringify(join(root, 'timed-out'))})) { fs.writeFileSync(${JSON.stringify(join(root, 'timed-out'))},'1'); return; }
+    if (mode === 'exit') return process.exit(17);
+    const id = 'turn-'+(++turn);
+    send({jsonrpc:'2.0',id:message.id,result:{turn:mode==='bad-turn-schema'?{id}:fullTurn(id)}});
+    if (mode === 'malformed') return process.stdout.write('{bad json\\n');
+    send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,delta:'missing'}});
+    send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:'prior-turn',delta:'prior'}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,tokenUsage:{last:{inputTokens:99,outputTokens:99}}}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:'prior-turn',tokenUsage:{last:{inputTokens:88,outputTokens:88}}}});
+    send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:'other',turn:fullTurn(id,'completed')}});
+    send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn('wrong-turn','completed')}});
+    send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'inProgress')}});
+    const complete = () => {
+    send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:id,delta:'hello'}});
+    send({jsonrpc:'2.0',method:'thread/tokenUsage/updated',params:{threadId:message.params.threadId,turnId:id,tokenUsage:{last:{inputTokens:3,outputTokens:2,cachedInputTokens:1}}}});
+    const status=mode === 'failed' ? 'failed' : mode === 'interrupted' ? 'interrupted' : 'completed';
+    const error=status==='failed'?{message:'turn boom',codexErrorInfo:null,additionalDetails:null}:null;
+    send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,status,error)}});
+    send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}});
+    if (mode === 'exit-after-turn') setTimeout(() => process.exit(23), 5);
+    };
+    if (mode === 'delayed') { const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release'))})){clearInterval(interval);complete();}},5); } else if(mode === 'unknown-response') setTimeout(complete,20); else complete();
+    return;
+  }
+  if (Object.hasOwn(message, 'result') || Object.hasOwn(message, 'error')) return;
+});
+setTimeout(() => {
+  const requests = [
+    ['item/tool/requestUserInput',{answers:{}}],
+    ['mcpServer/elicitation/request',{action:'decline',content:null,_meta:null}],
+    ['item/tool/call',{success:false,contentItems:[{type:'inputText',text:'Native app-server tools are disabled by MAMA'}]}],
+    ['item/commandExecution/requestApproval',{decision:'decline'}],
+    ['item/fileChange/requestApproval',{decision:'decline'}],
+    ['item/permissions/requestApproval',{permissions:{},scope:'turn',strictAutoReview:true}],
+    ['applyPatchApproval',{decision:'denied'}],
+    ['execCommandApproval',{decision:'denied'}],
+  ];
+  let id = 900;
+  for (const [method] of requests) send({jsonrpc:'2.0',id:id === 900 ? 'request-900' : id,method,params:{}}), id++;
+  send({jsonrpc:'2.0',id:id++,method:'unknown/request',params:{}});
+}, 10);
+process.on('SIGTERM', () => { if (mode !== 'ignore-term') process.exit(0); });
+`,
+    { mode: 0o700 }
+  );
+  chmodSync(command, 0o700);
+  const isolatedHome = join(root, 'isolated-home');
+  const registryRoot = join(root, 'runtime', 'threads');
+  mkdirSync(join(root, 'source-home', '.codex'), { recursive: true });
+  return {
+    root,
+    command,
+    capture,
+    options: {
+      sessionKey: 'session-a',
+      model: 'gpt-test',
+      systemPrompt: 'system rules',
+      cwd: root,
+      sandbox: 'workspace-write',
+      command,
+      requestTimeout: 500,
+      codexHome,
+      isolatedHome,
+      registryRoot,
+    },
+  };
+}
+
+function messages(path: string): Array<Record<string, unknown>> {
+  return readFileSync(path, 'utf8')
+    .trim()
+    .split('\n')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+afterEach(() => {
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
+
+describe('Story: Codex app-server process', () => {
+  it('initializes, starts a durable thread, streams a matching turn, and resumes it', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess(item.options);
+    const result = await first.prompt('hi');
+    expect(result).toMatchObject({
+      response: 'hello',
+      session_id: 'thread-1',
+      usage: { input_tokens: 3, output_tokens: 2, cache_read_input_tokens: 1 },
+    });
+    await first.stop();
+
+    const second = new CodexAppServerProcess(item.options);
+    await expect(second.prompt('again')).resolves.toMatchObject({
+      response: 'hello',
+      usage: { input_tokens: 3, output_tokens: 2 },
+    });
+    await second.stop();
+    const sent = messages(item.capture);
+    expect(sent[0]).toMatchObject({
+      argv: ['app-server', '--strict-config', '--stdio'],
+      home: item.options.isolatedHome,
+      codexHome: item.options.codexHome,
+    });
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        method: 'initialize',
+        params: expect.objectContaining({ capabilities: null }),
+      })
+    );
+    expect(sent).toContainEqual({ jsonrpc: '2.0', method: 'initialized' });
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        method: 'thread/start',
+        params: {
+          model: 'gpt-test',
+          cwd: item.root,
+          approvalPolicy: 'never',
+          sandbox: 'workspace-write',
+          baseInstructions: 'system rules',
+          config: {},
+        },
+      })
+    );
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        method: 'thread/resume',
+        params: expect.objectContaining({ threadId: 'thread-1' }),
+      })
+    );
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        method: 'turn/start',
+        params: expect.objectContaining({
+          input: [{ type: 'text', text: 'hi', text_elements: [] }],
+        }),
+      })
+    );
+  });
+
+  it('answers every headless server request with the exact safe body', async () => {
+    const item = fixture();
+    const process = new CodexAppServerProcess(item.options);
+    await process.prompt('hi');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await process.stop();
+    const replies = messages(item.capture).filter(
+      (entry) => entry.id === 'request-900' || (typeof entry.id === 'number' && entry.id >= 901)
+    );
+    expect(replies[0].id).toBe('request-900');
+    expect(replies.map((entry) => entry.result ?? entry.error)).toEqual([
+      { answers: {} },
+      { action: 'decline', content: null, _meta: null },
+      {
+        success: false,
+        contentItems: [{ type: 'inputText', text: 'Native app-server tools are disabled by MAMA' }],
+      },
+      { decision: 'decline' },
+      { decision: 'decline' },
+      { permissions: {}, scope: 'turn', strictAutoReview: true },
+      { decision: 'denied' },
+      { decision: 'denied' },
+      { code: -32601, message: 'Unsupported app-server request: unknown/request' },
+    ]);
+  });
+
+  it.each(['failed', 'interrupted'])('rejects an explicitly %s turn', async (mode) => {
+    const item = fixture(mode);
+    const process = new CodexAppServerProcess(item.options);
+    await expect(process.prompt('hi')).rejects.toThrow(
+      mode === 'failed' ? 'turn boom' : 'interrupted'
+    );
+    await process.stop();
+  });
+
+  it('rejects malformed stdout and request timeouts without returning empty output', async () => {
+    const malformed = fixture('malformed');
+    const first = new CodexAppServerProcess(malformed.options);
+    await expect(first.prompt('hi')).rejects.toThrow('malformed JSON');
+    await first.stop();
+    const timeout = fixture('timeout');
+    const second = new CodexAppServerProcess({ ...timeout.options, requestTimeout: 40 });
+    await expect(second.prompt('hi')).rejects.toThrow('timed out');
+    await second.stop();
+  });
+
+  it.each(['timeout', 'init-timeout'])(
+    'settles a timed-out %s operation exactly once and leaves no live child',
+    async (mode) => {
+      const item = fixture(mode);
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 35 });
+      let settlements = 0;
+      await runner.prompt('hi').then(
+        () => {
+          settlements += 1;
+        },
+        () => {
+          settlements += 1;
+        }
+      );
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(settlements).toBe(1);
+      expect(() => process.kill(Number(messages(item.capture)[0].pid), 0)).toThrow();
+      expect(runner.getStatus()).toMatchObject({
+        running: false,
+        pendingRequestCount: 0,
+        hasActiveTurn: false,
+        stdoutListenerCount: 0,
+        stderrListenerCount: 0,
+        shutdownTimerActive: false,
+      });
+    }
+  );
+
+  it('rejects malformed protocol responses and unexpected process exits', async () => {
+    const malformed = fixture('bad-response');
+    const first = new CodexAppServerProcess(malformed.options);
+    await expect(first.prompt('hi')).rejects.toThrow('malformed protocol');
+    expect(first.getStatus().running).toBe(false);
+    const exited = fixture('exit');
+    const second = new CodexAppServerProcess(exited.options);
+    await expect(second.prompt('hi')).rejects.toThrow('exited (17)');
+    await second.stop();
+    const rpc = fixture('rpc-error');
+    const third = new CodexAppServerProcess(rpc.options);
+    await expect(third.prompt('hi')).rejects.toThrow('rpc boom');
+    expect(third.getStatus()).toMatchObject({ running: false, pendingRequestCount: 0 });
+  });
+
+  it.each([
+    'null-json',
+    'missing-jsonrpc',
+    'combined-shape',
+    'version-only',
+    'result-no-id',
+    'error-no-id',
+    'id-only',
+  ])('cleans up automatically for malformed protocol shape %s', async (mode) => {
+    const item = fixture(mode);
+    const runner = new CodexAppServerProcess(item.options);
+    await expect(runner.prompt('hi')).rejects.toThrow(/malformed/);
+    expect(() => process.kill(Number(messages(item.capture)[0].pid), 0)).toThrow();
+  });
+
+  it('keeps a turn pending through missing, prior, cross, wrong, and inProgress events', async () => {
+    const item = fixture('delayed');
+    const runner = new CodexAppServerProcess(item.options);
+    let settled = false;
+    const pending = runner.prompt('hi').finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(settled).toBe(false);
+    writeFileSync(join(item.root, 'release'), '1');
+    await expect(pending).resolves.toMatchObject({ response: 'hello', usage: { input_tokens: 3 } });
+    await runner.stop();
+  });
+
+  it('rejects instruction sources outside managed roots independently on start and resume', async () => {
+    const start = fixture();
+    writeFileSync(join(start.root, 'bad-source'), '1');
+    const first = new CodexAppServerProcess(start.options);
+    await expect(first.prompt('hi')).rejects.toThrow('outside managed roots');
+    await first.stop();
+
+    const resume = fixture();
+    const second = new CodexAppServerProcess(resume.options);
+    await second.prompt('hi');
+    await second.stop();
+    writeFileSync(join(resume.root, 'bad-source'), '1');
+    const third = new CodexAppServerProcess(resume.options);
+    await expect(third.prompt('again')).rejects.toThrow('outside managed roots');
+    await third.stop();
+  });
+
+  it('rejects response policy metadata that differs from the requested thread policy', async () => {
+    const item = fixture('bad-policy');
+    const process = new CodexAppServerProcess(item.options);
+    await expect(process.prompt('hi')).rejects.toThrow('response model');
+    await process.stop();
+  });
+
+  it.each(['bad-thread-schema', 'bad-turn-schema'])(
+    'rejects incomplete strict 0.144 %s payloads',
+    async (mode) => {
+      const item = fixture(mode);
+      const runner = new CodexAppServerProcess(item.options);
+      await expect(runner.prompt('hi')).rejects.toThrow(/malformed/);
+      await runner.stop();
+    }
+  );
+
+  it('rejects a response id that does not match a pending client request', async () => {
+    const item = fixture('unknown-response');
+    const runner = new CodexAppServerProcess(item.options);
+    await expect(runner.prompt('hi')).rejects.toThrow('did not match');
+    expect(runner.getStatus()).toMatchObject({ running: false, pendingRequestCount: 0 });
+  });
+
+  it('rejects immutable policy changes until reset and reuses the shared homes', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess(item.options);
+    await first.prompt('hi');
+    await first.stop();
+    const changed = new CodexAppServerProcess({ ...item.options, systemPrompt: 'changed' });
+    await expect(changed.prompt('hi')).rejects.toThrow('policy mismatch');
+    await changed.reset();
+    await changed.prompt('hi');
+    await changed.stop();
+    const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
+    expect(new Set(launches.map((entry) => entry.home))).toEqual(
+      new Set([item.options.isolatedHome])
+    );
+    expect(new Set(launches.map((entry) => entry.codexHome))).toEqual(
+      new Set([item.options.codexHome])
+    );
+  });
+
+  it.each(['model', 'cwd', 'mcp'] as const)(
+    'rejects a persisted %s policy mismatch',
+    async (field) => {
+      const item = fixture();
+      const first = new CodexAppServerProcess(item.options);
+      await first.prompt('hi');
+      await first.stop();
+      const changed = { ...item.options };
+      if (field === 'model') {
+        changed.model = 'different-model';
+      }
+      if (field === 'cwd') {
+        changed.cwd = join(item.root, 'different-cwd');
+        mkdirSync(changed.cwd);
+      }
+      if (field === 'mcp') {
+        changed.mcpConfigPath = join(item.root, 'changed-mcp.json');
+        writeFileSync(
+          changed.mcpConfigPath,
+          JSON.stringify({ mcpServers: { remote: { command: 'node' } } })
+        );
+      }
+      const second = new CodexAppServerProcess(changed);
+      await expect(second.prompt('again')).rejects.toThrow('policy mismatch');
+      await second.stop();
+    }
+  );
+
+  it('keeps MCP secrets out of argv and redacts echoed stderr from errors', async () => {
+    const secret = 'super-secret-token';
+    const item = fixture('exit', secret);
+    const mcpConfigPath = join(item.root, 'mcp.json');
+    const previousSecret = globalThis.process.env.TEST_SECRET;
+    globalThis.process.env.TEST_SECRET = secret;
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({ mcpServers: { remote: { command: 'node', env_vars: ['TEST_SECRET'] } } })
+    );
+    const process = new CodexAppServerProcess({ ...item.options, mcpConfigPath });
+    let message = '';
+    try {
+      await process.prompt('hi');
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    } finally {
+      if (previousSecret === undefined) {
+        delete globalThis.process.env.TEST_SECRET;
+      } else {
+        globalThis.process.env.TEST_SECRET = previousSecret;
+      }
+    }
+    await process.stop();
+    expect(message).toContain('[REDACTED]');
+    expect(message).not.toContain(secret);
+    expect(JSON.stringify(messages(item.capture)[0].argv)).not.toContain(secret);
+  });
+
+  it('redacts generated HTTP-header environment values without redacting arbitrary env', async () => {
+    const secret = 'generated-header-secret';
+    const item = fixture('exit', secret);
+    const mcpConfigPath = join(item.root, 'http-mcp.json');
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          remote: {
+            url: 'https://mcp.example.test',
+            http_headers: { Authorization: secret },
+          },
+        },
+      })
+    );
+    const runner = new CodexAppServerProcess({ ...item.options, mcpConfigPath });
+    let message = '';
+    try {
+      await runner.prompt('hi');
+    } catch (error: unknown) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    await runner.stop();
+    expect(message).toContain('[REDACTED]');
+    expect(message).not.toContain(secret);
+    expect(JSON.stringify(messages(item.capture)[0].argv)).not.toContain(secret);
+  });
+
+  it('writes stable private shared config and non-empty auth atomically', async () => {
+    const item = fixture();
+    const sourceHome = join(item.root, 'source-home');
+    writeFileSync(join(sourceHome, '.codex', 'auth.json'), '{"token":"abc"}');
+    const previousHome = process.env.HOME;
+    process.env.HOME = sourceHome;
+    try {
+      const one = new CodexAppServerProcess({ ...item.options, sessionKey: 'one' });
+      const two = new CodexAppServerProcess({ ...item.options, sessionKey: 'two' });
+      await Promise.all([one.prompt('a'), two.prompt('b')]);
+      await Promise.all([one.stop(), two.stop()]);
+      expect(readFileSync(join(item.options.codexHome!, 'auth.json'), 'utf8')).toContain('abc');
+      expect(readFileSync(join(item.options.codexHome!, 'config.toml'), 'utf8')).toContain(
+        '[features]'
+      );
+      expect(statSync(item.options.codexHome!).mode & 0o777).toBe(0o700);
+      expect(statSync(item.options.isolatedHome!).mode & 0o777).toBe(0o700);
+      expect(statSync(join(item.options.codexHome!, 'config.toml')).mode & 0o777).toBe(0o600);
+      expect(statSync(join(item.options.codexHome!, 'auth.json')).mode & 0o777).toBe(0o600);
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+
+  it('force-kills a child that ignores SIGTERM within a bounded grace period', async () => {
+    const item = fixture('ignore-term');
+    const process = new CodexAppServerProcess(item.options);
+    await process.prompt('hi');
+    const started = Date.now();
+    await process.stop();
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(() => globalThis.process.kill(Number(messages(item.capture)[0].pid), 0)).toThrow();
+    expect(process.getStatus()).toMatchObject({
+      running: false,
+      pendingRequestCount: 0,
+      hasActiveTurn: false,
+      stdoutListenerCount: 0,
+      stderrListenerCount: 0,
+      shutdownTimerActive: false,
+    });
+  });
+
+  it('restarts before the next turn when source authentication changes', async () => {
+    const item = fixture();
+    const sourceHome = join(item.root, 'source-home');
+    const authPath = join(sourceHome, '.codex', 'auth.json');
+    const previousHome = process.env.HOME;
+    process.env.HOME = sourceHome;
+    try {
+      writeFileSync(authPath, '{"token":"first-auth-token"}');
+      const runner = new CodexAppServerProcess(item.options);
+      await runner.prompt('first');
+      writeFileSync(authPath, '{"token":"second-auth-token"}');
+      await runner.prompt('second');
+      await runner.stop();
+      const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
+      expect(launches).toHaveLength(2);
+      expect(readFileSync(join(item.options.codexHome!, 'auth.json'), 'utf8')).toContain(
+        'second-auth-token'
+      );
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+
+  it.each(['absent', 'empty'])(
+    'restarts when authentication changes from %s to present',
+    async (state) => {
+      const item = fixture();
+      const sourceHome = join(item.root, 'source-home');
+      const authPath = join(sourceHome, '.codex', 'auth.json');
+      if (state === 'empty') {
+        writeFileSync(authPath, '');
+      }
+      const previousHome = process.env.HOME;
+      process.env.HOME = sourceHome;
+      try {
+        const runner = new CodexAppServerProcess(item.options);
+        await runner.prompt('first');
+        writeFileSync(authPath, '{"token":"now-present"}');
+        await runner.prompt('second');
+        await runner.stop();
+        expect(messages(item.capture).filter((entry) => Array.isArray(entry.argv))).toHaveLength(2);
+      } finally {
+        process.env.HOME = previousHome;
+      }
+    }
+  );
+
+  it.each(['exit-after-turn', 'timeout-once'])(
+    'resumes the persisted thread after %s before starting the next turn',
+    async (mode) => {
+      const item = fixture(mode);
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 200 });
+      if (mode === 'exit-after-turn') {
+        await runner.prompt('first');
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      } else {
+        await expect(runner.prompt('first')).rejects.toThrow('timed out');
+      }
+      await expect(runner.prompt('second')).resolves.toMatchObject({ response: 'hello' });
+      await runner.stop();
+      const sent = messages(item.capture);
+      const resumeIndex = sent.findIndex((entry) => entry.method === 'thread/resume');
+      const secondTurnIndex = sent.findLastIndex((entry) => entry.method === 'turn/start');
+      expect(resumeIndex).toBeGreaterThan(-1);
+      expect(resumeIndex).toBeLessThan(secondTurnIndex);
+    }
+  );
+
+  it('does not overwrite managed authentication when the source is missing', async () => {
+    const item = fixture();
+    mkdirSync(item.options.codexHome!, { recursive: true });
+    writeFileSync(join(item.options.codexHome!, 'auth.json'), '{"token":"keep-me"}');
+    const emptyHome = join(item.root, 'empty-source-home');
+    mkdirSync(emptyHome);
+    const previousHome = process.env.HOME;
+    process.env.HOME = emptyHome;
+    try {
+      const runner = new CodexAppServerProcess(item.options);
+      await runner.prompt('hi');
+      await runner.stop();
+      expect(readFileSync(join(item.options.codexHome!, 'auth.json'), 'utf8')).toContain('keep-me');
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+});
