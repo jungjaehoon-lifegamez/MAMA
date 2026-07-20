@@ -386,7 +386,7 @@ export class AgentProcessManager extends EventEmitter {
         return existing;
       }
 
-      const runner = this.createCodexRunner(options);
+      const runner = this.createCodexRunner(options, channelKey);
       this.codexProcessPool.set(channelKey, runner);
       this.emit('process-created', { agentId, process: runner });
       return runner;
@@ -424,8 +424,13 @@ export class AgentProcessManager extends EventEmitter {
    * Claude runners are managed by PersistentProcessPool (returned separately).
    * Codex runners are created here as standalone instances.
    */
-  private createCodexRunner(options: Partial<PersistentProcessOptions>): AgentRuntimeProcess {
+  private createCodexRunner(
+    options: Partial<PersistentProcessOptions>,
+    sessionKey: string
+  ): AgentRuntimeProcess {
     return new CodexRuntimeProcess({
+      defaultSessionKey: sessionKey,
+      transport: this.runtimeOptions.codexTransport,
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
       cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,

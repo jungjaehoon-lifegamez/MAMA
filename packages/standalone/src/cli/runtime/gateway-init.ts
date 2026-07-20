@@ -84,6 +84,7 @@ export async function initGateways(
     effort: config.agent.effort,
     requestTimeout: config.agent.timeout,
     codexCommand: process.env.MAMA_CODEX_COMMAND || process.env.CODEX_COMMAND,
+    codexTransport: config.agent.codex_transport,
     codexCwd: config.agent.codex_cwd,
     codexSandbox: config.agent.codex_sandbox,
   };

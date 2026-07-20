@@ -129,6 +129,7 @@ export function initMainAgentLoop(
     oauthManager,
     {
       backend: runtimeBackend,
+      codexTransport: config.agent.codex_transport,
       model: config.agent.model,
       timeoutMs: config.agent.timeout,
       maxTurns: config.agent.max_turns,

@@ -64,8 +64,8 @@ export async function statusCommand(): Promise<void> {
       const config = await loadConfig();
       const backend = config.agent.backend;
       console.log(`Backend: ${backend}`);
-      if (backend === 'codex-mcp') {
-        console.log('Codex MCP backend: Uses MCP protocol for Codex communication');
+      if (backend === 'codex' || backend === 'codex-mcp') {
+        console.log(`Codex transport: ${config.agent.codex_transport ?? 'app-server'}`);
       } else {
         const authStatus = getClaudeCodeAuthStatus();
         process.stdout.write('Claude Code auth: ');
@@ -85,41 +85,41 @@ export async function statusCommand(): Promise<void> {
           console.log(summary);
         } else {
           try {
-          const oauthManager = new OAuthManager();
-          const tokenStatus = await oauthManager.getStatus();
+            const oauthManager = new OAuthManager();
+            const tokenStatus = await oauthManager.getStatus();
 
-          if (tokenStatus.valid) {
-            const expiresIn = tokenStatus.expiresIn;
-            if (expiresIn !== null) {
-              const hours = Math.floor(expiresIn / 3600);
-              const minutes = Math.floor((expiresIn % 3600) / 60);
-              if (hours > 0) {
-                console.log(`Valid (${hours}h ${minutes}m remaining)`);
+            if (tokenStatus.valid) {
+              const expiresIn = tokenStatus.expiresIn;
+              if (expiresIn !== null) {
+                const hours = Math.floor(expiresIn / 3600);
+                const minutes = Math.floor((expiresIn % 3600) / 60);
+                if (hours > 0) {
+                  console.log(`Valid (${hours}h ${minutes}m remaining)`);
+                } else {
+                  console.log(`Valid (${minutes}m remaining)`);
+                }
               } else {
-                console.log(`Valid (${minutes}m remaining)`);
+                console.log('Valid');
+              }
+
+              if (tokenStatus.needsRefresh) {
+                console.log('  ⚠️  Refresh needed soon');
+              }
+
+              if (tokenStatus.subscriptionType) {
+                console.log(`Subscription type: ${tokenStatus.subscriptionType}`);
               }
             } else {
-              console.log('Valid');
+              console.log('Invalid ❌');
+              if (tokenStatus.error) {
+                console.log(`  Error: ${tokenStatus.error}`);
+              }
+              console.log('  Please log in to Claude Code again.');
             }
-
-            if (tokenStatus.needsRefresh) {
-              console.log('  ⚠️  Refresh needed soon');
-            }
-
-            if (tokenStatus.subscriptionType) {
-              console.log(`Subscription type: ${tokenStatus.subscriptionType}`);
-            }
-          } else {
-            console.log('Invalid ❌');
-            if (tokenStatus.error) {
-              console.log(`  Error: ${tokenStatus.error}`);
-            }
-            console.log('  Please log in to Claude Code again.');
+          } catch (error) {
+            console.log('Check failed ❌');
+            console.log(`  ${error instanceof Error ? error.message : String(error)}`);
           }
-        } catch (error) {
-          console.log('Check failed ❌');
-          console.log(`  ${error instanceof Error ? error.message : String(error)}`);
-        }
         }
       }
 

@@ -952,6 +952,8 @@ export interface AgentLoopOptions {
    * Required at construction time (validated by config-manager)
    */
   backend?: 'claude' | 'codex' | 'codex-mcp';
+  /** Codex transport selector; ignored by the Claude backend. */
+  codexTransport?: 'app-server' | 'mcp';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** User identifier for the frontdoor message source */

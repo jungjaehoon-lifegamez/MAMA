@@ -174,9 +174,14 @@ describe('ModelRunner types', () => {
   describe('PromptOptions', () => {
     it('should be optional fields', () => {
       const empty: PromptOptions = {};
-      const full: PromptOptions = { model: 'claude-sonnet-4-6', resumeSession: true };
+      const full: PromptOptions = {
+        model: 'claude-sonnet-4-6',
+        resumeSession: true,
+        sessionKey: 'discord:channel-1',
+      };
       expect(empty.model).toBeUndefined();
       expect(full.resumeSession).toBe(true);
+      expect(full.sessionKey).toBe('discord:channel-1');
     });
   });
 });
