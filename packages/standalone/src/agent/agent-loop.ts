@@ -2097,7 +2097,7 @@ export class AgentLoop {
 
     try {
       // Stop the model runner
-      this.agent.stop();
+      await this.agent.stop();
 
       const waitUntil = Date.now() + 5000;
       while (this.laneManager.getTotalQueueSize() > 0 && Date.now() < waitUntil) {

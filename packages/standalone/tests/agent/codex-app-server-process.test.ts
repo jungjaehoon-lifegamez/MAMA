@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { CodexAppServerProcess } from '../../src/agent/codex-app-server-process.js';
+import { CodexRuntimeProcess } from '../../src/multi-agent/runtime-process.js';
 
 const roots: string[] = [];
 
@@ -496,15 +497,13 @@ describe('Story: Codex app-server process', () => {
     expect(runner.getStatus()).toMatchObject({ running: false, pendingRequestCount: 0 });
   });
 
-  it('rejects immutable policy changes until reset and reuses the shared homes', async () => {
+  it('resumes after a rebuilt system prompt and reuses the shared homes', async () => {
     const item = fixture();
     const first = new CodexAppServerProcess(item.options);
     await first.prompt('hi');
     await first.stop();
     const changed = new CodexAppServerProcess({ ...item.options, systemPrompt: 'changed' });
-    await expect(changed.prompt('hi')).rejects.toThrow('policy mismatch');
-    await changed.reset();
-    await changed.prompt('hi');
+    await expect(changed.prompt('hi')).resolves.toMatchObject({ response: 'hello' });
     await changed.stop();
     const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
     expect(new Set(launches.map((entry) => entry.home))).toEqual(
@@ -513,6 +512,70 @@ describe('Story: Codex app-server process', () => {
     expect(new Set(launches.map((entry) => entry.codexHome))).toEqual(
       new Set([item.options.codexHome])
     );
+    expect(
+      messages(item.capture).some(
+        (entry) => entry.method === 'thread/resume' && entry.params?.threadId === 'thread-1'
+      )
+    ).toBe(true);
+  });
+
+  it('forwards accepted agent message deltas while collecting the final response', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess(item.options);
+    const deltas: string[] = [];
+    const result = await (
+      runner as unknown as {
+        prompt(text: string, callbacks: { onDelta(text: string): void }): Promise<PromptResult>;
+      }
+    ).prompt('hi', { onDelta: (text) => deltas.push(text) });
+
+    expect(deltas).toEqual(['hello']);
+    expect(result.response).toBe('hello');
+    await runner.stop();
+  });
+
+  it('forwards app-server deltas through the production runtime adapter', async () => {
+    const item = fixture();
+    const runtime = new CodexRuntimeProcess({ transport: 'app-server', ...item.options });
+    const deltas: string[] = [];
+
+    const result = await runtime.prompt('hi', { onDelta: (text) => deltas.push(text) });
+
+    expect(deltas).toEqual(['hello']);
+    expect(result.response).toBe('hello');
+    await runtime.stop();
+  });
+
+  it('evicts the least recently used app-server process at the configured bound', async () => {
+    const item = fixture();
+    const runtime = new CodexRuntimeProcess({
+      transport: 'app-server',
+      ...item.options,
+      maxAppServerProcesses: 2,
+    } as ConstructorParameters<typeof CodexRuntimeProcess>[0] & {
+      maxAppServerProcesses: number;
+    });
+
+    for (const sessionKey of ['one', 'two', 'three']) {
+      await runtime.prompt('hi', undefined, { sessionKey });
+    }
+
+    const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
+    expect(launches).toHaveLength(3);
+    expect(() => process.kill(Number(launches[0].pid), 0)).toThrow();
+    expect(() => process.kill(Number(launches[2].pid), 0)).not.toThrow();
+    await runtime.stop();
+  });
+
+  it('awaits app-server child termination before runtime stop resolves', async () => {
+    const item = fixture('ignore-term');
+    const runtime = new CodexRuntimeProcess({ transport: 'app-server', ...item.options });
+    await runtime.prompt('hi');
+    const launch = messages(item.capture).find((entry) => Array.isArray(entry.argv));
+
+    await runtime.stop();
+
+    expect(() => process.kill(Number(launch?.pid), 0)).toThrow();
   });
 
   it.each(['model', 'cwd', 'mcp'] as const)(

@@ -14,7 +14,7 @@ import type { IModelRunner, RunnerMetrics, PromptOptions } from '../agent/model-
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
   isReady(): boolean;
-  stop(): void;
+  stop(): void | Promise<void>;
   getSessionId?(): string;
   on(event: 'idle' | 'close' | 'error', listener: (...args: unknown[]) => void): this;
 }
@@ -30,6 +30,7 @@ export interface CodexRuntimeProcessOptions {
   codexHome?: string;
   isolatedHome?: string;
   registryRoot?: string;
+  maxAppServerProcesses?: number;
   mcpConfigPath?: string;
   command?: string;
   // Legacy options (from old CLI approach - some may not be supported in MCP mode)
@@ -55,6 +56,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
   private readonly transport: 'app-server' | 'mcp';
   private readonly mcpWrapper: CodexMCPProcess | undefined;
   private readonly appRunners = new Map<string, CodexAppServerProcess>();
+  private readonly maxAppServerProcesses: number;
   private defaultSessionKey: string;
   private systemPrompt: string;
   private state: 'idle' | 'busy' | 'dead' = 'idle';
@@ -70,6 +72,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     super();
     this.options = { ...options };
     this.transport = options.transport ?? 'app-server';
+    this.maxAppServerProcesses = Math.max(1, Math.floor(options.maxAppServerProcesses ?? 8));
     this.defaultSessionKey = options.defaultSessionKey ?? 'default';
     this.systemPrompt = options.systemPrompt ?? '';
     if (this.transport === 'mcp') {
@@ -129,7 +132,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
       const normalized =
         this.transport === 'mcp'
           ? await this.promptMcp(content, callbacks, promptOptions)
-          : await this.promptAppServer(content, promptOptions);
+          : await this.promptAppServer(content, callbacks, promptOptions);
 
       this._totalLatencyMs += Date.now() - startTime;
       callbacks?.onFinal?.({ content: normalized.response, toolUseBlocks: [] });
@@ -179,11 +182,25 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
 
   private async promptAppServer(
     content: string,
+    callbacks: ClaudePromptCallbacks | undefined,
     options: PromptOptions | undefined
   ): Promise<ClaudePromptResult> {
     const sessionKey = options?.sessionKey ?? options?.sessionId ?? this.defaultSessionKey;
     let runner = this.appRunners.get(sessionKey);
+    if (runner) {
+      this.appRunners.delete(sessionKey);
+      this.appRunners.set(sessionKey, runner);
+    }
     if (!runner) {
+      if (this.appRunners.size >= this.maxAppServerProcesses) {
+        const oldest = this.appRunners.entries().next().value as
+          | [string, CodexAppServerProcess]
+          | undefined;
+        if (oldest) {
+          this.appRunners.delete(oldest[0]);
+          await oldest[1].stop();
+        }
+      }
       runner = new CodexAppServerProcess({
         sessionKey,
         model: options?.model ?? this.options.model ?? 'gpt-5.4',
@@ -202,7 +219,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     if (options?.resumeSession === false) {
       await runner.reset();
     }
-    return runner.prompt(content);
+    return runner.prompt(content, callbacks);
   }
 
   // ─── IModelRunner session management ───────────────────────────────────
@@ -237,14 +254,13 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     };
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stoppedDuringExecution = this.state === 'busy';
     this.state = 'dead';
     this.mcpWrapper?.stop();
-    for (const runner of this.appRunners.values()) {
-      void runner.stop();
-    }
+    const shutdowns = [...this.appRunners.values()].map((runner) => runner.stop());
     this.appRunners.clear();
+    await Promise.all(shutdowns);
     this.emit('close', 0);
   }
 

@@ -16,6 +16,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 
 import type { PromptResult } from './model-runner.js';
+import type { PromptCallbacks } from './types.js';
 import {
   buildCodexAppServerLaunchConfig,
   buildMAMACodexAppServerConfig,
@@ -62,6 +63,7 @@ interface PendingTurn {
   usage: PromptResult['usage'];
   timer: NodeJS.Timeout;
   queuedNotifications: Array<{ method: string; params: unknown }>;
+  onDelta?: (text: string) => void;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
 }
@@ -311,7 +313,7 @@ export class CodexAppServerProcess {
     this.registry = new CodexThreadRegistry({ rootDir: this.options.registryRoot });
   }
 
-  async prompt(text: string): Promise<PromptResult> {
+  async prompt(text: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
     if (this.stopped) {
       throw new Error('Codex app-server process is stopped');
     }
@@ -330,7 +332,7 @@ export class CodexAppServerProcess {
       if (!this.threadId) {
         await this.openThread(launch);
       }
-      return await this.startTurn(text);
+      return await this.startTurn(text, callbacks);
     } catch (error: unknown) {
       if (this.shutdownPromise) {
         await this.shutdownPromise;
@@ -388,7 +390,6 @@ export class CodexAppServerProcess {
     const matches =
       record.model === this.options.model &&
       record.cwd === this.options.cwd &&
-      record.systemPromptFingerprint === fingerprintText(this.options.systemPrompt) &&
       record.mcpConfigFingerprint === launch.fingerprint;
     if (!matches) {
       throw new Error('Codex app-server thread policy mismatch; reset the session explicitly');
@@ -579,7 +580,7 @@ export class CodexAppServerProcess {
     }
   }
 
-  private startTurn(text: string): Promise<PromptResult> {
+  private startTurn(text: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
     return new Promise<PromptResult>((resolveTurn, rejectTurn) => {
       const timer = setTimeout(() => {
         const error = new Error(
@@ -595,6 +596,7 @@ export class CodexAppServerProcess {
         usage: { input_tokens: 0, output_tokens: 0 },
         timer,
         queuedNotifications: [],
+        onDelta: callbacks?.onDelta,
         resolve: resolveTurn,
         reject: rejectTurn,
       };
@@ -750,6 +752,11 @@ export class CodexAppServerProcess {
       }
       if (typeof data.delta === 'string') {
         turn.chunks.push(data.delta);
+        try {
+          turn.onDelta?.(data.delta);
+        } catch (error: unknown) {
+          this.failTurn(this.toError(error));
+        }
       }
       return;
     }

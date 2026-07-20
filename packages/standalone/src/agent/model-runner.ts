@@ -140,5 +140,5 @@ export interface IModelRunner {
   getMetrics(): RunnerMetrics;
 
   /** Gracefully stop all processes */
-  stop(): void;
+  stop(): void | Promise<void>;
 }
