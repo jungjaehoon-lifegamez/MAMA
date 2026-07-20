@@ -191,7 +191,7 @@ export class AgentProcessManager extends EventEmitter {
     // 2. Codex processes
     for (const [key, proc] of this.codexProcessPool.entries()) {
       try {
-        proc.stop();
+        void proc.stop();
       } catch {
         // Ignore errors during cleanup
       }
@@ -896,7 +896,7 @@ Respond to messages in a helpful and professional manner.
     this.processPool.stopProcess(channelKey);
     const codexProcess = this.codexProcessPool.get(channelKey);
     if (codexProcess) {
-      codexProcess.stop();
+      void codexProcess.stop();
       this.codexProcessPool.delete(channelKey);
     }
   }
@@ -916,7 +916,7 @@ Respond to messages in a helpful and professional manner.
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.startsWith(prefix)) {
         const process = this.codexProcessPool.get(channelKey);
-        process?.stop();
+        void process?.stop();
         this.codexProcessPool.delete(channelKey);
       }
     }
@@ -937,7 +937,7 @@ Respond to messages in a helpful and professional manner.
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.endsWith(suffix)) {
         const process = this.codexProcessPool.get(channelKey);
-        process?.stop();
+        void process?.stop();
         this.codexProcessPool.delete(channelKey);
       }
     }
@@ -946,12 +946,11 @@ Respond to messages in a helpful and professional manner.
   /**
    * Stop all processes
    */
-  stopAll(): void {
+  async stopAll(): Promise<void> {
     this.processPool.stopAll();
-    for (const process of this.codexProcessPool.values()) {
-      process.stop();
-    }
+    const shutdowns = [...this.codexProcessPool.values()].map((process) => process.stop());
     this.codexProcessPool.clear();
+    await Promise.all(shutdowns);
     this.personaCache.clear();
   }
 
@@ -1060,7 +1059,7 @@ Respond to messages in a helpful and professional manner.
     this.clearPersonaCache(true);
     this.processPool.stopAll();
     for (const process of this.codexProcessPool.values()) {
-      process.stop();
+      void process.stop();
     }
     this.codexProcessPool.clear();
   }

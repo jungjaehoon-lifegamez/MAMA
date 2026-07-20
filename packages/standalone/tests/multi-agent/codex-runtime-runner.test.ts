@@ -62,13 +62,13 @@ describe('CodexRuntimeProcess as IModelRunner', () => {
   });
 
   describe('stop()', () => {
-    it('should emit close event', () => {
+    it('should emit close event after shutdown completes', async () => {
       const process = new CodexRuntimeProcess({});
       let closeFired = false;
       process.on('close', () => {
         closeFired = true;
       });
-      process.stop();
+      await process.stop();
       expect(closeFired).toBe(true);
     });
 

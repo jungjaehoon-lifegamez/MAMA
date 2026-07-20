@@ -821,7 +821,7 @@ export abstract class MultiAgentHandlerBase {
       this.cleanupInterval = null;
     }
     this.backgroundTaskManager.destroy();
-    this.processManager.stopAll();
+    await this.processManager.stopAll();
     await this.platformCleanup();
   }
 }
