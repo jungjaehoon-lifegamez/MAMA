@@ -213,6 +213,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
         isolatedHome: this.options.isolatedHome,
         registryRoot: this.options.registryRoot,
         mcpConfigPath: this.options.mcpConfigPath,
+        policyFingerprint: options?.sessionPolicyFingerprint,
       });
       this.appRunners.set(sessionKey, runner);
     }

@@ -499,10 +499,17 @@ describe('Story: Codex app-server process', () => {
 
   it('resumes after a rebuilt system prompt and reuses the shared homes', async () => {
     const item = fixture();
-    const first = new CodexAppServerProcess(item.options);
+    const first = new CodexAppServerProcess({
+      ...item.options,
+      policyFingerprint: 'stable-policy',
+    });
     await first.prompt('hi');
     await first.stop();
-    const changed = new CodexAppServerProcess({ ...item.options, systemPrompt: 'changed' });
+    const changed = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'changed',
+      policyFingerprint: 'stable-policy',
+    });
     await expect(changed.prompt('hi')).resolves.toMatchObject({ response: 'hello' });
     await changed.stop();
     const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
@@ -517,6 +524,21 @@ describe('Story: Codex app-server process', () => {
         (entry) => entry.method === 'thread/resume' && entry.params?.threadId === 'thread-1'
       )
     ).toBe(true);
+  });
+
+  it('rejects a stable policy fingerprint change even when dynamic prompt resume is allowed', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess({ ...item.options, policyFingerprint: 'policy-one' });
+    await first.prompt('hi');
+    await first.stop();
+    const changed = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'rebuilt with history',
+      policyFingerprint: 'policy-two',
+    });
+
+    await expect(changed.prompt('again')).rejects.toThrow('policy mismatch');
+    await changed.stop();
   });
 
   it('forwards accepted agent message deltas while collecting the final response', async () => {

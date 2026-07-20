@@ -36,6 +36,8 @@ export interface CodexAppServerProcessOptions {
   isolatedHome?: string;
   registryRoot?: string;
   mcpConfigPath?: string;
+  /** Stable identity/rules fingerprint; dynamic conversation context must be excluded. */
+  policyFingerprint?: string;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -278,7 +280,7 @@ export class CodexAppServerProcess {
       | 'isolatedHome'
       | 'registryRoot'
     >
-  > & { mcpConfigPath?: string };
+  > & { mcpConfigPath?: string; policyFingerprint?: string };
   private readonly registry: CodexThreadRegistry;
   private child: ChildProcessWithoutNullStreams | undefined;
   private stdout: ReadlineInterface | undefined;
@@ -390,6 +392,7 @@ export class CodexAppServerProcess {
     const matches =
       record.model === this.options.model &&
       record.cwd === this.options.cwd &&
+      record.systemPromptFingerprint === this.policyFingerprint() &&
       record.mcpConfigFingerprint === launch.fingerprint;
     if (!matches) {
       throw new Error('Codex app-server thread policy mismatch; reset the session explicitly');
@@ -512,9 +515,13 @@ export class CodexAppServerProcess {
       threadId: thread.id,
       model: this.options.model,
       cwd: this.options.cwd,
-      systemPromptFingerprint: fingerprintText(this.options.systemPrompt),
+      systemPromptFingerprint: this.policyFingerprint(),
       mcpConfigFingerprint: launch.fingerprint,
     });
+  }
+
+  private policyFingerprint(): string {
+    return this.options.policyFingerprint ?? fingerprintText(this.options.systemPrompt);
   }
 
   private validateInstructionMetadata(result: JsonObject | undefined): void {

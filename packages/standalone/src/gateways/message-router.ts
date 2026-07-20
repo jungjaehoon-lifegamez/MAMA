@@ -779,6 +779,9 @@ This protects your credentials from being exposed in chat logs.`;
       );
     }
     const roleMaxTurns = agentContext.role.maxTurns;
+    const sessionPolicyFingerprint = isNewCliSession
+      ? this.buildSessionPolicyFingerprint(agentContext, enhanced, roleModel)
+      : undefined;
 
     // Determine if we should resume an existing CLI session
     // - New CLI session: start with --session-id (inject full system prompt)
@@ -840,6 +843,7 @@ This protects your credentials from being exposed in chat logs.`;
       const envelope = this.buildReactiveEnvelope(message);
       const options: AgentLoopOptions = {
         systemPrompt: effectivePrompt,
+        sessionPolicyFingerprint,
         userId: message.userId,
         model: roleModel, // Role-specific model override
         maxTurns: roleMaxTurns, // Role-specific max turns
@@ -1305,6 +1309,26 @@ ${historyContext}
     }
 
     return prompt;
+  }
+
+  private buildSessionPolicyFingerprint(
+    agentContext: AgentContext,
+    enhanced: EnhancedPromptContext,
+    model: string
+  ): string {
+    const soulPath = join(homedir(), '.mama', 'SOUL.md');
+    const baseInstructions = existsSync(soulPath)
+      ? loadComposedSystemPrompt(false, agentContext)
+      : COMPLETE_AUTONOMOUS_PROMPT;
+    return createHash('sha256')
+      .update(baseInstructions)
+      .update('\0')
+      .update(enhanced.agentsContent ?? '')
+      .update('\0')
+      .update(enhanced.rulesContent ?? '')
+      .update('\0')
+      .update(model)
+      .digest('hex');
   }
 
   /**

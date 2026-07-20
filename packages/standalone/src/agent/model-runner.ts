@@ -37,6 +37,8 @@ export interface PromptOptions {
   systemPrompt?: string;
   /** Stable source/channel route used by persistent backends across daemon restarts. */
   sessionKey?: string;
+  /** Stable identity/rules fingerprint, excluding dynamic conversation context. */
+  sessionPolicyFingerprint?: string;
   /**
    * Pool ROUTING key (SessionPool id) for THIS call, NOT the CLI --session-id.
    * The pool spawns processes with its own randomUUID() so the CLI never
