@@ -956,6 +956,8 @@ export interface AgentLoopOptions {
   codexTransport?: 'app-server' | 'mcp';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** Stable identity/rules fingerprint for durable Codex threads. */
+  sessionPolicyFingerprint?: string;
   /** User identifier for the frontdoor message source */
   userId?: string;
   /** Maximum number of conversation turns (default: 10) */

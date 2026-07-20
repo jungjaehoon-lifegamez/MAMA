@@ -1232,6 +1232,7 @@ export class AgentLoop {
             resumeSession: shouldResume,
             systemPrompt: perCallSystemPrompt,
             sessionKey: channelKey,
+            sessionPolicyFingerprint: options?.sessionPolicyFingerprint,
             sessionId: resolvedCliSessionId ?? undefined,
             // Per-run request timeout (operator worker runs); undefined leaves
             // the pool's construction-time default untouched (chat).
@@ -1281,6 +1282,7 @@ export class AgentLoop {
               resumeSession: false, // Force new session
               systemPrompt: perCallSystemPrompt,
               sessionKey: channelKey,
+              sessionPolicyFingerprint: options?.sessionPolicyFingerprint,
               sessionId: newSessionId,
               // Carry the per-run timeout onto the reset session too.
               requestTimeout: options?.requestTimeoutMs,

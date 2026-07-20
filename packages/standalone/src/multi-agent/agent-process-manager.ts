@@ -146,6 +146,7 @@ export class AgentProcessManager extends EventEmitter {
   private config: MultiAgentConfig;
   private processPool: PersistentProcessPool;
   private codexProcessPool: Map<string, AgentRuntimeProcess> = new Map();
+  private codexShutdowns: Map<string, Promise<void>> = new Map();
   private permissionManager: ToolPermissionManager;
   private runtimeOptions: MultiAgentRuntimeOptions;
   private readonly tracePromptMs = globalThis.process.env.MAMA_CONDUCTOR_PROMPT_MS === '1';
@@ -191,7 +192,7 @@ export class AgentProcessManager extends EventEmitter {
     // 2. Codex processes
     for (const [key, proc] of this.codexProcessPool.entries()) {
       try {
-        void proc.stop();
+        this.trackCodexShutdown(key, proc);
       } catch {
         // Ignore errors during cleanup
       }
@@ -381,6 +382,7 @@ export class AgentProcessManager extends EventEmitter {
     // Code-Act: available as optional tool alongside direct tools (no forced disallowedTools)
 
     if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
+      await this.waitForCodexShutdown(channelKey);
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
@@ -896,7 +898,7 @@ Respond to messages in a helpful and professional manner.
     this.processPool.stopProcess(channelKey);
     const codexProcess = this.codexProcessPool.get(channelKey);
     if (codexProcess) {
-      void codexProcess.stop();
+      this.trackCodexShutdown(channelKey, codexProcess);
       this.codexProcessPool.delete(channelKey);
     }
   }
@@ -916,7 +918,9 @@ Respond to messages in a helpful and professional manner.
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.startsWith(prefix)) {
         const process = this.codexProcessPool.get(channelKey);
-        void process?.stop();
+        if (process) {
+          this.trackCodexShutdown(channelKey, process);
+        }
         this.codexProcessPool.delete(channelKey);
       }
     }
@@ -937,7 +941,9 @@ Respond to messages in a helpful and professional manner.
     for (const channelKey of this.codexProcessPool.keys()) {
       if (channelKey.endsWith(suffix)) {
         const process = this.codexProcessPool.get(channelKey);
-        void process?.stop();
+        if (process) {
+          this.trackCodexShutdown(channelKey, process);
+        }
         this.codexProcessPool.delete(channelKey);
       }
     }
@@ -948,9 +954,11 @@ Respond to messages in a helpful and professional manner.
    */
   async stopAll(): Promise<void> {
     this.processPool.stopAll();
-    const shutdowns = [...this.codexProcessPool.values()].map((process) => process.stop());
+    for (const [key, process] of this.codexProcessPool) {
+      this.trackCodexShutdown(key, process);
+    }
     this.codexProcessPool.clear();
-    await Promise.all(shutdowns);
+    await Promise.all(this.codexShutdowns.values());
     this.personaCache.clear();
   }
 
@@ -1058,10 +1066,34 @@ Respond to messages in a helpful and professional manner.
   reloadAllPersonas(): void {
     this.clearPersonaCache(true);
     this.processPool.stopAll();
-    for (const process of this.codexProcessPool.values()) {
-      void process.stop();
+    for (const [key, process] of this.codexProcessPool) {
+      this.trackCodexShutdown(key, process);
     }
     this.codexProcessPool.clear();
+  }
+
+  private trackCodexShutdown(channelKey: string, process: AgentRuntimeProcess): Promise<void> {
+    const prior = this.codexShutdowns.get(channelKey);
+    const shutdown = (prior ? prior.catch(() => undefined) : Promise.resolve())
+      .then(() => process.stop())
+      .catch((error: unknown) => {
+        processManagerLogger.error(
+          `Codex process shutdown failed for ${channelKey}: ${error instanceof Error ? error.message : String(error)}`
+        );
+        throw error;
+      });
+    const tracked = shutdown.finally(() => {
+      if (this.codexShutdowns.get(channelKey) === tracked) {
+        this.codexShutdowns.delete(channelKey);
+      }
+    });
+    void tracked.catch(() => undefined);
+    this.codexShutdowns.set(channelKey, tracked);
+    return tracked;
+  }
+
+  private async waitForCodexShutdown(channelKey: string): Promise<void> {
+    await this.codexShutdowns.get(channelKey);
   }
 
   /**
