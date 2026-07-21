@@ -154,11 +154,15 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     expect(() => ledger.requeueTemporalWorkOrder(claimed.id, 'too many')).toThrow(/budget/);
     ledger.exhaustTemporalWorkOrder(claimed.id, 'no evidence after retries');
 
-    expect(ledger.getTemporalGeneration(input.generationKey)).toMatchObject({
+    const exhausted = ledger.getTemporalGeneration(input.generationKey);
+    expect(exhausted).toMatchObject({
       disposition: 'exhausted',
       lastWorkOrderId: claimed.id,
-      reason: 'no evidence after retries',
     });
+    expect(exhausted?.reason).toMatch(
+      /^temporal-worker-failure;failure_sha256=[a-f0-9]{64};failure_length=25$/
+    );
+    expect(exhausted?.reason).not.toContain('no evidence after retries');
     const duplicate = ledger.enqueueTemporalGeneration(input);
     expect(duplicate.created).toBe(false);
     expect(duplicate.workOrder.id).toBe(claimed.id);
@@ -240,6 +244,37 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     expect(restored.temporalEpoch).toBe(moved.temporalEpoch + 1);
     expect(replacement.generation.generationKey).not.toBe(old.generation.generationKey);
     expect(() => ledger.loadTemporalWorkContext(old.workOrder.id)).toThrow();
+  });
+
+  it.each(['done', 'cancelled'] as const)(
+    'atomically supersedes active temporal ownership when the owner task becomes %s',
+    (status) => {
+      const task = scheduledTask();
+      const active = ledger.enqueueTemporalGeneration(inputFor(task));
+      ledger.claimNextWorkOrder();
+
+      ledger.update(task.id, { status });
+
+      expect(ledger.getWorkOrderById(active.workOrder.id)?.status).toBe('cancelled');
+      expect(ledger.getTemporalGeneration(active.generation.generationKey)?.disposition).toBe(
+        'superseded'
+      );
+    }
+  );
+
+  it('repairs a legacy closed-task active generation instead of blocking arbitration', () => {
+    const task = scheduledTask();
+    const active = ledger.enqueueTemporalGeneration(inputFor(task));
+    const claimed = ledger.claimNextWorkOrder()!;
+    db.prepare(`UPDATE operator_tasks SET status = 'done' WHERE id = ?`).run(task.id);
+
+    expect(ledger.failTemporalWorkOrder(claimed.id, 'legacy closed owner')).toMatchObject({
+      disposition: 'superseded',
+    });
+    expect(ledger.getWorkOrderById(claimed.id)?.status).toBe('cancelled');
+    expect(ledger.getTemporalGeneration(active.generation.generationKey)?.disposition).toBe(
+      'superseded'
+    );
   });
 
   it('reopening a closed task mints a new epoch-qualified generation', () => {

@@ -22,4 +22,21 @@ describe('trigger runtime provider wiring', () => {
 
     expect(startSource).toContain('await triggerAgentRuntime.stop()');
   });
+
+  it('preflights temporal compatibility before initializing timer-bearing services', () => {
+    const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+    const preflight = startSource.indexOf('preflightTemporalStartup(process.env');
+
+    expect(preflight).toBeGreaterThan(0);
+    expect(preflight).toBeLessThan(startSource.indexOf('await initMetrics('));
+    expect(startSource.indexOf('const runtimeBackend = requireRuntimeBackend')).toBeLessThan(
+      startSource.indexOf('await initMetrics(')
+    );
+    expect(startSource.indexOf('const temporalEffectiveTools = temporalPolicy')).toBeLessThan(
+      startSource.indexOf('await initMetrics(')
+    );
+    expect(preflight).toBeLessThan(startSource.indexOf('initCronScheduler('));
+    expect(preflight).toBeLessThan(startSource.indexOf('initHeartbeat('));
+    expect(preflight).toBeLessThan(startSource.indexOf('triggerLoop.start()'));
+  });
 });

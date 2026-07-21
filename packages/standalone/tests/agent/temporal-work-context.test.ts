@@ -78,6 +78,20 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ordinary).not.toHaveProperty('temporalWorkContext');
   });
 
+  it('scopes task_list to the single host-bound owner task', async () => {
+    ledger.create({ title: 'unrelated private owner task' });
+
+    const result = (await executor.execute('task_list', {} as never, executionContext)) as {
+      success: boolean;
+      tasks: Array<{ id: number; title: string }>;
+    };
+
+    expect(result.success).toBe(true);
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0]?.id).toBe(taskId);
+    expect(result.tasks[0]?.title).toBe('temporal authority test');
+  });
+
   it('keeps task_temporal_reconcile unavailable without trusted context', async () => {
     await expect(
       executor.execute('task_temporal_reconcile', {

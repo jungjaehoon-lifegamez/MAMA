@@ -73,13 +73,13 @@ import {
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
-import type { WorkOrderKind } from '../../operator/task-ledger.js';
+import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import { buildTemporalWorkOrderHook } from '../../operator/workorder-hooks.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
   createTemporalRuntime,
-  resolveTemporalReconcileFlag,
+  preflightTemporalStartup,
   type TemporalRuntime,
 } from '../../operator/temporal-runtime.js';
 import { TemporalReconcileScheduler } from '../../operator/temporal-reconcile.js';
@@ -673,7 +673,38 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
-  const startupBackend = config.agent.backend;
+  const temporalStartup = preflightTemporalStartup(process.env, (reason) => {
+    const preflightDbPath = expandPath('~/.mama/operator/triggers.db');
+    mkdirSync(dirname(preflightDbPath), { recursive: true });
+    const preflightDb = new Database(preflightDbPath);
+    try {
+      new TaskLedger(preflightDb).pauseActiveTemporalWork(reason);
+    } finally {
+      preflightDb.close();
+    }
+  });
+
+  const runtimeBackend = requireRuntimeBackend(config.agent.backend);
+  const temporalPolicy =
+    temporalStartup.temporalFlag === 'on'
+      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
+      : null;
+  const temporalEffectiveTools = temporalPolicy
+    ? projectCodeActToolPolicy({
+        tier: requireCodeActTier(temporalPolicy.agentContext.tier),
+        role: temporalPolicy.agentContext.role,
+      }).names
+    : [];
+  const temporalAvailableTools = ToolRegistry.getValidToolNames();
+  if (
+    temporalStartup.temporalFlag === 'on' &&
+    (!temporalEffectiveTools.includes('task_temporal_reconcile') ||
+      !temporalAvailableTools.includes('task_temporal_reconcile'))
+  ) {
+    throw new Error('temporal reconciliation tool policy or transport registry is incompatible');
+  }
+
+  const startupBackend = runtimeBackend;
   const usesCodexBackend = startupBackend === 'codex' || hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
@@ -741,7 +772,6 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   process.env.MAMA_BACKEND = runtimeBackend;
   const agentLoopBackend: 'claude' | 'codex' = runtimeBackend;
 
@@ -1202,7 +1232,6 @@ export async function runAgentLoop(
   const operatorDb = new Database(operatorDbPath);
   let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
   try {
-    const { TaskLedger } = await import('../../operator/task-ledger.js');
     taskLedger = new TaskLedger(operatorDb);
     toolExecutor.setTaskLedger(taskLedger);
   } catch (err) {
@@ -1214,9 +1243,7 @@ export async function runAgentLoop(
   // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
   // registerApiRoutes (which registers the per-kind completion hooks) and
   // started AFTER it - the boot invariant below enforces that ordering.
-  const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
-  const stage2Flag = readStage2Flag();
-  const temporalFlag = resolveTemporalReconcileFlag();
+  const { stage2Flag, temporalFlag } = temporalStartup;
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
@@ -1441,19 +1468,8 @@ export async function runAgentLoop(
     });
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const temporalPolicy =
-    temporalFlag === 'on'
-      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
-      : null;
-  const temporalEffectiveTools = temporalPolicy
-    ? projectCodeActToolPolicy({
-        tier: requireCodeActTier(temporalPolicy.agentContext.tier),
-        role: temporalPolicy.agentContext.role,
-      }).names
-    : [];
-  const temporalAvailableTools =
-    toolExecutor.getTaskLedger() === taskLedger ? ToolRegistry.getValidToolNames() : [];
   temporalRuntime = createTemporalRuntime({
+    flag: temporalFlag,
     stage2Flag,
     backend: runtimeBackend,
     effectiveTools: temporalEffectiveTools,

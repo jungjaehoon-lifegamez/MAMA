@@ -45,6 +45,8 @@ export interface CompileAndPersistContextRequest {
   parentModelRunId?: string | null;
   deadlineMs?: number;
   signal?: AbortSignal;
+  /** Host-only authority guard, rechecked after async compilation and before persistence. */
+  beforePersist?: () => void;
 }
 
 export interface CompileAndPersistContextResult {
@@ -84,6 +86,13 @@ export class ContextCompileServiceError extends Error {
 
 function generatedId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function auditTextRef(value: string): { sha256: string; length: number } {
+  return {
+    sha256: crypto.createHash('sha256').update(value).digest('hex'),
+    length: value.length,
+  };
 }
 
 function asCoreAdapter(adapter: ContextCompileServiceAdapter): CoreAdapter {
@@ -576,7 +585,7 @@ export function createContextCompileService(
           caller: request.caller,
           packet_id: packetId,
           parent_model_run_id: parentModelRunId,
-          task: compileInput.task,
+          task_ref: auditTextRef(compileInput.task),
           scopes: compileInput.scopes,
           connectors: compileInput.connectors,
           project_refs: compileInput.project_refs,
@@ -598,6 +607,7 @@ export function createContextCompileService(
           now,
           packetId: () => packetId,
         });
+        request.beforePersist?.();
         const packet = sanitizeContextPacketForVisibility(
           packetWithServiceIdentity(compiled, packetId)
         );

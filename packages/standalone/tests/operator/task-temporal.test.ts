@@ -30,6 +30,19 @@ describe('Story A2 Task 2: exact temporal normalization', () => {
     expect(() => parseExactDueAt(input)).toThrow(/RFC 3339/);
   });
 
+  it('does not echo rejected exact-time input into errors or operational logs', () => {
+    const privateInput = 'private connector evidence';
+    let message = '';
+    try {
+      parseExactDueAt(privateInput);
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      message = (error as Error).message;
+    }
+    expect(message).toMatch(/RFC 3339/);
+    expect(message).not.toContain(privateInput);
+  });
+
   it('builds epoch-qualified exact and date occurrence keys', () => {
     expect(occurrenceKeyForTask({ temporalEpoch: 3, dueAt: 123, deadlineIso: '2026-07-21' })).toBe(
       'epoch:3:due:123'
@@ -122,6 +135,21 @@ describe('Story A2 Task 2: ledger revision and temporal epoch rules', () => {
         deadline: '2026-07-22',
       })
     ).toThrow(/conflict/);
+    db.close();
+  });
+
+  it('rejects clearing deadline while simultaneously setting an exact due time', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db);
+    const task = ledger.create({ title: 'conflict update' });
+
+    expect(() =>
+      ledger.update(task.id, {
+        deadline: null,
+        due_at: '2026-07-21T14:00:00+09:00',
+      })
+    ).toThrow(/conflict/);
+    expect(ledger.getById(task.id)).toMatchObject({ revision: 1, dueAt: null });
     db.close();
   });
 

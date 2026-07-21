@@ -53,6 +53,59 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(WORKORDER_MAX_ATTEMPTS.temporal).toBe(3);
   });
 
+  it('never writes temporal model response content to operational logs', async () => {
+    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    ctx.ledger.enqueueTemporalGeneration({
+      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    const privateResponse = 'private connector evidence must not reach logs';
+    ctx.deps.runner = { runWithContent: async () => ({ response: privateResponse }) };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    expect(ctx.logs.join('\n')).not.toContain(privateResponse);
+  });
+
+  it('stores and reports only a digest when a temporal runner error is private', async () => {
+    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
+    ctx.ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    const privateError = 'private connector token abc-123';
+    ctx.deps.runner = {
+      runWithContent: async () => Promise.reject(new Error(privateError)),
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    const combined = [
+      ...ctx.logs,
+      ...ctx.notices,
+      ...ctx.activeSends,
+      ...ctx.events.map((event) => event.reason ?? ''),
+      ctx.ledger.getTemporalGeneration(generationKey)?.reason ?? '',
+    ].join('\n');
+    expect(combined).not.toContain(privateError);
+    expect(combined).toContain('sha256=');
+  });
+
   it('routes temporal exhaustion through the generation transaction', async () => {
     const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
     const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
@@ -75,6 +128,8 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`
     );
     expect(generation?.disposition).toBe('exhausted');
+    expect(generation?.reason).toMatch(/^temporal-worker-failure;failure_sha256=[a-f0-9]{64};/);
+    expect(generation?.reason).not.toContain('synthetic');
     expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
   });
 

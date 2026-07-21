@@ -27,6 +27,8 @@
  * or verifier transport failures.
  */
 
+import { createHash } from 'node:crypto';
+
 import {
   TEMPORAL_WORKORDER_MAX_ATTEMPTS,
   type WorkOrderKind,
@@ -315,15 +317,17 @@ export class WorkOrderConsumer {
       }
     }
 
+    if (wo.workKind === 'temporal') {
+      // Temporal responses may contain private task or connector evidence.
+      // The durable receipt is authoritative, so never log model prose here.
+      this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing');
+      return;
+    }
     // Shadow-gate diagnostics (§8.2): the worker's actual output decides
     // whether the tool path works - log a bounded head, never the full body.
     this.log(
       `[workorder-consumer] ${wo.workKind}#${wo.id} response head: ${response.slice(0, 200).replace(/\n/g, ' | ')}`
     );
-    if (wo.workKind === 'temporal') {
-      this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing');
-      return;
-    }
     this.deps.ledger.completeWorkOrder(wo.id);
     this.emitEvent({ type: 'complete', workKind: wo.workKind, workOrderId: wo.id });
     this.log(`[workorder-consumer] completed ${wo.workKind}#${wo.id}`);
@@ -365,11 +369,12 @@ export class WorkOrderConsumer {
 
   /** Durable row+generation+receipt state always wins over runner prose/errors. */
   private arbitrateTemporalAttempt(wo: WorkOrderRecord, reason: string): void {
+    const auditReason = temporalFailureAuditReason(reason);
     let state: TemporalAttemptState;
     try {
       state = this.deps.ledger.inspectTemporalAttempt(wo.id);
     } catch (err) {
-      this.deferTemporalArbitration(wo, reason, err);
+      this.deferTemporalArbitration(wo, auditReason, err);
       return;
     }
 
@@ -394,7 +399,12 @@ export class WorkOrderConsumer {
       state.generation.lastWorkOrderId !== wo.id
     ) {
       this.unresolvedTemporalEffects.delete(wo.id);
-      this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
+      this.emitEvent({
+        type: 'failed',
+        workKind: 'temporal',
+        workOrderId: wo.id,
+        reason: auditReason,
+      });
       this.emitEvent({
         type: 'requeued',
         workKind: 'temporal',
@@ -411,19 +421,29 @@ export class WorkOrderConsumer {
       state.generation.lastWorkOrderId === wo.id
     ) {
       this.unresolvedTemporalEffects.delete(wo.id);
-      this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
-      this.emitEvent({ type: 'exhausted', workKind: 'temporal', workOrderId: wo.id, reason });
+      this.emitEvent({
+        type: 'failed',
+        workKind: 'temporal',
+        workOrderId: wo.id,
+        reason: auditReason,
+      });
+      this.emitEvent({
+        type: 'exhausted',
+        workKind: 'temporal',
+        workOrderId: wo.id,
+        reason: auditReason,
+      });
       this.log(`[workorder-consumer] temporal#${wo.id} exhaustion was already committed`);
       this.alarm(
         'temporal',
-        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${reason}`
+        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${auditReason}`
       );
       return;
     }
     if (state.workOrder.status !== 'in_progress') {
       this.deferTemporalArbitration(
         wo,
-        reason,
+        auditReason,
         new Error(
           `attempt is '${state.workOrder.status}' with generation '${state.generation.disposition}'`
         )
@@ -433,15 +453,25 @@ export class WorkOrderConsumer {
 
     let result: TemporalWorkFailureResult;
     try {
-      result = this.deps.ledger.failTemporalWorkOrder(wo.id, reason);
+      result = this.deps.ledger.failTemporalWorkOrder(wo.id, auditReason);
     } catch (err) {
       // A competing effect/supersession may have won after the read. Do not
       // guess which transition won; force another authoritative read first.
-      this.deferTemporalArbitration(wo, reason, err);
+      this.deferTemporalArbitration(wo, auditReason, err);
       return;
     }
     this.unresolvedTemporalEffects.delete(wo.id);
-    this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
+    if (result.disposition === 'superseded') {
+      this.emitEvent({ type: 'superseded', workKind: 'temporal', workOrderId: wo.id });
+      this.log(`[workorder-consumer] temporal#${wo.id} superseded during failure arbitration`);
+      return;
+    }
+    this.emitEvent({
+      type: 'failed',
+      workKind: 'temporal',
+      workOrderId: wo.id,
+      reason: auditReason,
+    });
     if (result.disposition === 'requeued') {
       this.emitEvent({
         type: 'requeued',
@@ -449,15 +479,20 @@ export class WorkOrderConsumer {
         workOrderId: result.replacement.id,
       });
       this.log(
-        `[workorder-consumer] failed temporal#${wo.id} (${reason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
+        `[workorder-consumer] failed temporal#${wo.id} (${auditReason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
       );
       return;
     }
-    this.log(`[workorder-consumer] failed temporal#${wo.id}: ${reason}`);
-    this.emitEvent({ type: 'exhausted', workKind: 'temporal', workOrderId: wo.id, reason });
+    this.log(`[workorder-consumer] failed temporal#${wo.id}: ${auditReason}`);
+    this.emitEvent({
+      type: 'exhausted',
+      workKind: 'temporal',
+      workOrderId: wo.id,
+      reason: auditReason,
+    });
     this.alarm(
       'temporal',
-      `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${reason}`
+      `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${auditReason}`
     );
   }
 
@@ -512,6 +547,13 @@ export class WorkOrderConsumer {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function temporalFailureAuditReason(reason: string): string {
+  if (/^temporal-worker-failure;sha256=[a-f0-9]{64};length=\d+$/.test(reason)) {
+    return reason;
+  }
+  return `temporal-worker-failure;sha256=${createHash('sha256').update(reason).digest('hex')};length=${reason.length}`;
 }
 
 function boundedEffectFailure(prefix: string, err: unknown): string {

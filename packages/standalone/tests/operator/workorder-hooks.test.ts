@@ -131,7 +131,8 @@ describe('Story S2-T3: extracted workorder hooks', () => {
           beforeRevision: 2,
           afterRevision: 3,
           changedFields: ['temporal_reconciled_occurrence_key', 'last_temporal_attempt_id'],
-          reason: 'Current state remains correct\nEvidence: source is still open',
+          reason:
+            'temporal-effect-final_no_update;reason_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;reason_length=29;evidence_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;evidence_length=20',
           nextTemporalCheckAt: null,
           createdAt: 10,
         }),

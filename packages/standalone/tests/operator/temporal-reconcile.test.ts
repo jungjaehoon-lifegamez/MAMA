@@ -195,7 +195,7 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
 
   it('does not enqueue past the ten-open temporal workorder cap', () => {
     const fakeLedger = {
-      list: () => [task({ id: 1, dueAt: now, deadlineIso: '2026-07-21' })],
+      listTemporalScanPage: () => [task({ id: 1, dueAt: now, deadlineIso: '2026-07-21' })],
       findTemporalGenerationKeys: () => new Set<string>(),
       countOpenWorkOrders: () => 10,
       enqueueTemporalGeneration: vi.fn(),
@@ -207,5 +207,61 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
     });
     expect(scheduler.tick()).toEqual({ enqueued: 0, saturated: true });
     expect(fakeLedger.enqueueTemporalGeneration).not.toHaveBeenCalled();
+  });
+
+  it('scans beyond two hundred non-candidates before selecting a due task', () => {
+    for (let index = 0; index < 200; index += 1) {
+      ledger.create({
+        title: `closed-${index}`,
+        status: 'done',
+        deadline: '2026-07-20',
+      });
+    }
+    const due = ledger.create({
+      title: 'due after closed prefix',
+      due_at: '2026-07-22T00:00:00+09:00',
+    });
+    const scheduler = new TemporalReconcileScheduler({
+      ledger,
+      now: () => now,
+      timeZone: 'Asia/Seoul',
+    });
+
+    expect(scheduler.tick()).toMatchObject({ enqueued: 1 });
+    expect(ledger.claimNextWorkOrder()).toMatchObject({ payload: { taskId: due.id } });
+  });
+
+  it('keeps global temporal priority across scan pages', () => {
+    const pages = [
+      Array.from({ length: 200 }, (_, index) =>
+        task({
+          id: index + 1,
+          dueAt: now - index,
+          deadlineIso: '2026-07-21',
+        })
+      ),
+      [task({ id: 201, dueAt: now - 10_000, deadlineIso: '2026-07-21' })],
+    ];
+    const enqueued: number[] = [];
+    const fakeLedger = {
+      listTemporalScanPage: ({ offset }: { limit: number; offset: number }) =>
+        pages[offset / 200] ?? [],
+      findTemporalGenerationKeys: () => new Set<string>(),
+      countOpenWorkOrders: () => 0,
+      enqueueTemporalGeneration: (input: { taskId: number }) => {
+        enqueued.push(input.taskId);
+        return {} as never;
+      },
+    };
+    const scheduler = new TemporalReconcileScheduler({
+      ledger: fakeLedger,
+      now: () => now,
+      timeZone: 'UTC',
+      exactLimit: 4,
+      dateLimit: 1,
+    });
+
+    expect(scheduler.tick()).toMatchObject({ enqueued: 4 });
+    expect(enqueued).toEqual([201, 200, 199, 198]);
   });
 });
