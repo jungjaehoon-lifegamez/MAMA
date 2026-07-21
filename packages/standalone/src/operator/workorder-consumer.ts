@@ -35,6 +35,8 @@ export interface WorkOrderLedgerPort {
   failWorkOrder(id: number, reason: string): void;
   /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
+  requeueTemporalWorkOrder(attemptId: number, reason: string): WorkOrderRecord;
+  exhaustTemporalWorkOrder(attemptId: number, reason: string): void;
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
   listStaleClaims(): WorkOrderRecord[];
   countPendingWorkOrders(): number;
@@ -102,6 +104,7 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   board: 1,
   wiki: 2,
   'memory-curation': 1,
+  temporal: 3,
 };
 
 const DEFAULT_TICK_MS = 60_000;
@@ -308,7 +311,10 @@ export class WorkOrderConsumer {
     if (wo.payload.attempts < maxAttempts) {
       // Atomic fail+requeue (PR bot round): a crash between separate fail and
       // enqueue calls would silently lose the retry.
-      const requeued = this.deps.ledger.requeueWorkOrder(wo, reason);
+      const requeued =
+        wo.workKind === 'temporal'
+          ? this.deps.ledger.requeueTemporalWorkOrder(wo.id, reason)
+          : this.deps.ledger.requeueWorkOrder(wo, reason);
       this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
       this.emitEvent({ type: 'requeued', workKind: wo.workKind, workOrderId: requeued.id });
       this.log(
@@ -317,7 +323,11 @@ export class WorkOrderConsumer {
       return;
     }
 
-    this.deps.ledger.failWorkOrder(wo.id, reason);
+    if (wo.workKind === 'temporal') {
+      this.deps.ledger.exhaustTemporalWorkOrder(wo.id, reason);
+    } else {
+      this.deps.ledger.failWorkOrder(wo.id, reason);
+    }
     this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
     this.log(`[workorder-consumer] failed ${wo.workKind}#${wo.id}: ${reason}`);
     this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });

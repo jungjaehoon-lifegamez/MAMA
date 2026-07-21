@@ -8,6 +8,7 @@ import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   WorkOrderConsumer,
+  WORKORDER_MAX_ATTEMPTS,
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
 } from '../../src/operator/workorder-consumer.js';
@@ -46,6 +47,35 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
 
   beforeEach(() => {
     ctx = makeDeps();
+  });
+
+  it('keeps the temporal retry budget explicit at three attempts', () => {
+    expect(WORKORDER_MAX_ATTEMPTS.temporal).toBe(3);
+  });
+
+  it('routes temporal exhaustion through the generation transaction', async () => {
+    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    ctx.ledger.enqueueTemporalGeneration({
+      generationKey: `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    ctx.deps.runner = { runWithContent: async () => Promise.reject(new Error('synthetic')) };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+    await consumer.tick();
+    await consumer.tick();
+    const generation = ctx.ledger.getTemporalGeneration(
+      `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`
+    );
+    expect(generation?.disposition).toBe('exhausted');
+    expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
   });
 
   describe('AC #1: enqueue -> consume -> complete e2e', () => {

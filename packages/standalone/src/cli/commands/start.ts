@@ -371,6 +371,18 @@ const WORKORDER_CODE_ACT_POLICIES = {
       'mama_search',
     ],
   },
+  temporal: {
+    roleName: 'workorder-temporal',
+    allowedTools: [
+      'agent_notices',
+      'context_compile',
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_tasks',
+      'schedule_upcoming',
+      'task_list',
+    ],
+  },
 } as const satisfies Record<WorkOrderKind, WorkOrderCodeActPolicy>;
 
 export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: string): AgentContext {
