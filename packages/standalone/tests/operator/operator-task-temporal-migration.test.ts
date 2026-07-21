@@ -48,9 +48,9 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
     const effectSql = objectSql(db, 'table', 'operator_temporal_effects');
     expect(effectSql).toContain('workorder_attempt_id INTEGER PRIMARY KEY');
     expect(effectSql).toContain("'resolved','final_no_update','deferred'");
+    expect(effectSql).toContain('attestation_version INTEGER NOT NULL DEFAULT 0');
 
     for (const index of [
-      'idx_operator_tasks_temporal_candidates',
       'idx_operator_tasks_temporal_open_event',
       'idx_operator_temporal_generations_identity',
       'idx_operator_temporal_generations_active',
@@ -59,6 +59,7 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
     ]) {
       expect(objectSql(db, 'index', index)).not.toBe('');
     }
+    expect(objectSql(db, 'index', 'idx_operator_tasks_temporal_candidates')).toBe('');
     expect(objectSql(db, 'index', 'idx_operator_temporal_generations_task_occurrence')).toBe('');
     db.close();
   });
@@ -216,6 +217,152 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
     db.close();
   });
 
+  it('normalizes legacy owner status transitions across downgrade and re-upgrade', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
+    const task = ledger.create({
+      title: 'mixed-version status task',
+      due_at: '2026-07-22T09:00:00+09:00',
+    });
+    const occurrenceKey = occurrenceKeyForTask(task)!;
+    const generationKey = temporalGenerationKey(task.id, occurrenceKey, task.dueAt!);
+    const generation = ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    db.prepare(
+      `UPDATE operator_tasks
+       SET temporal_reconciled_occurrence_key = ?, last_temporal_checked_at = 100,
+           next_temporal_check_at = 200, last_temporal_attempt_id = ?
+       WHERE id = ?`
+    ).run(occurrenceKey, generation.workOrder.id, task.id);
+
+    db.prepare(`UPDATE operator_tasks SET status = 'done', updated_at = 300 WHERE id = ?`).run(
+      task.id
+    );
+    expect(db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(task.id)).toMatchObject({
+      status: 'done',
+      revision: 2,
+      temporal_epoch: 1,
+    });
+    expect(ledger.getTemporalGeneration(generationKey)?.disposition).toBe('superseded');
+    expect(ledger.getWorkOrderById(generation.workOrder.id)?.status).toBe('cancelled');
+
+    db.prepare(`UPDATE operator_tasks SET status = 'pending', updated_at = 400 WHERE id = ?`).run(
+      task.id
+    );
+    new TaskLedger(db);
+
+    expect(db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(task.id)).toMatchObject({
+      status: 'pending',
+      revision: 3,
+      temporal_epoch: 2,
+      temporal_reconciled_occurrence_key: null,
+      last_temporal_checked_at: null,
+      next_temporal_check_at: null,
+      last_temporal_attempt_id: null,
+    });
+    expect(objectSql(db, 'trigger', 'trg_operator_tasks_legacy_status_write')).not.toBe('');
+    db.close();
+  });
+
+  it('advances revision for legacy owner content writes', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
+    const task = ledger.create({ title: 'legacy content task', deadline: '2026-07-21' });
+
+    db.prepare(
+      `UPDATE operator_tasks
+       SET title = 'legacy rename', priority = 'high', assignee = 'owner',
+           latest_event = 'legacy edit', confirmed = 1, updated_at = 500
+       WHERE id = ?`
+    ).run(task.id);
+
+    expect(db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(task.id)).toMatchObject({
+      title: 'legacy rename',
+      priority: 'high',
+      assignee: 'owner',
+      latest_event: 'legacy edit',
+      confirmed: 1,
+      revision: 2,
+      temporal_epoch: 1,
+    });
+    expect(objectSql(db, 'trigger', 'trg_operator_tasks_legacy_content_write')).not.toBe('');
+    db.close();
+  });
+
+  it('enforces temporal foreign keys on every operator connection', () => {
+    const db = new Database(':memory:');
+    new TaskLedger(db);
+
+    expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(() =>
+      db
+        .prepare(
+          `INSERT INTO operator_temporal_generations
+             (generation_key, task_id, temporal_epoch, occurrence_key, check_at,
+              disposition, created_at, updated_at)
+           VALUES ('orphan', 999, 0, 'date:2026-07-21', 1, 'active', 1, 1)`
+        )
+        .run()
+    ).toThrow(/FOREIGN KEY/);
+    db.close();
+  });
+
+  it('keeps old-shape receipts non-authoritative on a fresh current schema', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
+    const task = ledger.create({ title: 'fresh legacy writer task', deadline: '2026-07-21' });
+    const occurrenceKey = occurrenceKeyForTask(task)!;
+    const generationKey = temporalGenerationKey(
+      task.id,
+      occurrenceKey,
+      Date.parse('2026-07-21T15:00:00Z')
+    );
+    const generation = ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: Date.parse('2026-07-21T15:00:00Z'),
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+
+    db.prepare(
+      `INSERT INTO operator_temporal_effects
+         (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
+          before_revision, after_revision, changed_fields, reason,
+          context_packet_id, context_packet_sha256, next_temporal_check_at, created_at)
+       VALUES (?, ?, ?, ?, 'final_no_update', 1, 2, '[]', 'old binary receipt',
+               'ctxp_old_shape', ?, NULL, ?)`
+    ).run(
+      generation.workOrder.id,
+      task.id,
+      generationKey,
+      occurrenceKey,
+      'a'.repeat(64),
+      Date.parse('2026-07-21T15:00:00Z')
+    );
+
+    expect(ledger.getTemporalEffect(generation.workOrder.id)?.attestationVersion).toBe(0);
+    db.close();
+  });
+
   it('classifies a pre-attestation receipt as readable but non-authoritative', () => {
     const db = new Database(':memory:');
     const ledger = new TaskLedger(db, {
@@ -262,12 +409,13 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
           before_revision, after_revision, changed_fields, reason,
           context_packet_id, context_packet_sha256, next_temporal_check_at, created_at)
        VALUES (?, ?, ?, ?, 'final_no_update', 1, 2, '[]', 'legacy receipt',
-               NULL, NULL, NULL, ?)`
+               'ctxp_legacy_shape', ?, NULL, ?)`
     ).run(
       generation.workOrder.id,
       task.id,
       generationKey,
       occurrenceKey,
+      'b'.repeat(64),
       Date.parse('2026-07-21T15:00:00Z')
     );
 
@@ -276,8 +424,8 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
 
     expect(receipt).toMatchObject({
       attestationVersion: 0,
-      contextPacketId: '',
-      contextPacketSha256: '',
+      contextPacketId: 'ctxp_legacy_shape',
+      contextPacketSha256: 'b'.repeat(64),
     });
     expect(
       temporalReceiptInvariantError(receipt, {

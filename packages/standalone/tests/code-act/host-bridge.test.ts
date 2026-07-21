@@ -381,6 +381,7 @@ describe('HostBridge', () => {
         returnType: expect.stringContaining('failedCount'),
         category: 'os',
       });
+      expect(registry.get('workorder_status')?.returnType).toContain("'temporal'");
     });
   });
 });

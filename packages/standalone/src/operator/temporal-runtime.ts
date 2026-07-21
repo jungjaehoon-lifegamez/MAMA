@@ -153,12 +153,13 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
       if (stopped) return;
       stopped = true;
       scheduler?.stop();
+      const consumerStop = options.consumer?.stop();
       try {
-        await options.consumer?.stop();
-      } finally {
         if (flag === 'on') {
           options.ledger.pauseActiveTemporalWork('temporal-runtime-stopped');
         }
+      } finally {
+        await consumerStop;
       }
     },
   };

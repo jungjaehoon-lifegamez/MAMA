@@ -75,6 +75,7 @@ import type {
   BeginModelRunInput,
   ModelRunRecord,
   AppendToolTraceInput,
+  TemporalReconcileToolInput,
 } from './types.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
@@ -124,7 +125,6 @@ import {
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
 import type {
   TemporalEvidenceAttestation,
-  TemporalReconcileInput,
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
 
@@ -148,7 +148,12 @@ function temporalContextPacketBinding(context: TemporalWorkContext): string {
   return `temporal:${context.taskId}:${context.generationKey}`;
 }
 
-function bindTemporalContextPacketTask(context: TemporalWorkContext, task: string): string {
+function bindTemporalContextPacketTask(context: TemporalWorkContext, task: unknown): string {
+  if (typeof task !== 'string' || task.trim().length === 0) {
+    const error = new Error('task is required.') as Error & { code: string };
+    error.code = 'context_compile_input_invalid';
+    throw error;
+  }
   return `${temporalContextPacketBinding(context)}\n${task}`;
 }
 
@@ -156,7 +161,7 @@ function temporalIdentifierRef(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
 }
 
-function temporalPacketReferencesBoundSource(
+function temporalPacketRawSourcesWithinBoundSource(
   context: TemporalWorkContext,
   sourceRefs: readonly unknown[]
 ): boolean {
@@ -168,14 +173,15 @@ function temporalPacketReferencesBoundSource(
       (value as Record<string, unknown>).kind === 'raw'
   );
   if (context.sourceEventId) {
-    return rawRefs.some(
-      (ref) =>
-        typeof ref.raw_id === 'string' &&
-        temporalIdentifierRef(ref.raw_id) === context.sourceEventId
+    return rawRefs.every((ref) =>
+      [ref.raw_id, ref.source_id].some(
+        (value) =>
+          typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
+      )
     );
   }
-  if (!context.sourceChannel) return true;
-  return rawRefs.some((ref) => {
+  if (!context.sourceChannel) return rawRefs.length === 0;
+  return rawRefs.every((ref) => {
     if (typeof ref.connector !== 'string') return false;
     const candidates = [ref.source_id, ref.channel_id]
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
@@ -184,6 +190,23 @@ function temporalPacketReferencesBoundSource(
       (candidate) => temporalIdentifierRef(candidate) === context.sourceChannel
     );
   });
+}
+
+function temporalPacketReferencesBoundSource(
+  context: TemporalWorkContext,
+  sourceRefs: readonly unknown[]
+): boolean {
+  const hasRawReference = sourceRefs.some(
+    (value) =>
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).kind === 'raw'
+  );
+  if (context.sourceEventId || context.sourceChannel) {
+    return hasRawReference && temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+  }
+  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
 }
 
 const { DebugLogger } = debugLogger as unknown as {
@@ -797,7 +820,7 @@ export class GatewayToolExecutor {
     return this.executionContextStorage.run(activeContext, fn);
   }
 
-  private requireActiveTemporalWriteAuthority(toolName: string): TemporalWorkContext | null {
+  private requireActiveTemporalAuthority(toolName: string): TemporalWorkContext | null {
     const context = this.getExecutionState().temporalWorkContext;
     if (toolName === 'task_temporal_reconcile' && !context) {
       throw new AgentError(
@@ -807,7 +830,7 @@ export class GatewayToolExecutor {
         false
       );
     }
-    if (!context || !TEMPORAL_WRITE_TOOLS.has(toolName)) return context ?? null;
+    if (!context) return null;
     if (!this.taskLedger) {
       throw new AgentError(
         'Temporal work authority cannot be checked because the task ledger is unavailable',
@@ -1380,7 +1403,7 @@ export class GatewayToolExecutor {
         };
     if (ctx.temporalWorkContext && TEMPORAL_WRITE_TOOLS.has(toolName)) {
       await this.executionContextStorage.run(ctx, async () => {
-        this.requireActiveTemporalWriteAuthority(toolName);
+        this.requireActiveTemporalAuthority(toolName);
       });
     }
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
@@ -1392,6 +1415,15 @@ export class GatewayToolExecutor {
       const rawResult = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
+      if (
+        activeCtx.temporalWorkContext &&
+        toolName !== 'task_temporal_reconcile' &&
+        toolName !== 'code_act'
+      ) {
+        await this.executionContextStorage.run(activeCtx, async () => {
+          this.requireActiveTemporalAuthority(toolName);
+        });
+      }
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
         toolName === 'context_compile' ||
@@ -2032,7 +2064,7 @@ export class GatewayToolExecutor {
       }
     }
 
-    this.requireActiveTemporalWriteAuthority(toolName);
+    this.requireActiveTemporalAuthority(toolName);
 
     const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
     if (envelopeDenied) {
@@ -2892,7 +2924,7 @@ export class GatewayToolExecutor {
               false
             );
           }
-          const effectInput = input as TemporalReconcileInput & { context_packet_id: string };
+          const effectInput = input as TemporalReconcileToolInput;
           if (
             effectInput.outcome !== 'deferred' &&
             (!Array.isArray(packet.source_refs) || packet.source_refs.length === 0)
@@ -2906,7 +2938,11 @@ export class GatewayToolExecutor {
           }
           if (
             !packet.task.startsWith(`${temporalContextPacketBinding(context)}\n`) ||
-            !temporalPacketReferencesBoundSource(context, packet.source_refs)
+            (effectInput.outcome === 'deferred'
+              ? Array.isArray(packet.source_refs) &&
+                packet.source_refs.length > 0 &&
+                !temporalPacketReferencesBoundSource(context, packet.source_refs)
+              : !temporalPacketReferencesBoundSource(context, packet.source_refs))
           ) {
             throw new AgentError(
               'task_temporal_reconcile context packet is not bound to the active task source',
@@ -4684,10 +4720,16 @@ export class GatewayToolExecutor {
         signal: ctx.signal,
         beforePersist: temporalContext
           ? () => {
-              this.requireActiveTemporalWriteAuthority('context_compile');
+              this.requireActiveTemporalAuthority('context_compile');
             }
           : undefined,
       });
+      if (
+        temporalContext &&
+        !temporalPacketRawSourcesWithinBoundSource(temporalContext, result.packet.source_refs)
+      ) {
+        throw new Error('context_compile packet exceeds the active temporal task source');
+      }
       return {
         success: true,
         packet: result.packet,

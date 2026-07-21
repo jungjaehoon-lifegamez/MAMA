@@ -30,6 +30,7 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
 
   db.exec(`
     DROP INDEX IF EXISTS idx_operator_temporal_generations_task_occurrence;
+    DROP INDEX IF EXISTS idx_operator_tasks_temporal_candidates;
 
     CREATE TABLE IF NOT EXISTS operator_temporal_generations (
       generation_key TEXT PRIMARY KEY,
@@ -56,16 +57,13 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       after_revision INTEGER NOT NULL CHECK (after_revision >= 0),
       changed_fields TEXT NOT NULL,
       reason TEXT NOT NULL,
-      attestation_version INTEGER NOT NULL DEFAULT 1 CHECK (attestation_version IN (0, 1)),
+      attestation_version INTEGER NOT NULL DEFAULT 0 CHECK (attestation_version IN (0, 1)),
       context_packet_id TEXT NOT NULL,
       context_packet_sha256 TEXT NOT NULL,
       next_temporal_check_at INTEGER,
       created_at INTEGER NOT NULL
     );
 
-    CREATE INDEX IF NOT EXISTS idx_operator_tasks_temporal_candidates
-      ON operator_tasks(next_temporal_check_at, due_at, deadline, id)
-      WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked');
     CREATE INDEX IF NOT EXISTS idx_operator_tasks_temporal_scan_id
       ON operator_tasks(id)
       WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked')
@@ -112,6 +110,93 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
           SELECT generation_key FROM operator_temporal_generations WHERE task_id = NEW.id
         );
     END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_operator_tasks_legacy_status_write
+    AFTER UPDATE OF status ON operator_tasks
+    WHEN NEW.kind = 'owner'
+      AND NEW.status IS NOT OLD.status
+      AND NEW.revision = OLD.revision
+    BEGIN
+      UPDATE operator_tasks
+      SET revision = OLD.revision + 1,
+          temporal_epoch = CASE
+            WHEN OLD.status IN ('done','cancelled')
+              AND NEW.status NOT IN ('done','cancelled')
+            THEN OLD.temporal_epoch + 1
+            ELSE OLD.temporal_epoch
+          END,
+          temporal_reconciled_occurrence_key = CASE
+            WHEN OLD.status IN ('done','cancelled')
+              AND NEW.status NOT IN ('done','cancelled')
+            THEN NULL
+            ELSE NEW.temporal_reconciled_occurrence_key
+          END,
+          last_temporal_checked_at = CASE
+            WHEN OLD.status IN ('done','cancelled')
+              AND NEW.status NOT IN ('done','cancelled')
+            THEN NULL
+            ELSE NEW.last_temporal_checked_at
+          END,
+          next_temporal_check_at = CASE
+            WHEN OLD.status IN ('done','cancelled')
+              AND NEW.status NOT IN ('done','cancelled')
+            THEN NULL
+            ELSE NEW.next_temporal_check_at
+          END,
+          last_temporal_attempt_id = CASE
+            WHEN OLD.status IN ('done','cancelled')
+              AND NEW.status NOT IN ('done','cancelled')
+            THEN NULL
+            ELSE NEW.last_temporal_attempt_id
+          END
+      WHERE id = NEW.id;
+      UPDATE operator_tasks
+      SET status = 'cancelled',
+          latest_event = CASE
+            WHEN NEW.status IN ('done','cancelled') THEN 'legacy-owner-task-closed'
+            ELSE 'legacy-owner-task-reopened'
+          END,
+          updated_at = NEW.updated_at
+      WHERE kind = 'system' AND source_channel = 'workorder:temporal'
+        AND status IN ('pending','in_progress')
+        AND source_event_id IN (
+          SELECT generation_key FROM operator_temporal_generations
+          WHERE task_id = NEW.id AND disposition = 'active'
+        )
+        AND (
+          (OLD.status IN ('done','cancelled') AND NEW.status NOT IN ('done','cancelled'))
+          OR
+          (OLD.status NOT IN ('done','cancelled') AND NEW.status IN ('done','cancelled'))
+        );
+      UPDATE operator_temporal_generations
+      SET disposition = 'superseded',
+          reason = CASE
+            WHEN NEW.status IN ('done','cancelled') THEN 'legacy-owner-task-closed'
+            ELSE 'legacy-owner-task-reopened'
+          END,
+          updated_at = NEW.updated_at
+      WHERE task_id = NEW.id AND disposition = 'active'
+        AND (
+          (OLD.status IN ('done','cancelled') AND NEW.status NOT IN ('done','cancelled'))
+          OR
+          (OLD.status NOT IN ('done','cancelled') AND NEW.status IN ('done','cancelled'))
+        );
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS trg_operator_tasks_legacy_content_write
+    AFTER UPDATE OF title, priority, assignee, latest_event, confirmed ON operator_tasks
+    WHEN NEW.kind = 'owner'
+      AND NEW.revision = OLD.revision
+      AND (
+        NEW.title IS NOT OLD.title
+        OR NEW.priority IS NOT OLD.priority
+        OR NEW.assignee IS NOT OLD.assignee
+        OR NEW.latest_event IS NOT OLD.latest_event
+        OR NEW.confirmed IS NOT OLD.confirmed
+      )
+    BEGIN
+      UPDATE operator_tasks SET revision = OLD.revision + 1 WHERE id = NEW.id;
+    END;
   `);
 
   const effectColumns = new Set(
@@ -132,14 +217,4 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
        CHECK (attestation_version IN (0, 1))`
     );
   }
-  db.exec(`
-    UPDATE operator_temporal_effects
-    SET attestation_version = 1
-    WHERE attestation_version = 0
-      AND context_packet_id IS NOT NULL
-      AND length(trim(context_packet_id)) > 0
-      AND context_packet_sha256 IS NOT NULL
-      AND length(context_packet_sha256) = 64
-      AND context_packet_sha256 NOT GLOB '*[^0-9a-f]*'
-  `);
 }

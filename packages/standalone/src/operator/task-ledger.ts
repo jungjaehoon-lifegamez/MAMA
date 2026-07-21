@@ -319,6 +319,7 @@ export class TaskLedger implements TaskSource {
     // Both construction sites (start.ts boot + operator-handler lazy) run this;
     // busy_timeout here covers BOTH connections against the rebuild race.
     this.db.pragma('busy_timeout = 5000');
+    this.db.pragma('foreign_keys = ON');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS operator_tasks (${TaskLedger.TABLE_COLUMNS_SQL});
       ${TaskLedger.INDEXES_SQL}
@@ -333,6 +334,12 @@ export class TaskLedger implements TaskSource {
         ON operator_no_update_notes(scope, id);
     `);
     this.upgradeSchema();
+    const foreignKeyViolations = this.db.pragma('foreign_key_check') as unknown[];
+    if (foreignKeyViolations.length > 0) {
+      throw new Error(
+        `operator task migration found ${foreignKeyViolations.length} foreign key violation(s)`
+      );
+    }
   }
 
   /** Full current column set - single source for CREATE and the rebuild copy. */
@@ -1525,27 +1532,24 @@ export class TaskLedger implements TaskSource {
 
   private repairClosedTemporalOwnershipInTransaction(attemptId: number): number | null {
     const workOrder = this.getWorkOrderById(attemptId);
-    if (
-      !workOrder ||
-      workOrder.workKind !== 'temporal' ||
-      (workOrder.status !== 'pending' && workOrder.status !== 'in_progress')
-    ) {
+    if (!workOrder || workOrder.workKind !== 'temporal') {
       return null;
     }
     const generationKey = this.requirePayloadString(workOrder.payload, 'generationKey', attemptId);
     const generation = this.getTemporalGeneration(generationKey);
-    if (
-      !generation ||
-      generation.disposition !== 'active' ||
-      generation.lastWorkOrderId !== attemptId
-    ) {
+    if (!generation || generation.lastWorkOrderId !== attemptId) {
       return null;
     }
     const task = this.getById(generation.taskId);
     if (!task || (task.status !== 'done' && task.status !== 'cancelled')) {
       return null;
     }
-    this.supersedeAllActiveTemporalGenerationsInTransaction(task.id);
+    const openAttempt = workOrder.status === 'pending' || workOrder.status === 'in_progress';
+    if (generation.disposition === 'active' && openAttempt) {
+      this.supersedeAllActiveTemporalGenerationsInTransaction(task.id);
+    } else if (generation.disposition !== 'superseded' || workOrder.status !== 'cancelled') {
+      return null;
+    }
     return workOrder.payload.attempts;
   }
 

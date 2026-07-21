@@ -195,6 +195,86 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     );
   });
 
+  it.each([undefined, null, '', '   ', {}, []])(
+    'rejects malformed temporal context_compile task input %#',
+    async (task) => {
+      const compileAndPersistContext = vi.fn();
+      executor = new GatewayToolExecutor({
+        contextCompileService: { compileAndPersistContext } as unknown as ContextCompileService,
+      });
+      executor.setTaskLedger(ledger);
+      executor.setMamaApi({
+        listDecisions: async () => [],
+        appendToolTrace: async () => ({}) as never,
+      } as unknown as MAMAApiSetInput);
+      const trustedExecution = {
+        ...executionContext,
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_invalid_task',
+        agentContext: {
+          ...executionContext.agentContext!,
+          role: {
+            ...executionContext.agentContext!.role,
+            allowedTools: [...executionContext.agentContext!.role.allowedTools, 'context_compile'],
+          },
+          capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+        },
+      };
+
+      const result = await executor.execute('context_compile', { task } as never, trustedExecution);
+
+      expect(result).toMatchObject({ success: false, code: 'context_compile_input_invalid' });
+      expect(compileAndPersistContext).not.toHaveBeenCalled();
+    }
+  );
+
+  it('rejects a compiled packet that mixes bound and unrelated raw evidence', async () => {
+    const sentinel = 'private-unrelated-card-777';
+    const compileAndPersistContext = vi.fn(async () => ({
+      packet: {
+        packet_id: 'ctxp_mixed_sources',
+        task: boundPacketTask(context),
+        source_refs: [
+          { kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' },
+          { kind: 'raw', connector: 'trello', raw_id: sentinel },
+        ],
+      },
+      record: {},
+      modelRunId: 'mr_mixed_sources_child',
+      parentModelRunId: 'mr_mixed_sources',
+    }));
+    executor = new GatewayToolExecutor({
+      contextCompileService: { compileAndPersistContext } as unknown as ContextCompileService,
+    });
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const trustedExecution = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+      modelRunId: 'mr_mixed_sources',
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: [...executionContext.agentContext!.role.allowedTools, 'context_compile'],
+        },
+        capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+      },
+    };
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile exact task evidence' } as never,
+      trustedExecution
+    );
+
+    expect(result).toMatchObject({ success: false });
+    expect(JSON.stringify(result)).not.toContain(sentinel);
+  });
+
   it.each([
     {
       name: 'predates the active attempt',
@@ -365,6 +445,87 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
   });
 
+  it('accepts the connector-native source_id when raw_id is an event-index identifier', async () => {
+    const packetId = 'ctxp_temporal_native_source';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [
+          {
+            kind: 'raw',
+            connector: 'trello',
+            raw_id: 'evt_index_123',
+            source_id: 'synthetic-card',
+          },
+        ],
+        created_at: now + 1,
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    const result = await executor.execute(
+      'task_temporal_reconcile',
+      {
+        context_packet_id: packetId,
+        expected_revision: context.revision,
+        outcome: 'resolved',
+        status: 'done',
+        reason: 'Connector-native source evidence confirms completion',
+      } as never,
+      {
+        ...executionContext,
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_temporal_native_source',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true });
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
+  });
+
+  it('allows a source-empty deferred packet while keeping final outcomes source-backed', async () => {
+    const packetId = 'ctxp_temporal_deferred';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [],
+        created_at: now + 1,
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    const result = await executor.execute(
+      'task_temporal_reconcile',
+      {
+        context_packet_id: packetId,
+        expected_revision: context.revision,
+        outcome: 'deferred',
+        next_temporal_check_at: '2026-07-23T00:00:00+09:00',
+        reason: 'Fresh evidence is not yet available',
+      } as never,
+      {
+        ...executionContext,
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_temporal_deferred',
+      }
+    );
+
+    expect(result).toMatchObject({ success: true, receipt: { outcome: 'deferred' } });
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 2 });
+  });
+
   it('retains the exact trusted context through nested Code-Act', async () => {
     const packetId = 'ctxp_nested_temporal';
     executor = new GatewayToolExecutor({
@@ -405,13 +566,14 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     });
   });
 
-  it('allows reads but rejects all temporal writes after supersession', async () => {
+  it('rejects reads and writes after temporal supersession', async () => {
     ledger.update(taskId, { due_at: '2026-07-23T00:00:00+09:00' });
     const published: unknown[] = [];
     executor.setReportPublisher((slots) => published.push(slots));
 
-    const read = await executor.execute('task_list', {} as never, executionContext);
-    expect(read.success).toBe(true);
+    await expect(
+      executor.execute('task_list', {} as never, executionContext)
+    ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
     await expect(
       executor.execute(
         'report_publish',

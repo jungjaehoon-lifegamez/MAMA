@@ -153,13 +153,37 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(ctx.scheduler.start).toHaveBeenCalledOnce();
   });
 
-  it('stops the scanner and consumer before pausing open temporal attempts', async () => {
+  it('stops new admission and durably pauses before awaiting consumer drainage', async () => {
     const ctx = dependencies();
     const runtime = createTemporalRuntime(ctx.options);
     runtime.boot();
     await runtime.stop();
     expect(ctx.order.slice(-3)).toEqual(['scanner-stop', 'consumer-stop', 'pause']);
     expect(ctx.ledger.pauseActiveTemporalWork).toHaveBeenLastCalledWith('temporal-runtime-stopped');
+  });
+
+  it('persists the pause while an in-flight consumer is still draining', async () => {
+    let finishDrain: (() => void) | undefined;
+    const drain = new Promise<void>((resolve) => {
+      finishDrain = resolve;
+    });
+    const consumerStop = vi.fn(() => drain);
+    const ctx = dependencies({
+      consumer: {
+        bootRecover: vi.fn(),
+        stop: consumerStop,
+      },
+    });
+    const runtime = createTemporalRuntime(ctx.options);
+    runtime.boot();
+
+    const stopping = runtime.stop();
+    await Promise.resolve();
+
+    expect(ctx.ledger.pauseActiveTemporalWork).toHaveBeenCalledWith('temporal-runtime-stopped');
+    expect(consumerStop).toHaveBeenCalledOnce();
+    finishDrain?.();
+    await stopping;
   });
 
   it('awaits runtime shutdown before closing the operator database', async () => {

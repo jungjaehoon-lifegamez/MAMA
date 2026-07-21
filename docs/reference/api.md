@@ -942,10 +942,15 @@ an evidence-backed workflow change (`resolved`), evidence-backed final confirmat
 workflow change (`final_no_update`), or a strictly future follow-up (`deferred`). The native task,
 generation, receipt, and workorder terminal state commit atomically. Reports or explanation text do
 not satisfy this contract, and stale attempts are denied after rescheduling and immediately before
-an asynchronous context packet is persisted.
+and after every gateway read or write. Context packets are host-bound to the task generation; every
+raw reference in a returned packet must match the task source event/channel, so one matching Trello
+card cannot authorize unrelated card evidence. Receipts created before source-bound attestation
+remain readable but quarantined and never become authoritative through migration shape checks.
 
-All calls require `expected_revision` (a non-negative integer equal to the host-bound revision),
-`outcome`, and a 1-500 character `reason`. Outcome-specific fields are closed schemas:
+All calls require `context_packet_id`, `expected_revision` (a non-negative integer equal to the
+host-bound revision), `outcome`, and a 1-500 character `reason`. A deferred result may use a fresh
+host-bound packet with no raw references when evidence is not yet available; final outcomes remain
+source-backed. Outcome-specific fields are closed schemas:
 
 | Outcome           | Additional fields                               | Contract                                                                                                                                                            |
 | ----------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
