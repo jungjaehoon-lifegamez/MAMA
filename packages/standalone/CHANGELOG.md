@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.1] - 2026-07-21
+
+Codex report-recovery patch: bounded durable-thread reset, full policy rebuild, replacement-session
+ownership cleanup, role-scoped Code-Act worker tools, Trello envelope least privilege, and explicit
+untrusted-evidence boundaries. Full details are in the repository root CHANGELOG.md.
+
+## [0.24.0] - 2026-07-21
+
+Native Codex app-server and Code-Act parity release, including durable managed threads and native
+MAMA host tools. Full details are in the repository root CHANGELOG.md.
+
 ## [0.23.0] - 2026-07-18
 
 The owner-console + workorder-ownership release: trust-conditional
