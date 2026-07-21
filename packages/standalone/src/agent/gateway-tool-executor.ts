@@ -769,11 +769,11 @@ export class GatewayToolExecutor {
     }
     try {
       return this.taskLedger.assertTemporalWorkContextActive(context);
-    } catch (error) {
+    } catch {
       throw new AgentError(
-        `Temporal workorder is no longer active: ${error instanceof Error ? error.message : String(error)}`,
+        'Temporal workorder authority is no longer active',
         'WORKORDER_SUPERSEDED',
-        error instanceof Error ? error : undefined,
+        undefined,
         false
       );
     }
@@ -1307,17 +1307,48 @@ export class GatewayToolExecutor {
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
-    const scopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
+    const computedScopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
+    const scopeAudit = ctx.temporalWorkContext
+      ? {
+          requestedScopes: null,
+          envelopeScopesSnapshot: null,
+          mismatch: computedScopeAudit.mismatch,
+        }
+      : {
+          ...computedScopeAudit,
+          requestedScopes: digestRequestedScopesForAudit(computedScopeAudit.requestedScopes),
+        };
+    if (ctx.temporalWorkContext && TEMPORAL_WRITE_TOOLS.has(toolName)) {
+      await this.executionContextStorage.run(ctx, async () => {
+        this.requireActiveTemporalWriteAuthority(toolName);
+      });
+    }
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
     const activeCtx = traceState ? { ...ctx, modelRunId: traceState.modelRunId } : ctx;
 
     let result!: GatewayToolResult;
+    let auditResult!: GatewayToolResult;
     try {
-      result = await this.executionContextStorage.run(activeCtx, () =>
+      const rawResult = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
+      const shouldSanitizeAuditFailure =
+        Boolean(activeCtx.temporalWorkContext) ||
+        toolName === 'context_compile' ||
+        toolName === 'code_act';
+      auditResult = shouldSanitizeAuditFailure
+        ? sanitizeGatewayFailureResult(rawResult, Boolean(activeCtx.temporalWorkContext))
+        : rawResult;
+      result = activeCtx.temporalWorkContext ? auditResult : rawResult;
       activeCtx.signal?.throwIfAborted();
     } catch (error) {
+      const shouldSanitizeAuditFailure =
+        Boolean(activeCtx.temporalWorkContext) ||
+        toolName === 'context_compile' ||
+        toolName === 'code_act';
+      const auditError = shouldSanitizeAuditFailure
+        ? sanitizeGatewayError(error, Boolean(activeCtx.temporalWorkContext))
+        : error;
       await this.appendToolTraceIfNeeded(
         traceState,
         activeCtx,
@@ -1325,14 +1356,14 @@ export class GatewayToolExecutor {
         undefined,
         Date.now() - startedAt,
         gatewayCallId,
-        error
+        auditError
       ).catch((appendError: unknown) => {
         securityLogger.warn(
           '[model-run] failed to append failed tool trace before finalization',
           appendError
         );
       });
-      await this.failDirectModelRunIfNeeded(traceState, toolName, error).catch(
+      await this.failDirectModelRunIfNeeded(traceState, toolName, auditError).catch(
         (finalizationError: unknown) => {
           securityLogger.warn(
             '[model-run] failed to finalize failed direct model run',
@@ -1347,12 +1378,12 @@ export class GatewayToolExecutor {
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
-        error
+        auditError
       );
       if (scopeAudit.mismatch) {
         this.alarmScopeMismatch(activeCtx, toolName);
       }
-      throw error;
+      throw activeCtx.temporalWorkContext ? auditError : error;
     }
 
     try {
@@ -1361,18 +1392,18 @@ export class GatewayToolExecutor {
           traceState,
           activeCtx,
           toolName,
-          result,
+          auditResult,
           Date.now() - startedAt,
           gatewayCallId
         );
       } finally {
-        await this.completeDirectModelRunIfNeeded(traceState, toolName, result);
+        await this.completeDirectModelRunIfNeeded(traceState, toolName, auditResult);
       }
     } catch (postRunError) {
       this.logGatewayToolCall(
         activeCtx,
         toolName,
-        result,
+        auditResult,
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
@@ -1387,7 +1418,7 @@ export class GatewayToolExecutor {
     this.logGatewayToolCall(
       activeCtx,
       toolName,
-      result,
+      auditResult,
       Date.now() - startedAt,
       scopeAudit,
       gatewayCallId
@@ -1941,6 +1972,8 @@ export class GatewayToolExecutor {
       }
     }
 
+    this.requireActiveTemporalWriteAuthority(toolName);
+
     const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
     if (envelopeDenied) {
       return envelopeDenied;
@@ -1955,8 +1988,6 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
     }
-
-    this.requireActiveTemporalWriteAuthority(toolName);
 
     try {
       // Handle non-MAMA tools first
@@ -4690,6 +4721,16 @@ function memoryScopeKey(scope: MemoryScope): string {
   return `${scope.kind}:${scope.id}`;
 }
 
+function digestRequestedScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
+  if (!scopes) {
+    return null;
+  }
+  return scopes.map((scope) => ({
+    kind: scope.kind,
+    id: `sha256:${createHash('sha256').update(scope.id).digest('hex')}`,
+  }));
+}
+
 function getFailureMessage(result: GatewayToolResult | undefined): string | undefined {
   if (!result || result.success !== false) {
     return undefined;
@@ -4697,4 +4738,42 @@ function getFailureMessage(result: GatewayToolResult | undefined): string | unde
   const record = result as Record<string, unknown>;
   const message = record.error ?? record.message ?? 'Tool returned success:false';
   return String(message);
+}
+
+function gatewayFailureRef(value: string, temporal: boolean): string {
+  const digest = createHash('sha256').update(value).digest('hex');
+  const label = temporal ? 'temporal_tool_failed' : 'gateway_tool_failed';
+  return `${label};sha256=${digest};length=${value.length}`;
+}
+
+function sanitizeGatewayFailureResult(
+  result: GatewayToolResult,
+  temporal: boolean
+): GatewayToolResult {
+  const failure = getFailureMessage(result);
+  if (!failure) {
+    return result;
+  }
+  const record = result as Record<string, unknown>;
+  return {
+    success: false,
+    error: gatewayFailureRef(failure, temporal),
+    ...(typeof record.code === 'string' ? { code: record.code } : {}),
+    ...(typeof record.envelope_hash === 'string' ? { envelope_hash: record.envelope_hash } : {}),
+  } as GatewayToolResult;
+}
+
+function sanitizeGatewayError(error: unknown, temporal: boolean): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof AgentError) {
+    return new AgentError(
+      error.code === 'WORKORDER_SUPERSEDED'
+        ? 'Temporal workorder authority is no longer active'
+        : gatewayFailureRef(message, temporal),
+      error.code,
+      undefined,
+      error.retryable
+    );
+  }
+  return new Error(gatewayFailureRef(message, temporal));
 }

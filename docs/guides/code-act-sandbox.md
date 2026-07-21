@@ -126,7 +126,9 @@ curl -X POST http://localhost:3847/api/code-act \
 
 `context_compile` creates a trusted, append-only context packet. It requires an active worker
 envelope, so start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` when you want packet
-provenance instead of plain search fallback.
+provenance instead of plain search fallback. Requested task/seed-ref text and compiler failures
+are stored in audit provenance only as digest references; envelope errors do not echo rejected
+connector or destination values.
 
 ```bash
 curl -X POST http://localhost:3847/api/code-act \

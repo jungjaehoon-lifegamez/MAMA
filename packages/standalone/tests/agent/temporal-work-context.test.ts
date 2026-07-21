@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
-import type { GatewayToolExecutionContext } from '../../src/agent/types.js';
+import type { GatewayToolExecutionContext, MAMAApiSetInput } from '../../src/agent/types.js';
+import type { ContextCompileService } from '../../src/agent/context-compile-service.js';
+import { initAgentTables } from '../../src/db/agent-store.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import type { TemporalWorkContext } from '../../src/operator/temporal-effect.js';
 import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
+import { makeSignedEnvelope } from '../envelope/fixtures.js';
 
 describe('Story A2 Task 7: trusted temporal work context', () => {
   let db: SQLiteDatabase;
@@ -19,8 +22,10 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
   beforeEach(() => {
     db = new Database(':memory:');
     ledger = new TaskLedger(db, { now: () => now, timeZone: 'Asia/Seoul' });
+    initAgentTables(db);
     executor = new GatewayToolExecutor();
     executor.setTaskLedger(ledger);
+    executor.setSessionsDb(db);
     const task = ledger.create({
       title: 'temporal authority test',
       due_at: '2026-07-22T00:00:00+09:00',
@@ -119,7 +124,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         } as never,
         executionContext
       )
-    ).rejects.toThrow(/unknown|forbidden/);
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
     expect(ledger.getById(taskId)?.revision).toBe(1);
   });
 
@@ -188,6 +193,119 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(published).toHaveLength(0);
   });
 
+  it('checks supersession before envelope validation and creates no denial audit', async () => {
+    const sentinel = 'private-trello-card-secret-42';
+    ledger.update(taskId, { due_at: '2026-07-23T00:00:00+09:00' });
+    const staleContext: GatewayToolExecutionContext = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({
+        scope: {
+          ...makeSignedEnvelope().scope,
+          raw_connectors: ['trello'],
+        },
+      }),
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: ['context_compile'],
+        },
+      },
+    };
+
+    await expect(
+      executor.execute(
+        'context_compile',
+        { task: 'compile', connectors: [sentinel] } as never,
+        staleContext
+      )
+    ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
+
+    const auditJson = JSON.stringify(
+      db.prepare(`SELECT * FROM agent_activity ORDER BY id ASC`).all()
+    );
+    expect(auditJson).not.toContain(sentinel);
+    expect(auditJson).not.toContain('envelope_violation');
+  });
+
+  it('keeps temporal context_compile denials non-reflective in direct and nested Code-Act', async () => {
+    const connectorSentinel = 'private-trello-card-secret-99';
+    const rawIdSentinel = 'private-raw-id-secret-100';
+    const compilerSentinel = 'private-compiler-secret-101';
+    const traceSummaries: string[] = [];
+    const compileService: ContextCompileService = {
+      compileAndPersistContext: async () => {
+        throw new Error(`compiler reflected ${compilerSentinel}`);
+      },
+    };
+    executor.setContextCompileService(compileService);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async (input) => {
+        traceSummaries.push(input.output_summary ?? '');
+        return {} as never;
+      },
+    } as unknown as MAMAApiSetInput);
+    const securedContext: GatewayToolExecutionContext = {
+      ...executionContext,
+      modelRunId: 'mr_temporal_security',
+      envelope: makeSignedEnvelope({
+        scope: {
+          ...makeSignedEnvelope().scope,
+          raw_connectors: ['trello'],
+        },
+      }),
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: ['code_act', 'context_compile'],
+        },
+      },
+    };
+
+    const direct = await executor.execute(
+      'context_compile',
+      { task: 'compile', connectors: [connectorSentinel] } as never,
+      securedContext
+    );
+    expect(direct).toMatchObject({ success: false, code: 'connector_out_of_scope' });
+    expect(JSON.stringify(direct)).not.toContain(connectorSentinel);
+
+    const forgedSeed = await executor.execute(
+      'context_compile',
+      {
+        task: 'compile',
+        connectors: ['trello'],
+        seed_refs: [{ kind: 'raw', connector: 'trello', raw_id: rawIdSentinel }],
+      } as never,
+      securedContext
+    );
+    expect(forgedSeed).toMatchObject({ success: false, code: 'context_compile_failed' });
+    expect(JSON.stringify(forgedSeed)).not.toContain(rawIdSentinel);
+    expect(JSON.stringify(forgedSeed)).not.toContain(compilerSentinel);
+
+    const nested = await executor.execute(
+      'code_act',
+      {
+        code: `context_compile({ task: 'compile', connectors: ['trello'], seed_refs: [{ kind: 'raw', connector: 'trello', raw_id: '${rawIdSentinel}' }] })`,
+        allowedTools: ['context_compile'],
+      },
+      securedContext
+    );
+    const nestedJson = JSON.stringify(nested);
+    expect(nestedJson).not.toContain(rawIdSentinel);
+    expect(nestedJson).not.toContain(compilerSentinel);
+
+    const auditJson = JSON.stringify(
+      db.prepare(`SELECT * FROM agent_activity ORDER BY id ASC`).all()
+    );
+    for (const sentinel of [connectorSentinel, rawIdSentinel, compilerSentinel]) {
+      expect(auditJson).not.toContain(sentinel);
+      expect(JSON.stringify(traceSummaries)).not.toContain(sentinel);
+    }
+  });
+
   it('blocks stale side-effect tools even if a legacy Claude catalog exposes them', async () => {
     ledger.update(taskId, { due_at: '2026-07-23T00:00:00+09:00' });
     const legacyContext: GatewayToolExecutionContext = {
@@ -216,14 +334,14 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         { slots: { briefing: '<p>forbidden</p>' } } as never,
         executionContext
       )
-    ).rejects.toThrow(/pipeline/);
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
     await expect(
       executor.execute(
         'report_publish',
         { slots: { pipeline: '<p>ok</p>', custom: '<p>forbidden</p>' } } as never,
         executionContext
       )
-    ).rejects.toThrow(/pipeline/);
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
 
     const result = await executor.execute(
       'report_publish',

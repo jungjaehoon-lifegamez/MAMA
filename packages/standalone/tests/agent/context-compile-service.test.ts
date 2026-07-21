@@ -202,6 +202,9 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
     expect(
       getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
+    ).not.toHaveProperty('seed_refs');
+    expect(
+      getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
     ).toMatchObject({
       task_ref: {
         sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
@@ -210,7 +213,11 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
       connectors: ['telegram'],
       project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
       tenant_id: 'default',
-      seed_refs: [{ kind: 'memory', id: 'mem-alpha' }],
+      seed_refs_ref: {
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        length: JSON.stringify([{ kind: 'memory', id: 'mem-alpha' }]).length,
+        count: 1,
+      },
     });
     expect(
       getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
@@ -770,10 +777,56 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     ).rejects.toThrow('compile exploded');
 
     expect(countRows('context_packets')).toBe(0);
-    expect(getModelRunInAdapter(adapter, 'mr_context_compile_failed')).toMatchObject({
+    const failedRun = getModelRunInAdapter(adapter, 'mr_context_compile_failed');
+    expect(failedRun).toMatchObject({
       status: 'failed',
-      error_summary: 'compile exploded',
+      error_summary: expect.stringMatching(
+        /^context_compile_failed;sha256=[a-f0-9]{64};length=16$/
+      ),
     });
+    expect(JSON.stringify(failedRun)).not.toContain('compile exploded');
+  });
+
+  it('AC: digests unverified seed refs and reflected compiler failures in model-run audit', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const sentinel = 'private-forged-raw-id-secret-42';
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext: vi.fn(async () => {
+        throw new Error(`Seed raw ref is not visible: ${sentinel}`);
+      }),
+      childModelRunId: () => 'mr_context_seed_audit',
+      packetId: () => 'ctxp_context_seed_audit',
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: {
+          task: 'compile branch context',
+          connectors: ['telegram'],
+          seed_refs: [{ kind: 'raw', connector: 'telegram', raw_id: sentinel }],
+        },
+      })
+    ).rejects.toThrow(sentinel);
+
+    const run = getModelRunInAdapter(adapter, 'mr_context_seed_audit');
+    expect(run).toMatchObject({
+      status: 'failed',
+      input_refs: {
+        seed_refs_ref: {
+          sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+          length: expect.any(Number),
+          count: 1,
+        },
+      },
+      error_summary: expect.stringMatching(
+        /^context_compile_failed;sha256=[a-f0-9]{64};length=\d+$/
+      ),
+    });
+    expect(JSON.stringify(run)).not.toContain(sentinel);
   });
 
   it('AC: retains the inserted packet when child commit fails and marks a running child failed', async () => {
@@ -820,7 +873,9 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     });
     expect(getModelRunInAdapter(baseAdapter, 'mr_context_commit_failed')).toMatchObject({
       status: 'failed',
-      error_summary: 'commit store unavailable',
+      error_summary: expect.stringMatching(
+        /^context_compile_failed;sha256=[a-f0-9]{64};length=24$/
+      ),
     });
   });
 

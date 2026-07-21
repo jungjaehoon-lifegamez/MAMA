@@ -29,6 +29,8 @@ import {
 } from '../../../mama-core/src/index.js';
 import { getAdapter } from '../../../mama-core/src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../../mama-core/src/test-utils.js';
+import Database from '../../src/sqlite.js';
+import { initAgentTables } from '../../src/db/agent-store.js';
 
 const FIXED_NOW_MS = Date.parse('2026-04-30T09:00:00.000Z');
 
@@ -400,6 +402,75 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
       error: expect.stringContaining('invalid compile input'),
       details: { field: 'as_of' },
     });
+  });
+
+  it('digests non-temporal context_compile failures before trace and activity persistence', async () => {
+    const sentinel = 'private-board-connector-secret-42';
+    const scopeSentinel = 'private-scope-secret-43';
+    const service: ContextCompileService = {
+      compileAndPersistContext: vi
+        .fn()
+        .mockRejectedValue(new Error(`compiler reflected ${sentinel}`)),
+    };
+    const traceApi = makeTraceApi();
+    const sessionsDb = new Database(':memory:');
+    initAgentTables(sessionsDb);
+    const executor = new GatewayToolExecutor({
+      mamaApi: traceApi,
+      contextCompileService: service,
+    });
+    executor.setSessionsDb(sessionsDb);
+
+    const result = await executor.execute(
+      'context_compile',
+      { task: 'compile context', connectors: ['telegram'] } as GatewayToolInput,
+      makeContext({ modelRunId: 'mr_non_temporal_worker' })
+    );
+
+    expect(result).toMatchObject({
+      success: false,
+      code: 'context_compile_failed',
+      error: expect.stringContaining(sentinel),
+    });
+    expect(JSON.stringify(vi.mocked(traceApi.appendToolTrace).mock.calls)).not.toContain(sentinel);
+
+    const scopeDenied = await executor.execute(
+      'context_compile',
+      {
+        task: 'compile context',
+        scopes: [{ kind: 'project', id: scopeSentinel }],
+      } as GatewayToolInput,
+      makeContext({ modelRunId: 'mr_non_temporal_worker_scope' })
+    );
+    expect(scopeDenied).toMatchObject({ success: false, code: 'memory_scope_out_of_scope' });
+    expect(JSON.stringify(scopeDenied)).not.toContain(scopeSentinel);
+
+    const sandbox = new CodeActSandbox();
+    const bridge = new HostBridge(
+      executor,
+      new RoleManager(),
+      makeContext({ modelRunId: 'mr_non_temporal_code_act', executionSurface: 'code_act' })
+    );
+    bridge.injectInto(sandbox, 2, {
+      allowedTools: ['context_compile'],
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+    });
+    const nested = await sandbox.execute(
+      `context_compile({ task: 'compile context', scopes: [{ kind: 'project', id: '${scopeSentinel}' }] })`
+    );
+    expect(JSON.stringify(nested)).not.toContain(scopeSentinel);
+
+    const activityJson = JSON.stringify(
+      sessionsDb.prepare(`SELECT * FROM agent_activity ORDER BY id`).all()
+    );
+    expect(activityJson).not.toContain(sentinel);
+    expect(activityJson).not.toContain(scopeSentinel);
+    expect(JSON.stringify(vi.mocked(traceApi.appendToolTrace).mock.calls)).not.toContain(
+      scopeSentinel
+    );
+    sessionsDb.close();
   });
 
   it('passes the model-turn cancellation signal into context compilation', async () => {
