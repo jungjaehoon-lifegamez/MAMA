@@ -162,6 +162,7 @@ type ActiveGatewayExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  workorderAttemptId?: number;
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -596,6 +597,7 @@ export class GatewayToolExecutor {
       sourceMessageRef: executionContext?.sourceMessageRef,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
+      workorderAttemptId: executionContext?.workorderAttemptId,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -636,6 +638,8 @@ export class GatewayToolExecutor {
       sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
+      // Never merged from fallback - attempt identity is issued for one claimed run only.
+      workorderAttemptId: active.workorderAttemptId,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -1762,6 +1766,9 @@ export class GatewayToolExecutor {
           gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),
           ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
+          ...(ctx?.workorderAttemptId !== undefined
+            ? { workorder_attempt_id: ctx.workorderAttemptId }
+            : {}),
         },
       });
     } catch (logErr) {
