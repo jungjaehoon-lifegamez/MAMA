@@ -273,8 +273,11 @@ Its effective tool surface is capability-based and least-privilege:
 - scoped connector evidence through `context_compile`;
 - read-only `kagemusha_*` evidence when configured;
 - schedule reads;
-- affected-slot `report_publish`;
 - agent notices needed for owner escalation.
+
+Every call carrying temporal authority is rejected once its attempt is superseded, including reads.
+`context_compile` host-binds the task/generation and returns raw references only when every raw
+reference matches the task's source event or channel.
 
 Trello remains MAMA connector evidence, consistent with the approved Code-Act parity design. This
 release does not add a direct Trello client or silently treat Kagemusha records as writable MAMA
@@ -298,6 +301,7 @@ The tool input is deliberately narrow:
 
 ```text
 task_temporal_reconcile({
+  context_packet_id,
   expected_revision,
   outcome: 'resolved' | 'final_no_update' | 'deferred',
   status?,
@@ -308,7 +312,7 @@ task_temporal_reconcile({
 })
 ```
 
-`reason` is required for every outcome. Task id, temporal epoch, occurrence key, generation key,
+`context_packet_id` and `reason` are required for every outcome. Task id, temporal epoch, occurrence key, generation key,
 check instant, and attempt id are absent from model input. They come only from a host-built
 `TemporalWorkContext` derived from the claimed system row and matching generation record. The exact
 no-update scope is host-derived as

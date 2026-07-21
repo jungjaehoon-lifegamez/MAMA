@@ -31,6 +31,7 @@ export type {
 } from '@jungjaehoon/mama-core';
 
 export type ContextCompileInput = CoreContextCompileInput;
+export type TemporalReconcileToolInput = TemporalReconcileInput & { context_packet_id: string };
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -728,7 +729,7 @@ export type GatewayToolInput =
   | RestartBotInput
   | StopBotInput
   | CodeActInput
-  | TemporalReconcileInput;
+  | TemporalReconcileToolInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)

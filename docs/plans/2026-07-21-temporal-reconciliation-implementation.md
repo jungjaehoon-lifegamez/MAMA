@@ -501,11 +501,8 @@ Prove:
 - model fields cannot provide/override task id, attempt id, epoch, occurrence, generation, or check;
 - valid context plus narrow input commits and returns receipt;
 - stale/superseded context returns `workorder_superseded` or a typed conflict;
-- reads remain allowed after supersession;
-- every write-capable function available to the temporal role, including `report_publish`, rechecks
-  active attempt ownership and is denied after supersession;
-- temporal `report_publish` accepts only the host-derived `pipeline` slot and rejects every other or
-  custom slot before calling the live publisher;
+- reads and writes both recheck active attempt ownership and are denied after supersession;
+- `context_compile` rejects mixed raw-source packets before they are returned to the worker;
 - nested Code-Act retains the exact trusted context.
 
 Run:
@@ -534,14 +531,11 @@ Add `task_temporal_reconcile` to the tool-name union, registry, host bridge, and
 Validate only the documented model input; pass trusted context separately into the ledger atomic
 method.
 
-Add a centralized pre-write guard that asks TaskLedger whether the temporal attempt is still active.
-Apply it to every write-capable tool reachable by the temporal role. Keep read-only tools available.
-
-For report publication, enforce the concrete affected-slot contract as `pipeline` only when
-`TemporalWorkContext` is present. This is a host-side key whitelist applied before the global
-publisher. `agent_notices` is read-only in this codebase; there is no model-callable owner-notice
-write to expose. Owner escalation remains the consumer's host-only `noticeOwner`/ops-alarm path on
-retry exhaustion and therefore cannot be invoked by stale model code.
+Add a centralized authority guard that asks TaskLedger whether the temporal attempt is still active.
+Apply it before every tool and recheck after asynchronous reads before returning data. The temporal
+role has no report-publication capability. `agent_notices` is read-only in this codebase; there is
+no model-callable owner-notice write to expose. Owner escalation remains the consumer's host-only
+`noticeOwner`/ops-alarm path on retry exhaustion and therefore cannot be invoked by stale model code.
 
 ### Step 4: Generate docs, test, and typecheck
 
@@ -782,7 +776,7 @@ Prove:
   the normal retry budget when enabled;
 - valid on-mode resumes paused generations, performs stale recovery, runs the boot temporal scan,
   then starts the interval in that order;
-- shutdown awaits scanner/consumer and closes in safe order;
+- shutdown stops admission, durably pauses attempts, then awaits consumer drainage before closing;
 - only one scanner timer/PID path is constructed per daemon start.
 
 Run:

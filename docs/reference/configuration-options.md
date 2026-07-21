@@ -114,7 +114,8 @@ configuration knobs:
 - allow at most ten open temporal workorders;
 - retry each occurrence at most three times, including stale-claim recovery;
 - keep exhausted generations terminal and schedule deferred results as distinct future
-  generations.
+  generations;
+- stop new admission and durably pause open temporal attempts before awaiting worker drainage.
 
 `due_at` accepts only valid RFC 3339 instants with `Z` or an explicit numeric offset. Legacy
 `YYYY-MM-DD` deadlines remain supported and retain date-only precision. The read-only
