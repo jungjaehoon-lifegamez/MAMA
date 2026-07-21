@@ -25,6 +25,19 @@ All notable changes to this project will be documented in this file.
 - **Bounded shutdown** — temporal admission stops and open attempts are durably paused before the
   runtime waits for an in-flight worker to drain.
 
+## [0.24.2] / mama-core [1.9.0] / mama-os [0.24.2] - 2026-07-22
+
+### Fixed — Workorder forward compatibility
+
+- **Version-owned workorder reads** — older MAMA OS binaries now count, claim, recover, and cancel
+  only the workorder kinds they understand. Rows written by a newer version remain untouched,
+  preventing downgrade crashes and preserving future work for the binary that owns it.
+
+### Upgrade notes
+
+- This patch bumps only `@jungjaehoon/mama-os` to `0.24.2`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+
 ## [0.24.1] / mama-core [1.9.0] / mama-os [0.24.1] - 2026-07-21
 
 ### Fixed — Codex report recovery and tool parity

@@ -64,6 +64,10 @@ export const TEMPORAL_WORKORDER_MAX_ATTEMPTS = 3;
 
 /** source_channel namespace for workorder rows: 'workorder:<workKind>'. */
 export const WORKORDER_CHANNEL_PREFIX = 'workorder:';
+const KNOWN_WORKORDER_CHANNELS = WORKORDER_KINDS.map(
+  (workKind) => `${WORKORDER_CHANNEL_PREFIX}${workKind}`
+);
+const KNOWN_WORKORDER_CHANNELS_SQL = KNOWN_WORKORDER_CHANNELS.map(() => '?').join(',');
 
 export interface EnqueueWorkOrderInput {
   workKind: WorkOrderKind;
@@ -1981,11 +1985,12 @@ export class TaskLedger implements TaskSource {
         .prepare(
           `SELECT * FROM operator_tasks
            WHERE kind = 'system' AND status = 'pending'
+             AND source_channel IN (${KNOWN_WORKORDER_CHANNELS_SQL})
            ORDER BY CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC,
                     id ASC
            LIMIT 1`
         )
-        .get() as TaskRow | undefined;
+        .get(...KNOWN_WORKORDER_CHANNELS) as TaskRow | undefined;
       if (row) {
         this.db
           .prepare(`UPDATE operator_tasks SET status = 'in_progress', updated_at = ? WHERE id = ?`)
@@ -2049,9 +2054,11 @@ export class TaskLedger implements TaskSource {
   countPendingWorkOrders(): number {
     const row = this.db
       .prepare(
-        `SELECT COUNT(*) AS count FROM operator_tasks WHERE kind = 'system' AND status = 'pending'`
+        `SELECT COUNT(*) AS count FROM operator_tasks
+         WHERE kind = 'system' AND status = 'pending'
+           AND source_channel IN (${KNOWN_WORKORDER_CHANNELS_SQL})`
       )
-      .get() as { count: number };
+      .get(...KNOWN_WORKORDER_CHANNELS) as { count: number };
     return row.count;
   }
 
@@ -2092,8 +2099,12 @@ export class TaskLedger implements TaskSource {
   /** In-progress system rows at boot = crash artifacts (single serial consumer). */
   listStaleClaims(): WorkOrderRecord[] {
     const rows = this.db
-      .prepare(`SELECT * FROM operator_tasks WHERE kind = 'system' AND status = 'in_progress'`)
-      .all() as TaskRow[];
+      .prepare(
+        `SELECT * FROM operator_tasks
+         WHERE kind = 'system' AND status = 'in_progress'
+           AND source_channel IN (${KNOWN_WORKORDER_CHANNELS_SQL})`
+      )
+      .all(...KNOWN_WORKORDER_CHANNELS) as TaskRow[];
     return rows.map((row) => this.rowToWorkOrder(row));
   }
 
@@ -2109,11 +2120,9 @@ export class TaskLedger implements TaskSource {
     if (onlyKinds !== undefined && onlyKinds.length === 0) {
       return 0;
     }
-    const kindFilter =
-      onlyKinds && onlyKinds.length > 0
-        ? ` AND source_channel IN (${onlyKinds.map(() => '?').join(',')})`
-        : '';
-    const kindParams = (onlyKinds ?? []).map((kind) => `${WORKORDER_CHANNEL_PREFIX}${kind}`);
+    const selectedKinds = onlyKinds ?? WORKORDER_KINDS;
+    const kindFilter = ` AND source_channel IN (${selectedKinds.map(() => '?').join(',')})`;
+    const kindParams = selectedKinds.map((kind) => `${WORKORDER_CHANNEL_PREFIX}${kind}`);
     const result = this.db
       .prepare(
         `UPDATE operator_tasks
