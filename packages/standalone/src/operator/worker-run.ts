@@ -20,7 +20,7 @@
  * runs never block owner replies.
  */
 
-import type { ContentBlock } from '../agent/types.js';
+import type { AgentLoopOptions, ContentBlock } from '../agent/types.js';
 import type { BackendType } from '../agent/model-runner.js';
 import type { WorkOrderKind } from './task-ledger.js';
 import { UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION } from '../utils/untrusted-content.js';
@@ -33,7 +33,9 @@ export interface WorkerIdentityOptions {
   freshSession: boolean;
 }
 
-export type WorkerRunnerOptions = WorkerIdentityOptions & Record<string, unknown>;
+export type WorkerRunnerOptions = WorkerIdentityOptions &
+  Pick<AgentLoopOptions, 'workorderAttemptId'> &
+  Record<string, unknown>;
 
 /** Minimal surface of AgentLoop.runWithContent that workerRun needs (DI seam). */
 export interface WorkerRunner {
@@ -140,6 +142,17 @@ export function buildWorkerSystemPrompt(
 
 export function buildWorkerSessionKey(kind: string): string {
   return `operator:worker:${kind}`;
+}
+
+/** Attach a claimed system-row id after all caller-provided options. */
+export function attachWorkOrderAttemptContext(
+  runOptions: Record<string, unknown>,
+  workorderAttemptId: number
+): Record<string, unknown> & { workorderAttemptId: number } {
+  if (!Number.isInteger(workorderAttemptId) || workorderAttemptId <= 0) {
+    throw new Error('[worker-run] workorder attempt id must be a positive integer');
+  }
+  return { ...runOptions, workorderAttemptId };
 }
 
 /**

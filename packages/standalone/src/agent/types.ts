@@ -130,6 +130,8 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  /** Host-issued claimed system-row id; never accepted from model tool input. */
+  workorderAttemptId?: number;
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -1000,6 +1002,8 @@ export interface AgentLoopOptions {
   agentContext?: AgentContext;
   /** Stage-2 shadow seam: per-run report_publish override (see GatewayToolExecutionContext). */
   reportPublisherOverride?: (slots: Record<string, string>) => void;
+  /** Host-issued claimed system-row id; never accepted from model tool input. */
+  workorderAttemptId?: number;
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)
