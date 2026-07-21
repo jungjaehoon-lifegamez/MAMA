@@ -37,6 +37,8 @@ export interface HostToolCall {
   callId: string;
   name: string;
   input: Record<string, unknown>;
+  /** Aborted when the owning model turn fails, times out, or is disconnected. */
+  signal?: AbortSignal;
 }
 
 /** Serialized result returned to the model host. */

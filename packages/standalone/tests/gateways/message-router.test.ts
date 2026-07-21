@@ -229,6 +229,31 @@ describe('MessageRouter', () => {
       expect(receivedOptions.systemPrompt!.length).toBeGreaterThan(0);
     });
 
+    it('should preserve durable Codex resume intent when the volatile session pool is new', async () => {
+      const run = vi.fn().mockResolvedValue({ response: 'Response' });
+      const customRouter = new MessageRouter(
+        sessionStore,
+        { run },
+        createMockMamaApi(mockDecisions),
+        { backend: 'codex' }
+      );
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: `codex-restart-${Date.now()}`,
+        userId: 'user-456',
+        text: 'Continue after restart',
+      });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          systemPrompt: expect.any(String),
+          resumeSession: true,
+        })
+      );
+    });
+
     it('keeps the stable policy fingerprint on resumed sessions', async () => {
       const receivedFingerprints: Array<string | undefined> = [];
       const agentLoop = {

@@ -1294,6 +1294,8 @@ export class AgentLoop {
                     viewer: options?.agentContext?.platform === 'viewer',
                   }),
               execute: async (call: HostToolCall) => {
+                const callSignal = call.signal ?? new AbortController().signal;
+                callSignal.throwIfAborted();
                 if (nativeToolCallCount >= EMERGENCY_MAX_TURNS) {
                   return {
                     content: `Native tool call budget exceeded emergency maximum turns (${EMERGENCY_MAX_TURNS})`,
@@ -1328,12 +1330,20 @@ export class AgentLoop {
                   content: [toolUse],
                   stopReason: 'tool_use',
                 });
+                const callExecutionContext = toolExecutionContext
+                  ? {
+                      ...toolExecutionContext,
+                      gatewayCallId: call.callId,
+                      signal: callSignal,
+                    }
+                  : null;
                 const [toolResult] = await this.executeTools(
                   [toolUse],
                   options?.stopAfterSuccessfulTools ?? [],
-                  toolExecutionContext,
+                  callExecutionContext,
                   runScope
                 );
+                callSignal.throwIfAborted();
                 if (!toolResult) {
                   return {
                     content: `Native tool "${call.name}" returned no result`,

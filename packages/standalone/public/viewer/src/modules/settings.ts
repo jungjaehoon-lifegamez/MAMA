@@ -31,7 +31,7 @@ import {
 
 const logger = new DebugLogger('Settings');
 
-type AgentBackend = 'claude' | 'codex';
+export type AgentBackend = 'claude' | 'codex';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
@@ -119,6 +119,13 @@ const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
     'claude-3-haiku-20240307',
   ],
 };
+
+export function getSettingsModelOptions(backend: AgentBackend, currentModel?: string): string[] {
+  const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+  return currentModel && !options.includes(currentModel)
+    ? [...options, currentModel]
+    : [...options];
+}
 
 const EFFORT_SUPPORTED_MODELS = new Set<string>(['claude-opus-4-6', 'claude-sonnet-4-6']);
 const MAX_EFFORT_MODELS = new Set<string>(['claude-opus-4-6']);
@@ -939,8 +946,8 @@ export class SettingsModule {
     if (!select) {
       return;
     }
-    const modelList = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
+    const modelList = getSettingsModelOptions(backend, normalized);
     select.innerHTML = modelList
       .map(
         (m) =>
@@ -1213,7 +1220,7 @@ export class SettingsModule {
     const backend = (backendSelect.value || 'claude') as AgentBackend;
     const currentModel = modelSelect.value || '';
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
-    const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+    const options = getSettingsModelOptions(backend, normalized);
 
     modelSelect.innerHTML = options
       .map(

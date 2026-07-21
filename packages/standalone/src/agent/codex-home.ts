@@ -14,6 +14,8 @@ export interface CodexAppServerLaunchConfig {
   args: string[];
   env: Record<string, string | undefined>;
   fingerprint: string;
+  /** Fingerprint of configured credential values; never persisted in thread policy. */
+  secretFingerprint: string;
 }
 
 const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -500,7 +502,12 @@ export function buildCodexAppServerLaunchConfig(
     childEnv[name] = value;
   }
   if (mcpConfigPath === undefined) {
-    return { args: [], env: childEnv, fingerprint: fingerprintPolicy({}) };
+    return {
+      args: [],
+      env: childEnv,
+      fingerprint: fingerprintPolicy({}),
+      secretFingerprint: fingerprintPolicy({}),
+    };
   }
   let parsed: unknown;
   try {
@@ -803,10 +810,14 @@ export function buildCodexAppServerLaunchConfig(
     normalizedServers[name] = normalized;
   }
 
+  const secretBindings = [...new Set([...userBindings, ...generatedBindings.keys()])]
+    .sort(codeUnitCompare)
+    .map((name) => [name, childEnv[name] ?? null]);
   return {
     args: consolidateMcpOverrides(args),
     env: childEnv,
     fingerprint: fingerprintPolicy(normalizedServers),
+    secretFingerprint: fingerprintPolicy(secretBindings),
   };
 }
 

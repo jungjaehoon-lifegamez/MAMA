@@ -130,6 +130,8 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  /** Cancellation for the owning model turn. */
+  signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
   parentToolName?: string;
   backgroundTasks?: BackgroundTaskRegistry;

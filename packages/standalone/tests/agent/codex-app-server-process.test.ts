@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { CodexAppServerProcess } from '../../src/agent/codex-app-server-process.js';
 import type {
   HostToolBridge,
+  HostToolCall,
   HostToolCallResult,
   HostToolDefinition,
 } from '../../src/agent/model-runner.js';
@@ -218,7 +219,7 @@ rl.on('line', line => {
     if (mode === 'unknown-response') setTimeout(()=>send({jsonrpc:'2.0',id:999,result:{}}),5);
     return;
   }
-  const threadResult = (id,params) => { const sandbox=params.sandbox === 'workspace-write'?{type:'workspaceWrite',writableRoots:[params.cwd],networkAccess:false,excludeTmpdirEnvVar:false,excludeSlashTmp:false}:params.sandbox === 'read-only'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}; const result={...${JSON.stringify(responseFixture)},thread:fullThread(id),model:mode === 'bad-policy'?'unexpected-model':params.model,cwd:params.cwd,instructionSources:fs.existsSync(${JSON.stringify(join(root, 'bad-source'))})?['/outside/AGENTS.md']:[],sandbox}; if(mode==='bad-thread-schema') delete result.thread.sessionId; return result; };
+  const threadResult = (id,params) => { const sandbox=params.sandbox === 'workspace-write'?{type:'workspaceWrite',writableRoots:[params.cwd],networkAccess:false,excludeTmpdirEnvVar:false,excludeSlashTmp:false}:params.sandbox === 'read-only'?{type:'readOnly',networkAccess:false}:{type:'dangerFullAccess'}; const instructionSources=mode==='symlink-source'?[params.cwd+'/AGENTS.md']:fs.existsSync(${JSON.stringify(join(root, 'bad-source'))})?['/outside/AGENTS.md']:[]; const result={...${JSON.stringify(responseFixture)},thread:fullThread(id),model:mode === 'bad-policy'?'unexpected-model':params.model,cwd:params.cwd,instructionSources,sandbox}; if(mode==='bad-thread-schema') delete result.thread.sessionId; return result; };
   if (message.method === 'thread/start') return send({jsonrpc:'2.0',id:message.id,result:threadResult('thread-'+(++thread),message.params)});
   if (message.method === 'thread/resume') return send({jsonrpc:'2.0',id:message.id,result:threadResult(message.params.threadId,message.params)});
   if (message.method === 'turn/start') {
@@ -227,6 +228,21 @@ rl.on('line', line => {
     if (mode === 'timeout-once' && !fs.existsSync(${JSON.stringify(join(root, 'timed-out'))})) { fs.writeFileSync(${JSON.stringify(join(root, 'timed-out'))},'1'); return; }
     if (mode === 'exit') return process.exit(17);
     const id = 'turn-'+(++turn);
+    if (['turn-start-error-held-once','turn-start-malformed-held-once'].includes(mode) && !fs.existsSync(${JSON.stringify(join(root, 'held-turn-start'))})) {
+      fs.writeFileSync(${JSON.stringify(join(root, 'held-turn-start'))},'1');
+      const interval=setInterval(()=>{
+        if (!fs.existsSync(${JSON.stringify(join(root, 'release-turn-start'))})) return;
+        clearInterval(interval);
+        if (mode === 'turn-start-error-held-once') send({jsonrpc:'2.0',id:message.id,error:{code:-32000,message:'rejected before execution'}});
+        else send({jsonrpc:'2.0',id:message.id,result:{turn:{id}}});
+      },5);
+      return;
+    }
+    if (mode === 'turn-start-late-once' && !fs.existsSync(${JSON.stringify(join(root, 'late-turn-start'))})) {
+      fs.writeFileSync(${JSON.stringify(join(root, 'late-turn-start'))},'1');
+      setTimeout(()=>send({jsonrpc:'2.0',id:message.id,result:{turn:fullTurn(id)}}),100);
+      return;
+    }
     const requestBase = 700 + turn * 10;
     const earlyTool = mode === 'tool-early';
     const toolParams = mode === 'code-act-tool-success'
@@ -440,7 +456,7 @@ describe('Story: Codex app-server process', () => {
 
   it('advertises the supplied dynamic tools and executes a matching native tool call', async () => {
     const item = fixture('tool-success');
-    const calls: Array<{ callId: string; name: string; input: Record<string, unknown> }> = [];
+    const calls: HostToolCall[] = [];
     const runner = new CodexAppServerProcess(item.options);
 
     await expect(
@@ -454,7 +470,12 @@ describe('Story: Codex app-server process', () => {
     await runner.stop();
 
     expect(calls).toEqual([
-      { callId: 'call-1', name: 'report_request', input: { topic: 'status' } },
+      expect.objectContaining({
+        callId: 'call-1',
+        name: 'report_request',
+        input: { topic: 'status' },
+        signal: expect.any(AbortSignal),
+      }),
     ]);
     const sent = messages(item.capture);
     expect(sent.find((entry) => entry.method === 'thread/start')?.params).toMatchObject({
@@ -702,6 +723,7 @@ describe('Story: Codex app-server process', () => {
           calls.push(call.callId);
           if (call.callId === 'call-1') {
             signalFirst?.();
+            call.signal?.addEventListener('abort', () => releaseFirst?.(), { once: true });
             await firstGate;
           }
           return { content: call.callId, isError: false };
@@ -916,8 +938,8 @@ describe('Story: Codex app-server process', () => {
       await expect(
         runner.prompt('second', undefined, { sessionKey: 'second' })
       ).resolves.toMatchObject({ response: 'hello' });
-      expect(await first).toBeInstanceOf(Error);
       releaseHandler?.();
+      expect(await first).toBeInstanceOf(Error);
       await new Promise((resolve) => setTimeout(resolve, 30));
       expect(existsSync(join(item.root, 'late-tool-reply'))).toBe(false);
     } finally {
@@ -1062,6 +1084,19 @@ describe('Story: Codex app-server process', () => {
     const third = new CodexAppServerProcess(resume.options);
     await expect(third.prompt('again')).rejects.toThrow('outside managed roots');
     await third.stop();
+  });
+
+  it('rejects instruction sources whose managed-root path resolves through a symlink', async () => {
+    const item = fixture('symlink-source');
+    const outsideRoot = mkdtempSync(join(tmpdir(), 'mama-codex-instructions-outside-'));
+    roots.push(outsideRoot);
+    const outside = join(outsideRoot, 'outside-instructions.md');
+    writeFileSync(outside, 'untrusted instructions');
+    symlinkSync(outside, join(item.root, 'AGENTS.md'));
+    const process = new CodexAppServerProcess(item.options);
+
+    await expect(process.prompt('hi')).rejects.toThrow('outside managed roots');
+    await process.stop();
   });
 
   it('rejects response policy metadata that differs from the requested thread policy', async () => {
@@ -1341,6 +1376,103 @@ describe('Story: Codex app-server process', () => {
     await runtime.stop();
   });
 
+  it('keeps sibling sessions alive when one multiplexed turn times out', async () => {
+    const item = fixture('timeout-once');
+    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 500 });
+
+    const timedOut = runtime.prompt('slow', undefined, {
+      sessionKey: 'slow',
+      requestTimeout: 60,
+    });
+    await waitForFile(join(item.root, 'timed-out'));
+    await expect(
+      runtime.prompt('fast', undefined, { sessionKey: 'fast', requestTimeout: 500 })
+    ).resolves.toMatchObject({ response: 'hello' });
+    await expect(timedOut).rejects.toThrow('timed out');
+
+    const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
+    expect(launches).toHaveLength(1);
+    expect(() => process.kill(Number(launches[0].pid), 0)).not.toThrow();
+    await runtime.stop();
+  });
+
+  it('interrupts a late acknowledged turn before retrying the same durable thread', async () => {
+    const item = fixture('turn-start-late-once');
+    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 500 });
+
+    await expect(
+      runtime.prompt('first', undefined, { sessionKey: 'same', requestTimeout: 60 })
+    ).rejects.toThrow('timed out');
+    await expect(
+      runtime.prompt('retry', undefined, { sessionKey: 'same', requestTimeout: 500 })
+    ).resolves.toMatchObject({ response: 'hello' });
+
+    const sent = messages(item.capture);
+    const interruptIndex = sent.findIndex((entry) => entry.method === 'turn/interrupt');
+    const retryIndex = sent.findLastIndex((entry) => entry.method === 'turn/start');
+    expect(interruptIndex).toBeGreaterThan(-1);
+    expect(interruptIndex).toBeLessThan(retryIndex);
+    expect(sent.filter((entry) => Array.isArray(entry.argv))).toHaveLength(1);
+    await runtime.stop();
+  });
+
+  it.each([
+    { mode: 'turn-start-error-held-once', expectedLaunches: 1 },
+    { mode: 'turn-start-malformed-held-once', expectedLaunches: 2 },
+  ])(
+    'reconciles $mode received after the outer deadline before retrying',
+    async ({ mode, expectedLaunches }) => {
+      const item = fixture(mode);
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+      const first = runner.prompt('first');
+      await waitForFile(join(item.root, 'held-turn-start'));
+      const firstStart = messages(item.capture).find((entry) => entry.method === 'turn/start');
+      const threadId = (firstStart?.params as Record<string, unknown>)?.threadId;
+      expect(typeof threadId).toBe('string');
+      (
+        runner as unknown as {
+          timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
+        }
+      ).timeoutTurn(String(threadId), new Error('manual outer deadline'), 500);
+      await expect(first).rejects.toThrow('manual outer deadline');
+      writeFileSync(join(item.root, 'release-turn-start'), '1');
+
+      await expect(runner.prompt('retry')).resolves.toMatchObject({ response: 'hello' });
+
+      const sent = messages(item.capture);
+      expect(sent.filter((entry) => entry.method === 'turn/start')).toHaveLength(2);
+      expect(sent.filter((entry) => Array.isArray(entry.argv))).toHaveLength(expectedLaunches);
+      await runner.stop();
+    }
+  );
+
+  it('aborts an active host tool before reporting a turn timeout', async () => {
+    const item = fixture('tool-success');
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 60 });
+    let observedAbort = false;
+
+    await expect(
+      runner.prompt('slow tool', undefined, {
+        hostToolBridge: hostBridge(
+          (call) =>
+            new Promise((resolve) => {
+              call.signal?.addEventListener(
+                'abort',
+                () => {
+                  observedAbort = true;
+                  resolve({ content: 'cancelled', isError: true });
+                },
+                { once: true }
+              );
+            })
+        ),
+      })
+    ).rejects.toThrow('timed out');
+
+    expect(observedAbort).toBe(true);
+    await runner.stop();
+  });
+
   it('serializes overlapping turns for the same session on the shared app-server', async () => {
     const item = fixture();
     const runtime = new CodexRuntimeProcess(item.options);
@@ -1435,6 +1567,34 @@ describe('Story: Codex app-server process', () => {
     expect(message).toContain('[REDACTED]');
     expect(message).not.toContain(secret);
     expect(JSON.stringify(messages(item.capture)[0].argv)).not.toContain(secret);
+  });
+
+  it('restarts and refreshes redaction when an MCP secret binding changes', async () => {
+    const item = fixture();
+    const mcpConfigPath = join(item.root, 'secret-refresh-mcp.json');
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({ mcpServers: { remote: { command: 'node', env_vars: ['TEST_SECRET'] } } })
+    );
+    const previousSecret = globalThis.process.env.TEST_SECRET;
+    try {
+      globalThis.process.env.TEST_SECRET = 'first-secret';
+      const runner = new CodexAppServerProcess({ ...item.options, mcpConfigPath });
+      await runner.prompt('first');
+      globalThis.process.env.TEST_SECRET = 'second-secret';
+      await runner.prompt('second');
+      await runner.stop();
+
+      const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
+      expect(launches).toHaveLength(2);
+      expect(launches.map((entry) => entry.secret)).toEqual(['first-secret', 'second-secret']);
+    } finally {
+      if (previousSecret === undefined) {
+        delete globalThis.process.env.TEST_SECRET;
+      } else {
+        globalThis.process.env.TEST_SECRET = previousSecret;
+      }
+    }
   });
 
   it('redacts generated HTTP-header environment values without redacting arbitrary env', async () => {
@@ -1555,7 +1715,7 @@ describe('Story: Codex app-server process', () => {
   );
 
   it.each(['exit-after-turn', 'timeout-once'])(
-    'resumes the persisted thread after %s before starting the next turn',
+    'continues the persisted thread after %s before starting the next turn',
     async (mode) => {
       const item = fixture(mode);
       const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 200 });
@@ -1572,8 +1732,43 @@ describe('Story: Codex app-server process', () => {
       const secondTurnIndex = sent.findLastIndex((entry) => entry.method === 'turn/start');
       expect(resumeIndex).toBeGreaterThan(-1);
       expect(resumeIndex).toBeLessThan(secondTurnIndex);
+      if (mode === 'timeout-once') {
+        expect(sent.filter((entry) => entry.method === 'turn/start')).toHaveLength(2);
+        expect(sent.filter((entry) => Array.isArray(entry.argv))).toHaveLength(2);
+      }
     }
   );
+
+  it('delivers fresh runtime bootstrap context when resuming a durable thread', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'initial runtime bootstrap',
+      policyFingerprint: 'stable-policy',
+    });
+    await first.prompt('first message');
+    await first.stop();
+
+    const resumed = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'fresh runtime bootstrap after restart',
+      policyFingerprint: 'stable-policy',
+    });
+    await resumed.prompt('second message');
+    await resumed.stop();
+
+    const sent = messages(item.capture);
+    const resumeIndex = sent.findIndex((entry) => entry.method === 'thread/resume');
+    const resumedTurn = sent.slice(resumeIndex + 1).find((entry) => entry.method === 'turn/start');
+    const input = (
+      (resumedTurn?.params as Record<string, unknown>)?.input as Array<{
+        text?: string;
+      }>
+    )?.[0]?.text;
+    expect(resumeIndex).toBeGreaterThan(-1);
+    expect(input).toContain('fresh runtime bootstrap after restart');
+    expect(input).toContain('second message');
+  });
 
   it('does not overwrite managed authentication when the source is missing', async () => {
     const item = fixture();
@@ -1591,5 +1786,46 @@ describe('Story: Codex app-server process', () => {
     } finally {
       process.env.HOME = previousHome;
     }
+  });
+
+  it('does not rewrite unchanged managed config and authentication on every prompt', async () => {
+    const item = fixture();
+    const sourceHome = join(item.root, 'source-home');
+    writeFileSync(join(sourceHome, '.codex', 'auth.json'), '{"token":"stable"}');
+    const previousHome = process.env.HOME;
+    process.env.HOME = sourceHome;
+    try {
+      const runner = new CodexAppServerProcess(item.options);
+      await runner.prompt('first');
+      const configPath = join(item.options.codexHome!, 'config.toml');
+      const authPath = join(item.options.codexHome!, 'auth.json');
+      const firstConfigMtime = statSync(configPath).mtimeMs;
+      const firstAuthMtime = statSync(authPath).mtimeMs;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+
+      await runner.prompt('second');
+
+      expect(statSync(configPath).mtimeMs).toBe(firstConfigMtime);
+      expect(statSync(authPath).mtimeMs).toBe(firstAuthMtime);
+      await runner.stop();
+    } finally {
+      process.env.HOME = previousHome;
+    }
+  });
+
+  it('repairs externally modified managed config before the next prompt', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess(item.options);
+    await runner.prompt('first');
+    const configPath = join(item.options.codexHome!, 'config.toml');
+    writeFileSync(configPath, 'approval_policy = "on-request"\n[features]\nshell_tool = true\n');
+
+    await runner.prompt('second');
+
+    const repaired = readFileSync(configPath, 'utf8');
+    expect(repaired).toContain('shell_tool = false');
+    expect(repaired).not.toContain('shell_tool = true');
+    expect(statSync(configPath).mode & 0o777).toBe(0o600);
+    await runner.stop();
   });
 });

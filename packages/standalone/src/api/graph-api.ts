@@ -172,6 +172,12 @@ const isOpus46Model = (model: string): boolean =>
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
 function normalizeLegacyManagedBackend(backend: unknown, configPath: string): unknown {
+  if (typeof backend === 'string' && backend.toLowerCase() === 'codex-mcp') {
+    console.warn(
+      `[GraphAPI] Deprecated backend "codex-mcp" at ${configPath}; using "codex" app-server for compatibility.`
+    );
+    return 'codex';
+  }
   if (typeof backend === 'string' && backend.toLowerCase() === 'gemini') {
     console.warn(
       `[GraphAPI] Deprecated backend "gemini" at ${configPath}; using "claude" for compatibility.`
@@ -192,6 +198,10 @@ function normalizeLegacyManagedModel(agent: Record<string, unknown>, configPath:
   return false;
 }
 
+function isLegacyGeminiBackend(backend: unknown): boolean {
+  return typeof backend === 'string' && backend.toLowerCase() === 'gemini';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -207,8 +217,11 @@ function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config:
     const agent = { ...next.agent };
     const backend = normalizeLegacyManagedBackend(agent.backend, 'agent.backend');
     if (backend !== agent.backend) {
+      const migrateModel = isLegacyGeminiBackend(agent.backend);
       agent.backend = backend;
-      normalizeLegacyManagedModel(agent, 'agent.model');
+      if (migrateModel) {
+        normalizeLegacyManagedModel(agent, 'agent.model');
+      }
       next.agent = agent;
       migrated = true;
     }
@@ -251,7 +264,9 @@ function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config:
           !hasExplicitBackend && normalizedInheritedBackend !== inheritedBackend;
         if (normalizedBackend !== priorEffectiveBackend || inheritedBackendWasNormalized) {
           agent.backend = normalizedBackend;
-          normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          if (isLegacyGeminiBackend(priorEffectiveBackend)) {
+            normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          }
           agents[agentId] = agent;
           agentsMigrated = true;
           migrated = true;

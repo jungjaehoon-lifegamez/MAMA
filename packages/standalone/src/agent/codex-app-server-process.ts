@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 
 import type { HostToolBridge, HostToolDefinition, PromptResult } from './model-runner.js';
@@ -82,11 +82,24 @@ interface PendingTurn {
   toolCallResults: Map<string, HostToolCallState>;
   stoppingCallIds: Set<string>;
   hostToolBridge?: HostToolBridge;
+  abortController: AbortController;
   intentionalStop: boolean;
   abortError?: Error;
   onDelta?: (text: string) => void;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
+}
+
+interface TurnStartReconciliation {
+  promise: Promise<void>;
+  resolve: () => void;
+  recoveryTimer?: NodeJS.Timeout;
+}
+
+interface LateTurnStart {
+  threadId: string;
+  requestTimeout: number;
+  reconciliation: TurnStartReconciliation;
 }
 
 interface ServerToolRequest {
@@ -119,6 +132,7 @@ interface SessionPolicy {
 
 interface SessionState {
   threadId: string;
+  bootstrapPending: boolean;
 }
 
 const DEFAULT_TIMEOUT = 300_000;
@@ -131,6 +145,7 @@ const APPROVAL_REVIEWERS = new Set(['user', 'auto_review', 'guardian_subagent'])
 const OVERLOADED_ERROR_CODE = -32001;
 const OVERLOAD_RETRY_LIMIT = 4;
 const OVERLOAD_RETRY_BASE_MS = 25;
+const TURN_START_RECONCILE_GRACE_MS = 250;
 
 class CodexAppServerRpcError extends Error {
   readonly code: number;
@@ -302,6 +317,14 @@ function shaFile(path: string): string {
   return createHash('sha256').update(readFileSync(path)).digest('hex');
 }
 
+function managedFileSignature(path: string): string | undefined {
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  const stat = statSync(path);
+  return `${stat.dev}:${stat.ino}:${stat.mode}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+}
+
 function ensurePrivateDirectory(path: string): void {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   chmodSync(path, 0o700);
@@ -395,6 +418,8 @@ export class CodexAppServerProcess {
   private stderr: ReadlineInterface | undefined;
   private nextId = 0;
   private pending = new Map<number, PendingRequest>();
+  private lateTurnStarts = new Map<number, LateTurnStart>();
+  private turnStartReconciliations = new Map<string, TurnStartReconciliation>();
   private turns = new Map<string, PendingTurn>();
   private sessions = new Map<string, SessionState>();
   private sessionQueues = new Map<string, Promise<void>>();
@@ -406,6 +431,11 @@ export class CodexAppServerProcess {
   private secrets = new Set<string>();
   private authFingerprint: string | undefined;
   private authFingerprintInitialized = false;
+  private authSourceSignature: string | undefined;
+  private managedConfigFingerprint: string | undefined;
+  private managedConfigSignature: string | undefined;
+  private secretLaunchFingerprint: string | undefined;
+  private secretLaunchFingerprintInitialized = false;
   private killTimer: NodeJS.Timeout | undefined;
   private finalKillTimer: NodeJS.Timeout | undefined;
 
@@ -457,13 +487,29 @@ export class CodexAppServerProcess {
           }
           this.sessions.set(session.sessionKey, state);
         }
-        return await this.startTurn(
+        const reconciliation = this.turnStartReconciliations.get(state.threadId);
+        if (reconciliation) {
+          await reconciliation.promise;
+          await this.prepareConnection(launch, session.requestTimeout);
+          state = this.sessions.get(session.sessionKey);
+          if (!state?.threadId) {
+            state = await this.openThread(session, launch);
+            this.sessions.set(session.sessionKey, state);
+          }
+        }
+        const turnText =
+          state.bootstrapPending && session.systemPrompt
+            ? `<system-reminder>\nFresh MAMA runtime context after resuming this durable thread:\n${session.systemPrompt.replace(/<\/system-reminder>/gi, '')}\n</system-reminder>\n\n${text}`
+            : text;
+        const result = await this.startTurn(
           state.threadId,
-          text,
+          turnText,
           callbacks,
           session.requestTimeout,
           session.hostToolBridge
         );
+        state.bootstrapPending = false;
+        return result;
       } catch (error: unknown) {
         if (
           error instanceof CodexAppServerRpcError &&
@@ -596,21 +642,57 @@ export class CodexAppServerProcess {
   private prepareManagedFiles(launch: CodexAppServerLaunchConfig): boolean {
     ensurePrivateDirectory(this.options.codexHome);
     ensurePrivateDirectory(this.options.isolatedHome);
-    atomicPrivateWrite(
-      join(this.options.codexHome, 'config.toml'),
-      buildMAMACodexAppServerConfig()
-    );
+    const configPath = join(this.options.codexHome, 'config.toml');
+    const config = buildMAMACodexAppServerConfig();
+    const configFingerprint = fingerprintText(config);
+    const configSignature = managedFileSignature(configPath);
+    if (
+      this.managedConfigFingerprint !== configFingerprint ||
+      this.managedConfigSignature !== configSignature
+    ) {
+      if (configSignature === undefined || shaFile(configPath) !== configFingerprint) {
+        atomicPrivateWrite(configPath, config);
+      }
+      this.managedConfigFingerprint = configFingerprint;
+      this.managedConfigSignature = managedFileSignature(configPath);
+    }
     const sourceAuth = join(homedir(), '.codex', 'auth.json');
-    const sourceFingerprint =
-      existsSync(sourceAuth) && statSync(sourceAuth).size > 0 ? shaFile(sourceAuth) : undefined;
-    if (sourceFingerprint) {
-      copyAuthAtomically(sourceAuth, join(this.options.codexHome, 'auth.json'));
+    const destinationAuth = join(this.options.codexHome, 'auth.json');
+    const sourceStat = existsSync(sourceAuth) ? statSync(sourceAuth) : undefined;
+    const sourceSignature =
+      sourceStat && sourceStat.size > 0
+        ? `${realpathSync(sourceAuth)}:${sourceStat.size}:${sourceStat.mtimeMs}:${sourceStat.ctimeMs}`
+        : undefined;
+    let sourceFingerprint = this.authFingerprint;
+    if (
+      !this.authFingerprintInitialized ||
+      this.authSourceSignature !== sourceSignature ||
+      (sourceSignature !== undefined && !existsSync(destinationAuth))
+    ) {
+      sourceFingerprint = sourceSignature ? shaFile(sourceAuth) : undefined;
+      if (
+        sourceFingerprint &&
+        (!existsSync(destinationAuth) || shaFile(destinationAuth) !== sourceFingerprint)
+      ) {
+        copyAuthAtomically(sourceAuth, destinationAuth);
+      }
     }
     const changed = this.authFingerprintInitialized && this.authFingerprint !== sourceFingerprint;
     this.authFingerprint = sourceFingerprint;
     this.authFingerprintInitialized = true;
-    this.secrets = configuredSecretValues(launch);
-    return changed;
+    this.authSourceSignature = sourceSignature;
+    const secretChanged =
+      this.secretLaunchFingerprintInitialized &&
+      this.secretLaunchFingerprint !== launch.secretFingerprint;
+    if (
+      !this.secretLaunchFingerprintInitialized ||
+      this.secretLaunchFingerprint !== launch.secretFingerprint
+    ) {
+      this.secrets = configuredSecretValues(launch);
+      this.secretLaunchFingerprint = launch.secretFingerprint;
+      this.secretLaunchFingerprintInitialized = true;
+    }
+    return changed || secretChanged;
   }
 
   private async ensureStarted(
@@ -698,7 +780,7 @@ export class CodexAppServerProcess {
       if (typeof resumed?.id !== 'string' || resumed.id !== record.threadId) {
         throw new Error('Codex app-server resumed an unexpected thread');
       }
-      return { threadId: record.threadId };
+      return { threadId: record.threadId, bootstrapPending: true };
     }
     const threadStartParams: JsonObject = {
       model: session.model,
@@ -728,7 +810,7 @@ export class CodexAppServerProcess {
       systemPromptFingerprint: this.policyFingerprint(session),
       mcpConfigFingerprint: launch.fingerprint,
     });
-    return { threadId: thread.id };
+    return { threadId: thread.id, bootstrapPending: false };
   }
 
   private policyFingerprint(session: SessionPolicy): string {
@@ -748,14 +830,26 @@ export class CodexAppServerProcess {
     if (!Array.isArray(sources)) {
       throw new Error('Codex app-server returned malformed instruction sources');
     }
+    const managedRoots = [session.cwd, this.options.codexHome].map((root) => realpathSync(root));
     for (const source of sources) {
       if (typeof source !== 'string') {
         throw new Error('Codex app-server returned malformed instruction source');
       }
-      const path = resolve(source);
-      const allowed = [session.cwd, this.options.codexHome].some(
-        (root) => path === root || path.startsWith(`${root}/`)
-      );
+      let path: string;
+      try {
+        path = realpathSync(resolve(session.cwd, source));
+      } catch (error: unknown) {
+        throw new Error('Codex app-server loaded an instruction source outside managed roots', {
+          cause: error,
+        });
+      }
+      const allowed = managedRoots.some((root) => {
+        const childPath = relative(root, path);
+        return (
+          childPath === '' ||
+          (childPath !== '..' && !childPath.startsWith(`..${sep}`) && !isAbsolute(childPath))
+        );
+      });
       if (!allowed) {
         throw new Error('Codex app-server loaded an instruction source outside managed roots');
       }
@@ -814,10 +908,10 @@ export class CodexAppServerProcess {
     hostToolBridge: HostToolBridge | undefined
   ): Promise<PromptResult> {
     return new Promise<PromptResult>((resolveTurn, rejectTurn) => {
+      const abortController = new AbortController();
       const timer = setTimeout(() => {
         const error = new Error(`Codex app-server turn timed out after ${requestTimeout}ms`);
-        this.failTurn(threadId, error);
-        void this.shutdown(error);
+        this.timeoutTurn(threadId, error, requestTimeout);
       }, requestTimeout);
       timer.unref();
       const pendingTurn: PendingTurn = {
@@ -831,6 +925,7 @@ export class CodexAppServerProcess {
         toolCallResults: new Map(),
         stoppingCallIds: new Set(),
         hostToolBridge,
+        abortController,
         intentionalStop: false,
         onDelta: callbacks?.onDelta,
         resolve: resolveTurn,
@@ -862,9 +957,27 @@ export class CodexAppServerProcess {
             for (const request of queuedToolRequests) {
               this.handleDynamicToolRequest(request, activeTurn);
             }
+          } else if (this.turnStartReconciliations.has(threadId)) {
+            void this.reconcileAcknowledgedTurn(threadId, turn.id, requestTimeout);
           }
         })
-        .catch((error: unknown) => this.failTurn(threadId, this.toError(error)));
+        .catch((error: unknown) => {
+          if (this.turns.get(threadId) === pendingTurn) {
+            this.failTurn(threadId, this.toError(error));
+            return;
+          }
+          const reconciliation = this.turnStartReconciliations.get(threadId);
+          if (!reconciliation) {
+            return;
+          }
+          if (error instanceof CodexAppServerRpcError) {
+            this.completeTurnStartReconciliation(threadId, reconciliation);
+          } else if (!reconciliation.recoveryTimer) {
+            void this.shutdown(this.toError(error)).finally(() => {
+              this.completeTurnStartReconciliation(threadId, reconciliation);
+            });
+          }
+        });
     });
   }
 
@@ -903,6 +1016,23 @@ export class CodexAppServerProcess {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         const error = new Error(`Codex app-server ${method} timed out after ${requestTimeout}ms`);
+        const threadId = method === 'turn/start' ? object(params)?.threadId : undefined;
+        if (typeof threadId === 'string' && threadId) {
+          const reconciliation = this.getOrCreateTurnStartReconciliation(threadId);
+          reconciliation.recoveryTimer = setTimeout(
+            () => {
+              this.lateTurnStarts.delete(id);
+              void this.shutdown(error).finally(() => {
+                this.completeTurnStartReconciliation(threadId, reconciliation);
+              });
+            },
+            Math.max(requestTimeout, TURN_START_RECONCILE_GRACE_MS)
+          );
+          reconciliation.recoveryTimer.unref();
+          this.lateTurnStarts.set(id, { threadId, requestTimeout, reconciliation });
+          rejectRequest(error);
+          return;
+        }
         rejectRequest(error);
         void this.shutdown(error);
       }, requestTimeout);
@@ -968,6 +1098,11 @@ export class CodexAppServerProcess {
       return;
     }
     if (typeof message.id === 'number') {
+      const lateTurnStart = this.lateTurnStarts.get(message.id);
+      if (lateTurnStart) {
+        this.handleLateTurnStartResponse(message.id, lateTurnStart, message);
+        return;
+      }
       const pending = this.pending.get(message.id);
       if (!pending) {
         const error = new Error('Codex app-server response id did not match a pending request');
@@ -1247,7 +1382,12 @@ export class CodexAppServerProcess {
           }
           let result: unknown;
           try {
-            result = await bridge.execute({ callId, name: tool, input });
+            result = await bridge.execute({
+              callId,
+              name: tool,
+              input,
+              signal: turn.abortController.signal,
+            });
           } catch (error: unknown) {
             result = { content: this.toError(error).message, isError: true };
           }
@@ -1313,7 +1453,8 @@ export class CodexAppServerProcess {
       this.child === request.child &&
       this.turns.get(turn.threadId) === turn &&
       !turn.intentionalStop &&
-      !turn.abortError
+      !turn.abortError &&
+      !turn.abortController.signal.aborted
     );
   }
 
@@ -1368,8 +1509,115 @@ export class CodexAppServerProcess {
     }
     this.turns.delete(threadId);
     clearTimeout(turn.timer);
-    this.clearTurnCallbacks(turn);
-    turn.reject(this.toError(error));
+    turn.abortController.abort(error);
+    turn.queuedNotifications.length = 0;
+    turn.queuedToolRequests.length = 0;
+    const safe = this.toError(error);
+    // A gateway mutation that cannot be interrupted must settle before the
+    // caller sees failure. This prevents retries from racing a late mutation.
+    void turn.toolCallQueue.finally(() => {
+      this.clearTurnCallbacks(turn);
+      turn.reject(safe);
+    });
+  }
+
+  private timeoutTurn(threadId: string, error: Error, requestTimeout: number): void {
+    const turn = this.turns.get(threadId);
+    if (!turn) {
+      return;
+    }
+    const turnId = turn.turnId;
+    if (!turnId) {
+      this.getOrCreateTurnStartReconciliation(threadId);
+    }
+    this.failTurn(threadId, error);
+    if (!turnId) {
+      return;
+    }
+    void this.request('turn/interrupt', { threadId, turnId }, requestTimeout).catch(
+      (interruptError: unknown) => {
+        if (this.child && !this.shutdownPromise) {
+          void this.shutdown(this.toError(interruptError));
+        }
+      }
+    );
+  }
+
+  private getOrCreateTurnStartReconciliation(threadId: string): TurnStartReconciliation {
+    const existing = this.turnStartReconciliations.get(threadId);
+    if (existing) {
+      return existing;
+    }
+    let resolveReconciliation: (() => void) | undefined;
+    const promise = new Promise<void>((resolvePromise) => {
+      resolveReconciliation = resolvePromise;
+    });
+    const reconciliation: TurnStartReconciliation = {
+      promise,
+      resolve: () => resolveReconciliation?.(),
+    };
+    this.turnStartReconciliations.set(threadId, reconciliation);
+    return reconciliation;
+  }
+
+  private completeTurnStartReconciliation(
+    threadId: string,
+    reconciliation: TurnStartReconciliation
+  ): void {
+    if (this.turnStartReconciliations.get(threadId) !== reconciliation) {
+      return;
+    }
+    if (reconciliation.recoveryTimer) {
+      clearTimeout(reconciliation.recoveryTimer);
+      reconciliation.recoveryTimer = undefined;
+    }
+    this.turnStartReconciliations.delete(threadId);
+    reconciliation.resolve();
+  }
+
+  private async reconcileAcknowledgedTurn(
+    threadId: string,
+    turnId: string,
+    requestTimeout: number
+  ): Promise<void> {
+    const reconciliation = this.turnStartReconciliations.get(threadId);
+    if (!reconciliation) {
+      return;
+    }
+    try {
+      await this.request('turn/interrupt', { threadId, turnId }, requestTimeout);
+      this.completeTurnStartReconciliation(threadId, reconciliation);
+    } catch (error: unknown) {
+      await this.shutdown(this.toError(error));
+      this.completeTurnStartReconciliation(threadId, reconciliation);
+    }
+  }
+
+  private handleLateTurnStartResponse(
+    id: number,
+    late: LateTurnStart,
+    message: JsonRpcMessage
+  ): void {
+    this.lateTurnStarts.delete(id);
+    if (late.reconciliation.recoveryTimer) {
+      clearTimeout(late.reconciliation.recoveryTimer);
+      late.reconciliation.recoveryTimer = undefined;
+    }
+    if (message.error !== undefined) {
+      this.completeTurnStartReconciliation(late.threadId, late.reconciliation);
+      return;
+    }
+    try {
+      const turn = validateTurn(object(message.result)?.turn, 'late turn/start turn');
+      if (typeof turn?.id !== 'string' || !turn.id) {
+        throw new Error('Codex app-server late turn/start returned no turn id');
+      }
+      void this.reconcileAcknowledgedTurn(late.threadId, turn.id, late.requestTimeout);
+    } catch (error: unknown) {
+      void this.shutdown(this.toError(error)).finally(() => {
+        this.completeTurnStartReconciliation(late.threadId, late.reconciliation);
+      });
+    }
   }
 
   private clearTurnCallbacks(turn: PendingTurn): void {
@@ -1477,5 +1725,9 @@ export class CodexAppServerProcess {
     this.stderr = undefined;
     this.child = undefined;
     this.sessions.clear();
+    this.lateTurnStarts.clear();
+    for (const [threadId, reconciliation] of this.turnStartReconciliations) {
+      this.completeTurnStartReconciliation(threadId, reconciliation);
+    }
   }
 }

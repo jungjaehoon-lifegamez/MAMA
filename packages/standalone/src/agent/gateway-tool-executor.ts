@@ -162,6 +162,7 @@ type ActiveGatewayExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
@@ -595,6 +596,7 @@ export class GatewayToolExecutor {
       sourceMessageRef: executionContext?.sourceMessageRef,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
+      signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
@@ -634,6 +636,7 @@ export class GatewayToolExecutor {
       sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
+      signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - blocks are strictly per-call.
@@ -1201,6 +1204,7 @@ export class GatewayToolExecutor {
 
     const startedAt = Date.now();
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
@@ -1213,6 +1217,7 @@ export class GatewayToolExecutor {
       result = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
+      activeCtx.signal?.throwIfAborted();
     } catch (error) {
       await this.appendToolTraceIfNeeded(
         traceState,
@@ -1800,6 +1805,7 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     gatewayCallId: string
   ): Promise<GatewayToolResult> {
+    this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
@@ -4354,6 +4360,7 @@ export class GatewayToolExecutor {
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
         input,
+        signal: ctx.signal,
       });
       return {
         success: true,
