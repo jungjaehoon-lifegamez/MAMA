@@ -45,7 +45,10 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
-import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
+import {
+  stripUntrustedBlocks,
+  UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
+} from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import { buildReportCarryPrefix } from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
@@ -68,6 +71,51 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('MessageRouter');
+
+interface SessionPolicyFingerprintInput {
+  baseInstructions: string;
+  agentsContent?: string;
+  rulesContent?: string;
+  model: string;
+  stableRolePolicy?: string;
+}
+
+export function hashSessionPolicyFingerprint({
+  baseInstructions,
+  agentsContent,
+  rulesContent,
+  model,
+  stableRolePolicy,
+}: SessionPolicyFingerprintInput): string {
+  const hash = createHash('sha256')
+    .update(baseInstructions)
+    .update('\0')
+    .update(agentsContent ?? '')
+    .update('\0')
+    .update(rulesContent ?? '')
+    .update('\0')
+    .update(model);
+  if (stableRolePolicy) {
+    hash.update('\0').update(stableRolePolicy);
+  }
+  return hash.digest('hex');
+}
+
+function buildStableRolePolicyInstructions(
+  agentContext: AgentContext,
+  roleManager: RoleManager
+): string {
+  if (agentContext.roleName !== 'owner_console') {
+    return '';
+  }
+  const trelloBoundary = roleManager.isToolAllowed(agentContext.role, 'context_compile')
+    ? `
+- ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
+- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
+    : '';
+  return `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
+- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+}
 
 /** Channel-less host alarms (workorder failures) park here; every resumed
  *  owner turn reads this key in addition to its own channel key. */
@@ -728,6 +776,7 @@ This protects your credentials from being exposed in chat logs.`;
     // CONTINUE turns: Codex server retains full conversation via threadId,
     // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
     let systemPrompt: string;
+    const historyContext = message.metadata?.historyContext;
 
     // Always enhance for per-message skill/keyword injection
     const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
@@ -751,7 +800,6 @@ This protects your credentials from being exposed in chat logs.`;
         source: message.source,
         channelId: message.channelId,
       });
-      const historyContext = message.metadata?.historyContext;
       systemPrompt = this.buildSystemPrompt(
         session,
         context.prompt,
@@ -864,6 +912,26 @@ This protects your credentials from being exposed in chat logs.`;
         sourceTurnId,
         sourceMessageRef,
       };
+      if (this.config.backend === 'codex' && shouldResume) {
+        options.freshSessionSystemPrompt = async () => {
+          const freshContext = this.config.implicitLegacyContextSearch
+            ? await this.contextInjector.getRelevantContext(message.text)
+            : context;
+          const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
+            source: message.source,
+            channelId: message.channelId,
+          });
+          return this.buildSystemPrompt(
+            session,
+            freshContext.prompt,
+            historyContext,
+            sessionStartupContext,
+            agentContext,
+            enhanced,
+            true
+          );
+        };
+      }
 
       if (shouldResume) {
         logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
@@ -1054,12 +1122,12 @@ This protects your credentials from being exposed in chat logs.`;
 
       if (isCriticalError) {
         logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
-        sessionPool.resetSession(channelKey);
+        sessionPool.invalidateSession(channelKey, cliSessionId);
       }
 
       // Release session lock before re-throwing
       if (acquiredLock) {
-        sessionPool.releaseSession(channelKey);
+        sessionPool.releaseSession(channelKey, cliSessionId);
       }
 
       // Normalize error to ensure proper Error object is thrown
@@ -1279,12 +1347,13 @@ ${historyContext}
     if (agentContext?.platform === 'viewer') {
       prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
     }
-    if (agentContext?.roleName === 'owner_console') {
-      // Store canonicity (Stage-2 S2-T7): two task stores exist with different
-      // vocabularies - the agent must never present their mismatch as data.
-      prompt += `
-- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.
-- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+    if (agentContext) {
+      // Store canonicity and external-evidence trust are stable owner policy.
+      // Keep this exact text in the durable Codex policy fingerprint below.
+      const stableRolePolicy = buildStableRolePolicyInstructions(agentContext, this.roleManager);
+      if (stableRolePolicy) {
+        prompt += `\n${stableRolePolicy}`;
+      }
     }
     prompt += '\n';
 
@@ -1328,15 +1397,13 @@ ${historyContext}
     const baseInstructions = existsSync(soulPath)
       ? loadComposedSystemPrompt(false, agentContext)
       : COMPLETE_AUTONOMOUS_PROMPT;
-    return createHash('sha256')
-      .update(baseInstructions)
-      .update('\0')
-      .update(enhanced.agentsContent ?? '')
-      .update('\0')
-      .update(enhanced.rulesContent ?? '')
-      .update('\0')
-      .update(model)
-      .digest('hex');
+    return hashSessionPolicyFingerprint({
+      baseInstructions,
+      agentsContent: enhanced.agentsContent,
+      rulesContent: enhanced.rulesContent,
+      model,
+      stableRolePolicy: buildStableRolePolicyInstructions(agentContext, this.roleManager),
+    });
   }
 
   /**

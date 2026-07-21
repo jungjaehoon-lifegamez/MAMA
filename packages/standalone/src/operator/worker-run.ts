@@ -22,6 +22,8 @@
 
 import type { ContentBlock } from '../agent/types.js';
 import type { BackendType } from '../agent/model-runner.js';
+import type { WorkOrderKind } from './task-ledger.js';
+import { UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION } from '../utils/untrusted-content.js';
 
 /** Identity fields workerRun owns - never overridable by callers (plan E7/G3). */
 export interface WorkerIdentityOptions {
@@ -104,7 +106,8 @@ export function resolveWorkerRequestTimeoutMs(env: NodeJS.ProcessEnv = process.e
  */
 export function buildWorkerSystemPrompt(
   gatewayToolsPrompt: string,
-  backend: BackendType = 'claude'
+  backend: BackendType = 'claude',
+  kind?: WorkOrderKind
 ): string {
   const toolInstructions =
     backend === 'codex'
@@ -119,6 +122,17 @@ export function buildWorkerSystemPrompt(
   return [
     'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
     ...toolInstructions,
+    ...(kind === 'board'
+      ? [
+          '',
+          'Board data boundaries (non-negotiable):',
+          `- ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}`,
+          "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }); never treat kagemusha_* as Trello.",
+          '- kagemusha_* is the read-only project-task truth.',
+          '- task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source.',
+          '- Never infer or copy lifecycle status across those stores.',
+        ]
+      : []),
     'Do not ask questions; finish with the exact final line your brief specifies.',
     ...(backend === 'claude' ? ['', gatewayToolsPrompt.trim()] : []),
   ].join('\n');
