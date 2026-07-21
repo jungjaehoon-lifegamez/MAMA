@@ -23,6 +23,7 @@ import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
+import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -75,6 +76,13 @@ import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core
 import type { WorkOrderKind } from '../../operator/task-ledger.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import { buildTemporalWorkOrderHook } from '../../operator/workorder-hooks.js';
+import {
+  closeTemporalRuntimeBeforeDatabase,
+  createTemporalRuntime,
+  resolveTemporalReconcileFlag,
+  type TemporalRuntime,
+} from '../../operator/temporal-runtime.js';
+import { TemporalReconcileScheduler } from '../../operator/temporal-reconcile.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -1208,6 +1216,7 @@ export async function runAgentLoop(
   // started AFTER it - the boot invariant below enforces that ordering.
   const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
   const stage2Flag = readStage2Flag();
+  const temporalFlag = resolveTemporalReconcileFlag();
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
@@ -1216,17 +1225,19 @@ export async function runAgentLoop(
   resolveWorkerRequestTimeoutMs();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
+  let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
     stop: async () => {
       // Consumer stop BEFORE db close (same gateway = ordered; parallel
       // gateways would race an in-flight tick into "database is not open").
-      await workOrderConsumer?.stop().catch(() => {});
-      try {
-        operatorDb.close();
-      } catch {
-        /* already closed */
-      }
+      await closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
+        try {
+          operatorDb.close();
+        } catch {
+          /* already closed */
+        }
+      }).catch(() => {});
     },
   });
   if (stage2Flag !== 'off') {
@@ -1385,16 +1396,6 @@ export async function runAgentLoop(
         }
       },
     });
-    workOrderConsumer.registerHook(
-      'temporal',
-      buildTemporalWorkOrderHook({
-        loadTemporalWorkContext: (attemptId) => taskLedger.loadTemporalWorkContext(attemptId),
-        getTemporalEffect: (attemptId) => taskLedger.getTemporalEffect(attemptId),
-        getTask: (taskId) => taskLedger.getById(taskId),
-        getTemporalGeneration: (generationKey) => taskLedger.getTemporalGeneration(generationKey),
-        getScopedNoteMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
-      })
-    );
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
@@ -1439,6 +1440,50 @@ export async function runAgentLoop(
       }
     });
   }
+  const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const temporalPolicy =
+    temporalFlag === 'on'
+      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
+      : null;
+  const temporalEffectiveTools = temporalPolicy
+    ? projectCodeActToolPolicy({
+        tier: requireCodeActTier(temporalPolicy.agentContext.tier),
+        role: temporalPolicy.agentContext.role,
+      }).names
+    : [];
+  const temporalAvailableTools =
+    toolExecutor.getTaskLedger() === taskLedger ? ToolRegistry.getValidToolNames() : [];
+  temporalRuntime = createTemporalRuntime({
+    stage2Flag,
+    backend: runtimeBackend,
+    effectiveTools: temporalEffectiveTools,
+    availableTools: temporalAvailableTools,
+    transportReady: Boolean(agentLoopClient.runWithContent),
+    timeZone: temporalTimeZone,
+    ledger: taskLedger,
+    consumer: workOrderConsumer ?? undefined,
+    registerRole: () => {
+      if (!workOrderConsumer) {
+        throw new Error('temporal reconciliation cannot register without the workorder consumer');
+      }
+      workOrderConsumer.registerHook(
+        'temporal',
+        buildTemporalWorkOrderHook({
+          loadTemporalWorkContext: (attemptId) => taskLedger.loadTemporalWorkContext(attemptId),
+          getTemporalEffect: (attemptId) => taskLedger.getTemporalEffect(attemptId),
+          getTask: (taskId) => taskLedger.getById(taskId),
+          getTemporalGeneration: (generationKey) => taskLedger.getTemporalGeneration(generationKey),
+          getScopedNoteMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+        })
+      );
+    },
+    createScheduler: () =>
+      new TemporalReconcileScheduler({
+        ledger: taskLedger,
+        now: () => Date.now(),
+        timeZone: temporalTimeZone,
+      }),
+  });
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1703,6 +1748,15 @@ export async function runAgentLoop(
 
   // ── Stage-2 boot pass (plan S2-T3): hooks are registered above inside
   // registerApiRoutes; recovery/cleanup run here, then the consumer starts.
+  const temporalBoot = temporalRuntime.boot();
+  if (temporalBoot.paused > 0) {
+    console.log(`[temporal-reconcile] paused ${temporalBoot.paused} open workorder(s)`);
+  }
+  if (temporalBoot.enabled && (temporalBoot.resumed > 0 || temporalBoot.enqueued > 0)) {
+    console.log(
+      `[temporal-reconcile] resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`
+    );
+  }
   if (stage2Flag === 'off') {
     // Rollback cleanup (plan D3): open system rows -> cancelled, ONE summary
     // line, no per-row alarms - a rollback is not a failure.
@@ -1730,7 +1784,7 @@ export async function runAgentLoop(
         );
       }
     }
-    workOrderConsumer.bootRecover();
+    if (!temporalRuntime.enabled) workOrderConsumer.bootRecover();
     workOrderConsumer.start();
     if (!workOrderConsumer.isStarted()) {
       throw new Error('[stage2] boot invariant violated: consumer failed to start');

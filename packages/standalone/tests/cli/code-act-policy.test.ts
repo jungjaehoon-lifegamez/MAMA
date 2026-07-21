@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   buildWorkOrderAgentPolicy,
@@ -9,6 +12,8 @@ import {
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #1: deriveCodeActToolPolicy enforces configured agent allowlists', () => {
@@ -274,5 +279,13 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         }
       }
     );
+
+    it('wires one temporal runtime from projected and registered transport tools', () => {
+      const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+      expect(startSource.match(/createTemporalRuntime\(\{/g)).toHaveLength(1);
+      expect(startSource).toMatch(/projectCodeActToolPolicy\(\{/);
+      expect(startSource).toMatch(/availableTools:\s*temporalAvailableTools/);
+      expect(startSource).toMatch(/transportReady:\s*Boolean\(agentLoopClient\.runWithContent\)/);
+    });
   });
 });

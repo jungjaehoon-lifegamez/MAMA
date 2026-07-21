@@ -381,7 +381,7 @@ export class WorkOrderConsumer {
       );
       return;
     }
-    if (state.generation.disposition === 'superseded' || state.workOrder.status === 'cancelled') {
+    if (state.generation.disposition === 'superseded') {
       this.unresolvedTemporalEffects.delete(wo.id);
       this.emitEvent({ type: 'superseded', workKind: 'temporal', workOrderId: wo.id });
       this.log(`[workorder-consumer] temporal#${wo.id} superseded; no retry required`);

@@ -1147,8 +1147,14 @@ export class TaskLedger implements TaskSource {
         throw new Error(`temporal attempt state: active attempt ${attemptId} lost ownership`);
       }
     }
-    if (workOrder.status === 'cancelled' && generation.disposition !== 'superseded') {
-      throw new Error(`temporal attempt state: cancelled attempt ${attemptId} is not superseded`);
+    if (
+      workOrder.status === 'cancelled' &&
+      generation.disposition !== 'superseded' &&
+      (generation.disposition !== 'active' || generation.lastWorkOrderId !== attemptId)
+    ) {
+      throw new Error(
+        `temporal attempt state: cancelled attempt ${attemptId} has invalid ownership`
+      );
     }
     if (
       workOrder.status === 'failed' &&
@@ -1412,6 +1418,90 @@ export class TaskLedger implements TaskSource {
     }
     if (!result) throw new Error(`temporal failure for attempt ${attemptId} produced no result`);
     return result;
+  }
+
+  /** Control-plane pause: cancel open attempts but keep generations resumable. */
+  pauseActiveTemporalWork(reason: string): number {
+    this.assertTemporalReason(reason);
+    let changed = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db
+        .prepare(
+          `UPDATE operator_tasks
+           SET status = 'cancelled', latest_event = ?, updated_at = ?
+           WHERE kind = 'system' AND source_channel = 'workorder:temporal'
+             AND status IN ('pending','in_progress')`
+        )
+        .run(reason, this.now());
+      changed = result.changes;
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return changed;
+  }
+
+  /** Resume paused active generations without spending another model attempt. */
+  resumePausedTemporalWork(): WorkOrderRecord[] {
+    const resumed: WorkOrderRecord[] = [];
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT generation_key, last_workorder_id
+           FROM operator_temporal_generations generation
+           WHERE disposition = 'active' AND last_workorder_id IS NOT NULL
+             AND NOT EXISTS (
+               SELECT 1 FROM operator_tasks open_attempt
+               WHERE open_attempt.kind = 'system'
+                 AND open_attempt.source_channel = 'workorder:temporal'
+                 AND open_attempt.source_event_id = generation.generation_key
+                 AND open_attempt.status IN ('pending','in_progress')
+             )
+           ORDER BY generation_key ASC`
+        )
+        .all() as Array<{ generation_key: string; last_workorder_id: number }>;
+      for (const row of rows) {
+        const generation = this.getTemporalGeneration(row.generation_key);
+        const previous = this.getWorkOrderById(row.last_workorder_id);
+        if (!generation || !previous || previous.status !== 'cancelled') {
+          throw new Error(
+            `temporal resume: active generation '${row.generation_key}' has no paused attempt`
+          );
+        }
+        this.assertTemporalPayloadMatches(previous, generation);
+        const { attempts, ...payload } = previous.payload;
+        const replacement = this.insertWorkOrder(
+          {
+            workKind: 'temporal',
+            idempotencyKey: generation.generationKey,
+            input: payload,
+            priority: previous.priority,
+          },
+          attempts
+        );
+        const ownership = this.db
+          .prepare(
+            `UPDATE operator_temporal_generations
+             SET last_workorder_id = ?, updated_at = ?
+             WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+          )
+          .run(replacement.id, this.now(), generation.generationKey, previous.id);
+        if (ownership.changes !== 1) {
+          throw new Error(
+            `temporal resume lost ownership for generation '${generation.generationKey}'`
+          );
+        }
+        resumed.push(replacement);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return resumed;
   }
 
   private requeueTemporalWorkOrderInTransaction(
