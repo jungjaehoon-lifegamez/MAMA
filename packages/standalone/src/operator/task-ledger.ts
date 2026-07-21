@@ -1316,6 +1316,40 @@ export class TaskLedger implements TaskSource {
     return row.count;
   }
 
+  countOpenWorkOrders(kind?: WorkOrderKind): number {
+    const row = (
+      kind
+        ? this.db
+            .prepare(
+              `SELECT COUNT(*) AS count FROM operator_tasks
+               WHERE kind = 'system' AND status IN ('pending','in_progress')
+                 AND source_channel = ?`
+            )
+            .get(`${WORKORDER_CHANNEL_PREFIX}${kind}`)
+        : this.db
+            .prepare(
+              `SELECT COUNT(*) AS count FROM operator_tasks
+               WHERE kind = 'system' AND status IN ('pending','in_progress')`
+            )
+            .get()
+    ) as { count: number };
+    return row.count;
+  }
+
+  findTemporalGenerationKeys(generationKeys: readonly string[]): Set<string> {
+    if (generationKeys.length === 0) return new Set();
+    if (generationKeys.length > 500) {
+      throw new Error('findTemporalGenerationKeys accepts at most 500 keys');
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT generation_key FROM operator_temporal_generations
+         WHERE generation_key IN (${generationKeys.map(() => '?').join(',')})`
+      )
+      .all(...generationKeys) as Array<{ generation_key: string }>;
+    return new Set(rows.map((row) => row.generation_key));
+  }
+
   /** In-progress system rows at boot = crash artifacts (single serial consumer). */
   listStaleClaims(): WorkOrderRecord[] {
     const rows = this.db
