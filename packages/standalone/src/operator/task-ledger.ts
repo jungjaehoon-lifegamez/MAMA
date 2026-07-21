@@ -24,6 +24,12 @@ import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-ta
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
 import {
+  temporalNoUpdateScope,
+  type TemporalEffectReceipt,
+  type TemporalReconcileInput,
+  type TemporalWorkContext,
+} from './temporal-effect.js';
+import {
   deriveTemporalState,
   occurrenceKeyForTask,
   parseExactDueAt,
@@ -139,17 +145,7 @@ export interface TemporalGenerationRecord {
   updatedAt: number;
 }
 
-export interface TemporalWorkContext {
-  attemptId: number;
-  generationKey: string;
-  taskId: number;
-  temporalEpoch: number;
-  occurrenceKey: string;
-  checkAt: number;
-  revision: number;
-  sourceChannel: string | null;
-  sourceEventId: string | null;
-}
+export type { TemporalWorkContext } from './temporal-effect.js';
 
 export interface TemporalGenerationEnqueueResult {
   generation: TemporalGenerationRecord;
@@ -160,22 +156,6 @@ export interface TemporalGenerationEnqueueResult {
 export type TemporalWorkFailureResult =
   | { disposition: 'requeued'; replacement: WorkOrderRecord; attempt: number; maxAttempts: number }
   | { disposition: 'exhausted'; attempt: number; maxAttempts: number };
-
-export type TemporalEffectOutcome = 'resolved' | 'final_no_update' | 'deferred';
-
-export interface TemporalEffectRecord {
-  workorderAttemptId: number;
-  taskId: number;
-  generationKey: string;
-  occurrenceKey: string;
-  outcome: TemporalEffectOutcome;
-  beforeRevision: number;
-  afterRevision: number;
-  changedFields: string[];
-  reason: string;
-  nextTemporalCheckAt: number | null;
-  createdAt: number;
-}
 
 export interface CreateTaskInput {
   title: string;
@@ -744,7 +724,8 @@ export class TaskLedger implements TaskSource {
   private supersedeTemporalGenerationsInTransaction(
     taskId: number,
     currentEpoch: number,
-    excludeGenerationKey?: string
+    excludeGenerationKey?: string,
+    updatedAt: number = this.now()
   ): void {
     const reason = 'task temporal occurrence superseded';
     const exclusion = excludeGenerationKey ? ' AND generation_key != ?' : '';
@@ -759,14 +740,14 @@ export class TaskLedger implements TaskSource {
            WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?${exclusion}
          )`
       )
-      .run(reason, this.now(), ...generationParams);
+      .run(reason, updatedAt, ...generationParams);
     this.db
       .prepare(
         `UPDATE operator_temporal_generations
          SET disposition = 'superseded', reason = ?, updated_at = ?
          WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?${exclusion}`
       )
-      .run(reason, this.now(), ...generationParams);
+      .run(reason, updatedAt, ...generationParams);
   }
 
   /**
@@ -1015,6 +996,213 @@ export class TaskLedger implements TaskSource {
     return this.loadTemporalWorkContextInternal(attemptId);
   }
 
+  getTemporalEffect(attemptId: number): TemporalEffectReceipt | null {
+    const row = this.db
+      .prepare(`SELECT * FROM operator_temporal_effects WHERE workorder_attempt_id = ?`)
+      .get(attemptId) as
+      | {
+          workorder_attempt_id: number;
+          task_id: number;
+          generation_key: string;
+          occurrence_key: string;
+          outcome: string;
+          before_revision: number;
+          after_revision: number;
+          changed_fields: string;
+          reason: string;
+          next_temporal_check_at: number | null;
+          created_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    const changedFields: unknown = JSON.parse(row.changed_fields);
+    if (
+      !Array.isArray(changedFields) ||
+      !changedFields.every((field) => typeof field === 'string')
+    ) {
+      throw new Error(`temporal effect ${attemptId} has invalid changed_fields`);
+    }
+    if (!['resolved', 'final_no_update', 'deferred'].includes(row.outcome)) {
+      throw new Error(`temporal effect ${attemptId} has invalid outcome '${row.outcome}'`);
+    }
+    return {
+      workorderAttemptId: row.workorder_attempt_id,
+      taskId: row.task_id,
+      generationKey: row.generation_key,
+      occurrenceKey: row.occurrence_key,
+      outcome: row.outcome as TemporalEffectReceipt['outcome'],
+      beforeRevision: row.before_revision,
+      afterRevision: row.after_revision,
+      changedFields,
+      reason: row.reason,
+      nextTemporalCheckAt: row.next_temporal_check_at,
+      createdAt: row.created_at,
+    };
+  }
+
+  applyTemporalEffect(
+    suppliedContext: TemporalWorkContext,
+    input: TemporalReconcileInput,
+    now: number = this.now()
+  ): TemporalEffectReceipt {
+    if (!Number.isSafeInteger(now)) {
+      throw new Error('temporal effect time must be an epoch millisecond integer');
+    }
+    this.validateTemporalEffectInput(input, now);
+    let receipt: TemporalEffectReceipt | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const context = this.loadTemporalWorkContextInternal(suppliedContext.attemptId);
+      this.assertTemporalContextMatches(suppliedContext, context);
+      if (input.expected_revision !== context.revision) {
+        throw new Error(
+          `temporal effect revision mismatch: expected ${input.expected_revision}, current ${context.revision}`
+        );
+      }
+      const existing = this.db
+        .prepare(`SELECT * FROM operator_tasks WHERE id = ?`)
+        .get(context.taskId) as TaskRow | undefined;
+      if (!existing || existing.kind !== 'owner' || existing.revision !== context.revision) {
+        throw new Error(`temporal effect owner task no longer matches trusted context`);
+      }
+
+      const next: Record<string, unknown> = {
+        status: existing.status,
+        deadline: existing.deadline,
+        due_at: existing.due_at,
+        deadline_offset_minutes: existing.deadline_offset_minutes,
+        temporal_epoch: existing.temporal_epoch,
+        temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
+        last_temporal_checked_at: now,
+        next_temporal_check_at: null,
+        last_temporal_attempt_id: context.attemptId,
+      };
+      let receiptReason = input.reason.trim();
+      let nextCheck: number | null = null;
+      let rescheduled = false;
+
+      if (input.outcome === 'resolved') {
+        if (input.status !== undefined) next.status = input.status;
+        if (Object.prototype.hasOwnProperty.call(input, 'due_at')) {
+          if (input.due_at === null) {
+            next.due_at = null;
+          } else if (input.due_at !== undefined) {
+            const exactDue = parseExactDueAt(input.due_at);
+            next.due_at = exactDue.dueAt;
+            next.deadline = exactDue.deadline;
+            next.deadline_offset_minutes = exactDue.offsetMinutes;
+          }
+        }
+        const workflowChanged =
+          next.status !== existing.status ||
+          next.due_at !== existing.due_at ||
+          next.deadline !== existing.deadline;
+        if (!workflowChanged) {
+          throw new Error('temporal resolved outcome requires an actual status or due_at change');
+        }
+        rescheduled = next.due_at !== existing.due_at || next.deadline !== existing.deadline;
+        if (rescheduled) next.temporal_epoch = existing.temporal_epoch + 1;
+        next.temporal_reconciled_occurrence_key = context.occurrenceKey;
+      } else if (input.outcome === 'final_no_update') {
+        receiptReason = `${receiptReason}\nEvidence: ${input.evidence_summary.trim()}`;
+        next.temporal_reconciled_occurrence_key = context.occurrenceKey;
+      } else {
+        nextCheck = parseExactDueAt(input.next_temporal_check_at).dueAt;
+        next.next_temporal_check_at = nextCheck;
+      }
+
+      const persistedColumns = [
+        'status',
+        'deadline',
+        'due_at',
+        'deadline_offset_minutes',
+        'temporal_epoch',
+        'temporal_reconciled_occurrence_key',
+        'last_temporal_checked_at',
+        'next_temporal_check_at',
+        'last_temporal_attempt_id',
+      ] as const;
+      const changedFields = persistedColumns.filter((column) => next[column] !== existing[column]);
+      const afterRevision = existing.revision + 1;
+      const sets = changedFields.map((column) => `${column} = ?`);
+      const values = changedFields.map((column) => next[column]);
+      sets.push('revision = ?', 'updated_at = ?');
+      values.push(afterRevision, now);
+      const ownerUpdate = this.db
+        .prepare(
+          `UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ? AND kind = 'owner' AND revision = ?`
+        )
+        .run(...values, context.taskId, existing.revision);
+      if (ownerUpdate.changes !== 1) {
+        throw new Error(`temporal effect lost owner task revision for task ${context.taskId}`);
+      }
+
+      if (rescheduled) {
+        this.supersedeTemporalGenerationsInTransaction(
+          context.taskId,
+          Number(next.temporal_epoch),
+          context.generationKey,
+          now
+        );
+      }
+      const generationUpdate = this.db
+        .prepare(
+          `UPDATE operator_temporal_generations
+           SET disposition = ?, reason = ?, updated_at = ?
+           WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+        )
+        .run(input.outcome, receiptReason, now, context.generationKey, context.attemptId);
+      if (generationUpdate.changes !== 1) {
+        throw new Error(
+          `temporal effect lost generation ownership for attempt ${context.attemptId}`
+        );
+      }
+
+      if (input.outcome !== 'resolved') {
+        this.insertNoUpdateNote(temporalNoUpdateScope(context), receiptReason, now);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO operator_temporal_effects
+             (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
+              before_revision, after_revision, changed_fields, reason,
+              next_temporal_check_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+        .run(
+          context.attemptId,
+          context.taskId,
+          context.generationKey,
+          context.occurrenceKey,
+          input.outcome,
+          existing.revision,
+          afterRevision,
+          JSON.stringify(changedFields),
+          receiptReason,
+          nextCheck,
+          now
+        );
+      const workOrderUpdate = this.db
+        .prepare(
+          `UPDATE operator_tasks SET status = 'done', latest_event = ?, updated_at = ?
+           WHERE id = ? AND kind = 'system' AND status = 'in_progress'
+             AND source_channel = 'workorder:temporal' AND source_event_id = ?`
+        )
+        .run(receiptReason, now, context.attemptId, context.generationKey);
+      if (workOrderUpdate.changes !== 1) {
+        throw new Error(`temporal effect lost active workorder ${context.attemptId}`);
+      }
+      receipt = this.getTemporalEffect(context.attemptId);
+      if (!receipt) throw new Error(`temporal effect receipt could not be read back`);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    if (!receipt) throw new Error(`temporal effect produced no receipt`);
+    return receipt;
+  }
+
   requeueTemporalWorkOrder(attemptId: number, reason: string): WorkOrderRecord {
     this.assertTemporalReason(reason);
     let replacement: WorkOrderRecord | null = null;
@@ -1177,6 +1365,74 @@ export class TaskLedger implements TaskSource {
       if (value !== null) bounded(value, field, 300);
     }
     if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
+  }
+
+  private validateTemporalEffectInput(input: TemporalReconcileInput, now: number): void {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      throw new Error('temporal effect input must be an object');
+    }
+    if (!Number.isSafeInteger(input.expected_revision) || input.expected_revision < 0) {
+      throw new Error('temporal effect expected_revision must be a non-negative integer');
+    }
+    this.assertTemporalReason(input.reason);
+    const baseKeys = ['expected_revision', 'outcome', 'reason'];
+    let allowedKeys: string[];
+    if (input.outcome === 'resolved') {
+      allowedKeys = [...baseKeys, 'status', 'due_at'];
+      if (input.status !== undefined) {
+        assertEnum(input.status, TASK_STATUSES, 'temporal effect status');
+        if (String(input.status) === 'failed') {
+          throw new Error(`temporal effect: 'failed' is a system-only status`);
+        }
+      }
+      if (input.due_at !== undefined && input.due_at !== null) parseExactDueAt(input.due_at);
+    } else if (input.outcome === 'final_no_update') {
+      allowedKeys = [...baseKeys, 'evidence_summary'];
+      if (
+        typeof input.evidence_summary !== 'string' ||
+        input.evidence_summary.trim().length < 1 ||
+        input.evidence_summary.length > 1_000
+      ) {
+        throw new Error('temporal effect evidence_summary must contain 1-1000 characters');
+      }
+    } else if (input.outcome === 'deferred') {
+      allowedKeys = [...baseKeys, 'next_temporal_check_at'];
+      if (typeof input.next_temporal_check_at !== 'string') {
+        throw new Error('temporal effect next_temporal_check_at must be RFC 3339');
+      }
+      const nextCheck = parseExactDueAt(input.next_temporal_check_at).dueAt;
+      if (nextCheck <= now) {
+        throw new Error('temporal effect deferred check must be strictly in the future');
+      }
+    } else {
+      throw new Error(`temporal effect outcome is unknown or forbidden`);
+    }
+    const unknownKeys = Object.keys(input).filter((key) => !allowedKeys.includes(key));
+    if (unknownKeys.length > 0) {
+      throw new Error(
+        `temporal effect contains unknown or forbidden fields: ${unknownKeys.join(', ')}`
+      );
+    }
+  }
+
+  private assertTemporalContextMatches(
+    supplied: TemporalWorkContext,
+    trusted: TemporalWorkContext
+  ): void {
+    const fields: Array<keyof TemporalWorkContext> = [
+      'attemptId',
+      'generationKey',
+      'taskId',
+      'temporalEpoch',
+      'occurrenceKey',
+      'checkAt',
+      'revision',
+      'sourceChannel',
+      'sourceEventId',
+    ];
+    if (fields.some((field) => supplied[field] !== trusted[field])) {
+      throw new Error('temporal effect supplied context does not match trusted host context');
+    }
   }
 
   private loadTemporalWorkContextInternal(attemptId: number): TemporalWorkContext {
@@ -1555,9 +1811,13 @@ export class TaskLedger implements TaskSource {
     if (!scope || !reason) {
       throw new Error('contract_no_update requires both scope and reason');
     }
+    return this.insertNoUpdateNote(scope, reason, this.now());
+  }
+
+  private insertNoUpdateNote(scope: string, reason: string, createdAt: number): { id: number } {
     const result = this.db
       .prepare(`INSERT INTO operator_no_update_notes (scope, reason, created_at) VALUES (?, ?, ?)`)
-      .run(scope, reason, this.now());
+      .run(scope, reason, createdAt);
     return { id: Number(result.lastInsertRowid) };
   }
 
