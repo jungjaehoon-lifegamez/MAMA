@@ -63,6 +63,8 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked');
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_task_occurrence
       ON operator_temporal_generations(task_id, temporal_epoch, occurrence_key, check_at);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_temporal_generations_identity
+      ON operator_temporal_generations(task_id, temporal_epoch, occurrence_key, check_at);
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_workorder
       ON operator_temporal_generations(last_workorder_id);
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_effects_task_occurrence

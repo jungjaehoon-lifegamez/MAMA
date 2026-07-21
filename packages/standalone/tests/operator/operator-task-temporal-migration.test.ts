@@ -49,6 +49,7 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
     for (const index of [
       'idx_operator_tasks_temporal_candidates',
       'idx_operator_temporal_generations_task_occurrence',
+      'idx_operator_temporal_generations_identity',
       'idx_operator_temporal_generations_workorder',
       'idx_operator_temporal_effects_task_occurrence',
     ]) {
@@ -148,7 +149,7 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
             "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_operator_temporal_%'"
           )
           .get()
-      ).toEqual({ count: 3 });
+      ).toEqual({ count: 4 });
       connectionA.close();
       connectionB.close();
     } finally {

@@ -141,3 +141,20 @@ export function occurrenceKeyForTask(task: {
   }
   return null;
 }
+
+export function temporalGenerationKey(
+  taskId: number,
+  occurrenceKey: string,
+  checkAt: number
+): string {
+  if (!Number.isSafeInteger(taskId) || taskId < 1) {
+    throw new Error(`temporal generation task id must be a positive integer, got: ${taskId}`);
+  }
+  if (occurrenceKey.length === 0) {
+    throw new Error('temporal generation occurrence key must be non-empty');
+  }
+  if (!Number.isSafeInteger(checkAt)) {
+    throw new Error(`temporal generation check must be an integer, got: ${checkAt}`);
+  }
+  return `task:${taskId}:${occurrenceKey}:check:${checkAt}`;
+}

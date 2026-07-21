@@ -26,7 +26,13 @@
  * blocking verdict; A1 does not enable that option for any production kind.
  */
 
-import type { WorkOrderKind, WorkOrderRecord, EnqueueWorkOrderInput } from './task-ledger.js';
+import {
+  TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+  type WorkOrderKind,
+  type WorkOrderRecord,
+  type EnqueueWorkOrderInput,
+  type TemporalWorkFailureResult,
+} from './task-ledger.js';
 import { workerRun, type WorkerRunner } from './worker-run.js';
 
 export interface WorkOrderLedgerPort {
@@ -35,8 +41,7 @@ export interface WorkOrderLedgerPort {
   failWorkOrder(id: number, reason: string): void;
   /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
-  requeueTemporalWorkOrder(attemptId: number, reason: string): WorkOrderRecord;
-  exhaustTemporalWorkOrder(attemptId: number, reason: string): void;
+  failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult;
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
   listStaleClaims(): WorkOrderRecord[];
   countPendingWorkOrders(): number;
@@ -104,7 +109,7 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   board: 1,
   wiki: 2,
   'memory-curation': 1,
-  temporal: 3,
+  temporal: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
 };
 
 const DEFAULT_TICK_MS = 60_000;
@@ -307,14 +312,34 @@ export class WorkOrderConsumer {
    * retries-exhausted with an owner alarm.
    */
   private handleFailure(wo: WorkOrderRecord, reason: string): void {
+    if (wo.workKind === 'temporal') {
+      const result = this.deps.ledger.failTemporalWorkOrder(wo.id, reason);
+      this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
+      if (result.disposition === 'requeued') {
+        this.emitEvent({
+          type: 'requeued',
+          workKind: wo.workKind,
+          workOrderId: result.replacement.id,
+        });
+        this.log(
+          `[workorder-consumer] failed temporal#${wo.id} (${reason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
+        );
+        return;
+      }
+      this.log(`[workorder-consumer] failed temporal#${wo.id}: ${reason}`);
+      this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });
+      this.alarm(
+        wo.workKind,
+        `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${reason}`
+      );
+      return;
+    }
+
     const maxAttempts = WORKORDER_MAX_ATTEMPTS[wo.workKind];
     if (wo.payload.attempts < maxAttempts) {
       // Atomic fail+requeue (PR bot round): a crash between separate fail and
       // enqueue calls would silently lose the retry.
-      const requeued =
-        wo.workKind === 'temporal'
-          ? this.deps.ledger.requeueTemporalWorkOrder(wo.id, reason)
-          : this.deps.ledger.requeueWorkOrder(wo, reason);
+      const requeued = this.deps.ledger.requeueWorkOrder(wo, reason);
       this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
       this.emitEvent({ type: 'requeued', workKind: wo.workKind, workOrderId: requeued.id });
       this.log(
@@ -323,11 +348,7 @@ export class WorkOrderConsumer {
       return;
     }
 
-    if (wo.workKind === 'temporal') {
-      this.deps.ledger.exhaustTemporalWorkOrder(wo.id, reason);
-    } else {
-      this.deps.ledger.failWorkOrder(wo.id, reason);
-    }
+    this.deps.ledger.failWorkOrder(wo.id, reason);
     this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
     this.log(`[workorder-consumer] failed ${wo.workKind}#${wo.id}: ${reason}`);
     this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });

@@ -3,7 +3,7 @@ import type {
   TaskRecord,
   TemporalGenerationEnqueueResult,
 } from './task-ledger.js';
-import { occurrenceKeyForTask } from './task-temporal.js';
+import { occurrenceKeyForTask, temporalGenerationKey } from './task-temporal.js';
 
 export type TemporalCandidateKind = 'exact_or_deferred' | 'date_activation';
 
@@ -121,7 +121,7 @@ export function buildTemporalGenerationKey(task: TaskRecord, checkAt: number): s
   if (!Number.isSafeInteger(checkAt)) {
     throw new Error(`task ${task.id} checkAt must be an epoch millisecond integer`);
   }
-  return `task:${task.id}:${occurrenceKey}:check:${checkAt}`;
+  return temporalGenerationKey(task.id, occurrenceKey, checkAt);
 }
 
 function candidateForTask(

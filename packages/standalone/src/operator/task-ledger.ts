@@ -27,6 +27,7 @@ import {
   deriveTemporalState,
   occurrenceKeyForTask,
   parseExactDueAt,
+  temporalGenerationKey,
   type TemporalState,
 } from './task-temporal.js';
 
@@ -51,6 +52,7 @@ export type TaskKind = (typeof TASK_KINDS)[number];
 
 export const WORKORDER_KINDS = ['board', 'wiki', 'memory-curation', 'temporal'] as const;
 export type WorkOrderKind = (typeof WORKORDER_KINDS)[number];
+export const TEMPORAL_WORKORDER_MAX_ATTEMPTS = 3;
 
 /** source_channel namespace for workorder rows: 'workorder:<workKind>'. */
 export const WORKORDER_CHANNEL_PREFIX = 'workorder:';
@@ -154,6 +156,10 @@ export interface TemporalGenerationEnqueueResult {
   workOrder: WorkOrderRecord;
   created: boolean;
 }
+
+export type TemporalWorkFailureResult =
+  | { disposition: 'requeued'; replacement: WorkOrderRecord; attempt: number; maxAttempts: number }
+  | { disposition: 'exhausted'; attempt: number; maxAttempts: number };
 
 export type TemporalEffectOutcome = 'resolved' | 'final_no_update' | 'deferred';
 
@@ -1016,27 +1022,10 @@ export class TaskLedger implements TaskSource {
     try {
       const context = this.loadTemporalWorkContextInternal(attemptId);
       const workOrder = this.getWorkOrderById(attemptId)!;
-      this.transitionWorkOrder(attemptId, 'failed', reason);
-      const { attempts: _attempts, ...payload } = workOrder.payload;
-      replacement = this.insertWorkOrder(
-        {
-          workKind: 'temporal',
-          idempotencyKey: context.generationKey,
-          input: payload,
-          priority: workOrder.priority,
-        },
-        workOrder.payload.attempts + 1
-      );
-      const ownership = this.db
-        .prepare(
-          `UPDATE operator_temporal_generations
-           SET last_workorder_id = ?, updated_at = ?
-           WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
-        )
-        .run(replacement.id, this.now(), context.generationKey, attemptId);
-      if (ownership.changes !== 1) {
-        throw new Error(`temporal retry lost generation ownership for attempt ${attemptId}`);
+      if (workOrder.payload.attempts >= TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
+        throw new Error(`temporal retry budget exhausted for attempt ${attemptId}`);
       }
+      replacement = this.requeueTemporalWorkOrderInTransaction(context, workOrder, reason);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -1051,21 +1040,97 @@ export class TaskLedger implements TaskSource {
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const context = this.loadTemporalWorkContextInternal(attemptId);
-      this.transitionWorkOrder(attemptId, 'failed', reason);
-      const update = this.db
-        .prepare(
-          `UPDATE operator_temporal_generations
-           SET disposition = 'exhausted', reason = ?, updated_at = ?
-           WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
-        )
-        .run(reason, this.now(), context.generationKey, attemptId);
-      if (update.changes !== 1) {
-        throw new Error(`temporal exhaustion lost ownership for attempt ${attemptId}`);
+      const workOrder = this.getWorkOrderById(attemptId)!;
+      if (workOrder.payload.attempts !== TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
+        throw new Error(
+          `temporal exhaustion requires attempt ${TEMPORAL_WORKORDER_MAX_ATTEMPTS}, got ${workOrder.payload.attempts}`
+        );
+      }
+      this.exhaustTemporalWorkOrderInTransaction(context, reason);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult {
+    this.assertTemporalReason(reason);
+    let result: TemporalWorkFailureResult | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const context = this.loadTemporalWorkContextInternal(attemptId);
+      const workOrder = this.getWorkOrderById(attemptId)!;
+      const attempt = workOrder.payload.attempts;
+      if (attempt < TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
+        result = {
+          disposition: 'requeued',
+          replacement: this.requeueTemporalWorkOrderInTransaction(context, workOrder, reason),
+          attempt,
+          maxAttempts: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+        };
+      } else if (attempt === TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
+        this.exhaustTemporalWorkOrderInTransaction(context, reason);
+        result = {
+          disposition: 'exhausted',
+          attempt,
+          maxAttempts: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+        };
+      } else {
+        throw new Error(`temporal attempt ${attemptId} exceeds retry budget: ${attempt}`);
       }
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
+    }
+    if (!result) throw new Error(`temporal failure for attempt ${attemptId} produced no result`);
+    return result;
+  }
+
+  private requeueTemporalWorkOrderInTransaction(
+    context: TemporalWorkContext,
+    workOrder: WorkOrderRecord,
+    reason: string
+  ): WorkOrderRecord {
+    this.transitionWorkOrder(workOrder.id, 'failed', reason);
+    const { attempts: _attempts, ...payload } = workOrder.payload;
+    const replacement = this.insertWorkOrder(
+      {
+        workKind: 'temporal',
+        idempotencyKey: context.generationKey,
+        input: payload,
+        priority: workOrder.priority,
+      },
+      workOrder.payload.attempts + 1
+    );
+    const ownership = this.db
+      .prepare(
+        `UPDATE operator_temporal_generations
+         SET last_workorder_id = ?, updated_at = ?
+         WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+      )
+      .run(replacement.id, this.now(), context.generationKey, workOrder.id);
+    if (ownership.changes !== 1) {
+      throw new Error(`temporal retry lost generation ownership for attempt ${workOrder.id}`);
+    }
+    return replacement;
+  }
+
+  private exhaustTemporalWorkOrderInTransaction(
+    context: TemporalWorkContext,
+    reason: string
+  ): void {
+    this.transitionWorkOrder(context.attemptId, 'failed', reason);
+    const update = this.db
+      .prepare(
+        `UPDATE operator_temporal_generations
+         SET disposition = 'exhausted', reason = ?, updated_at = ?
+         WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+      )
+      .run(reason, this.now(), context.generationKey, context.attemptId);
+    if (update.changes !== 1) {
+      throw new Error(`temporal exhaustion lost ownership for attempt ${context.attemptId}`);
     }
   }
 
@@ -1100,6 +1165,10 @@ export class TaskLedger implements TaskSource {
     }
     if (!Number.isSafeInteger(input.checkAt)) {
       throw new Error(`temporal generation: checkAt must be an epoch millisecond integer`);
+    }
+    const canonicalKey = temporalGenerationKey(input.taskId, input.occurrenceKey, input.checkAt);
+    if (input.generationKey !== canonicalKey) {
+      throw new Error(`temporal generation: generationKey must equal canonical identity key`);
     }
     for (const [field, value] of [
       ['sourceChannel', input.sourceChannel],
