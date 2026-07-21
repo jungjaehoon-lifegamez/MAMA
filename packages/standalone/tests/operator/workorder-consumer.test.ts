@@ -409,6 +409,9 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
 
     it.each([
+      ['null verdict', null],
+      ['primitive verdict', 'complete'],
+      ['array verdict', [{ disposition: 'complete' }]],
       ['unknown disposition', { disposition: 'unknown' }],
       ['blank failure reason', { disposition: 'fail', reason: '   ' }],
       ['oversized failure reason', { disposition: 'fail', reason: 'x'.repeat(501) }],
