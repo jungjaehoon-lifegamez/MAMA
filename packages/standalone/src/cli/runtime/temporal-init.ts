@@ -22,6 +22,7 @@ export interface DaemonTemporalAssemblyInput {
   flag: TemporalReconcileFlag;
   stage2Flag: Stage2Flag;
   backend: string;
+  envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   effectiveTools: readonly string[];
   availableTools: readonly string[];
   transportReady: boolean;
@@ -42,6 +43,7 @@ export function assembleDaemonTemporalRuntime(
     flag: input.flag,
     stage2Flag: input.stage2Flag,
     backend: input.backend,
+    envelopeIssuanceMode: input.envelopeIssuanceMode,
     effectiveTools: input.effectiveTools,
     availableTools: input.availableTools,
     transportReady: input.transportReady,

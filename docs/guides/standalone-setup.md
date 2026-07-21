@@ -266,6 +266,7 @@ pipeline is running in live mode:
 
 ```bash
 export MAMA_STAGE2_WORKORDERS=on
+export MAMA_ENVELOPE_ISSUANCE=enabled
 export MAMA_TEMPORAL_RECONCILE=on
 mama start
 ```
@@ -273,6 +274,7 @@ mama start
 The daemon validates the complete path before starting the scanner. `on` requires:
 
 - `MAMA_STAGE2_WORKORDERS=on` (not `off` or `shadow`);
+- signed envelope issuance enabled (the default, or `MAMA_ENVELOPE_ISSUANCE=enabled|required`);
 - a Claude or Codex backend;
 - the built-in temporal worker policy with `task_temporal_reconcile` available through the
   active transport; and

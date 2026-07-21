@@ -89,8 +89,23 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     executor = new GatewayToolExecutor({
       temporalContextPacketLookup: async ({ packetId }) => ({
         packet_id: packetId,
+        task: (() => {
+          const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
+          const context = ledger.loadTemporalWorkContext(attemptId);
+          return `temporal:${context.taskId}:${context.generationKey}\nReconcile synthetic evidence`;
+        })(),
         packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] }),
-        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-evidence' }],
+        source_refs: [
+          {
+            kind: 'raw',
+            connector: 'trello',
+            raw_id: (() => {
+              const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
+              const context = ledger.loadTemporalWorkContext(attemptId);
+              return ledger.getById(context.taskId)?.sourceEventId ?? 'missing-source-event';
+            })(),
+          },
+        ],
         created_at: now,
       }),
     });

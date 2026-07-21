@@ -47,6 +47,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
       env: { MAMA_TEMPORAL_RECONCILE: 'on' },
       stage2Flag: 'on' as const,
       backend: 'codex',
+      envelopeIssuanceMode: 'enabled' as const,
       effectiveTools: ['task_temporal_reconcile'],
       availableTools: ['task_temporal_reconcile'],
       transportReady: true,
@@ -133,6 +134,14 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(transport.options.createScheduler).not.toHaveBeenCalled();
   });
 
+  it('rejects disabled envelope issuance before registering the temporal role', () => {
+    const ctx = dependencies({ envelopeIssuanceMode: 'off' });
+
+    expect(() => createTemporalRuntime(ctx.options)).toThrow(/envelope issuance/i);
+    expect(ctx.options.registerRole).not.toHaveBeenCalled();
+    expect(ctx.options.createScheduler).not.toHaveBeenCalled();
+  });
+
   it('resumes, recovers, boot-scans, and starts exactly one interval in order', () => {
     const ctx = dependencies();
     const runtime = createTemporalRuntime(ctx.options);
@@ -144,12 +153,13 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(ctx.scheduler.start).toHaveBeenCalledOnce();
   });
 
-  it('stops the scanner before awaiting the consumer', async () => {
+  it('stops the scanner and consumer before pausing open temporal attempts', async () => {
     const ctx = dependencies();
     const runtime = createTemporalRuntime(ctx.options);
     runtime.boot();
     await runtime.stop();
-    expect(ctx.order.slice(-2)).toEqual(['scanner-stop', 'consumer-stop']);
+    expect(ctx.order.slice(-3)).toEqual(['scanner-stop', 'consumer-stop', 'pause']);
+    expect(ctx.ledger.pauseActiveTemporalWork).toHaveBeenLastCalledWith('temporal-runtime-stopped');
   });
 
   it('awaits runtime shutdown before closing the operator database', async () => {
@@ -210,6 +220,7 @@ describe('Story A2 Task 10: temporal restart integration', () => {
         env: { MAMA_TEMPORAL_RECONCILE: flag },
         stage2Flag,
         backend: 'codex',
+        envelopeIssuanceMode: 'enabled',
         effectiveTools: ['task_temporal_reconcile'],
         availableTools: ['task_temporal_reconcile'],
         transportReady: true,
@@ -236,7 +247,6 @@ describe('Story A2 Task 10: temporal restart integration', () => {
       try {
         const enabledRuntime = ctx.create('on');
         expect(enabledRuntime.boot().enabled).toBe(true);
-        await enabledRuntime.stop();
         expect(ctx.ledger.claimNextWorkOrder()?.id).toBe(ctx.created.workOrder.id);
         const runtime = ctx.create('on', stage2Flag);
         expect(() => runtime.boot()).toThrow(/MAMA_STAGE2_WORKORDERS=on/);

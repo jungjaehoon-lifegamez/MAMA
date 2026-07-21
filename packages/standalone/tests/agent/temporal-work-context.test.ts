@@ -18,6 +18,10 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
   let executionContext: GatewayToolExecutionContext;
   let taskId: number;
   const now = Date.parse('2026-07-21T15:00:00Z');
+  const packetTaskBinding = (value: TemporalWorkContext): string =>
+    `temporal:${value.taskId}:${value.generationKey}`;
+  const boundPacketTask = (value: TemporalWorkContext): string =>
+    `${packetTaskBinding(value)}\nReconcile fresh source evidence`;
 
   beforeEach(() => {
     db = new Database(':memory:');
@@ -144,12 +148,60 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
   });
 
+  it('host-binds temporal context compilation to the active task generation', async () => {
+    const compileAndPersistContext = vi.fn(async (request) => ({
+      packet: {
+        packet_id: 'ctxp_host_bound',
+        task: request.input.task,
+        source_refs: [],
+      },
+      record: {},
+      modelRunId: 'mr_host_bound',
+      parentModelRunId: null,
+    }));
+    executor = new GatewayToolExecutor({
+      contextCompileService: { compileAndPersistContext } as unknown as ContextCompileService,
+    });
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const trustedExecution = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+      modelRunId: 'mr_host_bound',
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: [...executionContext.agentContext!.role.allowedTools, 'context_compile'],
+        },
+        capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+      },
+    };
+
+    await executor.execute(
+      'context_compile',
+      {
+        task: 'model-supplied unrelated task',
+        scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+      } as never,
+      trustedExecution
+    );
+
+    expect(compileAndPersistContext.mock.calls[0]?.[0].input.task).toBe(
+      `${packetTaskBinding(context)}\nmodel-supplied unrelated task`
+    );
+  });
+
   it.each([
     {
       name: 'predates the active attempt',
       packetId: 'ctxp_temporal_stale',
       packet: {
         packet_id: 'ctxp_temporal_stale',
+        task: 'untrusted caller task',
         packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_stale' }),
         source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
         created_at: now - 1,
@@ -160,6 +212,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       packetId: 'ctxp_temporal_requested',
       packet: {
         packet_id: 'ctxp_temporal_different',
+        task: 'untrusted caller task',
         packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_different' }),
         source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
         created_at: now + 1,
@@ -170,6 +223,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       packetId: 'ctxp_temporal_unbacked',
       packet: {
         packet_id: 'ctxp_temporal_unbacked',
+        task: 'untrusted caller task',
         packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_unbacked' }),
         source_refs: [],
         created_at: now + 1,
@@ -210,6 +264,55 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
   });
 
+  it.each([
+    {
+      name: 'was compiled for another task',
+      task: 'temporal:999:unrelated-generation',
+      rawId: 'synthetic-card',
+    },
+    {
+      name: 'does not reference the bound source event',
+      task: null,
+      rawId: 'unrelated-card',
+    },
+  ])('rejects a fresh packet that $name', async ({ task, rawId }) => {
+    const packetId = 'ctxp_temporal_unrelated';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: task ?? boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: rawId }],
+        created_at: now + 1,
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const trustedExecution = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+      modelRunId: 'mr_temporal_unrelated',
+    };
+
+    await expect(
+      executor.execute(
+        'task_temporal_reconcile',
+        {
+          context_packet_id: packetId,
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          status: 'done',
+          reason: 'Unrelated evidence must not mutate the task',
+        } as never,
+        trustedExecution
+      )
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+  });
+
   it('commits only with a fresh same-run context packet carrying source evidence', async () => {
     const modelRunId = 'mr_temporal_evidence';
     const envelope = makeSignedEnvelope({
@@ -220,6 +323,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     const packetJson = JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] });
     const lookup = vi.fn(async () => ({
       packet_id: packetId,
+      task: boundPacketTask(context),
       packet_json: packetJson,
       source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
       created_at: now + 1,
@@ -266,6 +370,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     executor = new GatewayToolExecutor({
       temporalContextPacketLookup: async () => ({
         packet_id: packetId,
+        task: boundPacketTask(context),
         packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['nested'] }),
         source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
         created_at: now + 1,

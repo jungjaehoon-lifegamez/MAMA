@@ -54,6 +54,7 @@ export interface TemporalRuntimeOptions {
   flag?: TemporalReconcileFlag;
   stage2Flag: Stage2Flag;
   backend: string;
+  envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   effectiveTools: readonly string[];
   availableTools: readonly string[];
   transportReady: boolean;
@@ -94,6 +95,7 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
   const flag = options.flag ?? resolveTemporalReconcileFlag(options.env);
   new Intl.DateTimeFormat('en-US', { timeZone: options.timeZone }).format(0);
   let booted = false;
+  let stopped = false;
   let scheduler: TemporalRuntimeScheduler | null = null;
   const stage2ValidationError =
     flag === 'on' && options.stage2Flag !== 'on'
@@ -101,6 +103,9 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
       : null;
 
   if (flag === 'on' && !stage2ValidationError) {
+    if (options.envelopeIssuanceMode === 'off') {
+      throw new Error('temporal reconciliation requires envelope issuance');
+    }
     if (options.backend !== 'claude' && options.backend !== 'codex') {
       throw new Error(`temporal reconciliation backend '${options.backend}' is incompatible`);
     }
@@ -145,8 +150,16 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
       return { enabled: true, paused: 0, resumed, enqueued: scan.enqueued };
     },
     async stop(): Promise<void> {
+      if (stopped) return;
+      stopped = true;
       scheduler?.stop();
-      await options.consumer?.stop();
+      try {
+        await options.consumer?.stop();
+      } finally {
+        if (flag === 'on') {
+          options.ledger.pauseActiveTemporalWork('temporal-runtime-stopped');
+        }
+      }
     },
   };
 }

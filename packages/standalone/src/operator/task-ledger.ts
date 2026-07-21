@@ -1079,6 +1079,7 @@ export class TaskLedger implements TaskSource {
           after_revision: number;
           changed_fields: string;
           reason: string;
+          attestation_version: number;
           context_packet_id: string | null;
           context_packet_sha256: string | null;
           next_temporal_check_at: number | null;
@@ -1106,6 +1107,7 @@ export class TaskLedger implements TaskSource {
       afterRevision: row.after_revision,
       changedFields,
       reason: row.reason,
+      attestationVersion: row.attestation_version === 1 ? 1 : 0,
       contextPacketId: row.context_packet_id ?? '',
       contextPacketSha256: row.context_packet_sha256 ?? '',
       nextTemporalCheckAt: row.next_temporal_check_at,
@@ -1385,8 +1387,9 @@ export class TaskLedger implements TaskSource {
           `INSERT INTO operator_temporal_effects
              (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
               before_revision, after_revision, changed_fields, reason,
-              context_packet_id, context_packet_sha256, next_temporal_check_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              attestation_version, context_packet_id, context_packet_sha256,
+              next_temporal_check_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
         )
         .run(
           context.attemptId,

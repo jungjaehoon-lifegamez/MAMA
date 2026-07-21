@@ -394,9 +394,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
       const result = await harness.sandbox.execute(source);
 
       expect(result.success).toBe(false);
-      expect(result.error?.message).toMatch(
-        /connector_out_of_scope.*envelope\.scope\.raw_connectors/i
-      );
+      expect(result.error?.message).toMatch(/connector_out_of_scope.*envelope policy denied/i);
       expect(harness.gatewayResults).toContainEqual(
         expect.objectContaining({ success: false, code: 'connector_out_of_scope' })
       );

@@ -51,6 +51,7 @@ describe('Story A2 Task 14: production temporal daemon composition', () => {
       flag: 'on',
       stage2Flag: 'on',
       backend: 'codex',
+      envelopeIssuanceMode: 'enabled',
       effectiveTools: ['task_temporal_reconcile'],
       availableTools: ['task_temporal_reconcile'],
       transportReady: true,

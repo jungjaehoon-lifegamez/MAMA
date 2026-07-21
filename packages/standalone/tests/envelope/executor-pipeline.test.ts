@@ -285,8 +285,9 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       expect(result).toMatchObject({
         success: false,
         code: 'destination_out_of_scope',
-        envelope_hash: 'envhash_pipeline',
       });
+      expect(result).not.toHaveProperty('envelope_hash');
+      expect(result).not.toHaveProperty('allowed');
       expect(telegramGateway.sendMessage).not.toHaveBeenCalled();
       const rows = readActivityRows(db);
       expect(JSON.stringify(result)).not.toContain(destinationSentinel);

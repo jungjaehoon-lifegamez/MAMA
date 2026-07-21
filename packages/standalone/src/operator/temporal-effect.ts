@@ -52,6 +52,7 @@ export interface TemporalEffectReceipt {
   afterRevision: number;
   changedFields: string[];
   reason: string;
+  attestationVersion: 0 | 1;
   contextPacketId: string;
   contextPacketSha256: string;
   nextTemporalCheckAt: number | null;
@@ -71,6 +72,9 @@ export function temporalReceiptInvariantError(
   receipt: TemporalEffectReceipt,
   expected: TemporalReceiptExpectation
 ): string | null {
+  if (receipt.attestationVersion !== 1) {
+    return 'legacy temporal receipt evidence is quarantined';
+  }
   if (receipt.workorderAttemptId !== expected.attemptId) {
     return 'temporal receipt attempt mismatch';
   }

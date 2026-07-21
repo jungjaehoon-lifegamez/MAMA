@@ -123,8 +123,8 @@ describe('Reactive Main envelope tool path', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'destination_out_of_scope',
-      envelope_hash: capturedOptions?.envelope?.envelope_hash,
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(result.error).toContain('destination_out_of_scope');
   });
 

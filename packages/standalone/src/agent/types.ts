@@ -918,9 +918,6 @@ export interface EnvelopeDenialResult {
   success: false;
   error: string;
   code: string;
-  envelope_hash?: string;
-  allowed?: unknown;
-  tier_required?: number;
 }
 
 /**
@@ -1303,6 +1300,7 @@ export interface GatewayToolExecutorOptions {
     callerModelRunId: string;
   }) => Promise<{
     packet_id: string;
+    task: string;
     packet_json: string;
     source_refs: unknown[];
     created_at: number;
