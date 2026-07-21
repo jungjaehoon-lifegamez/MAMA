@@ -983,7 +983,9 @@ describe('Story: Codex app-server process', () => {
     'settles a timed-out %s operation exactly once and leaves no live child',
     async (mode) => {
       const item = fixture(mode);
-      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 35 });
+      // The assertion covers eventual cleanup, not sub-process launch speed. Keep enough budget for
+      // a loaded CI runner to start the fixture before exercising its intentional timeout mode.
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
       let settlements = 0;
       await runner.prompt('hi').then(
         () => {
@@ -993,17 +995,22 @@ describe('Story: Codex app-server process', () => {
           settlements += 1;
         }
       );
-      await new Promise((resolve) => setTimeout(resolve, 80));
       expect(settlements).toBe(1);
-      expect(() => process.kill(Number(messages(item.capture)[0].pid), 0)).toThrow();
-      expect(runner.getStatus()).toMatchObject({
-        running: false,
-        pendingRequestCount: 0,
-        hasActiveTurn: false,
-        stdoutListenerCount: 0,
-        stderrListenerCount: 0,
-        shutdownTimerActive: false,
-      });
+      const pid = Number(messages(item.capture)[0].pid);
+      await vi.waitFor(
+        () => {
+          expect(() => process.kill(pid, 0)).toThrow();
+          expect(runner.getStatus()).toMatchObject({
+            running: false,
+            pendingRequestCount: 0,
+            hasActiveTurn: false,
+            stdoutListenerCount: 0,
+            stderrListenerCount: 0,
+            shutdownTimerActive: false,
+          });
+        },
+        { timeout: 2_000, interval: 10 }
+      );
     }
   );
 
