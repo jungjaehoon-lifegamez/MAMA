@@ -1,5 +1,6 @@
 import type { OperatorTask, TaskPatch, TaskStatus } from '../api/client';
-import { formatDday, formatRelativeTime } from '../lib/time';
+import { presentTaskTemporal, type TaskTemporalCategory } from '../lib/task-temporal';
+import { formatRelativeTime } from '../lib/time';
 
 const TASK_STATUSES: TaskStatus[] = [
   'pending',
@@ -25,6 +26,14 @@ const PRIORITY_CLASSES = {
   low: 'bg-surface-secondary text-text-secondary dark:text-text-tertiary',
 };
 
+const TEMPORAL_CLASSES: Record<TaskTemporalCategory, string> = {
+  closed: 'bg-surface-secondary text-text-tertiary',
+  upcoming: 'bg-agent-light text-agent-hover dark:text-agent',
+  due: 'bg-warning-soft text-warning-text',
+  overdue: 'bg-danger/10 text-danger',
+  unscheduled: 'bg-surface-secondary text-text-tertiary',
+};
+
 interface TaskRowProps {
   task: OperatorTask;
   now: number;
@@ -39,6 +48,11 @@ function statusLabel(status: TaskStatus): string {
 
 export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowProps) {
   const unconfirmed = task.auto_created && !task.confirmed;
+  const temporal = presentTaskTemporal({
+    temporalState: task.temporal_state,
+    dueAt: task.due_at,
+    dueDate: task.due_date,
+  });
 
   return (
     <tr id={`task-${task.id}`} className="scroll-mt-4 border-b border-border last:border-0">
@@ -82,9 +96,16 @@ export default function TaskRow({ task, now, pending, error, onPatch }: TaskRowP
         {task.assignee || 'unassigned'}
       </td>
       <td className="px-3 py-3 text-xs text-text-secondary whitespace-nowrap">
-        <div>{task.due_date || '-'}</div>
+        <div>{temporal.dueLabel}</div>
+      </td>
+      <td className="px-3 py-3 text-xs text-text-secondary whitespace-nowrap">
+        <span
+          className={`rounded-full px-2 py-1 text-[11px] font-medium ${TEMPORAL_CLASSES[temporal.category]}`}
+        >
+          {temporal.badgeLabel}
+        </span>
         <div className="text-[11px] text-text-secondary dark:text-text-tertiary">
-          {formatDday(now, task.due_date)}
+          {temporal.fact}
         </div>
       </td>
       <td className="px-3 py-3 max-w-48 truncate text-xs text-text-secondary">

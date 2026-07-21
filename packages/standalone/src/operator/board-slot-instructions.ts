@@ -24,8 +24,10 @@ export function buildBoardHtmlVocabulary(): string[] {
     '  <span class="card-badge badge-warning">STATE</span></div>',
     '  <div class="card-tags"><span class="tag tag-channel">CHANNEL</span></div>',
     '  <div class="card-action">CONCRETE NEXT ACTION</div></div>',
-    '- Badge classes by state: badge-danger (blocked/overdue), badge-warning (waiting/needs confirmation),',
+    '- Workflow badge classes: badge-danger (blocked), badge-warning (waiting/needs confirmation),',
     '  badge-info (in progress), badge-success (done/quiet).',
+    '- Temporal badges are separate facts: badge-danger (overdue), badge-warning (due today),',
+    '  badge-info (upcoming), badge-success (closed).',
     '- Pipeline table: <table class="report-table"><thead><tr><th>...</th></tr></thead><tbody>rows</tbody></table>',
     'No <script>, <iframe>, or event handlers: the board sanitizes them out and the CSP blocks them.',
   ];
@@ -34,19 +36,26 @@ export function buildBoardHtmlVocabulary(): string[] {
 /**
  * Pipeline slot = item tracker projection (M8 Phase 3). Injected into EVERY
  * board writer (dashboard persona, cron prompt, the trigger loop's full
- * report) so both writers project the same tracker. D-day arithmetic uses the
- * "Today is <date>" line each RUN PROMPT carries -- personas are static files
- * and must never bake in a date.
+ * report) so both writers project the same tracker. The server-derived
+ * temporal_state is the canonical time category; personas are static files
+ * and must never recompute it from a baked-in date.
  */
 export function buildPipelineTrackerInstructions(): string[] {
   return [
     'The pipeline slot is an ITEM TRACKER, not a summary. Build it from',
     'task_list({order: "deadline_priority", limit: 12}) -- the native task ledger is the',
     'projection source. Render one report-table with a row per open item:',
-    '  #id | title | status badge | assignee (or "unassigned") | D-day | source | latest event',
-    '- D-day: compute from the item\'s deadline against the run prompt\'s "Today is" date',
-    '  (D-3 = due in 3 days, D+2 = 2 days overdue). No deadline -> "-".',
-    '- Overdue -> badge-danger. Unassigned AND due within 7 days -> badge-warning with the',
+    '  #id | title | workflow status | temporal fact | D-day | assignee (or "unassigned") | source | latest event',
+    '- Temporal fact: use temporal_state as the canonical category. Show exact_overdue as',
+    '  "overdue since <due_at>" and date_overdue as "overdue since <deadline>".',
+    '- Workflow judgment: render status independently; overdue never changes status to blocked.',
+    '- System condition: report reconciliation retrying/authority unavailable separately; never',
+    '  turn an infrastructure condition into a task lifecycle status.',
+    '- D-day is an optional display aid computed from deadline and the run date; never use it',
+    '  to replace or recompute temporal_state.',
+    '- Never infer completion from calendar disappearance.',
+    '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
+    '- Unassigned AND due within 7 days -> badge-warning with the',
     '  literal word "unassigned" visible.',
     '- Items with auto_created true and confirmed false render "(unconfirmed)" after the title',
     '  so model-created items are visually distinct from owner-confirmed ones.',
