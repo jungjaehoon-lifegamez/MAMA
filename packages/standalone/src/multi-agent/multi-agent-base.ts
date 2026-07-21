@@ -426,6 +426,7 @@ export abstract class MultiAgentHandlerBase {
    */
   setGatewayToolExecutor(executor: GatewayToolExecutor): void {
     this.gatewayToolExecutor = executor;
+    this.processManager.setGatewayToolExecutor(executor);
   }
 
   /**
@@ -821,7 +822,7 @@ export abstract class MultiAgentHandlerBase {
       this.cleanupInterval = null;
     }
     this.backgroundTaskManager.destroy();
-    this.processManager.stopAll();
+    await this.processManager.stopAll();
     await this.platformCleanup();
   }
 }

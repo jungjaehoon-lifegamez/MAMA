@@ -1,9 +1,5 @@
 import { EventEmitter } from 'events';
-import {
-  CodexMCPProcess,
-  type CodexMCPOptions,
-  type PromptCallbacks as CodexPromptCallbacks,
-} from '../agent/codex-mcp-process.js';
+import { CodexAppServerProcess } from '../agent/codex-app-server-process.js';
 import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
@@ -13,26 +9,23 @@ import type { IModelRunner, RunnerMetrics, PromptOptions } from '../agent/model-
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
   isReady(): boolean;
-  stop(): void;
+  stop(): void | Promise<void>;
   getSessionId?(): string;
   on(event: 'idle' | 'close' | 'error', listener: (...args: unknown[]) => void): this;
 }
 
 export interface CodexRuntimeProcessOptions {
+  defaultSessionKey?: string;
   model?: string;
   systemPrompt?: string;
   cwd?: string;
   sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
   requestTimeout?: number;
   codexHome?: string;
+  isolatedHome?: string;
+  registryRoot?: string;
   mcpConfigPath?: string;
   command?: string;
-  // Legacy options (from old CLI approach - some may not be supported in MCP mode)
-  profile?: string;
-  ephemeral?: boolean;
-  addDirs?: string[];
-  configOverrides?: string[];
-  skipGitRepoCheck?: boolean;
 }
 
 /**
@@ -40,14 +33,19 @@ export interface CodexRuntimeProcessOptions {
  * multi-agent runtime (sendMessage/isReady/stop + idle events).
  *
  * Implements both AgentRuntimeProcess (multi-agent) and IModelRunner (agent-loop).
- * Uses CodexMCPProcess for persistent MCP communication.
+ * Uses one Codex app-server connection and multiplexes durable threads by
+ * session key. Different sessions may run concurrently; turns for the same
+ * session are serialized by CodexAppServerProcess.
  */
 export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimeProcess, IModelRunner {
-  readonly backendType = 'codex-mcp' as const;
+  readonly backendType = 'codex' as const;
 
-  private wrapper: CodexMCPProcess;
-  private state: 'idle' | 'busy' | 'dead' = 'idle';
-  private stoppedDuringExecution = false;
+  private readonly options: CodexRuntimeProcessOptions;
+  private readonly appServer: CodexAppServerProcess;
+  private defaultSessionKey: string;
+  private systemPrompt: string;
+  private stopped = false;
+  private activeRequests = 0;
 
   // ─── Metrics tracking ───
   private _requestCount = 0;
@@ -57,18 +55,22 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
 
   constructor(options: CodexRuntimeProcessOptions) {
     super();
-    const wrapperOptions: CodexMCPOptions = {
-      model: options.model,
-      systemPrompt: options.systemPrompt,
-      cwd: options.cwd,
-      sandbox: options.sandbox,
-      codexHome: options.codexHome,
+    this.options = { ...options };
+    this.defaultSessionKey = options.defaultSessionKey ?? 'default';
+    this.systemPrompt = options.systemPrompt ?? '';
+    this.appServer = new CodexAppServerProcess({
+      sessionKey: this.defaultSessionKey,
+      model: options.model ?? 'gpt-5.4',
+      systemPrompt: this.systemPrompt,
+      cwd: options.cwd ?? process.cwd(),
+      sandbox: options.sandbox ?? 'workspace-write',
       command: options.command,
+      requestTimeout: options.requestTimeout,
+      codexHome: options.codexHome,
+      isolatedHome: options.isolatedHome,
+      registryRoot: options.registryRoot,
       mcpConfigPath: options.mcpConfigPath,
-      compactPrompt: 'Summarize the conversation concisely, preserving key decisions and context.',
-      timeoutMs: options.requestTimeout,
-    };
-    this.wrapper = new CodexMCPProcess(wrapperOptions);
+    });
   }
 
   // ─── IModelRunner.prompt() ─────────────────────────────────────────────
@@ -78,61 +80,42 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     callbacks?: ClaudePromptCallbacks,
     options?: PromptOptions
   ): Promise<ClaudePromptResult> {
-    // Narrowed on purpose: only systemPrompt is per-call plumbing (Task 3).
-    // model/resumeSession stay inert on codex - activating them is a separate,
-    // deliberate change (they alter thread lifecycle, codex-mcp-process.ts:261-266).
-    return this.sendMessage(
-      content,
-      callbacks,
-      options?.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : undefined
-    );
+    return this.execute(content, callbacks, options);
   }
 
   // ─── AgentRuntimeProcess.sendMessage() ─────────────────────────────────
 
   async sendMessage(
     content: string,
-    callbacks?: ClaudePromptCallbacks,
-    options?: { systemPrompt?: string }
+    callbacks?: ClaudePromptCallbacks
   ): Promise<ClaudePromptResult> {
-    if (this.state === 'dead') {
-      throw new Error('Process is dead');
-    }
-    if (this.state === 'busy') {
-      throw new Error('Process is busy with another request');
+    return this.execute(content, callbacks);
+  }
+
+  private async execute(
+    content: string,
+    callbacks?: ClaudePromptCallbacks,
+    promptOptions?: PromptOptions
+  ): Promise<ClaudePromptResult> {
+    if (this.stopped) {
+      throw this.notifyError(new Error('Process is dead'), callbacks);
     }
 
-    this.state = 'busy';
+    this.activeRequests++;
     const startTime = Date.now();
     this._requestCount++;
     this._lastRequestAt = startTime;
 
     try {
-      const codexCallbacks: CodexPromptCallbacks | undefined = callbacks
-        ? {
-            onDelta: callbacks.onDelta,
-            onError: callbacks.onError,
-          }
-        : undefined;
-
-      const result = await this.wrapper.prompt(
-        content,
-        codexCallbacks,
-        options?.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : undefined
-      );
-
-      const normalized: ClaudePromptResult = {
-        response: result.response,
-        usage: {
-          input_tokens: result.usage.input_tokens,
-          output_tokens: result.usage.output_tokens,
-          cache_read_input_tokens: result.usage.cached_input_tokens,
-        },
-        session_id: result.session_id || this.wrapper.getSessionId(),
-        cost_usd: result.cost_usd,
-        toolUseBlocks: undefined,
-        hasToolUse: false,
-      };
+      const normalized = await this.appServer.prompt(content, callbacks, {
+        sessionKey: promptOptions?.sessionKey ?? promptOptions?.sessionId ?? this.defaultSessionKey,
+        model: promptOptions?.model ?? this.options.model,
+        systemPrompt: promptOptions?.systemPrompt ?? this.systemPrompt,
+        requestTimeout: promptOptions?.requestTimeout ?? this.options.requestTimeout,
+        policyFingerprint: promptOptions?.sessionPolicyFingerprint,
+        resumeSession: promptOptions?.resumeSession,
+        hostToolBridge: promptOptions?.hostToolBridge,
+      });
 
       this._totalLatencyMs += Date.now() - startTime;
       callbacks?.onFinal?.({ content: normalized.response, toolUseBlocks: [] });
@@ -140,34 +123,43 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     } catch (err) {
       this._failureCount++;
       this._totalLatencyMs += Date.now() - startTime;
-      throw err;
+      throw this.notifyError(err, callbacks);
     } finally {
-      // Only reset to idle if not stopped during execution
-      if (!this.stoppedDuringExecution) {
-        this.state = 'idle';
+      this.activeRequests--;
+      if (!this.stopped && this.activeRequests === 0) {
         this.emit('idle');
       }
     }
   }
 
+  private notifyError(error: unknown, callbacks?: ClaudePromptCallbacks): Error {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    try {
+      callbacks?.onError?.(normalized);
+    } catch {
+      // Consumer callback failures must not replace the model failure.
+    }
+    return normalized;
+  }
+
   // ─── IModelRunner session management ───────────────────────────────────
 
   setSessionId(id: string): void {
-    this.wrapper.setSessionId(id);
+    this.defaultSessionKey = id;
   }
 
   setSystemPrompt(prompt: string): void {
-    this.wrapper.setSystemPrompt(prompt);
+    this.systemPrompt = prompt;
   }
 
   // ─── IModelRunner health & metrics ─────────────────────────────────────
 
   isReady(): boolean {
-    return this.state === 'idle';
+    return !this.stopped;
   }
 
   isHealthy(): boolean {
-    return this.state !== 'dead';
+    return !this.stopped;
   }
 
   getMetrics(): RunnerMetrics {
@@ -180,14 +172,13 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     };
   }
 
-  stop(): void {
-    this.stoppedDuringExecution = this.state === 'busy';
-    this.state = 'dead';
-    this.wrapper.stop();
+  async stop(): Promise<void> {
+    this.stopped = true;
+    await this.appServer.stop();
     this.emit('close', 0);
   }
 
   getSessionId(): string {
-    return this.wrapper.getSessionId();
+    return this.appServer.getThreadId(this.defaultSessionKey) ?? '';
   }
 }

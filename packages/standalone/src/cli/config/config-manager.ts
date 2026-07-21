@@ -225,7 +225,7 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
   const errors: string[] = [];
 
   if (!config.agent.backend) {
-    errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'codex-mcp'");
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex'");
   }
   if (!config.agent.model) {
     errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
@@ -463,6 +463,10 @@ export async function createDefaultConfig(overwrite = false): Promise<string> {
  */
 function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
   const multiAgent = normalizeLegacyMultiAgentConfig(config.multi_agent);
+  const agent =
+    config.agent && (config.agent.backend as string) === 'codex-mcp'
+      ? { ...config.agent, backend: 'codex' as const }
+      : config.agent;
 
   return {
     // Preserve all user-defined fields (scheduling, custom sections, etc.)
@@ -471,7 +475,7 @@ function mergeWithDefaults(config: Partial<MAMAConfig>): MAMAConfig {
     version: config.version ?? DEFAULT_CONFIG.version,
     agent: {
       ...DEFAULT_CONFIG.agent,
-      ...config.agent,
+      ...agent,
     },
     database: {
       ...DEFAULT_CONFIG.database,
@@ -532,6 +536,20 @@ function normalizeLegacyMultiAgentConfig(
 ): MultiAgentConfig | undefined {
   if (!multiAgentConfig?.agents) {
     return multiAgentConfig;
+  }
+
+  let backendMigrated = false;
+  const backendNormalizedAgents = Object.fromEntries(
+    Object.entries(multiAgentConfig.agents).map(([agentId, agent]) => {
+      if ((agent.backend as string | undefined) !== 'codex-mcp') {
+        return [agentId, agent];
+      }
+      backendMigrated = true;
+      return [agentId, { ...agent, backend: 'codex' as const }];
+    })
+  ) as typeof multiAgentConfig.agents;
+  if (backendMigrated) {
+    multiAgentConfig = { ...multiAgentConfig, agents: backendNormalizedAgents };
   }
 
   // Migrate sisyphus → conductor (renamed in v0.9.0)
@@ -741,8 +759,12 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex', 'codex-mcp'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
+  if (config.agent.backend && !['claude', 'codex'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude" or "codex"');
+  }
+
+  if (Object.hasOwn(config.agent, 'codex_transport')) {
+    errors.push('agent.codex_transport was removed; Codex always uses app-server');
   }
 
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {

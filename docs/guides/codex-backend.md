@@ -1,222 +1,179 @@
-# Codex CLI Backend Setup Guide
+# Codex App-Server Backend Setup Guide
 
 **Category:** Guide (Task-Oriented)
-**Audience:** Users who want to use Codex CLI as a backend in MAMA OS
+**Audience:** Users who want to use Codex app-server as a backend in MAMA OS
 
 ---
 
 ## Overview
 
-MAMA OS can run Codex CLI in MCP server mode (`codex mcp-server`) and use it as an agent backend. You can also mix it with the Claude CLI backend to use both backends simultaneously in a single Multi-Agent swarm.
+MAMA OS runs Codex CLI through its stdio app-server protocol and can mix Codex and Claude
+agents in the same multi-agent workflow. The configured backend name is `codex`.
 
----
+The runtime keeps one managed app-server process, multiplexes conversations onto durable Codex
+threads, and exposes the tools allowed for each run as native app-server host tools. MAMA still
+enforces the current role, tier, runtime, channel, and Reactive-envelope policy before executing a
+host tool.
+
+`codex-mcp` is a legacy configuration alias. Existing configuration is normalized to `codex`, but
+new configuration and API calls should use `codex`.
 
 ## Installation
 
 ### 1. Install Codex CLI
 
 ```bash
-# Global install via npm
 npm install -g @openai/codex
-
-# Or install the binary directly
-# Place it in a directory included in PATH, such as ~/.local/bin/codex
 ```
 
-### 2. Environment Variables (Optional)
+You can also place a Codex binary in a directory on `PATH`.
+
+### 2. Authenticate
+
+Run `codex login` before starting MAMA. By default, MAMA isolates Codex state under
+`~/.mama/.codex` and bootstraps `auth.json` from `~/.codex/auth.json` when needed. The managed
+copy is refreshed only when the source credentials change.
+
+Useful overrides:
 
 ```bash
-# Specify the Codex binary path directly (if not in PATH)
 export MAMA_CODEX_COMMAND=/path/to/codex
-# Or
-export CODEX_COMMAND=/path/to/codex
-
-# Codex configuration directory (default: ~/.mama/.codex)
 export CODEX_HOME=~/.mama/.codex
 ```
 
-If `~/.mama/.codex/auth.json` does not exist yet, MAMA OS will bootstrap it from `~/.codex/auth.json` automatically on first `codex-mcp` startup.
-If neither file exists, run `codex login` first. A missing bootstrap typically shows up as `Process not running` or a missing `~/.mama/.codex/auth.json`; check `~/.mama/logs/daemon.log` for startup diagnostics.
+MAMA searches for the Codex executable in this order:
 
-MAMA searches for the Codex binary in the following order:
-
-1. The `command` option in the configuration
-2. `MAMA_CODEX_COMMAND` environment variable
-3. `CODEX_COMMAND` environment variable
-4. PATH search
-5. Fallback paths: `~/.local/bin/codex`, `~/bin/codex`, `/usr/local/bin/codex`, etc.
-
----
+1. The configured command
+2. `MAMA_CODEX_COMMAND`
+3. `CODEX_COMMAND`
+4. `PATH`
+5. Common local binary directories such as `~/.local/bin`
 
 ## Configuration
 
-### Global Configuration
-
-Change the default backend to `codex-mcp` in `config.yaml`:
+### Global configuration
 
 ```yaml
 agent:
-  backend: 'codex-mcp'
-  model: 'codex-model-name'
+  backend: codex
+  model: gpt-5.4
   timeout: 180000
-  codex_sandbox: 'workspace-write'
+  codex_home: ~/.mama/.codex
+  codex_cwd: ~/.mama/workspace
+  codex_sandbox: workspace-write
+  codex_skip_git_repo_check: true
+  codex_ephemeral: false
 ```
 
-### Per-Agent Override
-
-Specify the backend for individual agents in the Multi-Agent configuration:
+### Per-agent override
 
 ```yaml
 multi_agent:
   enabled: true
   agents:
     conductor:
-      backend: 'claude'
-      model: 'claude-sonnet-4-6'
+      backend: claude
+      model: claude-sonnet-4-6
       tier: 1
       can_delegate: true
 
     developer:
-      backend: 'codex-mcp'
-      model: 'codex-model-name'
-      tier: 1
-      codex_sandbox: 'workspace-write'
+      backend: codex
+      model: gpt-5.4
+      tier: 2
+      codex_sandbox: workspace-write
 
     reviewer:
-      backend: 'claude'
-      model: 'claude-sonnet-4-6'
+      backend: codex
+      model: gpt-5.4
       tier: 3
+      codex_sandbox: read-only
 ```
 
----
+## Claude and Codex runtime differences
 
-## Claude vs Codex Comparison
+| Item               | Claude backend                 | Codex backend                                                         |
+| ------------------ | ------------------------------ | --------------------------------------------------------------------- |
+| Protocol           | Persistent Claude CLI stream   | `codex app-server --strict-config --stdio`                            |
+| Conversation state | Persistent CLI session         | Durable app-server thread registry                                    |
+| Process model      | Resident process pool          | One multiplexed managed app-server process                            |
+| Tools              | Gateway/Code-Act routing       | Native app-server host tools projected per run                        |
+| Sandbox            | CLI permission policy          | `read-only`, `workspace-write`, or `danger-full-access`               |
+| Timeout behavior   | Per request                    | Confirmed turns are isolated; unreconciled starts restart the process |
+| Compaction         | Managed by MAMA session policy | Managed by Codex app-server                                           |
 
-| Item                   | Claude CLI                                                     | Codex MCP                                            |
-| ---------------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
-| **Protocol**           | CLI subprocess (JSON stdout)                                   | MCP (JSON-RPC via stdio)                             |
-| **Session Management** | UUID + session persistence (context preserved across sessions) | ThreadId-based internal management                   |
-| **Sandbox**            | None (permissions-based)                                       | `read-only`, `workspace-write`, `danger-full-access` |
-| **Thinking**           | Adaptive thinking (`effort: low~max`)                          | None                                                 |
-| **Startup Method**     | Resident process pool (PersistentProcessPool)                  | Resident process (reused after MCP Initialize)       |
-| **Timeout**            | Configurable per request                                       | Initialize 60s, request 3 min default                |
-| **Auto-Restart**       | Process pool recreation                                        | Automatic restart once on failure                    |
-| **State Machine**      | None                                                           | `dead → starting → ready → busy → ready`             |
-| **Isolation**          | `cwd: ~/.mama/workspace` + git boundary + empty plugin-dir     | `codex_cwd` configuration                            |
-| **System Prompt**      | Injected once via `--system-prompt` (persistent session)       | Injected once via developer-instructions             |
+On a new Codex conversation, MAMA creates a thread with the current persona and runtime policy.
+After a MAMA daemon restart, it resumes the durable thread and sends a fresh runtime bootstrap on
+the first resumed turn so current policy and tool context are not stale. An explicit fresh session
+removes the old registry entry and starts a new thread.
 
-> **Important:** Both backends inject the system prompt **only once on the first turn**. Claude preserves prior context via session persistence, while Codex does so via threadId.
+## Native tool bridge and Code-Act
 
----
+Codex agents call the tools advertised by app-server directly. They must not print JSON or Markdown
+tool blocks as a substitute for a tool call.
 
-## Sandbox Options
+The advertised set is built for each run and can include:
 
-Sandbox modes exclusive to the Codex backend:
+- Memory and context tools such as `mama_search`, `context_compile`, and `mama_save`
+- Messaging and connector tools allowed for the current role and channel
+- Browser or other gateway tools explicitly allowed by configuration
+- `code_act`, which runs JavaScript against its own restricted host bridge
 
-| Mode                 | Description                                | Use Case                                       |
-| -------------------- | ------------------------------------------ | ---------------------------------------------- |
-| `read-only`          | Cannot write to the file system            | Analysis and review-only agents                |
-| `workspace-write`    | Can only modify files within the workspace | General development agents (recommended)       |
-| `danger-full-access` | Full file system access                    | System administration tasks (use with caution) |
+Code-Act does not bypass MAMA permissions. Its host bridge applies the same role, runtime, tier,
+channel, and Reactive-envelope checks as direct native host-tool calls. After a turn is cancelled,
+MAMA rejects new tool callbacks and waits for any callback that already started to settle before
+reporting the turn failure. An external side effect may still finish if its provider call had
+already begun and does not support cooperative cancellation.
+
+MAMA intentionally excludes the `mama` and legacy `code-act` MCP servers from the Codex app-server
+MCP registry. Exposing them there would create a second route around the canonical host bridge.
+Other explicitly configured external MCP servers may still be projected into app-server after
+their configuration is validated.
+
+## Sandbox options
+
+| Mode                 | Description                                | Typical use                      |
+| -------------------- | ------------------------------------------ | -------------------------------- |
+| `read-only`          | File reads only                            | Review and investigation         |
+| `workspace-write`    | Writes limited to the configured workspace | Development; recommended default |
+| `danger-full-access` | Full filesystem access                     | Trusted administration only      |
+
+The app-server is also launched from a managed Codex home with user instructions, apps, plugins,
+tool search, shell, web search, and other unprojected native surfaces disabled. MAMA rejects
+instruction sources that resolve outside its managed roots, including symlink escapes.
+
+## External MCP servers
+
+`agent.tools.mcp_config` may point to a validated MAMA MCP configuration file. For Codex,
+non-MAMA external servers are translated into app-server launch overrides. Stdio server secrets
+are passed through the child environment, redacted from errors, and trigger a safe process refresh
+when changed.
 
 ```yaml
 agent:
-  codex_sandbox: 'workspace-write' # Recommended default
+  backend: codex
+  tools:
+    gateway:
+      - '*'
+    mcp:
+      - '*'
+    mcp_config: ~/.mama/mama-mcp-config.json
 ```
 
----
+The gateway allowlist and MCP configuration describe different boundaries: gateway tools are
+executed by MAMA's canonical executor, while validated external MCP servers run through Codex.
 
-## Mixed Swarm Example
-
-Use Claude and Codex agents together in a single swarm:
-
-```yaml
-multi_agent:
-  enabled: true
-
-  workflow:
-    enabled: true
-    backend_balancing: true # Claude ↔ Codex round-robin
-
-  agents:
-    conductor:
-      backend: 'claude'
-      model: 'claude-sonnet-4-6'
-      tier: 1
-      can_delegate: true
-
-    developer:
-      backend: 'codex-mcp'
-      model: 'codex-model-name'
-      tier: 1
-      codex_sandbox: 'workspace-write'
-
-    coder:
-      backend: 'codex-mcp'
-      model: 'codex-model-name'
-      tier: 2
-      codex_sandbox: 'workspace-write'
-
-    reviewer:
-      backend: 'claude'
-      model: 'claude-sonnet-4-6'
-      tier: 3
-```
-
-When `backend_balancing: true` is set, Dynamic Workflow's ephemeral agents are distributed between Claude and Codex in a round-robin fashion.
-
----
-
-## Customizing AGENTS.codex.md
-
-Codex backend agents receive a different instruction file than Claude agents.
-
-### Default Files
-
-- **Claude agents**: Use persona files (`~/.mama/templates/personas/*.md`) directly
-- **Codex agents**: Instructions injected based on `templates/AGENTS.codex.md`
-
-### Tool Call Format for Codex Agents
-
-Codex agents call gateway tools using JSON blocks:
-
-```json
-{ "name": "mama_search", "input": { "query": "authentication strategy" } }
-```
-
-### Available Tools (via Gateway Bridge)
-
-**Claude CLI built-in tools:**
-
-- `Read`, `Write`, `Bash`, `Grep`, `Glob`, `Edit`
-
-**Gateway tools** (implemented in `gateway-tool-executor.ts`):
-
-- **Memory**: `mama_search`, `context_compile`, `mama_save`, `mama_update`, `mama_load_checkpoint`
-- **Messaging**: `discord_send`, `slack_send`
-- **Browser**: `browser_get_text`, `browser_screenshot`
-
-> **Note:** Do not use `exec_command` or `apply_patch` in Codex agents. These are Codex-native tools and are not available through the gateway bridge.
-
-### How to Customize
-
-You can modify `templates/AGENTS.codex.md` to change the default behavior of Codex agents. When a skill is activated, its `SKILL.md` is additionally injected.
-
----
-
-## Configuration Type Reference
+## Configuration type reference
 
 ```typescript
 interface AgentConfig {
-  backend: 'claude' | 'codex-mcp';
+  backend: 'claude' | 'codex';
   model: string;
   timeout: number;
 
-  // Claude only
-  effort?: 'low' | 'medium' | 'high' | 'max';
-  use_persistent_cli?: boolean;
+  effort?: 'low' | 'medium' | 'high' | 'max'; // Claude only
+  use_persistent_cli?: boolean; // Claude only
 
-  // Codex only
   codex_home?: string;
   codex_cwd?: string;
   codex_sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
@@ -225,38 +182,24 @@ interface AgentConfig {
 }
 ```
 
----
+## Troubleshooting
 
-## CLI Backend Evolution
+- **Authentication failure:** run `codex login`, then restart MAMA. Check
+  `~/.mama/logs/daemon.log` if the managed credential copy cannot be prepared.
+- **Backend rejected:** use `codex`. Unknown backend names fail explicitly; only stored legacy
+  `codex-mcp` values are migrated.
+- **Thread policy mismatch:** start a fresh session after changing model, working directory, or
+  sandbox policy for an existing durable conversation.
+- **Unexpected instruction source:** remove instructions or symlinks that resolve outside the
+  managed MAMA roots.
+- **External MCP startup issue:** validate `agent.tools.mcp_config`; MAMA rejects malformed fields,
+  unsafe environment bindings, and invalid transports before launching Codex.
 
-MAMA OS evolved through multiple phases to achieve stable, token-efficient CLI integration for both Claude and Codex backends.
+## Reference files
 
-### Claude CLI: 3-Phase Evolution
-
-| Phase       | Approach                                                               | Problem                                                                                                                                                           |
-| ----------- | ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase 1** | One-shot `claude -p`                                                   | No session continuity; system prompt re-sent every turn                                                                                                           |
-| **Phase 2** | `PersistentClaudeProcess` with `--output-format stream-json`           | Session persistence works, but global settings (`~/CLAUDE.md`, plugins from `~/.claude/settings.json`) re-injected every turn — up to ~50K tokens wasted per turn |
-| **Phase 3** | 4-layer isolation (cwd + .git/HEAD + --plugin-dir + --setting-sources) | Fully isolated; system prompt injected once on first turn only                                                                                                    |
-
-Key discovery: `--plugin-dir` alone is **additive** (plugins load from both the specified dir and global settings). The fix was excluding `user` from `--setting-sources` to block `~/.claude/settings.json` entirely.
-
-### Codex CLI: 3-Phase Evolution
-
-| Phase       | Approach                          | Problem                                                                             |
-| ----------- | --------------------------------- | ----------------------------------------------------------------------------------- |
-| **Phase 1** | `codex exec` (one-shot)           | System prompt re-injected every call; no session continuity                         |
-| **Phase 2** | `codex app-server` (HTTP)         | Session persistence, but `developer-instructions` still re-sent on every request    |
-| **Phase 3** | `codex mcp-server` (MCP protocol) | `threadId` for session continuity; `developer-instructions` sent on first turn only |
-
-Both backends now share the same pattern: inject system prompt (persona + skills + tools) on the first turn, then rely on session persistence for subsequent turns.
-Current Standalone builds also harden the shutdown path so `mama stop` can tear down the `codex-mcp` backend cleanly without restarting into a crash loop.
-
----
-
-## Reference Files
-
-- Codex MCP process: `packages/standalone/src/agent/codex-mcp-process.ts`
-- Claude CLI wrapper: `packages/standalone/src/agent/claude-cli-wrapper.ts`
+- App-server runtime: `packages/standalone/src/agent/codex-app-server-process.ts`
+- Durable thread registry: `packages/standalone/src/agent/codex-thread-registry.ts`
+- Managed Codex home and MCP projection: `packages/standalone/src/agent/codex-home.ts`
+- Shared model runner: `packages/standalone/src/agent/model-runner.ts`
+- Canonical host-tool executor: `packages/standalone/src/agent/gateway-tool-executor.ts`
 - Codex instructions: `packages/standalone/templates/AGENTS.codex.md`
-- Configuration types: `packages/standalone/src/cli/config/types.ts`

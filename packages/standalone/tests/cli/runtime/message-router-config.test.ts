@@ -26,11 +26,11 @@ describe('Story PR17: message-router memory policy config', () => {
             implicit_legacy_context_search: true,
           },
         },
-        'codex-mcp'
+        'codex'
       );
 
       expect(routerConfig).toMatchObject({
-        backend: 'codex-mcp',
+        backend: 'codex',
         implicitMemoryRecall: true,
         implicitLegacyContextSearch: true,
       });

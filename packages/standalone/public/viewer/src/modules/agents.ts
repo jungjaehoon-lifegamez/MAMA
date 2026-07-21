@@ -42,17 +42,19 @@ const SYSTEM_AGENT_IDS = new Set([
 ]);
 
 const CLAUDE_MODEL_OPTIONS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
-const CODEX_MODEL_OPTIONS = ['gpt-5.3-codex', 'gpt-5.4-mini'];
+const CODEX_MODEL_OPTIONS = ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.4-mini'];
 const GEMINI_MODEL_OPTIONS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
 
-function getModelsForBackend(backend: string): string[] {
-  if (backend === 'codex-mcp' || backend === 'codex') {
-    return CODEX_MODEL_OPTIONS;
+export function getModelsForBackend(backend: string, currentModel?: string): string[] {
+  let models: readonly string[];
+  if (backend === 'codex') {
+    models = CODEX_MODEL_OPTIONS;
+  } else if (backend === 'gemini') {
+    models = GEMINI_MODEL_OPTIONS;
+  } else {
+    models = CLAUDE_MODEL_OPTIONS;
   }
-  if (backend === 'gemini') {
-    return GEMINI_MODEL_OPTIONS;
-  }
-  return CLAUDE_MODEL_OPTIONS;
+  return currentModel && !models.includes(currentModel) ? [...models, currentModel] : [...models];
 }
 
 export class AgentsModule {
@@ -488,7 +490,7 @@ export class AgentsModule {
 
   private renderConfigTab(el: HTMLElement, a: AgentWithVersion): void {
     const backend = String(a.backend || 'claude');
-    const modelOptions = getModelsForBackend(backend)
+    const modelOptions = getModelsForBackend(backend, a.model)
       .map(
         (m) =>
           `<option value="${escapeAttr(m)}" ${a.model === m ? 'selected' : ''}>${escapeHtml(m)}</option>`
@@ -499,7 +501,7 @@ export class AgentsModule {
       .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
       .join('');
 
-    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', 'gemini', backend]))
+    const backendOptions = Array.from(new Set(['claude', 'codex', 'gemini', backend]))
       .map(
         (b) =>
           `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`

@@ -159,9 +159,8 @@ const codeActRateBuckets = new Map<
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
-const supportedManagedBackends = ['claude', 'codex', 'codex-mcp'];
-const isCodexFamilyBackend = (backend: string): boolean =>
-  backend === 'codex' || backend === 'codex-mcp';
+const supportedManagedBackends = ['claude', 'codex'];
+const isCodexFamilyBackend = (backend: string): boolean => backend === 'codex';
 const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
   'agent_test',
   'delegate_run',
@@ -173,6 +172,12 @@ const isOpus46Model = (model: string): boolean =>
 const VALID_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'max']);
 
 function normalizeLegacyManagedBackend(backend: unknown, configPath: string): unknown {
+  if (typeof backend === 'string' && backend.toLowerCase() === 'codex-mcp') {
+    console.warn(
+      `[GraphAPI] Deprecated backend "codex-mcp" at ${configPath}; using "codex" app-server for compatibility.`
+    );
+    return 'codex';
+  }
   if (typeof backend === 'string' && backend.toLowerCase() === 'gemini') {
     console.warn(
       `[GraphAPI] Deprecated backend "gemini" at ${configPath}; using "claude" for compatibility.`
@@ -193,6 +198,10 @@ function normalizeLegacyManagedModel(agent: Record<string, unknown>, configPath:
   return false;
 }
 
+function isLegacyGeminiBackend(backend: unknown): boolean {
+  return typeof backend === 'string' && backend.toLowerCase() === 'gemini';
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -208,8 +217,11 @@ function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config:
     const agent = { ...next.agent };
     const backend = normalizeLegacyManagedBackend(agent.backend, 'agent.backend');
     if (backend !== agent.backend) {
+      const migrateModel = isLegacyGeminiBackend(agent.backend);
       agent.backend = backend;
-      normalizeLegacyManagedModel(agent, 'agent.model');
+      if (migrateModel) {
+        normalizeLegacyManagedModel(agent, 'agent.model');
+      }
       next.agent = agent;
       migrated = true;
     }
@@ -252,7 +264,9 @@ function migrateLegacyManagedBackends<T extends Record<string, unknown>>(config:
           !hasExplicitBackend && normalizedInheritedBackend !== inheritedBackend;
         if (normalizedBackend !== priorEffectiveBackend || inheritedBackendWasNormalized) {
           agent.backend = normalizedBackend;
-          normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          if (isLegacyGeminiBackend(priorEffectiveBackend)) {
+            normalizeLegacyManagedModel(agent, `multi_agent.agents.${agentId}.model`);
+          }
           agents[agentId] = agent;
           agentsMigrated = true;
           migrated = true;
@@ -3275,7 +3289,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       config.agent.backend &&
       !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
+      errors.push('agent.backend must be "claude" or "codex"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -3314,9 +3328,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
         if (!supportedManagedBackends.includes(backend)) {
-          errors.push(
-            `multi_agent.agents.${agentId}.backend must be "claude", "codex", or "codex-mcp"`
-          );
+          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -3757,7 +3769,7 @@ async function handleMultiAgentUpdateAgentRequest(
       (typeof body.backend !== 'string' ||
         !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude", "codex", or "codex-mcp"');
+      validationErrors.push('backend must be "claude" or "codex"');
     }
 
     const nextBackend = (

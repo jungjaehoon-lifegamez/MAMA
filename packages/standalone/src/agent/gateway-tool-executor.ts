@@ -49,6 +49,7 @@ import type {
   GatewayToolExecutorOptions,
   GatewaySessionStore,
   MAMAApiInterface,
+  MAMAApiSetInput,
   BrowserNavigateInput,
   BrowserScreenshotInput,
   BrowserClickInput,
@@ -161,6 +162,7 @@ type ActiveGatewayExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
@@ -253,16 +255,6 @@ const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
   'reactive_internal',
   'code_act',
 ]);
-
-type CodeActToolPatternResolution = {
-  patterns?: string[];
-  error?: string;
-};
-
-type CodeActSandboxRoleResolution = {
-  role?: RoleConfig;
-  error?: string;
-};
 
 class ContextPacketProvenanceError extends Error {}
 
@@ -604,6 +596,8 @@ export class GatewayToolExecutor {
       sourceMessageRef: executionContext?.sourceMessageRef,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
+      signal: executionContext?.signal,
+      parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
       reportPublisherOverride: executionContext?.reportPublisherOverride,
@@ -642,6 +636,7 @@ export class GatewayToolExecutor {
       sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
+      signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - blocks are strictly per-call.
@@ -927,8 +922,40 @@ export class GatewayToolExecutor {
 
   /** Wire the shared MAMA API built at boot (initMamaCore) so the executor never
    *  lazily constructs a second API/adapter stack against the same DB. */
-  setMamaApi(api: MAMAApiInterface): void {
-    this.mamaApi = api;
+  setMamaApi(api: MAMAApiSetInput): void {
+    const listDecisions = 'listDecisions' in api ? api.listDecisions : undefined;
+    if (typeof listDecisions === 'function') {
+      this.mamaApi = api as MAMAApiInterface;
+      return;
+    }
+
+    const list = 'list' in api ? api.list : undefined;
+    if (typeof list !== 'function') {
+      throw new Error('MAMA API must provide listDecisions() or list()');
+    }
+
+    const normalizedListDecisions = list.bind(api);
+    const boundMethods = new WeakMap<object, object>();
+    this.mamaApi = new Proxy({} as MAMAApiInterface, {
+      get(_target, property) {
+        if (property === 'listDecisions') {
+          return normalizedListDecisions;
+        }
+
+        const value = Reflect.get(api, property, api);
+        if (typeof value !== 'function') {
+          return value;
+        }
+
+        const cached = boundMethods.get(value);
+        if (cached) {
+          return cached;
+        }
+        const bound = value.bind(api);
+        boundMethods.set(value, bound);
+        return bound;
+      },
+    });
   }
 
   /**
@@ -1002,6 +1029,13 @@ export class GatewayToolExecutor {
     // If no context set, allow all tools (backward compatibility)
     const context = this.getActiveContext();
     if (!context) {
+      if (toolName === 'code_act') {
+        return {
+          allowed: false,
+          error: 'Permission denied: code_act requires an active agent role',
+        };
+      }
+
       return { allowed: true };
     }
 
@@ -1170,6 +1204,7 @@ export class GatewayToolExecutor {
 
     const startedAt = Date.now();
     const baseCtx = this.mergeWithFallbackExecutionContext(this.executionContextStorage.getStore());
+    baseCtx.signal?.throwIfAborted();
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
@@ -1182,6 +1217,7 @@ export class GatewayToolExecutor {
       result = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
+      activeCtx.signal?.throwIfAborted();
     } catch (error) {
       await this.appendToolTraceIfNeeded(
         traceState,
@@ -1769,6 +1805,7 @@ export class GatewayToolExecutor {
     input: GatewayToolInput,
     gatewayCallId: string
   ): Promise<GatewayToolResult> {
+    this.getExecutionState().signal?.throwIfAborted();
     if (!VALID_TOOLS.includes(toolName as GatewayToolName)) {
       throw new AgentError(
         `Unknown tool: ${toolName}. Valid tools: ${VALID_TOOLS.join(', ')}`,
@@ -2023,7 +2060,7 @@ export class GatewayToolExecutor {
             model: string;
             tier: number;
             system?: string;
-            backend?: 'claude' | 'codex' | 'codex-mcp';
+            backend?: 'claude' | 'codex';
           };
           const createError = validateManagedAgentCreateInput(
             createArgs as unknown as Record<string, unknown>
@@ -4076,134 +4113,44 @@ export class GatewayToolExecutor {
     }
   }
 
-  private resolveCodeActSandboxRole(
-    input: CodeActInput,
-    activeRole: RoleConfig | undefined,
-    registryNames: string[]
-  ): CodeActSandboxRoleResolution {
-    const allowedResolution = this.normalizeCodeActToolPatterns(
-      input.allowedTools,
-      'allowedTools',
-      registryNames
-    );
-    if (allowedResolution.error) {
-      return { error: allowedResolution.error };
-    }
-
-    const blockedResolution = this.normalizeCodeActToolPatterns(
-      input.blockedTools,
-      'blockedTools',
-      registryNames
-    );
-    if (blockedResolution.error) {
-      return { error: blockedResolution.error };
-    }
-
-    if (!activeRole && !allowedResolution.patterns && !blockedResolution.patterns) {
-      return {};
-    }
-
-    let effectiveToolNames = activeRole
-      ? registryNames.filter((toolName) => this.roleManager.isToolAllowed(activeRole, toolName))
-      : [...registryNames];
-
-    const allowedPatterns = allowedResolution.patterns;
-    if (allowedPatterns) {
-      effectiveToolNames = effectiveToolNames.filter((toolName) =>
-        this.matchesAnyCodeActToolPattern(toolName, allowedPatterns)
-      );
-    }
-
-    const blockedPatterns = blockedResolution.patterns;
-    if (blockedPatterns) {
-      effectiveToolNames = effectiveToolNames.filter(
-        (toolName) => !this.matchesAnyCodeActToolPattern(toolName, blockedPatterns)
-      );
-    }
-
-    return {
-      role: {
-        ...activeRole,
-        allowedTools: effectiveToolNames,
-        blockedTools: undefined,
-        allowedPaths: activeRole?.allowedPaths ?? [],
-        systemControl: activeRole?.systemControl ?? false,
-        sensitiveAccess: activeRole?.sensitiveAccess ?? false,
-      },
-    };
-  }
-
-  private normalizeCodeActToolPatterns(
-    value: unknown,
-    fieldName: 'allowedTools' | 'blockedTools',
-    registryNames: string[]
-  ): CodeActToolPatternResolution {
-    if (value === undefined) {
-      return {};
-    }
-    if (!Array.isArray(value)) {
-      return { error: `${fieldName} must be an array of gateway tool names.` };
-    }
-
-    const patterns: string[] = [];
-    const seen = new Set<string>();
-    for (const item of value) {
-      if (typeof item !== 'string' || item.trim().length === 0) {
-        return { error: `${fieldName} must contain non-empty gateway tool names.` };
-      }
-      const pattern = item.trim();
-      if (seen.has(pattern)) {
-        continue;
-      }
-      if (!this.isKnownCodeActToolPattern(pattern, registryNames)) {
-        return { error: `Unknown Code-Act tool pattern in ${fieldName}: ${pattern}` };
-      }
-      seen.add(pattern);
-      patterns.push(pattern);
-    }
-
-    return { patterns };
-  }
-
-  private isKnownCodeActToolPattern(pattern: string, registryNames: string[]): boolean {
-    return (
-      pattern === '*' ||
-      registryNames.some((toolName) => this.matchesCodeActToolPattern(toolName, pattern))
-    );
-  }
-
-  private matchesAnyCodeActToolPattern(toolName: string, patterns: string[]): boolean {
-    return patterns.some((pattern) => this.matchesCodeActToolPattern(toolName, pattern));
-  }
-
-  private matchesCodeActToolPattern(toolName: string, pattern: string): boolean {
-    return this.roleManager.isToolAllowed(
-      {
-        allowedTools: [pattern],
-        allowedPaths: [],
-        systemControl: false,
-        sensitiveAccess: false,
-      },
-      toolName
-    );
-  }
-
   private async executeCodeAct(input: CodeActInput): Promise<GatewayToolResult> {
-    const { CodeActSandbox, HostBridge } = await import('./code-act/index.js');
+    const {
+      CodeActSandbox,
+      CodeActToolPolicyValidationError,
+      HostBridge,
+      projectCodeActToolPolicy,
+    } = await import('./code-act/index.js');
     const sandbox = new CodeActSandbox();
-    const context = this.getActiveContext();
-    const tier = (context?.tier ?? 1) as 1 | 2 | 3;
-    const registryNames = HostBridge.getToolRegistry().map((meta) => meta.name);
-    const sandboxRole = this.resolveCodeActSandboxRole(input, context?.role, registryNames);
-    if (sandboxRole.error) {
+    const state = this.getExecutionState();
+    const contextTier = state.agentContext?.tier;
+    const tier = contextTier === undefined ? 1 : contextTier;
+    let policy;
+    try {
+      policy = projectCodeActToolPolicy({
+        tier,
+        role: state.agentContext?.role,
+        disallowedTools: state.disallowedGatewayTools,
+        requestedAllowedTools: input.allowedTools,
+        requestedBlockedTools: input.blockedTools,
+      });
+    } catch (error) {
+      if (!(error instanceof CodeActToolPolicyValidationError)) {
+        throw error;
+      }
       return {
         success: false,
-        error: sandboxRole.error,
+        error: error.message,
       } as GatewayToolResult;
     }
 
-    const bridge = new HostBridge(this, this.roleManager);
-    bridge.injectInto(sandbox, tier, sandboxRole.role);
+    const nestedExecutionContext: GatewayToolExecutionContext = {
+      ...state,
+      agentContext: state.agentContext ?? undefined,
+      executionSurface: 'code_act',
+      parentToolName: 'code_act',
+    };
+    const bridge = new HostBridge(this, this.roleManager, nestedExecutionContext);
+    bridge.injectInto(sandbox, policy.names);
 
     const result = await sandbox.execute(input.code);
 
@@ -4413,6 +4360,7 @@ export class GatewayToolExecutor {
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
         input,
+        signal: ctx.signal,
       });
       return {
         success: true,

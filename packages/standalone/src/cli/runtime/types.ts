@@ -25,6 +25,7 @@ import type { ApiServer } from '../../api/index.js';
 import type { MamaApiClient } from '../../gateways/context-injector.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { AgentLoopClient } from '../../gateways/message-router.js';
+import type { MAMAApiInterface } from '../../agent/types.js';
 
 // Re-export AgentLoopClient so consumers can import it from this module
 export type { AgentLoopClient };
@@ -35,20 +36,10 @@ export type { AgentLoopClient };
  * This is an inline type in start.ts around the `mamaApi` variable.
  * Extracted here so gateway/init modules can reference it by name.
  */
-export interface MAMAApiShape {
-  suggest?: (query: string, options?: { limit?: number }) => Promise<unknown>;
+export type MAMAApiShape = Partial<MAMAApiInterface> & {
   search?: (query: string, limit?: number) => Promise<unknown>;
-  save?: (input: unknown) => Promise<unknown>;
   update?: (decisionId: string, updates: unknown) => Promise<unknown>;
-  updateOutcome?: (decisionId: string, updates: unknown) => Promise<unknown>;
-  loadCheckpoint?: () => Promise<unknown>;
-  list?: (options?: { limit?: number }) => Promise<unknown>;
-  listDecisions?: (options?: { limit?: number }) => Promise<unknown>;
-  recallMemory?: (
-    query: string,
-    options?: { scopes?: Array<{ kind: string; id: string }>; includeProfile?: boolean }
-  ) => Promise<unknown>;
-  ingestMemory?: (input: Record<string, unknown>) => Promise<unknown>;
+  list?: MAMAApiInterface['listDecisions'];
   buildMemoryBootstrap?: (input: {
     scopes: Array<{ kind: string; id: string }>;
     channelKey?: string;
@@ -65,11 +56,7 @@ export interface MAMAApiShape {
     summaryMarkdown: string;
     deltaHash?: string;
   }) => Promise<unknown>;
-  buildProfile?: (
-    scopes?: Array<{ kind: string; id: string }>,
-    options?: Record<string, unknown>
-  ) => Promise<unknown>;
-}
+};
 
 /**
  * Master runtime context assembled by runAgentLoop().

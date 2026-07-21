@@ -17,6 +17,7 @@
  */
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
 import type { AskAgent } from './trigger-author.js';
+import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 
 /**
@@ -55,6 +56,8 @@ interface FireAgg {
 }
 
 export interface SituationReporterOptions {
+  /** Model provider controls only the tool-call syntax; report workflow/content stays shared. */
+  backend?: BackendType;
   /**
    * M2.3: tool-call instructions injected into the FULL report framing so the agent
    * ACTIVELY gathers current context (channels, tasks, memory) before writing - the
@@ -261,6 +264,49 @@ export class SituationReporter {
           ? this.opts.selfGatherLines()
           : (this.opts.selfGatherLines ?? [])
         : [];
+    const gatherInstructions =
+      this.opts.backend === 'codex'
+        ? [
+            'Before writing, ACTIVELY gather current context with your injected native host tools directly.',
+            'Call each tool through the native model tool interface and wait for its result before',
+            'the next call; never emit Markdown or JavaScript substitutes for tool calls.',
+            'Gather with these injected native host tools:',
+            ...gatherLines.map((line) => `- ${line}`),
+            'These tool names are already injected for this run. Do not search for them, and do',
+            'not fall back to Bash or curl against any API.',
+            'Use ONLY these injected host tools to gather. Do NOT read log files, databases, or',
+            'the filesystem with Bash, Read, or other unrelated tools - those are not the task',
+            'board and will make the report wrong. Your tool findings are the primary source;',
+            'the window summary below is only a hint.',
+            '',
+            'After gathering, if the window contains a durable decision or lesson worth keeping,',
+            'persist exactly ONE by calling the injected native mama_save host tool (type',
+            '"decision", with topic, decision, reasoning). Only save when it is genuinely',
+            'durable; skip the save otherwise. This is your judgement, not a requirement.',
+          ]
+        : [
+            'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
+            'Emit each call as a fenced tool_call JSON block and wait for the result before',
+            'the next call. The block format is exactly:',
+            '```tool_call',
+            '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
+            '```',
+            'Gather with these gateway tool calls:',
+            ...gatherLines.map((line) => `- ${line}`),
+            'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
+            'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
+            'blocks in your reply text - do not search for them, and do not fall back to',
+            'Bash or curl against any API.',
+            'Use ONLY these gateway tool_call blocks to gather. Do NOT read log files,',
+            'databases, or the filesystem with Bash, Read, or other native tools - those are',
+            'not the task board and will make the report wrong. Your gateway tool findings',
+            'are the primary source; the window summary below is only a hint.',
+            '',
+            'After gathering, if the window contains a durable decision or lesson worth',
+            'keeping, persist exactly ONE with a gateway tool_call to mama_save (type',
+            '"decision", with topic, decision, reasoning). Only save when it is genuinely',
+            'durable; skip the save otherwise. This is your judgement, not a requirement.',
+          ];
 
     // M2.1 posture: the full report is a DUTY report (always arrives - a quiet window is
     // reported as quiet, the aliveness signal owners rely on); the digest defaults to briefing
@@ -277,32 +323,7 @@ export class SituationReporter {
             "Structure the report with these sections (render the headings in the owner's language;",
             'omit a section only when it is truly empty):',
             '1) Key situation  2) Action required  3) Decisions needed  4) Pipeline  5) Next actions',
-            ...(gatherLines.length > 0
-              ? [
-                  '',
-                  'Before writing, ACTIVELY gather current context by CALLING your gateway tools.',
-                  'Emit each call as a fenced tool_call JSON block and wait for the result before',
-                  'the next call. The block format is exactly:',
-                  '```tool_call',
-                  '{"name": "kagemusha_tasks", "input": {"status": "in_progress"}}',
-                  '```',
-                  'Gather with these gateway tool calls:',
-                  ...gatherLines.map((line) => `- ${line}`),
-                  'These gateway tools are NOT native or deferred CLI tools: ToolSearch cannot',
-                  'load them and will find nothing. Invoke them ONLY as fenced tool_call JSON',
-                  'blocks in your reply text - do not search for them, and do not fall back to',
-                  'Bash or curl against any API.',
-                  'Use ONLY these gateway tool_call blocks to gather. Do NOT read log files,',
-                  'databases, or the filesystem with Bash, Read, or other native tools - those are',
-                  'not the task board and will make the report wrong. Your gateway tool findings',
-                  'are the primary source; the window summary below is only a hint.',
-                  '',
-                  'After gathering, if the window contains a durable decision or lesson worth',
-                  'keeping, persist exactly ONE with a gateway tool_call to mama_save (type',
-                  '"decision", with topic, decision, reasoning). Only save when it is genuinely',
-                  'durable; skip the save otherwise. This is your judgement, not a requirement.',
-                ]
-              : []),
+            ...(gatherLines.length > 0 ? ['', ...gatherInstructions] : []),
             ...(this.opts.boardPublishLines && this.opts.boardPublishLines.length > 0
               ? ['', ...this.opts.boardPublishLines]
               : []),

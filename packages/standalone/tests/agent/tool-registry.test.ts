@@ -72,6 +72,12 @@ describe('ToolRegistry', () => {
       ]);
     });
 
+    it('should filter by non-trailing glob pattern', () => {
+      const filtered = ToolRegistry.getFilteredTools(['mama_*ch']);
+
+      expect(filtered.map((tool) => tool.name)).toEqual(['mama_search']);
+    });
+
     it('should support mixed patterns', () => {
       const filtered = ToolRegistry.getFilteredTools(['mama_*', 'Read', 'browser_*']);
       expect(filtered.length).toBeGreaterThan(10);
@@ -85,6 +91,104 @@ describe('ToolRegistry', () => {
     it('should return empty for non-matching filter', () => {
       const filtered = ToolRegistry.getFilteredTools(['nonexistent_*']);
       expect(filtered).toHaveLength(0);
+    });
+  });
+
+  describe('getHostToolDefinitions()', () => {
+    it('should advertise all non-viewer registered tools when allowedTools is undefined', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions();
+
+      expect(definitions.length).toBeGreaterThan(0);
+      expect(definitions.map((tool) => tool.name)).toContain('mama_search');
+      expect(definitions.map((tool) => tool.name)).not.toContain('os_add_bot');
+      expect(definitions.every((tool) => ToolRegistry.isRegistered(tool.name))).toBe(true);
+      expect(definitions.every((tool) => !tool.name.startsWith('mcp__'))).toBe(true);
+    });
+
+    it('should advertise no tools when allowedTools is empty', () => {
+      expect(ToolRegistry.getHostToolDefinitions({ allowedTools: [] })).toEqual([]);
+    });
+
+    it('should restrict advertised tools with allowed wildcard patterns', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions({ allowedTools: ['mama_*ch'] });
+
+      expect(definitions.map((tool) => tool.name)).toEqual(['mama_search']);
+    });
+
+    it('should let blockedTools take precedence over allowedTools', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['mama_*'],
+        blockedTools: ['mama_search', 'mama_?ecall'],
+      });
+
+      expect(definitions.map((tool) => tool.name)).not.toContain('mama_search');
+      expect(definitions.map((tool) => tool.name)).not.toContain('mama_recall');
+      expect(definitions.map((tool) => tool.name)).toContain('mama_save');
+    });
+
+    it('should let instance disallowedTools take precedence over allowedTools', () => {
+      const definitions = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['*'],
+        disallowedTools: ['Read', 'browser_*ate'],
+      });
+
+      expect(definitions.map((tool) => tool.name)).not.toContain('Read');
+      expect(definitions.map((tool) => tool.name)).not.toContain('browser_navigate');
+      expect(definitions.map((tool) => tool.name)).not.toContain('browser_evaluate');
+      expect(definitions.map((tool) => tool.name)).toContain('browser_click');
+      expect(definitions.map((tool) => tool.name)).toContain('Write');
+    });
+
+    it('should include viewerOnly tools only for authorized viewer runs', () => {
+      const unauthorized = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['os_add_bot'],
+      });
+      const authorized = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['os_add_bot'],
+        viewer: true,
+      });
+
+      expect(unauthorized).toEqual([]);
+      expect(authorized.map((tool) => tool.name)).toEqual(['os_add_bot']);
+    });
+
+    it('should convert metadata to permissive dynamic function definitions', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['mama_search'],
+      });
+
+      expect(definition).toEqual({
+        type: 'function',
+        name: 'mama_search',
+        description: expect.stringContaining('query?'),
+        inputSchema: {
+          type: 'object',
+          properties: {},
+          additionalProperties: true,
+        },
+      });
+    });
+
+    it('should expose the exact native outer code_act input schema', () => {
+      const [definition] = ToolRegistry.getHostToolDefinitions({
+        allowedTools: ['code_act'],
+      });
+
+      expect(definition).toEqual({
+        type: 'function',
+        name: 'code_act',
+        description: expect.stringContaining('QuickJS'),
+        inputSchema: {
+          type: 'object',
+          properties: {
+            code: { type: 'string' },
+            allowedTools: { type: 'array', items: { type: 'string' } },
+            blockedTools: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['code'],
+          additionalProperties: false,
+        },
+      });
     });
   });
 

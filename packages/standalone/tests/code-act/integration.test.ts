@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 import {
   CODE_ACT_INSTRUCTIONS,
   CODE_ACT_MARKER,
@@ -124,13 +125,10 @@ describe('Code-Act Integration', () => {
     expect(CODE_ACT_INSTRUCTIONS).toContain('console.log');
   });
 
-  describe('Story: codex-mcp Code-Act prompt filtering', () => {
+  describe('Story: Codex Code-Act prompt filtering', () => {
     describe('AC: explicit allowlists that contain no gateway tools stay empty', () => {
       it('does not describe all gateway tools when an explicit allowlist filters to none', () => {
-        const instructions = getCodeActInstructions('codex-mcp', [
-          'code_act',
-          'mcp__brave-search__*',
-        ]);
+        const instructions = getCodeActInstructions('codex', ['code_act', 'mcp__brave-search__*']);
 
         expect(instructions).toContain('USE code_act only for these allowed gateway tools');
         expect(instructions).toContain('No gateway tools are currently allowed');
@@ -138,17 +136,34 @@ describe('Code-Act Integration', () => {
         expect(instructions).not.toContain('- Memory: mama_search');
       });
     });
+
+    it('describes code_act as a native app-server tool without retired MCP transport names', () => {
+      const instructions = getCodeActInstructions('codex', ['mama_search']);
+
+      expect(instructions).toContain('native app-server tool called `code_act`');
+      expect(instructions).toContain('code_act({ code:');
+      expect(instructions).not.toContain('MCP tool');
+      expect(instructions).not.toContain('mcp__code-act__code_act');
+    });
+
+    it('preserves Claude MCP guidance', () => {
+      const instructions = getCodeActInstructions('claude', ['mama_search']);
+
+      expect(instructions).toContain('MCP tool called `code_act`');
+      expect(instructions).toContain('mcp__code-act__code_act');
+    });
   });
 
   it('system prompt combines instructions + type definitions', () => {
-    const typeDefs = TypeDefinitionGenerator.generate(1);
+    const typeDefs = TypeDefinitionGenerator.generate(projectCodeActToolPolicy({ tier: 1 }));
     const fullPrompt = CODE_ACT_INSTRUCTIONS + '\n```typescript\n' + typeDefs + '\n```';
     expect(fullPrompt).toContain('declare function mama_search');
     expect(fullPrompt).toContain('declare function Read');
     expect(fullPrompt).toContain('## Code-Act');
-    // Budget raised 9000 -> 9800 for the M8 native task-ledger tools
-    // (task_list/task_create/task_update add ~450 chars of tier-1 type defs).
-    expect(fullPrompt.length).toBeLessThan(9800);
+    // Budget raised for the complete owner workflow surface. The six owner
+    // recall/board/audit/report/workorder signatures add ~750 chars while
+    // keeping their real parameter and return types visible to Code-Act.
+    expect(fullPrompt.length).toBeLessThan(11000);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

@@ -90,8 +90,8 @@ multi_agent:
       "agent": {
         "id": "coder-1",
         "display_name": "Developer",
-        "backend": "codex-mcp",
-        "model": "codex-model",
+        "backend": "codex",
+        "model": "gpt-5.4",
         "system_prompt": "Implements code changes."
       },
       "prompt": "Implement based on analysis results: {{analyze.result}}",

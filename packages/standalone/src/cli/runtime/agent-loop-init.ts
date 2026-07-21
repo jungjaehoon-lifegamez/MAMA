@@ -70,7 +70,7 @@ export function initMainAgentLoop(
   oauthManager: OAuthManager,
   db: SQLiteDatabase,
   metricsStore: MetricsStore | null,
-  runtimeBackend: 'claude' | 'codex-mcp',
+  runtimeBackend: 'claude' | 'codex',
   toolExecutor: GatewayToolExecutor,
   options?: {
     osAgentMode?: boolean;
@@ -112,12 +112,14 @@ export function initMainAgentLoop(
   }
 
   // Initialize agent loop with lane-based concurrency and reasoning collection
-  // Viewer frontdoor prefers os-agent config; conductor remains the fallback for legacy installs.
-  const frontdoorConfig =
-    config.multi_agent?.agents?.['os-agent'] ??
-    config.multi_agent?.agents?.conductor ??
-    config.multi_agent?.agents?.Conductor;
-  const useCodeAct = frontdoorConfig?.useCodeAct === true;
+  // Viewer frontdoor prefers an explicit os-agent value; conductor remains the
+  // field-level fallback for normalized legacy installs.
+  const osAgentUseCodeAct = config.multi_agent?.agents?.['os-agent']?.useCodeAct;
+  const conductorUseCodeAct =
+    config.multi_agent?.agents?.conductor?.useCodeAct ??
+    config.multi_agent?.agents?.Conductor?.useCodeAct;
+  const useCodeAct =
+    options?.osAgentMode === true ? false : (osAgentUseCodeAct ?? conductorUseCodeAct ?? true);
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.
@@ -132,13 +134,13 @@ export function initMainAgentLoop(
       model: config.agent.model,
       timeoutMs: config.agent.timeout,
       maxTurns: config.agent.max_turns,
-      useCodeAct: options?.osAgentMode ? false : useCodeAct,
+      useCodeAct,
       toolsConfig: config.agent.tools, // Gateway + MCP hybrid mode
       disallowedTools: osAgentDisallowed,
       // Gateway tools are the ONLY tool surface for the daemon persona
       // (owner decision D2, 2026-07-16). MAMA_PERSONA_NATIVE_TOOLS=1 re-enables.
       // NOTE: consumed only by the claude PersistentCLIAdapter branch - on a
-      // codex-mcp backend this option is a no-op (log below keeps that loud).
+      // Codex backend: this option is a no-op (log below keeps that loud).
       builtinTools:
         process.env.MAMA_PERSONA_NATIVE_TOOLS === '1' ||
         process.env.MAMA_PERSONA_NATIVE_TOOLS?.toLowerCase() === 'true'
@@ -273,8 +275,8 @@ export function initMainAgentLoop(
         agentLoop.setSessionKey(sessionKey);
       }
 
-      if (runtimeBackend === 'codex-mcp') {
-        // Override role-based model selection for Codex-MCP backend
+      if (runtimeBackend === 'codex') {
+        // Override role-based model selection for the Codex backend.
         callOptions.model = config.agent.model;
       }
       const result = await agentLoop.run(prompt, callOptions);
@@ -316,8 +318,8 @@ export function initMainAgentLoop(
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);
-      if (runtimeBackend === 'codex-mcp') {
-        // Override role-based model selection for Codex-MCP backend
+      if (runtimeBackend === 'codex') {
+        // Override role-based model selection for the Codex backend.
         callOptions.model = config.agent.model;
       }
       const result = await agentLoop.runWithContent(

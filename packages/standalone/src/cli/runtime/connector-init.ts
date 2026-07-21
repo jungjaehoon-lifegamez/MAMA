@@ -19,7 +19,6 @@
  * deterministic raw-backed memory indexing with source evidence links.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +29,7 @@ import {
   type RawIndexSink,
   type RawStore,
 } from '../../connectors/framework/raw-store.js';
+import { loadConnectorConfig } from '../../connectors/config-loader.js';
 
 const logger = new DebugLogger('connector-init');
 
@@ -93,7 +93,6 @@ export async function initConnectors(
   const pollMinutes = resolvePollMinutes(process.env.MAMA_CONNECTOR_POLL_MINUTES);
   console.log(`[connector] unified batch poll cadence: ${pollMinutes} min`);
 
-  const connectorsConfigPath = join(homedir(), '.mama', 'connectors.json');
   let enabledConnectorNames: string[] = [];
 
   const { ConnectorRegistry, PollingScheduler, RawStore } =
@@ -150,17 +149,20 @@ export async function initConnectors(
     return idsBySourceId;
   };
 
-  let connectorsConfig: ConnectorsJson;
-  if (existsSync(connectorsConfigPath)) {
-    try {
-      connectorsConfig = JSON.parse(readFileSync(connectorsConfigPath, 'utf-8')) as ConnectorsJson;
-    } catch (err) {
-      console.error(`[connector] failed to parse connectors.json:`, err);
-      connectorsConfig = {} as ConnectorsJson;
-    }
-  } else {
-    connectorsConfig = {} as ConnectorsJson;
+  const configLoadResult = loadConnectorConfig();
+  if (!configLoadResult.ok) {
+    console.error(
+      `[connector] failed to load connector configuration (${configLoadResult.error.code}): ` +
+        configLoadResult.error.message
+    );
   }
+  // The loader's empty success/failure boundaries are frozen. Connector initialization owns a
+  // fresh top-level map because it may auto-enable claude-code; validated nested records remain
+  // shared read-only inputs to connector construction.
+  const connectorsConfig = Object.assign(
+    Object.create(null) as ConnectorsJson,
+    configLoadResult.config
+  );
 
   // Auto-enable claude-code connector (local, no auth needed)
   if (!connectorsConfig['claude-code']) {
@@ -200,13 +202,15 @@ export async function initConnectors(
   // For kagemusha connector, channels are keyed as "source:channelId" (e.g., "chatwork:ROOM_ID")
   // but items have source=row.channel (e.g., "chatwork") and channel=row.channel_id (e.g., "chatwork:ROOM_ID")
   // So we need to distribute kagemusha channel configs by their source prefix
-  const allChannelConfigs: Record<string, Record<string, ChannelConfigMap>> = {};
+  const allChannelConfigs = Object.create(null) as Record<string, Record<string, ChannelConfigMap>>;
   for (const [name, cc] of Object.entries(connectorsConfig)) {
     if (name === 'kagemusha') {
       // Distribute kagemusha channels by source prefix
       for (const [channelKey, channelCfg] of Object.entries(cc.channels ?? {})) {
         const [source] = channelKey.split(':');
-        if (!allChannelConfigs[source]) allChannelConfigs[source] = {};
+        if (!Object.prototype.hasOwnProperty.call(allChannelConfigs, source)) {
+          allChannelConfigs[source] = Object.create(null) as Record<string, ChannelConfigMap>;
+        }
         allChannelConfigs[source][channelKey] = channelCfg;
       }
     } else {

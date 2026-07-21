@@ -2,7 +2,7 @@
  * Unit tests for IModelRunner interface and types (STORY-011)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, expectTypeOf } from 'vitest';
 import {
   ModelRunnerError,
   type IModelRunner,
@@ -11,6 +11,12 @@ import {
   type PromptOptions,
   type BackendType,
   type ModelRunnerErrorCode,
+  type HostToolBridge,
+  type HostToolCall,
+  type HostToolCallResult,
+  type HostToolDefinition,
+  type HostToolInputSchema,
+  type HostToolJsonValue,
 } from '../../src/agent/model-runner.js';
 
 describe('ModelRunner types', () => {
@@ -100,9 +106,9 @@ describe('ModelRunner types', () => {
       expect(result.response).toBe('tool: data');
     });
 
-    it('should accept codex-mcp backend type without sendToolResult', () => {
+    it('should accept codex backend type without sendToolResult', () => {
       const codexMock: IModelRunner = {
-        backendType: 'codex-mcp',
+        backendType: 'codex',
         prompt: async () => ({
           response: '',
           usage: { input_tokens: 0, output_tokens: 0 },
@@ -120,7 +126,7 @@ describe('ModelRunner types', () => {
         stop: () => {},
       };
 
-      expect(codexMock.backendType).toBe('codex-mcp');
+      expect(codexMock.backendType).toBe('codex');
       expect(codexMock.sendToolResult).toBeUndefined();
     });
   });
@@ -174,9 +180,60 @@ describe('ModelRunner types', () => {
   describe('PromptOptions', () => {
     it('should be optional fields', () => {
       const empty: PromptOptions = {};
-      const full: PromptOptions = { model: 'claude-sonnet-4-6', resumeSession: true };
+      const full: PromptOptions = {
+        model: 'claude-sonnet-4-6',
+        resumeSession: true,
+        sessionKey: 'discord:channel-1',
+      };
       expect(empty.model).toBeUndefined();
       expect(full.resumeSession).toBe(true);
+      expect(full.sessionKey).toBe('discord:channel-1');
+    });
+
+    it('should accept a run-local host-tool bridge', async () => {
+      const tools: HostToolDefinition[] = [
+        {
+          type: 'function',
+          name: 'mama_search',
+          description: 'Search decisions',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+            additionalProperties: true,
+          },
+        },
+      ];
+      const execute = async (call: HostToolCall): Promise<HostToolCallResult> => ({
+        content: JSON.stringify({ name: call.name, input: call.input }),
+        isError: false,
+        stop: true,
+      });
+      const bridge: HostToolBridge = { tools, execute };
+      const options: PromptOptions = { hostToolBridge: bridge };
+
+      expect(options.hostToolBridge?.tools).toEqual(tools);
+      await expect(
+        options.hostToolBridge?.execute({
+          callId: 'call-1',
+          name: 'mama_search',
+          input: { query: 'decision' },
+        })
+      ).resolves.toEqual({
+        content: JSON.stringify({ name: 'mama_search', input: { query: 'decision' } }),
+        isError: false,
+        stop: true,
+      });
+    });
+
+    it('should expose readonly host-tool definitions and schemas', () => {
+      expectTypeOf<HostToolBridge['tools']>().toEqualTypeOf<readonly HostToolDefinition[]>();
+      expectTypeOf<HostToolDefinition['inputSchema']>().toEqualTypeOf<HostToolInputSchema>();
+      expectTypeOf<HostToolInputSchema>().toEqualTypeOf<{
+        readonly type: 'object';
+        readonly properties: Readonly<Record<string, HostToolJsonValue>>;
+        readonly required?: readonly string[];
+        readonly additionalProperties: boolean;
+      }>();
     });
   });
 });

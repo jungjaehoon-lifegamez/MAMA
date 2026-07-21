@@ -3,9 +3,11 @@ import { execSync } from 'child_process';
 import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 import { ClaudeCLIWrapper } from '../src/agent/claude-cli-wrapper.js';
 
-// Skip in CI or inside Claude Code session - these tests require claude CLI to be installed
+// Live integration tests consume the signed-in Claude subscription and can fail on account limits.
+// Keep them opt-in even when the CLI is installed so the normal local suite stays deterministic.
 const isCI = process.env.CI === 'true';
 const isInsideClaudeCode = process.env.CLAUDECODE === '1';
+const runLiveClaudeTests = process.env.MAMA_RUN_LIVE_CLAUDE_TESTS === 'true';
 process.env.MAMA_FORCE_TIER_3 = 'true';
 const testLogger = new DebugLogger('ClaudeCLIWrapperTest');
 const hasClaudeCli = (() => {
@@ -21,7 +23,7 @@ const hasClaudeCli = (() => {
     throw new Error(`Failed to check claude CLI availability: ${err.message || String(error)}`);
   }
 })();
-const shouldSkip = isCI || isInsideClaudeCode || !hasClaudeCli;
+const shouldSkip = !runLiveClaudeTests || isCI || isInsideClaudeCode || !hasClaudeCli;
 
 describe('ClaudeCLIWrapper', () => {
   /**

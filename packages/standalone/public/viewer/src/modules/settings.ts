@@ -31,7 +31,7 @@ import {
 
 const logger = new DebugLogger('Settings');
 
-type AgentBackend = 'claude' | 'codex-mcp';
+export type AgentBackend = 'claude' | 'codex';
 type SettingsFilterValue = 'loading' | 'error' | 'success' | '';
 type SettingsPayloadToolConfig = {
   gateway: string[];
@@ -94,10 +94,9 @@ type SettingsPayload = {
 // Model options by backend (single source of truth)
 // Claude models: https://platform.claude.com/docs/en/about-claude/models/overview
 const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
-  'codex-mcp': [
-    'gpt-5.3-codex',
-    'gpt-5.2-codex',
-    'gpt-5.1-codex-max',
+  codex: [
+    'gpt-5.4',
+    'gpt-5.4-mini',
     'gpt-4.1',
     'gpt-4o',
     'gpt-4o-mini',
@@ -120,6 +119,13 @@ const MODEL_OPTIONS: Record<AgentBackend, readonly string[]> = {
     'claude-3-haiku-20240307',
   ],
 };
+
+export function getSettingsModelOptions(backend: AgentBackend, currentModel?: string): string[] {
+  const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+  return currentModel && !options.includes(currentModel)
+    ? [...options, currentModel]
+    : [...options];
+}
 
 const EFFORT_SUPPORTED_MODELS = new Set<string>(['claude-opus-4-6', 'claude-sonnet-4-6']);
 const MAX_EFFORT_MODELS = new Set<string>(['claude-opus-4-6']);
@@ -817,8 +823,7 @@ export class SettingsModule {
     const model = this.getSelectValue('settings-agent-model');
     const effort = (this.getSelectValue('settings-agent-effort') || 'medium') as EffortLevel;
     const useClaudeCli = backend === 'claude';
-    const resolvedModel =
-      model || (backend === 'codex-mcp' ? 'gpt-5.2-codex' : 'claude-sonnet-4-6');
+    const resolvedModel = model || (backend === 'codex' ? 'gpt-5.4' : 'claude-sonnet-4-6');
     const normalizedEffort = this.supportsEffortModel(resolvedModel)
       ? this.normalizeEffortForModel(resolvedModel, effort)
       : undefined;
@@ -941,8 +946,8 @@ export class SettingsModule {
     if (!select) {
       return;
     }
-    const modelList = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
+    const modelList = getSettingsModelOptions(backend, normalized);
     select.innerHTML = modelList
       .map(
         (m) =>
@@ -978,13 +983,13 @@ export class SettingsModule {
   }
 
   getNormalizedModelForBackend(backend: AgentBackend, model: string): string {
-    const isCodexBackend = backend === 'codex-mcp';
+    const isCodexBackend = backend === 'codex';
     if (!model) {
-      return isCodexBackend ? 'gpt-5.2-codex' : 'claude-sonnet-4-6';
+      return isCodexBackend ? 'gpt-5.4' : 'claude-sonnet-4-6';
     }
     const isClaudeModel = /^claude-/i.test(model);
     if (isCodexBackend && isClaudeModel) {
-      return 'gpt-5.2-codex';
+      return 'gpt-5.4';
     }
     if (backend === 'claude' && !isClaudeModel) {
       return 'claude-sonnet-4-20250514';
@@ -1215,7 +1220,7 @@ export class SettingsModule {
     const backend = (backendSelect.value || 'claude') as AgentBackend;
     const currentModel = modelSelect.value || '';
     const normalized = this.getNormalizedModelForBackend(backend, currentModel);
-    const options = MODEL_OPTIONS[backend] || MODEL_OPTIONS.claude;
+    const options = getSettingsModelOptions(backend, normalized);
 
     modelSelect.innerHTML = options
       .map(

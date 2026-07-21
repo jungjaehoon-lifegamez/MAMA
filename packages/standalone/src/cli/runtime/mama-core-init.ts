@@ -22,12 +22,30 @@ import type {
   SearchResult,
 } from '../../gateways/context-injector.js';
 import type { MAMAApiShape } from './types.js';
+import type { MAMAApiSetInput } from '../../agent/types.js';
+
+function assertMAMAApiSetInput(api: MAMAApiShape): asserts api is MAMAApiShape & MAMAApiSetInput {
+  const requiredMethods = [
+    'save',
+    'saveCheckpoint',
+    'suggest',
+    'updateOutcome',
+    'loadCheckpoint',
+  ] as const;
+  const missing: string[] = requiredMethods.filter((method) => typeof api[method] !== 'function');
+  if (typeof api.listDecisions !== 'function' && typeof api.list !== 'function') {
+    missing.push('listDecisions');
+  }
+  if (missing.length > 0) {
+    throw new Error(`MAMA API shape is incompatible; missing methods: ${missing.join(', ')}`);
+  }
+}
 
 /**
  * Result returned by initMamaCore.
  */
 export interface MamaCoreInitResult {
-  mamaApi: MAMAApiShape;
+  mamaApi: MAMAApiSetInput;
   mamaApiClient: MamaApiClient;
   connectorExtractionFn: ((prompt: string) => Promise<string>) | null;
 }
@@ -127,6 +145,7 @@ export async function initMamaCore(config: MAMAConfig): Promise<MamaCoreInitResu
   const mamaApi = (
     mamaCore && typeof mamaCore === 'object' && 'mama' in mamaCore ? mamaCore.mama : mamaCore
   ) as MAMAApiShape;
+  assertMAMAApiSetInput(mamaApi);
 
   const suggest = (mamaApi.suggest ?? mamaApi.search) as
     | ((query: string, options?: { limit?: number }) => Promise<unknown>)

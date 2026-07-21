@@ -95,17 +95,24 @@ vi.mock('fs/promises', () => ({
   readFile: vi.fn().mockResolvedValue('# Test Persona\nYou are a test agent.'),
 }));
 
-vi.mock('fs', () => ({
-  existsSync: vi.fn().mockReturnValue(true),
-  readFileSync: vi.fn(() => readFileSyncValue),
-  writeFileSync: vi.fn((path: string, data: string) => {
-    writeFileSyncCalls.push({ path, data });
-  }),
-}));
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>();
+  return {
+    ...actual,
+    existsSync: vi.fn().mockReturnValue(true),
+    readFileSync: vi.fn(() => readFileSyncValue),
+    writeFileSync: vi.fn((path: string, data: string) => {
+      writeFileSyncCalls.push({ path, data });
+    }),
+  };
+});
 
 // Now import modules that depend on mocked child_process
 import { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
 import { PersistentCLIAdapter } from '../../src/agent/persistent-cli-adapter.js';
+import type { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+import type { AgentContext } from '../../src/agent/types.js';
 
 /**
  * Helper: Create a minimal MultiAgentConfig
@@ -120,7 +127,7 @@ function makeConfig(
       is_planning_agent?: boolean;
       isPlanningAgent?: boolean;
       useCodeAct?: boolean;
-      backend?: 'claude' | 'codex' | 'codex-mcp';
+      backend?: 'claude' | 'codex';
       tool_permissions?: { allowed?: string[]; blocked?: string[] };
       gateway_tool_permissions?: { allowed?: string[]; blocked?: string[] };
     }
@@ -416,11 +423,11 @@ describe('AgentProcessManager env vars by tier', () => {
       );
     });
 
-    it('passes per-agent Code-Act MCP config through the Codex runtime path', async () => {
+    it('does not pass the retired Code-Act MCP config through the Codex runtime path', async () => {
       readFileSyncValue = codeActMcpConfig();
       const config = makeConfig({
         dashboard: {
-          backend: 'codex-mcp',
+          backend: 'codex',
           tier: 2,
           useCodeAct: true,
           gateway_tool_permissions: {
@@ -430,13 +437,74 @@ describe('AgentProcessManager env vars by tier', () => {
         },
       });
       manager = new AgentProcessManager(config, {}, { model: 'claude-sonnet-4-6' });
+      manager.setGatewayToolExecutor({} as GatewayToolExecutor);
 
       const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
-      const runtimeOptions = (
-        runner as unknown as { wrapper: { options: { mcpConfigPath?: string } } }
-      ).wrapper.options;
 
-      expect(runtimeOptions.mcpConfigPath).toContain('code-act-only-mcp-config-dashboard.json');
+      expect(runner).toBeDefined();
+      expect(writeFileSyncCalls).toHaveLength(0);
+    });
+
+    it('synthesizes code_act only on the managed outer role', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'codex',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_search', 'report_publish'],
+            blocked: ['mama_save'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'gpt-5.4' });
+      manager.setGatewayToolExecutor({} as GatewayToolExecutor);
+
+      const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
+      const context = (runner as unknown as { agentContext: AgentContext }).agentContext;
+      const innerPolicy = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+
+      expect(context.role.allowedTools).toEqual(['code_act', 'mama_search', 'report_publish']);
+      expect(innerPolicy.names).toEqual(['mama_search', 'report_publish']);
+    });
+
+    it('uses canonical wildcard semantics for managed Code-Act projections', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'codex',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: {
+            allowed: ['mama_*ch'],
+          },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'gpt-5.4' });
+      manager.setGatewayToolExecutor({} as GatewayToolExecutor);
+
+      const runner = await manager.getProcess('discord', 'channel-1', 'dashboard');
+      const context = (runner as unknown as { agentContext: AgentContext }).agentContext;
+      const innerPolicy = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+
+      expect(context.role.allowedTools).toEqual(['code_act', 'mama_search']);
+      expect(innerPolicy.names).toEqual(['mama_search']);
+    });
+
+    it('fails explicitly when managed Codex Code-Act is requested before executor wiring', async () => {
+      const config = makeConfig({
+        dashboard: {
+          backend: 'codex',
+          tier: 2,
+          useCodeAct: true,
+          gateway_tool_permissions: { allowed: ['mama_search', 'report_publish'] },
+        },
+      });
+      manager = new AgentProcessManager(config, {}, { model: 'gpt-5.4' });
+
+      await expect(manager.getProcess('discord', 'channel-1', 'dashboard')).rejects.toThrow(
+        /shared GatewayToolExecutor.*not wired/
+      );
+      expect(spawnCalls).toHaveLength(0);
     });
 
     it('fails closed for Code-Act-only agents when the MCP config is invalid', async () => {

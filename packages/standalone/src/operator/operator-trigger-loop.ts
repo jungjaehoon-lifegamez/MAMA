@@ -27,6 +27,7 @@ import { authorTriggers, type AskAgent } from './trigger-author.js';
 import { applyReview, type ReviewDecision } from './trigger-review.js';
 import { SituationReporter } from './situation-report.js';
 import type { ReportSchedule } from './report-scheduler.js';
+import type { BackendType } from '../agent/model-runner.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -57,6 +58,8 @@ export interface TriggerLoopConfig {
 }
 
 export interface TriggerLoopDeps {
+  /** Provider affects only report tool-call syntax. */
+  backend?: BackendType;
   delta: DeltaSource;
   memory: OperatorMemoryPort;
   registry: TriggerRegistry;
@@ -135,6 +138,7 @@ export class OperatorTriggerLoop {
     };
     this.digest = new SituationReporter({ recordTriggerUse });
     this.fullReporter = new SituationReporter({
+      backend: deps.backend,
       // Wrap a provider into a zero-arg closure resolved AT FIRE TIME (buildPrompt
       // calls it): the delta anchor is the last SUCCESSFUL full report, so a run
       // that failed never widens the next window (defer, never drop).
