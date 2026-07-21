@@ -93,6 +93,14 @@ scheduledAt as the current time reference.
 5. Finish with exactly PROMOTED <n> or NO_UPDATE.
 `;
 
+const TEMPORAL_BRIEF = `You are reconciling one time-sensitive owner task.
+
+## Work order contract
+Use the bounded work order identifiers to read the current task and gather fresh scoped evidence.
+Do not infer completion from elapsed time alone and do not write through generic task_update.
+The dedicated temporal mutation tool is the only valid completion path for this work order.
+`;
+
 export function buildDefaultBrief(kind: WorkOrderKind): string {
   switch (kind) {
     case 'board':
@@ -101,6 +109,8 @@ export function buildDefaultBrief(kind: WorkOrderKind): string {
       return `${stripManagedMarker(WIKI_AGENT_PERSONA)}\n${WIKI_WORKORDER_CONTRACT}`;
     case 'memory-curation':
       return PROMOTION_BRIEF;
+    case 'temporal':
+      return TEMPORAL_BRIEF;
   }
 }
 

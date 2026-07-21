@@ -23,7 +23,12 @@ import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
-import { deriveTemporalState, parseExactDueAt, type TemporalState } from './task-temporal.js';
+import {
+  deriveTemporalState,
+  occurrenceKeyForTask,
+  parseExactDueAt,
+  type TemporalState,
+} from './task-temporal.js';
 
 export const TASK_STATUSES = [
   'pending',
@@ -44,7 +49,7 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 export const TASK_KINDS = ['owner', 'system'] as const;
 export type TaskKind = (typeof TASK_KINDS)[number];
 
-export const WORKORDER_KINDS = ['board', 'wiki', 'memory-curation'] as const;
+export const WORKORDER_KINDS = ['board', 'wiki', 'memory-curation', 'temporal'] as const;
 export type WorkOrderKind = (typeof WORKORDER_KINDS)[number];
 
 /** source_channel namespace for workorder rows: 'workorder:<workKind>'. */
@@ -56,6 +61,17 @@ export interface EnqueueWorkOrderInput {
   idempotencyKey: string;
   /** Kind-specific payload; `attempts` is managed by the ledger (starts at 1). */
   input: Record<string, unknown>;
+  priority?: TaskPriority;
+}
+
+export interface EnqueueTemporalGenerationInput {
+  generationKey: string;
+  taskId: number;
+  temporalEpoch: number;
+  occurrenceKey: string;
+  checkAt: number;
+  sourceChannel: string | null;
+  sourceEventId: string | null;
   priority?: TaskPriority;
 }
 
@@ -119,6 +135,24 @@ export interface TemporalGenerationRecord {
   reason: string | null;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface TemporalWorkContext {
+  attemptId: number;
+  generationKey: string;
+  taskId: number;
+  temporalEpoch: number;
+  occurrenceKey: string;
+  checkAt: number;
+  revision: number;
+  sourceChannel: string | null;
+  sourceEventId: string | null;
+}
+
+export interface TemporalGenerationEnqueueResult {
+  generation: TemporalGenerationRecord;
+  workOrder: WorkOrderRecord;
+  created: boolean;
 }
 
 export type TemporalEffectOutcome = 'resolved' | 'final_no_update' | 'deferred';
@@ -691,7 +725,7 @@ export class TaskLedger implements TaskSource {
         .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
         .run(...values, id);
       if (temporalChanged || terminalToOpen) {
-        this.supersedeOlderTemporalGenerations(id, Number(next.temporal_epoch));
+        this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
       }
       this.db.exec('COMMIT');
     } catch (error) {
@@ -701,24 +735,32 @@ export class TaskLedger implements TaskSource {
     return this.getById(id)!;
   }
 
-  private supersedeOlderTemporalGenerations(taskId: number, currentEpoch: number): void {
+  private supersedeTemporalGenerationsInTransaction(
+    taskId: number,
+    currentEpoch: number,
+    excludeGenerationKey?: string
+  ): void {
     const reason = 'task temporal occurrence superseded';
+    const exclusion = excludeGenerationKey ? ' AND generation_key != ?' : '';
+    const generationParams = excludeGenerationKey
+      ? [taskId, currentEpoch, excludeGenerationKey]
+      : [taskId, currentEpoch];
     this.db
       .prepare(
         `UPDATE operator_tasks SET status = 'cancelled', latest_event = ?, updated_at = ?
          WHERE kind = 'system' AND status IN ('pending','in_progress') AND id IN (
            SELECT last_workorder_id FROM operator_temporal_generations
-           WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?
+           WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?${exclusion}
          )`
       )
-      .run(reason, this.now(), taskId, currentEpoch);
+      .run(reason, this.now(), ...generationParams);
     this.db
       .prepare(
         `UPDATE operator_temporal_generations
          SET disposition = 'superseded', reason = ?, updated_at = ?
-         WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?`
+         WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?${exclusion}`
       )
-      .run(reason, this.now(), taskId, currentEpoch);
+      .run(reason, this.now(), ...generationParams);
   }
 
   /**
@@ -747,6 +789,16 @@ export class TaskLedger implements TaskSource {
    * unique index excludes terminal statuses) and a fresh row is inserted.
    */
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord {
+    if (order.workKind === 'temporal') {
+      throw new Error('enqueueWorkOrder: temporal work requires enqueueTemporalGeneration');
+    }
+    if (Object.prototype.hasOwnProperty.call(order.input, 'attempts')) {
+      throw new Error('enqueueWorkOrder: attempts is ledger-managed and cannot be supplied');
+    }
+    return this.insertWorkOrder(order, 1);
+  }
+
+  private insertWorkOrder(order: EnqueueWorkOrderInput, attempts: number): WorkOrderRecord {
     assertEnum(order.workKind, WORKORDER_KINDS, 'workKind');
     if (order.priority !== undefined) {
       assertEnum(order.priority, TASK_PRIORITIES, 'priority');
@@ -766,10 +818,9 @@ export class TaskLedger implements TaskSource {
       return this.rowToWorkOrder(open);
     }
 
-    const attempts =
-      typeof order.input.attempts === 'number' && order.input.attempts >= 1
-        ? order.input.attempts
-        : 1;
+    if (!Number.isSafeInteger(attempts) || attempts < 1) {
+      throw new Error(`insertWorkOrder: attempts must be a positive integer, got: ${attempts}`);
+    }
     const payload = JSON.stringify({ ...order.input, attempts });
     const now = this.now();
     const result = this.db
@@ -789,6 +840,393 @@ export class TaskLedger implements TaskSource {
         now
       );
     return this.getWorkOrderById(Number(result.lastInsertRowid))!;
+  }
+
+  enqueueTemporalGeneration(
+    input: EnqueueTemporalGenerationInput
+  ): TemporalGenerationEnqueueResult {
+    this.validateTemporalGenerationInput(input);
+    let result: TemporalGenerationEnqueueResult | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.getTemporalGeneration(input.generationKey);
+      if (existing) {
+        if (
+          existing.taskId !== input.taskId ||
+          existing.temporalEpoch !== input.temporalEpoch ||
+          existing.occurrenceKey !== input.occurrenceKey ||
+          existing.checkAt !== input.checkAt
+        ) {
+          throw new Error(
+            `temporal generation '${input.generationKey}' conflicts with its stored identity`
+          );
+        }
+        if (existing.lastWorkOrderId === null) {
+          throw new Error(
+            `temporal generation '${input.generationKey}' has no owning workorder attempt`
+          );
+        }
+        const workOrder = this.getWorkOrderById(existing.lastWorkOrderId);
+        if (!workOrder) {
+          throw new Error(
+            `temporal generation '${input.generationKey}' owns missing workorder ${existing.lastWorkOrderId}`
+          );
+        }
+        this.assertTemporalPayloadMatches(workOrder, existing);
+        if (
+          workOrder.payload.sourceChannel !== input.sourceChannel ||
+          workOrder.payload.sourceEventId !== input.sourceEventId
+        ) {
+          throw new Error(
+            `temporal generation '${input.generationKey}' conflicts with stored source identifiers`
+          );
+        }
+        result = { generation: existing, workOrder, created: false };
+      } else {
+        const task = this.getRowById(input.taskId);
+        if (!task || task.kind !== 'owner') {
+          throw new Error(`temporal generation: owner task ${input.taskId} does not exist`);
+        }
+        if (task.status === 'done' || task.status === 'cancelled') {
+          throw new Error(`temporal generation: task ${input.taskId} is closed`);
+        }
+        const currentOccurrence = occurrenceKeyForTask(task);
+        if (
+          task.temporalEpoch !== input.temporalEpoch ||
+          currentOccurrence !== input.occurrenceKey
+        ) {
+          throw new Error(`temporal generation: task occurrence no longer matches enqueue input`);
+        }
+        if (
+          task.sourceChannel !== input.sourceChannel ||
+          task.sourceEventId !== input.sourceEventId
+        ) {
+          throw new Error(`temporal generation: source identifiers do not match owner task`);
+        }
+        const openCollision = this.db
+          .prepare(
+            `SELECT id FROM operator_tasks
+             WHERE kind = 'system' AND source_channel = 'workorder:temporal'
+               AND source_event_id = ? AND status IN ('pending','in_progress')`
+          )
+          .get(input.generationKey) as { id: number } | undefined;
+        if (openCollision) {
+          throw new Error(
+            `temporal generation '${input.generationKey}' has orphan open workorder ${openCollision.id}`
+          );
+        }
+
+        const timestamp = this.now();
+        this.db
+          .prepare(
+            `INSERT INTO operator_temporal_generations
+               (generation_key, task_id, temporal_epoch, occurrence_key, check_at,
+                disposition, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+          )
+          .run(
+            input.generationKey,
+            input.taskId,
+            input.temporalEpoch,
+            input.occurrenceKey,
+            input.checkAt,
+            timestamp,
+            timestamp
+          );
+        const workOrder = this.insertWorkOrder(
+          {
+            workKind: 'temporal',
+            idempotencyKey: input.generationKey,
+            input: {
+              generationKey: input.generationKey,
+              taskId: input.taskId,
+              temporalEpoch: input.temporalEpoch,
+              occurrenceKey: input.occurrenceKey,
+              checkAt: input.checkAt,
+              sourceChannel: input.sourceChannel,
+              sourceEventId: input.sourceEventId,
+            },
+            priority: input.priority ?? 'normal',
+          },
+          1
+        );
+        this.db
+          .prepare(
+            `UPDATE operator_temporal_generations
+             SET last_workorder_id = ?, updated_at = ? WHERE generation_key = ?`
+          )
+          .run(workOrder.id, timestamp, input.generationKey);
+        const generation = this.getTemporalGeneration(input.generationKey);
+        if (!generation) {
+          throw new Error(`temporal generation '${input.generationKey}' could not be read back`);
+        }
+        result = { generation, workOrder, created: true };
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    if (!result) {
+      throw new Error(`temporal generation '${input.generationKey}' produced no result`);
+    }
+    return result;
+  }
+
+  getTemporalGeneration(generationKey: string): TemporalGenerationRecord | null {
+    const row = this.db
+      .prepare(`SELECT * FROM operator_temporal_generations WHERE generation_key = ?`)
+      .get(generationKey) as
+      | {
+          generation_key: string;
+          task_id: number;
+          temporal_epoch: number;
+          occurrence_key: string;
+          check_at: number;
+          disposition: string;
+          last_workorder_id: number | null;
+          reason: string | null;
+          created_at: number;
+          updated_at: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      generationKey: row.generation_key,
+      taskId: row.task_id,
+      temporalEpoch: row.temporal_epoch,
+      occurrenceKey: row.occurrence_key,
+      checkAt: row.check_at,
+      disposition: row.disposition as TemporalGenerationDisposition,
+      lastWorkOrderId: row.last_workorder_id,
+      reason: row.reason,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  loadTemporalWorkContext(attemptId: number): TemporalWorkContext {
+    return this.loadTemporalWorkContextInternal(attemptId);
+  }
+
+  requeueTemporalWorkOrder(attemptId: number, reason: string): WorkOrderRecord {
+    this.assertTemporalReason(reason);
+    let replacement: WorkOrderRecord | null = null;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const context = this.loadTemporalWorkContextInternal(attemptId);
+      const workOrder = this.getWorkOrderById(attemptId)!;
+      this.transitionWorkOrder(attemptId, 'failed', reason);
+      const { attempts: _attempts, ...payload } = workOrder.payload;
+      replacement = this.insertWorkOrder(
+        {
+          workKind: 'temporal',
+          idempotencyKey: context.generationKey,
+          input: payload,
+          priority: workOrder.priority,
+        },
+        workOrder.payload.attempts + 1
+      );
+      const ownership = this.db
+        .prepare(
+          `UPDATE operator_temporal_generations
+           SET last_workorder_id = ?, updated_at = ?
+           WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+        )
+        .run(replacement.id, this.now(), context.generationKey, attemptId);
+      if (ownership.changes !== 1) {
+        throw new Error(`temporal retry lost generation ownership for attempt ${attemptId}`);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    if (!replacement) throw new Error(`temporal retry for attempt ${attemptId} produced no row`);
+    return replacement;
+  }
+
+  exhaustTemporalWorkOrder(attemptId: number, reason: string): void {
+    this.assertTemporalReason(reason);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const context = this.loadTemporalWorkContextInternal(attemptId);
+      this.transitionWorkOrder(attemptId, 'failed', reason);
+      const update = this.db
+        .prepare(
+          `UPDATE operator_temporal_generations
+           SET disposition = 'exhausted', reason = ?, updated_at = ?
+           WHERE generation_key = ? AND disposition = 'active' AND last_workorder_id = ?`
+        )
+        .run(reason, this.now(), context.generationKey, attemptId);
+      if (update.changes !== 1) {
+        throw new Error(`temporal exhaustion lost ownership for attempt ${attemptId}`);
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  supersedeTemporalGenerations(
+    taskId: number,
+    currentEpoch: number,
+    excludeGenerationKey?: string
+  ): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.supersedeTemporalGenerationsInTransaction(taskId, currentEpoch, excludeGenerationKey);
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  private validateTemporalGenerationInput(input: EnqueueTemporalGenerationInput): void {
+    const bounded = (value: string, field: string, max: number): void => {
+      if (value.length < 1 || value.length > max) {
+        throw new Error(`temporal generation: ${field} must contain 1-${max} characters`);
+      }
+    };
+    bounded(input.generationKey, 'generationKey', 500);
+    bounded(input.occurrenceKey, 'occurrenceKey', 300);
+    if (!Number.isSafeInteger(input.taskId) || input.taskId < 1) {
+      throw new Error(`temporal generation: taskId must be a positive integer`);
+    }
+    if (!Number.isSafeInteger(input.temporalEpoch) || input.temporalEpoch < 0) {
+      throw new Error(`temporal generation: temporalEpoch must be a non-negative integer`);
+    }
+    if (!Number.isSafeInteger(input.checkAt)) {
+      throw new Error(`temporal generation: checkAt must be an epoch millisecond integer`);
+    }
+    for (const [field, value] of [
+      ['sourceChannel', input.sourceChannel],
+      ['sourceEventId', input.sourceEventId],
+    ] as const) {
+      if (value !== null) bounded(value, field, 300);
+    }
+    if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
+  }
+
+  private loadTemporalWorkContextInternal(attemptId: number): TemporalWorkContext {
+    const workOrder = this.getWorkOrderById(attemptId);
+    if (!workOrder || workOrder.workKind !== 'temporal') {
+      throw new Error(`temporal context: no temporal attempt ${attemptId}`);
+    }
+    if (workOrder.status !== 'in_progress') {
+      throw new Error(
+        `temporal context: attempt ${attemptId} is '${workOrder.status}', expected active attempt`
+      );
+    }
+    const payload = workOrder.payload;
+    const generationKey = this.requirePayloadString(payload, 'generationKey', attemptId);
+    const taskId = this.requirePayloadInteger(payload, 'taskId', attemptId, 1);
+    const temporalEpoch = this.requirePayloadInteger(payload, 'temporalEpoch', attemptId, 0);
+    const occurrenceKey = this.requirePayloadString(payload, 'occurrenceKey', attemptId);
+    const checkAt = this.requirePayloadInteger(payload, 'checkAt', attemptId);
+    const sourceChannel = this.requireNullablePayloadString(payload, 'sourceChannel', attemptId);
+    const sourceEventId = this.requireNullablePayloadString(payload, 'sourceEventId', attemptId);
+    const generation = this.getTemporalGeneration(generationKey);
+    if (!generation || generation.disposition !== 'active') {
+      throw new Error(`temporal context: generation '${generationKey}' is not active`);
+    }
+    if (generation.lastWorkOrderId !== attemptId) {
+      throw new Error(`temporal context: attempt ${attemptId} no longer owns generation`);
+    }
+    this.assertTemporalPayloadMatches(workOrder, generation);
+    const task = this.getRowById(taskId);
+    if (!task || task.kind !== 'owner') {
+      throw new Error(`temporal context: owner task ${taskId} does not exist`);
+    }
+    if (task.status === 'done' || task.status === 'cancelled') {
+      throw new Error(`temporal context: owner task ${taskId} is closed`);
+    }
+    if (
+      task.temporalEpoch !== temporalEpoch ||
+      occurrenceKeyForTask(task) !== occurrenceKey ||
+      task.sourceChannel !== sourceChannel ||
+      task.sourceEventId !== sourceEventId ||
+      generation.taskId !== taskId ||
+      generation.temporalEpoch !== temporalEpoch ||
+      generation.occurrenceKey !== occurrenceKey ||
+      generation.checkAt !== checkAt
+    ) {
+      throw new Error(`temporal context: attempt ${attemptId} payload no longer matches ownership`);
+    }
+    return {
+      attemptId,
+      generationKey,
+      taskId,
+      temporalEpoch,
+      occurrenceKey,
+      checkAt,
+      revision: task.revision,
+      sourceChannel,
+      sourceEventId,
+    };
+  }
+
+  private assertTemporalPayloadMatches(
+    workOrder: WorkOrderRecord,
+    generation: TemporalGenerationRecord
+  ): void {
+    const payload = workOrder.payload;
+    if (
+      payload.generationKey !== generation.generationKey ||
+      payload.taskId !== generation.taskId ||
+      payload.temporalEpoch !== generation.temporalEpoch ||
+      payload.occurrenceKey !== generation.occurrenceKey ||
+      payload.checkAt !== generation.checkAt
+    ) {
+      throw new Error(
+        `temporal attempt ${workOrder.id} payload does not match generation ownership`
+      );
+    }
+  }
+
+  private requirePayloadString(
+    payload: Record<string, unknown>,
+    field: string,
+    attemptId: number
+  ): string {
+    const value = payload[field];
+    if (typeof value !== 'string' || value.length === 0) {
+      throw new Error(`temporal attempt ${attemptId}: ${field} must be a non-empty string`);
+    }
+    return value;
+  }
+
+  private requireNullablePayloadString(
+    payload: Record<string, unknown>,
+    field: string,
+    attemptId: number
+  ): string | null {
+    const value = payload[field];
+    if (value !== null && typeof value !== 'string') {
+      throw new Error(`temporal attempt ${attemptId}: ${field} must be a string or null`);
+    }
+    return value;
+  }
+
+  private requirePayloadInteger(
+    payload: Record<string, unknown>,
+    field: string,
+    attemptId: number,
+    minimum: number = Number.MIN_SAFE_INTEGER
+  ): number {
+    const value = payload[field];
+    if (!Number.isSafeInteger(value) || (value as number) < minimum) {
+      throw new Error(`temporal attempt ${attemptId}: ${field} must be an integer`);
+    }
+    return value as number;
+  }
+
+  private assertTemporalReason(reason: string): void {
+    if (reason.trim().length < 1 || reason.length > 500) {
+      throw new Error('temporal workorder reason must contain 1-500 characters');
+    }
   }
 
   /**
@@ -833,15 +1271,26 @@ export class TaskLedger implements TaskSource {
    * unique index, hence one transaction, not two calls.
    */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord {
+    if (wo.workKind === 'temporal') {
+      return this.requeueTemporalWorkOrder(wo.id, reason);
+    }
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      this.transitionWorkOrder(wo.id, 'failed', reason);
-      const replacement = this.enqueueWorkOrder({
-        workKind: wo.workKind,
-        idempotencyKey: wo.idempotencyKey,
-        input: { ...wo.payload, attempts: wo.payload.attempts + 1 },
-        priority: wo.priority,
-      });
+      const current = this.getWorkOrderById(wo.id);
+      if (!current || current.workKind !== wo.workKind) {
+        throw new Error(`workorder retry: claimed row ${wo.id} no longer matches input`);
+      }
+      this.transitionWorkOrder(current.id, 'failed', reason);
+      const { attempts: _attempts, ...input } = current.payload;
+      const replacement = this.insertWorkOrder(
+        {
+          workKind: current.workKind,
+          idempotencyKey: current.idempotencyKey,
+          input,
+          priority: current.priority,
+        },
+        current.payload.attempts + 1
+      );
       this.db.exec('COMMIT');
       return replacement;
     } catch (error) {
