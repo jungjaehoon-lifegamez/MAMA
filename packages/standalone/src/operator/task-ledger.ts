@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
-import { parseExactDueAt } from './task-temporal.js';
+import { deriveTemporalState, parseExactDueAt, type TemporalState } from './task-temporal.js';
 
 export const TASK_STATUSES = [
   'pending',
@@ -92,6 +92,12 @@ export interface TaskRecord extends OperatorTask {
   lastTemporalCheckedAt: number | null;
   nextTemporalCheckAt: number | null;
   lastTemporalAttemptId: number | null;
+  temporalState: TemporalState;
+}
+
+export interface TaskLedgerOptions {
+  now?: () => number;
+  timeZone?: string;
 }
 
 export type TemporalGenerationDisposition =
@@ -223,7 +229,7 @@ function assertIsoDate(value: string, field: string): void {
   }
 }
 
-function rowToRecord(row: TaskRow): TaskRecord {
+function rowToRecord(row: TaskRow, now: number, timeZone: string): TaskRecord {
   return {
     id: row.id,
     title: row.title,
@@ -246,6 +252,16 @@ function rowToRecord(row: TaskRow): TaskRecord {
     lastTemporalCheckedAt: row.last_temporal_checked_at,
     nextTemporalCheckAt: row.next_temporal_check_at,
     lastTemporalAttemptId: row.last_temporal_attempt_id,
+    temporalState: deriveTemporalState(
+      {
+        status: row.status,
+        dueAt: row.due_at,
+        deadlineIso: row.deadline,
+        deadlineOffsetMinutes: row.deadline_offset_minutes,
+      },
+      now,
+      timeZone
+    ),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -253,10 +269,20 @@ function rowToRecord(row: TaskRow): TaskRecord {
 
 export class TaskLedger implements TaskSource {
   private db: SQLiteDatabase;
+  private now: () => number;
+  private timeZone: string;
 
-  constructor(db: SQLiteDatabase) {
+  constructor(db: SQLiteDatabase, options: TaskLedgerOptions = {}) {
     this.db = db;
+    this.now = options.now ?? Date.now;
+    this.timeZone = options.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+    // Validate the injected or boot-resolved zone once, before reads depend on it.
+    new Intl.DateTimeFormat('en-US', { timeZone: this.timeZone }).format(0);
     this.runMigration();
+  }
+
+  private toRecord(row: TaskRow): TaskRecord {
+    return rowToRecord(row, this.now(), this.timeZone);
   }
 
   private runMigration(): void {
@@ -450,7 +476,7 @@ export class TaskLedger implements TaskSource {
          LIMIT ?`
       )
       .all(...params, limit) as TaskRow[];
-    return rows.map(rowToRecord);
+    return rows.map((row) => this.toRecord(row));
   }
 
   /** Owner rows only - system workorder rows are invisible to external reads. */
@@ -464,7 +490,7 @@ export class TaskLedger implements TaskSource {
     const row = this.db.prepare(`SELECT * FROM operator_tasks WHERE id = ?`).get(id) as
       | TaskRow
       | undefined;
-    return row ? rowToRecord(row) : null;
+    return row ? this.toRecord(row) : null;
   }
 
   /**
@@ -497,7 +523,7 @@ export class TaskLedger implements TaskSource {
     }
     const normalizedDeadline = exactDue?.deadline ?? input.deadline ?? null;
     const initialTemporalEpoch = normalizedDeadline !== null ? 1 : 0;
-    const now = Date.now();
+    const now = this.now();
 
     if (input.source_channel && input.source_event_id) {
       // kind='owner' probe: an agent-supplied (channel, event) pair can never
@@ -653,14 +679,14 @@ export class TaskLedger implements TaskSource {
       const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
       if (changedColumns.length === 0) {
         this.db.exec('COMMIT');
-        return rowToRecord(existing);
+        return this.toRecord(existing);
       }
 
       const nextRevision = existing.revision + 1;
       const sets = changedColumns.map((column) => `${column} = ?`);
       const values = changedColumns.map((column) => next[column]);
       sets.push('revision = ?', 'updated_at = ?');
-      values.push(nextRevision, Date.now());
+      values.push(nextRevision, this.now());
       this.db
         .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
         .run(...values, id);
@@ -685,14 +711,14 @@ export class TaskLedger implements TaskSource {
            WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?
          )`
       )
-      .run(reason, Date.now(), taskId, currentEpoch);
+      .run(reason, this.now(), taskId, currentEpoch);
     this.db
       .prepare(
         `UPDATE operator_temporal_generations
          SET disposition = 'superseded', reason = ?, updated_at = ?
          WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?`
       )
-      .run(reason, Date.now(), taskId, currentEpoch);
+      .run(reason, this.now(), taskId, currentEpoch);
   }
 
   /**
@@ -745,7 +771,7 @@ export class TaskLedger implements TaskSource {
         ? order.input.attempts
         : 1;
     const payload = JSON.stringify({ ...order.input, attempts });
-    const now = Date.now();
+    const now = this.now();
     const result = this.db
       .prepare(
         `INSERT INTO operator_tasks
@@ -786,7 +812,7 @@ export class TaskLedger implements TaskSource {
       if (row) {
         this.db
           .prepare(`UPDATE operator_tasks SET status = 'in_progress', updated_at = ? WHERE id = ?`)
-          .run(Date.now(), row.id);
+          .run(this.now(), row.id);
         claimedId = row.id;
       }
       this.db.exec('COMMIT');
@@ -872,7 +898,7 @@ export class TaskLedger implements TaskSource {
          SET status = 'cancelled', latest_event = ?, updated_at = ?
          WHERE kind = 'system' AND status IN ('pending','in_progress')${kindFilter}`
       )
-      .run(reason, Date.now(), ...kindParams);
+      .run(reason, this.now(), ...kindParams);
     return result.changes;
   }
 
@@ -934,7 +960,7 @@ export class TaskLedger implements TaskSource {
         `UPDATE operator_tasks SET status = ?, latest_event = COALESCE(?, latest_event),
                 updated_at = ? WHERE id = ?`
       )
-      .run(status, reason, Date.now(), id);
+      .run(status, reason, this.now(), id);
   }
 
   private rowToWorkOrder(row: TaskRow): WorkOrderRecord {
@@ -979,7 +1005,7 @@ export class TaskLedger implements TaskSource {
     }
     const result = this.db
       .prepare(`INSERT INTO operator_no_update_notes (scope, reason, created_at) VALUES (?, ?, ?)`)
-      .run(scope, reason, Date.now());
+      .run(scope, reason, this.now());
     return { id: Number(result.lastInsertRowid) };
   }
 

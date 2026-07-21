@@ -123,6 +123,22 @@ import {
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
 
+function serializeTaskToolRecord(
+  task: import('../operator/task-ledger.js').TaskRecord
+): Record<string, unknown> {
+  return {
+    ...task,
+    due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
+    deadline_offset_minutes: task.deadlineOffsetMinutes,
+    temporal_epoch: task.temporalEpoch,
+    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
+    last_temporal_checked_at: task.lastTemporalCheckedAt,
+    next_temporal_check_at: task.nextTemporalCheckAt,
+    last_temporal_attempt_id: task.lastTemporalAttemptId,
+    temporal_state: task.temporalState,
+  };
+}
+
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
     warn: (...args: unknown[]) => void;
@@ -2577,13 +2593,15 @@ export class GatewayToolExecutor {
           };
           return {
             success: true,
-            tasks: this.taskLedger.list({
-              status: listInput.status as never,
-              channel: listInput.channel,
-              search: listInput.search,
-              limit: listInput.limit,
-              order: (listInput.order as never) ?? 'deadline_priority',
-            }),
+            tasks: this.taskLedger
+              .list({
+                status: listInput.status as never,
+                channel: listInput.channel,
+                search: listInput.search,
+                limit: listInput.limit,
+                order: (listInput.order as never) ?? 'deadline_priority',
+              })
+              .map(serializeTaskToolRecord),
           };
         }
         case 'task_create': {
@@ -2592,7 +2610,7 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: this.taskLedger.create(input as never),
+            task: serializeTaskToolRecord(this.taskLedger.create(input as never)),
           };
         }
         case 'task_update': {
@@ -2612,7 +2630,7 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: this.taskLedger.update(id, patch as never),
+            task: serializeTaskToolRecord(this.taskLedger.update(id, patch as never)),
           };
         }
         case 'schedule_upcoming': {

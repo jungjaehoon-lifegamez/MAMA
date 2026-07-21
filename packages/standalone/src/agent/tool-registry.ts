@@ -371,7 +371,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
+    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')",
@@ -382,7 +382,7 @@ register({
     'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
-    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
+    'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
 });
 register({
   name: 'task_update',
@@ -390,7 +390,7 @@ register({
     'Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.',
   category: 'os_monitoring',
   params:
-    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), latest_event?, confirmed?',
+    'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?',
 });
 register({
   name: 'schedule_upcoming',
