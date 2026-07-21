@@ -393,6 +393,14 @@ register({
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?',
 });
 register({
+  name: 'task_temporal_reconcile',
+  description:
+    'Resolve, finalize without a lifecycle change, or defer the host-issued temporal work item. Task, generation, occurrence, check, and attempt identity come only from trusted runtime context.',
+  category: 'os_monitoring',
+  params:
+    'expected_revision (required), outcome (resolved|final_no_update|deferred), reason (required), status? or due_at? for resolved, evidence_summary for final_no_update, next_temporal_check_at for deferred',
+});
+register({
   name: 'schedule_upcoming',
   description:
     'Upcoming schedule from the calendar connector raw store: events within the next N days plus a one-line-per-event text digest. v1 limits: no recurrence expansion, no cancellation tracking; all-day events surface by date.',

@@ -38,6 +38,12 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).not.toContain('/**');
     });
 
+    it('omits separator whitespace from parameter lists to preserve the prompt budget', () => {
+      const dts = TypeDefinitionGenerator.generate(policy(1, ['Write']));
+
+      expect(dts).toContain('declare function Write(path: string,content: string): true;');
+    });
+
     it('marks optional params with ?', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/query\?: string/);

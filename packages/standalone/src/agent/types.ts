@@ -12,6 +12,7 @@
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
+import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 import type { ContextCompileService } from './context-compile-service.js';
 import type { GatewayToolExecutor } from './gateway-tool-executor.js';
 import type {
@@ -132,6 +133,8 @@ export type GatewayToolExecutionContext = {
   gatewayCallId?: string;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
+  /** Host-built temporal authority; never accepted from tool input or fallback state. */
+  temporalWorkContext?: TemporalWorkContext;
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -724,7 +727,8 @@ export type GatewayToolInput =
   | ListBotsInput
   | RestartBotInput
   | StopBotInput
-  | CodeActInput;
+  | CodeActInput
+  | TemporalReconcileInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -793,6 +797,7 @@ export type GatewayToolName =
   | 'task_list'
   | 'task_create'
   | 'task_update'
+  | 'task_temporal_reconcile'
   | 'contract_no_update'
   | 'schedule_upcoming'
   // System tools
@@ -1004,6 +1009,8 @@ export interface AgentLoopOptions {
   reportPublisherOverride?: (slots: Record<string, string>) => void;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
+  /** Host-built temporal authority for one claimed temporal workorder. */
+  temporalWorkContext?: TemporalWorkContext;
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)
@@ -1217,7 +1224,8 @@ export type AgentErrorCode =
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'
   | 'INVALID_RESPONSE'
-  | 'ENVELOPE_EXPIRED';
+  | 'ENVELOPE_EXPIRED'
+  | 'WORKORDER_SUPERSEDED';
 
 /**
  * Custom error class for agent loop errors
