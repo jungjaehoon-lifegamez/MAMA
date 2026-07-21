@@ -188,8 +188,15 @@ interface AgentConfig {
   `~/.mama/logs/daemon.log` if the managed credential copy cannot be prepared.
 - **Backend rejected:** use `codex`. Unknown backend names fail explicitly; only stored legacy
   `codex-mcp` values are migrated.
-- **Thread policy mismatch:** start a fresh session after changing model, working directory, or
-  sandbox policy for an existing durable conversation.
+- **Thread policy mismatch:** the app-server process rejects the stale durable thread without
+  changing its registry entry. The MAMA AgentLoop then performs one bounded reset, rebuilds the
+  complete current persona/rules/tool prompt, and retries on a fresh thread. A successful recovery
+  emits no user-facing error callback. If the reset retry fails, MAMA reports one normalized error;
+  repeated retries are not attempted, and the replacement pool entry is invalidated so the next
+  request rebuilds a full prompt instead of persisting minimal resume instructions. Opt-in legacy
+  context search is also rerun during that lazy full-prompt rebuild. Stable owner-console policy,
+  including the external-evidence trust boundary, participates in the fingerprint so deployment
+  invalidates durable threads that predate the rule.
 - **Unexpected instruction source:** remove instructions or symlinks that resolve outside the
   managed MAMA roots.
 - **External MCP startup issue:** validate `agent.tools.mcp_config`; MAMA rejects malformed fields,

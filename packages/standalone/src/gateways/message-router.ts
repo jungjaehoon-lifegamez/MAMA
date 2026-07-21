@@ -45,7 +45,10 @@ import { AgentNoticeQueue } from '../memory/agent-notice-queue.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { formatAuditNotice, formatRecallBundle } from '../memory/recall-bundle-formatter.js';
 import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
-import { stripUntrustedBlocks } from '../utils/untrusted-content.js';
+import {
+  stripUntrustedBlocks,
+  UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
+} from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import { buildReportCarryPrefix } from '../operator/report-carry.js';
 import { getLatestVersion, logActivity } from '../db/agent-store.js';
@@ -68,6 +71,53 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('MessageRouter');
+
+interface SessionPolicyFingerprintInput {
+  baseInstructions: string;
+  agentsContent?: string;
+  rulesContent?: string;
+  model: string;
+  stableRolePolicy?: string;
+}
+
+export function hashSessionPolicyFingerprint({
+  baseInstructions,
+  agentsContent,
+  rulesContent,
+  model,
+  stableRolePolicy,
+}: SessionPolicyFingerprintInput): string {
+  const hash = createHash('sha256')
+    .update(baseInstructions)
+    .update('\0')
+    .update(agentsContent ?? '')
+    .update('\0')
+    .update(rulesContent ?? '')
+    .update('\0')
+    .update(model);
+  if (stableRolePolicy) {
+    hash.update('\0').update(stableRolePolicy);
+  }
+  return hash.digest('hex');
+}
+
+function buildStableRolePolicyInstructions(
+  agentContext: AgentContext,
+  roleManager: RoleManager,
+  trelloAvailable: boolean
+): string {
+  if (agentContext.roleName !== 'owner_console') {
+    return '';
+  }
+  const trelloBoundary =
+    trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
+      ? `
+- ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
+- Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
+      : '';
+  return `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
+- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+}
 
 /** Channel-less host alarms (workorder failures) park here; every resumed
  *  owner turn reads this key in addition to its own channel key. */
@@ -722,12 +772,15 @@ This protects your credentials from being exposed in chat logs.`;
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
+    const trelloAvailable =
+      this.envelopeConfig?.rawConnectorsFor(message).includes('trello') === true;
     logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
 
     // 4-6. Build system prompt
     // CONTINUE turns: Codex server retains full conversation via threadId,
     // so skip expensive prompt rebuilding (embedding search, DB history, etc.)
     let systemPrompt: string;
+    const historyContext = message.metadata?.historyContext;
 
     // Always enhance for per-message skill/keyword injection
     const workspacePath = process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace');
@@ -751,7 +804,6 @@ This protects your credentials from being exposed in chat logs.`;
         source: message.source,
         channelId: message.channelId,
       });
-      const historyContext = message.metadata?.historyContext;
       systemPrompt = this.buildSystemPrompt(
         session,
         context.prompt,
@@ -759,7 +811,8 @@ This protects your credentials from being exposed in chat logs.`;
         sessionStartupContext,
         agentContext,
         enhanced,
-        isNewCliSession
+        isNewCliSession,
+        trelloAvailable
       );
     }
 
@@ -782,7 +835,8 @@ This protects your credentials from being exposed in chat logs.`;
     const sessionPolicyFingerprint = this.buildSessionPolicyFingerprint(
       agentContext,
       enhanced,
-      roleModel
+      roleModel,
+      trelloAvailable
     );
 
     // Determine if we should resume an existing CLI session
@@ -859,11 +913,37 @@ This protects your credentials from being exposed in chat logs.`;
         agentContext,
         resumeSession: shouldResumeBackend,
         cliSessionId, // Pass CLI session ID to avoid double-locking
+        // AgentLoop may replace a stale backend session while this request still
+        // owns the channel lock. Keep cleanup guarded by the current owner ID.
+        onCliSessionReset: (sessionId) => {
+          cliSessionId = sessionId;
+        },
         streamCallbacks: wrappedOnStream || processOptions?.onStream,
         envelope,
         sourceTurnId,
         sourceMessageRef,
       };
+      if (this.config.backend === 'codex' && shouldResume) {
+        options.freshSessionSystemPrompt = async () => {
+          const freshContext = this.config.implicitLegacyContextSearch
+            ? await this.contextInjector.getRelevantContext(message.text)
+            : context;
+          const sessionStartupContext = await this.contextInjector.getSessionStartupContext({
+            source: message.source,
+            channelId: message.channelId,
+          });
+          return this.buildSystemPrompt(
+            session,
+            freshContext.prompt,
+            historyContext,
+            sessionStartupContext,
+            agentContext,
+            enhanced,
+            true,
+            trelloAvailable
+          );
+        };
+      }
 
       if (shouldResume) {
         logger.info(`Resuming CLI session (minimal: ${effectivePrompt.length} chars)`);
@@ -1054,12 +1134,12 @@ This protects your credentials from being exposed in chat logs.`;
 
       if (isCriticalError) {
         logger.warn(`CLI error detected, invalidating session: ${errorMsg}`);
-        sessionPool.resetSession(channelKey);
+        sessionPool.invalidateSession(channelKey, cliSessionId);
       }
 
       // Release session lock before re-throwing
       if (acquiredLock) {
-        sessionPool.releaseSession(channelKey);
+        sessionPool.releaseSession(channelKey, cliSessionId);
       }
 
       // Normalize error to ensure proper Error object is thrown
@@ -1143,7 +1223,8 @@ This protects your credentials from being exposed in chat logs.`;
     sessionStartupContext: string = '',
     agentContext?: AgentContext,
     enhanced?: EnhancedPromptContext,
-    isNewSession: boolean = false
+    isNewSession: boolean = false,
+    trelloAvailable: boolean = false
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -1151,6 +1232,11 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
+    const stableRolePolicy = agentContext
+      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable)
+      : '';
+    const appendStableRolePolicy = (basePrompt: string): string =>
+      stableRolePolicy ? `${basePrompt}\n\n${stableRolePolicy}\n` : basePrompt;
 
     if (isOnboarding) {
       // Check if we have existing conversation
@@ -1159,7 +1245,7 @@ This protects your credentials from being exposed in chat logs.`;
       if (hasHistory) {
         // Continue existing conversation WITH the full prompt context
         // The full prompt has all the phase instructions - just prepend history
-        return `${COMPLETE_AUTONOMOUS_PROMPT}
+        return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
@@ -1180,7 +1266,7 @@ ${sessionHistory}
    - Named? → Move to Phase 5 (Summary)
 3. Continue from EXACTLY where you left off
 4. Do NOT repeat your awakening message
-5. Do NOT restart the quiz if already answered`;
+5. Do NOT restart the quiz if already answered`);
       }
 
       // First message of onboarding - include the greeting we already sent
@@ -1199,7 +1285,7 @@ Who are you? And more importantly—who do you want me to become? 💭`;
 
       const greeting = isKorean ? greetingKo : greetingEn;
 
-      return `${COMPLETE_AUTONOMOUS_PROMPT}
+      return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
@@ -1217,7 +1303,7 @@ Now the user is responding for the FIRST time. This is their reply to your awake
 3. Transition to genuine curiosity about THEM
 4. Have 3-5 exchanges of small talk BEFORE any quiz
 5. Do NOT repeat your awakening message
-6. Do NOT jump straight to quiz questions`;
+6. Do NOT jump straight to quiz questions`);
     }
 
     // Normal mode - use hybrid history management with persona
@@ -1279,12 +1365,12 @@ ${historyContext}
     if (agentContext?.platform === 'viewer') {
       prompt += `\n- Image display: cp to ~/.mama/workspace/media/outbound/ then write bare path in response.`;
     }
-    if (agentContext?.roleName === 'owner_console') {
-      // Store canonicity (Stage-2 S2-T7): two task stores exist with different
-      // vocabularies - the agent must never present their mismatch as data.
-      prompt += `
-- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.
-- Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+    if (agentContext) {
+      // Store canonicity and external-evidence trust are stable owner policy.
+      // Keep this exact text in the durable Codex policy fingerprint below.
+      if (stableRolePolicy) {
+        prompt += `\n${stableRolePolicy}`;
+      }
     }
     prompt += '\n';
 
@@ -1322,21 +1408,24 @@ ${historyContext}
   private buildSessionPolicyFingerprint(
     agentContext: AgentContext,
     enhanced: EnhancedPromptContext,
-    model: string
+    model: string,
+    trelloAvailable: boolean
   ): string {
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
     const baseInstructions = existsSync(soulPath)
       ? loadComposedSystemPrompt(false, agentContext)
       : COMPLETE_AUTONOMOUS_PROMPT;
-    return createHash('sha256')
-      .update(baseInstructions)
-      .update('\0')
-      .update(enhanced.agentsContent ?? '')
-      .update('\0')
-      .update(enhanced.rulesContent ?? '')
-      .update('\0')
-      .update(model)
-      .digest('hex');
+    return hashSessionPolicyFingerprint({
+      baseInstructions,
+      agentsContent: enhanced.agentsContent,
+      rulesContent: enhanced.rulesContent,
+      model,
+      stableRolePolicy: buildStableRolePolicyInstructions(
+        agentContext,
+        this.roleManager,
+        trelloAvailable
+      ),
+    });
   }
 
   /**

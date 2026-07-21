@@ -71,6 +71,7 @@ import {
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
+import type { WorkOrderKind } from '../../operator/task-ledger.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -231,6 +232,27 @@ export function resolveCodeActRawConnectors(
   return [...new Set((enabledConnectorNames ?? []).map((name) => name.trim()).filter(Boolean))];
 }
 
+export type DaemonRawConnectorPrincipal =
+  | 'api-code-act'
+  | 'operator-report'
+  | `workorder-${WorkOrderKind}`;
+
+/**
+ * Trello contains owner-scoped project evidence. Among daemon-internal runs,
+ * only the host-issued board workorder may read it. Verified owner-console
+ * chat receives its separate route-scoped envelope in envelope-bootstrap.
+ */
+export function scopeDaemonRawConnectors(
+  enabledConnectorNames: readonly string[] | undefined,
+  principal: DaemonRawConnectorPrincipal
+): string[] {
+  const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
+  if (principal === 'workorder-board') {
+    return connectors;
+  }
+  return connectors.filter((connector) => connector !== 'trello');
+}
+
 const CODE_ACT_RAW_MEMORY_SCOPE_LIMIT = 500;
 const MEMORY_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
 
@@ -306,6 +328,76 @@ function buildCodeActRole(policy: {
     allowedPaths: [],
     systemControl: false,
     sensitiveAccess: false,
+  };
+}
+
+interface WorkOrderCodeActPolicy {
+  roleName: string;
+  allowedTools: readonly string[];
+}
+
+// Stage-2 workers are short-lived operator jobs, not standing multi-agent
+// personas. Their permissions must therefore be complete on a default install
+// and must not vary with optional legacy agent configuration.
+const WORKORDER_CODE_ACT_POLICIES = {
+  board: {
+    roleName: 'workorder-board',
+    allowedTools: [
+      'agent_notices',
+      'context_compile',
+      'contract_no_update',
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_overview',
+      'kagemusha_tasks',
+      'mama_search',
+      'report_publish',
+      'task_create',
+      'task_list',
+      'task_update',
+    ],
+  },
+  wiki: {
+    roleName: 'workorder-wiki',
+    allowedTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
+  },
+  'memory-curation': {
+    roleName: 'workorder-memory-curation',
+    allowedTools: [
+      'agent_notices',
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'mama_save',
+      'mama_search',
+    ],
+  },
+} as const satisfies Record<WorkOrderKind, WorkOrderCodeActPolicy>;
+
+export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: string): AgentContext {
+  const policy = WORKORDER_CODE_ACT_POLICIES[kind];
+  const blockedTools: string[] = [];
+  const allowedTools = uniqueToolList(['code_act', ...policy.allowedTools]);
+  return {
+    source: 'operator',
+    platform: 'cli',
+    roleName: policy.roleName,
+    role: {
+      allowedTools,
+      blockedTools,
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+      model,
+    },
+    session: {
+      sessionId: `operator:worker:${kind}`,
+      channelId: `worker:${kind}`,
+      startedAt: new Date(),
+    },
+    capabilities: allowedTools,
+    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+    tier: 2,
+    backend: 'codex',
   };
 }
 
@@ -736,7 +828,7 @@ export async function runAgentLoop(
         trigger_context: { user_text: '<api-code-act invocation>' },
         scope: {
           project_refs: [projectRef],
-          raw_connectors: codeActRawConnectors,
+          raw_connectors: scopeDaemonRawConnectors(codeActRawConnectors, 'api-code-act'),
           memory_scopes: memoryScopes,
           allowed_destinations: [],
         },
@@ -1162,8 +1254,18 @@ export async function runAgentLoop(
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
         const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
         const runOptions: Record<string, unknown> = {
-          systemPrompt: buildWorkerSystemPrompt(getGatewayToolsPrompt(), runtimeBackend),
+          systemPrompt: buildWorkerSystemPrompt(
+            getGatewayToolsPrompt(),
+            runtimeBackend,
+            wo.workKind
+          ),
         };
+        if (runtimeBackend === 'codex') {
+          runOptions.agentContext = buildWorkOrderCodexAgentContext(
+            wo.workKind,
+            config.agent.model
+          );
+        }
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
           // 'on' before a rollback) would run LIVE with no capture seam
@@ -1201,7 +1303,10 @@ export async function runAgentLoop(
             trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
             scope: {
               project_refs: [{ kind: 'project' as const, id: projectId }],
-              raw_connectors: codeActRawConnectors,
+              raw_connectors: scopeDaemonRawConnectors(
+                codeActRawConnectors,
+                `workorder-${wo.workKind}`
+              ),
               memory_scopes: resolveCodeActMemoryScopes(
                 deriveMemoryScopes({
                   source: 'operator',
@@ -1399,11 +1504,15 @@ export async function runAgentLoop(
                     channel_id: 'report',
                     trigger_context: { user_text: '<operator scheduled report>' },
                     scope: {
-                      // Reads: the enabled raw connectors (kagemusha_* gathers) + memory scopes
+                      // Reads: enabled non-Trello raw connectors (kagemusha_* gathers) + memory scopes.
+                      // Trello is reserved for verified owner-console and workorder-board envelopes.
                       // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
                       // send surface (constraint 2).
                       project_refs: [{ kind: 'project' as const, id: projectId }],
-                      raw_connectors: codeActRawConnectors,
+                      raw_connectors: scopeDaemonRawConnectors(
+                        codeActRawConnectors,
+                        'operator-report'
+                      ),
                       memory_scopes: resolveCodeActMemoryScopes(
                         deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
                         getAdapter()

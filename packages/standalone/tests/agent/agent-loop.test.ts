@@ -116,10 +116,12 @@ function parseDeliveredCodeActDeclarations(systemPrompt: string): CanonicalDecla
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-const { codexRuntimeProcessMock, laneManagerEnqueueWithSessionMock } = vi.hoisted(() => ({
-  codexRuntimeProcessMock: vi.fn(),
-  laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
-}));
+const { codexRuntimeProcessMock, laneManagerEnqueueWithSessionMock, sessionPoolInvalidateMock } =
+  vi.hoisted(() => ({
+    codexRuntimeProcessMock: vi.fn(),
+    laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
+    sessionPoolInvalidateMock: vi.fn(),
+  }));
 
 const persistentPromptMock = vi.fn().mockResolvedValue({
   response: 'Mock response',
@@ -207,6 +209,7 @@ vi.mock('../../src/agent/session-pool.js', () => {
       getSession: vi.fn().mockReturnValue({ sessionId: 'test-session', isNew: true }),
       getSessionId: vi.fn().mockReturnValue('test-session'),
       resetSession: vi.fn().mockReturnValue('fresh-test-session'),
+      invalidateSession: sessionPoolInvalidateMock,
       updateTokens: vi.fn().mockReturnValue({ totalTokens: 100, nearThreshold: false }),
       releaseSession: vi.fn(),
     }),
@@ -2583,6 +2586,189 @@ Skills provide additional tools.
   });
 
   describe('error handling', () => {
+    it('resets a stale Codex thread and retries once on a policy mismatch', async () => {
+      const resumePolicies: boolean[] = [];
+      const deliveredPrompts: string[] = [];
+      const onError = vi.fn();
+      const onMetric = vi.fn();
+      const onCliSessionReset = vi.fn();
+      const freshSessionSystemPrompt = vi.fn().mockResolvedValue('full owner policy prompt');
+      persistentPromptMock
+        .mockImplementationOnce(
+          async (_text: string, callbacks: unknown, promptOptions?: PromptOptions) => {
+            resumePolicies.push(promptOptions?.resumeSession ?? true);
+            deliveredPrompts.push(promptOptions?.systemPrompt ?? '');
+            const mismatch = new Error(
+              'Codex app-server thread policy mismatch; reset the session explicitly'
+            );
+            (callbacks as { onError?: (error: Error) => void }).onError?.(mismatch);
+            throw mismatch;
+          }
+        )
+        .mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            resumePolicies.push(promptOptions?.resumeSession ?? true);
+            deliveredPrompts.push(promptOptions?.systemPrompt ?? '');
+            return {
+              response: 'Recovered on a fresh Codex thread',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'fresh-codex-thread',
+            };
+          }
+        );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'base prompt',
+          useCodeAct: true,
+          onMetric,
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const result = await agentLoop.run('Give me the full report', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(createCodexContext()),
+        resumeSession: true,
+        systemPrompt: 'minimal resumed policy prompt',
+        freshSessionSystemPrompt,
+        onCliSessionReset,
+        streamCallbacks: { onError },
+      });
+
+      expect(resumePolicies).toEqual([true, false]);
+      expect(deliveredPrompts[0]).toContain('minimal resumed policy prompt');
+      expect(deliveredPrompts[1]).toContain('full owner policy prompt');
+      expect(freshSessionSystemPrompt).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+      expect(onCliSessionReset).toHaveBeenCalledWith('fresh-test-session');
+      expect(onMetric).toHaveBeenCalledWith('prompt_latency_ms', expect.any(Number), {
+        backend: 'codex',
+        turn: '1',
+      });
+      expect(result.response).toBe('Recovered on a fresh Codex thread');
+      expect(persistentPromptMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('normalizes one failed reset retry and emits final error metrics and callback once', async () => {
+      const mismatch = new Error(
+        'Codex app-server thread policy mismatch; reset the session explicitly'
+      );
+      const retryError = new Error('fresh Codex thread failed');
+      const onError = vi.fn();
+      const onMetric = vi.fn();
+      persistentPromptMock
+        .mockImplementationOnce(async (_text: string, callbacks: unknown) => {
+          (callbacks as { onError?: (error: Error) => void }).onError?.(mismatch);
+          throw mismatch;
+        })
+        .mockImplementationOnce(async (_text: string, callbacks: unknown) => {
+          (callbacks as { onError?: (error: Error) => void }).onError?.(retryError);
+          throw retryError;
+        });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        {
+          backend: 'codex',
+          systemPrompt: 'full prompt',
+          useCodeAct: true,
+          onMetric,
+        },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('Give me the full report', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          streamCallbacks: { onError },
+        })
+      ).rejects.toThrow('CLI error: fresh Codex thread failed');
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(retryError);
+      expect(onMetric).toHaveBeenCalledWith('prompt_error', 1, {
+        backend: 'codex',
+        error_type: 'CLI_ERROR',
+      });
+      expect(onMetric).not.toHaveBeenCalledWith(
+        'prompt_latency_ms',
+        expect.any(Number),
+        expect.any(Object)
+      );
+      expect(sessionPoolInvalidateMock).toHaveBeenCalledWith(
+        'default:default',
+        'fresh-test-session'
+      );
+    });
+
+    it('preserves the normalized CLI error when the external error callback throws', async () => {
+      const runtimeError = new Error('native runtime failed');
+      persistentPromptMock.mockRejectedValueOnce(runtimeError);
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'full prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('Give me the full report', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          streamCallbacks: {
+            onError: () => {
+              throw new Error('consumer callback exploded');
+            },
+          },
+        })
+      ).rejects.toThrow('CLI error: native runtime failed');
+    });
+
+    it('reports a full-prompt rebuild failure instead of the recoverable mismatch', async () => {
+      const mismatch = new Error(
+        'Codex app-server thread policy mismatch; reset the session explicitly'
+      );
+      const rebuildError = new Error('could not rebuild current owner policy');
+      const onError = vi.fn();
+      persistentPromptMock.mockImplementationOnce(async (_text: string, callbacks: unknown) => {
+        (callbacks as { onError?: (error: Error) => void }).onError?.(mismatch);
+        throw mismatch;
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'full prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('Give me the full report', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          freshSessionSystemPrompt: vi.fn().mockRejectedValue(rebuildError),
+          streamCallbacks: { onError },
+        })
+      ).rejects.toThrow('CLI error: could not rebuild current owner policy');
+
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(rebuildError);
+      expect(persistentPromptMock).toHaveBeenCalledTimes(1);
+      expect(sessionPoolInvalidateMock).toHaveBeenCalledWith(
+        'default:default',
+        'fresh-test-session'
+      );
+    });
+
     it('should handle max turns exceeded', async () => {
       const { ClaudeCLIWrapper } = await import('../../src/agent/claude-cli-wrapper.js');
       (ClaudeCLIWrapper as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
