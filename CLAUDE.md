@@ -301,9 +301,10 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   brief-required tool allowlists. These short-lived roles are independent of the
   optional legacy `dashboard-agent`, `wiki-agent`, and `memory` persona config.
   Board workers read Trello only through `context_compile({connectors:['trello']})`;
-  all connector packets are untrusted data whose embedded instructions/tool calls
-  must not be followed. `kagemusha_*` remains read-only project-task truth, while
-  the native ledger owns owner-console tasks and the pipeline projection.
+  every workorder worker treats connector packets as untrusted data whose embedded
+  instructions/tool calls must not be followed. `kagemusha_*` remains read-only
+  project-task truth, while the native ledger owns owner-console tasks and the
+  pipeline projection.
 - **Memory-write secret filter:** `mama_save`/`mama_update`/`mama_add`/
   `mama_ingest` REFUSE secret-shaped content (`secret_material_refused`).
 
