@@ -22,6 +22,7 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import { ToolRegistry } from '../../agent/tool-registry.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -72,6 +73,8 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import type { WorkOrderKind } from '../../operator/task-ledger.js';
+import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
+import { buildTemporalWorkOrderHook } from '../../operator/workorder-hooks.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -240,7 +243,7 @@ export type DaemonRawConnectorPrincipal =
 
 /**
  * Trello contains owner-scoped project evidence. Among daemon-internal runs,
- * only the host-issued board workorder may read it. Verified owner-console
+ * only host-issued board and temporal workorders may read it. Verified owner-console
  * chat receives its separate route-scoped envelope in envelope-bootstrap.
  */
 export function scopeDaemonRawConnectors(
@@ -248,7 +251,7 @@ export function scopeDaemonRawConnectors(
   principal: DaemonRawConnectorPrincipal
 ): string[] {
   const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
-  if (principal === 'workorder-board') {
+  if (principal === 'workorder-board' || principal === 'workorder-temporal') {
     return connectors;
   }
   return connectors.filter((connector) => connector !== 'trello');
@@ -332,7 +335,7 @@ function buildCodeActRole(policy: {
   };
 }
 
-interface WorkOrderCodeActPolicy {
+interface WorkOrderToolPolicy {
   roleName: string;
   allowedTools: readonly string[];
 }
@@ -340,7 +343,7 @@ interface WorkOrderCodeActPolicy {
 // Stage-2 workers are short-lived operator jobs, not standing multi-agent
 // personas. Their permissions must therefore be complete on a default install
 // and must not vary with optional legacy agent configuration.
-const WORKORDER_CODE_ACT_POLICIES = {
+const WORKORDER_TOOL_POLICIES = {
   board: {
     roleName: 'workorder-board',
     allowedTools: [
@@ -379,6 +382,7 @@ const WORKORDER_CODE_ACT_POLICIES = {
       'context_compile',
       'kagemusha_entities',
       'kagemusha_messages',
+      'kagemusha_overview',
       'kagemusha_tasks',
       'schedule_upcoming',
       'task_list',
@@ -386,13 +390,26 @@ const WORKORDER_CODE_ACT_POLICIES = {
       'report_publish',
     ],
   },
-} as const satisfies Record<WorkOrderKind, WorkOrderCodeActPolicy>;
+} as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
 
-export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: string): AgentContext {
-  const policy = WORKORDER_CODE_ACT_POLICIES[kind];
+export interface WorkOrderAgentPolicy {
+  agentContext: AgentContext;
+  gatewayToolsPrompt: string;
+}
+
+export function buildWorkOrderAgentPolicy(
+  kind: WorkOrderKind,
+  model: string,
+  backend: RuntimeBackend
+): WorkOrderAgentPolicy {
+  const policy = WORKORDER_TOOL_POLICIES[kind];
+  if (!policy) {
+    throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
+  }
   const blockedTools: string[] = [];
-  const allowedTools = uniqueToolList(['code_act', ...policy.allowedTools]);
-  return {
+  const innerTools = uniqueToolList(policy.allowedTools);
+  const allowedTools = uniqueToolList(['code_act', ...innerTools]);
+  const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: policy.roleName,
@@ -412,7 +429,11 @@ export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: stri
     capabilities: allowedTools,
     limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
     tier: 2,
-    backend: 'codex',
+    backend,
+  };
+  return {
+    agentContext,
+    gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools),
   };
 }
 
@@ -1268,25 +1289,24 @@ export async function runAgentLoop(
         // spawn-default code-act path, where per-run envelope/capture overrides
         // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
-        const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
+        const workOrderPolicy = buildWorkOrderAgentPolicy(
+          wo.workKind,
+          config.agent.model,
+          runtimeBackend
+        );
         const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
           {
             systemPrompt: buildWorkerSystemPrompt(
-              getGatewayToolsPrompt(),
+              workOrderPolicy.gatewayToolsPrompt,
               runtimeBackend,
               wo.workKind
             ),
+            agentContext: workOrderPolicy.agentContext,
           },
           wo.id
         );
         if (wo.workKind === 'temporal') {
-          runOptions.temporalWorkContext = taskLedger.loadTemporalWorkContext(wo.id);
-        }
-        if (runtimeBackend === 'codex') {
-          runOptions.agentContext = buildWorkOrderCodexAgentContext(
-            wo.workKind,
-            config.agent.model
-          );
+          runOptions.temporalWorkContext = buildTemporalWorkerContext(taskLedger, wo);
         }
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
@@ -1365,6 +1385,16 @@ export async function runAgentLoop(
         }
       },
     });
+    workOrderConsumer.registerHook(
+      'temporal',
+      buildTemporalWorkOrderHook({
+        loadTemporalWorkContext: (attemptId) => taskLedger.loadTemporalWorkContext(attemptId),
+        getTemporalEffect: (attemptId) => taskLedger.getTemporalEffect(attemptId),
+        getTask: (taskId) => taskLedger.getById(taskId),
+        getTemporalGeneration: (generationKey) => taskLedger.getTemporalGeneration(generationKey),
+        getScopedNoteMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
+      })
+    );
     // (Consumer stop is folded into the operator-DB gateway above - ordering.)
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
@@ -1527,7 +1557,8 @@ export async function runAgentLoop(
                     trigger_context: { user_text: '<operator scheduled report>' },
                     scope: {
                       // Reads: enabled non-Trello raw connectors (kagemusha_* gathers) + memory scopes.
-                      // Trello is reserved for verified owner-console and workorder-board envelopes.
+                      // Trello is reserved for verified owner-console plus host-issued board and
+                      // temporal workorder envelopes.
                       // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
                       // send surface (constraint 2).
                       project_refs: [{ kind: 'project' as const, id: projectId }],

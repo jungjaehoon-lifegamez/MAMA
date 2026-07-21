@@ -17,6 +17,12 @@
  */
 
 import { createHash } from 'node:crypto';
+import type { TaskRecord, TemporalGenerationRecord } from './task-ledger.js';
+import {
+  temporalNoUpdateScope,
+  type TemporalEffectReceipt,
+  type TemporalWorkContext,
+} from './temporal-effect.js';
 
 export const OBLIGATED_TOOLS = [
   'report_publish',
@@ -102,4 +108,158 @@ export function verifyAfterRun(
   }
 
   return { verified, effects };
+}
+
+export interface TemporalVerifierDeps {
+  loadTemporalWorkContext: (attemptId: number) => TemporalWorkContext;
+  getTemporalEffect: (attemptId: number) => TemporalEffectReceipt | null;
+  getTask: (taskId: number) => TaskRecord | null;
+  getTemporalGeneration: (generationKey: string) => TemporalGenerationRecord | null;
+  getScopedNoteMaxId: (scope: string) => number;
+}
+
+export type TemporalEffectSnapshot = Readonly<TemporalWorkContext & { scopedNoteMaxId: number }>;
+
+export type TemporalVerifyResult =
+  | {
+      verified: true;
+      outcome: TemporalEffectReceipt['outcome'] | 'verified_superseded';
+      effects: string[];
+    }
+  | { verified: false; reason: string; effects: string[] };
+
+export function captureTemporalEffectSnapshot(
+  deps: TemporalVerifierDeps,
+  attemptId: number
+): TemporalEffectSnapshot {
+  const context = deps.loadTemporalWorkContext(attemptId);
+  if (context.attemptId !== attemptId) {
+    throw new Error(`temporal verifier context attempt mismatch for ${attemptId}`);
+  }
+  return Object.freeze({
+    ...context,
+    scopedNoteMaxId: deps.getScopedNoteMaxId(temporalNoUpdateScope(context)),
+  });
+}
+
+export function verifyTemporalEffect(
+  deps: TemporalVerifierDeps,
+  before: TemporalEffectSnapshot
+): TemporalVerifyResult {
+  const effects: string[] = [];
+  const receipt = deps.getTemporalEffect(before.attemptId);
+  if (!receipt) return temporalFailure('temporal effect receipt missing', effects);
+  if (receipt.workorderAttemptId !== before.attemptId) {
+    return temporalFailure('temporal receipt attempt mismatch', effects);
+  }
+  if (receipt.taskId !== before.taskId) {
+    return temporalFailure('temporal receipt task mismatch', effects);
+  }
+  if (receipt.generationKey !== before.generationKey) {
+    return temporalFailure('temporal receipt generation mismatch', effects);
+  }
+  if (receipt.occurrenceKey !== before.occurrenceKey) {
+    return temporalFailure('temporal receipt occurrence mismatch', effects);
+  }
+  if (
+    receipt.beforeRevision !== before.revision ||
+    receipt.afterRevision !== receipt.beforeRevision + 1
+  ) {
+    return temporalFailure('temporal receipt revision invariant failed', effects);
+  }
+  if (!receipt.reason.trim()) {
+    return temporalFailure('temporal receipt reason missing', effects);
+  }
+  if (!Number.isSafeInteger(receipt.createdAt)) {
+    return temporalFailure('temporal receipt creation time is invalid', effects);
+  }
+  if (new Set(receipt.changedFields).size !== receipt.changedFields.length) {
+    return temporalFailure('temporal receipt changed fields contain duplicates', effects);
+  }
+
+  const generation = deps.getTemporalGeneration(before.generationKey);
+  if (
+    !generation ||
+    generation.generationKey !== before.generationKey ||
+    generation.taskId !== before.taskId ||
+    generation.temporalEpoch !== before.temporalEpoch ||
+    generation.occurrenceKey !== before.occurrenceKey ||
+    generation.checkAt !== before.checkAt ||
+    generation.lastWorkOrderId !== before.attemptId ||
+    generation.disposition !== receipt.outcome
+  ) {
+    return temporalFailure('temporal generation invariant failed', effects);
+  }
+
+  const workflowFields = new Set(['status', 'deadline', 'due_at']);
+  const resolvedEffectFields = new Set(['status', 'due_at']);
+  const hasWorkflowChange = receipt.changedFields.some((field) => workflowFields.has(field));
+  const hasResolvedEffect = receipt.changedFields.some((field) => resolvedEffectFields.has(field));
+  const markerChanged = receipt.changedFields.includes('temporal_reconciled_occurrence_key');
+  const requiresNote = receipt.outcome === 'final_no_update' || receipt.outcome === 'deferred';
+  if (receipt.outcome === 'resolved') {
+    if (!hasResolvedEffect || !markerChanged || receipt.nextTemporalCheckAt !== null) {
+      return temporalFailure('resolved temporal receipt markers are invalid', effects);
+    }
+  } else if (receipt.outcome === 'final_no_update') {
+    if (
+      hasWorkflowChange ||
+      !markerChanged ||
+      receipt.nextTemporalCheckAt !== null ||
+      !receipt.reason.includes('\nEvidence:')
+    ) {
+      return temporalFailure('final_no_update temporal receipt markers are invalid', effects);
+    }
+  } else if (
+    hasWorkflowChange ||
+    markerChanged ||
+    !receipt.changedFields.includes('next_temporal_check_at') ||
+    receipt.nextTemporalCheckAt === null ||
+    receipt.nextTemporalCheckAt <= receipt.createdAt
+  ) {
+    return temporalFailure('deferred temporal receipt markers are invalid', effects);
+  }
+
+  if (
+    requiresNote &&
+    deps.getScopedNoteMaxId(temporalNoUpdateScope(before)) <= before.scopedNoteMaxId
+  ) {
+    return temporalFailure('exact-scope temporal no-update note missing', effects);
+  }
+
+  const task = deps.getTask(before.taskId);
+  if (!task) return temporalFailure('temporal receipt owner task missing', effects);
+  if (task.id !== before.taskId) {
+    return temporalFailure('temporal owner task identity mismatch', effects);
+  }
+  if (task.revision < receipt.afterRevision) {
+    return temporalFailure('temporal owner task revision precedes receipt', effects);
+  }
+  effects.push(`receipt:${receipt.workorderAttemptId}`);
+  effects.push(`outcome:${receipt.outcome}`);
+  if (task.revision > receipt.afterRevision) {
+    effects.push(`owner task advanced to revision ${task.revision}`);
+    return { verified: true, outcome: 'verified_superseded', effects };
+  }
+  if (
+    task.lastTemporalAttemptId !== before.attemptId ||
+    task.lastTemporalCheckedAt !== receipt.createdAt
+  ) {
+    return temporalFailure('temporal owner task attempt marker mismatch', effects);
+  }
+  if (receipt.outcome === 'resolved' || receipt.outcome === 'final_no_update') {
+    if (
+      task.temporalReconciledOccurrenceKey !== before.occurrenceKey ||
+      task.nextTemporalCheckAt !== null
+    ) {
+      return temporalFailure('temporal owner task final markers are invalid', effects);
+    }
+  } else if (task.nextTemporalCheckAt !== receipt.nextTemporalCheckAt) {
+    return temporalFailure('temporal owner task deferred check mismatch', effects);
+  }
+  return { verified: true, outcome: receipt.outcome, effects };
+}
+
+function temporalFailure(reason: string, effects: string[]): TemporalVerifyResult {
+  return { verified: false, reason, effects };
 }

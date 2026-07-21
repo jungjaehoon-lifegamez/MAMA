@@ -16,6 +16,13 @@
 import type { SQLiteDatabase } from '../sqlite.js';
 import { OBLIGATED_TOOLS } from './action-verifier.js';
 import type { WorkOrderRecord } from './task-ledger.js';
+import {
+  captureTemporalEffectSnapshot,
+  verifyTemporalEffect,
+  type TemporalEffectSnapshot,
+  type TemporalVerifierDeps,
+} from './action-verifier.js';
+import type { WorkOrderHook } from './workorder-consumer.js';
 
 const TRACE_TOOL_LIST = OBLIGATED_TOOLS.map((t) => `'${t}'`).join(',');
 
@@ -89,5 +96,29 @@ export function buildWikiAfterHook(
     } else {
       log('[stage2] wiki worker: compilation complete');
     }
+  };
+}
+
+export function buildTemporalWorkOrderHook(deps: TemporalVerifierDeps): WorkOrderHook {
+  return {
+    verdictRequired: true,
+    before: (workOrder) => captureTemporalEffectSnapshot(deps, workOrder.id),
+    after: (workOrder, _response, beforeState) => {
+      if (
+        typeof beforeState !== 'object' ||
+        beforeState === null ||
+        !('attemptId' in beforeState)
+      ) {
+        return { disposition: 'fail', reason: 'temporal effect snapshot missing' };
+      }
+      const snapshot = beforeState as TemporalEffectSnapshot;
+      if (snapshot.attemptId !== workOrder.id) {
+        return { disposition: 'fail', reason: 'temporal effect snapshot attempt mismatch' };
+      }
+      const result = verifyTemporalEffect(deps, snapshot);
+      return result.verified
+        ? { disposition: 'complete' }
+        : { disposition: 'fail', reason: result.reason };
+    },
   };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  buildWorkOrderCodexAgentContext,
+  buildWorkOrderAgentPolicy,
   deriveCodeActToolPolicy,
   resolveCodeActMemoryScopes,
   resolveCodeActRawConnectors,
@@ -131,10 +131,11 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('grants Trello only to the host-issued board workorder principal', () => {
+    it('grants Trello only to host-issued board and temporal workorder principals', () => {
       const enabled = ['trello', 'kagemusha', 'telegram'];
 
       expect(scopeDaemonRawConnectors(enabled, 'workorder-board')).toEqual(enabled);
+      expect(scopeDaemonRawConnectors(enabled, 'workorder-temporal')).toEqual(enabled);
       for (const principal of [
         'workorder-wiki',
         'workorder-memory-curation',
@@ -211,7 +212,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it.each(cases)(
       'uses the built-in least-privilege $kind policy without standing agent config',
       ({ kind, roleName, innerTools }) => {
-        const context = buildWorkOrderCodexAgentContext(kind, 'gpt-5.4');
+        const policy = buildWorkOrderAgentPolicy(kind, 'gpt-5.4', 'codex');
+        const context = policy.agentContext;
         const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
 
         expect(context).toMatchObject({
@@ -227,6 +229,49 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         });
         expect(context.role.allowedTools).toEqual(['code_act', ...innerTools]);
         expect(projected.names).toEqual(innerTools);
+      }
+    );
+
+    it.each(['codex', 'claude'] as const)(
+      'uses one least-privilege temporal catalog for the %s backend',
+      (backend) => {
+        const policy = buildWorkOrderAgentPolicy('temporal', 'worker-model', backend);
+        const projected = projectCodeActToolPolicy({
+          tier: policy.agentContext.tier,
+          role: policy.agentContext.role,
+        });
+        const advertised = [
+          ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
+        ].map((match) => match[1]);
+
+        expect(policy.agentContext.backend).toBe(backend);
+        expect(advertised.sort()).toEqual([...projected.names].sort());
+        expect(projected.names).toEqual([
+          'agent_notices',
+          'context_compile',
+          'kagemusha_entities',
+          'kagemusha_messages',
+          'kagemusha_overview',
+          'kagemusha_tasks',
+          'report_publish',
+          'schedule_upcoming',
+          'task_list',
+          'task_temporal_reconcile',
+        ]);
+        for (const forbidden of [
+          'task_create',
+          'task_update',
+          'mama_save',
+          'mama_update',
+          'Read',
+          'Write',
+          'Bash',
+          'os_set_model',
+          'browser_click',
+        ]) {
+          expect(projected.names).not.toContain(forbidden);
+          expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
+        }
       }
     );
   });
