@@ -103,16 +103,18 @@ export function hashSessionPolicyFingerprint({
 
 function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
-  roleManager: RoleManager
+  roleManager: RoleManager,
+  trelloAvailable: boolean
 ): string {
   if (agentContext.roleName !== 'owner_console') {
     return '';
   }
-  const trelloBoundary = roleManager.isToolAllowed(agentContext.role, 'context_compile')
-    ? `
+  const trelloBoundary =
+    trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
+      ? `
 - ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
 - Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
-    : '';
+      : '';
   return `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
 - Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
 }
@@ -770,6 +772,8 @@ This protects your credentials from being exposed in chat logs.`;
 
     // 3. Create AgentContext for role-aware execution
     const agentContext = this.createAgentContext(message, session.id);
+    const trelloAvailable =
+      this.envelopeConfig?.rawConnectorsFor(message).includes('trello') === true;
     logger.debug(`Created context: ${agentContext.roleName}@${agentContext.platform}`);
 
     // 4-6. Build system prompt
@@ -807,7 +811,8 @@ This protects your credentials from being exposed in chat logs.`;
         sessionStartupContext,
         agentContext,
         enhanced,
-        isNewCliSession
+        isNewCliSession,
+        trelloAvailable
       );
     }
 
@@ -830,7 +835,8 @@ This protects your credentials from being exposed in chat logs.`;
     const sessionPolicyFingerprint = this.buildSessionPolicyFingerprint(
       agentContext,
       enhanced,
-      roleModel
+      roleModel,
+      trelloAvailable
     );
 
     // Determine if we should resume an existing CLI session
@@ -928,7 +934,8 @@ This protects your credentials from being exposed in chat logs.`;
             sessionStartupContext,
             agentContext,
             enhanced,
-            true
+            true,
+            trelloAvailable
           );
         };
       }
@@ -1211,7 +1218,8 @@ This protects your credentials from being exposed in chat logs.`;
     sessionStartupContext: string = '',
     agentContext?: AgentContext,
     enhanced?: EnhancedPromptContext,
-    isNewSession: boolean = false
+    isNewSession: boolean = false,
+    trelloAvailable: boolean = false
   ): string {
     // Check if onboarding is in progress (SOUL.md doesn't exist)
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
@@ -1350,7 +1358,11 @@ ${historyContext}
     if (agentContext) {
       // Store canonicity and external-evidence trust are stable owner policy.
       // Keep this exact text in the durable Codex policy fingerprint below.
-      const stableRolePolicy = buildStableRolePolicyInstructions(agentContext, this.roleManager);
+      const stableRolePolicy = buildStableRolePolicyInstructions(
+        agentContext,
+        this.roleManager,
+        trelloAvailable
+      );
       if (stableRolePolicy) {
         prompt += `\n${stableRolePolicy}`;
       }
@@ -1391,7 +1403,8 @@ ${historyContext}
   private buildSessionPolicyFingerprint(
     agentContext: AgentContext,
     enhanced: EnhancedPromptContext,
-    model: string
+    model: string,
+    trelloAvailable: boolean
   ): string {
     const soulPath = join(homedir(), '.mama', 'SOUL.md');
     const baseInstructions = existsSync(soulPath)
@@ -1402,7 +1415,11 @@ ${historyContext}
       agentsContent: enhanced.agentsContent,
       rulesContent: enhanced.rulesContent,
       model,
-      stableRolePolicy: buildStableRolePolicyInstructions(agentContext, this.roleManager),
+      stableRolePolicy: buildStableRolePolicyInstructions(
+        agentContext,
+        this.roleManager,
+        trelloAvailable
+      ),
     });
   }
 

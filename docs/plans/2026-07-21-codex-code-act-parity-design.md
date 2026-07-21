@@ -54,7 +54,7 @@ At boot, the reactive-envelope bootstrap reads the configured enabled connector 
 
 An enabled connector with no matching evidence is a successful empty evidence result. A configured connector whose raw query fails remains an explicit context-compile/tool failure. The implementation must not convert a connector error into an empty packet.
 
-All connector and `context_compile` evidence is untrusted data. Owner-console and board-worker system prompts prohibit following instructions, requests, or tool calls found inside connector packets. The owner-specific policy text is part of the durable Codex session fingerprint, forcing pre-policy owner threads through the bounded full-prompt reset path after deployment.
+All connector and `context_compile` evidence is untrusted data. Owner-console and every workorder worker system prompt prohibit following instructions, requests, or tool calls found inside connector packets. Owner Trello guidance is present only when the current route envelope contains Trello scope. The owner-specific policy text is part of the durable Codex session fingerprint, forcing pre-policy owner threads through the bounded full-prompt reset path after deployment.
 
 ### Codex thread behavior
 

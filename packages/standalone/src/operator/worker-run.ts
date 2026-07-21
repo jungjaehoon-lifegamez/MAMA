@@ -122,11 +122,11 @@ export function buildWorkerSystemPrompt(
   return [
     'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
     ...toolInstructions,
+    UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
     ...(kind === 'board'
       ? [
           '',
           'Board data boundaries (non-negotiable):',
-          `- ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}`,
           "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }); never treat kagemusha_* as Trello.",
           '- kagemusha_* is the read-only project-task truth.',
           '- task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source.',
