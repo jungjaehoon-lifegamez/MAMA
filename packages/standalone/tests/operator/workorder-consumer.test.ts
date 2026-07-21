@@ -284,7 +284,208 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     });
   });
 
-  describe('AC #7: start/stop lifecycle', () => {
+  describe('AC #7: opt-in blocking effect verdict', () => {
+    it('completes only after a required hook returns a complete verdict', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: () => ({ disposition: 'complete' }),
+      });
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-complete',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events).toContainEqual({
+        type: 'complete',
+        workKind: 'board',
+        workOrderId: wo.id,
+      });
+    });
+
+    it('routes a required fail verdict through the existing requeue policy', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('wiki', {
+        verdictRequired: true,
+        after: () => ({ disposition: 'fail', reason: 'effect-missing' }),
+      });
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'required-fail',
+        input: { batchId: 'b-required-fail', events: [] },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events).toContainEqual({
+        type: 'failed',
+        workKind: 'wiki',
+        workOrderId: wo.id,
+        reason: 'effect-missing',
+      });
+      expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
+      expect(ctx.events.some((event) => event.type === 'complete')).toBe(false);
+    });
+
+    it('fails when a required hook has no after verifier', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', { verdictRequired: true });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-after-missing',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.find((event) => event.type === 'failed')?.reason).toBe(
+        'effect-verdict-missing'
+      );
+      expect(ctx.events.some((event) => event.type === 'complete')).toBe(false);
+    });
+
+    it('fails when a required verifier returns no verdict', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: () => undefined,
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-verdict-missing',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.find((event) => event.type === 'failed')?.reason).toBe(
+        'effect-verdict-missing'
+      );
+    });
+
+    it('fails when a required verifier throws', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: async () => {
+          throw new Error('receipt store unavailable');
+        },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-verifier-throws',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.find((event) => event.type === 'failed')?.reason).toBe(
+        'after-hook: receipt store unavailable'
+      );
+    });
+
+    it('bounds a required verifier exception before persistence and alarms', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: () => {
+          throw new Error(`private-prefix-${'x'.repeat(1_000)}`);
+        },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-verifier-bounded-error',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      const reason = ctx.events.find((event) => event.type === 'failed')?.reason;
+      expect(reason?.startsWith('after-hook: private-prefix-')).toBe(true);
+      expect(reason?.length).toBeLessThanOrEqual(500);
+    });
+
+    it.each([
+      ['unknown disposition', { disposition: 'unknown' }],
+      ['blank failure reason', { disposition: 'fail', reason: '   ' }],
+      ['oversized failure reason', { disposition: 'fail', reason: 'x'.repeat(501) }],
+    ])('fails a malformed required verdict: %s', async (_label, verdict) => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        after: () => verdict as never,
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: `required-invalid-${_label}`,
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.find((event) => event.type === 'failed')?.reason).toBe(
+        'effect-verdict-invalid'
+      );
+    });
+
+    it('awaits asynchronous before and after hooks around the runner', async () => {
+      const order: string[] = [];
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          order.push('runner');
+          return { response: 'done' };
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        verdictRequired: true,
+        before: async () => {
+          await Promise.resolve();
+          order.push('before');
+          return { revision: 7 };
+        },
+        after: async (_wo, _response, beforeState) => {
+          await Promise.resolve();
+          order.push(`after:${String((beforeState as { revision: number }).revision)}`);
+          return { disposition: 'complete' };
+        },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'required-async-hooks',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(order).toEqual(['before', 'runner', 'after:7']);
+      expect(ctx.events.some((event) => event.type === 'complete')).toBe(true);
+    });
+
+    it('ignores a fail-shaped verdict when strict completion is not enabled', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      consumer.registerHook('board', {
+        after: () => ({ disposition: 'fail', reason: 'legacy-observe-only' }),
+      });
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'permissive-fail-shaped',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
+      expect(
+        ctx.events.some((event) => event.type === 'complete' && event.workOrderId === wo.id)
+      ).toBe(true);
+    });
+  });
+
+  describe('AC #8: start/stop lifecycle', () => {
     it('start twice throws; isStarted reflects state', () => {
       const consumer = new WorkOrderConsumer({ ...ctx.deps, tickMs: 3_600_000 });
       expect(consumer.isStarted()).toBe(false);

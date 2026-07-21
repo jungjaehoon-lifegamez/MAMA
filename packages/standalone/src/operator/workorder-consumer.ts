@@ -22,7 +22,8 @@
  * Completion hooks (plan E3/E4): per-kind before/after seams re-home the
  * post-run host effects the legacy closures owned (board bracket
  * verification, promotion event re-emission, wiki noUpdate reading). Hook
- * errors are LOUD but never fail a completed run (observe, never block).
+ * errors remain observe-only for existing kinds. A kind may opt into a typed
+ * blocking verdict; A1 does not enable that option for any production kind.
  */
 
 import type { WorkOrderKind, WorkOrderRecord, EnqueueWorkOrderInput } from './task-ledger.js';
@@ -45,11 +46,21 @@ export interface OpsAlarmSink {
   send(line: string): Promise<void>;
 }
 
+export type WorkOrderEffectVerdict =
+  | { disposition: 'complete' }
+  | { disposition: 'fail'; reason: string };
+
 export interface WorkOrderHook {
   /** Bracket 'before' state (e.g. verifier snapshot at claim time). */
-  before?: (wo: WorkOrderRecord) => unknown;
+  before?: (wo: WorkOrderRecord) => unknown | Promise<unknown>;
   /** Post-run effects (verification, event re-emission, outcome reading). */
-  after?: (wo: WorkOrderRecord, response: string, beforeState: unknown) => void;
+  after?: (
+    wo: WorkOrderRecord,
+    response: string,
+    beforeState: unknown
+  ) => WorkOrderEffectVerdict | void | Promise<WorkOrderEffectVerdict | void>;
+  /** Opt-in only: a missing, malformed, or negative verdict blocks completion. */
+  verdictRequired?: boolean;
 }
 
 export interface WorkOrderConsumerEvent {
@@ -95,6 +106,7 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
 
 const DEFAULT_TICK_MS = 60_000;
 const ALARM_DEDUP_MS = 6 * 60 * 60 * 1000;
+const MAX_EFFECT_VERDICT_REASON_LENGTH = 500;
 
 export class WorkOrderConsumer {
   private readonly deps: WorkOrderConsumerDeps;
@@ -210,7 +222,7 @@ export class WorkOrderConsumer {
     let beforeState: unknown;
     if (hook?.before) {
       try {
-        beforeState = hook.before(wo);
+        beforeState = await hook.before(wo);
       } catch (err) {
         // A broken before-hook must not strand the claim: fail the order loudly.
         this.handleFailure(wo, `before-hook: ${errMessage(err)}`);
@@ -235,15 +247,40 @@ export class WorkOrderConsumer {
       return;
     }
 
+    let verdict: WorkOrderEffectVerdict | void = undefined;
     if (hook?.after) {
       try {
-        hook.after(wo, response, beforeState);
+        verdict = await hook.after(wo, response, beforeState);
       } catch (err) {
-        // Observe, never block: a verification/emission failure is loud but
-        // does not fail a run that completed.
+        if (hook.verdictRequired) {
+          this.handleFailure(wo, boundedEffectFailure('after-hook: ', err));
+          return;
+        }
+        // Existing kinds remain observe-only: a verification/emission failure
+        // is loud but does not fail a run that completed.
         this.log(
           `[workorder-consumer] after-hook error (${wo.workKind}#${wo.id}): ${errMessage(err)}`
         );
+      }
+    }
+
+    if (hook?.verdictRequired) {
+      if (verdict === undefined) {
+        this.handleFailure(wo, 'effect-verdict-missing');
+        return;
+      }
+      if (verdict.disposition === 'fail') {
+        const reason = typeof verdict.reason === 'string' ? verdict.reason.trim() : '';
+        if (!reason || reason.length > MAX_EFFECT_VERDICT_REASON_LENGTH) {
+          this.handleFailure(wo, 'effect-verdict-invalid');
+          return;
+        }
+        this.handleFailure(wo, reason);
+        return;
+      }
+      if (verdict.disposition !== 'complete') {
+        this.handleFailure(wo, 'effect-verdict-invalid');
+        return;
       }
     }
 
@@ -324,4 +361,8 @@ export class WorkOrderConsumer {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function boundedEffectFailure(prefix: string, err: unknown): string {
+  return `${prefix}${errMessage(err)}`.slice(0, MAX_EFFECT_VERDICT_REASON_LENGTH);
 }
