@@ -2583,6 +2583,46 @@ Skills provide additional tools.
   });
 
   describe('error handling', () => {
+    it('resets a stale Codex thread and retries once on a policy mismatch', async () => {
+      const resumePolicies: boolean[] = [];
+      persistentPromptMock
+        .mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            resumePolicies.push(promptOptions?.resumeSession ?? true);
+            throw new Error(
+              'Codex app-server thread policy mismatch; reset the session explicitly'
+            );
+          }
+        )
+        .mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            resumePolicies.push(promptOptions?.resumeSession ?? true);
+            return {
+              response: 'Recovered on a fresh Codex thread',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'fresh-codex-thread',
+            };
+          }
+        );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const result = await agentLoop.run('Give me the full report', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(createCodexContext()),
+        resumeSession: true,
+      });
+
+      expect(resumePolicies).toEqual([true, false]);
+      expect(result.response).toBe('Recovered on a fresh Codex thread');
+      expect(persistentPromptMock).toHaveBeenCalledTimes(2);
+    });
+
     it('should handle max turns exceeded', async () => {
       const { ClaudeCLIWrapper } = await import('../../src/agent/claude-cli-wrapper.js');
       (ClaudeCLIWrapper as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
