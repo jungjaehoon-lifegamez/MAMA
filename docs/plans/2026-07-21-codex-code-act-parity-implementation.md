@@ -44,7 +44,7 @@ expect(policy.names).not.toContain('Bash');
 
 - [ ] **Step 2: Run the new test and verify RED**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/code-act/tool-policy.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/code-act/tool-policy.test.ts`
 
 Expected: FAIL because `tool-policy.ts` does not exist.
 
@@ -103,7 +103,7 @@ Add a HostBridge test that records registered QuickJS function names and compare
 
 - [ ] **Step 8: Run focused tests and verify GREEN**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/code-act/tool-policy.test.ts tests/code-act/host-bridge.test.ts tests/code-act/type-definition-generator.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/code-act/tool-policy.test.ts tests/code-act/host-bridge.test.ts tests/code-act/type-definition-generator.test.ts`
 
 Expected: all tests pass.
 
@@ -156,7 +156,7 @@ Assert the outer tool's exact JSON schema requires `code`, permits optional stri
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/agent/agent-loop.test.ts tests/code-act/integration.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/agent/agent-loop.test.ts tests/code-act/integration.test.ts`
 
 Expected: new Codex bridge assertions fail because Codex currently receives individual tools and suppresses Code-Act guidance.
 
@@ -193,7 +193,7 @@ Make both the Claude parsed-JavaScript path and the Codex native-tool path invok
 
 - [ ] **Step 7: Run focused tests and verify GREEN**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/agent/agent-loop.test.ts tests/code-act/integration.test.ts tests/agent/tool-registry.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/agent/agent-loop.test.ts tests/code-act/integration.test.ts tests/agent/tool-registry.test.ts`
 
 Expected: all tests pass.
 
@@ -232,7 +232,7 @@ In `agent-loop.test.ts`, hold the caller-supplied base fingerprint constant, var
 
 - [ ] **Step 4: Run tests and verify RED**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/cli/config-manager.test.ts tests/cli/runtime/message-router-config.test.ts tests/agent/agent-loop.test.ts tests/agent/codex-app-server-process.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/cli/config-manager.test.ts tests/cli/runtime/message-router-config.test.ts tests/agent/agent-loop.test.ts tests/agent/codex-app-server-process.test.ts`
 
 Expected: the new default, activation, and inner-policy identity assertions fail.
 
@@ -246,7 +246,7 @@ Pass a fingerprint formed from the caller value plus the projector's stable `fin
 
 - [ ] **Step 7: Run focused tests and verify GREEN**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/cli/config-manager.test.ts tests/cli/runtime/message-router-config.test.ts tests/agent/agent-loop.test.ts tests/agent/codex-app-server-process.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/cli/config-manager.test.ts tests/cli/runtime/message-router-config.test.ts tests/agent/agent-loop.test.ts tests/agent/codex-app-server-process.test.ts`
 
 Expected: all tests pass.
 
@@ -275,7 +275,7 @@ Cover the real `ConnectorsConfig = Record<string, ConnectorConfig>` shape: valid
 
 - [ ] **Step 2: Run loader tests and verify RED**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/connectors/config-loader.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/connectors/config-loader.test.ts`
 
 Expected: FAIL because the shared loader does not exist.
 
@@ -304,7 +304,7 @@ Use the shared loader for connector registration. On typed failure, log the erro
 
 - [ ] **Step 5: Run focused tests and verify GREEN**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/connectors/config-loader.test.ts tests/connectors/resolve-poll-minutes.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/connectors/config-loader.test.ts tests/connectors/resolve-poll-minutes.test.ts`
 
 Expected: all tests pass.
 
@@ -348,7 +348,7 @@ Sandbox functions are synchronous from the model's perspective, so the script mu
 
 - [ ] **Step 3: Run envelope tests and verify RED**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/code-act-context.test.ts tests/agent/context-compile-tool.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/code-act-context.test.ts tests/agent/context-compile-tool.test.ts`
 
 Expected: owner Trello is currently out of scope.
 
@@ -366,7 +366,7 @@ In `context-compile-tool.test.ts`, construct a real `GatewayToolExecutor` with t
 
 - [ ] **Step 7: Run envelope tests and verify GREEN**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/code-act-context.test.ts tests/agent/context-compile-tool.test.ts tests/envelope/trust-boundary-negative.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/cli/runtime/envelope-bootstrap.test.ts tests/envelope/reactive-config.test.ts tests/envelope/code-act-context.test.ts tests/agent/context-compile-tool.test.ts tests/envelope/trust-boundary-negative.test.ts`
 
 Expected: all tests pass.
 
@@ -395,7 +395,7 @@ For identical role, tier, blocks, and disallowed inputs, run real Claude-mode an
 
 - [ ] **Step 2: Run parity tests and verify they pass**
 
-Run: `pnpm --filter @jungjaehoon/mama-os vitest run tests/code-act/integration.test.ts tests/gateways/tool-ad-coherence.test.ts tests/agent/agent-loop.test.ts`
+Run: `pnpm --filter @jungjaehoon/mama-os exec vitest run tests/code-act/integration.test.ts tests/gateways/tool-ad-coherence.test.ts tests/agent/agent-loop.test.ts`
 
 Expected: all tests pass.
 

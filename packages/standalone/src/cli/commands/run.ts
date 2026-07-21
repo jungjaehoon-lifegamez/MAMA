@@ -46,10 +46,8 @@ export async function runCommand(options: RunOptions): Promise<void> {
   process.env.MAMA_BACKEND = backend;
 
   let oauthManager: OAuthManager;
-  if (backend === 'codex' || backend === 'codex-mcp') {
-    console.log(
-      `✓ Codex backend (${config.agent.codex_transport ?? 'app-server'} transport; authentication handled by Codex login)`
-    );
+  if (backend === 'codex') {
+    console.log('✓ Codex app-server backend (authentication handled by Codex login)');
     oauthManager = new OAuthManager();
   } else {
     process.stdout.write('Checking Claude Code login... ');
@@ -72,7 +70,6 @@ export async function runCommand(options: RunOptions): Promise<void> {
   // Create agent loop
   const agentLoop = new AgentLoop(oauthManager, {
     backend,
-    codexTransport: config.agent.codex_transport,
     model: config.agent.model,
     timeoutMs: config.agent.timeout,
     maxTurns: config.agent.max_turns,

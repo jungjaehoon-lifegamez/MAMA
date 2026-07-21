@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { TypeDefinitionGenerator } from '../../src/agent/code-act/type-definition-generator.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+
+function policy(tier: 1 | 2 | 3, allowedTools?: string[]) {
+  return projectCodeActToolPolicy({ tier, role: { allowedTools } });
+}
 
 describe('TypeDefinitionGenerator', () => {
   describe('generate', () => {
     it('generates valid declaration syntax for Tier 1', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toContain('declare function');
       expect(dts).toContain('mama_search');
       expect(dts).toContain('Read');
@@ -15,7 +20,7 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('includes category headers', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toContain('// --- memory ---');
       expect(dts).toContain('// --- file ---');
       expect(dts).toContain('// --- communication ---');
@@ -24,7 +29,7 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('uses compact declaration output without per-function JSDoc blocks', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toContain(
         '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
       );
@@ -34,7 +39,7 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('marks optional params with ?', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/query\?: string/);
       // Anchor to the mama_search declaration so an unrelated declaration
       // exposing `scopes?` would not silently keep this assertion green.
@@ -44,7 +49,7 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('advertises mama_search diagnostics and meta return fields', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       // Anchor to the mama_search declaration so the assertion fails if those
       // return fields are removed from mama_search specifically.
       expect(dts).toMatch(
@@ -53,24 +58,24 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('advertises context_compile scope, connector, temporal, seed refs, and packet return fields', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(
         /declare function context_compile[\s\S]*task: string[\s\S]*scopes\?: Array<\{ kind: 'global' \| 'user' \| 'channel' \| 'project'; id: string \}>[\s\S]*connectors\?: string\[\][\s\S]*seed_refs\?: Array<Record<string, unknown>>[\s\S]*range\?: \{ start_ms\?: number; end_ms\?: number \}[\s\S]*as_of\?: string \| number \| null[\s\S]*packet_id: string/
       );
     });
 
     it('advertises context_packet_id on mama_save decisions', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/declare function mama_save[\s\S]*context_packet_id\?: string/);
     });
 
     it('marks required params without ?', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
       expect(dts).toMatch(/path: string/);
     });
 
     it('filters Tier 2 to read and memory-write tools', () => {
-      const dts = TypeDefinitionGenerator.generate(2);
+      const dts = TypeDefinitionGenerator.generate(policy(2));
       expect(dts).toContain('mama_search');
       expect(dts).toContain('context_compile');
       expect(dts).toContain('Read');
@@ -80,19 +85,16 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('Tier 3 excludes durable mutation tools', () => {
-      const t2 = TypeDefinitionGenerator.generate(2);
-      const t3 = TypeDefinitionGenerator.generate(3);
+      const t2 = TypeDefinitionGenerator.generate(policy(2));
+      const t3 = TypeDefinitionGenerator.generate(policy(3));
       expect(t2).toContain('context_compile');
       expect(t3).not.toContain('context_compile');
     });
 
     it('filters declarations to an explicit agent allowed-tool list', () => {
-      const dts = TypeDefinitionGenerator.generate(2, [
-        'mama_search',
-        'agent_notices',
-        'report_publish',
-        'code_act',
-      ]);
+      const dts = TypeDefinitionGenerator.generate(
+        policy(2, ['mama_search', 'agent_notices', 'report_publish', 'code_act'])
+      );
       expect(dts).toContain('declare function mama_search');
       expect(dts).toContain('declare function agent_notices');
       expect(dts).toContain('declare function report_publish');
@@ -102,22 +104,23 @@ describe('TypeDefinitionGenerator', () => {
     });
 
     it('stays within token budget for Tier 1', () => {
-      const dts = TypeDefinitionGenerator.generate(1);
-      // Budget raised 7200 -> 8000 for the M8 native task-ledger tools.
-      expect(dts.length).toBeLessThan(8000);
+      const dts = TypeDefinitionGenerator.generate(policy(1));
+      // Includes the owner workflow and scoped recall declarations added to
+      // the canonical HostBridge surface while retaining a hard prompt cap.
+      expect(dts.length).toBeLessThan(10000);
     });
   });
 
   describe('estimateTokens', () => {
     it('returns reasonable token estimate', () => {
-      const tokens = TypeDefinitionGenerator.estimateTokens(1);
+      const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2000);
+      expect(tokens).toBeLessThan(2500);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {
-      const t1 = TypeDefinitionGenerator.estimateTokens(1);
-      const t2 = TypeDefinitionGenerator.estimateTokens(2);
+      const t1 = TypeDefinitionGenerator.estimateTokens(policy(1));
+      const t2 = TypeDefinitionGenerator.estimateTokens(policy(2));
       expect(t2).toBeLessThan(t1);
     });
   });

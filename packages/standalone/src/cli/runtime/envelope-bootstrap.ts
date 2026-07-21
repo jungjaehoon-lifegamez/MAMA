@@ -1,5 +1,11 @@
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
+
 import type { SQLiteDatabase } from '../../sqlite.js';
 import type { MAMAConfig } from '../config/types.js';
+import { loadConnectorConfig } from '../../connectors/config-loader.js';
 import { applyEnvelopeTablesMigration } from '../../db/migrations/envelope-tables.js';
 import { EnvelopeAuthority } from '../../envelope/authority.js';
 import {
@@ -10,6 +16,8 @@ import {
 import { createDefaultReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import type { EnvLike, ReactiveEnvelopeConfig } from '../../envelope/reactive-config.js';
 import { EnvelopeStore } from '../../envelope/store.js';
+
+const logger = new DebugLogger('envelope-bootstrap');
 
 export type EnvelopeIssuanceMode = 'off' | 'enabled' | 'required';
 
@@ -53,6 +61,16 @@ export function buildRuntimeEnvelopeBootstrap(
     };
   }
 
+  const connectorConfigPath = join(env.HOME?.trim() || homedir(), '.mama', 'connectors.json');
+  const connectorConfig = loadConnectorConfig(connectorConfigPath);
+  if (!connectorConfig.ok) {
+    logger.error(
+      `[envelope] failed to load connector configuration (${connectorConfig.error.code}): ` +
+        connectorConfig.error.message
+    );
+  }
+  const enabledConnectorNames = Object.freeze([...connectorConfig.enabledNames]);
+
   const signingKey =
     issuance === 'required'
       ? loadEnvelopeSigningKeyFromEnv(env)
@@ -65,7 +83,7 @@ export function buildRuntimeEnvelopeBootstrap(
   );
 
   return {
-    envelopeConfig: createDefaultReactiveEnvelopeConfig(config, env),
+    envelopeConfig: createDefaultReactiveEnvelopeConfig(config, env, enabledConnectorNames),
     envelopeAuthority,
     metadata: {
       issuance,

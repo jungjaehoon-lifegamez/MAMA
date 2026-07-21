@@ -225,7 +225,7 @@ function validateRequiredFields(config: MAMAConfig, configPath: string): void {
   const errors: string[] = [];
 
   if (!config.agent.backend) {
-    errors.push("agent.backend is required. Valid: 'claude' | 'codex' | 'codex-mcp'");
+    errors.push("agent.backend is required. Valid: 'claude' | 'codex'");
   }
   if (!config.agent.model) {
     errors.push("agent.model is required. Example: 'claude-sonnet-4-6'");
@@ -741,15 +741,12 @@ export function validateConfig(config: MAMAConfig): string[] {
     errors.push('agent.model is required');
   }
 
-  if (config.agent.backend && !['claude', 'codex', 'codex-mcp'].includes(config.agent.backend)) {
-    errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
+  if (config.agent.backend && !['claude', 'codex'].includes(config.agent.backend)) {
+    errors.push('agent.backend must be "claude" or "codex"');
   }
 
-  if (
-    config.agent.codex_transport &&
-    !['app-server', 'mcp'].includes(config.agent.codex_transport)
-  ) {
-    errors.push('agent.codex_transport must be "app-server" or "mcp"');
+  if (Object.hasOwn(config.agent, 'codex_transport')) {
+    errors.push('agent.codex_transport was removed; Codex always uses app-server');
   }
 
   if (config.agent.max_turns < 1 || config.agent.max_turns > 100) {

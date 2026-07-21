@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { DebugLogger } from '@jungjaehoon/mama-core/debug-logger';
 import Database, { type SQLiteDatabase } from '../../../src/sqlite.js';
-import type { MAMAConfig } from '../../../src/cli/config/types.js';
+import { DEFAULT_ROLES, type MAMAConfig } from '../../../src/cli/config/types.js';
 import type { AgentLoopOptions } from '../../../src/agent/types.js';
 import { buildAgentToolExecutionContext } from '../../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../../src/agent/gateway-tool-executor.js';
@@ -53,6 +54,32 @@ function makeKeyEnv(mode: 'enabled' | 'required' = 'enabled'): Record<string, st
     MAMA_ENVELOPE_HMAC_KEY_ID: 'test-key',
     MAMA_ENVELOPE_HMAC_KEY_VERSION: '3',
   };
+}
+
+function makeOwnerConfig(): MAMAConfig {
+  return makeConfig({
+    telegram: { enabled: true, token: 'redacted', allowed_chats: ['7777'] },
+    roles: DEFAULT_ROLES,
+  } as unknown as Partial<MAMAConfig>);
+}
+
+function writeConnectorConfig(
+  home: string,
+  input: { enabled?: boolean; malformed?: boolean } = {}
+): void {
+  const configDir = join(home, '.mama');
+  mkdirSync(configDir, { recursive: true });
+  const contents = input.malformed
+    ? '{"trello":{"enabled":true,"token":"must-not-leak"'
+    : JSON.stringify({
+        trello: {
+          enabled: input.enabled ?? true,
+          pollIntervalMinutes: 15,
+          channels: {},
+          auth: { type: 'token', tokenName: 'TRELLO_TOKEN' },
+        },
+      });
+  writeFileSync(join(configDir, 'connectors.json'), contents, 'utf8');
 }
 
 describe('STORY-M1R-BOOTSTRAP-1: issuance/config validation', () => {
@@ -283,5 +310,107 @@ describe('STORY-M1R-BOOTSTRAP-4: concurrency/lock release', () => {
         })
       ).resolves.toMatchObject({ response: 'ok' });
     });
+  });
+});
+
+describe('STORY-M1R-BOOTSTRAP-5: verified-owner connector snapshot', () => {
+  it('loads active connector config synchronously and grants Trello only when enabled', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-'));
+    try {
+      writeConnectorConfig(tempHome);
+      const db: SQLiteDatabase = new Database(':memory:');
+      const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeOwnerConfig(), {
+        ...makeKeyEnv('enabled'),
+        HOME: tempHome,
+      });
+
+      expect(
+        bootstrap.envelopeConfig?.rawConnectorsFor({
+          source: 'telegram',
+          channelId: '7777',
+          userId: 'telegram:user',
+          text: 'current Trello work?',
+          metadata: { chatType: 'private' },
+        })
+      ).toEqual(['telegram', 'kagemusha', 'trello']);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['disabled', true],
+    ['missing', false],
+  ])('does not grant Trello when config is %s', (_label, writeConfig) => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-'));
+    try {
+      if (writeConfig) {
+        writeConnectorConfig(tempHome, { enabled: false });
+      }
+      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
+        ...makeKeyEnv('enabled'),
+        HOME: tempHome,
+      });
+
+      expect(
+        bootstrap.envelopeConfig?.rawConnectorsFor({
+          source: 'telegram',
+          channelId: '7777',
+          userId: 'telegram:user',
+          text: 'current Trello work?',
+          metadata: { chatType: 'private' },
+        })
+      ).toEqual(['telegram', 'kagemusha']);
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('logs one sanitized typed failure and keeps Trello out for malformed config', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-'));
+    const errorSpy = vi.spyOn(DebugLogger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      writeConnectorConfig(tempHome, { malformed: true });
+      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
+        ...makeKeyEnv('enabled'),
+        HOME: tempHome,
+      });
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy.mock.calls[0]?.join(' ')).toMatch(/connector.*parse_error/i);
+      expect(errorSpy.mock.calls[0]?.join(' ')).not.toContain('must-not-leak');
+      expect(
+        bootstrap.envelopeConfig?.rawConnectorsFor({
+          source: 'telegram',
+          channelId: '7777',
+          userId: 'telegram:user',
+          text: 'current Trello work?',
+          metadata: { chatType: 'private' },
+        })
+      ).toEqual(['telegram', 'kagemusha']);
+    } finally {
+      errorSpy.mockRestore();
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('does not read connector config or create auth state when issuance is off', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-connectors-off-'));
+    const errorSpy = vi.spyOn(DebugLogger.prototype, 'error').mockImplementation(() => undefined);
+    try {
+      writeConnectorConfig(tempHome, { malformed: true });
+
+      const bootstrap = buildRuntimeEnvelopeBootstrap(new Database(':memory:'), makeOwnerConfig(), {
+        MAMA_ENVELOPE_ISSUANCE: 'off',
+        HOME: tempHome,
+      });
+
+      expect(bootstrap).toEqual({ metadata: { issuance: 'off' } });
+      expect(errorSpy).not.toHaveBeenCalled();
+      expect(existsSync(join(tempHome, '.mama', 'envelope-key.json'))).toBe(false);
+    } finally {
+      errorSpy.mockRestore();
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 });

@@ -169,6 +169,15 @@ describe('HostBridge', () => {
       expect(registered).not.toContain('Bash');
       expect(registered).not.toContain('Write');
     });
+
+    it('registers exactly an already-projected name set', () => {
+      const bridge = new HostBridge(makeExecutor(), new RoleManager());
+      const sandbox = new CodeActSandbox();
+
+      bridge.injectInto(sandbox, ['mama_search', 'Read'], { allowedTools: ['Write'] });
+
+      expect(sandbox.getRegisteredFunctions().sort()).toEqual(['Read', 'mama_search']);
+    });
   });
 
   describe('tool execution via sandbox', () => {
@@ -317,6 +326,54 @@ describe('HostBridge', () => {
       const registry = HostBridge.getToolRegistry();
       expect(registry.length).toBeGreaterThanOrEqual(25);
       expect(registry.every((t) => t.name && t.description && t.category)).toBe(true);
+    });
+
+    it('describes the real owner workflow handler signatures', () => {
+      const registry = new Map(HostBridge.getToolRegistry().map((tool) => [tool.name, tool]));
+
+      expect(registry.get('mama_recall')).toMatchObject({
+        params: [
+          { name: 'query', type: 'string', required: true },
+          {
+            name: 'scopes',
+            type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+            required: false,
+          },
+        ],
+        returnType: expect.stringContaining('graph_context'),
+        category: 'memory',
+      });
+      expect(registry.get('board_read')).toMatchObject({
+        params: [],
+        returnType: '{ slots: Record<string, { html: string; updatedAt?: string | null }> }',
+        category: 'os',
+      });
+      expect(registry.get('audit_findings_read')).toMatchObject({
+        params: [],
+        returnType: '{ findings: unknown; message?: string }',
+        category: 'os',
+      });
+      expect(registry.get('report_request')).toMatchObject({
+        params: [],
+        returnType: '{ message: string }',
+        category: 'os',
+      });
+      expect(registry.get('workorder_request')).toMatchObject({
+        params: [
+          {
+            name: 'kind',
+            type: "'board' | 'wiki' | 'memory-curation'",
+            required: true,
+          },
+        ],
+        returnType: '{ message: string }',
+        category: 'os',
+      });
+      expect(registry.get('workorder_status')).toMatchObject({
+        params: [],
+        returnType: expect.stringContaining('failedCount'),
+        category: 'os',
+      });
     });
   });
 });

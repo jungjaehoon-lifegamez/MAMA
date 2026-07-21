@@ -8,6 +8,8 @@
  */
 
 import type { GatewayToolName } from './types.js';
+import type { HostToolDefinition } from './model-runner.js';
+import { minimatch } from 'minimatch';
 
 // ─── Tool Metadata ───────────────────────────────────────────────────────────
 
@@ -32,6 +34,15 @@ export interface ToolDefinitionMeta {
   params?: string;
   /** If true, only viewers can use this tool */
   viewerOnly?: boolean;
+  /** Exact Codex dynamic-tool schema when the permissive gateway default is insufficient. */
+  inputSchema?: HostToolDefinition['inputSchema'];
+}
+
+export interface HostToolDefinitionOptions {
+  allowedTools?: string[];
+  blockedTools?: string[];
+  disallowedTools?: string[];
+  viewer?: boolean;
 }
 
 // ─── Registry ────────────────────────────────────────────────────────────────
@@ -308,6 +319,16 @@ register({
   description: 'Execute JavaScript in sandboxed QuickJS',
   category: 'code_act',
   params: 'code, allowedTools?, blockedTools?',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      code: { type: 'string' },
+      allowedTools: { type: 'array', items: { type: 'string' } },
+      blockedTools: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['code'],
+    additionalProperties: false,
+  },
 });
 
 // Multi-Agent delegation
@@ -509,6 +530,43 @@ export class ToolRegistry {
   }
 
   /**
+   * Convert role-filtered registry metadata to Codex dynamic functions.
+   * Argument validation remains the responsibility of GatewayToolExecutor.
+   */
+  static getHostToolDefinitions(options: HostToolDefinitionOptions = {}): HostToolDefinition[] {
+    const { allowedTools, blockedTools, disallowedTools, viewer = false } = options;
+
+    return ToolRegistry.getAllTools()
+      .filter((tool) => {
+        if (tool.name.startsWith('mcp__') || (tool.viewerOnly && !viewer)) {
+          return false;
+        }
+        if (
+          allowedTools !== undefined &&
+          !allowedTools.some((pattern) => matchToolPattern(pattern, tool.name))
+        ) {
+          return false;
+        }
+        if (blockedTools?.some((pattern) => matchToolPattern(pattern, tool.name))) {
+          return false;
+        }
+        return !disallowedTools?.some((pattern) => matchToolPattern(pattern, tool.name));
+      })
+      .map((tool) => ({
+        type: 'function',
+        name: tool.name,
+        description: tool.params
+          ? `${tool.description} Parameters: ${tool.params}`
+          : tool.description,
+        inputSchema: tool.inputSchema ?? {
+          type: 'object',
+          properties: {},
+          additionalProperties: true,
+        },
+      }));
+  }
+
+  /**
    * Get tools grouped by category.
    */
   static getByCategory(): Map<ToolCategory, ToolDefinitionMeta[]> {
@@ -614,12 +672,8 @@ export class ToolRegistry {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
- * Match a tool name against a pattern (supports trailing wildcard).
+ * Match a tool name against a minimatch glob pattern.
  */
 function matchToolPattern(pattern: string, toolName: string): boolean {
-  if (pattern === '*') return true;
-  if (pattern.endsWith('*')) {
-    return toolName.startsWith(pattern.slice(0, -1));
-  }
-  return pattern === toolName;
+  return minimatch(toolName, pattern);
 }

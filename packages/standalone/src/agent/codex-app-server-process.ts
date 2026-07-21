@@ -15,7 +15,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 
-import type { PromptResult } from './model-runner.js';
+import type { HostToolBridge, HostToolDefinition, PromptResult } from './model-runner.js';
 import type { PromptCallbacks } from './types.js';
 import {
   buildCodexAppServerLaunchConfig,
@@ -38,6 +38,18 @@ export interface CodexAppServerProcessOptions {
   mcpConfigPath?: string;
   /** Stable identity/rules fingerprint; dynamic conversation context must be excluded. */
   policyFingerprint?: string;
+}
+
+export interface CodexAppServerPromptOptions {
+  sessionKey?: string;
+  model?: string;
+  systemPrompt?: string;
+  cwd?: string;
+  sandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  requestTimeout?: number;
+  policyFingerprint?: string;
+  resumeSession?: boolean;
+  hostToolBridge?: HostToolBridge;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -65,9 +77,48 @@ interface PendingTurn {
   usage: PromptResult['usage'];
   timer: NodeJS.Timeout;
   queuedNotifications: Array<{ method: string; params: unknown }>;
+  queuedToolRequests: ServerToolRequest[];
+  toolCallQueue: Promise<void>;
+  toolCallResults: Map<string, HostToolCallState>;
+  stoppingCallIds: Set<string>;
+  hostToolBridge?: HostToolBridge;
+  intentionalStop: boolean;
+  abortError?: Error;
   onDelta?: (text: string) => void;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
+}
+
+interface ServerToolRequest {
+  child: ChildProcessWithoutNullStreams;
+  id: number | string;
+  params: unknown;
+}
+
+interface HostToolExecution {
+  result: JsonObject;
+  stop: boolean;
+  abortError?: Error;
+}
+
+interface HostToolCallState {
+  identity: string;
+  execution: Promise<HostToolExecution>;
+}
+
+interface SessionPolicy {
+  sessionKey: string;
+  model: string;
+  systemPrompt: string;
+  cwd: string;
+  sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
+  requestTimeout: number;
+  policyFingerprint?: string;
+  hostToolBridge?: HostToolBridge;
+}
+
+interface SessionState {
+  threadId: string;
 }
 
 const DEFAULT_TIMEOUT = 300_000;
@@ -77,11 +128,68 @@ const CLIENT_INFO = { name: 'mama-codex-app-server', version: '1.0.0' };
 const TURN_STATUSES = new Set(['completed', 'interrupted', 'failed', 'inProgress']);
 const TURN_ITEM_VIEWS = new Set(['notLoaded', 'summary', 'full']);
 const APPROVAL_REVIEWERS = new Set(['user', 'auto_review', 'guardian_subagent']);
+const OVERLOADED_ERROR_CODE = -32001;
+const OVERLOAD_RETRY_LIMIT = 4;
+const OVERLOAD_RETRY_BASE_MS = 25;
+
+class CodexAppServerRpcError extends Error {
+  readonly code: number;
+
+  constructor(code: number, message: string) {
+    super(message);
+    this.name = 'CodexAppServerRpcError';
+    this.code = code;
+  }
+}
 
 function object(value: unknown): JsonObject | undefined {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
     : undefined;
+}
+
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stableJson);
+  }
+  const record = object(value);
+  if (!record) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, stableJson(record[key])])
+  );
+}
+
+function deepFreeze(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      deepFreeze(item);
+    }
+    Object.freeze(value);
+    return;
+  }
+  const record = object(value);
+  if (record) {
+    for (const item of Object.values(record)) {
+      deepFreeze(item);
+    }
+    Object.freeze(record);
+  }
+}
+
+function snapshotHostToolBridge(bridge: HostToolBridge | undefined): HostToolBridge | undefined {
+  if (!bridge) {
+    return undefined;
+  }
+  const tools = bridge.tools
+    .map((tool) => stableJson(tool) as HostToolDefinition)
+    .sort((left, right) => left.name.localeCompare(right.name));
+  deepFreeze(tools);
+  const execute = bridge.execute.bind(bridge);
+  return Object.freeze({ tools, execute });
 }
 
 function errorMessage(value: unknown, fallback: string): string {
@@ -287,12 +395,13 @@ export class CodexAppServerProcess {
   private stderr: ReadlineInterface | undefined;
   private nextId = 0;
   private pending = new Map<number, PendingRequest>();
-  private turn: PendingTurn | undefined;
-  private threadId = '';
+  private turns = new Map<string, PendingTurn>();
+  private sessions = new Map<string, SessionState>();
+  private sessionQueues = new Map<string, Promise<void>>();
+  private connectionQueue: Promise<void> = Promise.resolve();
   private startPromise: Promise<void> | undefined;
   private shutdownPromise: Promise<void> | undefined;
   private stopped = false;
-  private busy = false;
   private stderrTail = '';
   private secrets = new Set<string>();
   private authFingerprint: string | undefined;
@@ -315,44 +424,68 @@ export class CodexAppServerProcess {
     this.registry = new CodexThreadRegistry({ rootDir: this.options.registryRoot });
   }
 
-  async prompt(text: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
+  async prompt(
+    text: string,
+    callbacks?: PromptCallbacks,
+    overrides: CodexAppServerPromptOptions = {}
+  ): Promise<PromptResult> {
     if (this.stopped) {
       throw new Error('Codex app-server process is stopped');
     }
-    if (this.busy) {
-      throw new Error('Codex app-server process is busy');
-    }
-    this.busy = true;
-    try {
-      const launch = buildCodexAppServerLaunchConfig(this.options.mcpConfigPath, process.env);
-      this.assertRegistryPolicy(launch);
-      const refreshed = this.prepareManagedFiles(launch);
-      if (refreshed && this.child) {
-        await this.restart();
+    const session = this.resolveSessionPolicy(overrides);
+    return this.enqueueSession(session.sessionKey, async () => {
+      try {
+        if (this.stopped) {
+          throw new Error('Codex app-server process is stopped');
+        }
+        const launch = buildCodexAppServerLaunchConfig(this.options.mcpConfigPath, process.env);
+        if (overrides.resumeSession === false) {
+          this.registry.remove(session.sessionKey);
+          this.sessions.delete(session.sessionKey);
+        }
+        this.assertRegistryPolicy(session, launch);
+        await this.prepareConnection(launch, session.requestTimeout);
+        let state = this.sessions.get(session.sessionKey);
+        if (!state?.threadId) {
+          try {
+            state = await this.openThread(session, launch);
+          } catch (error: unknown) {
+            if (this.child && !this.shutdownPromise) {
+              await this.shutdown(this.toError(error));
+            }
+            throw error;
+          }
+          this.sessions.set(session.sessionKey, state);
+        }
+        return await this.startTurn(
+          state.threadId,
+          text,
+          callbacks,
+          session.requestTimeout,
+          session.hostToolBridge
+        );
+      } catch (error: unknown) {
+        if (
+          error instanceof CodexAppServerRpcError &&
+          error.code !== OVERLOADED_ERROR_CODE &&
+          this.child &&
+          !this.shutdownPromise
+        ) {
+          await this.shutdown(error);
+        }
+        if (this.shutdownPromise) {
+          await this.shutdownPromise;
+        }
+        throw error;
       }
-      await this.ensureStarted(launch);
-      if (!this.threadId) {
-        await this.openThread(launch);
-      }
-      return await this.startTurn(text, callbacks);
-    } catch (error: unknown) {
-      if (this.shutdownPromise) {
-        await this.shutdownPromise;
-      } else if (this.child) {
-        await this.shutdown(this.toError(error));
-      }
-      throw error;
-    } finally {
-      this.busy = false;
-    }
+    });
   }
 
-  async reset(): Promise<void> {
-    this.registry.remove(this.options.sessionKey);
-    this.threadId = '';
-    if (this.child) {
-      await this.restart();
-    }
+  async reset(sessionKey = this.options.sessionKey): Promise<void> {
+    await this.enqueueSession(sessionKey, async () => {
+      this.registry.remove(sessionKey);
+      this.sessions.delete(sessionKey);
+    });
   }
 
   async stop(): Promise<void> {
@@ -360,8 +493,8 @@ export class CodexAppServerProcess {
     await this.shutdown(new Error('Codex app-server process stopped'));
   }
 
-  getThreadId(): string | undefined {
-    return this.threadId || undefined;
+  getThreadId(sessionKey = this.options.sessionKey): string | undefined {
+    return this.sessions.get(sessionKey)?.threadId || undefined;
   }
 
   getStatus(): {
@@ -377,22 +510,83 @@ export class CodexAppServerProcess {
       running: this.child !== undefined,
       childPid: this.child?.pid,
       pendingRequestCount: this.pending.size,
-      hasActiveTurn: this.turn !== undefined,
+      hasActiveTurn: this.turns.size > 0,
       stdoutListenerCount: this.stdout?.listenerCount('line') ?? 0,
       stderrListenerCount: this.stderr?.listenerCount('line') ?? 0,
       shutdownTimerActive: this.killTimer !== undefined || this.finalKillTimer !== undefined,
     };
   }
 
-  private assertRegistryPolicy(launch: CodexAppServerLaunchConfig): void {
-    const record = this.registry.load(this.options.sessionKey);
+  private resolveSessionPolicy(overrides: CodexAppServerPromptOptions): SessionPolicy {
+    const hostToolBridge = snapshotHostToolBridge(overrides.hostToolBridge);
+    return {
+      sessionKey: overrides.sessionKey ?? this.options.sessionKey,
+      model: overrides.model ?? this.options.model,
+      systemPrompt: overrides.systemPrompt ?? this.options.systemPrompt,
+      cwd: resolve(overrides.cwd ?? this.options.cwd),
+      sandbox: overrides.sandbox ?? this.options.sandbox,
+      requestTimeout: overrides.requestTimeout ?? this.options.requestTimeout,
+      policyFingerprint: overrides.policyFingerprint ?? this.options.policyFingerprint,
+      hostToolBridge,
+    };
+  }
+
+  private enqueueSession<T>(sessionKey: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.sessionQueues.get(sessionKey) ?? Promise.resolve();
+    const result = previous.catch(() => undefined).then(operation);
+    const tail = result.then(
+      () => undefined,
+      () => undefined
+    );
+    this.sessionQueues.set(sessionKey, tail);
+    void tail.finally(() => {
+      if (this.sessionQueues.get(sessionKey) === tail) {
+        this.sessionQueues.delete(sessionKey);
+      }
+    });
+    return result;
+  }
+
+  private async prepareConnection(
+    launch: CodexAppServerLaunchConfig,
+    requestTimeout: number
+  ): Promise<void> {
+    const operation = this.connectionQueue.then(async () => {
+      if (this.stopped) {
+        throw new Error('Codex app-server process is stopped');
+      }
+      if (this.shutdownPromise) {
+        await this.shutdownPromise;
+      }
+      if (this.stopped) {
+        throw new Error('Codex app-server process is stopped');
+      }
+      const refreshed = this.prepareManagedFiles(launch);
+      if (refreshed && this.child) {
+        await this.restart();
+      }
+      try {
+        await this.ensureStarted(launch, requestTimeout);
+      } catch (error: unknown) {
+        if (this.child && !this.shutdownPromise) {
+          await this.shutdown(this.toError(error));
+        }
+        throw error;
+      }
+    });
+    this.connectionQueue = operation.catch(() => undefined);
+    await operation;
+  }
+
+  private assertRegistryPolicy(session: SessionPolicy, launch: CodexAppServerLaunchConfig): void {
+    const record = this.registry.load(session.sessionKey);
     if (!record) {
       return;
     }
     const matches =
-      record.model === this.options.model &&
-      record.cwd === this.options.cwd &&
-      record.systemPromptFingerprint === this.policyFingerprint() &&
+      record.model === session.model &&
+      record.cwd === session.cwd &&
+      record.systemPromptFingerprint === this.policyFingerprint(session) &&
       record.mcpConfigFingerprint === launch.fingerprint;
     if (!matches) {
       throw new Error('Codex app-server thread policy mismatch; reset the session explicitly');
@@ -419,12 +613,15 @@ export class CodexAppServerProcess {
     return changed;
   }
 
-  private async ensureStarted(launch: CodexAppServerLaunchConfig): Promise<void> {
+  private async ensureStarted(
+    launch: CodexAppServerLaunchConfig,
+    requestTimeout: number
+  ): Promise<void> {
     if (this.child) {
       return;
     }
     if (!this.startPromise) {
-      this.startPromise = this.start(launch);
+      this.startPromise = this.start(launch, requestTimeout);
     }
     try {
       await this.startPromise;
@@ -433,7 +630,7 @@ export class CodexAppServerProcess {
     }
   }
 
-  private async start(launch: CodexAppServerLaunchConfig): Promise<void> {
+  private async start(launch: CodexAppServerLaunchConfig, requestTimeout: number): Promise<void> {
     const child = spawn(
       this.options.command,
       ['app-server', '--strict-config', '--stdio', ...launch.args],
@@ -452,10 +649,14 @@ export class CodexAppServerProcess {
     child.once('exit', (code, signal) =>
       this.failProcess(child, new Error(`Codex app-server exited (${code ?? signal ?? 'unknown'})`))
     );
-    const initialized = await this.request('initialize', {
-      clientInfo: CLIENT_INFO,
-      capabilities: null,
-    });
+    const initialized = await this.request(
+      'initialize',
+      {
+        clientInfo: CLIENT_INFO,
+        capabilities: { experimentalApi: true },
+      },
+      requestTimeout
+    );
     const initializeResponse = object(initialized);
     if (
       !initializeResponse ||
@@ -472,59 +673,77 @@ export class CodexAppServerProcess {
     this.notify('initialized');
   }
 
-  private async openThread(launch: CodexAppServerLaunchConfig): Promise<void> {
-    const record = this.registry.load(this.options.sessionKey);
+  private async openThread(
+    session: SessionPolicy,
+    launch: CodexAppServerLaunchConfig
+  ): Promise<SessionState> {
+    const record = this.registry.load(session.sessionKey);
     if (record) {
       const result = object(
-        await this.request('thread/resume', {
-          threadId: record.threadId,
-          model: this.options.model,
-          cwd: this.options.cwd,
-          approvalPolicy: 'never',
-          sandbox: this.options.sandbox,
-        })
+        await this.request(
+          'thread/resume',
+          {
+            threadId: record.threadId,
+            model: session.model,
+            cwd: session.cwd,
+            approvalPolicy: 'never',
+            sandbox: session.sandbox,
+          },
+          session.requestTimeout
+        )
       );
-      this.validateResponsePolicy(result);
-      this.validateInstructionMetadata(result);
+      this.validateResponsePolicy(result, session);
+      this.validateInstructionMetadata(result, session);
       const resumed = validateThread(result?.thread);
       if (typeof resumed?.id !== 'string' || resumed.id !== record.threadId) {
         throw new Error('Codex app-server resumed an unexpected thread');
       }
-      this.threadId = record.threadId;
-      return;
+      return { threadId: record.threadId };
+    }
+    const threadStartParams: JsonObject = {
+      model: session.model,
+      cwd: session.cwd,
+      approvalPolicy: 'never',
+      sandbox: session.sandbox,
+      baseInstructions: session.systemPrompt,
+      config: {},
+    };
+    if (session.hostToolBridge) {
+      threadStartParams.dynamicTools = session.hostToolBridge.tools;
     }
     const result = object(
-      await this.request('thread/start', {
-        model: this.options.model,
-        cwd: this.options.cwd,
-        approvalPolicy: 'never',
-        sandbox: this.options.sandbox,
-        baseInstructions: this.options.systemPrompt,
-        config: {},
-      })
+      await this.request('thread/start', threadStartParams, session.requestTimeout)
     );
-    this.validateResponsePolicy(result);
-    this.validateInstructionMetadata(result);
+    this.validateResponsePolicy(result, session);
+    this.validateInstructionMetadata(result, session);
     const thread = validateThread(result?.thread);
     if (typeof thread?.id !== 'string' || !thread.id) {
       throw new Error('Codex app-server thread/start returned no thread id');
     }
-    this.threadId = thread.id;
     this.registry.save({
-      sessionKey: this.options.sessionKey,
+      sessionKey: session.sessionKey,
       threadId: thread.id,
-      model: this.options.model,
-      cwd: this.options.cwd,
-      systemPromptFingerprint: this.policyFingerprint(),
+      model: session.model,
+      cwd: session.cwd,
+      systemPromptFingerprint: this.policyFingerprint(session),
       mcpConfigFingerprint: launch.fingerprint,
     });
+    return { threadId: thread.id };
   }
 
-  private policyFingerprint(): string {
-    return this.options.policyFingerprint ?? fingerprintText(this.options.systemPrompt);
+  private policyFingerprint(session: SessionPolicy): string {
+    const base = session.policyFingerprint ?? fingerprintText(session.systemPrompt);
+    const tools = session.hostToolBridge?.tools;
+    if (!tools?.length) {
+      return base;
+    }
+    return fingerprintText(`${base}\n${JSON.stringify(tools)}`);
   }
 
-  private validateInstructionMetadata(result: JsonObject | undefined): void {
+  private validateInstructionMetadata(
+    result: JsonObject | undefined,
+    session: SessionPolicy
+  ): void {
     const sources = result?.instructionSources;
     if (!Array.isArray(sources)) {
       throw new Error('Codex app-server returned malformed instruction sources');
@@ -534,7 +753,7 @@ export class CodexAppServerProcess {
         throw new Error('Codex app-server returned malformed instruction source');
       }
       const path = resolve(source);
-      const allowed = [this.options.cwd, this.options.codexHome].some(
+      const allowed = [session.cwd, this.options.codexHome].some(
         (root) => path === root || path.startsWith(`${root}/`)
       );
       if (!allowed) {
@@ -543,7 +762,7 @@ export class CodexAppServerProcess {
     }
   }
 
-  private validateResponsePolicy(result: JsonObject | undefined): void {
+  private validateResponsePolicy(result: JsonObject | undefined, session: SessionPolicy): void {
     if (!result) {
       throw new Error('Codex app-server returned a malformed thread response');
     }
@@ -555,10 +774,10 @@ export class CodexAppServerProcess {
     ) {
       throw new Error('Codex app-server returned malformed thread response metadata');
     }
-    if (typeof result.model !== 'string' || result.model !== this.options.model) {
+    if (typeof result.model !== 'string' || result.model !== session.model) {
       throw new Error('Codex app-server response model did not match the requested policy');
     }
-    if (typeof result.cwd !== 'string' || resolve(result.cwd) !== this.options.cwd) {
+    if (typeof result.cwd !== 'string' || resolve(result.cwd) !== session.cwd) {
       throw new Error('Codex app-server response cwd did not match the requested policy');
     }
     if (result.approvalPolicy !== 'never') {
@@ -569,7 +788,7 @@ export class CodexAppServerProcess {
       'read-only': 'readOnly',
       'workspace-write': 'workspaceWrite',
       'danger-full-access': 'dangerFullAccess',
-    }[this.options.sandbox];
+    }[session.sandbox];
     if (typeof sandbox?.type !== 'string' || sandbox.type !== expectedSandboxType) {
       throw new Error('Codex app-server response sandbox did not match the requested policy');
     }
@@ -587,49 +806,94 @@ export class CodexAppServerProcess {
     }
   }
 
-  private startTurn(text: string, callbacks?: PromptCallbacks): Promise<PromptResult> {
+  private startTurn(
+    threadId: string,
+    text: string,
+    callbacks: PromptCallbacks | undefined,
+    requestTimeout: number,
+    hostToolBridge: HostToolBridge | undefined
+  ): Promise<PromptResult> {
     return new Promise<PromptResult>((resolveTurn, rejectTurn) => {
       const timer = setTimeout(() => {
-        const error = new Error(
-          `Codex app-server turn timed out after ${this.options.requestTimeout}ms`
-        );
-        this.failTurn(error);
+        const error = new Error(`Codex app-server turn timed out after ${requestTimeout}ms`);
+        this.failTurn(threadId, error);
         void this.shutdown(error);
-      }, this.options.requestTimeout);
+      }, requestTimeout);
       timer.unref();
-      this.turn = {
-        threadId: this.threadId,
+      const pendingTurn: PendingTurn = {
+        threadId,
         chunks: [],
         usage: { input_tokens: 0, output_tokens: 0 },
         timer,
         queuedNotifications: [],
+        queuedToolRequests: [],
+        toolCallQueue: Promise.resolve(),
+        toolCallResults: new Map(),
+        stoppingCallIds: new Set(),
+        hostToolBridge,
+        intentionalStop: false,
         onDelta: callbacks?.onDelta,
         resolve: resolveTurn,
         reject: rejectTurn,
       };
-      this.request('turn/start', {
-        threadId: this.threadId,
-        input: [{ type: 'text', text, text_elements: [] }],
-      })
+      this.turns.set(threadId, pendingTurn);
+      this.request(
+        'turn/start',
+        {
+          threadId,
+          input: [{ type: 'text', text, text_elements: [] }],
+        },
+        requestTimeout
+      )
         .then((value) => {
           const turn = validateTurn(object(value)?.turn, 'turn/start turn');
           if (typeof turn?.id !== 'string' || !turn.id) {
-            this.failTurn(new Error('Codex app-server turn/start returned no turn id'));
+            this.failTurn(threadId, new Error('Codex app-server turn/start returned no turn id'));
             return;
           }
-          if (this.turn) {
-            this.turn.turnId = turn.id;
-            const queued = this.turn.queuedNotifications.splice(0);
+          const activeTurn = this.turns.get(threadId);
+          if (activeTurn === pendingTurn) {
+            activeTurn.turnId = turn.id;
+            const queued = activeTurn.queuedNotifications.splice(0);
             for (const notification of queued) {
               this.handleNotification(notification.method, notification.params);
             }
+            const queuedToolRequests = activeTurn.queuedToolRequests.splice(0);
+            for (const request of queuedToolRequests) {
+              this.handleDynamicToolRequest(request, activeTurn);
+            }
           }
         })
-        .catch((error: unknown) => this.failTurn(this.toError(error)));
+        .catch((error: unknown) => this.failTurn(threadId, this.toError(error)));
     });
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private async request(
+    method: string,
+    params: unknown,
+    requestTimeout = this.options.requestTimeout
+  ): Promise<unknown> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.requestOnce(method, params, requestTimeout);
+      } catch (error: unknown) {
+        if (
+          !(error instanceof CodexAppServerRpcError) ||
+          error.code !== OVERLOADED_ERROR_CODE ||
+          attempt >= OVERLOAD_RETRY_LIMIT - 1
+        ) {
+          throw error;
+        }
+        const delay = OVERLOAD_RETRY_BASE_MS * 2 ** attempt + Math.floor(Math.random() * 10);
+        await new Promise<void>((resolveDelay) => {
+          const timer = setTimeout(resolveDelay, delay);
+          timer.unref();
+        });
+      }
+    }
+  }
+
+  private requestOnce(method: string, params: unknown, requestTimeout: number): Promise<unknown> {
     const child = this.child;
     if (!child?.stdin.writable) {
       return Promise.reject(new Error('Codex app-server stdin is not writable'));
@@ -638,12 +902,10 @@ export class CodexAppServerProcess {
     return new Promise((resolveRequest, rejectRequest) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        const error = new Error(
-          `Codex app-server ${method} timed out after ${this.options.requestTimeout}ms`
-        );
+        const error = new Error(`Codex app-server ${method} timed out after ${requestTimeout}ms`);
         rejectRequest(error);
         void this.shutdown(error);
-      }, this.options.requestTimeout);
+      }, requestTimeout);
       timer.unref();
       this.pending.set(id, { method, timer, resolve: resolveRequest, reject: rejectRequest });
       child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', id, method, params })}\n`);
@@ -702,7 +964,7 @@ export class CodexAppServerProcess {
       typeof message.method === 'string' &&
       (typeof message.id === 'number' || typeof message.id === 'string')
     ) {
-      this.handleServerRequest(message.id, message.method);
+      this.handleServerRequest(child, message.id, message.method, message.params);
       return;
     }
     if (typeof message.id === 'number') {
@@ -716,8 +978,13 @@ export class CodexAppServerProcess {
       clearTimeout(pending.timer);
       this.pending.delete(message.id);
       if (message.error !== undefined) {
+        const rpcError = object(message.error);
+        const code = typeof rpcError?.code === 'number' ? rpcError.code : 0;
         pending.reject(
-          new Error(this.redact(errorMessage(message.error, `${pending.method} failed`)))
+          new CodexAppServerRpcError(
+            code,
+            this.redact(errorMessage(message.error, `${pending.method} failed`))
+          )
         );
       } else if (!Object.hasOwn(message, 'result')) {
         pending.reject(
@@ -735,8 +1002,11 @@ export class CodexAppServerProcess {
 
   private handleNotification(method: string, params: unknown): void {
     const data = object(params);
-    const turn = this.turn;
-    if (!turn || data?.threadId !== turn.threadId) {
+    if (!data || typeof data.threadId !== 'string') {
+      return;
+    }
+    const turn = this.turns.get(data.threadId);
+    if (!turn) {
       return;
     }
     const completedTurn = method === 'turn/completed' ? object(data.turn) : undefined;
@@ -762,7 +1032,7 @@ export class CodexAppServerProcess {
         try {
           turn.onDelta?.(data.delta);
         } catch (error: unknown) {
-          this.failTurn(this.toError(error));
+          this.failTurn(turn.threadId, this.toError(error));
         }
       }
       return;
@@ -797,25 +1067,47 @@ export class CodexAppServerProcess {
     try {
       validateTurn(completed, 'turn/completed turn');
     } catch (error: unknown) {
-      this.failTurn(this.toError(error));
+      this.failTurn(turn.threadId, this.toError(error));
+      return;
+    }
+    if (turn.abortError) {
+      this.failTurn(turn.threadId, turn.abortError);
       return;
     }
     if (status === 'failed') {
       this.failTurn(
+        turn.threadId,
         new Error(this.redact(errorMessage(completed.error, 'Codex app-server turn failed')))
       );
       return;
     }
     if (status === 'interrupted') {
-      this.failTurn(new Error('Codex app-server turn was interrupted'));
+      if (turn.abortError) {
+        this.failTurn(turn.threadId, turn.abortError);
+      } else if (turn.intentionalStop) {
+        this.resolveTurn(turn);
+      } else {
+        this.failTurn(turn.threadId, new Error('Codex app-server turn was interrupted'));
+      }
       return;
     }
     if (status !== 'completed') {
-      this.failTurn(new Error(`Codex app-server returned unknown turn status: ${String(status)}`));
+      this.failTurn(
+        turn.threadId,
+        new Error(`Codex app-server returned unknown turn status: ${String(status)}`)
+      );
       return;
     }
-    this.turn = undefined;
+    this.resolveTurn(turn);
+  }
+
+  private resolveTurn(turn: PendingTurn): void {
+    if (this.turns.get(turn.threadId) !== turn) {
+      return;
+    }
+    this.turns.delete(turn.threadId);
     clearTimeout(turn.timer);
+    this.clearTurnCallbacks(turn);
     turn.resolve({
       response: turn.chunks.join(''),
       usage: turn.usage,
@@ -825,14 +1117,19 @@ export class CodexAppServerProcess {
     });
   }
 
-  private handleServerRequest(id: number | string, method: string): void {
+  private handleServerRequest(
+    child: ChildProcessWithoutNullStreams,
+    id: number | string,
+    method: string,
+    params: unknown
+  ): void {
+    if (method === 'item/tool/call') {
+      this.handleDynamicToolRequest({ child, id, params });
+      return;
+    }
     const bodies: Record<string, unknown> = {
       'item/tool/requestUserInput': { answers: {} },
       'mcpServer/elicitation/request': { action: 'decline', content: null, _meta: null },
-      'item/tool/call': {
-        success: false,
-        contentItems: [{ type: 'inputText', text: 'Native app-server tools are disabled by MAMA' }],
-      },
       'item/commandExecution/requestApproval': { decision: 'decline' },
       'item/fileChange/requestApproval': { decision: 'decline' },
       'item/permissions/requestApproval': {
@@ -844,9 +1141,9 @@ export class CodexAppServerProcess {
       execCommandApproval: { decision: 'denied' },
     };
     if (Object.hasOwn(bodies, method)) {
-      this.reply({ jsonrpc: '2.0', id, result: bodies[method] });
+      this.reply(child, { jsonrpc: '2.0', id, result: bodies[method] });
     } else {
-      this.reply({
+      this.reply(child, {
         jsonrpc: '2.0',
         id,
         error: { code: -32601, message: `Unsupported app-server request: ${method}` },
@@ -854,9 +1151,195 @@ export class CodexAppServerProcess {
     }
   }
 
-  private reply(message: JsonObject): void {
-    if (this.child?.stdin.writable) {
-      this.child.stdin.write(`${JSON.stringify(message)}\n`);
+  private handleDynamicToolRequest(request: ServerToolRequest, expectedTurn?: PendingTurn): void {
+    const data = object(request.params);
+    const threadId = typeof data?.threadId === 'string' ? data.threadId : undefined;
+    const turn = threadId ? this.turns.get(threadId) : undefined;
+    if (!data || !turn || !turn.hostToolBridge || (expectedTurn && turn !== expectedTurn)) {
+      this.replyDisabledTool(request);
+      return;
+    }
+    try {
+      const turnId = this.requiredToolString(data, 'turnId');
+      const callId = this.requiredToolString(data, 'callId');
+      const tool = this.requiredToolString(data, 'tool');
+      if (data.namespace !== null && typeof data.namespace !== 'string') {
+        throw new Error('Codex app-server tool call namespace must be null or a string');
+      }
+      const input = object(data.arguments);
+      if (!input) {
+        throw new Error('Codex app-server tool call arguments must be an object');
+      }
+      if (!turn.hostToolBridge.tools.some((definition) => definition.name === tool)) {
+        throw new Error(`Codex app-server tool call ${tool} was not advertised`);
+      }
+      if (!turn.turnId) {
+        turn.queuedToolRequests.push(request);
+        return;
+      }
+      if (turnId !== turn.turnId) {
+        this.failToolProtocol(
+          request,
+          turn,
+          new Error('Codex app-server tool call did not match the active turn')
+        );
+        return;
+      }
+      this.dispatchDynamicToolCall(request, turn, callId, tool, data.namespace, input);
+    } catch (error: unknown) {
+      this.failToolProtocol(request, turn, this.toError(error));
+    }
+  }
+
+  private failToolProtocol(request: ServerToolRequest, turn: PendingTurn, error: Error): void {
+    const failure = this.toError(error);
+    this.replyToolError(request, failure.message);
+    this.failTurn(turn.threadId, failure);
+    if (this.child === request.child && !this.shutdownPromise) {
+      void this.shutdown(failure);
+    }
+  }
+
+  private requiredToolString(data: JsonObject, field: string): string {
+    const value = data[field];
+    if (typeof value !== 'string' || !value) {
+      throw new Error(`Codex app-server tool call ${field} must be a string`);
+    }
+    return value;
+  }
+
+  private dispatchDynamicToolCall(
+    request: ServerToolRequest,
+    turn: PendingTurn,
+    callId: string,
+    tool: string,
+    namespace: string | null,
+    input: JsonObject
+  ): void {
+    const identity = JSON.stringify(
+      stableJson({
+        threadId: turn.threadId,
+        turnId: turn.turnId,
+        tool,
+        namespace,
+        arguments: input,
+      })
+    );
+    const existing = turn.toolCallResults.get(callId);
+    if (existing && existing.identity !== identity) {
+      throw new Error(`Codex app-server callId ${callId} had a conflicting request`);
+    }
+    let execution = existing?.execution;
+    if (!execution) {
+      const bridge = turn.hostToolBridge;
+      if (!bridge) {
+        this.replyDisabledTool(request);
+        return;
+      }
+      execution = turn.toolCallQueue
+        .then(async () => {
+          if (!this.isToolTurnActive(request, turn)) {
+            return {
+              result: this.toolResult(false, 'Codex app-server tool call is no longer active'),
+              stop: false,
+              abortError: undefined,
+            };
+          }
+          let result: unknown;
+          try {
+            result = await bridge.execute({ callId, name: tool, input });
+          } catch (error: unknown) {
+            result = { content: this.toError(error).message, isError: true };
+          }
+          const resultData = object(result);
+          if (
+            !resultData ||
+            typeof resultData.content !== 'string' ||
+            typeof resultData.isError !== 'boolean'
+          ) {
+            return {
+              result: this.toolResult(false, 'Host tool returned a malformed result'),
+              stop: false,
+              abortError: undefined,
+            };
+          }
+          const abortError =
+            resultData.abort === true && resultData.isError
+              ? new Error(resultData.content)
+              : undefined;
+          return {
+            result: this.toolResult(!resultData.isError, resultData.content),
+            stop: resultData.stop === true && !resultData.isError,
+            abortError,
+          };
+        })
+        .catch((error: unknown) => ({
+          result: this.toolResult(false, this.toError(error).message),
+          stop: false,
+          abortError: undefined,
+        }));
+      turn.toolCallResults.set(callId, { identity, execution });
+      turn.toolCallQueue = execution.then(
+        () => undefined,
+        () => undefined
+      );
+    }
+    void execution.then(({ result, stop, abortError }) => {
+      if (!this.isToolTurnActive(request, turn)) {
+        if (this.child === request.child) {
+          this.replyToolError(request, 'Codex app-server tool call is no longer active');
+        }
+        return;
+      }
+      this.reply(request.child, { jsonrpc: '2.0', id: request.id, result });
+      if (abortError && !turn.stoppingCallIds.has(callId)) {
+        turn.stoppingCallIds.add(callId);
+        turn.abortError = abortError;
+        void this.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId }).catch(
+          (error: unknown) => this.failTurn(turn.threadId, this.toError(error))
+        );
+      } else if (stop && !turn.stoppingCallIds.has(callId)) {
+        turn.stoppingCallIds.add(callId);
+        turn.intentionalStop = true;
+        void this.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.turnId }).catch(
+          (error: unknown) => this.failTurn(turn.threadId, this.toError(error))
+        );
+      }
+    });
+  }
+
+  private isToolTurnActive(request: ServerToolRequest, turn: PendingTurn): boolean {
+    return (
+      this.child === request.child &&
+      this.turns.get(turn.threadId) === turn &&
+      !turn.intentionalStop &&
+      !turn.abortError
+    );
+  }
+
+  private toolResult(success: boolean, content: string): JsonObject {
+    return { success, contentItems: [{ type: 'inputText', text: content }] };
+  }
+
+  private replyDisabledTool(request: ServerToolRequest): void {
+    this.reply(request.child, {
+      jsonrpc: '2.0',
+      id: request.id,
+      result: this.toolResult(false, 'Native app-server tools are disabled by MAMA'),
+    });
+  }
+
+  private replyToolError(request: ServerToolRequest, message: string): void {
+    this.reply(request.child, {
+      jsonrpc: '2.0',
+      id: request.id,
+      error: { code: -32602, message },
+    });
+  }
+
+  private reply(child: ChildProcessWithoutNullStreams, message: JsonObject): void {
+    if (child.stdin.writable) {
+      child.stdin.write(`${JSON.stringify(message)}\n`);
     }
   }
 
@@ -878,19 +1361,31 @@ export class CodexAppServerProcess {
       : new Error(this.redact(String(error)));
   }
 
-  private failTurn(error: Error): void {
-    const turn = this.turn;
+  private failTurn(threadId: string, error: Error): void {
+    const turn = this.turns.get(threadId);
     if (!turn) {
       return;
     }
-    this.turn = undefined;
+    this.turns.delete(threadId);
     clearTimeout(turn.timer);
+    this.clearTurnCallbacks(turn);
     turn.reject(this.toError(error));
+  }
+
+  private clearTurnCallbacks(turn: PendingTurn): void {
+    turn.queuedNotifications.length = 0;
+    turn.queuedToolRequests.length = 0;
+    turn.toolCallResults.clear();
+    turn.stoppingCallIds.clear();
+    turn.hostToolBridge = undefined;
+    turn.onDelta = undefined;
   }
 
   private failAll(error: Error): void {
     const safe = this.toError(error);
-    this.failTurn(safe);
+    for (const threadId of [...this.turns.keys()]) {
+      this.failTurn(threadId, safe);
+    }
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       this.pending.delete(id);
@@ -909,8 +1404,7 @@ export class CodexAppServerProcess {
 
   private async restart(): Promise<void> {
     await this.shutdown(new Error('Codex app-server restarting after auth refresh'));
-    this.stopped = false;
-    this.threadId = '';
+    this.sessions.clear();
   }
 
   private async shutdown(reason: Error): Promise<void> {
@@ -982,6 +1476,6 @@ export class CodexAppServerProcess {
     this.stdout = undefined;
     this.stderr = undefined;
     this.child = undefined;
-    this.threadId = '';
+    this.sessions.clear();
   }
 }

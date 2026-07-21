@@ -562,7 +562,7 @@ describe('graph api helpers', () => {
             agent: { backend: 'codex', model: 'gpt-5.4-mini' },
             multi_agent: {
               agents: {
-                coder: { backend: 'codex-mcp', model: 'gpt-5.3-codex' },
+                coder: { backend: 'codex', model: 'gpt-5.4' },
               },
             },
           })
@@ -575,9 +575,7 @@ describe('graph api helpers', () => {
               },
             },
           })
-        ).toContain(
-          'multi_agent.agents.resolver.backend must be "claude", "codex", or "codex-mcp"'
-        );
+        ).toContain('multi_agent.agents.resolver.backend must be "claude" or "codex"');
       });
     });
 

@@ -1,5 +1,9 @@
 # Codex App-Server Recovery Design
 
+> Superseded for runtime architecture by
+> `2026-07-20-codex-app-server-multiplex-refactor.md`. The MCP rollback transport described below
+> was removed; Codex app-server is now the only supported Codex transport.
+
 **Date:** 2026-07-20  
 **Status:** Approved  
 **Historical baseline:** `53c10ab74edd93ad809fae2088122774bafd4a01`  

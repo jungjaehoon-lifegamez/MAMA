@@ -11,7 +11,7 @@
 import { readFile } from 'fs/promises';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { resolve } from 'path';
-import { loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import { AgentLoop, loadBackendAgentsMd, getGatewayToolsPrompt } from '../agent/agent-loop.js';
 import { ToolRegistry } from '../agent/tool-registry.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from '../agent/skill-loader.js';
 import { homedir } from 'os';
@@ -26,8 +26,15 @@ import { ToolPermissionManager } from './tool-permission-manager.js';
 import { CodexRuntimeProcess, type AgentRuntimeProcess } from './runtime-process.js';
 import type { EphemeralAgentDef } from './workflow-types.js';
 import { buildBmadPromptBlock } from './bmad-templates.js';
-import { TypeDefinitionGenerator, getCodeActInstructions } from '../agent/code-act/index.js';
+import {
+  CODE_ACT_MARKER,
+  TypeDefinitionGenerator,
+  getCodeActInstructions,
+  projectCodeActToolPolicy,
+} from '../agent/code-act/index.js';
 import { HostBridge } from '../agent/code-act/host-bridge.js';
+import type { GatewayToolExecutor } from '../agent/gateway-tool-executor.js';
+import type { AgentContext, AgentPlatform } from '../agent/types.js';
 
 const { DebugLogger } = debugLogger as {
   DebugLogger: new (context?: string) => {
@@ -39,6 +46,74 @@ const { DebugLogger } = debugLogger as {
 };
 const processManagerLogger = new DebugLogger('AgentProcessManager');
 
+class ManagedCodexCodeActProcess extends EventEmitter implements AgentRuntimeProcess {
+  private stopped = false;
+  private activeRequests = 0;
+
+  constructor(
+    private readonly loop: AgentLoop,
+    private readonly sessionKey: string,
+    private readonly source: string,
+    private readonly channelId: string,
+    private readonly agentContext: AgentContext,
+    private readonly model?: string
+  ) {
+    super();
+  }
+
+  async sendMessage(
+    content: string,
+    callbacks?: import('../agent/persistent-cli-process.js').PromptCallbacks
+  ): Promise<import('../agent/persistent-cli-process.js').PromptResult> {
+    if (this.stopped) {
+      const error = new Error('Process is dead');
+      callbacks?.onError?.(error);
+      throw error;
+    }
+
+    this.activeRequests += 1;
+    try {
+      const result = await this.loop.run(content, {
+        source: this.source,
+        channelId: this.channelId,
+        sessionKey: this.sessionKey,
+        agentContext: this.agentContext,
+        model: this.model,
+        streamCallbacks: callbacks,
+      });
+      return {
+        response: result.response,
+        usage: result.totalUsage,
+        session_id: this.sessionKey,
+        toolUseBlocks: [],
+        hasToolUse: false,
+      };
+    } finally {
+      this.activeRequests -= 1;
+      if (!this.stopped && this.activeRequests === 0) {
+        this.emit('idle');
+      }
+    }
+  }
+
+  isReady(): boolean {
+    return !this.stopped;
+  }
+
+  async stop(): Promise<void> {
+    if (this.stopped) {
+      return;
+    }
+    this.stopped = true;
+    await this.loop.stop();
+    this.emit('close', 0);
+  }
+
+  getSessionId(): string {
+    return this.sessionKey;
+  }
+}
+
 /**
  * Resolve path with ~ expansion
  */
@@ -47,16 +122,6 @@ function resolvePath(path: string): string {
     return resolve(homedir(), path.slice(2));
   }
   return resolve(path);
-}
-
-function matchCodeActToolPattern(pattern: string, toolName: string): boolean {
-  if (pattern === '*') {
-    return true;
-  }
-  if (pattern.endsWith('*')) {
-    return toolName.startsWith(pattern.slice(0, -1));
-  }
-  return pattern === toolName;
 }
 
 function safeConfigId(agentId: string): string {
@@ -149,6 +214,7 @@ export class AgentProcessManager extends EventEmitter {
   private codexShutdowns: Map<string, Promise<void>> = new Map();
   private permissionManager: ToolPermissionManager;
   private runtimeOptions: MultiAgentRuntimeOptions;
+  private gatewayToolExecutor: GatewayToolExecutor | null = null;
   private readonly tracePromptMs = globalThis.process.env.MAMA_CONDUCTOR_PROMPT_MS === '1';
   private readonly dumpConductorPrompt = globalThis.process.env.MAMA_DUMP_CONDUCTOR_PROMPT === '1';
 
@@ -200,15 +266,20 @@ export class AgentProcessManager extends EventEmitter {
     }
   }
 
+  /** Wire the boot-owned executor used by managed Codex Code-Act loops. */
+  setGatewayToolExecutor(executor: GatewayToolExecutor): void {
+    this.gatewayToolExecutor = executor;
+  }
+
   private getAgentBackend(
     agentConfig: Omit<AgentPersonaConfig, 'id'>,
     agentId?: string
-  ): 'claude' | 'codex' | 'codex-mcp' {
+  ): 'claude' | 'codex' {
     const backend = agentConfig.backend ?? this.runtimeOptions.backend;
     if (!backend) {
       throw new Error(
         `No backend configured for agent${agentId ? ` '${agentId}'` : ''}. ` +
-          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex' | 'codex-mcp'`
+          `Set 'backend' in agent config or global agent.backend. Valid: 'claude' | 'codex'`
       );
     }
     return backend;
@@ -286,6 +357,11 @@ export class AgentProcessManager extends EventEmitter {
     const channelKey = this.buildChannelKey(source, channelId, agentId);
     const agentConfig = this.config.agents[agentId];
     const agentBackend = this.getAgentBackend(agentConfig, agentId);
+    if (agentBackend === 'codex' && agentConfig?.useCodeAct && !this.gatewayToolExecutor) {
+      throw new Error(
+        `Managed Codex Code-Act agent "${agentId}" cannot start: shared GatewayToolExecutor is not wired`
+      );
+    }
     const systemPrompt = await this.loadPersona(agentId);
     const tier = agentConfig?.tier ?? 1;
     const options: Partial<PersistentProcessOptions> = {
@@ -306,14 +382,13 @@ export class AgentProcessManager extends EventEmitter {
       options.effort = effort;
     }
 
-    // MCP config: expose MCP tools to agents
-    // Code-Act agents get a stripped config (code-act only) to force tool access through sandbox.
-    // Without this, direct MCP tools (mcp__mama__search) compete with code-act gateway tools
-    // (report_publish, wiki_publish) which are ONLY available inside code_act.
+    // MCP config: expose MCP tools to agents. Claude Code-Act agents retain the
+    // legacy stripped MCP transport; Codex receives its outer code_act function
+    // natively from AgentLoop and must not also load the retired MCP wrapper.
     const mcpConfigPath = resolve(homedir(), '.mama', 'mama-mcp-config.json');
     if (existsSync(mcpConfigPath)) {
-      if (agentConfig?.useCodeAct) {
-        // Code-Act agents: only provide code-act MCP server
+      if (agentConfig?.useCodeAct && agentBackend !== 'codex') {
+        // Claude Code-Act agents: only provide code-act MCP server
         const codeActOnlyConfig = resolve(
           homedir(),
           '.mama',
@@ -355,7 +430,7 @@ export class AgentProcessManager extends EventEmitter {
             `Code-Act MCP config unavailable for agent "${agentId}" at ${mcpConfigPath}: ${message}`
           );
         }
-      } else {
+      } else if (!agentConfig?.useCodeAct) {
         options.mcpConfigPath = mcpConfigPath;
       }
     }
@@ -381,14 +456,24 @@ export class AgentProcessManager extends EventEmitter {
 
     // Code-Act: available as optional tool alongside direct tools (no forced disallowedTools)
 
-    if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
+    if (agentBackend === 'codex') {
       await this.waitForCodexShutdown(channelKey);
       const existing = this.codexProcessPool.get(channelKey);
       if (existing) {
         return existing;
       }
 
-      const runner = this.createCodexRunner(options, channelKey);
+      const runner = agentConfig.useCodeAct
+        ? this.createCodexCodeActRunner(
+            options,
+            channelKey,
+            source,
+            channelId,
+            agentId,
+            agentConfig,
+            this.gatewayToolExecutor!
+          )
+        : this.createCodexRunner(options, channelKey);
       this.codexProcessPool.set(channelKey, runner);
       this.emit('process-created', { agentId, process: runner });
       return runner;
@@ -432,7 +517,6 @@ export class AgentProcessManager extends EventEmitter {
   ): AgentRuntimeProcess {
     return new CodexRuntimeProcess({
       defaultSessionKey: sessionKey,
-      transport: this.runtimeOptions.codexTransport,
       model: options.model || this.runtimeOptions.model,
       systemPrompt: options.systemPrompt,
       cwd: this.runtimeOptions.codexCwd ? resolvePath(this.runtimeOptions.codexCwd) : undefined,
@@ -441,6 +525,83 @@ export class AgentProcessManager extends EventEmitter {
       requestTimeout: options.requestTimeout,
       mcpConfigPath: options.mcpConfigPath,
     });
+  }
+
+  private createCodexCodeActRunner(
+    options: Partial<PersistentProcessOptions>,
+    sessionKey: string,
+    source: string,
+    channelId: string,
+    agentId: string,
+    agentConfig: Omit<AgentPersonaConfig, 'id'>,
+    executor: GatewayToolExecutor
+  ): AgentRuntimeProcess {
+    const allowedTools = this.deriveCodeActAllowedTools(agentConfig) ?? ['*'];
+    const blockedTools = codeActBlockedTools(agentConfig) ?? [];
+    const outerAllowedTools = [
+      CODE_ACT_MARKER,
+      ...allowedTools.filter((tool) => tool !== CODE_ACT_MARKER),
+    ];
+    const platform: AgentPlatform =
+      source === 'viewer' ||
+      source === 'discord' ||
+      source === 'telegram' ||
+      source === 'slack' ||
+      source === 'chatwork' ||
+      source === 'cli'
+        ? source
+        : 'cli';
+    const capabilities = allowedTools.includes('*')
+      ? [CODE_ACT_MARKER, ...HostBridge.getToolRegistry().map((tool) => tool.name)]
+      : [...outerAllowedTools];
+    const agentContext: AgentContext = {
+      source,
+      platform,
+      roleName: agentId,
+      role: {
+        allowedTools: outerAllowedTools,
+        blockedTools: [...blockedTools],
+        model: options.model,
+        maxTurns: agentConfig.max_turns,
+      },
+      session: {
+        sessionId: sessionKey,
+        channelId,
+        startedAt: new Date(),
+      },
+      capabilities,
+      limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+      tier: agentConfig.tier ?? 1,
+      backend: 'codex',
+    };
+    const loop = new AgentLoop(null, {
+      backend: 'codex',
+      model: options.model ?? this.runtimeOptions.model,
+      systemPrompt: options.systemPrompt,
+      maxTurns: agentConfig.max_turns,
+      timeoutMs: options.requestTimeout,
+      sessionKey,
+      useCodeAct: true,
+      agentContext,
+      toolsConfig: { gateway: ['*'], mcp: [] },
+      executor,
+      codexCwd: this.runtimeOptions.codexCwd
+        ? resolvePath(this.runtimeOptions.codexCwd)
+        : undefined,
+      codexCommand: this.runtimeOptions.codexCommand,
+      codexSandbox: this.runtimeOptions.codexSandbox,
+      codexHome: this.runtimeOptions.codexHome,
+      codexIsolatedHome: this.runtimeOptions.codexIsolatedHome,
+      codexRegistryRoot: this.runtimeOptions.codexRegistryRoot,
+    });
+    return new ManagedCodexCodeActProcess(
+      loop,
+      sessionKey,
+      source,
+      channelId,
+      agentContext,
+      options.model ?? this.runtimeOptions.model
+    );
   }
 
   /**
@@ -586,7 +747,7 @@ export class AgentProcessManager extends EventEmitter {
 
     // Resolve backend-specific model IDs for workflow plan templates
     const claudeModelId = this.resolveModelForBackend('claude');
-    const codexModelId = this.resolveModelForBackend('codex-mcp');
+    const codexModelId = this.resolveModelForBackend('codex');
     resolvedPersona = resolvedPersona.replace(/\{\{claude_model_id\}\}/gi, claudeModelId);
     resolvedPersona = resolvedPersona.replace(/\{\{codex_model_id\}\}/gi, codexModelId);
 
@@ -669,12 +830,15 @@ ${skillsPrompt}## Guidelines
     // Code-Act mode: replace tool_call instructions with Code-Act JS execution
     if (agentConfig.useCodeAct && tier !== 3) {
       const allowedTools = this.deriveCodeActAllowedTools(agentConfig);
-      const typeDefs = TypeDefinitionGenerator.generate(tier as 1 | 2 | 3, allowedTools);
+      const policy = projectCodeActToolPolicy({
+        tier: tier as 1 | 2 | 3,
+        role: { allowedTools },
+      });
+      const typeDefs = TypeDefinitionGenerator.generate(policy);
       const backend = agentConfig.backend ?? this.runtimeOptions.backend ?? 'claude';
-      const codeActBackend =
-        backend === 'codex' || backend === 'codex-mcp' ? 'codex-mcp' : ('claude' as const);
+      const codeActBackend = backend === 'codex' ? 'codex' : ('claude' as const);
       return (
-        getCodeActInstructions(codeActBackend, allowedTools) +
+        getCodeActInstructions(codeActBackend, policy.names) +
         '\n```typescript\n' +
         typeDefs +
         '\n```\n'
@@ -723,27 +887,12 @@ ${skillsPrompt}## Guidelines
   }
 
   private filterCodeActAllowedTools(allowedTools: string[], blockedTools?: string[]): string[] {
-    if (blockedTools?.includes('*')) {
-      return [];
-    }
-    if (allowedTools.includes('*') && !blockedTools?.length) {
-      return ['*'];
-    }
-    const registry = HostBridge.getToolRegistry();
-    const allowedNames = allowedTools.includes('*')
-      ? registry.map((meta) => meta.name)
-      : registry
-          .filter((meta) =>
-            allowedTools.some((pattern) => matchCodeActToolPattern(pattern, meta.name))
-          )
-          .map((meta) => meta.name);
-
-    if (!blockedTools?.length) {
-      return allowedNames;
-    }
-    return allowedNames.filter(
-      (toolName) => !blockedTools.some((pattern) => matchCodeActToolPattern(pattern, toolName))
-    );
+    return [
+      ...projectCodeActToolPolicy({
+        tier: 1,
+        role: { allowedTools, blockedTools },
+      }).names,
+    ];
   }
 
   private shouldTracePrompt(agentId: string): boolean {
@@ -1024,7 +1173,7 @@ Respond to messages in a helpful and professional manner.
       display_name: agentDef.display_name,
       trigger_prefix: '', // ephemeral agents have no trigger
       persona_file: '', // inline system prompt, no file
-      backend: agentDef.backend as 'claude' | 'codex' | 'codex-mcp',
+      backend: agentDef.backend as 'claude' | 'codex',
       model: agentDef.model,
       tier: agentDef.tier ?? 1,
       tool_permissions: agentDef.tool_permissions,

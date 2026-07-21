@@ -6,6 +6,8 @@
  * enforced by the caller contract in worker-run.ts).
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   buildWorkerSessionKey,
@@ -129,14 +131,40 @@ describe('Story S2-T4: workerRun runOptions merge order', () => {
 });
 
 /**
- * Story S2 shadow-gate §8.2: worker system prompt forces the text-gateway path.
+ * Story S2 shadow-gate §8.2: worker system prompt selects the provider's supported tool path.
  */
 describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
-  it('carries the gateway tools doc and excludes code-act instructions', () => {
-    const prompt = buildWorkerSystemPrompt('# Gateway Tools\n\nCall tools via JSON block: ...');
+  it('keeps the Claude fenced tool_call contract exactly on the text gateway path', () => {
+    const prompt = buildWorkerSystemPrompt(
+      '# Gateway Tools\n\nCall tools via JSON block: ...',
+      'claude'
+    );
     expect(prompt).toContain('# Gateway Tools');
     expect(prompt).toContain('ONE work order');
+    expect(prompt).toContain('tool_call JSON');
     expect(prompt).not.toMatch(/code-?act/i);
     expect(prompt).not.toMatch(/sandbox/i);
+  });
+
+  it('uses injected native host tools for Codex without embedding text or JS substitutes', () => {
+    const prompt = buildWorkerSystemPrompt(
+      '# Gateway Tools\n\n```tool_call\n{"name":"mama_search","input":{}}\n```',
+      'codex'
+    );
+
+    expect(prompt).toContain('native host tools directly');
+    expect(prompt).toContain('never emit Markdown or JavaScript substitutes');
+    expect(prompt).not.toContain('# Gateway Tools');
+    expect(prompt).not.toContain('```tool_call');
+    expect(prompt).not.toContain('tool_call JSON');
+  });
+
+  it('wires the selected runtime backend into work-order and report prompt construction', () => {
+    const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+
+    expect(startSource).toContain(
+      'buildWorkerSystemPrompt(getGatewayToolsPrompt(), runtimeBackend)'
+    );
+    expect(startSource).toMatch(/new OperatorTriggerLoop\(\{[\s\S]*?backend: runtimeBackend,/);
   });
 });

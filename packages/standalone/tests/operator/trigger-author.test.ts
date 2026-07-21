@@ -5,11 +5,13 @@
  * unknown kind/action VALUES are accepted (never narrowed to a catalog), or G3 re-freezes.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TriggerRegistry } from '../../src/operator/trigger-registry.js';
 import {
   authorTriggers,
+  createAskAgentCLI,
+  createTriggerAgentRuntime,
   parseTriggerSpecs,
   validateTriggerSpec,
 } from '../../src/operator/trigger-author.js';
@@ -167,5 +169,129 @@ describe('authorTriggers', () => {
         requiredEvidence: [],
       })
     ).toThrow(); // empty kind + empty keywords = malformed shape
+  });
+});
+
+describe('trigger agent provider boundary', () => {
+  it('keeps the Claude CLI command, arguments, and JSON result parsing unchanged', async () => {
+    const execute = vi.fn().mockResolvedValue({
+      stdout: JSON.stringify({ type: 'result', result: '[{"kind":"k"}]' }),
+    });
+    const askAgent = createAskAgentCLI(execute);
+
+    await expect(askAgent('author prompt')).resolves.toBe('[{"kind":"k"}]');
+    expect(execute).toHaveBeenCalledWith(
+      'claude',
+      ['-p', 'author prompt', '--output-format', 'json'],
+      { maxBuffer: 16 * 1024 * 1024 }
+    );
+  });
+
+  it('does not construct Codex for the Claude backend and propagates Claude failures', async () => {
+    const failure = new Error('claude failed');
+    const askClaude = vi.fn().mockRejectedValue(failure);
+    const createCodexRuntime = vi.fn();
+    const runtime = createTriggerAgentRuntime('claude', {}, { askClaude, createCodexRuntime });
+
+    await expect(runtime.askAuthor('prompt')).rejects.toBe(failure);
+    expect(createCodexRuntime).not.toHaveBeenCalled();
+    await runtime.stop();
+  });
+
+  it('uses one read-only Codex app-server runner with isolated fresh author and review lanes', async () => {
+    const prompt = vi
+      .fn()
+      .mockResolvedValueOnce({ response: '[{"kind":"k"}]' })
+      .mockResolvedValueOnce({ response: '{"action":"kept"}' });
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const createCodexRuntime = vi.fn(() => ({ prompt, stop }));
+    const runtime = createTriggerAgentRuntime(
+      'codex',
+      {
+        model: 'gpt-5.4',
+        cwd: '/safe/workspace',
+        command: '/usr/local/bin/codex',
+      },
+      { createCodexRuntime }
+    );
+
+    await expect(runtime.askAuthor('author prompt')).resolves.toBe('[{"kind":"k"}]');
+    await expect(runtime.askReview('review prompt')).resolves.toBe('{"action":"kept"}');
+
+    expect(createCodexRuntime).toHaveBeenCalledTimes(1);
+    expect(createCodexRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: 'gpt-5.4',
+        cwd: '/safe/workspace',
+        command: '/usr/local/bin/codex',
+        sandbox: 'read-only',
+      })
+    );
+    const authorOptions = prompt.mock.calls[0][2];
+    const reviewOptions = prompt.mock.calls[1][2];
+    expect(authorOptions).toEqual(
+      expect.objectContaining({
+        sessionKey: 'operator:trigger-author',
+        resumeSession: false,
+      })
+    );
+    expect(reviewOptions).toEqual(
+      expect.objectContaining({
+        sessionKey: 'operator:trigger-review',
+        resumeSession: false,
+      })
+    );
+    expect(authorOptions.sessionKey).not.toBe(reviewOptions.sessionKey);
+    expect(authorOptions).not.toHaveProperty('hostToolBridge');
+    expect(reviewOptions).not.toHaveProperty('hostToolBridge');
+    expect(JSON.stringify(createCodexRuntime.mock.calls)).not.toMatch(/mcp|tool_call/i);
+  });
+
+  it('propagates malformed Codex results and runner errors without fallback', async () => {
+    const malformedRuntime = createTriggerAgentRuntime(
+      'codex',
+      {},
+      {
+        createCodexRuntime: () => ({
+          prompt: vi.fn().mockResolvedValue({ response: null }),
+          stop: vi.fn(),
+        }),
+      }
+    );
+    await expect(malformedRuntime.askAuthor('prompt')).rejects.toThrow(
+      'Codex trigger agent did not return a text result'
+    );
+
+    const failure = new Error('codex failed');
+    const failingRuntime = createTriggerAgentRuntime(
+      'codex',
+      {},
+      {
+        createCodexRuntime: () => ({
+          prompt: vi.fn().mockRejectedValue(failure),
+          stop: vi.fn(),
+        }),
+      }
+    );
+    await expect(failingRuntime.askReview('prompt')).rejects.toBe(failure);
+  });
+
+  it('stops the shared Codex runner exactly once', async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const runtime = createTriggerAgentRuntime(
+      'codex',
+      {},
+      {
+        createCodexRuntime: () => ({
+          prompt: vi.fn(),
+          stop,
+        }),
+      }
+    );
+
+    await Promise.all([runtime.stop(), runtime.stop()]);
+    await runtime.stop();
+
+    expect(stop).toHaveBeenCalledTimes(1);
   });
 });

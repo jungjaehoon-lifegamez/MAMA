@@ -1,5 +1,9 @@
 # Codex App-Server Recovery Implementation Plan
 
+> Superseded for runtime architecture by
+> `2026-07-20-codex-app-server-multiplex-refactor.md`. The MCP rollback transport described below
+> was removed; Codex app-server is now the only supported Codex transport.
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents
 > available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`)
 > syntax for tracking.

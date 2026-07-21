@@ -534,7 +534,10 @@ export function buildCodexAppServerLaunchConfig(
       throw new Error(`mcpServers.${name} must be an object`);
     }
     rejectUnknownFields(raw, SERVER_FIELDS, `mcpServers.${name}`);
-    if (name === 'mama') {
+    // MAMA and legacy code-act are owned by the canonical native host bridge.
+    // Passing either server to app-server would create an unprojected bypass
+    // around role, runtime, tier, and envelope enforcement.
+    if (name === 'mama' || name === 'code-act') {
       continue;
     }
 

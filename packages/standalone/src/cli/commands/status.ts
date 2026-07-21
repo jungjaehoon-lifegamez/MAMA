@@ -64,8 +64,8 @@ export async function statusCommand(): Promise<void> {
       const config = await loadConfig();
       const backend = config.agent.backend;
       console.log(`Backend: ${backend}`);
-      if (backend === 'codex' || backend === 'codex-mcp') {
-        console.log(`Codex transport: ${config.agent.codex_transport ?? 'app-server'}`);
+      if (backend === 'codex') {
+        console.log('Codex transport: app-server');
       } else {
         const authStatus = getClaudeCodeAuthStatus();
         process.stdout.write('Claude Code auth: ');

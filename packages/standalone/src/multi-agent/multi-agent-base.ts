@@ -426,6 +426,7 @@ export abstract class MultiAgentHandlerBase {
    */
   setGatewayToolExecutor(executor: GatewayToolExecutor): void {
     this.gatewayToolExecutor = executor;
+    this.processManager.setGatewayToolExecutor(executor);
   }
 
   /**

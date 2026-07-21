@@ -23,6 +23,7 @@ import { expandPath } from '../config/config-manager.js';
 import type { OAuthManager } from '../../auth/index.js';
 import { AgentLoop } from '../../agent/index.js';
 import type { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
+import type { BackendType } from '../../agent/model-runner.js';
 import type { AgentContext } from '../../agent/types.js';
 import type { MessageRouter } from '../../gateways/message-router.js';
 import type { MemoryAgentProcessManagerLike } from '../../gateways/message-router.js';
@@ -42,6 +43,23 @@ export interface MemoryAgentInitResult {
   memoryAgentLoop: AgentLoop | null;
 }
 
+function isBackendType(value: string | undefined): value is BackendType {
+  return value === 'claude' || value === 'codex';
+}
+
+function resolveMemoryBackend(
+  configuredBackend: string | undefined,
+  runtimeBackend: string
+): BackendType {
+  if (isBackendType(configuredBackend)) {
+    return configuredBackend;
+  }
+  if (isBackendType(runtimeBackend)) {
+    return runtimeBackend;
+  }
+  return 'claude';
+}
+
 /**
  * Initialize the memory agent (persistent process for fact extraction).
  *
@@ -58,8 +76,7 @@ export async function initMemoryAgent(
   _mamaApi: MAMAApiShape,
   mamaApiClient: MamaApiClient,
   messageRouter: MessageRouter,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _runtimeBackend: string,
+  runtimeBackend: string,
   toolExecutor: GatewayToolExecutor
 ): Promise<MemoryAgentInitResult> {
   // getAdapter is used directly for DB queries after initDB has run
@@ -74,6 +91,8 @@ export async function initMemoryAgent(
 
     const personaPath = ensureMemoryPersona();
     const memoryPersona = readFileSync(personaPath, 'utf-8');
+    const memoryAgentConfig = config.multi_agent?.agents?.memory;
+    const memoryBackend = resolveMemoryBackend(memoryAgentConfig?.backend, runtimeBackend);
     const memoryAgentContext: AgentContext = {
       source: 'memory-agent',
       platform: 'cli',
@@ -92,13 +111,9 @@ export async function initMemoryAgent(
       capabilities: ['mama_search', 'mama_save'],
       limitations: ['No file or shell access'],
       tier: 2,
-      backend: 'claude',
+      backend: memoryBackend,
     };
 
-    const memoryAgentConfig = config.multi_agent?.agents?.memory;
-    const memoryBackend = (memoryAgentConfig?.backend === 'codex-mcp' ? 'codex-mcp' : 'claude') as
-      | 'claude'
-      | 'codex-mcp';
     const memoryModel =
       memoryAgentConfig?.model ||
       (memoryBackend === 'claude' ? 'claude-sonnet-4-6' : config.agent.model);

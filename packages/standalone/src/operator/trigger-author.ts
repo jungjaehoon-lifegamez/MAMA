@@ -15,6 +15,9 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
+import type { CodexRuntimeProcessOptions } from '../multi-agent/runtime-process.js';
+import type { IModelRunner } from '../agent/model-runner.js';
 import type { OperatorChannelEvent } from './operator-interfaces.js';
 import type { CreateTriggerInput, TriggerRecord } from './trigger-types.js';
 import type { TriggerRegistry } from './trigger-registry.js';
@@ -42,6 +45,37 @@ export interface TriggerSpec {
 export interface AuthorOptions {
   note?: string;
 }
+
+type TriggerCodexRunner = Pick<IModelRunner, 'prompt' | 'stop'>;
+
+export interface TriggerAgentRuntimeOptions {
+  model?: string;
+  cwd?: string;
+  command?: string;
+  requestTimeout?: number;
+}
+
+export interface TriggerAgentRuntime {
+  askAuthor: AskAgent;
+  askReview: AskAgent;
+  stop(): Promise<void>;
+}
+
+export interface TriggerAgentRuntimeDependencies {
+  askClaude?: AskAgent;
+  createCodexRuntime?: (options: CodexRuntimeProcessOptions) => TriggerCodexRunner;
+}
+
+export type ClaudeCliExecutor = (
+  file: string,
+  args: string[],
+  options: { maxBuffer: number }
+) => Promise<{ stdout: string }>;
+
+const TRIGGER_CODEX_SYSTEM_PROMPT =
+  'Return only the requested JSON value, with no prose or code fences.';
+const TRIGGER_AUTHOR_SESSION_KEY = 'operator:trigger-author';
+const TRIGGER_REVIEW_SESSION_KEY = 'operator:trigger-review';
 
 export async function authorTriggers(
   events: OperatorChannelEvent[],
@@ -196,15 +230,89 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
   };
 }
 
-/** Real agent: the local claude CLI (CLI-over-API). Used by the LLM eval, not unit tests. */
-export const askAgentCLI: AskAgent = async (prompt) => {
-  const { stdout } = await execFileAsync('claude', ['-p', prompt, '--output-format', 'json'], {
-    maxBuffer: 16 * 1024 * 1024,
+/** Build the legacy bare-Claude JSON runner while allowing command injection in tests. */
+export function createAskAgentCLI(execute: ClaudeCliExecutor = executeClaudeCLI): AskAgent {
+  return async (prompt) => {
+    const { stdout } = await execute('claude', ['-p', prompt, '--output-format', 'json'], {
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout) as { type?: string; result?: unknown };
+    if (parsed.type === 'result' && typeof parsed.result === 'string') return parsed.result;
+    throw new Error('claude CLI did not return a text result');
+  };
+}
+
+/** Real agent: the local claude CLI (CLI-over-API). Preserved for eval compatibility. */
+export const askAgentCLI: AskAgent = createAskAgentCLI();
+
+/**
+ * Provider boundary for trigger authoring and review.
+ *
+ * Claude keeps the historical bare CLI path. Codex shares one app-server
+ * connection, but every structured task starts a fresh, isolated, read-only
+ * session and advertises no host tools.
+ */
+export function createTriggerAgentRuntime(
+  backend: 'claude' | 'codex',
+  options: TriggerAgentRuntimeOptions = {},
+  dependencies: TriggerAgentRuntimeDependencies = {}
+): TriggerAgentRuntime {
+  if (backend === 'claude') {
+    const askClaude = dependencies.askClaude ?? askAgentCLI;
+    return {
+      askAuthor: askClaude,
+      askReview: askClaude,
+      stop: async () => undefined,
+    };
+  }
+
+  const createCodexRuntime =
+    dependencies.createCodexRuntime ??
+    ((runtimeOptions) => new CodexRuntimeProcess(runtimeOptions));
+  const runner = createCodexRuntime({
+    defaultSessionKey: TRIGGER_AUTHOR_SESSION_KEY,
+    model: options.model,
+    systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
+    cwd: options.cwd,
+    sandbox: 'read-only',
+    requestTimeout: options.requestTimeout,
+    command: options.command,
   });
-  const parsed = JSON.parse(stdout) as { type?: string; result?: unknown };
-  if (parsed.type === 'result' && typeof parsed.result === 'string') return parsed.result;
-  throw new Error('claude CLI did not return a text result');
-};
+  const askInSession =
+    (sessionKey: string): AskAgent =>
+    async (prompt) => {
+      const result = await runner.prompt(prompt, undefined, {
+        sessionKey,
+        resumeSession: false,
+        systemPrompt: TRIGGER_CODEX_SYSTEM_PROMPT,
+      });
+      if (typeof result.response !== 'string') {
+        throw new Error('Codex trigger agent did not return a text result');
+      }
+      return result.response;
+    };
+  let stopPromise: Promise<void> | undefined;
+
+  return {
+    askAuthor: askInSession(TRIGGER_AUTHOR_SESSION_KEY),
+    askReview: askInSession(TRIGGER_REVIEW_SESSION_KEY),
+    stop: () => {
+      stopPromise ??= Promise.resolve().then(async () => {
+        await runner.stop();
+      });
+      return stopPromise;
+    },
+  };
+}
+
+async function executeClaudeCLI(
+  file: string,
+  args: string[],
+  options: { maxBuffer: number }
+): Promise<{ stdout: string }> {
+  const { stdout } = await execFileAsync(file, args, options);
+  return { stdout: String(stdout) };
+}
 
 // ---- helpers ----
 

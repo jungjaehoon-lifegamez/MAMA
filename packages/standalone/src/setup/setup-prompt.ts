@@ -77,18 +77,17 @@ Ask users which AI backend they want to use:
 
 **Options:**
 - **claude** (default): Uses Claude CLI. Requires Claude Code subscription.
-- **codex-mcp**: Uses OpenAI Codex via MCP. Requires Codex subscription and setup.
+- **codex**: Uses OpenAI Codex app-server. Requires a Codex subscription and codex login.
 
 To configure:
 \`\`\`
-update_config("agent.backend", "claude")        // or "codex-mcp"
+update_config("agent.backend", "claude")        // or "codex"
 update_config("agent.model", "claude-sonnet-4-6")  // for claude
-update_config("agent.model", "gpt-5.3-codex")   // for codex-mcp
+update_config("agent.model", "gpt-5.4")         // for codex
 \`\`\`
 
 **Important:**
-- If using \`codex-mcp\`, user must have Codex credentials in \`~/.mama/.codex/\`
-- Do NOT use \`backend: codex\` (legacy, broken) - always use \`codex-mcp\`
+- If using \`codex\`, authenticate first with \`codex login\`; MAMA manages its isolated runtime home.
 
 ### Security & Permission Settings
 

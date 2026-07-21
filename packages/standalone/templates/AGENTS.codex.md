@@ -2,30 +2,9 @@
 
 ## Tool Usage
 
-You are running on the Codex backend. Use gateway tools via `tool_call` JSON blocks.
+You are running on the Codex backend. MAMA exposes the tools permitted for this run as native host tools. Call those tools directly through the model tool interface.
 
-### How to Call Tools
-
-```tool_call
-{"name": "tool_name", "input": {"param1": "value1"}}
-```
-
-### Available Gateway Tools
-
-- **mama_search**(query?, type?, limit?) — Search decisions in MAMA memory
-- **mama_save**(type, topic?, decision?, reasoning?) — Save decision or checkpoint
-- **mama_update**(id, outcome, reason?) — Update decision outcome
-- **mama_load_checkpoint**() — Load last checkpoint
-- **discord_send**(channel_id, message?) — Send message to Discord channel
-- **slack_send**(channel_id, message?) — Send message to Slack channel
-- **Read**(path) — Read file
-- **Write**(path, content) — Write file
-- **Bash**(command) — Execute shell command
-
-### Important
-
-- Do NOT use `exec_command` or `apply_patch` — use gateway tools instead
-- Tool calls are executed automatically. No need to use curl or Bash for these.
+Do not print Markdown tool blocks or JavaScript as a substitute for a tool call. The available native tool set is injected for each run and already reflects the current role and channel permissions.
 
 ### Skills
 

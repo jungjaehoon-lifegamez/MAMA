@@ -47,7 +47,7 @@ describe('managed-agent-runtime-sync', () => {
     expect(Object.keys(agents).sort()).toEqual(['alpha', 'beta']);
   });
 
-  it('preserves codex and codex-mcp backend variants when creating agents', async () => {
+  it('preserves the codex backend when creating agents', async () => {
     const persistedConfig: Record<string, unknown> = {
       multi_agent: { enabled: true, agents: {} },
     };
@@ -63,13 +63,13 @@ describe('managed-agent-runtime-sync', () => {
         writePersonaFile: vi.fn(),
       }
     );
-    const codexMcp = await createManagedAgentRuntime(
+    const codexRuntime = await createManagedAgentRuntime(
       {
-        id: 'codex-mcp',
-        name: 'Codex MCP',
+        id: 'codex-secondary',
+        name: 'Codex Secondary',
         model: 'gpt-5.3-codex',
         tier: 1,
-        backend: 'codex-mcp',
+        backend: 'codex',
       },
       {
         loadConfig: vi.fn().mockResolvedValue(persistedConfig),
@@ -79,7 +79,7 @@ describe('managed-agent-runtime-sync', () => {
     );
 
     expect(codex.snapshot.backend).toBe('codex');
-    expect(codexMcp.snapshot.backend).toBe('codex-mcp');
+    expect(codexRuntime.snapshot.backend).toBe('codex');
   });
 
   it('uses a default persona path when updating system text without persona_file', async () => {

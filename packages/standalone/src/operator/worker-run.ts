@@ -21,6 +21,7 @@
  */
 
 import type { ContentBlock } from '../agent/types.js';
+import type { BackendType } from '../agent/model-runner.js';
 
 /** Identity fields workerRun owns - never overridable by callers (plan E7/G3). */
 export interface WorkerIdentityOptions {
@@ -97,17 +98,29 @@ export function resolveWorkerRequestTimeoutMs(env: NodeJS.ProcessEnv = process.e
  * went through POST /api/code-act - a server-side surface the per-run
  * execution-context seam (envelope, capture override) cannot reach. A custom
  * systemPrompt REPLACES the persona layers entirely (agent-loop.ts:484-486),
- * so workers advertise ONLY the text-gateway tool syntax and every call flows
- * through the in-process path where the seam works.
+ * so Claude workers advertise only the text-gateway syntax while Codex workers
+ * use the injected native host tools. Both routes reach the same in-process
+ * gateway executor where the per-run seam works.
  */
-export function buildWorkerSystemPrompt(gatewayToolsPrompt: string): string {
+export function buildWorkerSystemPrompt(
+  gatewayToolsPrompt: string,
+  backend: BackendType = 'claude'
+): string {
+  const toolInstructions =
+    backend === 'codex'
+      ? [
+          'Follow the brief in the user message. Use the injected native host tools directly.',
+          'Call them through the model tool interface; never emit Markdown or JavaScript substitutes.',
+        ]
+      : [
+          'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
+          'blocks documented below - no other execution mechanism exists in this session.',
+        ];
   return [
     'You are a MAMA OS system worker. You execute exactly ONE work order and stop.',
-    'Follow the brief in the user message. Call tools ONLY via the tool_call JSON',
-    'blocks documented below - no other execution mechanism exists in this session.',
+    ...toolInstructions,
     'Do not ask questions; finish with the exact final line your brief specifies.',
-    '',
-    gatewayToolsPrompt.trim(),
+    ...(backend === 'claude' ? ['', gatewayToolsPrompt.trim()] : []),
   ].join('\n');
 }
 

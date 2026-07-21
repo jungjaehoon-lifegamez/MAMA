@@ -84,9 +84,6 @@ function normalizeCreateBackend(
   if (candidate === 'codex') {
     return 'codex';
   }
-  if (candidate === 'codex-mcp') {
-    return 'codex-mcp';
-  }
   return 'claude';
 }
 
