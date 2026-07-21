@@ -105,7 +105,7 @@ export function temporalReceiptInvariantError(
       hasWorkflowChange ||
       !markerChanged ||
       receipt.nextTemporalCheckAt !== null ||
-      !receipt.reason.includes('\nEvidence:')
+      !receipt.reason.includes('evidence_sha256=')
     ) {
       return 'final_no_update temporal receipt markers are invalid';
     }

@@ -82,7 +82,7 @@ export function deriveTemporalState(
 export function parseExactDueAt(value: string): ParsedExactDueAt {
   const match = RFC3339_EXACT_PATTERN.exec(value);
   if (!match) {
-    throw new Error(`due_at must be RFC 3339 with an explicit offset, got: ${value}`);
+    throw new Error('due_at must be RFC 3339 with an explicit offset');
   }
   const [
     ,
@@ -117,7 +117,7 @@ export function parseExactDueAt(value: string): ParsedExactDueAt {
     offsetHours <= 14 && offsetMinutePart <= 59 && (offsetHours < 14 || offsetMinutePart === 0);
   const dueAt = Date.parse(value);
   if (!validLocalFields || !validOffset || !Number.isFinite(dueAt)) {
-    throw new Error(`due_at must be valid RFC 3339 with an explicit offset, got: ${value}`);
+    throw new Error('due_at must be valid RFC 3339 with an explicit offset');
   }
   const offsetMagnitude = offsetHours * 60 + offsetMinutePart;
   const offsetMinutes = zone === 'Z' ? 0 : sign === '-' ? -offsetMagnitude : offsetMagnitude;

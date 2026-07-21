@@ -2680,6 +2680,22 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
+          const temporalContext = this.getExecutionState().temporalWorkContext;
+          if (temporalContext) {
+            const boundTask = this.taskLedger.getById(temporalContext.taskId);
+            if (!boundTask) {
+              throw new AgentError(
+                'Host-bound temporal owner task is unavailable',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            return {
+              success: true,
+              tasks: [serializeTaskToolRecord(boundTask)],
+            };
+          }
           const listInput = input as {
             status?: string;
             channel?: string;
@@ -4494,12 +4510,18 @@ export class GatewayToolExecutor {
     }
 
     try {
+      const temporalContext = ctx.temporalWorkContext;
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
         input,
         signal: ctx.signal,
+        beforePersist: temporalContext
+          ? () => {
+              this.requireActiveTemporalWriteAuthority('context_compile');
+            }
+          : undefined,
       });
       return {
         success: true,

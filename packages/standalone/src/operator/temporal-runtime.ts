@@ -1,9 +1,27 @@
-import type { Stage2Flag } from './workorder-publishers.js';
+import { readStage2Flag, type Stage2Flag } from './workorder-publishers.js';
 import type { TemporalTickResult } from './temporal-reconcile.js';
 import type { WorkOrderRecord } from './task-ledger.js';
 
 export const TEMPORAL_RECONCILE_ENV = 'MAMA_TEMPORAL_RECONCILE';
 export type TemporalReconcileFlag = 'off' | 'on';
+
+export interface TemporalStartupPreflight {
+  stage2Flag: Stage2Flag;
+  temporalFlag: TemporalReconcileFlag;
+}
+
+export function preflightTemporalStartup(
+  env: NodeJS.ProcessEnv = process.env,
+  pauseIncompatible?: (reason: string) => void
+): TemporalStartupPreflight {
+  const stage2Flag = readStage2Flag(env);
+  const temporalFlag = resolveTemporalReconcileFlag(env);
+  if (temporalFlag === 'on' && stage2Flag !== 'on') {
+    pauseIncompatible?.(`stage2-${stage2Flag}`);
+    throw new Error(`${TEMPORAL_RECONCILE_ENV}=on requires MAMA_STAGE2_WORKORDERS=on`);
+  }
+  return { stage2Flag, temporalFlag };
+}
 
 export function resolveTemporalReconcileFlag(
   env: NodeJS.ProcessEnv = process.env
@@ -15,6 +33,7 @@ export function resolveTemporalReconcileFlag(
 }
 
 export interface TemporalRuntimeLedger {
+  repairClosedTemporalGenerations(): number;
   pauseActiveTemporalWork(reason: string): number;
   resumePausedTemporalWork(): WorkOrderRecord[];
 }
@@ -32,6 +51,7 @@ export interface TemporalRuntimeScheduler {
 
 export interface TemporalRuntimeOptions {
   env?: NodeJS.ProcessEnv;
+  flag?: TemporalReconcileFlag;
   stage2Flag: Stage2Flag;
   backend: string;
   effectiveTools: readonly string[];
@@ -71,7 +91,7 @@ export async function closeTemporalRuntimeBeforeDatabase(
 }
 
 export function createTemporalRuntime(options: TemporalRuntimeOptions): TemporalRuntime {
-  const flag = resolveTemporalReconcileFlag(options.env);
+  const flag = options.flag ?? resolveTemporalReconcileFlag(options.env);
   new Intl.DateTimeFormat('en-US', { timeZone: options.timeZone }).format(0);
   let booted = false;
   let scheduler: TemporalRuntimeScheduler | null = null;
@@ -105,6 +125,7 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
     boot(): TemporalRuntimeBootResult {
       if (booted) throw new Error('temporal reconciliation runtime already booted');
       booted = true;
+      options.ledger.repairClosedTemporalGenerations();
       if (flag === 'off' || stage2ValidationError) {
         const paused = options.ledger.pauseActiveTemporalWork(
           flag === 'off' ? 'temporal-reconcile-disabled' : `stage2-${options.stage2Flag}`

@@ -278,12 +278,14 @@ The daemon validates the complete path before starting the scanner. `on` require
   active transport; and
 - a working Stage-2 consumer.
 
-An incompatible `on` configuration fails during boot before any temporal timer starts. With the
+Malformed flags or an incompatible Stage-2 mode fail before timer-bearing daemon services start;
+an incompatible mode first pauses existing temporal attempts transactionally. With the
 flag unset or `off`, MAMA starts normally, creates no temporal worker/timer, and pauses existing
 open temporal attempts so they can be resumed safely after re-enabling the feature.
 
-The scanner runs once per minute. A scan selects at most four due exact/deferred occurrences and
-one due date-only occurrence, and never allows more than ten temporal workorders to remain open.
+The scanner runs once per minute. It pages through all open scheduled owner tasks, then selects at
+most four due exact/deferred occurrences and one due date-only occurrence, and never allows more
+than ten temporal workorders to remain open.
 Each occurrence has a three-attempt budget. A daemon restart recovers a stale pre-transaction
 claim through that same budget; an already committed receipt is not rerun. Exhausted generations
 remain exhausted across later scans. Owner alarms for stale claims and exhaustion are best-effort
@@ -302,6 +304,10 @@ Trello is connector evidence read through `context_compile`, Kagemusha is read-o
 truth, and the native task ledger owns owner-console workflow state. This feature does not write
 Trello, copy Kagemusha/Trello lifecycle state into native tasks, or infer completion from a missing
 calendar event.
+
+Temporal model responses are not written to daemon logs. Receipt reason/evidence and worker-error
+diagnostics are stored as bounded length/SHA-256 references, so operational rows support correlation
+without retaining the original connector or model text.
 
 ---
 

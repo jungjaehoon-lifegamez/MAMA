@@ -203,10 +203,48 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     expect(
       getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
     ).toMatchObject({
+      task_ref: {
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        length: 'compile branch context'.length,
+      },
       connectors: ['telegram'],
       project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
       tenant_id: 'default',
       seed_refs: [{ kind: 'memory', id: 'mem-alpha' }],
+    });
+    expect(
+      getModelRunInAdapter(adapter, 'mr_context_normalized_filters')?.input_refs
+    ).not.toHaveProperty('task');
+  });
+
+  it('AC: rechecks host authority after compilation and before packet persistence', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const beforePersist = vi.fn(() => {
+      throw new Error('temporal authority superseded');
+    });
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext: vi.fn(async (_input, deps: { packetId?: () => string }) =>
+        makePacket({ packet_id: deps.packetId?.() ?? 'ctxp_revoked' })
+      ),
+      childModelRunId: () => 'mr_context_revoked',
+      packetId: () => 'ctxp_revoked',
+    });
+
+    await expect(
+      service.compileAndPersistContext({
+        caller: 'gateway',
+        envelope,
+        input: { task: 'private connector evidence' },
+        beforePersist,
+      })
+    ).rejects.toThrow('temporal authority superseded');
+
+    expect(beforePersist).toHaveBeenCalledTimes(1);
+    expect(getContextPacket(adapter, 'ctxp_revoked')).toBeNull();
+    expect(getModelRunInAdapter(adapter, 'mr_context_revoked')).toMatchObject({
+      status: 'failed',
     });
   });
 

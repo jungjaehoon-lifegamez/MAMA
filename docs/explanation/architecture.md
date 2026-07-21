@@ -142,7 +142,8 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   date-only activation, with at most ten temporal workorders open. The temporal kind
   uses a blocking receipt verdict and a three-attempt budget; stale claims recover
   through the same retry policy, while exhausted generations remain terminal across
-  later scans.
+  later scans. Candidate discovery pages through all open scheduled owner rows before
+  applying those caps, so unrelated or already-terminal rows cannot starve a later due task.
 - **Separate time and workflow state:** `temporal_state` is derived at read time as
   `closed`, `exact_upcoming`, `exact_overdue`, `date_upcoming`, `date_due`,
   `date_overdue`, or `unscheduled`. It is a separate projection that never rewrites
@@ -154,8 +155,10 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   and numeric attempt identity to the worker. A successful `task_temporal_reconcile`
   call commits the owner-task mutation or no-update/deferred marker, generation
   disposition, receipt, and workorder completion in one SQLite transaction. A stale
-  worker cannot write after rescheduling. Model prose, a board report, elapsed time,
-  or calendar disappearance is not completion evidence.
+  worker cannot write after rescheduling, including after an asynchronous evidence compile.
+  Model-supplied reason/evidence and worker errors are retained in operational audit rows only
+  as length plus SHA-256 references; raw model prose is not logged. Model prose, a board report,
+  elapsed time, or calendar disappearance is not completion evidence.
 - **Authority boundary:** Trello remains untrusted connector evidence read through
   `context_compile`; Kagemusha remains read-only project-task truth; the native ledger
   owns owner-task workflow state. Temporal reconciliation does not write Trello or copy

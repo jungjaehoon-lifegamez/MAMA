@@ -19,7 +19,7 @@ export interface TemporalSelectionOptions {
 }
 
 export interface TemporalScannerLedger {
-  list(filter: { limit: number; order: 'deadline_priority' }): TaskRecord[];
+  listTemporalScanPage(input: { limit: number; offset: number }): TaskRecord[];
   findTemporalGenerationKeys(generationKeys: readonly string[]): Set<string>;
   countOpenWorkOrders(kind: 'temporal'): number;
   enqueueTemporalGeneration(input: EnqueueTemporalGenerationInput): TemporalGenerationEnqueueResult;
@@ -48,6 +48,18 @@ const DEFAULT_MAX_OPEN = 10;
 const DEFAULT_EXACT_LIMIT = 4;
 const DEFAULT_DATE_LIMIT = 1;
 const TASK_SCAN_LIMIT = 200;
+
+function retainBestCandidates(
+  retained: TemporalCandidate[],
+  incoming: TemporalCandidate[],
+  kind: TemporalCandidateKind,
+  limit: number
+): TemporalCandidate[] {
+  return [...retained, ...incoming]
+    .filter((candidate) => candidate.kind === kind)
+    .sort((left, right) => left.checkAt - right.checkAt || left.taskId - right.taskId)
+    .slice(0, limit);
+}
 
 function dateInIanaZone(epochMs: number, timeZone: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -207,25 +219,31 @@ export class TemporalReconcileScheduler {
     if (open >= maxOpen) return { enqueued: 0, saturated: true };
 
     const now = this.options.now();
-    const tasks = this.options.ledger.list({
-      limit: TASK_SCAN_LIMIT,
-      order: 'deadline_priority',
-    });
-    const uncapped = selectTemporalCandidates(tasks, new Set(), {
-      now,
-      timeZone: this.options.timeZone,
-      exactLimit: TASK_SCAN_LIMIT,
-      dateLimit: TASK_SCAN_LIMIT,
-    });
-    const existing = this.options.ledger.findTemporalGenerationKeys(
-      uncapped.map((candidate) => candidate.generationKey)
-    );
-    const candidates = selectTemporalCandidates(tasks, existing, {
-      now,
-      timeZone: this.options.timeZone,
-      exactLimit: this.options.exactLimit,
-      dateLimit: this.options.dateLimit,
-    }).slice(0, maxOpen - open);
+    const exactLimit = this.options.exactLimit ?? DEFAULT_EXACT_LIMIT;
+    const dateLimit = this.options.dateLimit ?? DEFAULT_DATE_LIMIT;
+    let exact: TemporalCandidate[] = [];
+    let dates: TemporalCandidate[] = [];
+    for (let offset = 0; ; offset += TASK_SCAN_LIMIT) {
+      const tasks = this.options.ledger.listTemporalScanPage({
+        limit: TASK_SCAN_LIMIT,
+        offset,
+      });
+      if (tasks.length === 0) break;
+      const pageCandidates = selectTemporalCandidates(tasks, new Set(), {
+        now,
+        timeZone: this.options.timeZone,
+        exactLimit: TASK_SCAN_LIMIT,
+        dateLimit: TASK_SCAN_LIMIT,
+      });
+      const existing = this.options.ledger.findTemporalGenerationKeys(
+        pageCandidates.map((candidate) => candidate.generationKey)
+      );
+      const eligible = pageCandidates.filter((candidate) => !existing.has(candidate.generationKey));
+      exact = retainBestCandidates(exact, eligible, 'exact_or_deferred', exactLimit);
+      dates = retainBestCandidates(dates, eligible, 'date_activation', dateLimit);
+      if (tasks.length < TASK_SCAN_LIMIT) break;
+    }
+    const candidates = [...exact, ...dates].slice(0, maxOpen - open);
     for (const candidate of candidates) {
       this.options.ledger.enqueueTemporalGeneration(candidate);
     }

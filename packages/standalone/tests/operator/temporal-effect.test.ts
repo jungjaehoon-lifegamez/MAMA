@@ -126,6 +126,27 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
   });
 
+  it('rejects an offset-only projection change at the same due instant without committing', () => {
+    const { context, generationKey, taskId } = setup();
+
+    expect(() =>
+      ledger.applyTemporalEffect(
+        context,
+        {
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          due_at: '2026-07-21T08:00:00-07:00',
+          reason: 'Same instant expressed with another offset',
+        },
+        now
+      )
+    ).toThrow(/actual status or due_at change/);
+
+    expect(ledger.getById(taskId)).toMatchObject({ revision: 1, deadlineIso: '2026-07-22' });
+    expect(ledger.getTemporalGeneration(generationKey)?.disposition).toBe('active');
+    expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+  });
+
   it('requires evidence for final_no_update and commits its exact-scope note atomically', () => {
     const { context, generationKey, taskId } = setup();
     expect(() =>
@@ -156,7 +177,10 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       beforeRevision: 1,
       afterRevision: 2,
     });
-    expect(receipt.reason).toContain('source card');
+    expect(receipt.reason).toMatch(
+      /^temporal-effect-final_no_update;reason_sha256=[a-f0-9]{64};reason_length=38;evidence_sha256=[a-f0-9]{64};evidence_length=40$/
+    );
+    expect(receipt.reason).not.toContain('source card');
     expect(ledger.getById(taskId)).toMatchObject({
       status: 'pending',
       revision: 2,
@@ -168,7 +192,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       db
         .prepare(`SELECT scope, reason FROM operator_no_update_notes WHERE scope = ?`)
         .get(temporalNoUpdateScope(context))
-    ).toMatchObject({ scope: temporalNoUpdateScope(context) });
+    ).toMatchObject({ scope: temporalNoUpdateScope(context), reason: receipt.reason });
   });
 
   it('defers only to a strictly future check and forbids workflow fields', () => {

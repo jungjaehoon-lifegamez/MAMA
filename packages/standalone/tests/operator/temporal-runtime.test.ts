@@ -6,6 +6,7 @@ import { WorkOrderConsumer } from '../../src/operator/workorder-consumer.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
   createTemporalRuntime,
+  preflightTemporalStartup,
   resolveTemporalReconcileFlag,
 } from '../../src/operator/temporal-runtime.js';
 
@@ -24,6 +25,10 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     stop: vi.fn(async () => void order.push('consumer-stop')),
   };
   const ledger = {
+    repairClosedTemporalGenerations: vi.fn(() => {
+      order.push('repair');
+      return 0;
+    }),
     pauseActiveTemporalWork: vi.fn(() => {
       order.push('pause');
       return 0;
@@ -64,13 +69,41 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     );
   });
 
+  it('preflights both flags and pauses a Stage-2 mismatch before throwing', () => {
+    const pause = vi.fn();
+    expect(
+      preflightTemporalStartup({
+        MAMA_TEMPORAL_RECONCILE: 'on',
+        MAMA_STAGE2_WORKORDERS: 'on',
+      })
+    ).toEqual({ temporalFlag: 'on', stage2Flag: 'on' });
+    expect(() =>
+      preflightTemporalStartup(
+        { MAMA_TEMPORAL_RECONCILE: 'on', MAMA_STAGE2_WORKORDERS: 'shadow' },
+        pause
+      )
+    ).toThrow(/MAMA_STAGE2_WORKORDERS=on/);
+    expect(pause).toHaveBeenCalledWith('stage2-shadow');
+  });
+
+  it('does not mutate durable work when either startup flag is malformed', () => {
+    const pause = vi.fn();
+    expect(() => preflightTemporalStartup({ MAMA_STAGE2_WORKORDERS: 'broken' }, pause)).toThrow(
+      /MAMA_STAGE2_WORKORDERS/
+    );
+    expect(() => preflightTemporalStartup({ MAMA_TEMPORAL_RECONCILE: 'broken' }, pause)).toThrow(
+      /MAMA_TEMPORAL_RECONCILE/
+    );
+    expect(pause).not.toHaveBeenCalled();
+  });
+
   it('off registers no role or scheduler and pauses before returning from boot', () => {
     const ctx = dependencies({ env: {} });
     const runtime = createTemporalRuntime(ctx.options);
     expect(ctx.options.registerRole).not.toHaveBeenCalled();
     expect(ctx.options.createScheduler).not.toHaveBeenCalled();
     expect(runtime.boot()).toEqual({ enabled: false, paused: 0, resumed: 0, enqueued: 0 });
-    expect(ctx.order).toEqual(['pause']);
+    expect(ctx.order).toEqual(['repair', 'pause']);
   });
 
   it.each(['off', 'shadow'] as const)(
@@ -79,7 +112,7 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
       const ctx = dependencies({ stage2Flag });
       const runtime = createTemporalRuntime(ctx.options);
       expect(() => runtime.boot()).toThrow(/MAMA_STAGE2_WORKORDERS=on/);
-      expect(ctx.order).toEqual(['pause']);
+      expect(ctx.order).toEqual(['repair', 'pause']);
       expect(ctx.options.registerRole).not.toHaveBeenCalled();
       expect(ctx.options.createScheduler).not.toHaveBeenCalled();
     }
@@ -106,7 +139,7 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(ctx.order).toEqual(['register']);
 
     expect(runtime.boot()).toEqual({ enabled: true, paused: 0, resumed: 0, enqueued: 0 });
-    expect(ctx.order).toEqual(['register', 'resume', 'recover', 'scan', 'timer']);
+    expect(ctx.order).toEqual(['register', 'repair', 'resume', 'recover', 'scan', 'timer']);
     expect(() => runtime.boot()).toThrow(/already booted/);
     expect(ctx.scheduler.start).toHaveBeenCalledOnce();
   });
@@ -234,6 +267,25 @@ describe('Story A2 Task 10: temporal restart integration', () => {
         ctx.created.workOrder.id
       );
       expect(ctx.ledger.claimNextWorkOrder()?.payload.attempts).toBe(1);
+    } finally {
+      ctx.db.close();
+    }
+  });
+
+  it('repairs a legacy closed owner before paused temporal work can resume', () => {
+    const ctx = harness();
+    try {
+      expect(ctx.create('off').boot().paused).toBe(1);
+      ctx.db
+        .prepare(`UPDATE operator_tasks SET status = 'done' WHERE id = ?`)
+        .run(ctx.created.generation.taskId);
+
+      expect(ctx.create('on').boot()).toMatchObject({ enabled: true, resumed: 0 });
+      expect(ctx.ledger.getTemporalGeneration(ctx.generationKey)).toMatchObject({
+        disposition: 'superseded',
+      });
+      expect(ctx.ledger.countOpenWorkOrders('temporal')).toBe(0);
+      expect(ctx.runs).toEqual([]);
     } finally {
       ctx.db.close();
     }

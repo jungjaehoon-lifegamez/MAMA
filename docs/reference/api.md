@@ -941,7 +941,8 @@ available only inside a host-issued active temporal work context and accepts one
 an evidence-backed workflow change (`resolved`), evidence-backed final confirmation with no
 workflow change (`final_no_update`), or a strictly future follow-up (`deferred`). The native task,
 generation, receipt, and workorder terminal state commit atomically. Reports or explanation text do
-not satisfy this contract, and stale attempts are denied after rescheduling.
+not satisfy this contract, and stale attempts are denied after rescheduling and immediately before
+an asynchronous context packet is persisted.
 
 All calls require `expected_revision` (a non-negative integer equal to the host-bound revision),
 `outcome`, and a 1-500 character `reason`. Outcome-specific fields are closed schemas:
@@ -954,6 +955,10 @@ All calls require `expected_revision` (a non-negative integer equal to the host-
 
 Fields belonging to another outcome, model-supplied task/generation/attempt identifiers, and unknown
 fields are rejected.
+
+The returned receipt `reason` is an audit reference, not an echo of the submitted prose. It records
+the outcome plus SHA-256 digest and character length for `reason` and, when applicable,
+`evidence_summary`; raw model/connector text is not copied into temporal audit rows.
 
 #### Memory promotion
 

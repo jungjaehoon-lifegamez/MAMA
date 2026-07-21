@@ -163,7 +163,8 @@ export interface TemporalAttemptState {
 
 export type TemporalWorkFailureResult =
   | { disposition: 'requeued'; replacement: WorkOrderRecord; attempt: number; maxAttempts: number }
-  | { disposition: 'exhausted'; attempt: number; maxAttempts: number };
+  | { disposition: 'exhausted'; attempt: number; maxAttempts: number }
+  | { disposition: 'superseded'; attempt: number; maxAttempts: number };
 
 export interface CreateTaskInput {
   title: string;
@@ -507,6 +508,27 @@ export class TaskLedger implements TaskSource {
     return rows.map((row) => this.toRecord(row));
   }
 
+  /** Internal bounded page for temporal reconciliation; excludes rows that can never be candidates. */
+  listTemporalScanPage(input: { limit: number; offset: number }): TaskRecord[] {
+    const rawLimit = Number(input.limit);
+    const rawOffset = Number(input.offset);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.max(1, Math.min(200, Math.floor(rawLimit)))
+      : 200;
+    const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM operator_tasks
+         WHERE kind = 'owner'
+           AND status NOT IN ('done', 'cancelled')
+           AND (due_at IS NOT NULL OR deadline IS NOT NULL OR next_temporal_check_at IS NOT NULL)
+         ORDER BY id ASC
+         LIMIT ? OFFSET ?`
+      )
+      .all(limit, offset) as TaskRow[];
+    return rows.map((row) => this.toRecord(row));
+  }
+
   /** Owner rows only - system workorder rows are invisible to external reads. */
   getById(id: number): TaskRecord | null {
     const record = this.getRowById(id);
@@ -658,7 +680,7 @@ export class TaskLedger implements TaskSource {
       const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
       if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
         const exactDue = parseExactDueAt(patch.due_at);
-        if (hasDeadline && patch.deadline !== null && patch.deadline !== exactDue.deadline) {
+        if (hasDeadline && patch.deadline !== exactDue.deadline) {
           throw new Error('task_update: due_at and deadline conflict');
         }
         next.due_at = exactDue.dueAt;
@@ -680,6 +702,10 @@ export class TaskLedger implements TaskSource {
         (existing.status === 'done' || existing.status === 'cancelled') &&
         next.status !== 'done' &&
         next.status !== 'cancelled';
+      const openToTerminal =
+        existing.status !== 'done' &&
+        existing.status !== 'cancelled' &&
+        (next.status === 'done' || next.status === 'cancelled');
       if (temporalChanged || terminalToOpen) {
         next.temporal_epoch = existing.temporal_epoch + 1;
         next.temporal_reconciled_occurrence_key = null;
@@ -720,6 +746,8 @@ export class TaskLedger implements TaskSource {
         .run(...values, id);
       if (temporalChanged || terminalToOpen) {
         this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
+      } else if (openToTerminal) {
+        this.supersedeAllActiveTemporalGenerationsInTransaction(id);
       }
       this.db.exec('COMMIT');
     } catch (error) {
@@ -756,6 +784,29 @@ export class TaskLedger implements TaskSource {
          WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?${exclusion}`
       )
       .run(reason, updatedAt, ...generationParams);
+  }
+
+  private supersedeAllActiveTemporalGenerationsInTransaction(
+    taskId: number,
+    updatedAt: number = this.now()
+  ): void {
+    const reason = 'owner task closed';
+    this.db
+      .prepare(
+        `UPDATE operator_tasks SET status = 'cancelled', latest_event = ?, updated_at = ?
+         WHERE kind = 'system' AND status IN ('pending','in_progress') AND id IN (
+           SELECT last_workorder_id FROM operator_temporal_generations
+           WHERE task_id = ? AND disposition = 'active'
+         )`
+      )
+      .run(reason, updatedAt, taskId);
+    this.db
+      .prepare(
+        `UPDATE operator_temporal_generations
+         SET disposition = 'superseded', reason = ?, updated_at = ?
+         WHERE task_id = ? AND disposition = 'active'`
+      )
+      .run(reason, updatedAt, taskId);
   }
 
   /**
@@ -1221,7 +1272,11 @@ export class TaskLedger implements TaskSource {
         next_temporal_check_at: null,
         last_temporal_attempt_id: context.attemptId,
       };
-      let receiptReason = input.reason.trim();
+      const auditParts = [`reason=${input.reason.trim()}`];
+      if (input.outcome === 'final_no_update') {
+        auditParts.push(`evidence=${input.evidence_summary.trim()}`);
+      }
+      const receiptReason = this.temporalAuditText(`effect-${input.outcome}`, auditParts);
       let nextCheck: number | null = null;
       let rescheduled = false;
 
@@ -1232,23 +1287,22 @@ export class TaskLedger implements TaskSource {
             next.due_at = null;
           } else if (input.due_at !== undefined) {
             const exactDue = parseExactDueAt(input.due_at);
-            next.due_at = exactDue.dueAt;
-            next.deadline = exactDue.deadline;
-            next.deadline_offset_minutes = exactDue.offsetMinutes;
+            if (exactDue.dueAt !== existing.due_at) {
+              next.due_at = exactDue.dueAt;
+              next.deadline = exactDue.deadline;
+              next.deadline_offset_minutes = exactDue.offsetMinutes;
+            }
           }
         }
-        const workflowChanged =
-          next.status !== existing.status ||
-          next.due_at !== existing.due_at ||
-          next.deadline !== existing.deadline;
-        if (!workflowChanged) {
+        const resolvedEffectChanged =
+          next.status !== existing.status || next.due_at !== existing.due_at;
+        if (!resolvedEffectChanged) {
           throw new Error('temporal resolved outcome requires an actual status or due_at change');
         }
-        rescheduled = next.due_at !== existing.due_at || next.deadline !== existing.deadline;
+        rescheduled = next.due_at !== existing.due_at;
         if (rescheduled) next.temporal_epoch = existing.temporal_epoch + 1;
         next.temporal_reconciled_occurrence_key = context.occurrenceKey;
       } else if (input.outcome === 'final_no_update') {
-        receiptReason = `${receiptReason}\nEvidence: ${input.evidence_summary.trim()}`;
         next.temporal_reconciled_occurrence_key = context.occurrenceKey;
       } else {
         nextCheck = parseExactDueAt(input.next_temporal_check_at).dueAt;
@@ -1338,6 +1392,16 @@ export class TaskLedger implements TaskSource {
       }
       receipt = this.getTemporalEffect(context.attemptId);
       if (!receipt) throw new Error(`temporal effect receipt could not be read back`);
+      const receiptError = temporalReceiptInvariantError(receipt, {
+        attemptId: context.attemptId,
+        taskId: context.taskId,
+        generationKey: context.generationKey,
+        occurrenceKey: context.occurrenceKey,
+        beforeRevision: context.revision,
+      });
+      if (receiptError) {
+        throw new Error(`temporal effect receipt invariant failed: ${receiptError}`);
+      }
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -1349,6 +1413,7 @@ export class TaskLedger implements TaskSource {
 
   requeueTemporalWorkOrder(attemptId: number, reason: string): WorkOrderRecord {
     this.assertTemporalReason(reason);
+    const auditReason = this.temporalAuditText('worker-failure', [`failure=${reason}`]);
     let replacement: WorkOrderRecord | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -1357,7 +1422,7 @@ export class TaskLedger implements TaskSource {
       if (workOrder.payload.attempts >= TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
         throw new Error(`temporal retry budget exhausted for attempt ${attemptId}`);
       }
-      replacement = this.requeueTemporalWorkOrderInTransaction(context, workOrder, reason);
+      replacement = this.requeueTemporalWorkOrderInTransaction(context, workOrder, auditReason);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -1369,6 +1434,7 @@ export class TaskLedger implements TaskSource {
 
   exhaustTemporalWorkOrder(attemptId: number, reason: string): void {
     this.assertTemporalReason(reason);
+    const auditReason = this.temporalAuditText('worker-failure', [`failure=${reason}`]);
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const context = this.loadTemporalWorkContextInternal(attemptId);
@@ -1378,7 +1444,7 @@ export class TaskLedger implements TaskSource {
           `temporal exhaustion requires attempt ${TEMPORAL_WORKORDER_MAX_ATTEMPTS}, got ${workOrder.payload.attempts}`
         );
       }
-      this.exhaustTemporalWorkOrderInTransaction(context, reason);
+      this.exhaustTemporalWorkOrderInTransaction(context, auditReason);
       this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
@@ -1388,21 +1454,32 @@ export class TaskLedger implements TaskSource {
 
   failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult {
     this.assertTemporalReason(reason);
+    const auditReason = this.temporalAuditText('worker-failure', [`failure=${reason}`]);
     let result: TemporalWorkFailureResult | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const repairedAttempt = this.repairClosedTemporalOwnershipInTransaction(attemptId);
+      if (repairedAttempt !== null) {
+        result = {
+          disposition: 'superseded',
+          attempt: repairedAttempt,
+          maxAttempts: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+        };
+        this.db.exec('COMMIT');
+        return result;
+      }
       const context = this.loadTemporalWorkContextInternal(attemptId);
       const workOrder = this.getWorkOrderById(attemptId)!;
       const attempt = workOrder.payload.attempts;
       if (attempt < TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
         result = {
           disposition: 'requeued',
-          replacement: this.requeueTemporalWorkOrderInTransaction(context, workOrder, reason),
+          replacement: this.requeueTemporalWorkOrderInTransaction(context, workOrder, auditReason),
           attempt,
           maxAttempts: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
         };
       } else if (attempt === TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
-        this.exhaustTemporalWorkOrderInTransaction(context, reason);
+        this.exhaustTemporalWorkOrderInTransaction(context, auditReason);
         result = {
           disposition: 'exhausted',
           attempt,
@@ -1418,6 +1495,61 @@ export class TaskLedger implements TaskSource {
     }
     if (!result) throw new Error(`temporal failure for attempt ${attemptId} produced no result`);
     return result;
+  }
+
+  private repairClosedTemporalOwnershipInTransaction(attemptId: number): number | null {
+    const workOrder = this.getWorkOrderById(attemptId);
+    if (
+      !workOrder ||
+      workOrder.workKind !== 'temporal' ||
+      (workOrder.status !== 'pending' && workOrder.status !== 'in_progress')
+    ) {
+      return null;
+    }
+    const generationKey = this.requirePayloadString(workOrder.payload, 'generationKey', attemptId);
+    const generation = this.getTemporalGeneration(generationKey);
+    if (
+      !generation ||
+      generation.disposition !== 'active' ||
+      generation.lastWorkOrderId !== attemptId
+    ) {
+      return null;
+    }
+    const task = this.getById(generation.taskId);
+    if (!task || (task.status !== 'done' && task.status !== 'cancelled')) {
+      return null;
+    }
+    this.supersedeAllActiveTemporalGenerationsInTransaction(task.id);
+    return workOrder.payload.attempts;
+  }
+
+  /** Repair pre-fix databases where a terminal owner still has active temporal ownership. */
+  repairClosedTemporalGenerations(): number {
+    let repaired = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db
+        .prepare(
+          `SELECT DISTINCT generation.task_id
+           FROM operator_temporal_generations generation
+           JOIN operator_tasks owner ON owner.id = generation.task_id
+           WHERE generation.disposition = 'active'
+             AND owner.kind = 'owner'
+             AND owner.status IN ('done','cancelled')
+           ORDER BY generation.task_id ASC`
+        )
+        .all() as Array<{ task_id: number }>;
+      const updatedAt = this.now();
+      for (const row of rows) {
+        this.supersedeAllActiveTemporalGenerationsInTransaction(row.task_id, updatedAt);
+      }
+      repaired = rows.length;
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    return repaired;
   }
 
   /** Control-plane pause: cancel open attempts but keep generations resumable. */
@@ -1780,6 +1912,17 @@ export class TaskLedger implements TaskSource {
     if (reason.trim().length < 1 || reason.length > 500) {
       throw new Error('temporal workorder reason must contain 1-500 characters');
     }
+  }
+
+  private temporalAuditText(kind: string, values: readonly string[]): string {
+    const refs = values.map((value, index) => {
+      const separator = value.indexOf('=');
+      const label = separator > 0 ? value.slice(0, separator) : `value${index + 1}`;
+      const text = separator > 0 ? value.slice(separator + 1) : value;
+      const digest = createHash('sha256').update(text).digest('hex');
+      return `${label}_sha256=${digest};${label}_length=${text.length}`;
+    });
+    return `temporal-${kind};${refs.join(';')}`;
   }
 
   /**
