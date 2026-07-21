@@ -694,7 +694,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'search', type: 'string', required: false },
       { name: 'limit', type: 'number', required: false },
     ],
-    returnType: '{ tasks: object[] }',
+    returnType:
+      '{ tasks: Array<{ due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown }> }',
     category: 'memory',
   },
   {
@@ -706,11 +707,18 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'priority', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
       { name: 'deadline', type: 'string', required: false, description: 'YYYY-MM-DD' },
+      {
+        name: 'due_at',
+        type: 'string',
+        required: false,
+        description: 'RFC 3339 with an explicit Z or numeric offset',
+      },
       { name: 'source_channel', type: 'string', required: false },
       { name: 'source_event_id', type: 'string', required: false },
       { name: 'latest_event', type: 'string', required: false },
     ],
-    returnType: '{ task: object }',
+    returnType:
+      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
     category: 'memory',
   },
   {
@@ -746,10 +754,17 @@ const TOOL_REGISTRY: ToolMeta[] = [
         required: false,
         description: 'YYYY-MM-DD, or null to clear',
       },
+      {
+        name: 'due_at',
+        type: 'string | null',
+        required: false,
+        description: 'RFC 3339 with explicit offset, or null to clear exact precision',
+      },
       { name: 'latest_event', type: 'string', required: false },
       { name: 'confirmed', type: 'boolean', required: false },
     ],
-    returnType: '{ task: object }',
+    returnType:
+      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
     category: 'memory',
   },
 ];

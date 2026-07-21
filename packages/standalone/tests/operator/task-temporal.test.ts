@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { occurrenceKeyForTask, parseExactDueAt } from '../../src/operator/task-temporal.js';
+import {
+  deriveTemporalState,
+  occurrenceKeyForTask,
+  parseExactDueAt,
+} from '../../src/operator/task-temporal.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import Database from '../../src/sqlite.js';
 
@@ -34,6 +38,53 @@ describe('Story A2 Task 2: exact temporal normalization', () => {
       'epoch:4:date:2026-07-21'
     );
     expect(occurrenceKeyForTask({ temporalEpoch: 0, dueAt: null, deadlineIso: null })).toBeNull();
+  });
+});
+
+describe('Story A2 Task 3: derived temporal state', () => {
+  const now = Date.parse('2026-07-21T15:00:00Z');
+
+  it.each([
+    [{ status: 'done', dueAt: now - 1, deadlineIso: '2026-07-21' }, 'closed'],
+    [{ status: 'cancelled', dueAt: null, deadlineIso: null }, 'closed'],
+    [{ status: 'pending', dueAt: now + 1, deadlineIso: '2026-07-22' }, 'exact_upcoming'],
+    [{ status: 'pending', dueAt: now, deadlineIso: '2026-07-21' }, 'exact_overdue'],
+    [{ status: 'blocked', dueAt: now - 1, deadlineIso: '2026-07-21' }, 'exact_overdue'],
+    [{ status: 'review', dueAt: null, deadlineIso: null }, 'unscheduled'],
+  ] as const)('derives %s as %s', (task, expected) => {
+    expect(deriveTemporalState({ ...task, deadlineOffsetMinutes: null }, now, 'Asia/Seoul')).toBe(
+      expected
+    );
+  });
+
+  it('uses the captured numeric offset for date-only boundaries', () => {
+    const task = { status: 'pending', dueAt: null, deadlineOffsetMinutes: 540 };
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-22' }, now, 'UTC')).toBe(
+      'date_due'
+    );
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-21' }, now, 'UTC')).toBe(
+      'date_overdue'
+    );
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-23' }, now, 'UTC')).toBe(
+      'date_upcoming'
+    );
+  });
+
+  it('uses the injected daemon IANA zone for legacy date-only rows', () => {
+    const task = {
+      status: 'in_progress',
+      dueAt: null,
+      deadlineOffsetMinutes: null,
+    };
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-22' }, now, 'Asia/Seoul')).toBe(
+      'date_due'
+    );
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-21' }, now, 'Asia/Seoul')).toBe(
+      'date_overdue'
+    );
+    expect(deriveTemporalState({ ...task, deadlineIso: '2026-07-23' }, now, 'Asia/Seoul')).toBe(
+      'date_upcoming'
+    );
   });
 });
 
