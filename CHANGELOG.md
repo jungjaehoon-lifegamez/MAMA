@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.1] / mama-core [1.9.0] / mama-os [0.24.1] - 2026-07-21
+
+### Fixed — Codex report recovery and tool parity
+
+- **Durable thread recovery** — an exact Codex app-server policy mismatch now triggers one bounded
+  reset with a freshly rebuilt full policy prompt. Replacement sessions are invalidated on retry
+  failure and released by their current owner ID after later failures, avoiding stale claims and
+  five-minute channel stalls.
+- **Operator report reliability** — report and workorder workers receive the same native Code-Act
+  host bridge as Claude, with role-specific tool surfaces for board, wiki, and memory-curation
+  jobs. Empty worker responses remain explicit failures instead of silent reports.
+- **Connector least privilege** — Trello raw access is limited to board workorders. Owner guidance
+  advertises Trello only when the current route envelope grants it, while wiki, memory-curation,
+  and report routes keep their narrower connector scopes.
+- **Untrusted evidence boundary** — connector and compiled evidence is treated as data rather than
+  instructions before any report, wiki, task, or memory write is allowed.
+
+### Upgrade notes
+
+- This patch bumps only `@jungjaehoon/mama-os` to `0.24.1`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+
 ## [0.24.0] / mama-core [1.9.0] / mama-os [0.24.0] - 2026-07-21
 
 ### Added — Codex app-server backend parity
