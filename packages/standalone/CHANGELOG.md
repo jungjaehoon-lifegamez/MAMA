@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.24.2] - 2026-07-22
+
+Workorder forward-compatibility patch: older binaries now ignore and preserve system workorders
+whose kinds are owned by a newer MAMA OS version. Full details are in the repository root
+CHANGELOG.md.
+
 ## [0.24.1] - 2026-07-21
 
 Codex report-recovery patch: bounded durable-thread reset, full policy rebuild, replacement-session
