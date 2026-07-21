@@ -1673,7 +1673,9 @@ export class AgentLoop {
           turn: String(turn),
         });
         // After first successful call, mark session as not new for subsequent turns
-        if (turn === 1) sessionIsNew = false;
+        if (turn === 1) {
+          sessionIsNew = false;
+        }
 
         // Build content blocks - include tool_use blocks if present
         const contentBlocks: ContentBlock[] = [];
