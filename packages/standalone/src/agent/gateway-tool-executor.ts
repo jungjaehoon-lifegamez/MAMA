@@ -172,23 +172,22 @@ function temporalPacketRawSourcesWithinBoundSource(
       !Array.isArray(value) &&
       (value as Record<string, unknown>).kind === 'raw'
   );
-  if (context.sourceEventId) {
-    return rawRefs.every((ref) =>
+  if (!context.sourceChannel) {
+    return rawRefs.length === 0;
+  }
+  return rawRefs.every((ref) => {
+    const eventMatches =
+      !context.sourceEventId ||
       [ref.raw_id, ref.source_id].some(
         (value) =>
           typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
-      )
-    );
-  }
-  if (!context.sourceChannel) return rawRefs.length === 0;
-  return rawRefs.every((ref) => {
-    if (typeof ref.connector !== 'string') return false;
-    const candidates = [ref.source_id, ref.channel_id]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-      .flatMap((value) => [value, `${ref.connector}:${value}`]);
-    return candidates.some(
-      (candidate) => temporalIdentifierRef(candidate) === context.sourceChannel
-    );
+      );
+    const channelMatches =
+      !context.sourceChannel ||
+      (typeof ref.connector === 'string' &&
+        typeof ref.channel_id === 'string' &&
+        temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel);
+    return eventMatches && channelMatches;
   });
 }
 
