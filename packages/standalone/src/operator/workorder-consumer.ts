@@ -269,6 +269,10 @@ export class WorkOrderConsumer {
         this.handleFailure(wo, 'effect-verdict-missing');
         return;
       }
+      if (typeof verdict !== 'object' || verdict === null || Array.isArray(verdict)) {
+        this.handleFailure(wo, 'effect-verdict-invalid');
+        return;
+      }
       if (verdict.disposition === 'fail') {
         const reason = typeof verdict.reason === 'string' ? verdict.reason.trim() : '';
         if (!reason || reason.length > MAX_EFFECT_VERDICT_REASON_LENGTH) {
