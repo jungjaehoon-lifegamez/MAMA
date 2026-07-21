@@ -118,6 +118,11 @@ describe('system agent unification', () => {
       );
       expect(DASHBOARD_AGENT_PERSONA).toContain('(unconfirmed)');
       expect(DASHBOARD_AGENT_PERSONA).toContain('unassigned');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('Temporal fact');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('Workflow judgment');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('System condition');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('calendar disappearance');
+      expect(DASHBOARD_AGENT_PERSONA).toContain('Never copy Trello or Kagemusha lifecycle status');
       // cron rules intact
       expect(DASHBOARD_AGENT_PERSONA).toContain(
         'Call report_publish exactly once, carrying all four slots'
@@ -132,6 +137,8 @@ describe('system agent unification', () => {
       });
       expect(source).toContain('const buildDashboardPrompt =');
       expect(source).toContain('Today is ${new Date().toISOString().slice(0, 10)}');
+      expect(source).toContain('use temporal_state as the canonical time category');
+      expect(source).not.toContain('compute D-day from today');
     });
   });
 

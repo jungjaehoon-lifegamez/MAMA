@@ -133,6 +133,12 @@ export function buildWorkerSystemPrompt(
           '- kagemusha_* is the read-only project-task truth.',
           '- task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source.',
           '- Never infer or copy lifecycle status across those stores.',
+          '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
+          '- Temporal fact: use task_list.temporal_state as the canonical time category and render it separately.',
+          '- Workflow judgment: preserve the source-of-truth lifecycle status; overdue does not mean blocked.',
+          '- System condition: reconciliation retrying or authority unavailable is not task lifecycle state.',
+          '- Set due_at only from trusted, unambiguous time and time zone evidence; otherwise retain date-only precision.',
+          '- Never infer completion from calendar disappearance.',
         ]
       : []),
     'Do not ask questions; finish with the exact final line your brief specifies.',

@@ -86,7 +86,7 @@ export default function Tasks() {
       <header className="border-b border-border bg-surface px-4 py-4">
         <h1 className="text-base font-semibold text-text">Tasks</h1>
         <p className="mt-1 text-xs text-text-secondary">
-          Native operator ledger ordered by due date and priority.
+          Native operator ledger with workflow and temporal state shown separately.
         </p>
       </header>
 
@@ -140,6 +140,7 @@ export default function Tasks() {
                       <th>Priority</th>
                       <th>Assignee</th>
                       <th>Due</th>
+                      <th>Temporal</th>
                       <th>Source</th>
                       <th>Updated</th>
                       <th>Action</th>

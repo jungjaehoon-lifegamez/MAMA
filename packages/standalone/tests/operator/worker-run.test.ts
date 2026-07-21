@@ -200,6 +200,14 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).toContain('kagemusha_* is the read-only project-task truth');
     expect(prompt).toContain('task_list/task_create/task_update is the native owner-task ledger');
     expect(prompt).toContain('Never infer or copy lifecycle status across those stores');
+    expect(prompt).toContain('Never copy Trello or Kagemusha lifecycle status');
+    expect(prompt).toContain('task_list.temporal_state');
+    expect(prompt).toContain('Temporal fact');
+    expect(prompt).toContain('Workflow judgment');
+    expect(prompt).toContain('System condition');
+    expect(prompt).toContain('unambiguous time and time zone evidence');
+    expect(prompt).toContain('retain date-only precision');
+    expect(prompt).toContain('calendar disappearance');
   });
 
   it('wires the selected runtime backend into work-order and report prompt construction', () => {
