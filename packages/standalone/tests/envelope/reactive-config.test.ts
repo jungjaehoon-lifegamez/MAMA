@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { MAMAConfig } from '../../src/cli/config/types.js';
+import { DEFAULT_ROLES, type MAMAConfig } from '../../src/cli/config/types.js';
+import { RoleManager } from '../../src/agent/role-manager.js';
 import type { NormalizedMessage } from '../../src/gateways/types.js';
 import type { AgentLoopOptions } from '../../src/agent/types.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
@@ -306,6 +307,7 @@ describe('Story OPS-1 / S1-T2b: owner-console kagemusha scope widening', () => {
   const ownerConfig = () =>
     makeConfig({
       telegram: { enabled: true, token: 't', allowed_chats: ['7777'] },
+      roles: DEFAULT_ROLES,
     } as unknown as Partial<MAMAConfig>);
 
   const ownerMessage = (channelId: string, chatType?: string): NormalizedMessage => ({
@@ -338,5 +340,106 @@ describe('Story OPS-1 / S1-T2b: owner-console kagemusha scope widening', () => {
       const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' });
       expect(policy.rawConnectors).toEqual(['telegram']);
     }
+  });
+});
+
+describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
+  const ownerMessage = (
+    channelId: string,
+    chatType: string,
+    source: NormalizedMessage['source'] = 'telegram'
+  ): NormalizedMessage => ({
+    source,
+    channelId,
+    userId: `${source}:user`,
+    text: 'current Trello work?',
+    metadata: { chatType },
+  });
+
+  const ownerConfig = (roles: MAMAConfig['roles'] = DEFAULT_ROLES): MAMAConfig =>
+    makeConfig({
+      telegram: { enabled: true, token: 'redacted', allowed_chats: ['7777'] },
+      roles,
+    } as unknown as Partial<MAMAConfig>);
+
+  it('adds kagemusha and enabled Trello once for a verified-owner private Telegram DM', () => {
+    const policy = getReactiveRoutePolicy(
+      ownerMessage('7777', 'private'),
+      ownerConfig(),
+      { HOME: '/tmp/home' },
+      Object.freeze(['trello', 'trello', 'telegram'])
+    );
+
+    expect(policy.rawConnectors).toEqual(['telegram', 'kagemusha', 'trello']);
+  });
+
+  it.each([
+    ['owner group', ownerMessage('7777', 'group'), ownerConfig()],
+    ['unverified private chat', ownerMessage('9999', 'private'), ownerConfig()],
+    ['private non-Telegram route', ownerMessage('7777', 'private', 'slack'), ownerConfig()],
+    [
+      'missing owner role',
+      ownerMessage('7777', 'private'),
+      ownerConfig({
+        definitions: { chat_bot: DEFAULT_ROLES.definitions.chat_bot },
+        sourceMapping: DEFAULT_ROLES.sourceMapping,
+      }),
+    ],
+  ])('does not widen %s to Trello', (_label, message, config) => {
+    const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' }, ['trello']);
+
+    expect(policy.rawConnectors).not.toContain('trello');
+  });
+
+  it('does not add Trello when its connector is disabled or missing', () => {
+    const message = ownerMessage('7777', 'private');
+
+    expect(
+      getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, []).rawConnectors
+    ).toEqual(['telegram', 'kagemusha']);
+    expect(
+      getReactiveRoutePolicy(message, ownerConfig(), { HOME: '/tmp/home' }, ['slack']).rawConnectors
+    ).toEqual(['telegram', 'kagemusha']);
+  });
+
+  it('copies enabled connector names so later caller mutation cannot widen scope', () => {
+    const enabledNames: string[] = [];
+    const reactiveConfig = createDefaultReactiveEnvelopeConfig(
+      ownerConfig(),
+      { HOME: '/tmp/home' },
+      enabledNames
+    );
+    enabledNames.push('trello');
+
+    expect(reactiveConfig.rawConnectorsFor(ownerMessage('7777', 'private'))).toEqual([
+      'telegram',
+      'kagemusha',
+    ]);
+  });
+
+  it.each([
+    ['verified owner private DM', ownerMessage('7777', 'private'), ownerConfig()],
+    ['allowlisted group', ownerMessage('7777', 'group'), ownerConfig()],
+    ['unverified private chat', ownerMessage('9999', 'private'), ownerConfig()],
+    ['non-Telegram private route', ownerMessage('7777', 'private', 'slack'), ownerConfig()],
+    [
+      'missing owner role',
+      ownerMessage('7777', 'private'),
+      ownerConfig({
+        definitions: { chat_bot: DEFAULT_ROLES.definitions.chat_bot },
+        sourceMapping: DEFAULT_ROLES.sourceMapping,
+      }),
+    ],
+  ])('matches RoleManager owner resolution for %s', (_label, message, config) => {
+    const roleManager = new RoleManager({ rolesConfig: config.roles });
+    roleManager.setTelegramTrust(config.telegram?.allowed_chats);
+    const roleName = roleManager.getRoleForSource(message.source, {
+      channelId: message.channelId,
+      chatType:
+        typeof message.metadata?.chatType === 'string' ? message.metadata.chatType : undefined,
+    }).roleName;
+    const policy = getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' }, ['trello']);
+
+    expect(policy.rawConnectors.includes('trello')).toBe(roleName === 'owner_console');
   });
 });

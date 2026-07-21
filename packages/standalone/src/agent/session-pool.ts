@@ -42,13 +42,13 @@ interface SessionEntry {
   /** Cumulative input tokens for this session */
   totalInputTokens: number;
   /** Backend type for context threshold selection */
-  backend?: 'claude' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
 }
 
 /**
  * Context window threshold (80% of 200K)
  * When exceeded, session will be reset on next request
- * Note: Only applies to Claude CLI backend. Codex MCP handles its own compaction.
+ * Note: Only applies to Claude CLI backend. Codex app-server handles its own compaction.
  */
 const CONTEXT_THRESHOLD_TOKENS = () => getConfig().io?.context_threshold_tokens ?? 160_000;
 
@@ -115,10 +115,10 @@ export class SessionPool {
     // Check if existing session is still valid
     if (existing) {
       const isExpired = now - existing.lastActive > this.config.sessionTimeoutMs;
-      // Codex MCP handles its own compaction - never reset session based on tokens
+      // Codex app-server handles its own compaction - never reset session based on tokens
       // Only Claude CLI backend uses token-based session reset
       const isContextFull =
-        existing.backend !== 'codex-mcp' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS();
+        existing.backend !== 'codex' && existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS();
 
       if (isExpired) {
         this.sessions.delete(channelKey);
@@ -179,7 +179,7 @@ export class SessionPool {
   updateTokens(
     channelKey: string,
     inputTokens: number,
-    backend?: 'claude' | 'codex-mcp'
+    backend?: 'claude' | 'codex'
   ): { totalTokens: number; nearThreshold: boolean } {
     const existing = this.sessions.get(channelKey);
     if (!existing) {
@@ -191,10 +191,10 @@ export class SessionPool {
       existing.backend = backend;
     }
 
-    // Codex MCP resume sessions accumulate ~20-25K tokens per message
+    // Codex app-server sessions may accumulate ~20-25K tokens per message
     // After ~50 messages, context exceeds 200K (max)
     // Force reset to prevent degraded responses from overflowed context
-    if (backend === 'codex-mcp') {
+    if (backend === 'codex') {
       const MAX_CONTEXT_TOKENS = getConfig().io?.max_context_tokens ?? 200_000;
       if (inputTokens > MAX_CONTEXT_TOKENS) {
         logger.warn(
@@ -208,7 +208,7 @@ export class SessionPool {
     // Use latest value, not cumulative - Claude API returns total context tokens per request
     existing.totalInputTokens = Math.max(existing.totalInputTokens, inputTokens);
 
-    // nearThreshold for monitoring (Codex MCP doesn't reset, but we track for UI display)
+    // nearThreshold for monitoring (Codex app-server doesn't reset, but we track for UI display)
     const nearThreshold = existing.totalInputTokens >= CONTEXT_THRESHOLD_TOKENS() * 0.9; // 90% of threshold
 
     if (nearThreshold) {

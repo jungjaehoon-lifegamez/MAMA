@@ -474,7 +474,7 @@ export function resolveCodexCommandForStartup(): string {
 }
 
 export function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof loadConfig>>): boolean {
-  if (config.agent.backend === 'codex' || config.agent.backend === 'codex-mcp') {
+  if (config.agent.backend === 'codex') {
     return true;
   }
 
@@ -486,7 +486,7 @@ export function hasCodexBackendConfigured(config: Awaited<ReturnType<typeof load
   for (const raw of Object.values(agents)) {
     if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
       const agentBackend = (raw as { backend?: string }).backend;
-      if (agentBackend === 'codex' || agentBackend === 'codex-mcp') {
+      if (agentBackend === 'codex') {
         return true;
       }
     }

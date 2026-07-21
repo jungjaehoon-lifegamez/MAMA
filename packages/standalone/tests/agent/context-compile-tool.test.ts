@@ -402,6 +402,22 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     });
   });
 
+  it('passes the model-turn cancellation signal into context compilation', async () => {
+    const service = makeService();
+    const executor = new GatewayToolExecutor({ contextCompileService: service });
+    const controller = new AbortController();
+
+    await executor.execute(
+      'context_compile',
+      { task: 'compile context' } as GatewayToolInput,
+      makeContext({ signal: controller.signal })
+    );
+
+    expect(service.compileAndPersistContext).toHaveBeenCalledWith(
+      expect.objectContaining({ signal: controller.signal })
+    );
+  });
+
   it('preserves explicit empty scopes for context_compile boundary narrowing', async () => {
     const service = makeService();
     const executor = new GatewayToolExecutor({

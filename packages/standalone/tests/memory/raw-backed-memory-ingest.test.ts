@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -5,6 +9,7 @@ import {
   ingestRawBackedMemoryCandidates,
 } from '../../src/memory/raw-backed-memory-ingest.js';
 import type { ChannelConfig, NormalizedItem } from '../../src/connectors/framework/types.js';
+import { loadConnectorConfig } from '../../src/connectors/config-loader.js';
 import type { RawBackedMemorySaveInput } from '../../src/memory/raw-backed-memory-ingest.js';
 
 function makeItem(overrides: Partial<NormalizedItem> = {}): NormalizedItem {
@@ -59,6 +64,37 @@ describe('Story M1R: Raw-backed connector memory ingest', () => {
       });
       expect(candidates[0]?.summary).toContain('reviewer @ slack:CTESTCHAN01');
       expect(candidates[0]?.details).toContain('Deterministic raw-backed memory candidate');
+    });
+
+    it('uses project_entity_id reconstructed by the shared connector loader', () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'mama-raw-ingest-config-'));
+      const configPath = join(tempDir, 'connectors.json');
+      try {
+        writeFileSync(
+          configPath,
+          JSON.stringify({
+            slack: {
+              enabled: true,
+              pollIntervalMinutes: 5,
+              channels: {
+                project: { role: 'hub', project_entity_id: 'project_from_loader' },
+              },
+              auth: { type: 'token', tokenName: 'SLACK_BOT_TOKEN' },
+            },
+          })
+        );
+        const loaded = loadConnectorConfig(configPath);
+        expect(loaded.ok).toBe(true);
+
+        const candidates = buildRawBackedMemoryCandidates([makeItem()], {
+          channelConfig: loaded.config.slack!.channels.project,
+        });
+
+        expect(candidates[0]?.scopes).toEqual([{ kind: 'project', id: 'project_from_loader' }]);
+        expect(candidates[0]?.source.project_id).toBe('project_from_loader');
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
 
     it('drops chatter that has no work, decision, status, or schedule signal', () => {

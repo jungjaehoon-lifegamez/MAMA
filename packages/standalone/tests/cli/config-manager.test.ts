@@ -18,7 +18,7 @@ import {
   getDefaultMultiAgentConfig,
   validateConfig,
 } from '../../src/cli/config/config-manager.js';
-import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
+import { DEFAULT_CONFIG, DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { MAMAConfig } from '../../src/cli/config/types.js';
 
 describe('ConfigManager', () => {
@@ -119,6 +119,34 @@ describe('ConfigManager', () => {
       expect(loaded.agent.max_turns).toBe(DEFAULT_CONFIG.agent.max_turns);
       expect(loaded.logging.level).toBe(DEFAULT_CONFIG.logging.level);
       expect(loaded.memory_policy).toEqual(DEFAULT_CONFIG.memory_policy);
+    });
+
+    it('should migrate legacy codex-mcp backends to the app-server codex backend', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+      const legacyConfig = {
+        version: 1,
+        agent: { ...DEFAULT_CONFIG.agent, backend: 'codex-mcp', model: 'gpt-5.2-codex' },
+        database: { path: '~/.test/db.sqlite' },
+        multi_agent: {
+          ...getDefaultMultiAgentConfig(),
+          agents: {
+            legacy: {
+              backend: 'codex-mcp',
+              model: 'gpt-5.2-codex',
+              enabled: true,
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(legacyConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.agent.backend).toBe('codex');
+      expect(loaded.multi_agent?.agents.legacy.backend).toBe('codex');
     });
 
     it('should keep implicit memory policy disabled unless explicitly configured', async () => {
@@ -530,15 +558,21 @@ describe('ConfigManager', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
-          agent: { ...DEFAULT_CONFIG.agent, backend: 'codex-mcp' },
+          agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' as 'claude' },
         })
-      ).toHaveLength(0);
+      ).toContain('agent.backend must be "claude" or "codex"');
+    });
+
+    it('should reject the removed Codex transport selector', () => {
       expect(
         validateConfig({
           ...DEFAULT_CONFIG,
-          agent: { ...DEFAULT_CONFIG.agent, backend: 'gemini' as 'claude' },
+          agent: {
+            ...DEFAULT_CONFIG.agent,
+            codex_transport: 'mcp',
+          } as typeof DEFAULT_CONFIG.agent,
         })
-      ).toContain('agent.backend must be "claude", "codex", or "codex-mcp"');
+      ).toContain('agent.codex_transport was removed; Codex always uses app-server');
     });
 
     it('should detect invalid log level', () => {
@@ -628,6 +662,39 @@ describe('Story OPS-1 / S1-T1 B1: additive roles merge + prune-at-save', () => {
     expect(loaded.roles?.definitions.owner_console?.allowedTools).toContain('kagemusha_tasks');
     // Default mappings still resolve
     expect(loaded.roles?.sourceMapping.viewer).toBe('os_agent');
+  });
+
+  it('enables only the outer Code-Act entry point on the default owner role', () => {
+    const owner = DEFAULT_ROLES.definitions.owner_console;
+
+    expect(owner.allowedTools).toContain('code_act');
+    expect(owner.blockedTools).toEqual(['Bash', 'Write', 'save_integration_token', 'delegate']);
+    expect(owner.systemControl).toBe(false);
+    expect(owner.sensitiveAccess).toBe(false);
+  });
+
+  it('keeps a persisted custom owner allowlist fail-closed instead of inheriting code_act', async () => {
+    const customOwner = {
+      ...DEFAULT_ROLES.definitions.owner_console,
+      allowedTools: ['mama_search'],
+    };
+    const config = {
+      version: 1,
+      agent: { model: 'test-model', max_turns: 5, timeout: 60000 },
+      database: { path: '~/.test/db.sqlite' },
+      logging: { level: 'debug', file: '~/.test/logs/test.log' },
+      roles: {
+        definitions: { owner_console: customOwner },
+        sourceMapping: { telegram: 'chat_bot' },
+      },
+    } as unknown as MAMAConfig;
+
+    await saveConfig(config);
+    const loaded = await loadConfig();
+
+    expect(loaded.roles?.definitions.owner_console?.allowedTools).toEqual(['mama_search']);
+    expect(loaded.roles?.definitions.owner_console?.allowedTools).not.toContain('code_act');
+    expect(loaded.roles?.definitions.owner_console?.blockedTools).toEqual(customOwner.blockedTools);
   });
 
   it('prunes default-identical role entries at save so defaults never freeze (R2-M1)', async () => {

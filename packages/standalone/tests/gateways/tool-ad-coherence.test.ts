@@ -8,11 +8,17 @@
  * through RoleManager into getGatewayToolsPrompt(disallowed).
  */
 
-import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import { getGatewayToolsPrompt } from '../../src/agent/agent-loop.js';
-import { RoleManager } from '../../src/agent/role-manager.js';
+import { getRoleManager, resetRoleManager, RoleManager } from '../../src/agent/role-manager.js';
 import { ToolRegistry } from '../../src/agent/tool-registry.js';
 import { DEFAULT_ROLES } from '../../src/cli/config/types.js';
+import Database from '../../src/sqlite.js';
+import { MessageRouter, createMockAgentLoop } from '../../src/gateways/message-router.js';
+import { SessionStore } from '../../src/gateways/session-store.js';
+import type { AgentContext } from '../../src/agent/types.js';
 
 function promptForRole(roleName: 'chat_bot' | 'owner_console'): string {
   const rm = new RoleManager({ rolesConfig: DEFAULT_ROLES });
@@ -67,6 +73,97 @@ describe('Story OPS-1: role-filtered tool advertising (S1-T2)', () => {
       expect(chatSecond).toBe(chatFirst);
       expect(ownerFirst).toContain('kagemusha_tasks');
       expect(chatSecond).not.toContain('kagemusha_tasks');
+    });
+  });
+
+  describe('Codex native tool advertising', () => {
+    it('projects the verified owner role into AgentLoop options', async () => {
+      const store = new SessionStore(new Database(':memory:'));
+      const run = vi.fn().mockResolvedValue({ response: 'ok' });
+      const router = new MessageRouter(
+        store,
+        { run },
+        { search: async () => [] },
+        { backend: 'codex' }
+      );
+      const roleManager = getRoleManager();
+      roleManager.updateRolesConfig(DEFAULT_ROLES);
+      roleManager.setTelegramTrust(['owner-chat']);
+
+      try {
+        await router.process({
+          source: 'telegram',
+          channelId: 'owner-chat',
+          userId: 'owner',
+          text: 'status',
+          metadata: { chatType: 'private' },
+        });
+        const context = run.mock.calls[0]?.[1]?.agentContext as AgentContext;
+
+        expect(context.roleName).toBe('owner_console');
+        expect(context.role.allowedTools).toContain('code_act');
+        expect(context.role.blockedTools).toEqual([
+          'Bash',
+          'Write',
+          'save_integration_token',
+          'delegate',
+        ]);
+      } finally {
+        resetRoleManager();
+        store.close();
+      }
+    });
+
+    it('does not append the legacy Gateway Tools text catalog in MessageRouter', () => {
+      const store = new SessionStore(new Database(':memory:'));
+      const router = new MessageRouter(
+        store,
+        createMockAgentLoop(() => 'ok'),
+        { search: async () => [] },
+        { backend: 'codex' }
+      );
+      const session = store.getOrCreate('telegram', 'codex-channel', 'owner');
+      const role = DEFAULT_ROLES.definitions.chat_bot;
+      const context: AgentContext = {
+        source: 'telegram',
+        platform: 'telegram',
+        roleName: 'chat_bot',
+        role,
+        session: {
+          sessionId: session.id,
+          channelId: 'codex-channel',
+          userId: 'owner',
+          startedAt: new Date(),
+        },
+        capabilities: [],
+        limitations: [],
+        tier: 1,
+        backend: 'codex',
+      };
+      const prompt = (
+        router as unknown as {
+          buildSystemPrompt(
+            target: typeof session,
+            injectedContext: string,
+            historyContext: string | undefined,
+            startupContext: string,
+            agentContext: AgentContext,
+            enhanced: undefined,
+            isNewSession: boolean
+          ): string;
+        }
+      ).buildSystemPrompt(session, '', undefined, '', context, undefined, true);
+
+      expect(prompt).not.toContain('# Gateway Tools');
+      store.close();
+    });
+
+    it('seeds Codex with native host-tool guidance instead of tool_call JSON blocks', () => {
+      const template = readFileSync(join(__dirname, '../../templates/AGENTS.codex.md'), 'utf-8');
+
+      expect(template).toContain('native');
+      expect(template).not.toContain('```tool_call');
+      expect(template).not.toContain('tool_call JSON');
     });
   });
 });

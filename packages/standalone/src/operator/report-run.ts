@@ -2,10 +2,10 @@
  * Operator report-run wiring + tool-use audit (M3 "Operator Hands").
  *
  * PURE half (this file, Task 1): classify the gateway tools the persona agent actually EXECUTED
- * during a report. Gateway calls are prompt-based ```tool_call blocks, parsed by AgentLoop into
- * tool_use blocks (agent-loop.ts:1218-1226,1330-1333); each execution's tool_result is pushed
- * into the NEXT user message (agent-loop.ts:1408-1411). We pair tool_use.id with its tool_result
- * and count executions only - errored results and envelope denials ("success":false /
+ * during a report. Claude text-gateway calls and Codex native host calls are both recorded by
+ * AgentLoop as assistant tool_use followed by user tool_result history entries. We pair
+ * tool_use.id with its tool_result and count executions only - errored results and envelope
+ * denials ("success":false /
  * envelope_missing, gateway-tool-executor.ts:1090-1142) do NOT count. History is read
  * structurally (no agent-internal imports) so the audit is trivially unit-testable.
  *

@@ -20,7 +20,7 @@ describe('STORY-020: Metric emission', () => {
       // Simulate calling the callback
       opts.onMetric!('prompt_latency_ms', 150, { backend: 'claude', turn: '1' });
       opts.onMetric!('tool_duration_ms', 50, { tool: 'Read', error: 'false' });
-      opts.onMetric!('prompt_error', 1, { backend: 'codex-mcp', error_type: 'CLI_ERROR' });
+      opts.onMetric!('prompt_error', 1, { backend: 'codex', error_type: 'CLI_ERROR' });
 
       expect(metrics).toHaveLength(3);
       expect(metrics[0]).toEqual({

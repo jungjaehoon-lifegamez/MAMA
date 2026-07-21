@@ -229,6 +229,61 @@ describe('MessageRouter', () => {
       expect(receivedOptions.systemPrompt!.length).toBeGreaterThan(0);
     });
 
+    it('should preserve durable Codex resume intent when the volatile session pool is new', async () => {
+      const run = vi.fn().mockResolvedValue({ response: 'Response' });
+      const customRouter = new MessageRouter(
+        sessionStore,
+        { run },
+        createMockMamaApi(mockDecisions),
+        { backend: 'codex' }
+      );
+
+      await customRouter.process({
+        source: 'discord',
+        channelId: `codex-restart-${Date.now()}`,
+        userId: 'user-456',
+        text: 'Continue after restart',
+      });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          systemPrompt: expect.any(String),
+          resumeSession: true,
+        })
+      );
+    });
+
+    it('keeps the stable policy fingerprint on resumed sessions', async () => {
+      const receivedFingerprints: Array<string | undefined> = [];
+      const agentLoop = {
+        async run(
+          _prompt: string,
+          options?: { sessionPolicyFingerprint?: string }
+        ): Promise<{ response: string }> {
+          receivedFingerprints.push(options?.sessionPolicyFingerprint);
+          return { response: 'Response' };
+        },
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+      const message: NormalizedMessage = {
+        source: 'discord',
+        channelId: 'channel-policy-resume',
+        userId: 'user-456',
+        text: 'Hello',
+      };
+
+      await customRouter.process(message);
+      await customRouter.process({ ...message, text: 'Continue' });
+
+      expect(receivedFingerprints[0]).toBeDefined();
+      expect(receivedFingerprints[1]).toBe(receivedFingerprints[0]);
+    });
+
     it('Story V19.7 / AC #1: should include selected viewer item in injected page context', async () => {
       let receivedPrompt = '';
       const agentLoop = createMockAgentLoop((prompt) => {

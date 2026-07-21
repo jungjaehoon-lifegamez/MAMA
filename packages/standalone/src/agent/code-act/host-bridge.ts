@@ -7,11 +7,16 @@ import { RoleManager } from '../role-manager.js';
 
 /** Tool metadata for .d.ts generation */
 export interface ToolMeta {
-  name: string;
-  description: string;
-  params: { name: string; type: string; required: boolean; description?: string }[];
-  returnType: string;
-  category: FunctionDescriptor['category'];
+  readonly name: string;
+  readonly description: string;
+  readonly params: readonly {
+    readonly name: string;
+    readonly type: string;
+    readonly required: boolean;
+    readonly description?: string;
+  }[];
+  readonly returnType: string;
+  readonly category: FunctionDescriptor['category'];
 }
 
 /** All gateway tool metadata */
@@ -40,6 +45,21 @@ const TOOL_REGISTRY: ToolMeta[] = [
     ],
     returnType:
       '{ results: Array<Record<string, unknown>>; count: number; diagnostics?: Record<string, unknown> | null; meta?: Record<string, unknown> }',
+    category: 'memory',
+  },
+  {
+    name: 'mama_recall',
+    description: 'Recall a scoped memory bundle with profile, memories, and graph context',
+    params: [
+      { name: 'query', type: 'string', required: true },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+    ],
+    returnType:
+      '{ bundle: { profile: { static: Array<Record<string, unknown>>; dynamic: Array<Record<string, unknown>>; evidence: Array<Record<string, unknown>> }; memories: Array<Record<string, unknown>>; graph_context: { primary: Array<Record<string, unknown>>; expanded: Array<Record<string, unknown>>; edge_count: number } } }',
     category: 'memory',
   },
   {
@@ -116,6 +136,48 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
     ],
     returnType: '{ success: boolean; message: string }',
+    category: 'os',
+  },
+  {
+    name: 'report_request',
+    description: 'Start a fresh full operator report and acknowledge that it is on its way',
+    params: [],
+    returnType: '{ message: string }',
+    category: 'os',
+  },
+  {
+    name: 'board_read',
+    description: 'Read the current owner dashboard report slots',
+    params: [],
+    returnType: '{ slots: Record<string, { html: string; updatedAt?: string | null }> }',
+    category: 'os',
+  },
+  {
+    name: 'workorder_request',
+    description: 'Enqueue a priority system workorder and acknowledge it without waiting',
+    params: [
+      {
+        name: 'kind',
+        type: "'board' | 'wiki' | 'memory-curation'",
+        required: true,
+      },
+    ],
+    returnType: '{ message: string }',
+    category: 'os',
+  },
+  {
+    name: 'workorder_status',
+    description: 'Read per-kind system workorder status and failure counts',
+    params: [],
+    returnType:
+      "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
+    category: 'os',
+  },
+  {
+    name: 'audit_findings_read',
+    description: 'Read the latest deterministic system-audit findings',
+    params: [],
+    returnType: '{ findings: unknown; message?: string }',
     category: 'os',
   },
   // Wiki
@@ -420,7 +482,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'model', type: 'string', required: true },
       { name: 'tier', type: 'number', required: true },
       { name: 'system', type: 'string', required: false },
-      { name: 'backend', type: "'claude' | 'codex' | 'codex-mcp'", required: false },
+      { name: 'backend', type: "'claude' | 'codex'", required: false },
     ],
     returnType: '{ id: string; version: number; runtime_reloaded?: boolean; error?: string }',
     category: 'os',
@@ -695,7 +757,11 @@ const TOOL_REGISTRY: ToolMeta[] = [
 /** Read-only tool names for Tier 3 (strictest) */
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
+  'mama_recall',
   'mama_load_checkpoint',
+  'board_read',
+  'audit_findings_read',
+  'workorder_status',
   'viewer_state',
   'Read',
   'browser_get_text',
@@ -725,6 +791,8 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'mama_add',
   'mama_ingest',
   'report_publish',
+  'report_request',
+  'workorder_request',
   'wiki_publish',
   // The Obsidian CLI is the tier-2 wiki agent's primary write path; without it
   // the code-act sandbox never injects the function and every run silently
@@ -736,6 +804,16 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'contract_no_update',
 ]);
 
+export function isToolAvailableAtTier(toolName: string, tier: 1 | 2 | 3): boolean {
+  if (tier === 1) {
+    return true;
+  }
+  if (tier === 2) {
+    return READ_ONLY_TOOLS.has(toolName) || MEMORY_WRITE_TOOLS.has(toolName);
+  }
+  return READ_ONLY_TOOLS.has(toolName);
+}
+
 export class HostBridge {
   onToolUse?: (toolName: string, input: Record<string, unknown>, result: unknown) => void;
 
@@ -745,13 +823,35 @@ export class HostBridge {
     private executionContext?: GatewayToolExecutionContext | null
   ) {}
 
-  /** Inject all allowed functions into sandbox based on tier */
-  injectInto(sandbox: CodeActSandbox, tier: 1 | 2 | 3 = 1, role?: RoleConfig): void {
-    const allowed = this.getAvailableFunctions(tier);
+  /** Inject tier/role-filtered functions, or exactly an already-projected name set. */
+  injectInto(
+    sandbox: CodeActSandbox,
+    tierOrProjectedNames: 1 | 2 | 3 | readonly string[] = 1,
+    role?: RoleConfig
+  ): void {
+    const projectedNames = Array.isArray(tierOrProjectedNames)
+      ? new Set<string>(tierOrProjectedNames)
+      : null;
+    if (projectedNames) {
+      const registryNames = new Set(TOOL_REGISTRY.map((tool) => tool.name));
+      const unknownNames = [...projectedNames].filter((name) => !registryNames.has(name));
+      if (unknownNames.length > 0) {
+        throw new Error(`Unknown projected Code-Act tool name(s): ${unknownNames.join(', ')}`);
+      }
+    }
+    const tier = Array.isArray(tierOrProjectedNames) ? 1 : tierOrProjectedNames;
+    const allowed = this.getAvailableFunctions(tier as 1 | 2 | 3).filter(
+      (desc) => projectedNames === null || projectedNames.has(desc.name)
+    );
 
     for (const desc of allowed) {
       // Additional role-based check if role provided
-      if (role && this.roleManager && !this.roleManager.isToolAllowed(role, desc.name)) {
+      if (
+        projectedNames === null &&
+        role &&
+        this.roleManager &&
+        !this.roleManager.isToolAllowed(role, desc.name)
+      ) {
         continue;
       }
 
@@ -793,17 +893,9 @@ export class HostBridge {
 
   /** Get available function descriptors filtered by tier */
   getAvailableFunctions(tier: 1 | 2 | 3 = 1): FunctionDescriptor[] {
-    return TOOL_REGISTRY.filter((meta) => {
-      if (tier === 1) {
-        return true;
-      }
-      if (tier === 2) {
-        return READ_ONLY_TOOLS.has(meta.name) || MEMORY_WRITE_TOOLS.has(meta.name);
-      }
-      return READ_ONLY_TOOLS.has(meta.name);
-    }).map((meta) => ({
+    return TOOL_REGISTRY.filter((meta) => isToolAvailableAtTier(meta.name, tier)).map((meta) => ({
       name: meta.name,
-      params: meta.params,
+      params: meta.params.map((param) => ({ ...param })),
       returnType: meta.returnType,
       description: meta.description,
       category: meta.category,

@@ -71,7 +71,7 @@ export async function initGateways(
   messageRouter: MessageRouter,
   toolExecutor: GatewayToolExecutor,
   agentLoop: AgentLoop,
-  runtimeBackend: 'claude' | 'codex' | 'codex-mcp',
+  runtimeBackend: 'claude' | 'codex',
   db: SQLiteDatabase
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup

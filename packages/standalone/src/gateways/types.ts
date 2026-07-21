@@ -160,7 +160,7 @@ export interface MessageRouterConfig {
   /** Target language for auto-translation prompts (default: Korean) */
   translationTargetLanguage?: string;
   /** Backend type for backend-specific AGENTS.md injection */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
   /** Opt into implicit recallMemory injection for new CLI session startup prompts. Default: false. */
   implicitMemoryRecall?: boolean;
   /** Opt into legacy decision-search context injection for new CLI session startup prompts. Default: false. */

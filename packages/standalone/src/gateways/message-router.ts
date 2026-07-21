@@ -774,16 +774,26 @@ This protects your credentials from being exposed in chat logs.`;
           '.model: claude-sonnet-4-6\n' +
           '  Codex:  codex login → roles.definitions.' +
           agentContext.roleName +
-          '.model: gpt-5.3-codex\n\n' +
+          '.model: gpt-5.4\n\n' +
           'Or run: mama init --reconfigure'
       );
     }
     const roleMaxTurns = agentContext.role.maxTurns;
+    const sessionPolicyFingerprint = this.buildSessionPolicyFingerprint(
+      agentContext,
+      enhanced,
+      roleModel
+    );
 
     // Determine if we should resume an existing CLI session
     // - New CLI session: start with --session-id (inject full system prompt)
     // - Continuing CLI session: use --resume flag (minimal injection - CLI has context)
     const shouldResume = !isNewCliSession;
+    // Codex persists thread IDs independently from the in-memory SessionPool.
+    // After a daemon restart the pool is new, but the durable Codex thread may
+    // still exist and should be resumed. Keep prompt/context freshness separate
+    // from backend conversation continuity.
+    const shouldResumeBackend = this.config.backend === 'codex' ? true : shouldResume;
 
     // For resumed sessions: inject minimal context only
     // Persistent CLI keeps the process alive with full system prompt from initial request
@@ -840,13 +850,14 @@ This protects your credentials from being exposed in chat logs.`;
       const envelope = this.buildReactiveEnvelope(message);
       const options: AgentLoopOptions = {
         systemPrompt: effectivePrompt,
+        sessionPolicyFingerprint,
         userId: message.userId,
         model: roleModel, // Role-specific model override
         maxTurns: roleMaxTurns, // Role-specific max turns
         source: message.source,
         channelId: message.channelId,
         agentContext,
-        resumeSession: shouldResume, // Use --resume flag for continuing sessions
+        resumeSession: shouldResumeBackend,
         cliSessionId, // Pass CLI session ID to avoid double-locking
         streamCallbacks: wrappedOnStream || processOptions?.onStream,
         envelope,
@@ -1299,12 +1310,33 @@ ${historyContext}
           (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
         )
       : undefined;
-    const gatewayToolsPrompt = getGatewayToolsPrompt(disallowedForRole) || '';
+    const gatewayToolsPrompt =
+      this.config.backend === 'codex' ? '' : getGatewayToolsPrompt(disallowedForRole) || '';
     if (gatewayToolsPrompt) {
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }
 
     return prompt;
+  }
+
+  private buildSessionPolicyFingerprint(
+    agentContext: AgentContext,
+    enhanced: EnhancedPromptContext,
+    model: string
+  ): string {
+    const soulPath = join(homedir(), '.mama', 'SOUL.md');
+    const baseInstructions = existsSync(soulPath)
+      ? loadComposedSystemPrompt(false, agentContext)
+      : COMPLETE_AUTONOMOUS_PROMPT;
+    return createHash('sha256')
+      .update(baseInstructions)
+      .update('\0')
+      .update(enhanced.agentsContent ?? '')
+      .update('\0')
+      .update(enhanced.rulesContent ?? '')
+      .update('\0')
+      .update(model)
+      .digest('hex');
   }
 
   /**

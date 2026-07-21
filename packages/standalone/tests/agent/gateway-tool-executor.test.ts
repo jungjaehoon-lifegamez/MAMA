@@ -17,7 +17,7 @@ import {
   logActivity,
 } from '../../src/db/agent-store.js';
 import { getDefaultMultiAgentConfig, saveConfig } from '../../src/cli/config/config-manager.js';
-import { DEFAULT_CONFIG } from '../../src/cli/config/types.js';
+import { DEFAULT_CONFIG, DEFAULT_ROLES } from '../../src/cli/config/types.js';
 import type { MAMAApiInterface } from '../../src/agent/types.js';
 import { UICommandQueue } from '../../src/api/ui-command-handler.js';
 import type { AgentProcessManager } from '../../src/multi-agent/agent-process-manager.js';
@@ -1378,6 +1378,67 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
 
       describe('AC #3: active role permissions remain an upper bound', () => {
+        it('denies direct code_act without an active agent role', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+
+          const result = await executor.execute('code_act', { code: '1 + 1' });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Permission denied'),
+          });
+        });
+
+        it('preserves context-less legacy access for unrelated tools', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+
+          const result = await executor.execute('mama_search', { query: 'legacy' });
+
+          expect(result.success).toBe(true);
+        });
+
+        it('denies direct code_act when the active role does not allow the outer tool', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'custom_owner',
+            role: {
+              allowedTools: ['mama_search'],
+              blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],
+              systemControl: false,
+              sensitiveAccess: false,
+            },
+          });
+
+          const result = await executor.execute('code_act', {
+            code: 'mama_search({ query: "denied" })',
+          });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Permission denied'),
+          });
+        });
+
+        it('allows direct code_act for the default owner role', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'owner_console',
+            role: DEFAULT_ROLES.definitions.owner_console,
+          });
+
+          const result = await executor.execute('code_act', {
+            code: '({ search: typeof mama_search, bash: typeof Bash })',
+          });
+
+          expect(result.success).toBe(true);
+          expect(JSON.parse(String(result.message)).value).toEqual({
+            search: 'function',
+            bash: 'undefined',
+          });
+        });
+
         it('does not let request allowlists widen the active role', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
@@ -1418,6 +1479,82 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
             success: false,
             error: expect.stringContaining('Unknown Code-Act tool pattern'),
           });
+        });
+
+        it.each([0, 4, Number.NaN, '2'])('rejects invalid runtime tier %s', async (tier) => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext({
+            ...createViewerContext(),
+            tier: tier as unknown as 1,
+          });
+
+          const result = await executor.execute('code_act', { code: '1 + 1' });
+
+          expect(result).toMatchObject({
+            success: false,
+            error: expect.stringContaining('Invalid Code-Act tier'),
+          });
+        });
+      });
+
+      describe('AC #5: advertised policy matches nested sandbox execution', () => {
+        it('combines active role, runtime blocks, tier, and model narrowing exactly', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          const executeSpy = vi.spyOn(executor, 'execute');
+          const context = {
+            ...createViewerContext(),
+            tier: 3 as const,
+            roleName: 'limited_code_act',
+            role: {
+              allowedTools: ['code_act', 'mama_*', 'Read', 'Write'],
+              blockedTools: ['mama_load_checkpoint'],
+              systemControl: false,
+              sensitiveAccess: false,
+            },
+          };
+
+          const result = await executor.execute(
+            'code_act',
+            {
+              code: 'mama_search({ query: "policy-context" }); ({ search: typeof mama_search, save: typeof mama_save, read: typeof Read, write: typeof Write, checkpoint: typeof mama_load_checkpoint })',
+              allowedTools: ['mama_*', 'Read', 'Write'],
+              blockedTools: ['Bash'],
+            },
+            {
+              agentContext: context,
+              agentId: 'limited_code_act',
+              source: 'viewer',
+              channelId: 'viewer',
+              executionSurface: 'model_tool',
+              sourceTurnId: 'turn-policy',
+              sourceMessageRef: 'message-policy',
+              disallowedGatewayTools: ['Read'],
+            }
+          );
+
+          expect(result.success).toBe(true);
+          expect(JSON.parse(String(result.message)).value).toEqual({
+            search: 'function',
+            save: 'undefined',
+            read: 'undefined',
+            write: 'undefined',
+            checkpoint: 'undefined',
+          });
+          expect(executeSpy).toHaveBeenCalledWith(
+            'mama_search',
+            { query: 'policy-context' },
+            expect.objectContaining({
+              agentContext: context,
+              source: 'viewer',
+              channelId: 'viewer',
+              executionSurface: 'code_act',
+              sourceTurnId: 'turn-policy',
+              sourceMessageRef: 'message-policy',
+              gatewayCallId: expect.stringMatching(/^gw_/),
+              parentToolName: 'code_act',
+              disallowedGatewayTools: ['Read'],
+            })
+          );
         });
       });
     });

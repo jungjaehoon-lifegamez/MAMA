@@ -92,13 +92,18 @@ export interface InitOptions {
   /** Skip Claude Code authentication check (for testing) */
   skipAuthCheck?: boolean;
   /** Preferred backend selection mode */
-  backend?: 'auto' | 'claude' | 'codex-mcp';
+  backend?: 'auto' | 'claude' | 'codex';
 }
 
 interface BackendResolution {
-  backend: 'claude' | 'codex-mcp';
+  backend: 'claude' | 'codex';
   codexAuthPath?: string;
 }
+
+const DEFAULT_MODEL_BY_BACKEND: Record<BackendResolution['backend'], string> = {
+  claude: 'claude-sonnet-4-6',
+  codex: 'gpt-5.4',
+};
 
 function resolvePreferredBackend(
   preferredBackend: InitOptions['backend']
@@ -111,8 +116,8 @@ function resolvePreferredBackend(
   const hasClaudeAuth = getClaudeCodeAuthStatus().loggedIn;
 
   if (requestedBackend) {
-    if (requestedBackend === 'codex-mcp') {
-      return hasCodexAuth ? { backend: 'codex-mcp', codexAuthPath } : null;
+    if (requestedBackend === 'codex') {
+      return hasCodexAuth ? { backend: 'codex', codexAuthPath } : null;
     }
     return hasClaudeAuth ? { backend: 'claude' } : null;
   }
@@ -121,7 +126,7 @@ function resolvePreferredBackend(
   // - if only one backend is authenticated, use it
   // - if both are authenticated, keep compatibility default (claude)
   if (hasCodexAuth && !hasClaudeAuth) {
-    return { backend: 'codex-mcp', codexAuthPath };
+    return { backend: 'codex', codexAuthPath };
   }
   if (hasClaudeAuth) {
     return { backend: 'claude' };
@@ -132,13 +137,13 @@ function resolvePreferredBackend(
 
 function resolveRequestedBackend(
   preferredBackend: InitOptions['backend']
-): 'claude' | 'codex-mcp' | undefined {
-  if (preferredBackend === 'claude' || preferredBackend === 'codex-mcp') {
+): 'claude' | 'codex' | undefined {
+  if (preferredBackend === 'claude' || preferredBackend === 'codex') {
     return preferredBackend;
   }
-  return process.env.MAMA_DEFAULT_BACKEND === 'codex-mcp' ||
+  return process.env.MAMA_DEFAULT_BACKEND === 'codex' ||
     process.env.MAMA_DEFAULT_BACKEND === 'claude'
-    ? (process.env.MAMA_DEFAULT_BACKEND as 'claude' | 'codex-mcp')
+    ? (process.env.MAMA_DEFAULT_BACKEND as 'claude' | 'codex')
     : undefined;
 }
 
@@ -150,15 +155,15 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
 
   const requestedBackend = resolveRequestedBackend(options.backend);
   let selectedBackend: BackendResolution = {
-    backend: requestedBackend === 'codex-mcp' ? 'codex-mcp' : 'claude',
+    backend: requestedBackend === 'codex' ? 'codex' : 'claude',
   };
   if (!options.skipAuthCheck) {
     process.stdout.write('Checking backend authentication (Codex/Claude)... ');
     const resolved = resolvePreferredBackend(options.backend);
     if (!resolved) {
       console.log('❌');
-      if (requestedBackend === 'codex-mcp') {
-        console.error('\n⚠️  Requested backend "codex-mcp" is not authenticated.');
+      if (requestedBackend === 'codex') {
+        console.error('\n⚠️  Requested backend "codex" is not authenticated.');
         console.error(
           `   Expected auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
         );
@@ -178,11 +183,13 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
       }
       console.error('\n⚠️  No authenticated backend found.');
       console.error(
-        `   Codex (codex-mcp) auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
+        `   Codex auth: ${expandPath('~/.mama/.codex/auth.json')} or ${expandPath('~/.codex/auth.json')}`
       );
-      console.error(`   Claude auth (legacy fallback): ${expandPath('~/.claude/.credentials.json')}`);
+      console.error(
+        `   Claude auth (legacy fallback): ${expandPath('~/.claude/.credentials.json')}`
+      );
       console.error('\n   Please authenticate one backend first:');
-      console.error('   - Codex (codex-mcp): codex login');
+      console.error('   - Codex: codex login');
       console.error('   - Claude: claude auth login (or install from https://claude.ai/code)\n');
       process.exit(1);
     }
@@ -190,11 +197,11 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
     console.log('✓');
   }
 
-  if (selectedBackend.backend === 'codex-mcp') {
+  if (selectedBackend.backend === 'codex') {
     const authPathMsg = selectedBackend.codexAuthPath
       ? ` (auth detected at ${selectedBackend.codexAuthPath})`
       : '';
-    console.log(`Selected backend: codex-mcp${authPathMsg}`);
+    console.log(`Selected backend: codex${authPathMsg}`);
   } else {
     console.log('Selected backend: claude');
   }
@@ -211,8 +218,12 @@ export async function initCommand(options: InitOptions = {}): Promise<void> {
   try {
     const configPath = await createDefaultConfig(options.force);
     const config = await loadConfig();
-    // Set backend (claude or codex-mcp)
-    config.agent.backend = selectedBackend.backend === 'codex-mcp' ? 'codex-mcp' : 'claude';
+    const defaultModel = DEFAULT_MODEL_BY_BACKEND[selectedBackend.backend];
+    config.agent.backend = selectedBackend.backend;
+    config.agent.model = defaultModel;
+    for (const role of Object.values(config.roles?.definitions ?? {})) {
+      role.model = defaultModel;
+    }
     await saveConfig(config);
     if (options.skipAuthCheck && requestedBackend) {
       console.log(

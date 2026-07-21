@@ -23,12 +23,6 @@
 - **Context:** Exposure already exists — multi-agent pm processes use it today. Adoption for the conductor is its own round (prompt/persona rework).
 - **Depends on:** agent-boundary-repair branch merged.
 
-### Codex per-call model/resumeSession + codex report-thread reset
-
-- **What:** Decide deliberately whether codex should honor per-call `model`/`resumeSession` (Task 3 forwards ONLY systemPrompt on purpose — activating the others changes thread lifecycle, codex-mcp-process.ts thread wipe on `resumeSession === false`). Also implement a codex report-thread reset so Task 6's stateless guarantee holds there (freshSession is pool-level only on codex; the internal threadId persists — a loud log marks this today).
-- **Why:** Without it, a codex-backend deployment keeps the immortal report thread Task 6 killed on claude.
-- **Context:** Default deployments run claude; gap is latent, logged loudly.
-
 ### Multi-agent pool getSharedProcess lane accumulation audit
 
 - **What:** Measure dashboard-cron/reconcile shared-process session growth over a week; apply the Task-6 stateless pattern if durations grow.
@@ -66,6 +60,12 @@
 
 ### 문서 부채 (2026-07-18 릴리즈 감사에서 이연 - 3렌즈 감사 결과)
 
+- **2026-07-21 재감사:** 추적 중인 Markdown 122개를 검사해 존재하지 않는 로컬 링크 참조
+  67개를 확인했다. 이 중 35개는 `packages/claude-code-plugin/README.md`의 저장소 루트 기준
+  상대경로이고, 나머지는 오래된 개발 문서의 삭제·이동된 설계 문서와 누락된 참조 문서다.
+  v0.24 사용자 경로(README, 문서 인덱스, Codex 가이드, 배포 버전 표)에는 새 깨진 링크가 없다.
+- **v0.24 처리:** Codex app-server/Code-Act/Trello 도구 경로, `gpt-5.4` 예시, 네 패키지가
+  아니라 네 릴리스 대상이라는 표현, MAMA OS `0.24.0` 버전 표와 상태 문구를 동기화했다.
 - **What:** v0.23 릴리즈 차단분은 수정 완료. 이연분: developer-playbook.md(2025-11 스냅숏 - mama-plugin 경로/384차원/구 툴명/데드 링크), deployment-architecture.md("4 packages", 워크플로 이름 불일치), docs/guides/deployment.md(e5-small 기본값), testing.md("134 tests"), code-standards.md(구 트리), hooks.md(384차원 예시 + SessionStart/PreCompact 미문서), code-act-sandbox.md + security.md Code-Act 섹션의 샌드박스 툴 표(host-bridge TOOL_REGISTRY와 불일치), reference/api.md에 operator task 라우트 3종 추가, configuration-options.md에 MAMA_TRIGGER_LOOP\* 패밀리/MAMA_BOARD_RECONCILE 행, AGENTS.md 전면 재생성(GitHub Packages/wave-swarm 중심 등 5+ 거짓), entity-substrate-runbook.md 포트 라벨.
 - **At-cutover (Stage 2 on 전환 시 함께):** README/standalone README/mama-os.md/package-structure.md의 "상주 타이머 인격 런" 기술을 워크오더 파이프라인 기술로 전환.
 - **Why:** 오늘 기준 거짓인 사용자 대면 사실층은 v0.23 준비 PR에서 수정했고, 나머지는 저빈도 개발 문서라 릴리즈 비차단 판정.

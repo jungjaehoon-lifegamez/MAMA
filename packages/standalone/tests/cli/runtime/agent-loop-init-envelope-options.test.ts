@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentLoop, GatewayToolExecutor } from '../../../src/agent/index.js';
@@ -10,6 +10,7 @@ import type { MetricsStore } from '../../../src/observability/metrics-store.js';
 import type { SQLiteDatabase } from '../../../src/sqlite.js';
 import { makeSignedEnvelope } from '../../envelope/fixtures.js';
 import { initMainAgentLoop } from '../../../src/cli/runtime/agent-loop-init.js';
+import { loadConfig } from '../../../src/cli/config/config-manager.js';
 
 function createConfig(): MAMAConfig {
   return {
@@ -124,6 +125,107 @@ describe('Story M1R: initMainAgentLoop envelope options', () => {
       await agentLoopClient.runWithContent?.(content, options);
 
       expect(runWithContentSpy).toHaveBeenCalledWith(content, expect.objectContaining(options));
+    });
+  });
+
+  describe('AC: front-door Code-Act defaults', () => {
+    it('honors legacy conductor false after load normalizes an os-agent without a value', async () => {
+      const mamaDir = join(tempHome, '.mama');
+      mkdirSync(mamaDir, { recursive: true });
+      writeFileSync(
+        join(mamaDir, 'config.yaml'),
+        [
+          'version: 1',
+          'agent:',
+          '  backend: codex',
+          '  model: gpt-5.4',
+          '  max_turns: 5',
+          '  timeout: 1000',
+          'database:',
+          '  path: ":memory:"',
+          'multi_agent:',
+          '  agents:',
+          '    conductor:',
+          '      useCodeAct: false',
+        ].join('\n')
+      );
+
+      const normalized = await loadConfig();
+      expect(normalized.multi_agent?.agents?.['os-agent']).toBeDefined();
+      expect(normalized.multi_agent?.agents?.['os-agent']?.useCodeAct).toBeUndefined();
+      expect(normalized.multi_agent?.agents?.conductor?.useCodeAct).toBe(false);
+
+      const result = initMainAgentLoop(
+        normalized,
+        { getToken: vi.fn() } as unknown as OAuthManager,
+        {} as SQLiteDatabase,
+        null as MetricsStore | null,
+        'codex',
+        new GatewayToolExecutor({}),
+        { osAgentMode: false }
+      );
+
+      expect(result.useCodeAct).toBe(false);
+    });
+
+    it.each([
+      {
+        label: 'missing useCodeAct',
+        agentId: 'os-agent',
+        configured: undefined,
+        osAgentMode: false,
+        expected: true,
+      },
+      {
+        label: 'explicit useCodeAct true',
+        agentId: 'os-agent',
+        configured: true,
+        osAgentMode: false,
+        expected: true,
+      },
+      {
+        label: 'explicit useCodeAct false',
+        agentId: 'os-agent',
+        configured: false,
+        osAgentMode: false,
+        expected: false,
+      },
+      {
+        label: 'legacy conductor explicit false',
+        agentId: 'conductor',
+        configured: false,
+        osAgentMode: false,
+        expected: false,
+      },
+      {
+        label: 'viewer delegated operator path',
+        agentId: 'os-agent',
+        configured: true,
+        osAgentMode: true,
+        expected: false,
+      },
+    ])('$label resolves to $expected', ({ agentId, configured, osAgentMode, expected }) => {
+      const config = createConfig();
+      config.multi_agent = {
+        agents: {
+          [agentId]: {
+            ...(configured === undefined ? {} : { useCodeAct: configured }),
+          },
+        },
+      } as MAMAConfig['multi_agent'];
+
+      const result = initMainAgentLoop(
+        config,
+        { getToken: vi.fn() } as unknown as OAuthManager,
+        {} as SQLiteDatabase,
+        null as MetricsStore | null,
+        'codex',
+        new GatewayToolExecutor({}),
+        { osAgentMode }
+      );
+
+      expect(result.useCodeAct).toBe(expected);
+      expect((result.agentLoop as unknown as { useCodeAct: boolean }).useCodeAct).toBe(expected);
     });
   });
 });
