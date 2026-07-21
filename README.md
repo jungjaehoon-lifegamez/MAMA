@@ -31,8 +31,9 @@ What runs continuously today:
 - **Trigger loop** — agent-authored triggers (keywords + memory query + procedure), deterministic
   fire → recall → report, near-duplicate authoring gate, citation-based success circuit.
 - **Operator board at `/ui`** — a React viewer with four agent-published slots (briefing, action
-  required, decisions, pipeline) rendered live over SSE, plus a Triggers tab showing the loop's
-  own library. Task state comes from the real task ledger, never guessed from chat.
+  required, decisions, pipeline) rendered live over SSE, a Triggers tab showing the loop's own
+  library, and a native Tasks surface backed by the task ledger. Tasks display workflow status and
+  temporal state separately, so an overdue item is never silently treated as blocked or complete.
 - **Memory promotion** — every 6 hours a curation pass promotes durable judgments (pricing rules,
   standing client preferences, process rules) from recent channel data into decisions. Task states
   never become memories; the board owns those.

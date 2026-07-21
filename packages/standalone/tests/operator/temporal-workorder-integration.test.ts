@@ -87,27 +87,28 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   function configureRuntime(): void {
     ledger = new TaskLedger(db, { now: () => now, timeZone: KST });
     executor = new GatewayToolExecutor({
-      temporalContextPacketLookup: async ({ packetId }) => ({
-        packet_id: packetId,
-        task: (() => {
-          const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
-          const context = ledger.loadTemporalWorkContext(attemptId);
-          return `temporal:${context.taskId}:${context.generationKey}\nReconcile synthetic evidence`;
-        })(),
-        packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] }),
-        source_refs: [
-          {
-            kind: 'raw',
-            connector: 'trello',
-            raw_id: (() => {
-              const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
-              const context = ledger.loadTemporalWorkContext(attemptId);
-              return ledger.getById(context.taskId)?.sourceEventId ?? 'missing-source-event';
-            })(),
-          },
-        ],
-        created_at: now,
-      }),
+      temporalContextPacketLookup: async ({ packetId }) => {
+        const attemptId = Number(packetId.replace('ctxp_temporal_attempt_', ''));
+        const context = ledger.loadTemporalWorkContext(attemptId);
+        const task = ledger.getById(context.taskId);
+        const [connector = '', ...channelParts] = (task?.sourceChannel ?? '').split(':');
+        const sourceEventId = task?.sourceEventId ?? 'missing-source-event';
+        return {
+          packet_id: packetId,
+          task: `temporal:${context.taskId}:${context.generationKey}\nReconcile synthetic evidence`,
+          packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] }),
+          source_refs: [
+            {
+              kind: 'raw',
+              connector,
+              raw_id: `event-index:${sourceEventId}`,
+              source_id: sourceEventId,
+              channel_id: channelParts.join(':'),
+            },
+          ],
+          created_at: now,
+        };
+      },
     });
     executor.setTaskLedger(ledger);
     executor.setMamaApi({

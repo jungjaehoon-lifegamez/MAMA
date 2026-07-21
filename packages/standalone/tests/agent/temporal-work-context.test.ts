@@ -22,6 +22,14 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     `temporal:${value.taskId}:${value.generationKey}`;
   const boundPacketTask = (value: TemporalWorkContext): string =>
     `${packetTaskBinding(value)}\nReconcile fresh source evidence`;
+  const boundRawRef = (overrides: Record<string, unknown> = {}) => ({
+    kind: 'raw',
+    connector: 'trello',
+    raw_id: 'event-index-synthetic-card',
+    source_id: 'synthetic-card',
+    channel_id: 'synthetic-board',
+    ...overrides,
+  });
 
   beforeEach(() => {
     db = new Database(':memory:');
@@ -235,8 +243,8 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         packet_id: 'ctxp_mixed_sources',
         task: boundPacketTask(context),
         source_refs: [
-          { kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' },
-          { kind: 'raw', connector: 'trello', raw_id: sentinel },
+          boundRawRef(),
+          boundRawRef({ raw_id: 'event-index-unrelated', source_id: sentinel }),
         ],
       },
       record: {},
@@ -283,7 +291,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         packet_id: 'ctxp_temporal_stale',
         task: 'untrusted caller task',
         packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_stale' }),
-        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        source_refs: [boundRawRef()],
         created_at: now - 1,
       },
     },
@@ -294,7 +302,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         packet_id: 'ctxp_temporal_different',
         task: 'untrusted caller task',
         packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_different' }),
-        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        source_refs: [boundRawRef()],
         created_at: now + 1,
       },
     },
@@ -355,42 +363,154 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       task: null,
       rawId: 'unrelated-card',
     },
-  ])('rejects a fresh packet that $name', async ({ task, rawId }) => {
-    const packetId = 'ctxp_temporal_unrelated';
-    executor = new GatewayToolExecutor({
-      temporalContextPacketLookup: async () => ({
-        packet_id: packetId,
-        task: task ?? boundPacketTask(context),
-        packet_json: JSON.stringify({ packet_id: packetId }),
-        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: rawId }],
-        created_at: now + 1,
-      }),
-    } as never);
-    executor.setTaskLedger(ledger);
-    executor.setMamaApi({
-      listDecisions: async () => [],
-      appendToolTrace: async () => ({}) as never,
-    } as unknown as MAMAApiSetInput);
-    const trustedExecution = {
-      ...executionContext,
-      envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
-      modelRunId: 'mr_temporal_unrelated',
-    };
+    {
+      name: 'reuses the event and channel ids from another connector',
+      task: null,
+      rawId: 'event-index-from-slack',
+      connector: 'slack',
+      sourceId: 'synthetic-card',
+      channelId: 'synthetic-board',
+    },
+  ])(
+    'rejects a fresh packet that $name',
+    async ({
+      task,
+      rawId,
+      connector = 'trello',
+      sourceId = rawId,
+      channelId = 'synthetic-board',
+    }) => {
+      const packetId = 'ctxp_temporal_unrelated';
+      executor = new GatewayToolExecutor({
+        temporalContextPacketLookup: async () => ({
+          packet_id: packetId,
+          task: task ?? boundPacketTask(context),
+          packet_json: JSON.stringify({ packet_id: packetId }),
+          source_refs: [
+            {
+              kind: 'raw',
+              connector,
+              raw_id: rawId,
+              source_id: sourceId,
+              channel_id: channelId,
+            },
+          ],
+          created_at: now + 1,
+        }),
+      } as never);
+      executor.setTaskLedger(ledger);
+      executor.setMamaApi({
+        listDecisions: async () => [],
+        appendToolTrace: async () => ({}) as never,
+      } as unknown as MAMAApiSetInput);
+      const trustedExecution = {
+        ...executionContext,
+        envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+        modelRunId: 'mr_temporal_unrelated',
+      };
 
-    await expect(
-      executor.execute(
-        'task_temporal_reconcile',
-        {
-          context_packet_id: packetId,
-          expected_revision: context.revision,
-          outcome: 'resolved',
-          status: 'done',
-          reason: 'Unrelated evidence must not mutate the task',
-        } as never,
-        trustedExecution
-      )
-    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
-    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+      await expect(
+        executor.execute(
+          'task_temporal_reconcile',
+          {
+            context_packet_id: packetId,
+            expected_revision: context.revision,
+            outcome: 'resolved',
+            status: 'done',
+            reason: 'Unrelated evidence must not mutate the task',
+          } as never,
+          trustedExecution
+        )
+      ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+      expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+    }
+  );
+
+  it.each([
+    {
+      name: 'an event-only task cannot prove connector identity',
+      sourceEventId: 'synthetic-card',
+    },
+    {
+      name: 'a source-less task has no authority over arbitrary raw evidence',
+      sourceEventId: undefined,
+    },
+  ])('fails closed when $name', async ({ sourceEventId }) => {
+    const eventOnlyDb = new Database(':memory:');
+    try {
+      const eventOnlyLedger = new TaskLedger(eventOnlyDb, {
+        now: () => now,
+        timeZone: 'Asia/Seoul',
+      });
+      initAgentTables(eventOnlyDb);
+      const eventOnlyTask = eventOnlyLedger.create({
+        title: 'event-only temporal authority test',
+        due_at: '2026-07-22T00:00:00+09:00',
+        ...(sourceEventId ? { source_event_id: sourceEventId } : {}),
+      });
+      const occurrenceKey = occurrenceKeyForTask(eventOnlyTask)!;
+      const generationKey = temporalGenerationKey(eventOnlyTask.id, occurrenceKey, now);
+      eventOnlyLedger.enqueueTemporalGeneration({
+        generationKey,
+        taskId: eventOnlyTask.id,
+        temporalEpoch: eventOnlyTask.temporalEpoch,
+        occurrenceKey,
+        checkAt: now,
+        sourceChannel: null,
+        sourceEventId: eventOnlyTask.sourceEventId,
+      });
+      const eventOnlyContext = eventOnlyLedger.loadTemporalWorkContext(
+        eventOnlyLedger.claimNextWorkOrder()!.id
+      );
+      const packetId = 'ctxp_temporal_event_only';
+      const eventOnlyExecutor = new GatewayToolExecutor({
+        temporalContextPacketLookup: async () => ({
+          packet_id: packetId,
+          task: boundPacketTask(eventOnlyContext),
+          packet_json: JSON.stringify({ packet_id: packetId }),
+          source_refs: [
+            {
+              kind: 'raw',
+              connector: 'slack',
+              raw_id: 'event-index-from-slack',
+              source_id: 'synthetic-card',
+              channel_id: 'synthetic-board',
+            },
+          ],
+          created_at: now + 1,
+        }),
+      } as never);
+      eventOnlyExecutor.setTaskLedger(eventOnlyLedger);
+      eventOnlyExecutor.setMamaApi({
+        listDecisions: async () => [],
+        appendToolTrace: async () => ({}) as never,
+      } as unknown as MAMAApiSetInput);
+
+      await expect(
+        eventOnlyExecutor.execute(
+          'task_temporal_reconcile',
+          {
+            context_packet_id: packetId,
+            expected_revision: eventOnlyContext.revision,
+            outcome: 'resolved',
+            status: 'done',
+            reason: 'Event-only identity cannot prove the connector',
+          } as never,
+          {
+            ...executionContext,
+            temporalWorkContext: eventOnlyContext,
+            envelope: makeSignedEnvelope({ agent_id: 'workorder-temporal' }),
+            modelRunId: 'mr_temporal_event_only',
+          }
+        )
+      ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+      expect(eventOnlyLedger.getById(eventOnlyTask.id)).toMatchObject({
+        status: 'pending',
+        revision: 1,
+      });
+    } finally {
+      eventOnlyDb.close();
+    }
   });
 
   it('commits only with a fresh same-run context packet carrying source evidence', async () => {
@@ -405,7 +525,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
       packet_id: packetId,
       task: boundPacketTask(context),
       packet_json: packetJson,
-      source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+      source_refs: [boundRawRef()],
       created_at: now + 1,
     }));
     executor = new GatewayToolExecutor({ temporalContextPacketLookup: lookup } as never);
@@ -458,6 +578,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
             connector: 'trello',
             raw_id: 'evt_index_123',
             source_id: 'synthetic-card',
+            channel_id: 'synthetic-board',
           },
         ],
         created_at: now + 1,
@@ -533,7 +654,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         packet_id: packetId,
         task: boundPacketTask(context),
         packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['nested'] }),
-        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        source_refs: [boundRawRef()],
         created_at: now + 1,
       }),
     });

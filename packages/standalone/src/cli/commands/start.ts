@@ -84,10 +84,12 @@ import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+const temporalLogger = new DebugLogger('TemporalReconcile');
 type RuntimeBackend = 'claude' | 'codex';
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
@@ -1476,7 +1478,7 @@ export async function runAgentLoop(
     timeZone: temporalTimeZone,
     ledger: taskLedger,
     consumer: workOrderConsumer,
-    log: (line) => console.log(line),
+    log: (line) => temporalLogger.info(line),
   });
   temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
@@ -1745,12 +1747,10 @@ export async function runAgentLoop(
   // recovery/cleanup run after routes are ready, then the consumer starts.
   const temporalBoot = temporalAssembly.bootAfterRoutes();
   if (temporalBoot.paused > 0) {
-    console.log(`[temporal-reconcile] paused ${temporalBoot.paused} open workorder(s)`);
+    temporalLogger.info(`paused ${temporalBoot.paused} open workorder(s)`);
   }
   if (temporalBoot.enabled && (temporalBoot.resumed > 0 || temporalBoot.enqueued > 0)) {
-    console.log(
-      `[temporal-reconcile] resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`
-    );
+    temporalLogger.info(`resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`);
   }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────

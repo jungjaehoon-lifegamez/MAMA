@@ -311,6 +311,57 @@ Temporal model responses are not written to daemon logs. Receipt reason/evidence
 diagnostics are stored as bounded length/SHA-256 references, so operational rows support correlation
 without retaining the original connector or model text.
 
+#### Roll Back Temporal Reconciliation
+
+Pause temporal work before installing an older MAMA OS binary. Do not delete temporal tables,
+generations, or receipts; they are needed for safe resume and audit history.
+
+```bash
+# 1. Stop cleanly, then preserve the operator database before changing versions.
+mama stop
+cp -p ~/.mama/operator/triggers.db \
+  ~/.mama/operator/triggers.db.pre-temporal-rollback-$(date +%Y%m%d-%H%M%S)
+
+# 2. Restart 0.25.x once with temporal reconciliation disabled.
+export MAMA_TEMPORAL_RECONCILE=off
+mama start
+mama status
+
+# 3. Prove that no temporal attempt is still pending or claimed.
+sqlite3 ~/.mama/operator/triggers.db \
+  "SELECT COUNT(*) FROM operator_tasks WHERE source_channel='workorder:temporal' AND status IN ('pending','in_progress');"
+```
+
+The final command must return `0`. If it does not, stop and investigate before downgrading. Once the
+pause is verified, install the pinned prior version and keep temporal reconciliation off:
+
+```bash
+mama stop
+npm install -g @jungjaehoon/mama-os@0.24.2
+export MAMA_TEMPORAL_RECONCILE=off
+mama start
+mama status
+```
+
+Version 0.24.2 ignores and preserves the newer `workorder:temporal` kind. To re-enable the feature,
+install 0.25.0 or newer, restore both live flags, restart, and confirm health before observing a
+non-critical due task in `/ui`:
+
+```bash
+mama stop
+npm install -g @jungjaehoon/mama-os@0.25.0
+export MAMA_STAGE2_WORKORDERS=on
+export MAMA_ENVELOPE_ISSUANCE=enabled
+export MAMA_TEMPORAL_RECONCILE=on
+mama start
+mama status
+curl -fsS http://127.0.0.1:3847/health
+```
+
+On re-enable, paused generations resume through the existing retry budget. Verify that workflow
+status remains independent from `temporal_state` and that a temporal workorder reaches a
+receipt-backed terminal result or an explicit bounded deferral.
+
 ---
 
 ## Configuration
