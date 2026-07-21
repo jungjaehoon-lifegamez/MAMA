@@ -12,6 +12,13 @@ describe('system agent unification', () => {
 
       expect(DASHBOARD_AGENT_PERSONA).toContain('context_compile');
       expect(DASHBOARD_AGENT_PERSONA).toContain('context_packet_id');
+      expect(DASHBOARD_AGENT_PERSONA).toContain("connectors: ['trello']");
+      expect(DASHBOARD_AGENT_PERSONA).toContain(
+        'kagemusha_tasks is the read-only project-task truth'
+      );
+      expect(DASHBOARD_AGENT_PERSONA).toContain(
+        'task_list/task_create/task_update is the native owner-task ledger'
+      );
     });
 
     it('wiki-agent directs compilation evidence through context_compile', async () => {

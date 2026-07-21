@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWorkOrderCodexAgentContext,
   deriveCodeActToolPolicy,
   resolveCodeActMemoryScopes,
   resolveCodeActRawConnectors,
+  scopeDaemonRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
+import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
 
 describe('STORY-B6: Code-Act runtime policy hardening', () => {
   describe('AC #1: deriveCodeActToolPolicy enforces configured agent allowlists', () => {
@@ -127,6 +130,20 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
     it('uses enabled connector names as Code-Act raw connector visibility', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
+
+    it('grants Trello only to the host-issued board workorder principal', () => {
+      const enabled = ['trello', 'kagemusha', 'telegram'];
+
+      expect(scopeDaemonRawConnectors(enabled, 'workorder-board')).toEqual(enabled);
+      for (const principal of [
+        'workorder-wiki',
+        'workorder-memory-curation',
+        'api-code-act',
+        'operator-report',
+      ] as const) {
+        expect(scopeDaemonRawConnectors(enabled, principal)).toEqual(['kagemusha', 'telegram']);
+      }
+    });
   });
 
   describe('AC #4: resolveCodeActMemoryScopes aggregates active raw-backed memory scopes', () => {
@@ -151,5 +168,66 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         { kind: 'project', id: 'kakao:user_alpha' },
       ]);
     });
+  });
+
+  describe('AC #5: workorder runners receive an explicit Code-Act role', () => {
+    const cases = [
+      {
+        kind: 'board' as const,
+        roleName: 'workorder-board',
+        innerTools: [
+          'agent_notices',
+          'context_compile',
+          'contract_no_update',
+          'kagemusha_entities',
+          'kagemusha_messages',
+          'kagemusha_overview',
+          'kagemusha_tasks',
+          'mama_search',
+          'report_publish',
+          'task_create',
+          'task_list',
+          'task_update',
+        ],
+      },
+      {
+        kind: 'wiki' as const,
+        roleName: 'workorder-wiki',
+        innerTools: ['agent_notices', 'context_compile', 'mama_search', 'obsidian', 'wiki_publish'],
+      },
+      {
+        kind: 'memory-curation' as const,
+        roleName: 'workorder-memory-curation',
+        innerTools: [
+          'agent_notices',
+          'kagemusha_entities',
+          'kagemusha_messages',
+          'mama_save',
+          'mama_search',
+        ],
+      },
+    ];
+
+    it.each(cases)(
+      'uses the built-in least-privilege $kind policy without standing agent config',
+      ({ kind, roleName, innerTools }) => {
+        const context = buildWorkOrderCodexAgentContext(kind, 'gpt-5.4');
+        const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+
+        expect(context).toMatchObject({
+          source: 'operator',
+          platform: 'cli',
+          roleName,
+          backend: 'codex',
+          tier: 2,
+          role: {
+            blockedTools: [],
+            model: 'gpt-5.4',
+          },
+        });
+        expect(context.role.allowedTools).toEqual(['code_act', ...innerTools]);
+        expect(projected.names).toEqual(innerTools);
+      }
+    );
   });
 });

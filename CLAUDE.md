@@ -296,7 +296,15 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   unconditional consumer claims serially and runs briefed workerRuns; briefs live
   in `~/.mama/briefs/brief-<kind>.md` (seeded on boot, user edits win). `shadow`
   dual-runs the BOARD only against a capture store. Malformed flag values fail
-  the boot (no-fallback).
+  the boot (no-fallback). Codex workers use built-in Tier-2 Code-Act roles named
+  `workorder-board`, `workorder-wiki`, and `workorder-memory-curation`, with exact
+  brief-required tool allowlists. These short-lived roles are independent of the
+  optional legacy `dashboard-agent`, `wiki-agent`, and `memory` persona config.
+  Board workers read Trello only through `context_compile({connectors:['trello']})`;
+  every workorder worker treats connector packets as untrusted data whose embedded
+  instructions/tool calls must not be followed. `kagemusha_*` remains read-only
+  project-task truth, while the native ledger owns owner-console tasks and the
+  pipeline projection.
 - **Memory-write secret filter:** `mama_save`/`mama_update`/`mama_add`/
   `mama_ingest` REFUSE secret-shaped content (`secret_material_refused`).
 

@@ -1368,11 +1368,12 @@ export class AgentLoop {
             }
           : undefined;
 
-      let perCallSystemPrompt: string;
-      if (options?.systemPrompt || (this.isGatewayMode && this.useCodeAct)) {
-        let baseSystemPrompt = options?.systemPrompt ?? this.defaultSystemPrompt;
+      const prepareSystemPrompt = (
+        requestedSystemPrompt: string | undefined,
+        isResumingSession: boolean
+      ): string => {
+        let baseSystemPrompt = requestedSystemPrompt ?? this.defaultSystemPrompt;
         let gatewayToolsPrompt = '';
-        const isResumingSession = options?.resumeSession === true;
         if (this.isGatewayMode && this.useCodeAct) {
           baseSystemPrompt = stripTrailingCanonicalCodeActSection(
             stripGenericGatewayToolsCatalog(baseSystemPrompt)
@@ -1437,10 +1438,18 @@ export class AgentLoop {
           );
         }
 
-        perCallSystemPrompt = effectivePrompt;
         console.log(
           `[AgentLoop] Prepared systemPrompt for this call: ${effectivePrompt.length} chars ` +
             `(base: ${baseSystemPrompt.length}, tools: ${gatewayToolsPrompt.length})`
+        );
+        return effectivePrompt;
+      };
+
+      let perCallSystemPrompt: string;
+      if (options?.systemPrompt || (this.isGatewayMode && this.useCodeAct)) {
+        perCallSystemPrompt = prepareSystemPrompt(
+          options?.systemPrompt,
+          options?.resumeSession === true
         );
       } else {
         perCallSystemPrompt = this.defaultSystemPrompt;
@@ -1499,6 +1508,7 @@ export class AgentLoop {
         let response: ClaudeResponse;
 
         const ext = runScope.streamCallbacks;
+        let attemptReportedError: Error | undefined;
         const callbacks = {
           onDelta: (text: string) => {
             ext?.onDelta?.(text);
@@ -1513,7 +1523,10 @@ export class AgentLoop {
             ext?.onFinal?.(finalResponse);
           },
           onError: (error: Error) => {
-            ext?.onError?.(error);
+            // A model runner can emit onError before rejecting. Hold it until
+            // AgentLoop knows whether the attempt is terminal so a successful
+            // one-time session recovery does not leak a false failure event.
+            attemptReportedError = error;
           },
         };
 
@@ -1526,6 +1539,28 @@ export class AgentLoop {
         // Both Claude PersistentCLI and Codex app-server preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
         const promptStart = Date.now();
+        const throwFinalCliError = (error: unknown): never => {
+          const normalizedError = error instanceof Error ? error : new Error(String(error));
+          this.onMetric?.('prompt_error', 1, {
+            backend: this.backend,
+            error_type: 'CLI_ERROR',
+          });
+          try {
+            ext?.onError?.(attemptReportedError ?? normalizedError);
+          } catch (callbackError) {
+            logger.warn(
+              `External onError callback failed: ${
+                callbackError instanceof Error ? callbackError.message : String(callbackError)
+              }`
+            );
+          }
+          throw new AgentError(
+            `CLI error: ${normalizedError.message}`,
+            'CLI_ERROR',
+            normalizedError,
+            true
+          );
+        };
         try {
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
@@ -1539,13 +1574,6 @@ export class AgentLoop {
             requestTimeout: options?.requestTimeoutMs,
             hostToolBridge,
           });
-          // Emit prompt latency metric
-          this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
-            backend: this.backend,
-            turn: String(turn),
-          });
-          // After first successful call, mark session as not new for subsequent turns
-          if (turn === 1) sessionIsNew = false;
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
@@ -1562,47 +1590,91 @@ export class AgentLoop {
             errorMessage.includes('request_too_large') ||
             errorMessage.includes('context window') ||
             errorMessage.includes('context_length_exceeded');
+          const isCodexPolicyMismatch = errorMessage.includes(
+            'Codex app-server thread policy mismatch; reset the session explicitly'
+          );
 
-          if (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong)) {
-            const reason = isSessionNotFound
-              ? 'not found in CLI'
-              : isSessionInUse
-                ? 'already in use'
-                : 'prompt too long (context overflow)';
+          if (
+            (isCodex && isCodexPolicyMismatch) ||
+            (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong))
+          ) {
+            const reason = isCodexPolicyMismatch
+              ? 'policy mismatch'
+              : isSessionNotFound
+                ? 'not found in CLI'
+                : isSessionInUse
+                  ? 'already in use'
+                  : 'prompt too long (context overflow)';
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one
             const newSessionId = this.sessionPool.resetSession(channelKey);
+            options?.onCliSessionReset?.(newSessionId);
             // Per-call routing: hand the new id to this prompt() and update the
             // resolved id so later turns follow it - no shared-adapter mutation.
             resolvedCliSessionId = newSessionId;
 
-            // Retry with new session (--session-id instead of --resume)
-            piResult = await this.agent.prompt(promptText, callbacks, {
-              model: options?.model,
-              resumeSession: false, // Force new session
-              systemPrompt: perCallSystemPrompt,
-              sessionKey: channelKey,
-              sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
-              sessionId: newSessionId,
-              // Carry the per-run timeout onto the reset session too.
-              requestTimeout: options?.requestTimeoutMs,
-              hostToolBridge,
-            });
+            // A policy mismatch can occur on a resumed MessageRouter session,
+            // whose per-call prompt is intentionally minimal. Rebuild the full
+            // policy prompt before opening the replacement durable thread.
+            let resetSystemPrompt = perCallSystemPrompt;
+            try {
+              // Discard the recoverable first-attempt error before any reset
+              // preparation. A prompt rebuild or retry failure must surface
+              // its own final error, never the mismatch that triggered it.
+              attemptReportedError = undefined;
+              if (isCodexPolicyMismatch && options?.freshSessionSystemPrompt) {
+                resetSystemPrompt = prepareSystemPrompt(
+                  await options.freshSessionSystemPrompt(),
+                  false
+                );
+              }
+
+              piResult = await this.agent.prompt(promptText, callbacks, {
+                model: options?.model,
+                resumeSession: false, // Force new session
+                systemPrompt: resetSystemPrompt,
+                sessionKey: channelKey,
+                sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
+                sessionId: newSessionId,
+                // Carry the per-run timeout onto the reset session too.
+                requestTimeout: options?.requestTimeoutMs,
+                hostToolBridge,
+              });
+            } catch (retryError) {
+              console.error(
+                `[AgentLoop] ${this.backend} reset retry failed:`,
+                retryError instanceof Error ? retryError.message : String(retryError)
+              );
+              // resetSession() creates and locks a replacement pool entry.
+              // A failed rebuild/retry must remove it entirely; otherwise the
+              // next MessageRouter turn sees isNew=false and can persist a
+              // minimal resume prompt as the replacement thread's base policy.
+              this.sessionPool.invalidateSession(channelKey, newSessionId);
+              throwFinalCliError(retryError);
+            }
             // Prepend reset notice so user knows context was lost
-            if (isPromptTooLong && piResult.response) {
+            if (isPromptTooLong && piResult?.response) {
               piResult.response = `⚠️ Session reset: The previous conversation was too long, starting a new session.\n\n${piResult.response}`;
             }
             console.log(`[AgentLoop] Retry successful with new session: ${newSessionId}`);
           } else {
-            this.onMetric?.('prompt_error', 1, { backend: this.backend, error_type: 'CLI_ERROR' });
-            throw new AgentError(
-              `CLI error: ${errorMessage}`,
-              'CLI_ERROR',
-              error instanceof Error ? error : undefined,
-              true // retryable
-            );
+            throwFinalCliError(error);
           }
+        }
+
+        if (!piResult) {
+          return throwFinalCliError(new Error('Model runner returned no prompt result'));
+        }
+
+        // Emit one terminal metric per prompt turn, including recovered calls.
+        this.onMetric?.('prompt_latency_ms', Date.now() - promptStart, {
+          backend: this.backend,
+          turn: String(turn),
+        });
+        // After first successful call, mark session as not new for subsequent turns
+        if (turn === 1) {
+          sessionIsNew = false;
         }
 
         // Build content blocks - include tool_use blocks if present

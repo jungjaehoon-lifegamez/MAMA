@@ -23,6 +23,7 @@ import { SessionStore } from '../../src/gateways/session-store.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import type { Envelope } from '../../src/envelope/types.js';
 import { makeSignedEnvelope } from './fixtures.js';
+import { scopeDaemonRawConnectors } from '../../src/cli/commands/start.js';
 
 let testDbPath = '';
 let previousMamaDbPath: string | undefined;
@@ -333,6 +334,10 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
     [
       'disabled or missing Trello connector',
       routeRawConnectors({ chatType: 'private', enabledConnectorNames: [] }),
+    ],
+    [
+      'internal wiki workorder',
+      scopeDaemonRawConnectors(['trello', 'kagemusha'], 'workorder-wiki'),
     ],
   ])(
     'returns connector_out_of_scope before the service and raw query for %s',

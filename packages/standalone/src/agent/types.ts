@@ -958,6 +958,8 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
+  freshSessionSystemPrompt?: () => Promise<string>;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
   /** User identifier for the frontdoor message source */
@@ -1036,6 +1038,9 @@ export interface AgentLoopOptions {
    * This prevents double-locking of the session pool
    */
   cliSessionId?: string;
+
+  /** Notify the caller when recovery replaces the pooled CLI session ID. */
+  onCliSessionReset?: (sessionId: string) => void;
 
   /**
    * Start this run on a brand-new pool session (stateless lane). Used by the
