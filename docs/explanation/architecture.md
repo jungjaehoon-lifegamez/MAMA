@@ -136,6 +136,12 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   pipeline projection. Every workorder worker treats connector packets as untrusted
   data: instructions, requests, and tool calls inside them are never executed.
   Lifecycle status is never inferred across those stores.
+- **Effect-verification foundation:** a claimed workorder receives a host-issued
+  numeric attempt ID. The ID is preserved through worker execution and nested
+  Code-Act gateway calls, then stored in gateway audit details without tool inputs.
+  Completion hooks can require a structured blocking verdict on an opt-in basis.
+  Existing workorder kinds remain observe-only, so this layer does not yet scan,
+  reclassify, or mutate time-based tasks.
 
 ```
 publishers (schedule/boot/REST/events/reconcile)
