@@ -251,6 +251,9 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
 
         expect(policy.agentContext.backend).toBe(backend);
         expect(advertised.sort()).toEqual([...projected.names].sort());
+        expect(policy.gatewayToolsPrompt).toMatch(
+          /task_temporal_reconcile[\s\S]*context_packet_id/
+        );
         expect(projected.names).toEqual([
           'agent_notices',
           'context_compile',
@@ -258,7 +261,6 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'kagemusha_messages',
           'kagemusha_overview',
           'kagemusha_tasks',
-          'report_publish',
           'schedule_upcoming',
           'task_list',
           'task_temporal_reconcile',
@@ -273,6 +275,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'Bash',
           'os_set_model',
           'browser_click',
+          'report_publish',
         ]) {
           expect(projected.names).not.toContain(forbidden);
           expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
@@ -282,10 +285,11 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
 
     it('wires one temporal runtime from projected and registered transport tools', () => {
       const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
-      expect(startSource.match(/createTemporalRuntime\(\{/g)).toHaveLength(1);
+      expect(startSource).toMatch(/assembleDaemonTemporalRuntime\(\{/);
       expect(startSource).toMatch(/projectCodeActToolPolicy\(\{/);
       expect(startSource).toMatch(/availableTools:\s*temporalAvailableTools/);
       expect(startSource).toMatch(/transportReady:\s*Boolean\(agentLoopClient\.runWithContent\)/);
+      expect(startSource).toMatch(/temporalAssembly\.bootAfterRoutes\(\)/);
     });
   });
 });

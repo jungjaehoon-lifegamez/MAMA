@@ -30,9 +30,7 @@ describe('TypeDefinitionGenerator', () => {
 
     it('uses compact declaration output without per-function JSDoc blocks', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
-      expect(dts).toContain(
-        '// Call with object: Read({path: "/file"}) or positional: Read("/file")'
-      );
+      expect(dts).toContain('// Args: Read({path:"/file"}) or Read("/file")');
       expect(dts).toContain('declare function mama_search');
       expect(dts).toContain('declare function context_compile');
       expect(dts).not.toContain('/**');

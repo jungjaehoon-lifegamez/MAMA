@@ -121,6 +121,16 @@ describe('Story A2 Task 5: pure temporal candidate selection', () => {
     expect(selected.every((candidate) => candidate.priority === 'normal')).toBe(true);
   });
 
+  it('resolves DST boundaries and rejects a local date skipped by a zone transition', () => {
+    expect(startOfTaskDate('2026-03-08', null, 'America/New_York')).toBe(
+      Date.parse('2026-03-08T05:00:00Z')
+    );
+    expect(startOfTaskDate('2026-11-01', null, 'America/New_York')).toBe(
+      Date.parse('2026-11-01T04:00:00Z')
+    );
+    expect(() => startOfTaskDate('2011-12-30', null, 'Pacific/Apia')).toThrow(/does not exist/);
+  });
+
   it('skips closed, finalized, and any already-owned generation', () => {
     const finalized = task({ id: 2, dueAt: now, deadlineIso: '2026-07-21' });
     finalized.temporalReconciledOccurrenceKey = occurrenceKeyForTask(finalized);
@@ -169,6 +179,35 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
 
   afterEach(() => db.close());
 
+  it('pages temporal candidates by the last seen id instead of rescanning prior rows', () => {
+    const first = ledger.create({ title: 'first', deadline: '2026-07-20' });
+    const second = ledger.create({ title: 'second', deadline: '2026-07-20' });
+    const third = ledger.create({ title: 'third', deadline: '2026-07-20' });
+
+    const pageOne = ledger.listTemporalScanPage({ limit: 2, afterId: 0 } as never);
+    const pageTwo = ledger.listTemporalScanPage({
+      limit: 2,
+      afterId: pageOne.at(-1)?.id ?? 0,
+    } as never);
+
+    expect(pageOne.map((row) => row.id)).toEqual([first.id, second.id]);
+    expect(pageTwo.map((row) => row.id)).toEqual([third.id]);
+    const plan = db
+      .prepare(
+        `EXPLAIN QUERY PLAN SELECT * FROM operator_tasks
+         INDEXED BY idx_operator_tasks_temporal_scan_id
+         WHERE kind = 'owner'
+           AND status IN ('pending','in_progress','review','blocked')
+           AND id > ?
+           AND (due_at IS NOT NULL OR deadline IS NOT NULL OR next_temporal_check_at IS NOT NULL)
+         ORDER BY id ASC LIMIT ?`
+      )
+      .all(0, 200) as Array<{ detail: string }>;
+    expect(plan.map((step) => step.detail).join('\n')).toContain(
+      'idx_operator_tasks_temporal_scan_id'
+    );
+  });
+
   it('uses the same tick for boot and interval scans and rejects double start', () => {
     ledger.create({ title: 'due exact', due_at: '2026-07-22T00:00:00+09:00' });
     let intervalCallback: (() => void) | null = null;
@@ -189,6 +228,36 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
     expect(() => scheduler.start()).toThrow(/already started/);
     intervalCallback!();
     expect(scheduler.tick()).toMatchObject({ enqueued: 0 });
+    scheduler.stop();
+    expect(clear).toHaveBeenCalledOnce();
+  });
+
+  it('contains an interval scan failure and keeps the scheduler stoppable', () => {
+    let intervalCallback: (() => void) | null = null;
+    const clear = vi.fn();
+    const log = vi.fn();
+    const scheduler = new TemporalReconcileScheduler({
+      ledger: {
+        listTemporalScanPage: () => {
+          throw new Error('synthetic scan failure');
+        },
+        findTemporalGenerationKeys: () => new Set<string>(),
+        countOpenWorkOrders: () => 0,
+        enqueueTemporalGeneration: vi.fn(),
+      },
+      now: () => now,
+      timeZone: 'UTC',
+      setInterval: (callback) => {
+        intervalCallback = callback;
+        return { synthetic: true } as unknown as NodeJS.Timeout;
+      },
+      clearInterval: clear,
+      log,
+    });
+
+    scheduler.start();
+    expect(() => intervalCallback!()).not.toThrow();
+    expect(log).toHaveBeenCalledWith('[temporal-reconcile] tick failed: synthetic scan failure');
     scheduler.stop();
     expect(clear).toHaveBeenCalledOnce();
   });
@@ -231,6 +300,28 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
     expect(ledger.claimNextWorkOrder()).toMatchObject({ payload: { taskId: due.id } });
   });
 
+  it.each([
+    ['', ''],
+    [`channel-${'x'.repeat(400)}`, `event-${'y'.repeat(400)}`],
+  ])('enqueues tasks with legacy source identifiers without aborting the scan', (source, event) => {
+    const due = ledger.create({
+      title: 'due with legacy source identifiers',
+      due_at: '2026-07-22T00:00:00+09:00',
+      source_channel: source,
+      source_event_id: event,
+    });
+    const scheduler = new TemporalReconcileScheduler({
+      ledger,
+      now: () => now,
+      timeZone: 'Asia/Seoul',
+    });
+
+    expect(scheduler.tick()).toMatchObject({ enqueued: 1 });
+    const claimed = ledger.claimNextWorkOrder();
+    expect(claimed).toMatchObject({ payload: { taskId: due.id } });
+    expect(ledger.loadTemporalWorkContext(claimed!.id)).toMatchObject({ taskId: due.id });
+  });
+
   it('keeps global temporal priority across scan pages', () => {
     const pages = [
       Array.from({ length: 200 }, (_, index) =>
@@ -244,8 +335,8 @@ describe('Story A2 Task 5: scheduler lifecycle and durable deduplication', () =>
     ];
     const enqueued: number[] = [];
     const fakeLedger = {
-      listTemporalScanPage: ({ offset }: { limit: number; offset: number }) =>
-        pages[offset / 200] ?? [],
+      listTemporalScanPage: ({ afterId }: { limit: number; afterId: number }) =>
+        afterId === 0 ? pages[0] : pages[1],
       findTemporalGenerationKeys: () => new Set<string>(),
       countOpenWorkOrders: () => 0,
       enqueueTemporalGeneration: (input: { taskId: number }) => {

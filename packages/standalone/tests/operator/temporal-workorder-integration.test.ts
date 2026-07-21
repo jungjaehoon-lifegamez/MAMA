@@ -4,7 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
-import type { AgentLoopOptions, GatewayToolExecutionContext } from '../../src/agent/types.js';
+import type {
+  AgentLoopOptions,
+  GatewayToolExecutionContext,
+  MAMAApiSetInput,
+} from '../../src/agent/types.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger, type TaskRecord } from '../../src/operator/task-ledger.js';
 import type {
@@ -82,8 +86,19 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
 
   function configureRuntime(): void {
     ledger = new TaskLedger(db, { now: () => now, timeZone: KST });
-    executor = new GatewayToolExecutor();
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async ({ packetId }) => ({
+        packet_id: packetId,
+        packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] }),
+        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-evidence' }],
+        created_at: now,
+      }),
+    });
     executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
     executor.setReportPublisher((slots) => reports.push(slots));
     envelopeAuthority = makeAuthorityHarness(db).authority;
     scheduler = new TemporalReconcileScheduler({ ledger, now: () => now, timeZone: KST });
@@ -151,6 +166,7 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     ) as GatewayToolExecutionContext | null;
     if (!executionContext)
       throw new Error('fake model transport could not build execution context');
+    executionContext.modelRunId = `mr_temporal_attempt_${trusted.attemptId}`;
     const action = actions.shift();
     if (!action) throw new Error('fake model response was not configured');
     runs.push(trusted.attemptId);
@@ -177,7 +193,14 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
   ): ModelAction {
     return async (executionContext, trusted) => {
       const observed = readEvidence(trusted, evidence);
-      await executor.execute('task_temporal_reconcile', input(trusted, observed), executionContext);
+      await executor.execute(
+        'task_temporal_reconcile',
+        {
+          context_packet_id: `ctxp_temporal_attempt_${trusted.attemptId}`,
+          ...input(trusted, observed),
+        },
+        executionContext
+      );
       return 'Reconciliation committed.';
     };
   }
@@ -255,9 +278,9 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
           { slots: { pipeline: '<p>Observed, but did not reconcile.</p>' } },
           executionContext
         );
-        expect(result.success).toBe(true);
-        expect(reports).toEqual([{ pipeline: '<p>Observed, but did not reconcile.</p>' }]);
-        return 'Report published.';
+        expect(result).toMatchObject({ success: false, code: 'permission_denied' });
+        expect(reports).toEqual([]);
+        return 'Report publication was denied.';
       },
     ],
     ['empty', async () => '   '],
@@ -522,12 +545,19 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     expect(scheduler.tick().enqueued).toBe(1);
     const deferredAttempt = ledger.claimNextWorkOrder()!;
     const deferredContext = ledger.loadTemporalWorkContext(deferredAttempt.id);
-    ledger.applyTemporalEffect(deferredContext, {
-      expected_revision: deferredContext.revision,
-      outcome: 'deferred',
-      next_temporal_check_at: '2026-07-21T14:00:00+09:00',
-      reason: 'The exact evidence check must resume at 14:00.',
-    });
+    ledger.applyTemporalEffect(
+      deferredContext,
+      {
+        expected_revision: deferredContext.revision,
+        outcome: 'deferred',
+        next_temporal_check_at: '2026-07-21T14:00:00+09:00',
+        reason: 'The exact evidence check must resume at 14:00.',
+      },
+      {
+        contextPacketId: 'ctxp_temporal_backlog_test',
+        contextPacketSha256: 'c'.repeat(64),
+      }
+    );
 
     for (let index = 0; index < 6; index++) {
       createExact(`Exact backlog ${index}`);

@@ -21,6 +21,19 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
 
   afterEach(() => db.close());
 
+  const testEvidence = {
+    contextPacketId: 'ctxp_temporal_effect_test',
+    contextPacketSha256: 'a'.repeat(64),
+  };
+
+  function applyEffect(
+    context: TemporalWorkContext,
+    input: TemporalReconcileInput,
+    at: number = now
+  ) {
+    return ledger.applyTemporalEffect(context, input, testEvidence, at);
+  }
+
   function setup(checkAt: number = now): {
     context: TemporalWorkContext;
     generationKey: string;
@@ -54,7 +67,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
 
   it('resolves with an actual status change and atomically finalizes every record', () => {
     const { context, generationKey, taskId } = setup();
-    const receipt = ledger.applyTemporalEffect(
+    const receipt = applyEffect(
       context,
       {
         expected_revision: context.revision,
@@ -120,7 +133,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       },
     ];
     for (const input of attempts) {
-      expect(() => ledger.applyTemporalEffect(context, input, now)).toThrow();
+      expect(() => applyEffect(context, input, now)).toThrow();
     }
     expect(ledger.getById(taskId)).toMatchObject({ revision: 1, status: 'pending' });
     expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
@@ -130,7 +143,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     const { context, generationKey, taskId } = setup();
 
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,
@@ -150,7 +163,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
   it('requires evidence for final_no_update and commits its exact-scope note atomically', () => {
     const { context, generationKey, taskId } = setup();
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,
@@ -162,7 +175,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       )
     ).toThrow(/evidence/);
 
-    const receipt = ledger.applyTemporalEffect(
+    const receipt = applyEffect(
       context,
       {
         expected_revision: context.revision,
@@ -198,7 +211,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
   it('defers only to a strictly future check and forbids workflow fields', () => {
     const { context, generationKey, taskId } = setup();
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,
@@ -210,7 +223,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       )
     ).toThrow(/future/);
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,
@@ -224,7 +237,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     ).toThrow(/unknown|forbidden/);
 
     const nextCheck = now + 60_000;
-    const receipt = ledger.applyTemporalEffect(
+    const receipt = applyEffect(
       context,
       {
         expected_revision: context.revision,
@@ -252,7 +265,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
   it('rejects forged trusted context, inactive ownership, and a second immutable write', () => {
     const { context, generationKey } = setup();
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         { ...context, checkAt: context.checkAt + 1 },
         {
           expected_revision: context.revision,
@@ -264,7 +277,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       )
     ).toThrow(/context|match/);
 
-    const receipt = ledger.applyTemporalEffect(
+    const receipt = applyEffect(
       context,
       {
         expected_revision: context.revision,
@@ -275,7 +288,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       now
     );
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,
@@ -305,7 +318,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       sourceEventId: task.sourceEventId,
     });
 
-    ledger.applyTemporalEffect(
+    applyEffect(
       context,
       {
         expected_revision: context.revision,
@@ -325,6 +338,43 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
     expect(ledger.getTemporalGeneration(otherKey)?.disposition).toBe('superseded');
   });
 
+  it.each(['done', 'cancelled'] as const)(
+    'supersedes sibling generations when a status-only effect closes the owner task as %s',
+    (status) => {
+      const { context, generationKey, taskId } = setup();
+      const task = ledger.getById(taskId)!;
+      const siblingCheck = context.checkAt + 60_000;
+      const siblingKey = `task:${taskId}:${context.occurrenceKey}:check:${siblingCheck}`;
+      const sibling = ledger.enqueueTemporalGeneration({
+        generationKey: siblingKey,
+        taskId,
+        temporalEpoch: task.temporalEpoch,
+        occurrenceKey: context.occurrenceKey,
+        checkAt: siblingCheck,
+        sourceChannel: task.sourceChannel,
+        sourceEventId: task.sourceEventId,
+      });
+
+      applyEffect(
+        context,
+        {
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          status,
+          reason: 'Fresh evidence closes the owner task',
+        },
+        now
+      );
+
+      expect(ledger.getTemporalGeneration(generationKey)?.disposition).toBe('resolved');
+      expect(ledger.getTemporalGeneration(siblingKey)?.disposition).toBe('superseded');
+      expect(ledger.inspectTemporalAttempt(sibling.workOrder.id).workOrder.status).toBe(
+        'cancelled'
+      );
+      expect(ledger.countOpenWorkOrders('temporal')).toBe(0);
+    }
+  );
+
   it('rolls every table back when immutable receipt insertion fails', () => {
     const { context, generationKey, taskId } = setup();
     db.exec(`
@@ -335,7 +385,7 @@ describe('Story A2 Task 6: atomic temporal effect', () => {
       END;
     `);
     expect(() =>
-      ledger.applyTemporalEffect(
+      applyEffect(
         context,
         {
           expected_revision: context.revision,

@@ -769,9 +769,9 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'task_temporal_reconcile',
-    description:
-      'Commit the current host-issued temporal work result. Identity fields are not accepted.',
+    description: 'Commit this temporal result; host context supplies identity.',
     params: [
+      { name: 'context_packet_id', type: 'string', required: true },
       { name: 'expected_revision', type: 'number', required: true },
       {
         name: 'outcome',
@@ -784,7 +784,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'evidence_summary', type: 'string', required: false },
       { name: 'next_temporal_check_at', type: 'string', required: false },
     ],
-    returnType: '{ receipt: { taskId: number; workorderAttemptId: number; outcome: string } }',
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
     category: 'memory',
   },
 ];

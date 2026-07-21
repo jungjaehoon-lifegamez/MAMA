@@ -54,6 +54,8 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       after_revision INTEGER NOT NULL CHECK (after_revision >= 0),
       changed_fields TEXT NOT NULL,
       reason TEXT NOT NULL,
+      context_packet_id TEXT NOT NULL,
+      context_packet_sha256 TEXT NOT NULL,
       next_temporal_check_at INTEGER,
       created_at INTEGER NOT NULL
     );
@@ -61,6 +63,10 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_operator_tasks_temporal_candidates
       ON operator_tasks(next_temporal_check_at, due_at, deadline, id)
       WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked');
+    CREATE INDEX IF NOT EXISTS idx_operator_tasks_temporal_scan_id
+      ON operator_tasks(id)
+      WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked')
+        AND (due_at IS NOT NULL OR deadline IS NOT NULL OR next_temporal_check_at IS NOT NULL);
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_task_occurrence
       ON operator_temporal_generations(task_id, temporal_epoch, occurrence_key, check_at);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_temporal_generations_identity
@@ -70,4 +76,16 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_effects_task_occurrence
       ON operator_temporal_effects(task_id, occurrence_key, created_at);
   `);
+
+  const effectColumns = new Set(
+    (
+      db.prepare('PRAGMA table_info(operator_temporal_effects)').all() as Array<{ name: string }>
+    ).map((column) => column.name)
+  );
+  if (!effectColumns.has('context_packet_id')) {
+    db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN context_packet_id TEXT`);
+  }
+  if (!effectColumns.has('context_packet_sha256')) {
+    db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN context_packet_sha256 TEXT`);
+  }
 }
