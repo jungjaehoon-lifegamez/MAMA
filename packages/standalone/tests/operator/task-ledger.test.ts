@@ -281,6 +281,23 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
   });
 
   describe('AC #4: workorder API - dedup, claim ordering, transitions, cleanup', () => {
+    function insertFutureWorkOrder(
+      status: 'pending' | 'in_progress',
+      idempotencyKey: string
+    ): number {
+      const now = Date.now();
+      const result = db
+        .prepare(
+          `INSERT INTO operator_tasks
+             (title, status, priority, kind, payload, source_channel, source_event_id,
+              auto_created, confirmed, created_at, updated_at)
+           VALUES ('workorder:temporal', ?, 'high', 'system', ?, 'workorder:temporal', ?,
+                   1, 0, ?, ?)`
+        )
+        .run(status, JSON.stringify({ attempts: 1 }), idempotencyKey, now, now);
+      return Number(result.lastInsertRowid);
+    }
+
     it('dedups open keyed rows, reinserts after terminal', () => {
       const a = ledger.enqueueWorkOrder({
         workKind: 'board',
@@ -328,6 +345,36 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
       expect(ledger.claimNextWorkOrder()?.id).toBe(normal.id);
       expect(ledger.claimNextWorkOrder()?.id).toBe(low.id);
       expect(ledger.claimNextWorkOrder()).toBeNull();
+    });
+
+    it('ignores and preserves pending workorders owned by a future version', () => {
+      const futureId = insertFutureWorkOrder('pending', 'temporal:slot-1');
+      const known = ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:slot-1',
+        input: {},
+      });
+
+      expect(ledger.countPendingWorkOrders()).toBe(1);
+      expect(ledger.claimNextWorkOrder()?.id).toBe(known.id);
+      expect(ledger.cancelOpenWorkOrders('flag-off')).toBe(1);
+
+      const future = db.prepare(`SELECT status FROM operator_tasks WHERE id = ?`).get(futureId) as {
+        status: string;
+      };
+      expect(future.status).toBe('pending');
+    });
+
+    it('ignores stale claims owned by a future version', () => {
+      insertFutureWorkOrder('in_progress', 'temporal:slot-2');
+      const known = ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:slot-2',
+        input: {},
+      });
+      ledger.claimNextWorkOrder();
+
+      expect(ledger.listStaleClaims().map((workorder) => workorder.id)).toEqual([known.id]);
     });
 
     it('transitions guard against wrong states', () => {
