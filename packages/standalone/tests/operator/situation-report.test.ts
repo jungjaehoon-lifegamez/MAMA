@@ -148,6 +148,25 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(plain.buildPrompt('full')).not.toContain('primary source');
   });
 
+  it('uses provider-specific tool instructions without duplicating the report workflow', () => {
+    const gather = ['kagemusha_tasks({}) for the open board'];
+    const claude = new SituationReporter({
+      backend: 'claude',
+      selfGatherLines: gather,
+    }).buildPrompt('full');
+    const codex = new SituationReporter({ backend: 'codex', selfGatherLines: gather }).buildPrompt(
+      'full'
+    );
+
+    expect(claude).toContain('```tool_call');
+    expect(claude).toContain('fenced tool_call JSON block');
+    expect(codex).toContain('injected native host tools directly');
+    expect(codex).toContain('never emit Markdown or JavaScript substitutes');
+    expect(codex).not.toContain('```tool_call');
+    expect(codex).not.toContain('fenced tool_call JSON block');
+    expect(codex).toContain(gather[0]);
+  });
+
   it('full mode injects board publish lines when configured; digest never does', () => {
     const r = new SituationReporter({
       boardPublishLines: ['BOARD: call report_publish with all four slots'],

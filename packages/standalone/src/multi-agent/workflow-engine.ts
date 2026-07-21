@@ -711,12 +711,12 @@ export class WorkflowEngine extends EventEmitter {
   }
 
   private balanceBackends(steps: WorkflowStep[]): void {
-    const backends: AgentBackend[] = ['claude', 'codex-mcp'];
+    const backends: AgentBackend[] = ['claude', 'codex'];
     let idx = 0;
     for (const step of steps) {
-      if (step.agent.backend === 'codex-mcp') continue;
+      if (step.agent.backend === 'codex') continue;
       step.agent.backend = backends[idx % backends.length];
-      if (step.agent.backend === 'codex-mcp') {
+      if (step.agent.backend === 'codex') {
         step.agent.model = 'codex';
       }
       idx++;

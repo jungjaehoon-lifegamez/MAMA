@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,7 @@ import { ConnectorRegistry } from '../../../src/connectors/framework/connector-r
 import { PollingScheduler } from '../../../src/connectors/framework/polling-scheduler.js';
 import { RawStore } from '../../../src/connectors/framework/raw-store.js';
 import type { IConnector, NormalizedItem } from '../../../src/connectors/framework/types.js';
+import { loadConnectorConfig } from '../../../src/connectors/config-loader.js';
 
 function makeItem(sourceId: string, timestamp: Date): NormalizedItem {
   return {
@@ -139,14 +140,26 @@ describe('PollingScheduler', () => {
       item.channel = 'general';
       registry.register('slack', makeMockConnector('slack', [item]));
 
-      const channelConfigs = {
-        slack: {
-          general: {
-            role: 'hub' as const,
-            project_entity_id: 'project_tinklestar',
+      const configPath = join(tmpDir, 'connectors.json');
+      writeFileSync(
+        configPath,
+        JSON.stringify({
+          slack: {
+            enabled: true,
+            pollIntervalMinutes: 5,
+            channels: {
+              general: {
+                role: 'hub',
+                project_entity_id: 'project_tinklestar',
+              },
+            },
+            auth: { type: 'token', tokenName: 'SLACK_BOT_TOKEN' },
           },
-        },
-      };
+        })
+      );
+      const loaded = loadConnectorConfig(configPath);
+      expect(loaded.ok).toBe(true);
+      const channelConfigs = { slack: loaded.config.slack!.channels };
 
       await scheduler.pollAll(registry, channelConfigs, vi.fn());
 

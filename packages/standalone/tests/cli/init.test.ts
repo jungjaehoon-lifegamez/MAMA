@@ -23,7 +23,7 @@ import {
  * - Creates config file in ~/.mama/config.yaml
  * - Supports --force to overwrite existing config
  * - Supports --skip-auth-check for testing
- * - Supports --backend option (claude, codex-mcp)
+ * - Supports --backend option (claude, codex)
  */
 describe('mama init command', () => {
   let testHome: string;
@@ -232,11 +232,31 @@ describe('mama init command', () => {
   });
 
   describe('backend selection', () => {
-    it('should apply codex-mcp backend when skipAuthCheck is enabled', async () => {
-      await initCommand({ skipAuthCheck: true, backend: 'codex-mcp' });
+    it('should apply codex backend when skipAuthCheck is enabled', async () => {
+      await initCommand({ skipAuthCheck: true, backend: 'codex' });
 
       const config = await loadConfig();
-      expect(config.agent.backend).toBe('codex-mcp');
+      expect(config.agent.backend).toBe('codex');
+      expect(config.agent.model).toBe('gpt-5.4');
+      expect(Object.values(config.roles?.definitions ?? {}).map((role) => role.model)).toEqual([
+        'gpt-5.4',
+        'gpt-5.4',
+        'gpt-5.4',
+      ]);
+    });
+
+    it('should create a provider-compatible config for a Codex-only installation', async () => {
+      const codexDir = join(testHome, '.codex');
+      await mkdir(codexDir, { recursive: true });
+      await writeFile(join(codexDir, 'auth.json'), '{}');
+
+      await initCommand();
+
+      const config = await loadConfig();
+      expect(config.agent).toEqual(expect.objectContaining({ backend: 'codex', model: 'gpt-5.4' }));
+      expect(
+        Object.values(config.roles?.definitions ?? {}).every((role) => role.model === 'gpt-5.4')
+      ).toBe(true);
     });
   });
 

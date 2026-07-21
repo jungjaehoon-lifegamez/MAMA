@@ -46,7 +46,7 @@ const CODEX_MODEL_OPTIONS = ['gpt-5.3-codex', 'gpt-5.4-mini'];
 const GEMINI_MODEL_OPTIONS = ['gemini-2.5-pro', 'gemini-2.5-flash'];
 
 function getModelsForBackend(backend: string): string[] {
-  if (backend === 'codex-mcp' || backend === 'codex') {
+  if (backend === 'codex') {
     return CODEX_MODEL_OPTIONS;
   }
   if (backend === 'gemini') {
@@ -499,7 +499,7 @@ export class AgentsModule {
       .map((t) => `<option value="${t}" ${(a.tier ?? 1) === t ? 'selected' : ''}>T${t}</option>`)
       .join('');
 
-    const backendOptions = Array.from(new Set(['claude', 'codex', 'codex-mcp', 'gemini', backend]))
+    const backendOptions = Array.from(new Set(['claude', 'codex', 'gemini', backend]))
       .map(
         (b) =>
           `<option value="${escapeAttr(b)}" ${backend === b ? 'selected' : ''}>${escapeHtml(b)}</option>`

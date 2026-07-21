@@ -1,11 +1,58 @@
 /**
  * IModelRunner — Unified interface for CLI backends (STORY-011)
  *
- * Abstracts over Claude (PersistentCLI) and Codex (MCP) backends
+ * Abstracts over Claude (PersistentCLI) and Codex (app-server) backends
  * so AgentLoop depends on a contract, not concrete implementations.
  */
 
 import type { PromptCallbacks, ToolUseBlock } from './types.js';
+
+// ─── Run-local Host Tools ───────────────────────────────────────────────────
+
+export type HostToolJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | HostToolJsonValue[]
+  | { [key: string]: HostToolJsonValue };
+
+export interface HostToolInputSchema {
+  readonly type: 'object';
+  readonly properties: Readonly<Record<string, HostToolJsonValue>>;
+  readonly required?: readonly string[];
+  readonly additionalProperties: boolean;
+}
+
+/** Codex app-server dynamic function definition. */
+export interface HostToolDefinition {
+  type: 'function';
+  name: string;
+  description: string;
+  inputSchema: HostToolInputSchema;
+}
+
+/** A dynamic function call received from the model host. */
+export interface HostToolCall {
+  callId: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** Serialized result returned to the model host. */
+export interface HostToolCallResult {
+  content: string;
+  isError: boolean;
+  stop?: boolean;
+  /** Fail the active model turn after returning this error result to the host. */
+  abort?: boolean;
+}
+
+/** Tools and executor scoped to one prompt run. */
+export interface HostToolBridge {
+  readonly tools: readonly HostToolDefinition[];
+  execute(call: HostToolCall): Promise<HostToolCallResult>;
+}
 
 // ─── Result Types ────────────────────────────────────────────────────────────
 
@@ -34,6 +81,7 @@ export interface PromptOptions {
   resumeSession?: boolean;
   allowedTools?: string[];
   disallowedTools?: string[];
+  hostToolBridge?: HostToolBridge;
   systemPrompt?: string;
   /** Stable source/channel route used by persistent backends across daemon restarts. */
   sessionKey?: string;
@@ -99,7 +147,7 @@ export class ModelRunnerError extends Error {
 /**
  * Backend type identifier.
  */
-export type BackendType = 'claude' | 'codex-mcp';
+export type BackendType = 'claude' | 'codex';
 
 /**
  * Unified model runner interface.

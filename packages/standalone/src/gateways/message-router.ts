@@ -1305,7 +1305,8 @@ ${historyContext}
           (name) => !this.roleManager.isToolAllowed(agentContext.role, name)
         )
       : undefined;
-    const gatewayToolsPrompt = getGatewayToolsPrompt(disallowedForRole) || '';
+    const gatewayToolsPrompt =
+      this.config.backend === 'codex' ? '' : getGatewayToolsPrompt(disallowedForRole) || '';
     if (gatewayToolsPrompt) {
       prompt += `\n---\n\n${gatewayToolsPrompt}\n`;
     }

@@ -184,6 +184,25 @@ describe('Story: Codex home config generation', () => {
   });
 
   describe('AC #4: secret-safe app-server launch overrides', () => {
+    it('filters legacy mama and code-act MCP servers from every app-server launch', () => {
+      const config = writeConfig({
+        mcpServers: {
+          mama: { command: 'node', args: ['mama-server.js'] },
+          'code-act': { command: 'node', args: ['code-act-server.js'] },
+          external: { command: 'node', args: ['external-server.js'] },
+        },
+      });
+      try {
+        const launch = buildCodexAppServerLaunchConfig(config.configPath, {});
+
+        expect(launch.args.join('\n')).not.toContain('mama-server.js');
+        expect(launch.args.join('\n')).not.toContain('code-act-server.js');
+        expect(launch.args.join('\n')).toContain('external-server.js');
+      } finally {
+        config.cleanup();
+      }
+    });
+
     it('serializes one exact TOML table override with quoted dotted server keys', () => {
       const config = writeConfig({
         mcpServers: {
@@ -333,7 +352,7 @@ describe('Story: Codex home config generation', () => {
       }
     });
 
-    it('keeps simultaneous full and Code-Act-only launches isolated', async () => {
+    it('keeps simultaneous external and legacy-Code-Act-only launches isolated', async () => {
       const full = writeConfig({
         mcpServers: {
           search: { command: 'node', env: { SHARED_TOKEN: 'full-secret' } },
@@ -354,13 +373,12 @@ describe('Story: Codex home config generation', () => {
           ),
         ]);
         fullLaunch.args.push('mutated');
-        fullLaunch.env.CODE_ACT_TOKEN = 'mutated';
+        fullLaunch.env.SHARED_TOKEN = 'mutated';
 
         expect(isolatedLaunch.args).not.toContain('mutated');
-        expect(isolatedLaunch.env).toMatchObject({
-          BASE: 'isolated',
-          CODE_ACT_TOKEN: 'isolated-secret',
-        });
+        expect(isolatedLaunch.env).toEqual({ BASE: 'isolated' });
+        expect(isolatedLaunch.args).toEqual([]);
+        expect(fullLaunch.args.join(' ')).not.toContain('code-act');
         expect(isolatedLaunch.args.join(' ')).not.toContain('mcp_servers."search"');
       } finally {
         full.cleanup();

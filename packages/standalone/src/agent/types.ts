@@ -110,7 +110,7 @@ export interface AgentContext {
    * Backend type for this agent context
    * Used for backend-specific AGENTS.md injection
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
 }
 
 export type GatewayExecutionSurface = 'model_tool' | 'reactive_internal' | 'code_act' | 'direct';
@@ -130,6 +130,8 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  /** Parent gateway tool when execution is nested (for example inside code_act). */
+  parentToolName?: string;
   backgroundTasks?: BackgroundTaskRegistry;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
@@ -300,7 +302,7 @@ export interface ContentBlockDelta {
 
 /**
  * Common response shape passed to onFinal callbacks.
- * Both PersistentCLI and CodexMCP normalize their output to this format.
+ * Both PersistentCLI and Codex app-server normalize their output to this format.
  */
 export interface PromptFinalResponse {
   content: string;
@@ -308,7 +310,7 @@ export interface PromptFinalResponse {
 }
 
 /**
- * Callbacks for PersistentCLI / CodexMCP prompt calls.
+ * Callbacks for PersistentCLI / Codex app-server prompt calls.
  * Shared across all backend adapters to avoid duplicate definitions.
  */
 export interface PromptCallbacks {
@@ -948,12 +950,10 @@ export interface AgentLoopOptions {
   /**
    * Backend to use for CLI execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex-mcp': Codex via MCP protocol
+   * - 'codex': Codex app-server
    * Required at construction time (validated by config-manager)
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
-  /** Codex transport selector; ignored by the Claude backend. */
-  codexTransport?: 'app-server' | 'mcp';
+  backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
   /** Stable identity/rules fingerprint for durable Codex threads. */
@@ -1010,6 +1010,18 @@ export interface AgentLoopOptions {
   };
   /** Explicit MCP config path for runtimes that consume an external MCP config directly. */
   mcpConfigPath?: string;
+  /** Codex app-server working directory (managed runtime construction only). */
+  codexCwd?: string;
+  /** Explicit Codex app-server command path (managed runtime/tests). */
+  codexCommand?: string;
+  /** Codex app-server sandbox policy. */
+  codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Managed Codex credential/config home. */
+  codexHome?: string;
+  /** Isolated HOME used by managed Codex app-server. */
+  codexIsolatedHome?: string;
+  /** Durable managed Codex thread registry root. */
+  codexRegistryRoot?: string;
   /**
    * Resume existing CLI session instead of starting new one
    * When true, uses --resume flag and skips system prompt injection
@@ -1081,7 +1093,7 @@ export interface AgentLoopOptions {
   /**
    * Native Claude Code built-in tool surface (--tools value). Pass-through to
    * the PersistentCLIAdapter; '' disables all built-ins so gateway tools are the
-   * only surface. Consumed only by the claude backend; a no-op on codex-mcp.
+   * only surface. Consumed only by the claude backend; a no-op on codex.
    */
   builtinTools?: string;
 
@@ -1363,3 +1375,18 @@ export interface MAMAApiInterface {
   ): Promise<UpdateResult>;
   loadCheckpoint(): Promise<LoadCheckpointResult>;
 }
+
+export type MAMAApiListProvider =
+  | {
+      listDecisions: MAMAApiInterface['listDecisions'];
+      list?: MAMAApiInterface['listDecisions'];
+    }
+  | {
+      list: MAMAApiInterface['listDecisions'];
+      listDecisions?: MAMAApiInterface['listDecisions'];
+    };
+
+/** Full executor API or the raw mama-core boot shape that exports list() as its alias. */
+export type MAMAApiSetInput =
+  | MAMAApiInterface
+  | (Omit<MAMAApiInterface, 'listDecisions'> & MAMAApiListProvider);

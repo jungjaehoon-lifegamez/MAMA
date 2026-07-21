@@ -21,11 +21,7 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
-import type {
-  AgentContext,
-  GatewayToolExecutionContext,
-  MAMAApiInterface,
-} from '../../agent/types.js';
+import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -82,7 +78,7 @@ const { DebugLogger } = debugLogger as unknown as {
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
-type RuntimeBackend = 'claude' | 'codex' | 'codex-mcp';
+type RuntimeBackend = 'claude' | 'codex';
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
@@ -438,15 +434,13 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
+  const validBackends = ['claude', 'codex'] as const;
   const backend = config.agent.backend;
   const isValidBackend = validBackends.includes(backend as RuntimeBackend);
   process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
 
-  if (backend === 'codex' || backend === 'codex-mcp') {
-    console.log(
-      `✓ Codex backend (${config.agent.codex_transport ?? 'app-server'} transport; authentication handled by Codex login)`
-    );
+  if (backend === 'codex') {
+    console.log('✓ Codex app-server backend (authentication handled by Codex login)');
   } else {
     console.log('✓ Claude CLI mode (OAuth token not needed)');
   }
@@ -539,10 +533,7 @@ export async function runAgentLoop(
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
   const startupBackend = config.agent.backend;
-  const usesCodexBackend =
-    startupBackend === 'codex' ||
-    startupBackend === 'codex-mcp' ||
-    hasCodexBackendConfigured(config);
+  const usesCodexBackend = startupBackend === 'codex' || hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
     const codexCommand = resolveCodexCommandForStartup();
@@ -609,7 +600,7 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const validBackends = ['claude', 'codex', 'codex-mcp'] as const;
+  const validBackends = ['claude', 'codex'] as const;
   const rawBackend = config.agent.backend;
   const isValidBackend = validBackends.includes(rawBackend as RuntimeBackend);
   const runtimeBackend: RuntimeBackend = isValidBackend ? (rawBackend as RuntimeBackend) : 'claude';
@@ -617,8 +608,7 @@ export async function runAgentLoop(
   if (rawBackend && !isValidBackend) {
     console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
   }
-  const agentLoopBackend: 'claude' | 'codex-mcp' =
-    runtimeBackend === 'codex' || runtimeBackend === 'codex-mcp' ? 'codex-mcp' : 'claude';
+  const agentLoopBackend: 'claude' | 'codex' = runtimeBackend;
 
   // Initialize main agent loop + client (reasoning state is closure-scoped inside)
   const { agentLoop, agentLoopClient } = initMainAgentLoop(
@@ -641,7 +631,7 @@ export async function runAgentLoop(
   // SECOND API/adapter stack against the same DB (initializeMAMAApi). This also
   // lets the memory agent fold into the shared executor (Task 7) instead of
   // carrying its own private instance just for this API.
-  toolExecutor.setMamaApi(mamaApi as MAMAApiInterface);
+  toolExecutor.setMamaApi(mamaApi);
 
   // getAdapter is still used directly in this file for DB queries after initDB has run
   // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -1166,13 +1156,14 @@ export async function runAgentLoop(
       noticeOwner: (summary) => messageRouter.enqueueOperatorNotice(summary),
       opsAlarm,
       runOptionsFor: async (wo) => {
-        // Worker prompt forces the TEXT-gateway tool path (shadow-gate §8.2:
-        // the spawn-default persona prompt routes tools through code-act,
-        // where per-run envelope/capture overrides cannot reach).
+        // Worker prompt selects the provider's supported tool path: Claude's
+        // text gateway or Codex's injected native host tools. Both avoid the
+        // spawn-default code-act path, where per-run envelope/capture overrides
+        // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
         const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
         const runOptions: Record<string, unknown> = {
-          systemPrompt: buildWorkerSystemPrompt(getGatewayToolsPrompt()),
+          systemPrompt: buildWorkerSystemPrompt(getGatewayToolsPrompt(), runtimeBackend),
         };
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
@@ -1313,6 +1304,7 @@ export async function runAgentLoop(
   // Runs ONLY with MAMA_TRIGGER_LOOP=1. Placed after initConnectors (which feeds
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
   if (process.env.MAMA_TRIGGER_LOOP === '1') {
+    let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
     // DB permission, registry constructor) must not abort the whole daemon before Phase
     // 10/11 - the gateways/viewer/agent serve independently of this optional leg. The
@@ -1322,7 +1314,7 @@ export async function runAgentLoop(
       const { ConnectorDeltaRepo } = await import('../../operator/connector-delta-repo.js');
       const { TriggerRegistry } = await import('../../operator/trigger-registry.js');
       const { createMamaMemoryPort } = await import('../../operator/mama-memory-port.js');
-      const { askAgentCLI } = await import('../../operator/trigger-author.js');
+      const { createTriggerAgentRuntime } = await import('../../operator/trigger-author.js');
       const { reviewTriggerCLI } = await import('../../operator/trigger-review.js');
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
@@ -1355,7 +1347,14 @@ export async function runAgentLoop(
             new FileReportScheduleStore(expandPath('~/.mama/operator/report-schedule-state.json'))
           )
         : undefined;
+      const triggerAgentRuntime = createTriggerAgentRuntime(runtimeBackend, {
+        model: config.agent.model,
+        cwd: expandPath(config.workspace?.path || '~/.mama/workspace'),
+        command: process.env.MAMA_CODEX_COMMAND,
+      });
+      stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();
       const triggerLoop = new OperatorTriggerLoop({
+        backend: runtimeBackend,
         delta: new ConnectorDeltaRepo(
           getAdapter(),
           expandPath('~/.mama/operator/trigger-loop-cursors.json')
@@ -1363,10 +1362,10 @@ export async function runAgentLoop(
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
         onChannelDelta: (channelKey, lines) => channelDeltaSink.current?.(channelKey, lines),
-        askAgent: askAgentCLI,
+        askAgent: triggerAgentRuntime.askAuthor,
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
-        // JSON tasks (authoring/review) stay on the bare CLI for reliable parsing.
+        // JSON tasks (authoring/review) use a provider-specific, tool-free runtime.
         // M3 (GAP1+GAP2): run reports in a dedicated persona session lane so the multi-turn gather
         // loop is isolated from chat and continuous across cadences (runWithContent honors
         // options.sessionKey - agent-loop.ts:879, no agent-loop internal change). Gateway
@@ -1438,7 +1437,8 @@ export async function runAgentLoop(
           log: (line: string) => console.log(line),
           fullReportTag: OPERATOR_FULL_REPORT_TAG,
         }),
-        review: (trigger, context) => reviewTriggerCLI(trigger, context),
+        review: (trigger, context) =>
+          reviewTriggerCLI(trigger, context, triggerAgentRuntime.askReview),
         output: reportOutput,
         reportScheduler,
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
@@ -1488,12 +1488,14 @@ export async function runAgentLoop(
         stop: async () => {
           triggerLoopNudge.current = null;
           stopTriggerLoop();
+          await triggerAgentRuntime.stop();
           // The shared operator DB handle is closed by the unconditional stop
           // hook above (single owner); nothing to close here.
         },
       });
       console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
     } catch (error) {
+      await stopTriggerAgentRuntime?.().catch(() => {});
       console.error(
         '[trigger-loop] FAILED to start - daemon continues WITHOUT the trigger loop. Fix and restart:',
         error

@@ -214,7 +214,7 @@ The system parses the DAG, executes steps in topological order with parallel exe
       "agent": {
         "id": "coder-1",
         "display_name": "Coder",
-        "backend": "codex-mcp",
+        "backend": "codex",
         "model": "{{codex_model_id}}",
         "system_prompt": "You are a developer."
       },

@@ -30,6 +30,8 @@ export interface NormalizedItem {
 
 export interface ChannelConfig {
   role: 'truth' | 'hub' | 'deliverable' | 'spoke' | 'reference' | 'ignore';
+  /** Authoritative project scope binding for connector evidence; null means unbound. */
+  project_entity_id?: string | null;
   name?: string;
   keywords?: string[];
   /** Truth: spreadsheet ID for Sheets connector */

@@ -110,6 +110,9 @@ function isOwnerConsoleMessage(message: NormalizedMessage, config: MAMAConfig): 
   if (message.source !== 'telegram') {
     return false;
   }
+  if (!config.roles?.definitions?.owner_console) {
+    return false;
+  }
   const allowed = config.telegram?.allowed_chats;
   if (!Array.isArray(allowed) || allowed.length === 0) {
     return false;
@@ -164,7 +167,8 @@ function reactiveBudgetSeconds(config: MAMAConfig): number {
 export function getReactiveRoutePolicy(
   message: NormalizedMessage,
   config: MAMAConfig | ReactiveEnvelopeConfig,
-  env: EnvLike = process.env
+  env: EnvLike = process.env,
+  enabledConnectorNames: readonly string[] = []
 ): ReactiveRoutePolicy {
   const route = getStaticRoute(message);
 
@@ -193,9 +197,14 @@ export function getReactiveRoutePolicy(
   // reactive telegram envelope must widen its raw-connector scope for the
   // verified-owner DM or the enforcer denies kagemusha_messages even after
   // the role layer allows it (connector_out_of_scope).
-  const rawConnectors = isOwnerConsoleMessage(message, config)
-    ? [...route.rawConnectors, 'kagemusha']
-    : [...route.rawConnectors];
+  const isOwnerConsole = isOwnerConsoleMessage(message, config);
+  const rawConnectors = Array.from(
+    new Set([
+      ...route.rawConnectors,
+      ...(isOwnerConsole ? ['kagemusha'] : []),
+      ...(isOwnerConsole && enabledConnectorNames.includes('trello') ? ['trello'] : []),
+    ])
+  );
 
   return {
     source,
@@ -209,9 +218,11 @@ export function getReactiveRoutePolicy(
 
 export function createDefaultReactiveEnvelopeConfig(
   config: MAMAConfig,
-  env: EnvLike = process.env
+  env: EnvLike = process.env,
+  enabledConnectorNames: readonly string[] = []
 ): ReactiveEnvelopeConfig {
   const budgetSeconds = reactiveBudgetSeconds(config);
+  const connectorSnapshot = Object.freeze([...enabledConnectorNames]);
   resolveReactiveProjectRoot(config, env);
   const policyCache = new WeakMap<NormalizedMessage, ReactiveRoutePolicy>();
   const policyFor = (message: NormalizedMessage): ReactiveRoutePolicy => {
@@ -219,7 +230,7 @@ export function createDefaultReactiveEnvelopeConfig(
     if (cached) {
       return cached;
     }
-    const policy = getReactiveRoutePolicy(message, config, env);
+    const policy = getReactiveRoutePolicy(message, config, env, connectorSnapshot);
     policyCache.set(message, policy);
     return policy;
   };

@@ -159,9 +159,8 @@ const codeActRateBuckets = new Map<
 // Model pattern helpers (used in multiple validation functions)
 const isClaudeModel = (model: string): boolean => /^claude-/i.test(model);
 const isCodexModel = (model: string): boolean => /^(gpt-|o\d|codex)/i.test(model);
-const supportedManagedBackends = ['claude', 'codex', 'codex-mcp'];
-const isCodexFamilyBackend = (backend: string): boolean =>
-  backend === 'codex' || backend === 'codex-mcp';
+const supportedManagedBackends = ['claude', 'codex'];
+const isCodexFamilyBackend = (backend: string): boolean => backend === 'codex';
 const VALIDATION_TRIGGER_TYPES = new Set<ValidationTriggerType>([
   'agent_test',
   'delegate_run',
@@ -3275,7 +3274,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       config.agent.backend &&
       !supportedManagedBackends.includes(String(config.agent.backend).toLowerCase())
     ) {
-      errors.push('agent.backend must be "claude", "codex", or "codex-mcp"');
+      errors.push('agent.backend must be "claude" or "codex"');
     }
     if (config.agent.backend && config.agent.model && typeof config.agent.model === 'string') {
       const backend = String(config.agent.backend).toLowerCase();
@@ -3314,9 +3313,7 @@ function validateConfigUpdate(config: Record<string, any>): string[] {
       if (backendRaw !== undefined) {
         const backend = String(backendRaw).toLowerCase();
         if (!supportedManagedBackends.includes(backend)) {
-          errors.push(
-            `multi_agent.agents.${agentId}.backend must be "claude", "codex", or "codex-mcp"`
-          );
+          errors.push(`multi_agent.agents.${agentId}.backend must be "claude" or "codex"`);
           continue;
         }
         if (typeof modelRaw === 'string' && modelRaw.trim()) {
@@ -3757,7 +3754,7 @@ async function handleMultiAgentUpdateAgentRequest(
       (typeof body.backend !== 'string' ||
         !supportedManagedBackends.includes(String(body.backend).toLowerCase()))
     ) {
-      validationErrors.push('backend must be "claude", "codex", or "codex-mcp"');
+      validationErrors.push('backend must be "claude" or "codex"');
     }
 
     const nextBackend = (

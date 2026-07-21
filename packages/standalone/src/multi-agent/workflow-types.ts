@@ -5,7 +5,7 @@
  * by Conductor based on user intent analysis.
  */
 
-export type AgentBackend = 'claude' | 'codex' | 'codex-mcp';
+export type AgentBackend = 'claude' | 'codex';
 
 /**
  * Ephemeral agent definition dynamically created by Conductor
@@ -74,7 +74,7 @@ export interface WorkflowConfig {
   step_timeout_ms?: number;
   /** Max concurrent steps per execution level @default 3 */
   max_concurrent_steps?: number;
-  /** Round-robin backend balancing (claude ↔ codex-mcp) @default true */
+  /** Round-robin backend balancing (claude ↔ codex) @default true */
   backend_balancing?: boolean;
 }
 

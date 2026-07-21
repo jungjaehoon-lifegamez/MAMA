@@ -141,6 +141,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'workorder_status',
         'mama_save',
         'mama_update',
+        'code_act',
       ],
       blockedTools: ['Bash', 'Write', 'save_integration_token', 'delegate'],
       allowedPaths: ['~/.mama/workspace/**'],
@@ -199,9 +200,9 @@ export interface AgentConfig {
   /**
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex'/'codex-mcp': Codex via MCP protocol
+   * - 'codex': Codex app-server
    */
-  backend: 'claude' | 'codex' | 'codex-mcp';
+  backend: 'claude' | 'codex';
   /** Claude model to use */
   model: string;
   /**
@@ -221,8 +222,6 @@ export interface AgentConfig {
   tools?: ToolsConfig;
   /** Codex home directory for configuration/cache */
   codex_home?: string;
-  /** Codex communication transport. Defaults to app-server. */
-  codex_transport?: 'app-server' | 'mcp';
   /** Codex working directory */
   codex_cwd?: string;
   /** Codex sandbox mode */
@@ -391,7 +390,7 @@ export interface AgentPersonaConfig {
   /** Cooldown between responses in milliseconds */
   cooldown_ms?: number;
   /** Backend for this agent (inherits from agent.backend if not set) */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
   /** Claude model to use for this agent */
   model?: string;
   /** Maximum turns for this agent */
@@ -551,7 +550,7 @@ export interface PromptConfig {
 export interface TimeoutsConfig {
   /** CLI request timeout @default 120000 */
   request_ms: number;
-  /** Codex MCP request timeout @default 180000 */
+  /** Codex app-server request timeout @default 180000 */
   codex_request_ms: number;
   /** MCP initialize timeout @default 60000 */
   initialize_ms: number;

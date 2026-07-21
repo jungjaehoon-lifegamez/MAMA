@@ -87,10 +87,10 @@ export interface AgentPersonaConfig {
   /**
    * Runtime backend for this agent.
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex-mcp': Codex via MCP protocol
+   * - 'codex': Codex app-server
    * If not specified, uses global runtime backend.
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
 
   /**
    * Maximum turns for this agent
@@ -328,21 +328,26 @@ export interface MultiAgentRuntimeOptions {
   /**
    * Backend for agent execution
    * - 'claude': Claude CLI (uses PersistentCLI for fast responses)
-   * - 'codex'/'codex-mcp': Codex via MCP protocol
+   * - 'codex': Codex app-server
    */
-  backend?: 'claude' | 'codex' | 'codex-mcp';
+  backend?: 'claude' | 'codex';
   model?: string;
   /** Effort level for Claude 4.6 adaptive thinking */
   effort?: 'low' | 'medium' | 'high' | 'max';
   /** Timeout in milliseconds for each agent process request */
   requestTimeout?: number;
-  /** Codex working directory (for codex-mcp backend) */
+  /** Codex working directory */
   codexCwd?: string;
-  /** Explicit Codex binary/command path (for codex-mcp backend) */
+  /** Explicit Codex binary/command path */
   codexCommand?: string;
-  codexTransport?: 'app-server' | 'mcp';
-  /** Codex sandbox mode (for codex-mcp backend) */
+  /** Codex sandbox mode */
   codexSandbox?: 'read-only' | 'workspace-write' | 'danger-full-access';
+  /** Managed Codex credential/config home. */
+  codexHome?: string;
+  /** Isolated HOME used by managed Codex app-server. */
+  codexIsolatedHome?: string;
+  /** Durable managed Codex thread registry root. */
+  codexRegistryRoot?: string;
 }
 
 /**

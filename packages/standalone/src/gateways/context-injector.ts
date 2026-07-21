@@ -6,6 +6,7 @@
  */
 
 import type { RelatedDecision, MessageRouterConfig } from './types.js';
+import type { SaveDecisionPayload } from '../agent/types.js';
 
 /**
  * Checkpoint data from MAMA
@@ -56,7 +57,7 @@ export interface MamaApiClient {
   /**
    * Save a new decision or fact
    */
-  save?(input: Record<string, unknown>): Promise<unknown>;
+  save?(input: SaveDecisionPayload): Promise<unknown>;
 
   /**
    * Recall memory v2 bundle
