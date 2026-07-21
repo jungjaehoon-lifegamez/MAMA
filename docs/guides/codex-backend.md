@@ -1,7 +1,7 @@
-# Codex CLI Backend Setup Guide
+# Codex App-Server Backend Setup Guide
 
 **Category:** Guide (Task-Oriented)
-**Audience:** Users who want to use Codex CLI as a backend in MAMA OS
+**Audience:** Users who want to use Codex app-server as a backend in MAMA OS
 
 ---
 
@@ -92,15 +92,15 @@ multi_agent:
 
 ## Claude and Codex runtime differences
 
-| Item               | Claude backend                 | Codex backend                                                |
-| ------------------ | ------------------------------ | ------------------------------------------------------------ |
-| Protocol           | Persistent Claude CLI stream   | `codex app-server --strict-config --stdio`                   |
-| Conversation state | Persistent CLI session         | Durable app-server thread registry                           |
-| Process model      | Resident process pool          | One multiplexed managed app-server process                   |
-| Tools              | Gateway/Code-Act routing       | Native app-server host tools projected per run               |
-| Sandbox            | CLI permission policy          | `read-only`, `workspace-write`, or `danger-full-access`      |
-| Timeout behavior   | Per request                    | Per turn; a timeout does not terminate sibling conversations |
-| Compaction         | Managed by MAMA session policy | Managed by Codex app-server                                  |
+| Item               | Claude backend                 | Codex backend                                                         |
+| ------------------ | ------------------------------ | --------------------------------------------------------------------- |
+| Protocol           | Persistent Claude CLI stream   | `codex app-server --strict-config --stdio`                            |
+| Conversation state | Persistent CLI session         | Durable app-server thread registry                                    |
+| Process model      | Resident process pool          | One multiplexed managed app-server process                            |
+| Tools              | Gateway/Code-Act routing       | Native app-server host tools projected per run                        |
+| Sandbox            | CLI permission policy          | `read-only`, `workspace-write`, or `danger-full-access`               |
+| Timeout behavior   | Per request                    | Confirmed turns are isolated; unreconciled starts restart the process |
+| Compaction         | Managed by MAMA session policy | Managed by Codex app-server                                           |
 
 On a new Codex conversation, MAMA creates a thread with the current persona and runtime policy.
 After a MAMA daemon restart, it resumes the durable thread and sends a fresh runtime bootstrap on

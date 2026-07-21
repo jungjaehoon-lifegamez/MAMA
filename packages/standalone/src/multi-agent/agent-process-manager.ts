@@ -182,6 +182,8 @@ function getModelDisplayName(modelId: string): string {
     'claude-opus-4-latest': 'Claude Opus 4 (latest)',
     'claude-sonnet-4-latest': 'Claude Sonnet 4 (latest)',
     // OpenAI / Codex
+    'gpt-5.4': 'GPT-5.4',
+    'gpt-5.4-mini': 'GPT-5.4 Mini',
     'gpt-5.3-codex': 'GPT-5.3 Codex',
     'gpt-5-codex': 'GPT-5 Codex',
     'gpt-4.1': 'GPT-4.1',

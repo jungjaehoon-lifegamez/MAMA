@@ -774,7 +774,7 @@ This protects your credentials from being exposed in chat logs.`;
           '.model: claude-sonnet-4-6\n' +
           '  Codex:  codex login → roles.definitions.' +
           agentContext.roleName +
-          '.model: gpt-5.3-codex\n\n' +
+          '.model: gpt-5.4\n\n' +
           'Or run: mama init --reconfigure'
       );
     }

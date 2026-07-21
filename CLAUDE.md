@@ -389,7 +389,7 @@ curl -X PUT 'http://localhost:3847/api/multi-agent/agents/developer' \
 **Body fields:**
 
 - `backend`: "claude" | "codex" (`codex-mcp` is migrated as a legacy stored alias)
-- `model`: Model ID (e.g., "claude-opus-4-5-20251101", "gpt-5.3-codex")
+- `model`: Model ID (e.g., "claude-opus-4-5-20251101", "gpt-5.4")
 - `tier`: 1-3 (tool permission level)
 - `enabled`: boolean
 - `can_delegate`: boolean
