@@ -20,6 +20,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
 
@@ -82,6 +83,51 @@ export interface TaskRecord extends OperatorTask {
   latestEvent: string | null;
   autoCreated: boolean;
   confirmed: boolean;
+  dueAt: number | null;
+  deadlineOffsetMinutes: number | null;
+  revision: number;
+  temporalEpoch: number;
+  temporalReconciledOccurrenceKey: string | null;
+  lastTemporalCheckedAt: number | null;
+  nextTemporalCheckAt: number | null;
+  lastTemporalAttemptId: number | null;
+}
+
+export type TemporalGenerationDisposition =
+  | 'active'
+  | 'resolved'
+  | 'final_no_update'
+  | 'deferred'
+  | 'exhausted'
+  | 'superseded';
+
+export interface TemporalGenerationRecord {
+  generationKey: string;
+  taskId: number;
+  temporalEpoch: number;
+  occurrenceKey: string;
+  checkAt: number;
+  disposition: TemporalGenerationDisposition;
+  lastWorkOrderId: number | null;
+  reason: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type TemporalEffectOutcome = 'resolved' | 'final_no_update' | 'deferred';
+
+export interface TemporalEffectRecord {
+  workorderAttemptId: number;
+  taskId: number;
+  generationKey: string;
+  occurrenceKey: string;
+  outcome: TemporalEffectOutcome;
+  beforeRevision: number;
+  afterRevision: number;
+  changedFields: string[];
+  reason: string;
+  nextTemporalCheckAt: number | null;
+  createdAt: number;
 }
 
 export interface CreateTaskInput {
@@ -132,6 +178,14 @@ interface TaskRow {
   latest_event: string | null;
   auto_created: number;
   confirmed: number;
+  due_at: number | null;
+  deadline_offset_minutes: number | null;
+  revision: number;
+  temporal_epoch: number;
+  temporal_reconciled_occurrence_key: string | null;
+  last_temporal_checked_at: number | null;
+  next_temporal_check_at: number | null;
+  last_temporal_attempt_id: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -179,6 +233,14 @@ function rowToRecord(row: TaskRow): TaskRecord {
     latestEvent: row.latest_event,
     autoCreated: row.auto_created === 1,
     confirmed: row.confirmed === 1,
+    dueAt: row.due_at,
+    deadlineOffsetMinutes: row.deadline_offset_minutes,
+    revision: row.revision,
+    temporalEpoch: row.temporal_epoch,
+    temporalReconciledOccurrenceKey: row.temporal_reconciled_occurrence_key,
+    lastTemporalCheckedAt: row.last_temporal_checked_at,
+    nextTemporalCheckAt: row.next_temporal_check_at,
+    lastTemporalAttemptId: row.last_temporal_attempt_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -228,6 +290,15 @@ export class TaskLedger implements TaskSource {
         latest_event TEXT,
         auto_created INTEGER NOT NULL DEFAULT 1,
         confirmed INTEGER NOT NULL DEFAULT 0,
+        due_at INTEGER,
+        deadline_offset_minutes INTEGER
+          CHECK (deadline_offset_minutes BETWEEN -840 AND 840),
+        revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+        temporal_epoch INTEGER NOT NULL DEFAULT 0 CHECK (temporal_epoch >= 0),
+        temporal_reconciled_occurrence_key TEXT,
+        last_temporal_checked_at INTEGER,
+        next_temporal_check_at INTEGER,
+        last_temporal_attempt_id INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL`;
 
@@ -300,6 +371,8 @@ export class TaskLedger implements TaskSource {
           }
         }
       }
+
+      applyOperatorTaskTemporalMigration(this.db);
 
       // Old-predicate unique index (no terminal exclusion) -> swap in place.
       const idxRow = this.db
