@@ -149,4 +149,19 @@ describe('Reactive Main envelope tool path', () => {
       executionSurface: 'model_tool',
     });
   });
+
+  it('copies only a host-supplied workorder attempt id into gateway execution context', () => {
+    const trusted = buildAgentToolExecutionContext({
+      source: 'operator',
+      channelId: 'worker:board',
+      workorderAttemptId: 148,
+    });
+    const ordinary = buildAgentToolExecutionContext({
+      source: 'telegram',
+      channelId: 'tg:1',
+    });
+
+    expect(trusted?.workorderAttemptId).toBe(148);
+    expect(ordinary).not.toHaveProperty('workorderAttemptId');
+  });
 });

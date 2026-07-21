@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildWorkerSessionKey,
   buildWorkerSystemPrompt,
+  attachWorkOrderAttemptContext,
   workerRun,
   type WorkerRunner,
 } from '../../src/operator/worker-run.js';
@@ -127,6 +128,25 @@ describe('Story S2-T4: workerRun runOptions merge order', () => {
     expect(captured.source).toBe('operator');
     expect(captured.channelId).toBe('worker:board');
     expect(captured.freshSession).toBe(true);
+  });
+
+  it('preserves the host-issued attempt id through the generic options merge', async () => {
+    const runner = makeRunner();
+    const runOptions = attachWorkOrderAttemptContext({ workorderAttemptId: 999 }, 148);
+
+    await workerRun(runner, {
+      kind: 'board',
+      brief: 'brief text',
+      input: 'work',
+      runOptions,
+    });
+
+    expect(runner.calls[0].options.workorderAttemptId).toBe(148);
+  });
+
+  it('rejects an invalid host-issued attempt id before the worker starts', () => {
+    expect(() => attachWorkOrderAttemptContext({}, 0)).toThrow(/positive integer/);
+    expect(() => attachWorkOrderAttemptContext({}, 1.5)).toThrow(/positive integer/);
   });
 });
 

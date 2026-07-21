@@ -1175,7 +1175,8 @@ export async function runAgentLoop(
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
-  const { resolveWorkerRequestTimeoutMs } = await import('../../operator/worker-run.js');
+  const { resolveWorkerRequestTimeoutMs, attachWorkOrderAttemptContext } =
+    await import('../../operator/worker-run.js');
   resolveWorkerRequestTimeoutMs();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
@@ -1253,13 +1254,16 @@ export async function runAgentLoop(
         // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
         const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
-        const runOptions: Record<string, unknown> = {
-          systemPrompt: buildWorkerSystemPrompt(
-            getGatewayToolsPrompt(),
-            runtimeBackend,
-            wo.workKind
-          ),
-        };
+        const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
+          {
+            systemPrompt: buildWorkerSystemPrompt(
+              getGatewayToolsPrompt(),
+              runtimeBackend,
+              wo.workKind
+            ),
+          },
+          wo.id
+        );
         if (runtimeBackend === 'codex') {
           runOptions.agentContext = buildWorkOrderCodexAgentContext(
             wo.workKind,
