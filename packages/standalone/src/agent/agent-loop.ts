@@ -1609,6 +1609,7 @@ export class AgentLoop {
 
             // Reset session in pool so it creates a new one
             const newSessionId = this.sessionPool.resetSession(channelKey);
+            options?.onCliSessionReset?.(newSessionId);
             // Per-call routing: hand the new id to this prompt() and update the
             // resolved id so later turns follow it - no shared-adapter mutation.
             resolvedCliSessionId = newSessionId;

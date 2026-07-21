@@ -1039,6 +1039,9 @@ export interface AgentLoopOptions {
    */
   cliSessionId?: string;
 
+  /** Notify the caller when recovery replaces the pooled CLI session ID. */
+  onCliSessionReset?: (sessionId: string) => void;
+
   /**
    * Start this run on a brand-new pool session (stateless lane). Used by the
    * operator report lane: session context is a cache, not persistence - every

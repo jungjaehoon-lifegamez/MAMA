@@ -2591,6 +2591,7 @@ Skills provide additional tools.
       const deliveredPrompts: string[] = [];
       const onError = vi.fn();
       const onMetric = vi.fn();
+      const onCliSessionReset = vi.fn();
       const freshSessionSystemPrompt = vi.fn().mockResolvedValue('full owner policy prompt');
       persistentPromptMock
         .mockImplementationOnce(
@@ -2634,6 +2635,7 @@ Skills provide additional tools.
         resumeSession: true,
         systemPrompt: 'minimal resumed policy prompt',
         freshSessionSystemPrompt,
+        onCliSessionReset,
         streamCallbacks: { onError },
       });
 
@@ -2642,6 +2644,7 @@ Skills provide additional tools.
       expect(deliveredPrompts[1]).toContain('full owner policy prompt');
       expect(freshSessionSystemPrompt).toHaveBeenCalledTimes(1);
       expect(onError).not.toHaveBeenCalled();
+      expect(onCliSessionReset).toHaveBeenCalledWith('fresh-test-session');
       expect(onMetric).toHaveBeenCalledWith('prompt_latency_ms', expect.any(Number), {
         backend: 'codex',
         turn: '1',

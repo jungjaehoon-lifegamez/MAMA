@@ -695,6 +695,43 @@ describe('MessageRouter', () => {
       expect(row.error_message).toBe('synthetic failure');
     });
 
+    it('releases a replacement session when recovery is followed by a later failure', async () => {
+      const channelId = `replacement-release-${Date.now()}`;
+      const channelKey = `telegram:${channelId}`;
+      const sessionPool = getSessionPool();
+      let replacementSessionId = '';
+      const agentLoop = {
+        async run(
+          _prompt: string,
+          options?: { onCliSessionReset?: (sessionId: string) => void }
+        ): Promise<{ response: string }> {
+          replacementSessionId = sessionPool.resetSession(channelKey);
+          options?.onCliSessionReset?.(replacementSessionId);
+          throw new Error('synthetic post-recovery failure');
+        },
+      };
+      const customRouter = new MessageRouter(
+        sessionStore,
+        agentLoop,
+        createMockMamaApi(mockDecisions)
+      );
+
+      await expect(
+        customRouter.process({
+          source: 'telegram',
+          channelId,
+          userId: 'synthetic-owner',
+          text: 'Generate a report',
+        })
+      ).rejects.toThrow('synthetic post-recovery failure');
+
+      expect(sessionPool.peekSession(channelKey)).toEqual({
+        sessionId: replacementSessionId,
+        busy: false,
+      });
+      sessionPool.invalidateSession(channelKey, replacementSessionId);
+    });
+
     it('should use resumeSession for subsequent messages to same channel', async () => {
       // Use unique channel ID for this test
       const uniqueChannelId = `channel-resume-${Date.now()}`;

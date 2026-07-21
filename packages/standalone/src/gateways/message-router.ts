@@ -913,6 +913,11 @@ This protects your credentials from being exposed in chat logs.`;
         agentContext,
         resumeSession: shouldResumeBackend,
         cliSessionId, // Pass CLI session ID to avoid double-locking
+        // AgentLoop may replace a stale backend session while this request still
+        // owns the channel lock. Keep cleanup guarded by the current owner ID.
+        onCliSessionReset: (sessionId) => {
+          cliSessionId = sessionId;
+        },
         streamCallbacks: wrappedOnStream || processOptions?.onStream,
         envelope,
         sourceTurnId,
