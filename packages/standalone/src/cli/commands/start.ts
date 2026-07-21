@@ -75,14 +75,12 @@ import {
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
-import { buildTemporalWorkOrderHook } from '../../operator/workorder-hooks.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
-  createTemporalRuntime,
   preflightTemporalStartup,
   type TemporalRuntime,
 } from '../../operator/temporal-runtime.js';
-import { TemporalReconcileScheduler } from '../../operator/temporal-reconcile.js';
+import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -395,7 +393,6 @@ const WORKORDER_TOOL_POLICIES = {
       'schedule_upcoming',
       'task_list',
       'task_temporal_reconcile',
-      'report_publish',
     ],
   },
 } as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
@@ -1240,9 +1237,9 @@ export async function runAgentLoop(
     throw err;
   }
   // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
-  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
-  // registerApiRoutes (which registers the per-kind completion hooks) and
-  // started AFTER it - the boot invariant below enforces that ordering.
+  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed before production
+  // runtime assembly registers per-kind completion hooks, and started only
+  // after route registration and recovery complete.
   const { stage2Flag, temporalFlag } = temporalStartup;
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
@@ -1468,7 +1465,7 @@ export async function runAgentLoop(
     });
   }
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  temporalRuntime = createTemporalRuntime({
+  const temporalAssembly = assembleDaemonTemporalRuntime({
     flag: temporalFlag,
     stage2Flag,
     backend: runtimeBackend,
@@ -1477,29 +1474,10 @@ export async function runAgentLoop(
     transportReady: Boolean(agentLoopClient.runWithContent),
     timeZone: temporalTimeZone,
     ledger: taskLedger,
-    consumer: workOrderConsumer ?? undefined,
-    registerRole: () => {
-      if (!workOrderConsumer) {
-        throw new Error('temporal reconciliation cannot register without the workorder consumer');
-      }
-      workOrderConsumer.registerHook(
-        'temporal',
-        buildTemporalWorkOrderHook({
-          loadTemporalWorkContext: (attemptId) => taskLedger.loadTemporalWorkContext(attemptId),
-          getTemporalEffect: (attemptId) => taskLedger.getTemporalEffect(attemptId),
-          getTask: (taskId) => taskLedger.getById(taskId),
-          getTemporalGeneration: (generationKey) => taskLedger.getTemporalGeneration(generationKey),
-          getScopedNoteMaxId: (scope) => taskLedger.maxNoUpdateId(scope),
-        })
-      );
-    },
-    createScheduler: () =>
-      new TemporalReconcileScheduler({
-        ledger: taskLedger,
-        now: () => Date.now(),
-        timeZone: temporalTimeZone,
-      }),
+    consumer: workOrderConsumer,
+    log: (line) => console.log(line),
   });
+  temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1762,9 +1740,9 @@ export async function runAgentLoop(
     workOrderConsumer: workOrderConsumer ?? undefined,
   });
 
-  // ── Stage-2 boot pass (plan S2-T3): hooks are registered above inside
-  // registerApiRoutes; recovery/cleanup run here, then the consumer starts.
-  const temporalBoot = temporalRuntime.boot();
+  // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
+  // recovery/cleanup run after routes are ready, then the consumer starts.
+  const temporalBoot = temporalAssembly.bootAfterRoutes();
   if (temporalBoot.paused > 0) {
     console.log(`[temporal-reconcile] paused ${temporalBoot.paused} open workorder(s)`);
   }
@@ -1772,39 +1750,6 @@ export async function runAgentLoop(
     console.log(
       `[temporal-reconcile] resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`
     );
-  }
-  if (stage2Flag === 'off') {
-    // Rollback cleanup (plan D3): open system rows -> cancelled, ONE summary
-    // line, no per-row alarms - a rollback is not a failure.
-    const cancelled = taskLedger.cancelOpenWorkOrders('flag-off');
-    if (cancelled > 0) {
-      console.log(`[stage2] flag=off: cancelled ${cancelled} open workorder(s) (rollback cleanup)`);
-    }
-  } else {
-    // Boot invariant (plan C13/G7): flag != off ⇒ consumer exists, hooks are
-    // already registered, and start() succeeds - violation kills the boot.
-    if (!workOrderConsumer) {
-      throw new Error('[stage2] boot invariant violated: flag != off but consumer not constructed');
-    }
-    if (stage2Flag === 'shadow') {
-      // on->shadow rollback cleanup (review N4): non-board orders enqueued
-      // at 'on' must never be consumed LIVE under shadow. Cancelled (not
-      // failed) - a rollback is not a failure; one summary line.
-      const cancelled = taskLedger.cancelOpenWorkOrders('shadow-board-only', [
-        'wiki',
-        'memory-curation',
-      ]);
-      if (cancelled > 0) {
-        console.log(
-          `[stage2] shadow: cancelled ${cancelled} non-board workorder(s) (rollback cleanup)`
-        );
-      }
-    }
-    if (!temporalRuntime.enabled) workOrderConsumer.bootRecover();
-    workOrderConsumer.start();
-    if (!workOrderConsumer.isStarted()) {
-      throw new Error('[stage2] boot invariant violated: consumer failed to start');
-    }
   }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────

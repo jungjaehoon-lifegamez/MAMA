@@ -9,9 +9,7 @@ import type { ToolMeta } from './host-bridge.js';
 export class TypeDefinitionGenerator {
   /** Generate .d.ts from an already-projected canonical policy. */
   static generate(policy: CodeActToolPolicy): string {
-    const lines: string[] = [
-      '// Call with object: Read({path: "/file"}) or positional: Read("/file")',
-    ];
+    const lines: string[] = ['// Args: Read({path:"/file"}) or Read("/file")'];
     const projectedNames = new Set(policy.names);
     const renderedNames = new Set<string>();
     const categories = new Map<string, ToolMeta[]>();

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAgentToolExecutionContext } from '../../src/agent/agent-loop.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { GatewayToolExecutionContext, MAMAApiSetInput } from '../../src/agent/types.js';
@@ -55,7 +55,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         platform: 'cli',
         roleName: 'workorder-temporal',
         role: {
-          allowedTools: ['code_act', 'report_publish', 'task_list', 'task_temporal_reconcile'],
+          allowedTools: ['code_act', 'task_list', 'task_temporal_reconcile'],
           allowedPaths: [],
           systemControl: false,
           sensitiveAccess: false,
@@ -65,7 +65,7 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
           channelId: 'worker:temporal',
           startedAt: new Date(now),
         },
-        capabilities: ['code_act', 'report_publish', 'task_list', 'task_temporal_reconcile'],
+        capabilities: ['code_act', 'task_list', 'task_temporal_reconcile'],
         limitations: [],
         tier: 2,
         backend: 'codex',
@@ -128,33 +128,169 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)?.revision).toBe(1);
   });
 
-  it('commits through direct gateway execution and returns the bounded receipt', async () => {
-    const result = (await executor.execute(
+  it('rejects a temporal mutation when no fresh context packet is attested', async () => {
+    await expect(
+      executor.execute(
+        'task_temporal_reconcile',
+        {
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          status: 'done',
+          reason: 'Unsupported model assertion',
+        } as never,
+        executionContext
+      )
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+  });
+
+  it.each([
+    {
+      name: 'predates the active attempt',
+      packetId: 'ctxp_temporal_stale',
+      packet: {
+        packet_id: 'ctxp_temporal_stale',
+        packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_stale' }),
+        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        created_at: now - 1,
+      },
+    },
+    {
+      name: 'has a different host-returned identity',
+      packetId: 'ctxp_temporal_requested',
+      packet: {
+        packet_id: 'ctxp_temporal_different',
+        packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_different' }),
+        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        created_at: now + 1,
+      },
+    },
+    {
+      name: 'has no source references for a final outcome',
+      packetId: 'ctxp_temporal_unbacked',
+      packet: {
+        packet_id: 'ctxp_temporal_unbacked',
+        packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_unbacked' }),
+        source_refs: [],
+        created_at: now + 1,
+      },
+    },
+  ])('rejects evidence that $name', async ({ packetId, packet }) => {
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => packet,
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const trustedExecution = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({
+        agent_id: 'workorder-temporal',
+        instance_id: 'temporal-invalid-evidence',
+      }),
+      modelRunId: 'mr_temporal_invalid_evidence',
+    };
+
+    await expect(
+      executor.execute(
+        'task_temporal_reconcile',
+        {
+          context_packet_id: packetId,
+          expected_revision: context.revision,
+          outcome: 'resolved',
+          status: 'done',
+          reason: 'Untrusted evidence must not mutate the task',
+        } as never,
+        trustedExecution
+      )
+    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'pending', revision: 1 });
+    expect(ledger.getTemporalEffect(context.attemptId)).toBeNull();
+  });
+
+  it('commits only with a fresh same-run context packet carrying source evidence', async () => {
+    const modelRunId = 'mr_temporal_evidence';
+    const envelope = makeSignedEnvelope({
+      agent_id: 'workorder-temporal',
+      instance_id: 'temporal-evidence-attempt',
+    });
+    const packetId = 'ctxp_temporal_fresh';
+    const packetJson = JSON.stringify({ packet_id: packetId, selected_evidence: ['synthetic'] });
+    const lookup = vi.fn(async () => ({
+      packet_id: packetId,
+      packet_json: packetJson,
+      source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+      created_at: now + 1,
+    }));
+    executor = new GatewayToolExecutor({ temporalContextPacketLookup: lookup } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const trustedExecution = { ...executionContext, envelope, modelRunId };
+
+    const result = await executor.execute(
       'task_temporal_reconcile',
       {
+        context_packet_id: packetId,
         expected_revision: context.revision,
         outcome: 'resolved',
         status: 'done',
         reason: 'Fresh source evidence confirms completion',
       } as never,
-      executionContext
-    )) as { success: boolean; receipt: { taskId: number; workorderAttemptId: number } };
+      trustedExecution
+    );
 
+    expect(lookup).toHaveBeenCalledWith({
+      packetId,
+      envelopeHash: envelope.envelope_hash,
+      callerModelRunId: modelRunId,
+    });
     expect(result).toMatchObject({
       success: true,
-      receipt: { taskId, workorderAttemptId: context.attemptId },
+      receipt: {
+        taskId,
+        workorderAttemptId: context.attemptId,
+        contextPacketId: packetId,
+        contextPacketSha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
     });
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
   });
 
   it('retains the exact trusted context through nested Code-Act', async () => {
+    const packetId = 'ctxp_nested_temporal';
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        packet_json: JSON.stringify({ packet_id: packetId, selected_evidence: ['nested'] }),
+        source_refs: [{ kind: 'raw', connector: 'trello', raw_id: 'synthetic-card' }],
+        created_at: now + 1,
+      }),
+    });
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const nestedContext: GatewayToolExecutionContext = {
+      ...executionContext,
+      envelope: makeSignedEnvelope({
+        agent_id: 'workorder-temporal',
+        instance_id: 'nested-temporal-attempt',
+      }),
+      modelRunId: 'mr_nested_temporal',
+    };
     const result = await executor.execute(
       'code_act',
       {
-        code: `task_temporal_reconcile({ expected_revision: ${context.revision}, outcome: 'resolved', status: 'done', reason: 'Nested host context is exact' })`,
+        code: `task_temporal_reconcile({ context_packet_id: '${packetId}', expected_revision: ${context.revision}, outcome: 'resolved', status: 'done', reason: 'Nested host context is exact' })`,
         allowedTools: ['task_temporal_reconcile'],
       },
-      executionContext
+      nestedContext
     );
 
     expect(result.success, JSON.stringify(result)).toBe(true);
@@ -324,31 +460,19 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
   });
 
-  it('restricts temporal report publication to the host-derived pipeline slot', async () => {
+  it('denies report publication from the temporal role before any live side effect', async () => {
     const published: unknown[] = [];
     executor.setReportPublisher((slots) => published.push(slots));
 
-    await expect(
-      executor.execute(
-        'report_publish',
-        { slots: { briefing: '<p>forbidden</p>' } } as never,
-        executionContext
-      )
-    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
-    await expect(
-      executor.execute(
-        'report_publish',
-        { slots: { pipeline: '<p>ok</p>', custom: '<p>forbidden</p>' } } as never,
-        executionContext
-      )
-    ).rejects.toThrow(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/);
-
     const result = await executor.execute(
       'report_publish',
-      { slots: { pipeline: '<p>ok</p>' } } as never,
+      { slots: { pipeline: '<p>must not publish</p>' } } as never,
       executionContext
     );
-    expect(result.success).toBe(true);
-    expect(published).toEqual([{ pipeline: '<p>ok</p>' }]);
+    expect(result).toMatchObject({ success: false });
+    expect(result).toMatchObject({
+      error: expect.stringMatching(/^temporal_tool_failed;sha256=[a-f0-9]{64};length=\d+$/),
+    });
+    expect(published).toEqual([]);
   });
 });

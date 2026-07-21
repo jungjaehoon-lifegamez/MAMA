@@ -122,7 +122,11 @@ import {
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
-import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
+import type {
+  TemporalEvidenceAttestation,
+  TemporalReconcileInput,
+  TemporalWorkContext,
+} from '../operator/temporal-effect.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -553,6 +557,9 @@ export class GatewayToolExecutor {
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
+  private temporalContextPacketLookup: NonNullable<
+    GatewayToolExecutorOptions['temporalContextPacketLookup']
+  >;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -951,6 +958,18 @@ export class GatewayToolExecutor {
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
     this.contextCompileService = options.contextCompileService;
+    this.temporalContextPacketLookup =
+      options.temporalContextPacketLookup ??
+      (async (input) => {
+        const packet = getContextPacketForTrustedUse(await getContextPacketLookupAdapter(), input);
+        if (!packet) return null;
+        return {
+          packet_id: packet.packet_id,
+          packet_json: packet.packet_json,
+          source_refs: packet.source_refs,
+          created_at: packet.created_at,
+        };
+      });
     this.wikiPublishAdapter = options.wikiPublishAdapter ?? null;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
@@ -2789,9 +2808,69 @@ export class GatewayToolExecutor {
               false
             );
           }
+          const contextPacketId = (input as { context_packet_id?: unknown }).context_packet_id;
+          if (typeof contextPacketId !== 'string' || contextPacketId.trim().length === 0) {
+            throw new AgentError(
+              'task_temporal_reconcile requires a fresh context_packet_id',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const executionState = this.getExecutionState();
+          if (!executionState.envelope || !executionState.modelRunId) {
+            throw new AgentError(
+              'task_temporal_reconcile evidence requires an active envelope and model run',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const packet = await this.temporalContextPacketLookup({
+            packetId: contextPacketId,
+            envelopeHash: executionState.envelope.envelope_hash,
+            callerModelRunId: executionState.modelRunId,
+          });
+          if (!packet || packet.packet_id !== contextPacketId) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet is unavailable',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
+          if (
+            !Number.isSafeInteger(packet.created_at) ||
+            packet.created_at < attempt.workOrder.updatedAt
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet predates the active attempt',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const effectInput = input as TemporalReconcileInput & { context_packet_id: string };
+          if (
+            effectInput.outcome !== 'deferred' &&
+            (!Array.isArray(packet.source_refs) || packet.source_refs.length === 0)
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile requires source-backed fresh evidence',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const evidence: TemporalEvidenceAttestation = {
+            contextPacketId,
+            contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+          };
+          const { context_packet_id: _contextPacketId, ...trustedEffectInput } = effectInput;
           return {
             success: true,
-            receipt: this.taskLedger.applyTemporalEffect(context, input as TemporalReconcileInput),
+            receipt: this.taskLedger.applyTemporalEffect(context, trustedEffectInput, evidence),
           };
         }
         case 'schedule_upcoming': {

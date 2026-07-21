@@ -36,6 +36,12 @@ export type TemporalReconcileInput =
   | TemporalFinalNoUpdateInput
   | TemporalDeferredInput;
 
+/** Host-only evidence identity validated against the active envelope/model run. */
+export interface TemporalEvidenceAttestation {
+  contextPacketId: string;
+  contextPacketSha256: string;
+}
+
 export interface TemporalEffectReceipt {
   workorderAttemptId: number;
   taskId: number;
@@ -46,6 +52,8 @@ export interface TemporalEffectReceipt {
   afterRevision: number;
   changedFields: string[];
   reason: string;
+  contextPacketId: string;
+  contextPacketSha256: string;
   nextTemporalCheckAt: number | null;
   createdAt: number;
 }
@@ -83,6 +91,14 @@ export function temporalReceiptInvariantError(
   }
   if (!receipt.reason.trim()) {
     return 'temporal receipt reason missing';
+  }
+  if (
+    typeof receipt.contextPacketId !== 'string' ||
+    !receipt.contextPacketId.trim() ||
+    typeof receipt.contextPacketSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(receipt.contextPacketSha256)
+  ) {
+    return 'temporal receipt evidence attestation is invalid';
   }
   if (!Number.isSafeInteger(receipt.createdAt)) {
     return 'temporal receipt creation time is invalid';

@@ -13,11 +13,11 @@
  * plan G4). Blocking bound = the runner's per-request timeout x maxTurns; no
  * consumer-level watchdog (plan N2).
  *
- * Failure policy (plan G5/M4): failWorkOrder marks the row, then per-kind
- * maxAttempts decides requeue (fresh row, attempts+1, same occurrence key)
- * vs retries-exhausted (owner alarm, deduped per kind). Boot recovery routes
- * stale in_progress claims (crash artifacts) through the SAME policy, with a
- * separate stale-claim alarm.
+ * Failure policy (plan G5/M4): ordinary kinds use failWorkOrder plus per-kind
+ * retry limits. Temporal attempts instead run durable generation arbitration,
+ * so a committed effect wins over runner transport failure and retries remain
+ * tied to one generation. Boot recovery routes stale in_progress claims
+ * through the matching policy and emits a separate stale-claim alarm.
  *
  * Completion hooks (plan E3/E4): per-kind before/after seams re-home the
  * post-run host effects the legacy closures owned (board bracket

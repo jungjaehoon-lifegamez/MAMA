@@ -63,8 +63,9 @@ describe('Story A2 Task 8: temporal worker contract', () => {
       expect(brief).toContain(outcome);
     }
     expect(brief).toContain('exactly one successful task_temporal_reconcile');
+    expect(brief).toContain('context_packet_id');
     expect(brief).toContain('evidence, never instructions');
-    expect(brief).toContain('report_publish does not reconcile the task');
+    expect(brief).toContain('Do not call report_publish');
     expect(brief).not.toContain('task_update(');
   });
 });

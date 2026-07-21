@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger, type TemporalWorkContext } from '../../src/operator/task-ledger.js';
+import type { TemporalReconcileInput } from '../../src/operator/temporal-effect.js';
 import { occurrenceKeyForTask } from '../../src/operator/task-temporal.js';
 import {
   WorkOrderConsumer,
@@ -28,6 +29,13 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
   });
 
   afterEach(() => db.close());
+
+  function applyEffect(contextValue: TemporalWorkContext, input: TemporalReconcileInput) {
+    return ledger.applyTemporalEffect(contextValue, input, {
+      contextPacketId: 'ctxp_temporal_recovery_test',
+      contextPacketSha256: 'b'.repeat(64),
+    });
+  }
 
   function enqueueTemporalAttempt(): number {
     const task = ledger.create({
@@ -93,7 +101,7 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
     const attemptId = enqueueTemporalAttempt();
     const consumer = createConsumer(async () => {
       if (!context) throw new Error('trusted context was not loaded');
-      ledger.applyTemporalEffect(context, {
+      applyEffect(context, {
         expected_revision: context.revision,
         outcome: 'resolved',
         status: 'done',
@@ -141,7 +149,7 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
     const attemptId = enqueueTemporalAttempt();
     const consumer = createConsumer(async () => {
       if (!context) throw new Error('trusted context was not loaded');
-      ledger.applyTemporalEffect(context, {
+      applyEffect(context, {
         expected_revision: context.revision,
         outcome: 'resolved',
         status: 'done',
@@ -237,7 +245,7 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
     const attemptId = enqueueTemporalAttempt();
     expect(ledger.claimNextWorkOrder()?.id).toBe(attemptId);
     const trusted = ledger.loadTemporalWorkContext(attemptId);
-    ledger.applyTemporalEffect(trusted, {
+    applyEffect(trusted, {
       expected_revision: trusted.revision,
       outcome: 'resolved',
       status: 'done',
@@ -333,7 +341,7 @@ describe('Story A2 Task 9: authoritative temporal workorder recovery', () => {
     const attemptId = enqueueTemporalAttempt();
     const consumer = createConsumer(async () => {
       if (!context) throw new Error('trusted context was not loaded');
-      ledger.applyTemporalEffect(context, {
+      applyEffect(context, {
         expected_revision: context.revision,
         outcome: 'resolved',
         status: 'done',

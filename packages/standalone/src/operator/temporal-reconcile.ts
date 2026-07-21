@@ -19,7 +19,7 @@ export interface TemporalSelectionOptions {
 }
 
 export interface TemporalScannerLedger {
-  listTemporalScanPage(input: { limit: number; offset: number }): TaskRecord[];
+  listTemporalScanPage(input: { limit: number; afterId: number }): TaskRecord[];
   findTemporalGenerationKeys(generationKeys: readonly string[]): Set<string>;
   countOpenWorkOrders(kind: 'temporal'): number;
   enqueueTemporalGeneration(input: EnqueueTemporalGenerationInput): TemporalGenerationEnqueueResult;
@@ -223,10 +223,11 @@ export class TemporalReconcileScheduler {
     const dateLimit = this.options.dateLimit ?? DEFAULT_DATE_LIMIT;
     let exact: TemporalCandidate[] = [];
     let dates: TemporalCandidate[] = [];
-    for (let offset = 0; ; offset += TASK_SCAN_LIMIT) {
+    let afterId = 0;
+    for (;;) {
       const tasks = this.options.ledger.listTemporalScanPage({
         limit: TASK_SCAN_LIMIT,
-        offset,
+        afterId,
       });
       if (tasks.length === 0) break;
       const pageCandidates = selectTemporalCandidates(tasks, new Set(), {
@@ -242,6 +243,7 @@ export class TemporalReconcileScheduler {
       exact = retainBestCandidates(exact, eligible, 'exact_or_deferred', exactLimit);
       dates = retainBestCandidates(dates, eligible, 'date_activation', dateLimit);
       if (tasks.length < TASK_SCAN_LIMIT) break;
+      afterId = tasks[tasks.length - 1].id;
     }
     const candidates = [...exact, ...dates].slice(0, maxOpen - open);
     for (const candidate of candidates) {

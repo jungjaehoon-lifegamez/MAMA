@@ -1,15 +1,15 @@
 /**
  * TaskLedger - the operator-owned native work-item ledger (M8 Task 0.1).
  *
- * Ports the SHAPE of Kagemusha's proven task store (11 columns: id/title/status/
- * priority/deadline/source/auto_created/confirmed/timestamps) plus `assignee`
- * and an idempotency key. Implements the pre-existing `TaskSource` interface
- * (operator-interfaces.ts) so the board projects ONE task model, not two.
+ * Extends the shape of Kagemusha's proven task store with assignment,
+ * idempotency, temporal scheduling, durable generation, effect receipt, and
+ * workorder state. Implements the pre-existing `TaskSource` interface
+ * (operator-interfaces.ts) so the board projects one task model, not two.
  *
  * Reconcile runs create/update rows through the task_create/task_update gateway
  * tools; the pipeline board slot is a projection of `list({order:
- * 'deadline_priority'})`. The AGENT makes every judgment about what becomes a
- * task; this store only persists.
+ * 'deadline_priority'})`. The agent proposes task changes, while this ledger
+ * enforces revisions, temporal ownership, idempotency, and atomic receipts.
  *
  * Schema-extension note: CREATE TABLE IF NOT EXISTS is a no-op on existing
  * tables. Any post-ship column addition needs an explicit ALTER TABLE guarded
@@ -27,6 +27,7 @@ import {
   temporalNoUpdateScope,
   temporalReceiptInvariantError,
   type TemporalEffectReceipt,
+  type TemporalEvidenceAttestation,
   type TemporalReconcileInput,
   type TemporalWorkContext,
 } from './temporal-effect.js';
@@ -509,23 +510,24 @@ export class TaskLedger implements TaskSource {
   }
 
   /** Internal bounded page for temporal reconciliation; excludes rows that can never be candidates. */
-  listTemporalScanPage(input: { limit: number; offset: number }): TaskRecord[] {
+  listTemporalScanPage(input: { limit: number; afterId: number }): TaskRecord[] {
     const rawLimit = Number(input.limit);
-    const rawOffset = Number(input.offset);
+    const rawAfterId = Number(input.afterId);
     const limit = Number.isFinite(rawLimit)
       ? Math.max(1, Math.min(200, Math.floor(rawLimit)))
       : 200;
-    const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0;
+    const afterId = Number.isFinite(rawAfterId) ? Math.max(0, Math.floor(rawAfterId)) : 0;
     const rows = this.db
       .prepare(
-        `SELECT * FROM operator_tasks
+        `SELECT * FROM operator_tasks INDEXED BY idx_operator_tasks_temporal_scan_id
          WHERE kind = 'owner'
-           AND status NOT IN ('done', 'cancelled')
+           AND status IN ('pending','in_progress','review','blocked')
+           AND id > ?
            AND (due_at IS NOT NULL OR deadline IS NOT NULL OR next_temporal_check_at IS NOT NULL)
          ORDER BY id ASC
-         LIMIT ? OFFSET ?`
+         LIMIT ?`
       )
-      .all(limit, offset) as TaskRow[];
+      .all(afterId, limit) as TaskRow[];
     return rows.map((row) => this.toRecord(row));
   }
 
@@ -892,6 +894,8 @@ export class TaskLedger implements TaskSource {
     input: EnqueueTemporalGenerationInput
   ): TemporalGenerationEnqueueResult {
     this.validateTemporalGenerationInput(input);
+    const sourceChannelRef = this.temporalSourceIdentifierRef(input.sourceChannel);
+    const sourceEventIdRef = this.temporalSourceIdentifierRef(input.sourceEventId);
     let result: TemporalGenerationEnqueueResult | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -920,8 +924,8 @@ export class TaskLedger implements TaskSource {
         }
         this.assertTemporalPayloadMatches(workOrder, existing);
         if (
-          workOrder.payload.sourceChannel !== input.sourceChannel ||
-          workOrder.payload.sourceEventId !== input.sourceEventId
+          workOrder.payload.sourceChannel !== sourceChannelRef ||
+          workOrder.payload.sourceEventId !== sourceEventIdRef
         ) {
           throw new Error(
             `temporal generation '${input.generationKey}' conflicts with stored source identifiers`
@@ -944,8 +948,8 @@ export class TaskLedger implements TaskSource {
           throw new Error(`temporal generation: task occurrence no longer matches enqueue input`);
         }
         if (
-          task.sourceChannel !== input.sourceChannel ||
-          task.sourceEventId !== input.sourceEventId
+          this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannelRef ||
+          this.temporalSourceIdentifierRef(task.sourceEventId) !== sourceEventIdRef
         ) {
           throw new Error(`temporal generation: source identifiers do not match owner task`);
         }
@@ -989,8 +993,8 @@ export class TaskLedger implements TaskSource {
               temporalEpoch: input.temporalEpoch,
               occurrenceKey: input.occurrenceKey,
               checkAt: input.checkAt,
-              sourceChannel: input.sourceChannel,
-              sourceEventId: input.sourceEventId,
+              sourceChannel: sourceChannelRef,
+              sourceEventId: sourceEventIdRef,
             },
             priority: input.priority ?? 'normal',
           },
@@ -1075,6 +1079,8 @@ export class TaskLedger implements TaskSource {
           after_revision: number;
           changed_fields: string;
           reason: string;
+          context_packet_id: string | null;
+          context_packet_sha256: string | null;
           next_temporal_check_at: number | null;
           created_at: number;
         }
@@ -1100,6 +1106,8 @@ export class TaskLedger implements TaskSource {
       afterRevision: row.after_revision,
       changedFields,
       reason: row.reason,
+      contextPacketId: row.context_packet_id ?? '',
+      contextPacketSha256: row.context_packet_sha256 ?? '',
       nextTemporalCheckAt: row.next_temporal_check_at,
       createdAt: row.created_at,
     };
@@ -1239,12 +1247,22 @@ export class TaskLedger implements TaskSource {
   applyTemporalEffect(
     suppliedContext: TemporalWorkContext,
     input: TemporalReconcileInput,
+    evidence: TemporalEvidenceAttestation,
     now: number = this.now()
   ): TemporalEffectReceipt {
     if (!Number.isSafeInteger(now)) {
       throw new Error('temporal effect time must be an epoch millisecond integer');
     }
     this.validateTemporalEffectInput(input, now);
+    if (
+      !evidence ||
+      typeof evidence.contextPacketId !== 'string' ||
+      evidence.contextPacketId.trim().length < 1 ||
+      evidence.contextPacketId.length > 300 ||
+      !/^[a-f0-9]{64}$/.test(evidence.contextPacketSha256)
+    ) {
+      throw new Error('temporal effect requires a valid host evidence attestation');
+    }
     let receipt: TemporalEffectReceipt | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
@@ -1355,6 +1373,9 @@ export class TaskLedger implements TaskSource {
           `temporal effect lost generation ownership for attempt ${context.attemptId}`
         );
       }
+      if (input.outcome === 'resolved' && (next.status === 'done' || next.status === 'cancelled')) {
+        this.supersedeAllActiveTemporalGenerationsInTransaction(context.taskId, now);
+      }
 
       if (input.outcome !== 'resolved') {
         this.insertNoUpdateNote(temporalNoUpdateScope(context), receiptReason, now);
@@ -1364,8 +1385,8 @@ export class TaskLedger implements TaskSource {
           `INSERT INTO operator_temporal_effects
              (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
               before_revision, after_revision, changed_fields, reason,
-              next_temporal_check_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+              context_packet_id, context_packet_sha256, next_temporal_check_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           context.attemptId,
@@ -1377,6 +1398,8 @@ export class TaskLedger implements TaskSource {
           afterRevision,
           JSON.stringify(changedFields),
           receiptReason,
+          evidence.contextPacketId,
+          evidence.contextPacketSha256,
           nextCheck,
           now
         );
@@ -1722,9 +1745,22 @@ export class TaskLedger implements TaskSource {
       ['sourceChannel', input.sourceChannel],
       ['sourceEventId', input.sourceEventId],
     ] as const) {
-      if (value !== null) bounded(value, field, 300);
+      if (value !== null && typeof value !== 'string') {
+        throw new Error(`temporal generation: ${field} must be a string or null`);
+      }
     }
     if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
+  }
+
+  /**
+   * Workorder payloads carry only bounded references to owner-source identifiers.
+   * Owner rows created by older releases may contain empty or arbitrarily long
+   * connector identifiers; hashing preserves exact identity without making one
+   * legacy row able to abort temporal boot or inflate every retry payload.
+   */
+  private temporalSourceIdentifierRef(value: string | null): string | null {
+    if (value === null) return null;
+    return `sha256:${createHash('sha256').update(value).digest('hex')}`;
   }
 
   private validateTemporalEffectInput(input: TemporalReconcileInput, now: number): void {
@@ -1831,8 +1867,8 @@ export class TaskLedger implements TaskSource {
     if (
       task.temporalEpoch !== temporalEpoch ||
       occurrenceKeyForTask(task) !== occurrenceKey ||
-      task.sourceChannel !== sourceChannel ||
-      task.sourceEventId !== sourceEventId ||
+      this.temporalSourceIdentifierRef(task.sourceChannel) !== sourceChannel ||
+      this.temporalSourceIdentifierRef(task.sourceEventId) !== sourceEventId ||
       generation.taskId !== taskId ||
       generation.temporalEpoch !== temporalEpoch ||
       generation.occurrenceKey !== occurrenceKey ||

@@ -1296,6 +1296,17 @@ export interface GatewayToolExecutorOptions {
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
   /** Shared context compile service for gateway context_compile calls. */
   contextCompileService?: ContextCompileService;
+  /** Test/runtime seam around the trusted context-packet store lookup. */
+  temporalContextPacketLookup?: (input: {
+    packetId: string;
+    envelopeHash: string;
+    callerModelRunId: string;
+  }) => Promise<{
+    packet_id: string;
+    packet_json: string;
+    source_refs: unknown[];
+    created_at: number;
+  } | null>;
   /** Optional wiki publish adapter for source-linked artifact persistence. */
   wikiPublishAdapter?: WikiPublishAdapter | null;
 }

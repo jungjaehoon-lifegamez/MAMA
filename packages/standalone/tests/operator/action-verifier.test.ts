@@ -116,6 +116,8 @@ describe('Story A2 Task 8: temporal receipt verifier', () => {
     afterRevision: 6,
     changedFields: ['status', 'temporal_reconciled_occurrence_key', 'last_temporal_attempt_id'],
     reason: 'Fresh evidence confirms completion',
+    contextPacketId: 'ctxp_action_verifier_test',
+    contextPacketSha256: 'd'.repeat(64),
     nextTemporalCheckAt: null,
     createdAt: 1784646000100,
   };
