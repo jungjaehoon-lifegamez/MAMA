@@ -54,7 +54,8 @@ function makeChangeList(
     parents?: string[];
     removed?: boolean;
   }>,
-  newStartPageToken?: string
+  newStartPageToken: string | null = 'next-token-456',
+  nextPageToken?: string
 ): string {
   const changeObjects = changes.map((c) => ({
     fileId: c.fileId,
@@ -72,7 +73,8 @@ function makeChangeList(
   }));
   return JSON.stringify({
     changes: changeObjects,
-    newStartPageToken: newStartPageToken ?? 'next-token-456',
+    ...(newStartPageToken === null ? {} : { newStartPageToken }),
+    ...(nextPageToken ? { nextPageToken } : {}),
   });
 }
 
@@ -366,6 +368,99 @@ describe('DriveConnector', () => {
       // Check second poll used token-002 (set from first poll's newStartPageToken)
       const secondPollParams = String(mockExecSync.mock.calls[3]?.[0]);
       expect(secondPollParams).toContain('token-002');
+    });
+
+    it('consumes every changes page before committing the new start token', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeStartPageToken('token-001') as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList(
+            [{ fileId: 'file-1', time: '2024-01-01T00:00:00.000Z' }],
+            null,
+            'page-002'
+          ) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList(
+            [{ fileId: 'file-2', time: '2024-01-01T00:01:00.000Z' }],
+            'token-003'
+          ) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList([], 'token-004') as unknown as ReturnType<typeof execSync>
+        );
+
+      const connector = new DriveConnector(makeConfig());
+      await connector.init();
+      const firstPoll = await connector.poll(new Date(0));
+      await connector.poll(new Date(0));
+
+      expect(firstPoll.map((item) => item.metadata?.fileId)).toEqual(['file-1', 'file-2']);
+      expect(String(mockExecSync.mock.calls[3]?.[0])).toContain('page-002');
+      expect(String(mockExecSync.mock.calls[4]?.[0])).toContain('token-003');
+    });
+
+    it('fails loudly when the changes API repeats a pagination token', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeStartPageToken('token-001') as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList([], null, 'page-loop') as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList([], null, 'page-loop') as unknown as ReturnType<typeof execSync>
+        );
+
+      const connector = new DriveConnector(makeConfig());
+      await connector.init();
+
+      await expect(connector.poll(new Date(0))).rejects.toThrow(/repeated a page token/i);
+    });
+
+    it('fails loudly when the terminal changes page omits newStartPageToken', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeStartPageToken('token-001') as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(makeChangeList([], null) as unknown as ReturnType<typeof execSync>);
+
+      const connector = new DriveConnector(makeConfig());
+      await connector.init();
+
+      await expect(connector.poll(new Date(0))).rejects.toThrow(/new start page token/i);
+    });
+
+    it('marks health unhealthy when a shared Drive poll fails', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeStartPageToken('token-001') as unknown as ReturnType<typeof execSync>
+        )
+        .mockImplementationOnce(() => {
+          throw new Error('shared drive unavailable');
+        });
+      const connector = new DriveConnector(
+        makeConfig({
+          channels: {
+            shared: { role: 'deliverable', name: 'shared', driveId: 'drive-1' },
+          },
+        })
+      );
+      await connector.init();
+
+      await expect(connector.poll(new Date(0))).resolves.toEqual([]);
+      await expect(connector.healthCheck()).resolves.toMatchObject({
+        healthy: false,
+        error: expect.stringContaining('shared drive unavailable'),
+      });
+      errorSpy.mockRestore();
     });
 
     it('skips changes with no file object', async () => {

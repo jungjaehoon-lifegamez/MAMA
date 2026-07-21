@@ -44,6 +44,10 @@ import type {
   RecallInput,
   ContextCompileInput,
   CodeActInput,
+  DriveBrowseInput,
+  DriveFindFolderInput,
+  DriveDownloadInput,
+  DriveUploadInput,
   UpdateInput,
   LoadCheckpointInput,
   GatewayToolExecutorOptions,
@@ -77,6 +81,7 @@ import type {
   AppendToolTraceInput,
   TemporalReconcileToolInput,
 } from './types.js';
+import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
 import {
@@ -608,6 +613,7 @@ interface GHGraphQLResponse {
 }
 
 export class GatewayToolExecutor {
+  private readonly driveTools = new DriveToolService();
   private mamaApi: MAMAApiInterface | null = null;
   private readonly mamaDbPath?: string;
   private sessionStore?: GatewaySessionStore;
@@ -2039,6 +2045,16 @@ export class GatewayToolExecutor {
       );
     }
 
+    if (
+      toolName.startsWith('drive_') &&
+      this.getExecutionState().agentContext?.roleName !== 'owner_console'
+    ) {
+      return {
+        success: false,
+        error: 'Permission denied: Google Drive tools are restricted to owner_console.',
+      } as GatewayToolResult;
+    }
+
     // Structurally disallowed tools are per-call policy carried by the execution
     // context (a shared executor serves many agents with different blocks).
     const activeDisallowed = this.getExecutionState()?.disallowedGatewayTools;
@@ -2101,6 +2117,39 @@ export class GatewayToolExecutor {
           return await this.executeTelegramSend(
             input as { chat_id: string; message?: string; file_path?: string }
           );
+        case 'drive_list_drives':
+          return {
+            success: true,
+            result: asUntrustedDriveEvidence(await this.driveTools.listDrives()),
+          };
+        case 'drive_browse':
+          return {
+            success: true,
+            result: asUntrustedDriveEvidence(
+              await this.driveTools.browse(input as DriveBrowseInput)
+            ),
+          };
+        case 'drive_find_folder':
+          return {
+            success: true,
+            result: asUntrustedDriveEvidence(
+              await this.driveTools.findFolder(input as DriveFindFolderInput)
+            ),
+          };
+        case 'drive_download':
+          return {
+            success: true,
+            result: asUntrustedDriveEvidence(
+              await this.driveTools.download(input as DriveDownloadInput)
+            ),
+          };
+        case 'drive_upload':
+          return {
+            success: true,
+            result: asUntrustedDriveEvidence(
+              await this.driveTools.upload(input as DriveUploadInput)
+            ),
+          };
         // Browser tools
         case 'browser_navigate':
           return await this.executeBrowserNavigate(input as BrowserNavigateInput);
@@ -4480,6 +4529,7 @@ export class GatewayToolExecutor {
     try {
       policy = projectCodeActToolPolicy({
         tier,
+        roleName: state.agentContext?.roleName,
         role: state.agentContext?.role,
         disallowedTools: state.disallowedGatewayTools,
         requestedAllowedTools: input.allowedTools,

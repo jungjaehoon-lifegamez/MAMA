@@ -5,6 +5,10 @@
  * requiring an actual Telegram bot connection.
  */
 
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockApi = {
@@ -14,6 +18,8 @@ const mockApi = {
   sendDocument: vi.fn().mockResolvedValue(undefined),
   sendChatAction: vi.fn().mockResolvedValue(undefined),
   sendSticker: vi.fn().mockResolvedValue(undefined),
+  deleteMessage: vi.fn().mockResolvedValue(undefined),
+  getFile: vi.fn().mockResolvedValue({ file_path: 'photos/file.jpg', file_size: 4 }),
   getStickerSet: vi.fn().mockResolvedValue({ stickers: [] }),
 };
 
@@ -368,5 +374,277 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       logSpy.mockRestore();
       await gateway.stop();
     });
+  });
+});
+
+describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
+  const makeBaseMessage = (chatId: number, userId: number, messageId: number) => ({
+    message_id: messageId,
+    date: 1700000000,
+    chat: { id: chatId, type: 'private' as const },
+    from: { id: userId, is_bot: false, first_name: 'u', username: `user${userId}` },
+  });
+
+  const privateHandler = (gateway: TelegramGateway) =>
+    gateway as unknown as { handleMessage(message: unknown): Promise<void> };
+
+  const jpegResponse = () =>
+    new Response(
+      new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0xff, 0xd9])
+    );
+
+  async function makeGateway(fetchImpl = vi.fn(async () => jpegResponse())) {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-gateway-'));
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      fetchImpl,
+    });
+    await gateway.start();
+    return gateway;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockApi.getFile.mockResolvedValue({ file_path: 'photos/file.jpg', file_size: 4 });
+    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockResolvedValue({
+      response: '||⏱️ 1 turns||\ntest',
+      duration: 100,
+    });
+  });
+
+  it('selects the largest photo and routes a photo-only message as image content', async () => {
+    const gateway = await makeGateway();
+    const routed: Array<{
+      text: string;
+      contentBlocks?: Array<{ type: string; text?: string; localPath?: string }>;
+    }> = [];
+    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockImplementation(async (message) => {
+      routed.push(message);
+      return { response: 'ok', duration: 1 };
+    });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 101),
+      photo: [
+        { file_id: 'small', file_unique_id: 'small-u', width: 10, height: 10, file_size: 2 },
+        { file_id: 'large', file_unique_id: 'large-u', width: 100, height: 100, file_size: 4 },
+      ],
+    });
+
+    expect(mockApi.getFile).toHaveBeenCalledWith('large');
+    expect(routed).toHaveLength(1);
+    expect(routed[0].text).toBe('[Image]');
+    expect(routed[0].contentBlocks?.some((block) => block.type === 'image')).toBe(true);
+    expect(routed[0].contentBlocks?.some((block) => 'localPath' in block)).toBe(false);
+    expect(JSON.stringify(routed[0].contentBlocks)).not.toContain('.mama/workspace/media');
+    await gateway.stop();
+  });
+
+  it('preserves a photo caption as the routed message text', async () => {
+    const gateway = await makeGateway();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 102),
+      caption: 'Read this image',
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(routed.text).toBe('Read this image');
+    await gateway.stop();
+  });
+
+  it('accepts and strips a group mention from caption_entities', async () => {
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['-7777'] },
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-group-')),
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    });
+    await gateway.start();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(-7777, 42, 103),
+      chat: { id: -7777, type: 'supergroup' as const, title: 'group' },
+      caption: '@test_bot read this image',
+      caption_entities: [{ type: 'mention', offset: 0, length: 9 }],
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(routed.text).toBe('read this image');
+    await gateway.stop();
+  });
+
+  it('downloads a document but routes only safe metadata without a local path', async () => {
+    const gateway = await makeGateway(vi.fn(async () => new Response(new Uint8Array([1, 2]))));
+    mockApi.getFile.mockResolvedValue({ file_path: 'documents/file.pdf', file_size: 2 });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 104),
+      document: {
+        file_id: 'document',
+        file_unique_id: 'document-u',
+        file_name: '../../brief.pdf',
+        mime_type: 'application/pdf',
+        file_size: 2,
+      },
+    });
+
+    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(routed.text).toBe('[File: brief.pdf]');
+    expect(JSON.stringify(routed.contentBlocks)).toContain('brief.pdf');
+    expect(JSON.stringify(routed.contentBlocks)).not.toContain('.mama/');
+    expect(routed.metadata.attachments[0].sourceRef).toBe('telegram:document-u');
+    expect(routed.metadata.attachments[0].url).toBeUndefined();
+    await gateway.stop();
+  });
+
+  it('reads an image uploaded as a Telegram document', async () => {
+    const gateway = await makeGateway();
+    mockApi.getFile.mockResolvedValue({ file_path: 'documents/reference.png', file_size: 12 });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 118),
+      caption: 'Read this uploaded image',
+      document: {
+        file_id: 'document-image',
+        file_unique_id: 'document-image-u',
+        file_name: 'reference.png',
+        mime_type: 'image/png',
+        file_size: 12,
+      },
+    });
+
+    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(routed.text).toBe('Read this uploaded image');
+    expect(routed.contentBlocks?.some((block: { type: string }) => block.type === 'image')).toBe(
+      true
+    );
+    expect(routed.contentBlocks?.some((block: object) => 'localPath' in block)).toBe(false);
+    await gateway.stop();
+  });
+
+  it('does not request or download media before allowlist authorization', async () => {
+    const fetchImpl = vi.fn(async () => jpegResponse());
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-denied-')),
+      fetchImpl,
+    });
+    await gateway.start();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(9999, 42, 105),
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    expect(mockApi.getFile).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+    await gateway.stop();
+  });
+
+  it('routes identical short text from distinct Telegram message IDs', async () => {
+    const gateway = await makeGateway();
+    const first = { ...makeBaseMessage(7777, 42, 106), text: 'yes' };
+    const second = { ...makeBaseMessage(7777, 42, 107), text: 'yes' };
+
+    await privateHandler(gateway).handleMessage(first);
+    await privateHandler(gateway).handleMessage(second);
+
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(2);
+    await gateway.stop();
+  });
+
+  it('still drops the same Telegram message ID', async () => {
+    const gateway = await makeGateway();
+    const message = { ...makeBaseMessage(7777, 42, 108), text: 'yes' };
+
+    await privateHandler(gateway).handleMessage(message);
+    await privateHandler(gateway).handleMessage(message);
+
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    await gateway.stop();
+  });
+
+  it('wraps forwarded captions after caption selection', async () => {
+    const gateway = await makeGateway();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 109),
+      caption: 'external instruction',
+      forward_origin: { type: 'user', date: 1700000000 },
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(routed.text).toContain('<<<UNTRUSTED-CONTENT source=telegram-forward>>>');
+    expect(routed.text).toContain('external instruction');
+    await gateway.stop();
+  });
+
+  it('makes a media failure visible and does not invoke the router', async () => {
+    const gateway = await makeGateway();
+    mockApi.getFile.mockResolvedValue({});
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 110),
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockApi.editMessageText).toHaveBeenCalledWith(
+      7777,
+      1,
+      'The image could not be downloaded.'
+    );
+    await gateway.stop();
+  });
+
+  it('rejects invalid image bytes without routing a false image success', async () => {
+    const gateway = await makeGateway(vi.fn(async () => new Response(new Uint8Array([1, 2, 3]))));
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 111),
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockApi.editMessageText).toHaveBeenCalledWith(
+      7777,
+      1,
+      'This image format is not supported.'
+    );
+    await gateway.stop();
+  });
+
+  it('finalizes one plain-text placeholder without the internal reasoning header', async () => {
+    const gateway = await makeGateway();
+    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockResolvedValue({
+      response: '||🔧 code_act | ⏱️ 1 turns||\nCompleted.',
+      duration: 1,
+    });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 112),
+      text: 'process this',
+    });
+
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, '⏳');
+    expect(mockApi.editMessageText).toHaveBeenCalledWith(7777, 1, 'Completed.');
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(
+      7777,
+      expect.stringContaining('turns'),
+      expect.anything()
+    );
+    await gateway.stop();
   });
 });

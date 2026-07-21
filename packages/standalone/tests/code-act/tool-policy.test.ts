@@ -20,7 +20,11 @@ describe('Code-Act canonical tool policy', () => {
     const owner = DEFAULT_ROLES.definitions.owner_console;
     const expectedInnerTools = owner.allowedTools.filter((tool) => tool !== 'code_act');
     const registryNames = HostBridge.getToolRegistry().map((tool) => tool.name);
-    const policy = projectCodeActToolPolicy({ tier: 2, role: owner });
+    const policy = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: owner,
+    });
 
     expect(registryNames).toEqual(expect.arrayContaining(expectedInnerTools));
     expect(policy.names).toEqual([...expectedInnerTools].sort());
@@ -66,6 +70,32 @@ describe('Code-Act canonical tool policy', () => {
     expect(tierTwo.names).toContain('mama_save');
     expect(tierThree.names).not.toContain('mama_save');
     expect(tierThree.names).toContain('mama_search');
+  });
+
+  it('projects Drive tools only for the verified owner_console role', () => {
+    const owner = projectCodeActToolPolicy({
+      tier: 1,
+      roleName: 'owner_console',
+      role: { allowedTools: ['*'] },
+    });
+    const chatBot = projectCodeActToolPolicy({
+      tier: 1,
+      roleName: 'chat_bot',
+      role: { allowedTools: ['*'] },
+    });
+    const missingRole = projectCodeActToolPolicy({ tier: 1, role: { allowedTools: ['*'] } });
+
+    expect(owner.names).toEqual(
+      expect.arrayContaining([
+        'drive_list_drives',
+        'drive_browse',
+        'drive_find_folder',
+        'drive_download',
+        'drive_upload',
+      ])
+    );
+    expect(chatBot.names.some((name) => name.startsWith('drive_'))).toBe(false);
+    expect(missingRole.names.some((name) => name.startsWith('drive_'))).toBe(false);
   });
 
   it('allows both model fields to narrow but never widen the role policy', () => {
@@ -125,6 +155,7 @@ describe('Code-Act canonical tool policy', () => {
     const fingerprint = JSON.parse(first.fingerprintPayload) as CodeActToolPolicyFingerprintData;
     expect(fingerprint.inputs).toEqual({
       tier: 2,
+      roleName: null,
       roleAllowedTools: ['Read', 'mama_*'],
       roleBlockedTools: ['mama_update'],
       runtimeDisallowedTools: ['mama_load_checkpoint'],

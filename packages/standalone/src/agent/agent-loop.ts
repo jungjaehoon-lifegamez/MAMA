@@ -749,6 +749,7 @@ export class AgentLoop {
         const tierForTypeDefs = options.agentContext?.tier ?? 1;
         const policy = projectCodeActToolPolicy({
           tier: tierForTypeDefs,
+          roleName: options.agentContext?.roleName,
           role: options.agentContext?.role,
           disallowedTools: this.disallowedTools,
         });
@@ -1216,6 +1217,7 @@ export class AgentLoop {
     const codeActPolicy = this.useCodeAct
       ? projectCodeActToolPolicy({
           tier: runScope.tier,
+          roleName: options?.agentContext?.roleName,
           role: options?.agentContext?.role,
           disallowedTools: this.disallowedTools,
         })

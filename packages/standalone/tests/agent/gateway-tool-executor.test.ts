@@ -1439,6 +1439,42 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           });
         });
 
+        it('injects Drive functions for owner_console but not a wildcard non-owner role', async () => {
+          const ownerExecutor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          ownerExecutor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'owner_console',
+            role: DEFAULT_ROLES.definitions.owner_console,
+          });
+          const ownerResult = await ownerExecutor.execute('code_act', {
+            code: '({ browse: typeof drive_browse, upload: typeof drive_upload })',
+          });
+
+          const chatExecutor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          chatExecutor.setAgentContext({
+            ...createViewerContext(),
+            roleName: 'chat_bot',
+            role: { allowedTools: ['code_act', '*'] },
+          });
+          const chatResult = await chatExecutor.execute('code_act', {
+            code: '({ browse: typeof drive_browse, upload: typeof drive_upload })',
+          });
+          const directChatResult = await chatExecutor.execute('drive_list_drives', {});
+
+          expect(JSON.parse(String(ownerResult.message)).value).toEqual({
+            browse: 'function',
+            upload: 'function',
+          });
+          expect(JSON.parse(String(chatResult.message)).value).toEqual({
+            browse: 'undefined',
+            upload: 'undefined',
+          });
+          expect(directChatResult).toMatchObject({
+            success: false,
+            error: expect.stringContaining('owner_console'),
+          });
+        });
+
         it('does not let request allowlists widen the active role', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
           executor.setAgentContext({
