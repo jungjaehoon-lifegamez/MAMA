@@ -75,6 +75,7 @@ import type {
   BeginModelRunInput,
   ModelRunRecord,
   AppendToolTraceInput,
+  TemporalReconcileToolInput,
 } from './types.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
@@ -122,6 +123,90 @@ import {
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
+import type {
+  TemporalEvidenceAttestation,
+  TemporalWorkContext,
+} from '../operator/temporal-effect.js';
+
+function serializeTaskToolRecord(
+  task: import('../operator/task-ledger.js').TaskRecord
+): Record<string, unknown> {
+  return {
+    ...task,
+    due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
+    deadline_offset_minutes: task.deadlineOffsetMinutes,
+    temporal_epoch: task.temporalEpoch,
+    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
+    last_temporal_checked_at: task.lastTemporalCheckedAt,
+    next_temporal_check_at: task.nextTemporalCheckAt,
+    last_temporal_attempt_id: task.lastTemporalAttemptId,
+    temporal_state: task.temporalState,
+  };
+}
+
+function temporalContextPacketBinding(context: TemporalWorkContext): string {
+  return `temporal:${context.taskId}:${context.generationKey}`;
+}
+
+function bindTemporalContextPacketTask(context: TemporalWorkContext, task: unknown): string {
+  if (typeof task !== 'string' || task.trim().length === 0) {
+    const error = new Error('task is required.') as Error & { code: string };
+    error.code = 'context_compile_input_invalid';
+    throw error;
+  }
+  return `${temporalContextPacketBinding(context)}\n${task}`;
+}
+
+function temporalIdentifierRef(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function temporalPacketRawSourcesWithinBoundSource(
+  context: TemporalWorkContext,
+  sourceRefs: readonly unknown[]
+): boolean {
+  const rawRefs = sourceRefs.filter(
+    (value): value is Record<string, unknown> =>
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).kind === 'raw'
+  );
+  if (!context.sourceChannel) {
+    return rawRefs.length === 0;
+  }
+  return rawRefs.every((ref) => {
+    const eventMatches =
+      !context.sourceEventId ||
+      [ref.raw_id, ref.source_id].some(
+        (value) =>
+          typeof value === 'string' && temporalIdentifierRef(value) === context.sourceEventId
+      );
+    const channelMatches =
+      !context.sourceChannel ||
+      (typeof ref.connector === 'string' &&
+        typeof ref.channel_id === 'string' &&
+        temporalIdentifierRef(`${ref.connector}:${ref.channel_id}`) === context.sourceChannel);
+    return eventMatches && channelMatches;
+  });
+}
+
+function temporalPacketReferencesBoundSource(
+  context: TemporalWorkContext,
+  sourceRefs: readonly unknown[]
+): boolean {
+  const hasRawReference = sourceRefs.some(
+    (value) =>
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).kind === 'raw'
+  );
+  if (context.sourceEventId || context.sourceChannel) {
+    return hasRawReference && temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+  }
+  return temporalPacketRawSourcesWithinBoundSource(context, sourceRefs);
+}
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -162,6 +247,8 @@ type ActiveGatewayExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  workorderAttemptId?: number;
+  temporalWorkContext?: TemporalWorkContext;
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -243,6 +330,49 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_update',
   'mama_add',
   'mama_ingest',
+]);
+
+const TEMPORAL_WRITE_TOOLS = new Set<string>([
+  'mama_save',
+  'context_compile',
+  'mama_update',
+  'mama_add',
+  'mama_ingest',
+  'report_publish',
+  'report_request',
+  'workorder_request',
+  'wiki_publish',
+  'obsidian',
+  'task_create',
+  'task_update',
+  'contract_no_update',
+  'task_temporal_reconcile',
+  'Write',
+  'Bash',
+  'discord_send',
+  'slack_send',
+  'telegram_send',
+  'webchat_send',
+  'delegate',
+  'os_add_bot',
+  'os_set_permissions',
+  'os_set_model',
+  'os_restart_bot',
+  'os_stop_bot',
+  'agent_update',
+  'agent_create',
+  'viewer_navigate',
+  'viewer_notify',
+  'save_integration_token',
+  'browser_navigate',
+  'browser_screenshot',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_evaluate',
+  'browser_pdf',
+  'browser_close',
+  'agent_test',
 ]);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
@@ -491,6 +621,9 @@ export class GatewayToolExecutor {
   private readonly envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   private readonly metricsStore: GatewayToolExecutorOptions['metricsStore'];
   private contextCompileService: GatewayToolExecutorOptions['contextCompileService'];
+  private temporalContextPacketLookup: NonNullable<
+    GatewayToolExecutorOptions['temporalContextPacketLookup']
+  >;
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
@@ -596,6 +729,8 @@ export class GatewayToolExecutor {
       sourceMessageRef: executionContext?.sourceMessageRef,
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
+      workorderAttemptId: executionContext?.workorderAttemptId,
+      temporalWorkContext: executionContext?.temporalWorkContext,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -636,6 +771,10 @@ export class GatewayToolExecutor {
       sourceMessageRef: active.sourceMessageRef ?? fallback.sourceMessageRef,
       modelRunId: active.modelRunId ?? fallback.modelRunId,
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
+      // Never merged from fallback - attempt identity is issued for one claimed run only.
+      workorderAttemptId: active.workorderAttemptId,
+      // Never merged from fallback - temporal authority belongs to one claimed run only.
+      temporalWorkContext: active.temporalWorkContext,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -678,6 +817,37 @@ export class GatewayToolExecutor {
     }
     const activeContext = this.normalizeExecutionContext(executionContext);
     return this.executionContextStorage.run(activeContext, fn);
+  }
+
+  private requireActiveTemporalAuthority(toolName: string): TemporalWorkContext | null {
+    const context = this.getExecutionState().temporalWorkContext;
+    if (toolName === 'task_temporal_reconcile' && !context) {
+      throw new AgentError(
+        'task_temporal_reconcile requires an active host-issued temporal work context',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+    if (!context) return null;
+    if (!this.taskLedger) {
+      throw new AgentError(
+        'Temporal work authority cannot be checked because the task ledger is unavailable',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+    try {
+      return this.taskLedger.assertTemporalWorkContextActive(context);
+    } catch {
+      throw new AgentError(
+        'Temporal workorder authority is no longer active',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
   }
 
   setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
@@ -852,6 +1022,19 @@ export class GatewayToolExecutor {
     this.envelopeIssuanceMode = options.envelopeIssuanceMode ?? 'enabled';
     this.metricsStore = options.metricsStore ?? null;
     this.contextCompileService = options.contextCompileService;
+    this.temporalContextPacketLookup =
+      options.temporalContextPacketLookup ??
+      (async (input) => {
+        const packet = getContextPacketForTrustedUse(await getContextPacketLookupAdapter(), input);
+        if (!packet) return null;
+        return {
+          packet_id: packet.packet_id,
+          task: packet.task,
+          packet_json: packet.packet_json,
+          source_refs: packet.source_refs,
+          created_at: packet.created_at,
+        };
+      });
     this.wikiPublishAdapter = options.wikiPublishAdapter ?? null;
     this.browserTool = getBrowserTool({
       screenshotDir: join(process.env.HOME || '', '.mama', 'workspace', 'media', 'outbound'),
@@ -1092,10 +1275,8 @@ export class GatewayToolExecutor {
           this.logEnvelopeActivity(ctx, 'envelope_violation', toolName, err.message);
           const denial: EnvelopeDenialResult = {
             success: false,
-            error: err.message,
+            error: `[${err.code}] Envelope policy denied this tool call`,
             code: err.code,
-            envelope_hash: ctx.envelope.envelope_hash,
-            ...err.metadata,
           };
           return denial;
         }
@@ -1208,17 +1389,57 @@ export class GatewayToolExecutor {
     const gatewayCallId = baseCtx.gatewayCallId ?? `gw_${randomUUID().replace(/-/g, '')}`;
     const ctx = { ...baseCtx, gatewayCallId };
     const effectiveInput = this.applyEnvelopeScopedReadDefaults(toolName, input, ctx);
-    const scopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
+    const computedScopeAudit = this.computeScopeAuditFields(toolName, effectiveInput, ctx);
+    const scopeAudit = ctx.temporalWorkContext
+      ? {
+          requestedScopes: null,
+          envelopeScopesSnapshot: null,
+          mismatch: computedScopeAudit.mismatch,
+        }
+      : {
+          ...computedScopeAudit,
+          requestedScopes: digestRequestedScopesForAudit(computedScopeAudit.requestedScopes),
+        };
+    if (ctx.temporalWorkContext && TEMPORAL_WRITE_TOOLS.has(toolName)) {
+      await this.executionContextStorage.run(ctx, async () => {
+        this.requireActiveTemporalAuthority(toolName);
+      });
+    }
     const traceState = await this.beginTraceIfNeeded(ctx, gatewayCallId);
     const activeCtx = traceState ? { ...ctx, modelRunId: traceState.modelRunId } : ctx;
 
     let result!: GatewayToolResult;
+    let auditResult!: GatewayToolResult;
     try {
-      result = await this.executionContextStorage.run(activeCtx, () =>
+      const rawResult = await this.executionContextStorage.run(activeCtx, () =>
         this.executeWithEnvelopeAndPermissions(toolName, effectiveInput, gatewayCallId)
       );
+      if (
+        activeCtx.temporalWorkContext &&
+        toolName !== 'task_temporal_reconcile' &&
+        toolName !== 'code_act'
+      ) {
+        await this.executionContextStorage.run(activeCtx, async () => {
+          this.requireActiveTemporalAuthority(toolName);
+        });
+      }
+      const shouldSanitizeAuditFailure =
+        Boolean(activeCtx.temporalWorkContext) ||
+        toolName === 'context_compile' ||
+        toolName === 'code_act';
+      auditResult = shouldSanitizeAuditFailure
+        ? sanitizeGatewayFailureResult(rawResult, Boolean(activeCtx.temporalWorkContext))
+        : rawResult;
+      result = activeCtx.temporalWorkContext ? auditResult : rawResult;
       activeCtx.signal?.throwIfAborted();
     } catch (error) {
+      const shouldSanitizeAuditFailure =
+        Boolean(activeCtx.temporalWorkContext) ||
+        toolName === 'context_compile' ||
+        toolName === 'code_act';
+      const auditError = shouldSanitizeAuditFailure
+        ? sanitizeGatewayError(error, Boolean(activeCtx.temporalWorkContext))
+        : error;
       await this.appendToolTraceIfNeeded(
         traceState,
         activeCtx,
@@ -1226,14 +1447,14 @@ export class GatewayToolExecutor {
         undefined,
         Date.now() - startedAt,
         gatewayCallId,
-        error
+        auditError
       ).catch((appendError: unknown) => {
         securityLogger.warn(
           '[model-run] failed to append failed tool trace before finalization',
           appendError
         );
       });
-      await this.failDirectModelRunIfNeeded(traceState, toolName, error).catch(
+      await this.failDirectModelRunIfNeeded(traceState, toolName, auditError).catch(
         (finalizationError: unknown) => {
           securityLogger.warn(
             '[model-run] failed to finalize failed direct model run',
@@ -1248,12 +1469,12 @@ export class GatewayToolExecutor {
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
-        error
+        auditError
       );
       if (scopeAudit.mismatch) {
         this.alarmScopeMismatch(activeCtx, toolName);
       }
-      throw error;
+      throw activeCtx.temporalWorkContext ? auditError : error;
     }
 
     try {
@@ -1262,18 +1483,18 @@ export class GatewayToolExecutor {
           traceState,
           activeCtx,
           toolName,
-          result,
+          auditResult,
           Date.now() - startedAt,
           gatewayCallId
         );
       } finally {
-        await this.completeDirectModelRunIfNeeded(traceState, toolName, result);
+        await this.completeDirectModelRunIfNeeded(traceState, toolName, auditResult);
       }
     } catch (postRunError) {
       this.logGatewayToolCall(
         activeCtx,
         toolName,
-        result,
+        auditResult,
         Date.now() - startedAt,
         scopeAudit,
         gatewayCallId,
@@ -1288,7 +1509,7 @@ export class GatewayToolExecutor {
     this.logGatewayToolCall(
       activeCtx,
       toolName,
-      result,
+      auditResult,
       Date.now() - startedAt,
       scopeAudit,
       gatewayCallId
@@ -1762,6 +1983,9 @@ export class GatewayToolExecutor {
           gateway_call_id: gatewayCallId,
           ...(resultCode ? { code: resultCode } : {}),
           ...(ctx?.parentToolName ? { parent: ctx.parentToolName } : {}),
+          ...(ctx?.workorderAttemptId !== undefined
+            ? { workorder_attempt_id: ctx.workorderAttemptId }
+            : {}),
         },
       });
     } catch (logErr) {
@@ -1838,6 +2062,8 @@ export class GatewayToolExecutor {
         } as GatewayToolResult;
       }
     }
+
+    this.requireActiveTemporalAuthority(toolName);
 
     const envelopeDenied = this.enforceEnvelopeForToolCall(toolName, input);
     if (envelopeDenied) {
@@ -2339,6 +2565,21 @@ export class GatewayToolExecutor {
               false
             );
           }
+          if (this.getExecutionState().temporalWorkContext) {
+            const slotNames = Object.keys(slotsInput);
+            if (
+              slotNames.length !== 1 ||
+              slotNames[0] !== 'pipeline' ||
+              typeof slotsInput.pipeline !== 'string'
+            ) {
+              throw new AgentError(
+                'Temporal report_publish accepts exactly the host-derived pipeline slot',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
           // Stage-2 shadow seam: a per-run capture override takes precedence
           // over the global singleton (capture runs never touch the live store).
           const activePublisher =
@@ -2561,6 +2802,22 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
+          const temporalContext = this.getExecutionState().temporalWorkContext;
+          if (temporalContext) {
+            const boundTask = this.taskLedger.getById(temporalContext.taskId);
+            if (!boundTask) {
+              throw new AgentError(
+                'Host-bound temporal owner task is unavailable',
+                'WORKORDER_SUPERSEDED',
+                undefined,
+                false
+              );
+            }
+            return {
+              success: true,
+              tasks: [serializeTaskToolRecord(boundTask)],
+            };
+          }
           const listInput = input as {
             status?: string;
             channel?: string;
@@ -2570,13 +2827,15 @@ export class GatewayToolExecutor {
           };
           return {
             success: true,
-            tasks: this.taskLedger.list({
-              status: listInput.status as never,
-              channel: listInput.channel,
-              search: listInput.search,
-              limit: listInput.limit,
-              order: (listInput.order as never) ?? 'deadline_priority',
-            }),
+            tasks: this.taskLedger
+              .list({
+                status: listInput.status as never,
+                channel: listInput.channel,
+                search: listInput.search,
+                limit: listInput.limit,
+                order: (listInput.order as never) ?? 'deadline_priority',
+              })
+              .map(serializeTaskToolRecord),
           };
         }
         case 'task_create': {
@@ -2585,7 +2844,7 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: this.taskLedger.create(input as never),
+            task: serializeTaskToolRecord(this.taskLedger.create(input as never)),
           };
         }
         case 'task_update': {
@@ -2605,7 +2864,100 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: this.taskLedger.update(id, patch as never),
+            task: serializeTaskToolRecord(this.taskLedger.update(id, patch as never)),
+          };
+        }
+        case 'task_temporal_reconcile': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const context = this.getExecutionState().temporalWorkContext;
+          if (!context) {
+            throw new AgentError(
+              'task_temporal_reconcile requires trusted temporal context',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          const contextPacketId = (input as { context_packet_id?: unknown }).context_packet_id;
+          if (typeof contextPacketId !== 'string' || contextPacketId.trim().length === 0) {
+            throw new AgentError(
+              'task_temporal_reconcile requires a fresh context_packet_id',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const executionState = this.getExecutionState();
+          if (!executionState.envelope || !executionState.modelRunId) {
+            throw new AgentError(
+              'task_temporal_reconcile evidence requires an active envelope and model run',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const packet = await this.temporalContextPacketLookup({
+            packetId: contextPacketId,
+            envelopeHash: executionState.envelope.envelope_hash,
+            callerModelRunId: executionState.modelRunId,
+          });
+          if (!packet || packet.packet_id !== contextPacketId) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet is unavailable',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
+          if (
+            !Number.isSafeInteger(packet.created_at) ||
+            packet.created_at < attempt.workOrder.updatedAt
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet predates the active attempt',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const effectInput = input as TemporalReconcileToolInput;
+          if (
+            effectInput.outcome !== 'deferred' &&
+            (!Array.isArray(packet.source_refs) || packet.source_refs.length === 0)
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile requires source-backed fresh evidence',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (
+            !packet.task.startsWith(`${temporalContextPacketBinding(context)}\n`) ||
+            (effectInput.outcome === 'deferred'
+              ? Array.isArray(packet.source_refs) &&
+                packet.source_refs.length > 0 &&
+                !temporalPacketReferencesBoundSource(context, packet.source_refs)
+              : !temporalPacketReferencesBoundSource(context, packet.source_refs))
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet is not bound to the active task source',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          const evidence: TemporalEvidenceAttestation = {
+            contextPacketId,
+            contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+          };
+          const { context_packet_id: _contextPacketId, ...trustedEffectInput } = effectInput;
+          return {
+            success: true,
+            receipt: this.taskLedger.applyTemporalEffect(context, trustedEffectInput, evidence),
           };
         }
         case 'schedule_upcoming': {
@@ -4355,13 +4707,28 @@ export class GatewayToolExecutor {
     }
 
     try {
+      const temporalContext = ctx.temporalWorkContext;
+      const effectiveInput = temporalContext
+        ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
+        : input;
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
-        input,
+        input: effectiveInput,
         signal: ctx.signal,
+        beforePersist: temporalContext
+          ? () => {
+              this.requireActiveTemporalAuthority('context_compile');
+            }
+          : undefined,
       });
+      if (
+        temporalContext &&
+        !temporalPacketRawSourcesWithinBoundSource(temporalContext, result.packet.source_refs)
+      ) {
+        throw new Error('context_compile packet exceeds the active temporal task source');
+      }
       return {
         success: true,
         packet: result.packet,
@@ -4529,6 +4896,16 @@ function memoryScopeKey(scope: MemoryScope): string {
   return `${scope.kind}:${scope.id}`;
 }
 
+function digestRequestedScopesForAudit(scopes: MemoryScope[] | null): MemoryScope[] | null {
+  if (!scopes) {
+    return null;
+  }
+  return scopes.map((scope) => ({
+    kind: scope.kind,
+    id: `sha256:${createHash('sha256').update(scope.id).digest('hex')}`,
+  }));
+}
+
 function getFailureMessage(result: GatewayToolResult | undefined): string | undefined {
   if (!result || result.success !== false) {
     return undefined;
@@ -4536,4 +4913,41 @@ function getFailureMessage(result: GatewayToolResult | undefined): string | unde
   const record = result as Record<string, unknown>;
   const message = record.error ?? record.message ?? 'Tool returned success:false';
   return String(message);
+}
+
+function gatewayFailureRef(value: string, temporal: boolean): string {
+  const digest = createHash('sha256').update(value).digest('hex');
+  const label = temporal ? 'temporal_tool_failed' : 'gateway_tool_failed';
+  return `${label};sha256=${digest};length=${value.length}`;
+}
+
+function sanitizeGatewayFailureResult(
+  result: GatewayToolResult,
+  temporal: boolean
+): GatewayToolResult {
+  const failure = getFailureMessage(result);
+  if (!failure) {
+    return result;
+  }
+  const record = result as Record<string, unknown>;
+  return {
+    success: false,
+    error: gatewayFailureRef(failure, temporal),
+    ...(typeof record.code === 'string' ? { code: record.code } : {}),
+  } as GatewayToolResult;
+}
+
+function sanitizeGatewayError(error: unknown, temporal: boolean): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof AgentError) {
+    return new AgentError(
+      error.code === 'WORKORDER_SUPERSEDED'
+        ? 'Temporal workorder authority is no longer active'
+        : gatewayFailureRef(message, temporal),
+      error.code,
+      undefined,
+      error.retryable
+    );
+  }
+  return new Error(gatewayFailureRef(message, temporal));
 }

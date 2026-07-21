@@ -5,7 +5,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { HostBridge } from '../../src/agent/code-act/host-bridge.js';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
-import type { AgentLoopOptions, GatewayToolExecutionContext } from '../../src/agent/types.js';
+import type {
+  AgentLoopOptions,
+  GatewayToolExecutionContext,
+  MAMAApiInterface,
+} from '../../src/agent/types.js';
 import {
   createContextCompileService,
   type ContextCompileServiceAdapter,
@@ -73,6 +77,49 @@ describe('Story M1R: Code-Act envelope context propagation', () => {
         { query: 'contracts' },
         executionContext
       );
+    });
+
+    it('preserves a host-issued workorder attempt id in nested Code-Act gateway calls', async () => {
+      const mamaApi = {
+        suggest: vi.fn().mockResolvedValue({ success: true, results: [], count: 0 }),
+      } as unknown as MAMAApiInterface;
+      const executor = new GatewayToolExecutor({ mamaApi });
+      const executeSpy = vi.spyOn(executor, 'execute');
+      const executionContext: GatewayToolExecutionContext = {
+        agentId: 'workorder-board',
+        source: 'operator',
+        channelId: 'worker:board',
+        agentContext: {
+          source: 'operator',
+          platform: 'telegram',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+          session: {
+            sessionId: 'workorder:board:148',
+            channelId: 'worker:board',
+            userId: 'workorder-board',
+            startedAt: new Date(),
+          },
+          capabilities: ['*'],
+          limitations: [],
+          tier: 1,
+          backend: 'codex',
+        },
+        executionSurface: 'model_tool',
+        workorderAttemptId: 148,
+      };
+
+      const result = await executor.execute(
+        'code_act',
+        { code: `mama_search({ query: 'contracts' })` },
+        executionContext
+      );
+
+      expect(result.success).toBe(true);
+      const innerCall = executeSpy.mock.calls.find(([toolName]) => toolName === 'mama_search');
+      expect(innerCall?.[2]?.executionSurface).toBe('code_act');
+      expect(innerCall?.[2]?.parentToolName).toBe('code_act');
+      expect(innerCall?.[2]?.workorderAttemptId).toBe(148);
     });
   });
 });
@@ -347,9 +394,7 @@ describe('Story M1R Task 5: real Code-Act Trello context boundary', () => {
       const result = await harness.sandbox.execute(source);
 
       expect(result.success).toBe(false);
-      expect(result.error?.message).toMatch(
-        /connector_out_of_scope.*envelope\.scope\.raw_connectors/i
-      );
+      expect(result.error?.message).toMatch(/connector_out_of_scope.*envelope policy denied/i);
       expect(harness.gatewayResults).toContainEqual(
         expect.objectContaining({ success: false, code: 'connector_out_of_scope' })
       );

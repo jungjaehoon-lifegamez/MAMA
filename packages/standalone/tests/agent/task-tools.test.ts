@@ -11,7 +11,10 @@ import Database from '../../src/sqlite.js';
 
 function makeExecutor(): { executor: GatewayToolExecutor; ledger: TaskLedger } {
   const executor = new GatewayToolExecutor();
-  const ledger = new TaskLedger(new Database(':memory:'));
+  const ledger = new TaskLedger(new Database(':memory:'), {
+    now: () => Date.parse('2026-07-21T15:00:00Z'),
+    timeZone: 'Asia/Seoul',
+  });
   executor.setTaskLedger(ledger);
   return { executor, ledger };
 }
@@ -50,6 +53,44 @@ describe('Story M8-P0: native task ledger gateway tools', () => {
       expect(result.success).toBe(true);
       expect(result.tasks.map((t) => t.title)).toEqual(['sooner', 'later']);
       expect(result.tasks[0]?.assignee).toBe('worker-a');
+    });
+
+    it('accepts exact due_at and returns the normalized temporal projection', async () => {
+      const created = (await executor.execute('task_create', {
+        title: 'exact',
+        due_at: '2026-07-22T09:00:00+09:00',
+      })) as {
+        task: Record<string, unknown>;
+      };
+      expect(created.task).toMatchObject({
+        due_at: '2026-07-22T00:00:00.000Z',
+        deadlineIso: '2026-07-22',
+        deadline_offset_minutes: 540,
+        revision: 1,
+        temporal_epoch: 1,
+        temporal_state: 'exact_upcoming',
+      });
+
+      const listed = (await executor.execute('task_list', {})) as {
+        tasks: Array<Record<string, unknown>>;
+      };
+      expect(listed.tasks[0]).toMatchObject({
+        due_at: '2026-07-22T00:00:00.000Z',
+        temporal_state: 'exact_upcoming',
+      });
+    });
+
+    it('rejects offset-free and conflicting exact due inputs through the ledger boundary', async () => {
+      await expect(
+        executor.execute('task_create', { title: 'bad', due_at: '2026-07-22T09:00:00' })
+      ).rejects.toThrow(/explicit offset/);
+      await expect(
+        executor.execute('task_create', {
+          title: 'conflict',
+          due_at: '2026-07-22T09:00:00+09:00',
+          deadline: '2026-07-23',
+        })
+      ).rejects.toThrow(/conflict/);
     });
   });
 

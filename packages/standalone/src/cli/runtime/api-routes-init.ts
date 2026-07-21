@@ -396,8 +396,8 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
 
     // Dashboard cron: 30-min interval via AgentProcessManager
-    // Built PER RUN: the tracker's D-day arithmetic needs today's date, and a
-    // module-const prompt would freeze it (#134 lesson).
+    // Built PER RUN: today's date gives report context and auxiliary D-day.
+    // Temporal categories still come only from task_list.temporal_state.
     const buildDashboardPrompt =
       () => `You are triggered on a schedule. Today is ${new Date().toISOString().slice(0, 10)}. Before writing anything, determine if an update is needed:
 
@@ -407,7 +407,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
    Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
    If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 20).
 3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
-4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona. The pipeline slot is the item tracker projected from task_list (see your persona); compute D-day from today's date above.
+4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona. The pipeline slot is the item tracker projected from task_list (see your persona); use temporal_state as the canonical time category and D-day only as an auxiliary display computed from today's date.
 5. Do NOT call mama_save for the briefing; report_publish and agent_activity are the durable operational record.
 
 This saves resources. Only publish when there is genuinely new information to report.`;

@@ -14,7 +14,14 @@ export interface OperatorTaskRouteDeps {
   getTaskLedger: () => TaskLedger | null;
 }
 
-const ALLOWED_PATCH_FIELDS = new Set(['status', 'priority', 'assignee', 'due_date', 'confirmed']);
+const ALLOWED_PATCH_FIELDS = new Set([
+  'status',
+  'priority',
+  'assignee',
+  'due_date',
+  'due_at',
+  'confirmed',
+]);
 const ISO_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 function serializeTask(task: TaskRecord) {
@@ -29,6 +36,15 @@ function serializeTask(task: TaskRecord) {
     latest_event: task.latestEvent,
     auto_created: task.autoCreated,
     confirmed: task.confirmed,
+    due_at: task.dueAt === null ? null : new Date(task.dueAt).toISOString(),
+    deadline_offset_minutes: task.deadlineOffsetMinutes,
+    revision: task.revision,
+    temporal_epoch: task.temporalEpoch,
+    temporal_reconciled_occurrence_key: task.temporalReconciledOccurrenceKey,
+    last_temporal_checked_at: task.lastTemporalCheckedAt,
+    next_temporal_check_at: task.nextTemporalCheckAt,
+    last_temporal_attempt_id: task.lastTemporalAttemptId,
+    temporal_state: task.temporalState,
     created_at: task.createdAt,
     updated_at: task.updatedAt,
   };
@@ -113,6 +129,12 @@ function validatePatchBody(body: unknown): UpdateTaskInput {
       throw new Error('due_date must be a real YYYY-MM-DD calendar date or null');
     }
     patch.deadline = input.due_date;
+  }
+  if ('due_at' in input) {
+    if (input.due_at !== null && typeof input.due_at !== 'string') {
+      throw new Error('due_at must be an RFC 3339 string with an explicit offset or null');
+    }
+    patch.due_at = input.due_at;
   }
   if ('confirmed' in input) {
     if (typeof input.confirmed !== 'boolean') {

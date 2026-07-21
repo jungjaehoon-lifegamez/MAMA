@@ -52,4 +52,17 @@ describe('board slot instructions', () => {
     // no scripts/styles: the board sanitizes and the CSP blocks them anyway
     expect(lines).toContain('class');
   });
+
+  it('keeps temporal facts separate from workflow and system judgments', () => {
+    const lines = buildBoardPublishLines().join('\n');
+    expect(lines).toContain('temporal_state');
+    expect(lines).toContain('Temporal fact');
+    expect(lines).toContain('Workflow judgment');
+    expect(lines).toContain('System condition');
+    expect(lines).toContain('calendar disappearance');
+    expect(lines).toContain('Never copy Trello or Kagemusha lifecycle status');
+    expect(lines).toContain('D-day is an optional display aid');
+    expect(lines).toContain('never use it');
+    expect(lines).not.toContain('blocked/overdue');
+  });
 });

@@ -18,6 +18,7 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 // relocate INTO this file when the persona modules are deleted at cutover.
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
+import { buildTemporalWorkerBrief } from './temporal-worker.js';
 
 export function briefsDir(homeDir: string = homedir()): string {
   return join(homeDir, '.mama', 'briefs');
@@ -101,6 +102,8 @@ export function buildDefaultBrief(kind: WorkOrderKind): string {
       return `${stripManagedMarker(WIKI_AGENT_PERSONA)}\n${WIKI_WORKORDER_CONTRACT}`;
     case 'memory-curation':
       return PROMOTION_BRIEF;
+    case 'temporal':
+      return buildTemporalWorkerBrief();
   }
 }
 

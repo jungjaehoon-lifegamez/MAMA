@@ -250,7 +250,11 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       const db = new Database(':memory:');
       initAgentTables(db);
       const telegramGateway = makeTelegramGateway();
-      const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
+      const destinationSentinel = 'tg:private-destination-secret-46';
+      const appendToolTrace = vi.fn().mockResolvedValue({});
+      const executor = new GatewayToolExecutor({
+        mamaApi: { ...makeMAMAApi(), appendToolTrace },
+      });
       executor.setTelegramGateway(telegramGateway);
       executor.setSessionsDb(db);
       const envelope = makeEnvelope({
@@ -267,23 +271,28 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
 
       const result = await executor.execute(
         'telegram_send',
-        { chat_id: 'tg:OTHER', message: 'leak' } as GatewayToolInput,
+        { chat_id: destinationSentinel, message: 'leak' } as GatewayToolInput,
         {
           agentId: 'worker',
           source: 'telegram',
           channelId: 'tg:OWN',
           envelope,
           executionSurface: 'model_tool',
+          modelRunId: 'mr_destination_violation',
         }
       );
 
       expect(result).toMatchObject({
         success: false,
         code: 'destination_out_of_scope',
-        envelope_hash: 'envhash_pipeline',
       });
+      expect(result).not.toHaveProperty('envelope_hash');
+      expect(result).not.toHaveProperty('allowed');
       expect(telegramGateway.sendMessage).not.toHaveBeenCalled();
       const rows = readActivityRows(db);
+      expect(JSON.stringify(result)).not.toContain(destinationSentinel);
+      expect(JSON.stringify(rows)).not.toContain(destinationSentinel);
+      expect(JSON.stringify(appendToolTrace.mock.calls)).not.toContain(destinationSentinel);
       expect(rows).toHaveLength(2);
       expect(rows).toEqual(
         expect.arrayContaining([
@@ -304,5 +313,48 @@ describe('Story M1R: GatewayToolExecutor execute pipeline characterization', () 
       );
       db.close();
     });
+
+    it.each([
+      ['invalid_expiry', 'private-invalid-expiry-secret-47'],
+      ['expired', '2000-01-01T00:00:00.000Z'],
+    ] as const)(
+      'keeps %s envelope identity and expiry values out of every audit sink',
+      async (expectedCode, expirySentinel) => {
+        const db = new Database(':memory:');
+        initAgentTables(db);
+        const instanceSentinel = `private-${expectedCode}-instance-secret-48`;
+        const appendToolTrace = vi.fn().mockResolvedValue({});
+        const executor = new GatewayToolExecutor({
+          mamaApi: { ...makeMAMAApi(), appendToolTrace },
+        });
+        executor.setSessionsDb(db);
+        const envelope = makeEnvelope({
+          envelope_hash: `envhash_${expectedCode}`,
+          instance_id: instanceSentinel,
+          expires_at: expirySentinel,
+        });
+
+        const result = await executor.execute(
+          'mama_search',
+          { query: 'safe', scopes: envelope.scope.memory_scopes },
+          {
+            agentId: 'worker',
+            source: 'telegram',
+            channelId: 'tg:OWN',
+            envelope,
+            executionSurface: 'model_tool',
+            modelRunId: `mr_${expectedCode}`,
+          }
+        );
+
+        expect(result).toMatchObject({ success: false, code: expectedCode });
+        for (const sink of [result, readActivityRows(db), appendToolTrace.mock.calls]) {
+          const serialized = JSON.stringify(sink);
+          expect(serialized).not.toContain(instanceSentinel);
+          expect(serialized).not.toContain(expirySentinel);
+        }
+        db.close();
+      }
+    );
   });
 });

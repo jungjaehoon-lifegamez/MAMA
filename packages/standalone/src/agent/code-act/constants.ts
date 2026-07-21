@@ -73,9 +73,9 @@ ${gatewayToolsList}
 - Last expression is the return value
 - \`console.log()\` output is captured
 
-**Example:** Search and aggregate decisions
+**Example:** Count decisions
 \`\`\`
-code_act({ code: "var results = mama_search({ query: 'auth' }); var topics = results.results.map(function(r) { return r.topic; }); ({ count: topics.length, topics: topics })" })
+code_act({ code: "var r=mama_search({query:'auth'}); r.results.length" })
 \`\`\`
 
 ### Gateway Functions (ONLY inside code_act)

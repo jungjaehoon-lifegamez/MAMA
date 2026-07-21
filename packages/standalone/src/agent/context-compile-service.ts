@@ -45,6 +45,8 @@ export interface CompileAndPersistContextRequest {
   parentModelRunId?: string | null;
   deadlineMs?: number;
   signal?: AbortSignal;
+  /** Host-only authority guard, rechecked after async compilation and before persistence. */
+  beforePersist?: () => void;
 }
 
 export interface CompileAndPersistContextResult {
@@ -84,6 +86,31 @@ export class ContextCompileServiceError extends Error {
 
 function generatedId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+function auditTextRef(value: string): { sha256: string; length: number } {
+  return {
+    sha256: crypto.createHash('sha256').update(value).digest('hex'),
+    length: value.length,
+  };
+}
+
+function auditSeedRefs(seedRefs: ContextCompileInput['seed_refs']): {
+  sha256: string;
+  length: number;
+  count: number;
+} {
+  const serialized = JSON.stringify(seedRefs ?? []);
+  return {
+    ...auditTextRef(serialized),
+    count: seedRefs?.length ?? 0,
+  };
+}
+
+function auditFailure(error: unknown): string {
+  const message = getErrorMessage(error);
+  const ref = auditTextRef(message);
+  return `context_compile_failed;sha256=${ref.sha256};length=${ref.length}`;
 }
 
 function asCoreAdapter(adapter: ContextCompileServiceAdapter): CoreAdapter {
@@ -505,7 +532,7 @@ function getErrorMessage(error: unknown): string {
 function failRunningChild(
   adapter: CoreAdapter,
   modelRunId: string,
-  reason: string,
+  error: unknown,
   logger?: ContextCompileServiceOptions['logger']
 ): void {
   try {
@@ -513,9 +540,9 @@ function failRunningChild(
     if (!current || current.status !== 'running') {
       return;
     }
-    failModelRunInAdapter(adapter, modelRunId, reason);
+    failModelRunInAdapter(adapter, modelRunId, auditFailure(error));
   } catch (error) {
-    logger?.error('Failed to mark context_compile model run as failed:', error);
+    logger?.error('Failed to mark context_compile model run as failed', auditFailure(error));
   }
 }
 
@@ -576,12 +603,12 @@ export function createContextCompileService(
           caller: request.caller,
           packet_id: packetId,
           parent_model_run_id: parentModelRunId,
-          task: compileInput.task,
+          task_ref: auditTextRef(compileInput.task),
           scopes: compileInput.scopes,
           connectors: compileInput.connectors,
           project_refs: compileInput.project_refs,
           tenant_id: compileInput.tenant_id,
-          seed_refs: compileInput.seed_refs ?? [],
+          seed_refs_ref: auditSeedRefs(compileInput.seed_refs),
           range: compileInput.range ?? null,
           as_of: compileInput.as_of ?? null,
         },
@@ -598,6 +625,7 @@ export function createContextCompileService(
           now,
           packetId: () => packetId,
         });
+        request.beforePersist?.();
         const packet = sanitizeContextPacketForVisibility(
           packetWithServiceIdentity(compiled, packetId)
         );
@@ -620,7 +648,7 @@ export function createContextCompileService(
         try {
           commitModelRunInAdapter(adapter, modelRunId, `context_compile packet ${packetId}`);
         } catch (error) {
-          failRunningChild(adapter, modelRunId, getErrorMessage(error), options.logger);
+          failRunningChild(adapter, modelRunId, error, options.logger);
           throw error;
         }
         return {
@@ -631,7 +659,7 @@ export function createContextCompileService(
         };
       } catch (error) {
         if (!inserted) {
-          failRunningChild(adapter, modelRunId, getErrorMessage(error), options.logger);
+          failRunningChild(adapter, modelRunId, error, options.logger);
         }
         if (error instanceof WorkerEnvelopeError || error instanceof ContextCompileServiceError) {
           throw error;

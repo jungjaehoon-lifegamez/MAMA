@@ -35,6 +35,7 @@ describe('STORY-B6: Code-Act context_compile parent model_run lineage', () => {
       channelId: 'api:code-act',
       envelope,
       executionSurface: 'code_act',
+      workorderAttemptId: 148,
     };
   }
 
@@ -48,6 +49,7 @@ describe('STORY-B6: Code-Act context_compile parent model_run lineage', () => {
     });
 
     expect(bound.executionContext?.modelRunId).toMatch(/^mr_/);
+    expect(bound.executionContext?.workorderAttemptId).toBe(148);
     expect(getModelRunInAdapter(adapter, bound.modelRunId ?? '')).toMatchObject({
       status: 'running',
       agent_id: context.agentId,

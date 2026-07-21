@@ -175,8 +175,8 @@ describe('Story M1R: gateway tool execution audit ledger', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'destination_out_of_scope',
-      envelope_hash: envelope.envelope_hash,
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(telegramGateway.sendMessage).not.toHaveBeenCalled();
     expect(readGatewayToolRows(db)).toEqual([
       expect.objectContaining({
