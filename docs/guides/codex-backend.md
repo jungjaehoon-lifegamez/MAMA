@@ -120,8 +120,10 @@ The advertised set is built for each run and can include:
 - `code_act`, which runs JavaScript against its own restricted host bridge
 
 Code-Act does not bypass MAMA permissions. Its host bridge applies the same role, runtime, tier,
-channel, and Reactive-envelope checks as direct native host-tool calls. Calls that outlive a failed
-or timed-out model turn are cancelled before they can continue mutating state.
+channel, and Reactive-envelope checks as direct native host-tool calls. After a turn is cancelled,
+MAMA rejects new tool callbacks and waits for any callback that already started to settle before
+reporting the turn failure. An external side effect may still finish if its provider call had
+already begun and does not support cooperative cancellation.
 
 MAMA intentionally excludes the `mama` and legacy `code-act` MCP servers from the Codex app-server
 MCP registry. Exposing them there would create a second route around the canonical host bridge.
