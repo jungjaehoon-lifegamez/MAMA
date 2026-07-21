@@ -23,6 +23,7 @@ import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
+import { parseExactDueAt } from './task-temporal.js';
 
 export const TASK_STATUSES = [
   'pending',
@@ -137,6 +138,8 @@ export interface CreateTaskInput {
   assignee?: string;
   /** ISO YYYY-MM-DD */
   deadline?: string;
+  /** RFC 3339 with an explicit Z or numeric offset. */
+  due_at?: string;
   /** channelKey: "<connector>:<channelId>" */
   source_channel?: string;
   /** Idempotency key from the connector event; duplicate (channel, event) UPSERTS. */
@@ -150,6 +153,8 @@ export interface UpdateTaskInput {
   priority?: TaskPriority;
   assignee?: string | null;
   deadline?: string | null;
+  /** RFC 3339 with an explicit Z or numeric offset. */
+  due_at?: string | null;
   latest_event?: string;
   confirmed?: boolean;
   title?: string;
@@ -486,6 +491,12 @@ export class TaskLedger implements TaskSource {
     }
     if (input.priority !== undefined) assertEnum(input.priority, TASK_PRIORITIES, 'priority');
     if (input.deadline !== undefined) assertIsoDate(input.deadline, 'deadline');
+    const exactDue = input.due_at !== undefined ? parseExactDueAt(input.due_at) : null;
+    if (exactDue && input.deadline !== undefined && input.deadline !== exactDue.deadline) {
+      throw new Error('task_create: due_at and deadline conflict');
+    }
+    const normalizedDeadline = exactDue?.deadline ?? input.deadline ?? null;
+    const initialTemporalEpoch = normalizedDeadline !== null ? 1 : 0;
     const now = Date.now();
 
     if (input.source_channel && input.source_event_id) {
@@ -498,13 +509,15 @@ export class TaskLedger implements TaskSource {
         )
         .get(input.source_channel, input.source_event_id) as TaskRow | undefined;
       if (existing) {
-        // Upsert carries every provided field EXCEPT title (the original naming
-        // stays stable across retries; movement and state updates flow through).
+        // Duplicate source delivery uses the same mutation boundary, including
+        // exact-time normalization and no-op detection. The original title stays
+        // stable across retries for backward compatibility.
         return this.update(existing.id, {
           ...(input.status !== undefined ? { status: input.status } : {}),
           ...(input.priority !== undefined ? { priority: input.priority } : {}),
           ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
           ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
+          ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
           ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
           ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
         });
@@ -514,16 +527,20 @@ export class TaskLedger implements TaskSource {
     const result = this.db
       .prepare(
         `INSERT INTO operator_tasks
-           (title, status, priority, assignee, deadline, source_channel, source_event_id,
-            latest_event, auto_created, confirmed, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           (title, status, priority, assignee, deadline, due_at, deadline_offset_minutes,
+            revision, temporal_epoch, source_channel, source_event_id, latest_event,
+            auto_created, confirmed, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         input.title.trim(),
         input.status ?? 'pending',
         input.priority ?? 'normal',
         input.assignee ?? null,
-        input.deadline ?? null,
+        normalizedDeadline,
+        exactDue?.dueAt ?? null,
+        exactDue?.offsetMinutes ?? null,
+        initialTemporalEpoch,
         input.source_channel ?? null,
         input.source_event_id ?? null,
         input.latest_event ?? null,
@@ -538,15 +555,6 @@ export class TaskLedger implements TaskSource {
   }
 
   update(id: number, patch: UpdateTaskInput): TaskRecord {
-    const existing = this.getRowById(id);
-    if (!existing) throw new Error(`task_update: no task with id ${id}`);
-    // Stage-2 tamper guards: system workorder rows are host-managed (their
-    // transitions go through the workorder API only), and 'failed' can never
-    // be set on an owner task from any external surface (REST PATCH + gateway
-    // task_update both land here).
-    if (existing.kind === 'system') {
-      throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
-    }
     if (patch.status === 'failed') {
       throw new Error(`task_update: 'failed' is a system-only status`);
     }
@@ -559,22 +567,132 @@ export class TaskLedger implements TaskSource {
       throw new Error('task title must be a non-empty string');
     }
 
-    const sets: string[] = ['updated_at = ?'];
-    const params: unknown[] = [Date.now()];
-    const assign = (column: string, value: unknown) => {
-      sets.push(`${column} = ?`);
-      params.push(value);
-    };
-    if (patch.title !== undefined) assign('title', patch.title.trim());
-    if (patch.status !== undefined) assign('status', patch.status);
-    if (patch.priority !== undefined) assign('priority', patch.priority);
-    if (patch.assignee !== undefined) assign('assignee', patch.assignee);
-    if (patch.deadline !== undefined) assign('deadline', patch.deadline);
-    if (patch.latest_event !== undefined) assign('latest_event', patch.latest_event);
-    if (patch.confirmed !== undefined) assign('confirmed', patch.confirmed ? 1 : 0);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const existing = this.db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(id) as
+        | TaskRow
+        | undefined;
+      if (!existing) throw new Error(`task_update: no task with id ${id}`);
+      if (existing.kind === 'system') {
+        throw new Error(`task_update: task ${id} is a system workorder row (host-managed)`);
+      }
 
-    this.db.prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`).run(...params, id);
+      const next: Record<string, unknown> = {
+        title: existing.title,
+        status: existing.status,
+        priority: existing.priority,
+        assignee: existing.assignee,
+        deadline: existing.deadline,
+        due_at: existing.due_at,
+        deadline_offset_minutes: existing.deadline_offset_minutes,
+        latest_event: existing.latest_event,
+        confirmed: existing.confirmed,
+        temporal_epoch: existing.temporal_epoch,
+        temporal_reconciled_occurrence_key: existing.temporal_reconciled_occurrence_key,
+        last_temporal_checked_at: existing.last_temporal_checked_at,
+        next_temporal_check_at: existing.next_temporal_check_at,
+        last_temporal_attempt_id: existing.last_temporal_attempt_id,
+      };
+      if (patch.title !== undefined) next.title = patch.title.trim();
+      if (patch.status !== undefined) next.status = patch.status;
+      if (patch.priority !== undefined) next.priority = patch.priority;
+      if (patch.assignee !== undefined) next.assignee = patch.assignee;
+      if (patch.latest_event !== undefined) next.latest_event = patch.latest_event;
+      if (patch.confirmed !== undefined) next.confirmed = patch.confirmed ? 1 : 0;
+
+      const hasDueAt = Object.prototype.hasOwnProperty.call(patch, 'due_at');
+      const hasDeadline = Object.prototype.hasOwnProperty.call(patch, 'deadline');
+      if (hasDueAt && patch.due_at !== null && patch.due_at !== undefined) {
+        const exactDue = parseExactDueAt(patch.due_at);
+        if (hasDeadline && patch.deadline !== null && patch.deadline !== exactDue.deadline) {
+          throw new Error('task_update: due_at and deadline conflict');
+        }
+        next.due_at = exactDue.dueAt;
+        next.deadline = exactDue.deadline;
+        next.deadline_offset_minutes = exactDue.offsetMinutes;
+      } else if (hasDeadline) {
+        next.deadline = patch.deadline ?? null;
+        next.due_at = null;
+        if (patch.deadline === null) {
+          next.deadline_offset_minutes = null;
+        }
+      } else if (hasDueAt) {
+        next.due_at = null;
+      }
+
+      const temporalChanged =
+        next.due_at !== existing.due_at || next.deadline !== existing.deadline;
+      const terminalToOpen =
+        (existing.status === 'done' || existing.status === 'cancelled') &&
+        next.status !== 'done' &&
+        next.status !== 'cancelled';
+      if (temporalChanged || terminalToOpen) {
+        next.temporal_epoch = existing.temporal_epoch + 1;
+        next.temporal_reconciled_occurrence_key = null;
+        next.last_temporal_checked_at = null;
+        next.next_temporal_check_at = null;
+        next.last_temporal_attempt_id = null;
+      }
+
+      const persistedColumns = [
+        'title',
+        'status',
+        'priority',
+        'assignee',
+        'deadline',
+        'due_at',
+        'deadline_offset_minutes',
+        'latest_event',
+        'confirmed',
+        'temporal_epoch',
+        'temporal_reconciled_occurrence_key',
+        'last_temporal_checked_at',
+        'next_temporal_check_at',
+        'last_temporal_attempt_id',
+      ] as const;
+      const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
+      if (changedColumns.length === 0) {
+        this.db.exec('COMMIT');
+        return rowToRecord(existing);
+      }
+
+      const nextRevision = existing.revision + 1;
+      const sets = changedColumns.map((column) => `${column} = ?`);
+      const values = changedColumns.map((column) => next[column]);
+      sets.push('revision = ?', 'updated_at = ?');
+      values.push(nextRevision, Date.now());
+      this.db
+        .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
+        .run(...values, id);
+      if (temporalChanged || terminalToOpen) {
+        this.supersedeOlderTemporalGenerations(id, Number(next.temporal_epoch));
+      }
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
     return this.getById(id)!;
+  }
+
+  private supersedeOlderTemporalGenerations(taskId: number, currentEpoch: number): void {
+    const reason = 'task temporal occurrence superseded';
+    this.db
+      .prepare(
+        `UPDATE operator_tasks SET status = 'cancelled', latest_event = ?, updated_at = ?
+         WHERE kind = 'system' AND status IN ('pending','in_progress') AND id IN (
+           SELECT last_workorder_id FROM operator_temporal_generations
+           WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?
+         )`
+      )
+      .run(reason, Date.now(), taskId, currentEpoch);
+    this.db
+      .prepare(
+        `UPDATE operator_temporal_generations
+         SET disposition = 'superseded', reason = ?, updated_at = ?
+         WHERE task_id = ? AND disposition = 'active' AND temporal_epoch < ?`
+      )
+      .run(reason, Date.now(), taskId, currentEpoch);
   }
 
   /**
