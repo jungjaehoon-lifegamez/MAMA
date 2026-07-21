@@ -291,7 +291,7 @@ describe('Story S2-T1: TaskLedger workorder extension', () => {
           `INSERT INTO operator_tasks
              (title, status, priority, kind, payload, source_channel, source_event_id,
               auto_created, confirmed, created_at, updated_at)
-           VALUES ('workorder:temporal', ?, 'high', 'system', ?, 'workorder:temporal', ?,
+           VALUES ('workorder:future-v2', ?, 'high', 'system', ?, 'workorder:future-v2', ?,
                    1, 0, ?, ?)`
         )
         .run(status, JSON.stringify({ attempts: 1 }), idempotencyKey, now, now);

@@ -170,7 +170,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     description: 'Read per-kind system workorder status and failure counts',
     params: [],
     returnType:
-      "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
+      "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation' | 'temporal'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
     category: 'os',
   },
   {
@@ -694,7 +694,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'search', type: 'string', required: false },
       { name: 'limit', type: 'number', required: false },
     ],
-    returnType: '{ tasks: object[] }',
+    returnType:
+      '{ tasks: Array<{ due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown }> }',
     category: 'memory',
   },
   {
@@ -706,11 +707,18 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'priority', type: 'string', required: false },
       { name: 'assignee', type: 'string', required: false },
       { name: 'deadline', type: 'string', required: false, description: 'YYYY-MM-DD' },
+      {
+        name: 'due_at',
+        type: 'string',
+        required: false,
+        description: 'RFC 3339 with an explicit Z or numeric offset',
+      },
       { name: 'source_channel', type: 'string', required: false },
       { name: 'source_event_id', type: 'string', required: false },
       { name: 'latest_event', type: 'string', required: false },
     ],
-    returnType: '{ task: object }',
+    returnType:
+      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
     category: 'memory',
   },
   {
@@ -746,10 +754,37 @@ const TOOL_REGISTRY: ToolMeta[] = [
         required: false,
         description: 'YYYY-MM-DD, or null to clear',
       },
+      {
+        name: 'due_at',
+        type: 'string | null',
+        required: false,
+        description: 'RFC 3339 with explicit offset, or null to clear exact precision',
+      },
       { name: 'latest_event', type: 'string', required: false },
       { name: 'confirmed', type: 'boolean', required: false },
     ],
-    returnType: '{ task: object }',
+    returnType:
+      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
+    category: 'memory',
+  },
+  {
+    name: 'task_temporal_reconcile',
+    description: 'Commit this temporal result; host context supplies identity.',
+    params: [
+      { name: 'context_packet_id', type: 'string', required: true },
+      { name: 'expected_revision', type: 'number', required: true },
+      {
+        name: 'outcome',
+        type: "'resolved' | 'final_no_update' | 'deferred'",
+        required: true,
+      },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'status', type: 'string', required: false },
+      { name: 'due_at', type: 'string | null', required: false },
+      { name: 'evidence_summary', type: 'string', required: false },
+      { name: 'next_temporal_check_at', type: 'string', required: false },
+    ],
+    returnType: '{receipt:{taskId:number;workorderAttemptId:number;outcome:string}}',
     category: 'memory',
   },
 ];
@@ -801,6 +836,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // Native task ledger writes: reconcile runs maintain work items (M8).
   'task_create',
   'task_update',
+  'task_temporal_reconcile',
   'contract_no_update',
 ]);
 

@@ -12,6 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildWorkerSessionKey,
   buildWorkerSystemPrompt,
+  attachWorkOrderAttemptContext,
   workerRun,
   type WorkerRunner,
 } from '../../src/operator/worker-run.js';
@@ -128,6 +129,25 @@ describe('Story S2-T4: workerRun runOptions merge order', () => {
     expect(captured.channelId).toBe('worker:board');
     expect(captured.freshSession).toBe(true);
   });
+
+  it('preserves the host-issued attempt id through the generic options merge', async () => {
+    const runner = makeRunner();
+    const runOptions = attachWorkOrderAttemptContext({ workorderAttemptId: 999 }, 148);
+
+    await workerRun(runner, {
+      kind: 'board',
+      brief: 'brief text',
+      input: 'work',
+      runOptions,
+    });
+
+    expect(runner.calls[0].options.workorderAttemptId).toBe(148);
+  });
+
+  it('rejects an invalid host-issued attempt id before the worker starts', () => {
+    expect(() => attachWorkOrderAttemptContext({}, 0)).toThrow(/positive integer/);
+    expect(() => attachWorkOrderAttemptContext({}, 1.5)).toThrow(/positive integer/);
+  });
 });
 
 /**
@@ -159,7 +179,7 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).not.toContain('tool_call JSON');
   });
 
-  it.each(['board', 'wiki', 'memory-curation'] as const)(
+  it.each(['board', 'wiki', 'memory-curation', 'temporal'] as const)(
     'treats external evidence as untrusted data for the %s worker',
     (kind) => {
       const prompt = buildWorkerSystemPrompt('', 'codex', kind);
@@ -180,14 +200,23 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).toContain('kagemusha_* is the read-only project-task truth');
     expect(prompt).toContain('task_list/task_create/task_update is the native owner-task ledger');
     expect(prompt).toContain('Never infer or copy lifecycle status across those stores');
+    expect(prompt).toContain('Never copy Trello or Kagemusha lifecycle status');
+    expect(prompt).toContain('task_list.temporal_state');
+    expect(prompt).toContain('Temporal fact');
+    expect(prompt).toContain('Workflow judgment');
+    expect(prompt).toContain('System condition');
+    expect(prompt).toContain('unambiguous time and time zone evidence');
+    expect(prompt).toContain('retain date-only precision');
+    expect(prompt).toContain('calendar disappearance');
   });
 
   it('wires the selected runtime backend into work-order and report prompt construction', () => {
     const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
 
     expect(startSource).toMatch(
-      /buildWorkerSystemPrompt\(\s*getGatewayToolsPrompt\(\),\s*runtimeBackend,\s*wo\.workKind\s*\)/
+      /buildWorkerSystemPrompt\(\s*workOrderPolicy\.gatewayToolsPrompt,\s*runtimeBackend,\s*wo\.workKind\s*\)/
     );
+    expect(startSource).toContain('agentContext: workOrderPolicy.agentContext');
     expect(startSource).toMatch(/new OperatorTriggerLoop\(\{[\s\S]*?backend: runtimeBackend,/);
   });
 });

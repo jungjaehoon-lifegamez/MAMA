@@ -119,24 +119,46 @@ export interface PromotionPayload {
   scheduledAt: string;
 }
 
+export interface TemporalPayload {
+  generationKey: string;
+  taskId: number;
+  temporalEpoch: number;
+  occurrenceKey: string;
+  checkAt: number;
+  sourceChannel: string | null;
+  sourceEventId: string | null;
+}
+
 const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
   board: ['mode', 'force', 'channelKey', 'deltaLines'],
   wiki: ['batchId', 'events'],
   'memory-curation': ['scheduledAt'],
+  temporal: [
+    'generationKey',
+    'taskId',
+    'temporalEpoch',
+    'occurrenceKey',
+    'checkAt',
+    'sourceChannel',
+    'sourceEventId',
+  ],
 };
 
 /**
  * Validate a payload at enqueue time. Unknown fields are rejected LOUDLY -
  * a misspelled field silently dropped would surface as a wrong run later.
- * (`attempts` is ledger-managed and allowed everywhere.)
+ * `attempts` is ledger-managed and is never valid publisher input.
  */
 export function validateWorkOrderPayload(
   kind: WorkOrderKind,
   payload: Record<string, unknown>
 ): void {
+  if (Object.prototype.hasOwnProperty.call(payload, 'attempts')) {
+    throw new Error(`workorder payload (${kind}): attempts is ledger-managed`);
+  }
   const allowed = PAYLOAD_KEYS[kind];
   for (const key of Object.keys(payload)) {
-    if (key !== 'attempts' && !allowed.includes(key)) {
+    if (!allowed.includes(key)) {
       throw new Error(`workorder payload (${kind}): unknown field '${key}'`);
     }
   }
@@ -171,9 +193,33 @@ export function validateWorkOrderPayload(
     ) {
       throw new Error(`workorder payload (wiki): events[] of strings required`);
     }
-  } else {
+  } else if (kind === 'memory-curation') {
     if (typeof payload.scheduledAt !== 'string' || payload.scheduledAt === '') {
       throw new Error(`workorder payload (memory-curation): scheduledAt required`);
+    }
+  } else {
+    const boundedString = (field: 'generationKey' | 'occurrenceKey', max: number): void => {
+      const value = payload[field];
+      if (typeof value !== 'string' || value.length < 1 || value.length > max) {
+        throw new Error(`workorder payload (temporal): ${field} must contain 1-${max} characters`);
+      }
+    };
+    boundedString('generationKey', 500);
+    boundedString('occurrenceKey', 300);
+    if (!Number.isSafeInteger(payload.taskId) || (payload.taskId as number) < 1) {
+      throw new Error(`workorder payload (temporal): taskId must be a positive integer`);
+    }
+    if (!Number.isSafeInteger(payload.temporalEpoch) || (payload.temporalEpoch as number) < 0) {
+      throw new Error(`workorder payload (temporal): temporalEpoch must be a non-negative integer`);
+    }
+    if (!Number.isSafeInteger(payload.checkAt)) {
+      throw new Error(`workorder payload (temporal): checkAt must be an epoch millisecond integer`);
+    }
+    for (const field of ['sourceChannel', 'sourceEventId'] as const) {
+      const value = payload[field];
+      if (value !== null && (typeof value !== 'string' || value.length < 1 || value.length > 300)) {
+        throw new Error(`workorder payload (temporal): ${field} must be null or 1-300 characters`);
+      }
     }
   }
 }

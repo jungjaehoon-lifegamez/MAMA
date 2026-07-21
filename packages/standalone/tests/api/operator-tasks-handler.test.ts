@@ -138,7 +138,10 @@ describe('Operator tasks API', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'operator-tasks-api-'));
     db = new Database(join(dir, 'operator.db'));
-    ledger = new TaskLedger(db);
+    ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
     app = express();
     app.use(express.json());
     registerOperatorTaskRoutes(app, { getTaskLedger: () => ledger });
@@ -229,6 +232,15 @@ describe('Operator tasks API', () => {
       latest_event: 'Candidate submitted',
       auto_created: true,
       confirmed: false,
+      due_at: null,
+      deadline_offset_minutes: null,
+      revision: 1,
+      temporal_epoch: 1,
+      temporal_reconciled_occurrence_key: null,
+      last_temporal_checked_at: null,
+      next_temporal_check_at: null,
+      last_temporal_attempt_id: null,
+      temporal_state: 'date_overdue',
       created_at: created.createdAt,
       updated_at: created.updatedAt,
     });
@@ -276,6 +288,42 @@ describe('Operator tasks API', () => {
       deadlineIso: '2026-07-20',
       confirmed: true,
     });
+  });
+
+  it('normalizes exact due_at, exposes bounded temporal fields, and preserves no-op revision', async () => {
+    const created = ledger.create({ title: 'Exact owner task' });
+
+    const first = await request(app).patch(`/api/operator/tasks/${created.id}`).send({
+      due_at: '2026-07-22T09:00:00+09:00',
+      due_date: '2026-07-22',
+    });
+    expect(first.status).toBe(200);
+    expect(first.body.task).toMatchObject({
+      due_at: '2026-07-22T00:00:00.000Z',
+      due_date: '2026-07-22',
+      deadline_offset_minutes: 540,
+      revision: 2,
+      temporal_epoch: 1,
+      temporal_state: 'exact_upcoming',
+    });
+
+    const second = await request(app).patch(`/api/operator/tasks/${created.id}`).send({
+      due_at: '2026-07-22T09:00:00+09:00',
+      due_date: '2026-07-22',
+    });
+    expect(second.status).toBe(200);
+    expect(second.body.task.revision).toBe(2);
+    expect(second.body.task.updated_at).toBe(first.body.task.updated_at);
+  });
+
+  it.each([
+    [{ due_at: '2026-07-22T09:00:00' }, 'explicit offset'],
+    [{ due_at: '2026-07-22T09:00:00+09:00', due_date: '2026-07-23' }, 'conflict'],
+  ])('rejects invalid exact due input %#', async (body, expected) => {
+    const created = ledger.create({ title: 'Exact validation target' });
+    const response = await request(app).patch(`/api/operator/tasks/${created.id}`).send(body);
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain(expected);
   });
 
   it('clears due_date and assignee with null', async () => {
@@ -331,6 +379,7 @@ describe('Operator tasks API', () => {
     [{ assignee: 123 }, 'assignee'],
     [{ due_date: '2026-02-30' }, 'due_date'],
     [{ due_date: 123 }, 'due_date'],
+    [{ due_at: 123 }, 'due_at'],
     [{ confirmed: 'yes' }, 'confirmed'],
     [[], 'body'],
     ['not an object', 'body'],

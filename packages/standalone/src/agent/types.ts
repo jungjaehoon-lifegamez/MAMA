@@ -12,6 +12,7 @@
 import type { RoleConfig } from '../cli/config/types.js';
 import type { Envelope } from '../envelope/types.js';
 import type { WikiPublishAdapter } from '../wiki-artifacts/wiki-publish-adapter.js';
+import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 import type { ContextCompileService } from './context-compile-service.js';
 import type { GatewayToolExecutor } from './gateway-tool-executor.js';
 import type {
@@ -30,6 +31,7 @@ export type {
 } from '@jungjaehoon/mama-core';
 
 export type ContextCompileInput = CoreContextCompileInput;
+export type TemporalReconcileToolInput = TemporalReconcileInput & { context_packet_id: string };
 
 // ============================================================================
 // Agent Context Types (Role Awareness)
@@ -130,6 +132,10 @@ export type GatewayToolExecutionContext = {
   sourceMessageRef?: string;
   modelRunId?: string | null;
   gatewayCallId?: string;
+  /** Host-issued claimed system-row id; never accepted from model tool input. */
+  workorderAttemptId?: number;
+  /** Host-built temporal authority; never accepted from tool input or fallback state. */
+  temporalWorkContext?: TemporalWorkContext;
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -722,7 +728,8 @@ export type GatewayToolInput =
   | ListBotsInput
   | RestartBotInput
   | StopBotInput
-  | CodeActInput;
+  | CodeActInput
+  | TemporalReconcileToolInput;
 
 /**
  * MAMA tool names (Gateway tools, NOT MCP protocol)
@@ -791,6 +798,7 @@ export type GatewayToolName =
   | 'task_list'
   | 'task_create'
   | 'task_update'
+  | 'task_temporal_reconcile'
   | 'contract_no_update'
   | 'schedule_upcoming'
   // System tools
@@ -911,9 +919,6 @@ export interface EnvelopeDenialResult {
   success: false;
   error: string;
   code: string;
-  envelope_hash?: string;
-  allowed?: unknown;
-  tier_required?: number;
 }
 
 /**
@@ -1000,6 +1005,10 @@ export interface AgentLoopOptions {
   agentContext?: AgentContext;
   /** Stage-2 shadow seam: per-run report_publish override (see GatewayToolExecutionContext). */
   reportPublisherOverride?: (slots: Record<string, string>) => void;
+  /** Host-issued claimed system-row id; never accepted from model tool input. */
+  workorderAttemptId?: number;
+  /** Host-built temporal authority for one claimed temporal workorder. */
+  temporalWorkContext?: TemporalWorkContext;
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)
@@ -1213,7 +1222,8 @@ export type AgentErrorCode =
   | 'TOOL_ERROR'
   | 'UNKNOWN_TOOL'
   | 'INVALID_RESPONSE'
-  | 'ENVELOPE_EXPIRED';
+  | 'ENVELOPE_EXPIRED'
+  | 'WORKORDER_SUPERSEDED';
 
 /**
  * Custom error class for agent loop errors
@@ -1284,6 +1294,18 @@ export interface GatewayToolExecutorOptions {
   metricsStore?: import('../observability/metrics-store.js').MetricsStore | null;
   /** Shared context compile service for gateway context_compile calls. */
   contextCompileService?: ContextCompileService;
+  /** Test/runtime seam around the trusted context-packet store lookup. */
+  temporalContextPacketLookup?: (input: {
+    packetId: string;
+    envelopeHash: string;
+    callerModelRunId: string;
+  }) => Promise<{
+    packet_id: string;
+    task: string;
+    packet_json: string;
+    source_refs: unknown[];
+    created_at: number;
+  } | null>;
   /** Optional wiki publish adapter for source-linked artifact persistence. */
   wikiPublishAdapter?: WikiPublishAdapter | null;
 }

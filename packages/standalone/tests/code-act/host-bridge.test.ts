@@ -94,6 +94,13 @@ describe('HostBridge', () => {
       expect(t3).toContain('task_list');
       expect(t3).not.toContain('task_create');
       expect(t3).not.toContain('task_update');
+
+      const create = bridge.getAvailableFunctions(2).find((fn) => fn.name === 'task_create');
+      const update = bridge.getAvailableFunctions(2).find((fn) => fn.name === 'task_update');
+      const list = bridge.getAvailableFunctions(3).find((fn) => fn.name === 'task_list');
+      expect(create?.params.map((param) => param.name)).toContain('due_at');
+      expect(update?.params.map((param) => param.name)).toContain('due_at');
+      expect(list?.returnType).toContain('temporal_state');
     });
 
     it('kagemusha query tools are read-only: available at tier 2 AND tier 3', () => {
@@ -374,6 +381,7 @@ describe('HostBridge', () => {
         returnType: expect.stringContaining('failedCount'),
         category: 'os',
       });
+      expect(registry.get('workorder_status')?.returnType).toContain("'temporal'");
     });
   });
 });

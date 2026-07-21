@@ -944,7 +944,7 @@ describe('AgentLoop', () => {
           name: 'workorder_status',
           params: [],
           returnType:
-            "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
+            "{ data: { kinds: Array<{ workKind: 'board' | 'wiki' | 'memory-curation' | 'temporal'; lastRunAt: number | null; lastStatus: 'pending' | 'in_progress' | 'review' | 'blocked' | 'done' | 'cancelled' | 'failed' | null; failedCount: number; lastFailureReason: string | null }> } }",
         },
       ]);
 

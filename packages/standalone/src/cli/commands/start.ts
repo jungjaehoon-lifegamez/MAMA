@@ -22,6 +22,8 @@ import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
+import { ToolRegistry } from '../../agent/tool-registry.js';
+import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
 import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
@@ -71,14 +73,23 @@ import {
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
-import type { WorkOrderKind } from '../../operator/task-ledger.js';
+import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
+import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
+import {
+  closeTemporalRuntimeBeforeDatabase,
+  preflightTemporalStartup,
+  type TemporalRuntime,
+} from '../../operator/temporal-runtime.js';
+import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
+    info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
   };
 };
 const codeActLogger = new DebugLogger('CodeAct');
+const temporalLogger = new DebugLogger('TemporalReconcile');
 type RuntimeBackend = 'claude' | 'codex';
 
 export function requireRuntimeBackend(value: unknown): RuntimeBackend {
@@ -98,6 +109,7 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'wiki_publish',
   'task_create',
   'task_update',
+  'task_temporal_reconcile',
   'contract_no_update',
 ]);
 
@@ -239,7 +251,7 @@ export type DaemonRawConnectorPrincipal =
 
 /**
  * Trello contains owner-scoped project evidence. Among daemon-internal runs,
- * only the host-issued board workorder may read it. Verified owner-console
+ * only host-issued board and temporal workorders may read it. Verified owner-console
  * chat receives its separate route-scoped envelope in envelope-bootstrap.
  */
 export function scopeDaemonRawConnectors(
@@ -247,7 +259,7 @@ export function scopeDaemonRawConnectors(
   principal: DaemonRawConnectorPrincipal
 ): string[] {
   const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
-  if (principal === 'workorder-board') {
+  if (principal === 'workorder-board' || principal === 'workorder-temporal') {
     return connectors;
   }
   return connectors.filter((connector) => connector !== 'trello');
@@ -331,7 +343,7 @@ function buildCodeActRole(policy: {
   };
 }
 
-interface WorkOrderCodeActPolicy {
+interface WorkOrderToolPolicy {
   roleName: string;
   allowedTools: readonly string[];
 }
@@ -339,7 +351,7 @@ interface WorkOrderCodeActPolicy {
 // Stage-2 workers are short-lived operator jobs, not standing multi-agent
 // personas. Their permissions must therefore be complete on a default install
 // and must not vary with optional legacy agent configuration.
-const WORKORDER_CODE_ACT_POLICIES = {
+const WORKORDER_TOOL_POLICIES = {
   board: {
     roleName: 'workorder-board',
     allowedTools: [
@@ -371,13 +383,40 @@ const WORKORDER_CODE_ACT_POLICIES = {
       'mama_search',
     ],
   },
-} as const satisfies Record<WorkOrderKind, WorkOrderCodeActPolicy>;
+  temporal: {
+    roleName: 'workorder-temporal',
+    allowedTools: [
+      'agent_notices',
+      'context_compile',
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_overview',
+      'kagemusha_tasks',
+      'schedule_upcoming',
+      'task_list',
+      'task_temporal_reconcile',
+    ],
+  },
+} as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
 
-export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: string): AgentContext {
-  const policy = WORKORDER_CODE_ACT_POLICIES[kind];
+export interface WorkOrderAgentPolicy {
+  agentContext: AgentContext;
+  gatewayToolsPrompt: string;
+}
+
+export function buildWorkOrderAgentPolicy(
+  kind: WorkOrderKind,
+  model: string,
+  backend: RuntimeBackend
+): WorkOrderAgentPolicy {
+  const policy = WORKORDER_TOOL_POLICIES[kind];
+  if (!policy) {
+    throw new Error(`Missing built-in workorder tool policy for '${kind}'`);
+  }
   const blockedTools: string[] = [];
-  const allowedTools = uniqueToolList(['code_act', ...policy.allowedTools]);
-  return {
+  const innerTools = uniqueToolList(policy.allowedTools);
+  const allowedTools = uniqueToolList(['code_act', ...innerTools]);
+  const agentContext: AgentContext = {
     source: 'operator',
     platform: 'cli',
     roleName: policy.roleName,
@@ -397,7 +436,11 @@ export function buildWorkOrderCodexAgentContext(kind: WorkOrderKind, model: stri
     capabilities: allowedTools,
     limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
     tier: 2,
-    backend: 'codex',
+    backend,
+  };
+  return {
+    agentContext,
+    gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools),
   };
 }
 
@@ -629,7 +672,38 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
-  const startupBackend = config.agent.backend;
+  const temporalStartup = preflightTemporalStartup(process.env, (reason) => {
+    const preflightDbPath = expandPath('~/.mama/operator/triggers.db');
+    mkdirSync(dirname(preflightDbPath), { recursive: true });
+    const preflightDb = new Database(preflightDbPath);
+    try {
+      new TaskLedger(preflightDb).pauseActiveTemporalWork(reason);
+    } finally {
+      preflightDb.close();
+    }
+  });
+
+  const runtimeBackend = requireRuntimeBackend(config.agent.backend);
+  const temporalPolicy =
+    temporalStartup.temporalFlag === 'on'
+      ? buildWorkOrderAgentPolicy('temporal', config.agent.model, runtimeBackend)
+      : null;
+  const temporalEffectiveTools = temporalPolicy
+    ? projectCodeActToolPolicy({
+        tier: requireCodeActTier(temporalPolicy.agentContext.tier),
+        role: temporalPolicy.agentContext.role,
+      }).names
+    : [];
+  const temporalAvailableTools = ToolRegistry.getValidToolNames();
+  if (
+    temporalStartup.temporalFlag === 'on' &&
+    (!temporalEffectiveTools.includes('task_temporal_reconcile') ||
+      !temporalAvailableTools.includes('task_temporal_reconcile'))
+  ) {
+    throw new Error('temporal reconciliation tool policy or transport registry is incompatible');
+  }
+
+  const startupBackend = runtimeBackend;
   const usesCodexBackend = startupBackend === 'codex' || hasCodexBackendConfigured(config);
 
   if (usesCodexBackend) {
@@ -697,7 +771,6 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   process.env.MAMA_BACKEND = runtimeBackend;
   const agentLoopBackend: 'claude' | 'codex' = runtimeBackend;
 
@@ -1158,7 +1231,6 @@ export async function runAgentLoop(
   const operatorDb = new Database(operatorDbPath);
   let taskLedger: import('../../operator/task-ledger.js').TaskLedger;
   try {
-    const { TaskLedger } = await import('../../operator/task-ledger.js');
     taskLedger = new TaskLedger(operatorDb);
     toolExecutor.setTaskLedger(taskLedger);
   } catch (err) {
@@ -1167,29 +1239,31 @@ export async function runAgentLoop(
     throw err;
   }
   // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
-  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed BEFORE
-  // registerApiRoutes (which registers the per-kind completion hooks) and
-  // started AFTER it - the boot invariant below enforces that ordering.
-  const { readStage2Flag } = await import('../../operator/workorder-publishers.js');
-  const stage2Flag = readStage2Flag();
+  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed before production
+  // runtime assembly registers per-kind completion hooks, and started only
+  // after route registration and recovery complete.
+  const { stage2Flag, temporalFlag } = temporalStartup;
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
-  const { resolveWorkerRequestTimeoutMs } = await import('../../operator/worker-run.js');
+  const { resolveWorkerRequestTimeoutMs, attachWorkOrderAttemptContext } =
+    await import('../../operator/worker-run.js');
   resolveWorkerRequestTimeoutMs();
   let workOrderConsumer: import('../../operator/workorder-consumer.js').WorkOrderConsumer | null =
     null;
+  let temporalRuntime: TemporalRuntime | null = null;
 
   gateways.push({
     stop: async () => {
       // Consumer stop BEFORE db close (same gateway = ordered; parallel
       // gateways would race an in-flight tick into "database is not open").
-      await workOrderConsumer?.stop().catch(() => {});
-      try {
-        operatorDb.close();
-      } catch {
-        /* already closed */
-      }
+      await closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
+        try {
+          operatorDb.close();
+        } catch {
+          /* already closed */
+        }
+      }).catch(() => {});
     },
   });
   if (stage2Flag !== 'off') {
@@ -1252,19 +1326,24 @@ export async function runAgentLoop(
         // spawn-default code-act path, where per-run envelope/capture overrides
         // cannot reach (shadow-gate §8.2).
         const { buildWorkerSystemPrompt } = await import('../../operator/worker-run.js');
-        const { getGatewayToolsPrompt } = await import('../../agent/agent-loop.js');
-        const runOptions: Record<string, unknown> = {
-          systemPrompt: buildWorkerSystemPrompt(
-            getGatewayToolsPrompt(),
-            runtimeBackend,
-            wo.workKind
-          ),
-        };
-        if (runtimeBackend === 'codex') {
-          runOptions.agentContext = buildWorkOrderCodexAgentContext(
-            wo.workKind,
-            config.agent.model
-          );
+        const workOrderPolicy = buildWorkOrderAgentPolicy(
+          wo.workKind,
+          config.agent.model,
+          runtimeBackend
+        );
+        const runOptions: Record<string, unknown> = attachWorkOrderAttemptContext(
+          {
+            systemPrompt: buildWorkerSystemPrompt(
+              workOrderPolicy.gatewayToolsPrompt,
+              runtimeBackend,
+              wo.workKind
+            ),
+            agentContext: workOrderPolicy.agentContext,
+          },
+          wo.id
+        );
+        if (wo.workKind === 'temporal') {
+          runOptions.temporalWorkContext = buildTemporalWorkerContext(taskLedger, wo);
         }
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
@@ -1387,6 +1466,21 @@ export async function runAgentLoop(
       }
     });
   }
+  const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const temporalAssembly = assembleDaemonTemporalRuntime({
+    flag: temporalFlag,
+    stage2Flag,
+    backend: runtimeBackend,
+    envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
+    effectiveTools: temporalEffectiveTools,
+    availableTools: temporalAvailableTools,
+    transportReady: Boolean(agentLoopClient.runWithContent),
+    timeZone: temporalTimeZone,
+    ledger: taskLedger,
+    consumer: workOrderConsumer,
+    log: (line) => temporalLogger.info(line),
+  });
+  temporalRuntime = temporalAssembly.runtime;
   const { rawStoreForApi, enabledConnectorNames, connectorSchedulerStop } = await initConnectors(
     connectorExtractionFn,
     { nudge: () => triggerLoopNudge.current?.() }
@@ -1505,7 +1599,8 @@ export async function runAgentLoop(
                     trigger_context: { user_text: '<operator scheduled report>' },
                     scope: {
                       // Reads: enabled non-Trello raw connectors (kagemusha_* gathers) + memory scopes.
-                      // Trello is reserved for verified owner-console and workorder-board envelopes.
+                      // Trello is reserved for verified owner-console plus host-issued board and
+                      // temporal workorder envelopes.
                       // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
                       // send surface (constraint 2).
                       project_refs: [{ kind: 'project' as const, id: projectId }],
@@ -1648,40 +1743,14 @@ export async function runAgentLoop(
     workOrderConsumer: workOrderConsumer ?? undefined,
   });
 
-  // ── Stage-2 boot pass (plan S2-T3): hooks are registered above inside
-  // registerApiRoutes; recovery/cleanup run here, then the consumer starts.
-  if (stage2Flag === 'off') {
-    // Rollback cleanup (plan D3): open system rows -> cancelled, ONE summary
-    // line, no per-row alarms - a rollback is not a failure.
-    const cancelled = taskLedger.cancelOpenWorkOrders('flag-off');
-    if (cancelled > 0) {
-      console.log(`[stage2] flag=off: cancelled ${cancelled} open workorder(s) (rollback cleanup)`);
-    }
-  } else {
-    // Boot invariant (plan C13/G7): flag != off ⇒ consumer exists, hooks are
-    // already registered, and start() succeeds - violation kills the boot.
-    if (!workOrderConsumer) {
-      throw new Error('[stage2] boot invariant violated: flag != off but consumer not constructed');
-    }
-    if (stage2Flag === 'shadow') {
-      // on->shadow rollback cleanup (review N4): non-board orders enqueued
-      // at 'on' must never be consumed LIVE under shadow. Cancelled (not
-      // failed) - a rollback is not a failure; one summary line.
-      const cancelled = taskLedger.cancelOpenWorkOrders('shadow-board-only', [
-        'wiki',
-        'memory-curation',
-      ]);
-      if (cancelled > 0) {
-        console.log(
-          `[stage2] shadow: cancelled ${cancelled} non-board workorder(s) (rollback cleanup)`
-        );
-      }
-    }
-    workOrderConsumer.bootRecover();
-    workOrderConsumer.start();
-    if (!workOrderConsumer.isStarted()) {
-      throw new Error('[stage2] boot invariant violated: consumer failed to start');
-    }
+  // ── Stage-2 boot pass (plan S2-T3): runtime assembly registered hooks;
+  // recovery/cleanup run after routes are ready, then the consumer starts.
+  const temporalBoot = temporalAssembly.bootAfterRoutes();
+  if (temporalBoot.paused > 0) {
+    temporalLogger.info(`paused ${temporalBoot.paused} open workorder(s)`);
+  }
+  if (temporalBoot.enabled && (temporalBoot.resumed > 0 || temporalBoot.enqueued > 0)) {
+    temporalLogger.info(`resumed ${temporalBoot.resumed}, enqueued ${temporalBoot.enqueued}`);
   }
 
   // ── Phase 11: Server Start + Shutdown ────────────────────────────────────

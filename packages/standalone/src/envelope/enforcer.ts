@@ -65,16 +65,10 @@ export class EnvelopeEnforcer {
     try {
       expiresAt = parseEnvelopeExpiresAt(envelope.expires_at);
     } catch {
-      throw new EnvelopeViolation(
-        `Envelope ${envelope.instance_id} has invalid expires_at ${envelope.expires_at}`,
-        'invalid_expiry'
-      );
+      throw new EnvelopeViolation('Envelope expiry is invalid', 'invalid_expiry');
     }
     if (expiresAt <= Date.now()) {
-      throw new EnvelopeViolation(
-        `Envelope ${envelope.instance_id} expired at ${envelope.expires_at}`,
-        'expired'
-      );
+      throw new EnvelopeViolation('Envelope has expired', 'expired');
     }
   }
 
@@ -97,9 +91,8 @@ export class EnvelopeEnforcer {
     );
     if (!allowed) {
       throw new EnvelopeViolation(
-        `Destination ${destinationKind}:${destinationId} not in envelope.scope.allowed_destinations`,
-        'destination_out_of_scope',
-        { allowed: envelope.scope.allowed_destinations }
+        'Requested destination is outside envelope.scope.allowed_destinations',
+        'destination_out_of_scope'
       );
     }
   }
@@ -115,9 +108,8 @@ export class EnvelopeEnforcer {
     );
     if (outOfScope.length > 0) {
       throw new EnvelopeViolation(
-        `Raw connectors ${outOfScope.join(',')} not in envelope.scope.raw_connectors`,
-        'connector_out_of_scope',
-        { allowed: envelope.scope.raw_connectors }
+        'Requested raw connector is outside envelope.scope.raw_connectors',
+        'connector_out_of_scope'
       );
     }
   }
@@ -154,8 +146,7 @@ export class EnvelopeEnforcer {
       }
       throw new EnvelopeViolation(
         'Memory tools must execute with an explicit envelope memory scope',
-        'memory_scope_out_of_scope',
-        { allowed: envelope.scope.memory_scopes }
+        'memory_scope_out_of_scope'
       );
     }
 
@@ -177,8 +168,7 @@ export class EnvelopeEnforcer {
     if (envelope.tier === 3 && WRITE_OR_SEND_TOOLS.has(toolName)) {
       throw new EnvelopeViolation(
         `Tool ${toolName} not allowed at tier 3 (read-only)`,
-        'tier_violation',
-        { tier_required: 2, allowed: false }
+        'tier_violation'
       );
     }
   }

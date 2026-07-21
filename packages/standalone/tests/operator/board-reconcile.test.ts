@@ -50,6 +50,19 @@ describe('buildReconcilePrompt', () => {
     expect(withCtx).toContain('kagemusha_tasks() as extra CONTEXT');
     expect(withCtx).toContain('projection source');
   });
+
+  it('requires trusted time precision and forbids inferred lifecycle transitions', () => {
+    const prompt = buildReconcilePrompt({
+      channelKey: 'calendar:meeting-room',
+      deltaLines: ['meeting no longer appears'],
+      todayIso: '2026-07-21',
+      kagemushaContext: true,
+    });
+    expect(prompt).toContain('unambiguous time and time zone evidence');
+    expect(prompt).toContain('retain date-only precision');
+    expect(prompt).toContain('calendar disappearance');
+    expect(prompt).toContain('Never copy Trello or Kagemusha lifecycle status');
+  });
 });
 
 describe('ReconcileScheduler', () => {

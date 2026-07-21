@@ -5,6 +5,16 @@ import { makeEnvelope } from './fixtures.js';
 describe('EnvelopeEnforcer', () => {
   const enforcer = new EnvelopeEnforcer();
 
+  function captureViolation(run: () => void): EnvelopeViolation {
+    try {
+      run();
+    } catch (error) {
+      expect(error).toBeInstanceOf(EnvelopeViolation);
+      return error as EnvelopeViolation;
+    }
+    throw new Error('expected EnvelopeViolation');
+  }
+
   it('allows tool call within destination scope', () => {
     const env = makeEnvelope();
 
@@ -15,10 +25,19 @@ describe('EnvelopeEnforcer', () => {
 
   it('rejects telegram_send to destination outside allowed_destinations', () => {
     const env = makeEnvelope();
+    const sentinel = 'tg:private-destination-secret-42';
+    const violation = captureViolation(() =>
+      enforcer.check(env, 'telegram_send', { chat_id: sentinel, message: 'leak' })
+    );
 
-    expect(() =>
-      enforcer.check(env, 'telegram_send', { chat_id: 'tg:OTHER', message: 'leak' })
-    ).toThrow(EnvelopeViolation);
+    expect(violation.code).toBe('destination_out_of_scope');
+    expect(
+      JSON.stringify({
+        message: violation.message,
+        code: violation.code,
+        metadata: violation.metadata,
+      })
+    ).not.toContain(sentinel);
   });
 
   it('rejects send tool without destination id', () => {
@@ -30,15 +49,35 @@ describe('EnvelopeEnforcer', () => {
   });
 
   it('rejects expired envelope', () => {
-    const env = makeEnvelope({ expires_at: new Date(Date.now() - 1000).toISOString() });
+    const instanceSentinel = 'private-expired-instance-secret-43';
+    const expirySentinel = new Date(Date.now() - 1000).toISOString();
+    const env = makeEnvelope({ instance_id: instanceSentinel, expires_at: expirySentinel });
+    const violation = captureViolation(() => enforcer.check(env, 'mama_search', { query: 'x' }));
 
-    expect(() => enforcer.check(env, 'mama_search', { query: 'x' })).toThrow(EnvelopeViolation);
+    expect(violation.code).toBe('expired');
+    const serialized = JSON.stringify({
+      message: violation.message,
+      code: violation.code,
+      metadata: violation.metadata,
+    });
+    expect(serialized).not.toContain(instanceSentinel);
+    expect(serialized).not.toContain(expirySentinel);
   });
 
   it('rejects unparsable expires_at', () => {
-    const env = makeEnvelope({ expires_at: 'not-a-date' });
+    const instanceSentinel = 'private-invalid-instance-secret-44';
+    const expirySentinel = 'private-invalid-expiry-secret-45';
+    const env = makeEnvelope({ instance_id: instanceSentinel, expires_at: expirySentinel });
+    const violation = captureViolation(() => enforcer.check(env, 'mama_search', { query: 'x' }));
 
-    expect(() => enforcer.check(env, 'mama_search', { query: 'x' })).toThrow(/invalid_expiry/);
+    expect(violation.code).toBe('invalid_expiry');
+    const serialized = JSON.stringify({
+      message: violation.message,
+      code: violation.code,
+      metadata: violation.metadata,
+    });
+    expect(serialized).not.toContain(instanceSentinel);
+    expect(serialized).not.toContain(expirySentinel);
   });
 
   it('rejects parseable non-ISO expires_at values', () => {
@@ -50,9 +89,18 @@ describe('EnvelopeEnforcer', () => {
   it('rejects raw access outside envelope.scope.raw_connectors', () => {
     const env = makeEnvelope();
 
-    expect(() => enforcer.check(env, 'raw.search', { connectors: ['slack'], query: 'x' })).toThrow(
-      EnvelopeViolation
-    );
+    const sentinel = 'private-card-text-secret-42';
+    let violation: EnvelopeViolation | null = null;
+    try {
+      enforcer.check(env, 'raw.search', { connectors: [sentinel], query: 'x' });
+    } catch (error) {
+      violation = error as EnvelopeViolation;
+    }
+
+    expect(violation).toBeInstanceOf(EnvelopeViolation);
+    expect(violation?.code).toBe('connector_out_of_scope');
+    expect(JSON.stringify(violation)).not.toContain(sentinel);
+    expect(violation?.message).not.toContain(sentinel);
   });
 
   it('allows raw access for connectors inside envelope.scope.raw_connectors', () => {

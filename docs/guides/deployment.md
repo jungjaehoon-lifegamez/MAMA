@@ -11,7 +11,7 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.24.2  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.25.0  |
 | MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.14.0  |
 | MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 1.9.0   |
 | Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.10.0  |
@@ -61,7 +61,7 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.24.2          |
+| `packages/standalone/package.json`                       | `version` | 0.25.0          |
 | `packages/mcp-server/package.json`                       | `version` | 1.14.0          |
 | `packages/mama-core/package.json`                        | `version` | 1.9.0           |
 | `packages/claude-code-plugin/package.json`               | `version` | 1.10.0          |
@@ -138,22 +138,43 @@ Record changes in `CHANGELOG.md`:
 - Embedding memory leak fix
 ```
 
-### Step 5: Deploy MCP Server (npm)
+### Step 5: Run the Release Workflow
 
 ```bash
-cd packages/mcp-server
+# Versions must already be committed on protected main.
+gh workflow run release.yml --ref main \
+  -f release_type=minor \
+  -f packages=mama-os \
+  -f dry_run=false \
+  -f bump_versions=false
 
-# npm login (first time only)
-npm login
+# Follow the dispatched run through tag, npm, Pages, and GitHub Release creation.
+gh run list --workflow release.yml --limit 1
+```
 
-# Publish
-npm publish
+The workflow publishes every selected package, including `@jungjaehoon/mama-os`. Use a
+comma-separated package list such as `mama-core,mama-server,mama-os,mama-plugin`, or `all`, when a
+release spans more than MAMA OS. Do not request an inline version bump on protected `main`.
 
-# Verify deployment
+### Step 6: Verify npm Artifacts
+
+```bash
+npm info @jungjaehoon/mama-os version
 npm info @jungjaehoon/mama-server version
 ```
 
-### Step 6: Deploy Plugin (Marketplace)
+For a MAMA OS release, install the exact published version, restart the local daemon, and verify
+both the process and HTTP health before enabling a new opt-in runtime:
+
+```bash
+npm install -g @jungjaehoon/mama-os@0.25.0
+mama stop
+mama start
+mama status
+curl -fsS http://127.0.0.1:3847/health
+```
+
+### Step 7: Deploy Plugin (Marketplace)
 
 Claude Code plugin is deployed via the marketplace:
 
@@ -171,7 +192,7 @@ Claude Code plugin is deployed via the marketplace:
    /plugin update mama
    ```
 
-### Step 7: Git Tag and Push
+### Step 8: Git Tag and Push (Manual Fallback Only)
 
 ```bash
 # Create tag
@@ -204,6 +225,16 @@ git push origin main
 - `src/db/migrations/*.sql` - DB migration scripts
 - `README.md` - Package documentation
 - `LICENSE` - License file
+
+### MAMA OS (@jungjaehoon/mama-os)
+
+| Item                  | Details                                                        |
+| --------------------- | -------------------------------------------------------------- |
+| **Deployment target** | npm registry (public)                                          |
+| **Deploy method**     | `.github/workflows/release.yml` with `packages=mama-os`        |
+| **Deploy frequency**  | On standalone runtime changes (MINOR/PATCH)                    |
+| **Installation**      | `npm install -g @jungjaehoon/mama-os@<version>`                |
+| **Verification**      | npm version, daemon restart/status, `/health`, temporal canary |
 
 ### Claude Code Plugin (mama)
 
@@ -256,8 +287,12 @@ export MAMA_FORCE_TIER_3=true
 # .env file (user environment)
 MAMA_DB_PATH=~/.claude/mama-memory.db
 MAMA_SERVER_TOKEN=<secure_token>
+# MCP server HTTP mode only; the MAMA OS daemon API remains fixed at 3847.
 MAMA_SERVER_PORT=3000
 MAMA_EMBEDDING_MODEL=Xenova/multilingual-e5-small
+MAMA_ENVELOPE_ISSUANCE=enabled
+MAMA_STAGE2_WORKORDERS=off
+MAMA_TEMPORAL_RECONCILE=off
 ```
 
 For Cloudflare Zero Trust deployments of MAMA OS, add:
@@ -270,13 +305,23 @@ Use `MAMA_AUTH_TOKEN` for non-Access tunnels and temporary test exposure. Withou
 
 **Environment Variable Reference:**
 
-| Variable               | Description             | Default                        |
-| ---------------------- | ----------------------- | ------------------------------ |
-| `MAMA_DB_PATH`         | SQLite DB file path     | `~/.claude/mama-memory.db`     |
-| `MAMA_SERVER_TOKEN`    | Auth token (HTTP mode)  | -                              |
-| `MAMA_SERVER_PORT`     | Server port (HTTP mode) | `3000`                         |
-| `MAMA_EMBEDDING_MODEL` | Embedding model         | `Xenova/multilingual-e5-small` |
-| `MAMA_FORCE_TIER_3`    | Force Tier 3 mode       | `false`                        |
+| Variable                  | Description                                   | Default                        |
+| ------------------------- | --------------------------------------------- | ------------------------------ |
+| `MAMA_DB_PATH`            | SQLite DB file path                           | `~/.claude/mama-memory.db`     |
+| `MAMA_SERVER_TOKEN`       | Auth token (HTTP mode)                        | -                              |
+| `MAMA_SERVER_PORT`        | MCP server HTTP port; does not change MAMA OS | `3000`                         |
+| `MAMA_EMBEDDING_MODEL`    | Embedding model                               | `Xenova/multilingual-e5-small` |
+| `MAMA_ENVELOPE_ISSUANCE`  | Runtime envelope issuance                     | `enabled`                      |
+| `MAMA_STAGE2_WORKORDERS`  | Durable workorders (`off`, `shadow`, or `on`) | `off`                          |
+| `MAMA_TEMPORAL_RECONCILE` | Temporal reconciliation (`off` or `on`)       | `off`                          |
+| `MAMA_FORCE_TIER_3`       | Force Tier 3 mode                             | `false`                        |
+
+Keep both workorder flags `off` during an ordinary upgrade. A temporal rollout changes them
+together: `MAMA_STAGE2_WORKORDERS=on` first, then `MAMA_TEMPORAL_RECONCILE=on` in the same daemon
+restart after envelope and worker transport checks pass. Temporal `on` with Stage-2 not `on` fails
+startup after pausing incompatible temporal attempts.
+
+The MAMA OS daemon and its `/health` endpoint listen on the fixed local API port `3847`.
 
 ---
 
@@ -286,6 +331,10 @@ Verify the following after deployment:
 
 ```markdown
 - [ ] npm package version: `npm info @jungjaehoon/mama-server version`
+- [ ] MAMA OS npm version: `npm info @jungjaehoon/mama-os version`
+- [ ] Exact MAMA OS version installed: `npm install -g @jungjaehoon/mama-os@<version>`
+- [ ] Daemon restart and process status: `mama stop && mama start && mama status`
+- [ ] HTTP health: `curl -fsS http://127.0.0.1:3847/health`
 - [ ] MCP server startup: `npx -y @jungjaehoon/mama-server` (stdio start)
 - [ ] Plugin installation: `/plugin install mama`
 - [ ] Basic functionality tests:
@@ -296,6 +345,9 @@ Verify the following after deployment:
   - [ ] `/mama-resume` - Restore session
 - [ ] GitHub release verification
 - [ ] Release notes published
+- [ ] If temporal reconciliation is being rolled out, verify one non-critical due task in `/ui`:
+      workflow status remains independent from `temporal_state`, and its temporal workorder reaches a
+      receipt-backed terminal result or an explicit bounded deferral.
 ```
 
 ---

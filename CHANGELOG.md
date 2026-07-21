@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+## [0.25.0] / mama-core [1.9.0] / mama-os [0.25.0] - 2026-07-22
+
+### Added — Verified temporal owner-task reconciliation
+
+- **Active overdue decisions** — optional temporal workorders now inspect exact-time and date-only
+  owner tasks, then atomically resolve, finalize without a workflow change, or defer a bounded
+  follow-up from fresh connector evidence.
+- **Codex and Claude parity** — both backends use the same host-issued temporal context, role-scoped
+  Code-Act surface, trusted receipt contract, retry policy, and owner-visible workorder status.
+
+### Security and compatibility
+
+- **Source-bound evidence** — context packets bind to the active task generation and accept only raw
+  references matching that task's source event/channel. Superseded workers lose read and write
+  authority before any further gateway result is returned.
+- **Conservative receipt migration** — receipts from older binaries remain quarantined at
+  attestation version 0; only the current source-bound transaction writes authoritative version 1.
+- **Mixed-version task safety** — legacy deadline, status, and content writes advance revision/epoch
+  state through compatibility triggers, while SQLite foreign keys reject orphan generations and
+  effects.
+- **Bounded shutdown** — temporal admission stops and open attempts are durably paused before the
+  runtime waits for an in-flight worker to drain.
+
+### Upgrade notes
+
+- This minor release bumps only `@jungjaehoon/mama-os` to `0.25.0`; MAMA Core, MCP Server, and the
+  Claude Code plugin keep their existing versions.
+
 ## [0.24.2] / mama-core [1.9.0] / mama-os [0.24.2] - 2026-07-22
 
 ### Fixed — Workorder forward compatibility

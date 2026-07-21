@@ -59,6 +59,15 @@ export type TaskStatus = 'pending' | 'in_progress' | 'review' | 'blocked' | 'don
 
 export type TaskPriority = 'high' | 'normal' | 'low';
 
+export type TaskTemporalState =
+  | 'closed'
+  | 'exact_upcoming'
+  | 'exact_overdue'
+  | 'date_upcoming'
+  | 'date_due'
+  | 'date_overdue'
+  | 'unscheduled';
+
 export interface OperatorTask {
   id: number;
   title: string;
@@ -66,6 +75,15 @@ export interface OperatorTask {
   priority: TaskPriority;
   assignee: string | null;
   due_date: string | null;
+  due_at: string | null;
+  deadline_offset_minutes: number | null;
+  revision: number;
+  temporal_epoch: number;
+  temporal_reconciled_occurrence_key: string | null;
+  last_temporal_checked_at: number | null;
+  next_temporal_check_at: number | null;
+  last_temporal_attempt_id: number | null;
+  temporal_state: TaskTemporalState;
   source_channel: string | null;
   latest_event: string | null;
   auto_created: boolean;
@@ -79,6 +97,7 @@ export interface TaskPatch {
   priority?: TaskPriority;
   assignee?: string | null;
   due_date?: string | null;
+  due_at?: string | null;
   confirmed?: boolean;
 }
 

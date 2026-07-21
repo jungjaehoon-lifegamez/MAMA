@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'crypto';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -39,6 +40,13 @@ type AuditRow = {
 type MetricsStoreMock = Pick<MetricsStore, 'record'> & {
   record: ReturnType<typeof vi.fn<[MetricRecord], void>>;
 };
+
+function auditScope(kind: string, id: string): { kind: string; id: string } {
+  return {
+    kind,
+    id: `sha256:${createHash('sha256').update(id).digest('hex')}`,
+  };
+}
 
 function createMAMAApi(): MAMAApiInterface {
   const api: MAMAApiInterface = {
@@ -254,7 +262,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     expect(mamaApi.save).not.toHaveBeenCalled();
     const [row] = readGatewayToolRows(db);
     expect(row.scope_mismatch).toBe(1);
-    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'global', id: 'system' }]);
+    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('global', 'system')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       { kind: 'channel', id: 'telegram:abc' },
     ]);
@@ -315,7 +323,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     );
     const [row] = readGatewayToolRows(db);
     expect(row.scope_mismatch).toBe(0);
-    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'channel', id: 'telegram:abc' }]);
+    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('channel', 'telegram:abc')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       { kind: 'channel', id: 'telegram:abc' },
     ]);
@@ -365,7 +373,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       scope_mismatch: 0,
       execution_status: 'completed',
     });
-    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'channel', id: 'telegram:abc' }]);
+    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('channel', 'telegram:abc')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       { kind: 'channel', id: 'telegram:abc' },
     ]);
@@ -452,7 +460,9 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
         envelope_hash: envelope.envelope_hash,
       });
       if (item.expectedRequestedScope) {
-        expect(parseScopes(row.requested_scopes)).toContainEqual(item.expectedRequestedScope);
+        expect(parseScopes(row.requested_scopes)).toContainEqual(
+          auditScope(item.expectedRequestedScope.kind, item.expectedRequestedScope.id)
+        );
       } else {
         expect(parseScopes(row.requested_scopes)).toEqual([]);
       }
@@ -505,7 +515,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     );
     const [row] = readGatewayToolRows(db);
     expect(row.scope_mismatch).toBe(1);
-    expect(parseScopes(row.requested_scopes)).toEqual([{ kind: 'global', id: 'system' }]);
+    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('global', 'system')]);
     expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
       { kind: 'channel', id: 'telegram:abc' },
     ]);
@@ -672,7 +682,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
-  it('denies report_publish and wiki_publish under tier 3 with tier metadata after tool rename', async () => {
+  it('denies report_publish and wiki_publish under tier 3 without reflecting host metadata', async () => {
     const tools: Array<'report_publish' | 'wiki_publish'> = ['report_publish', 'wiki_publish'];
 
     for (const toolName of tools) {
@@ -713,10 +723,10 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       expect(result).toMatchObject({
         success: false,
         code: 'tier_violation',
-        tier_required: 2,
-        allowed: false,
-        envelope_hash: envelope.envelope_hash,
       });
+      expect(result).not.toHaveProperty('tier_required');
+      expect(result).not.toHaveProperty('allowed');
+      expect(result).not.toHaveProperty('envelope_hash');
       db.close();
     }
   });

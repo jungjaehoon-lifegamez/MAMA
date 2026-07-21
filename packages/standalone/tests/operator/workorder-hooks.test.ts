@@ -14,6 +14,7 @@ import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   buildWorkerTraceQueries,
   buildPromotionAfterHook,
+  buildTemporalWorkOrderHook,
   buildWikiAfterHook,
 } from '../../src/operator/workorder-hooks.js';
 import type { WorkOrderRecord } from '../../src/operator/task-ledger.js';
@@ -102,6 +103,71 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       hook(fakeWo, 'compiled 2 pages');
       expect(lines[0]).toContain('no changes');
       expect(lines[1]).toContain('complete');
+    });
+  });
+
+  describe('AC #4: temporal hook requires a receipt verdict', () => {
+    it('maps verified receipts to a required completion verdict', async () => {
+      let scopedNoteMaxId = 0;
+      const context = {
+        attemptId: 9,
+        generationKey: 'generation:9',
+        taskId: 3,
+        temporalEpoch: 1,
+        occurrenceKey: 'due:9',
+        checkAt: 9,
+        revision: 2,
+        sourceChannel: null,
+        sourceEventId: null,
+      };
+      const hook = buildTemporalWorkOrderHook({
+        loadTemporalWorkContext: () => context,
+        getTemporalEffect: () => ({
+          workorderAttemptId: 9,
+          taskId: 3,
+          generationKey: 'generation:9',
+          occurrenceKey: 'due:9',
+          outcome: 'final_no_update',
+          beforeRevision: 2,
+          afterRevision: 3,
+          changedFields: ['temporal_reconciled_occurrence_key', 'last_temporal_attempt_id'],
+          reason:
+            'temporal-effect-final_no_update;reason_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;reason_length=29;evidence_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;evidence_length=20',
+          nextTemporalCheckAt: null,
+          attestationVersion: 1,
+          contextPacketId: 'ctxp_workorder_hook_test',
+          contextPacketSha256: 'e'.repeat(64),
+          createdAt: 10,
+        }),
+        getTask: () =>
+          ({
+            id: 3,
+            revision: 3,
+            temporalReconciledOccurrenceKey: 'due:9',
+            nextTemporalCheckAt: null,
+            lastTemporalAttemptId: 9,
+            lastTemporalCheckedAt: 10,
+          }) as never,
+        getTemporalGeneration: () =>
+          ({
+            generationKey: 'generation:9',
+            taskId: 3,
+            temporalEpoch: 1,
+            occurrenceKey: 'due:9',
+            checkAt: 9,
+            disposition: 'final_no_update',
+            lastWorkOrderId: 9,
+          }) as never,
+        getScopedNoteMaxId: () => scopedNoteMaxId,
+      });
+      const wo = { id: 9, workKind: 'temporal' } as WorkOrderRecord;
+      const before = await hook.before!(wo);
+      scopedNoteMaxId = 1;
+
+      expect(hook.verdictRequired).toBe(true);
+      expect(await hook.after!(wo, 'irrelevant model prose', before)).toEqual({
+        disposition: 'complete',
+      });
     });
   });
 });

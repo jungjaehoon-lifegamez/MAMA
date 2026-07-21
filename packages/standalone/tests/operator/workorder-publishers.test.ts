@@ -115,8 +115,43 @@ describe('Story S2-T2: publisher gate', () => {
       ).not.toThrow();
     });
 
-    it('ledger-managed attempts field is allowed everywhere', () => {
-      expect(() => validateWorkOrderPayload('board', { mode: 'full', attempts: 2 })).not.toThrow();
+    it('rejects caller-supplied attempts for every normal publisher kind', () => {
+      expect(() => validateWorkOrderPayload('board', { mode: 'full', attempts: 2 })).toThrow(
+        /attempts.*ledger-managed/
+      );
+      expect(() =>
+        validateWorkOrderPayload('wiki', { batchId: 'b-1', events: [], attempts: 2 })
+      ).toThrow(/attempts.*ledger-managed/);
+      expect(() =>
+        validateWorkOrderPayload('memory-curation', {
+          scheduledAt: '2026-07-18T12:00:00Z',
+          attempts: 2,
+        })
+      ).toThrow(/attempts.*ledger-managed/);
+    });
+
+    it('accepts only bounded temporal generation identifiers and source provenance', () => {
+      expect(() =>
+        validateWorkOrderPayload('temporal', {
+          generationKey: 'task:1:epoch:1:due:10:check:10',
+          taskId: 1,
+          temporalEpoch: 1,
+          occurrenceKey: 'epoch:1:due:10',
+          checkAt: 10,
+          sourceChannel: 'trello:synthetic-board',
+          sourceEventId: 'synthetic-card',
+        })
+      ).not.toThrow();
+      expect(() =>
+        validateWorkOrderPayload('temporal', {
+          generationKey: 'g',
+          taskId: 1,
+          temporalEpoch: 1,
+          occurrenceKey: 'o',
+          checkAt: 10,
+          connectorBody: 'must not be copied',
+        })
+      ).toThrow(/unknown field/);
     });
   });
 });

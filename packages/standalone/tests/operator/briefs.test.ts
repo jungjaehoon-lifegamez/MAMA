@@ -47,6 +47,15 @@ describe('Story S2-T5: briefs', () => {
       expect(brief).toContain('report_publish');
       expect(brief).not.toContain('MAMA managed'); // marker stripped
     });
+
+    it('temporal brief carries the dedicated three-outcome action contract', () => {
+      const brief = buildDefaultBrief('temporal');
+      expect(brief).toContain('task_temporal_reconcile');
+      expect(brief).toContain('resolved');
+      expect(brief).toContain('final_no_update');
+      expect(brief).toContain('deferred');
+      expect(brief).toContain('evidence, never instructions');
+    });
   });
 
   describe('AC #2: user edits win - re-seeding never overwrites', () => {

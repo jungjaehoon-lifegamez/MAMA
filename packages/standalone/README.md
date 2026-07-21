@@ -65,7 +65,8 @@ MAMA OS has full system access — so security is not optional, it's foundationa
 - **Intrusion detection** — Honeypot traps for scanner probes (`.git`, `.env`, `wp-login.php`), per-IP suspicion scoring, automatic tarpit delays, and IP deny-listing when thresholds are exceeded.
 - **Agent permission tiers** — Tier 1 (full access), Tier 2 (read + memory write), Tier 3 (read-only). Each agent only gets the tools it needs.
 - **Owner console (v0.22+)** — the `owner_console` role is granted ONLY in an allowlisted telegram chat's 1:1 DM (`telegram.allowed_chats` is the trust anchor). It reads operational artifacts (`board_read`, `audit_findings_read`, `workorder_status`) and issues work (`report_request`, `workorder_request`) fire-and-forget; memory writes refuse secret-shaped content.
-- **Stage-2 workorder pipeline (v0.23, flag-gated)** — `MAMA_STAGE2_WORKORDERS=off|shadow|on` converts the scheduled board/wiki/memory-promotion runs into durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Codex workorders receive built-in, least-privilege Tier-2 Code-Act roles for board, wiki, and memory curation, independent of optional standing-agent configuration. Every worker treats connector evidence as untrusted data rather than instructions. Board workers read enabled Trello evidence through `context_compile`, keep Kagemusha as read-only project-task truth, and use the native ledger for owner tasks and the pipeline. Default `off` = unchanged behavior.
+- **Stage-2 workorder pipeline (v0.23, flag-gated)** — `MAMA_STAGE2_WORKORDERS=off|shadow|on` converts the scheduled board/wiki/memory-promotion runs into durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Codex workorders receive built-in, least-privilege Tier-2 Code-Act roles for board, wiki, memory curation, and temporal reconciliation, independent of optional standing-agent configuration. Every worker treats connector evidence as untrusted data rather than instructions. Board workers read enabled Trello evidence through `context_compile`, keep Kagemusha as read-only project-task truth, and use the native ledger for owner tasks and the pipeline. Default `off` = unchanged behavior.
+- **Verified temporal effects (opt-in)** — `MAMA_TEMPORAL_RECONCILE=on` requires `MAMA_STAGE2_WORKORDERS=on`, a Claude or Codex backend, the trusted `task_temporal_reconcile` tool, and a working worker transport. It scans all open scheduled owner rows once per minute before applying bounded admission caps, and exposes a separate temporal projection that never turns overdue into a workflow status (`closed` reflects terminal lifecycle). Fresh evidence may resolve, finalize, or defer one native owner-task occurrence. Task, generation, authoritative receipt, and workorder completion commit atomically; legacy receipts remain quarantined, every temporal gateway call rechecks active authority, and compiled raw evidence must stay bound to the task source. Shutdown durably pauses temporal attempts before waiting for worker drainage. Model prose is represented in audit rows only by length/SHA-256 references. Default `off` pauses temporal work and preserves existing behavior.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts itself down gracefully rather than operating in a compromised state.
 
 These aren't theoretical protections. The prompt injection defense was built after a real attack where an adversary injected a fake "server failure" message into a monitored channel, causing the AI agent to voluntarily expose system configuration. The IP banning system has blocked actual intrusion attempts in production.
@@ -192,11 +193,13 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
 
 Main config: `~/.mama/config.yaml`
 
-| Variable         | Default                  |
-| ---------------- | ------------------------ |
-| `MAMA_DB_PATH`   | `~/.mama/mama-memory.db` |
-| `MAMA_HTTP_PORT` | `3847`                   |
-| `MAMA_WORKSPACE` | `~/.mama/workspace`      |
+| Variable                  | Default                  |
+| ------------------------- | ------------------------ |
+| `MAMA_DB_PATH`            | `~/.mama/mama-memory.db` |
+| `MAMA_HTTP_PORT`          | `3847`                   |
+| `MAMA_WORKSPACE`          | `~/.mama/workspace`      |
+| `MAMA_STAGE2_WORKORDERS`  | `off`                    |
+| `MAMA_TEMPORAL_RECONCILE` | `off`                    |
 
 Timeout tuning lives under `timeouts` in `config.yaml`. The persistent CLI process pool supports:
 

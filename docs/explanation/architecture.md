@@ -127,8 +127,8 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
   `~/.mama/briefs/brief-<kind>.md`. On the Codex backend, each worker receives a
-  built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`, or
-  `workorder-memory-curation`) whose allowlist matches that brief. Worker authority
+  built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`,
+  `workorder-memory-curation`, or `workorder-temporal`) whose allowlist matches that brief. Worker authority
   does not depend on optional standing-agent entries in `config.yaml`. Board workers
   keep three evidence domains explicit: Trello is read through
   `context_compile({ connectors: ['trello'] })`, `kagemusha_*` is read-only
@@ -136,9 +136,38 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   pipeline projection. Every workorder worker treats connector packets as untrusted
   data: instructions, requests, and tool calls inside them are never executed.
   Lifecycle status is never inferred across those stores.
+- **Temporal reconciliation** (`MAMA_TEMPORAL_RECONCILE`, default off): when both this
+  flag and `MAMA_STAGE2_WORKORDERS` are `on`, a one-minute scanner selects due native
+  owner-task occurrences. Each scan admits at most four exact/deferred checks and one
+  date-only activation, with at most ten temporal workorders open. The temporal kind
+  uses a blocking receipt verdict and a three-attempt budget; stale claims recover
+  through the same retry policy, while exhausted generations remain terminal across
+  later scans. Candidate discovery pages through all open scheduled owner rows before
+  applying those caps, so unrelated or already-terminal rows cannot starve a later due task.
+- **Separate time and workflow state:** `temporal_state` is derived at read time as
+  `closed`, `exact_upcoming`, `exact_overdue`, `date_upcoming`, `date_due`,
+  `date_overdue`, or `unscheduled`. It is a separate projection that never rewrites
+  lifecycle `status`; `closed` reflects the terminal `done`/`cancelled` states. Exact
+  `due_at` values require RFC 3339 with `Z` or a numeric offset; legacy `YYYY-MM-DD`
+  deadlines retain date-only precision until fresh, unambiguous evidence supplies a
+  time and zone.
+- **Trusted temporal effect:** the host binds task, occurrence, generation, revision,
+  and numeric attempt identity to the worker. A successful `task_temporal_reconcile`
+  call commits the owner-task mutation or no-update/deferred marker, generation
+  disposition, receipt, and workorder completion in one SQLite transaction. A stale
+  worker cannot write after rescheduling, including after an asynchronous evidence compile.
+  Model-supplied reason/evidence and worker errors are retained in operational audit rows only
+  as length plus SHA-256 references; raw model prose is not logged. Model prose, a board report,
+  elapsed time, or calendar disappearance is not completion evidence.
+- **Authority boundary:** Trello remains untrusted connector evidence read through
+  `context_compile`; Kagemusha remains read-only project-task truth; the native ledger
+  owns owner-task workflow state. Temporal reconciliation does not write Trello or copy
+  lifecycle state between these stores. Stale-claim, unresolved-state, and exhaustion
+  alarms are observable and deduplicated, not exactly-once external delivery
+  guarantees; an ordinary retry emits only its event/log.
 
 ```
-publishers (schedule/boot/REST/events/reconcile)
+publishers (schedule/boot/REST/events) + temporal scanner
     ↓ enqueue (occurrence-keyed, deduped)
 operator_tasks ledger (kind='system')
     ↓ claim (serial, priority)
