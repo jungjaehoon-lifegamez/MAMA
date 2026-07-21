@@ -103,8 +103,8 @@ memory-twin worker scope and must not gain memory mutation scope.
 - Agent fabrication: gateway tools receive a signed envelope from the runtime,
   not from model-authored text.
 - Durable audit tamper evidence: gateway tool calls record `envelope_hash`,
-  requested scopes, envelope scope snapshots, and `scope_mismatch` in
-  `agent_activity`.
+  SHA-256 references for model-requested scope IDs, host-issued envelope scope
+  snapshots, and `scope_mismatch` in `agent_activity`.
 - Irreversible exfiltration: destination sends, raw connector reads, and tiered
   write paths fail closed when the signed envelope does not authorize them.
 
@@ -143,10 +143,11 @@ Find memory-scope mismatches in these places:
 - `securityLogger.warn` lines containing envelope scope mismatch context
 - Authenticated `/api/envelope/status` field `recent_mismatch_count_24h`
 
-When mismatches spike, compare `requested_scopes` with
-`envelope_scopes_snapshot` for the same `envelope_hash`. Classify the cause as
-prompt injection, agent hallucination, or a legitimate caller-side scope
-derivation bug before changing policy.
+When mismatches spike, use the requested-scope kind and stable SHA-256 ID
+reference alongside `envelope_scopes_snapshot` for the same `envelope_hash`.
+Classify the cause as prompt injection, agent hallucination, or a legitimate
+caller-side scope derivation bug before changing policy. Raw model-requested
+scope IDs are deliberately not persisted.
 
 ### Memory Provenance Foundation
 
@@ -166,6 +167,15 @@ arguments, model completions, raw connector payloads, and other high-cardinality
 or sensitive payload bodies. For memory-scope visibility, provenance reads use
 `memory_scope_bindings` as the source of truth instead of trusting provenance
 JSON.
+
+`context_compile` applies the same rule to model-controlled diagnostics. Its
+task text, requested seed refs, and failure text are represented in model-run
+audit data by SHA-256 plus length (and seed-ref count), never by the submitted
+text. Envelope denials do not reflect rejected connector or destination values.
+Gateway activity, tool-trace, reasoning-header, and diagnostic-log failures are
+likewise bounded to status/code or digest references. A temporal worker's host
+authority is checked before envelope validation, so an already superseded
+attempt cannot create a denial audit as a side effect.
 
 M2 scope read/backfill adds two operational guarantees:
 
@@ -1199,10 +1209,11 @@ The Code-Act sandbox is accessible via `POST /api/code-act`. This endpoint:
 - Trusts forwarded client IP headers only when the socket peer is a configured
   trusted proxy (`MAMA_TRUSTED_PROXY_IPS`, plus loopback defaults); otherwise
   the socket peer is the rate-limit identity
-- Records gateway audit rows with envelope hash, requested scopes, envelope
-  scope snapshots, and `scope_mismatch`. The signed envelope/audit row gives
-  durable request provenance, while the memory row stores compact M2 origin
-  metadata for operator lookup.
+- Records gateway audit rows with envelope hash, SHA-256 references for
+  model-requested scope IDs, host-issued envelope scope snapshots, and
+  `scope_mismatch`. The signed envelope/audit row gives durable request
+  provenance, while the memory row stores compact M2 origin metadata for
+  operator lookup.
 
 ### Risk Assessment
 

@@ -45,6 +45,43 @@ const { DebugLogger } = debugLogger as {
 };
 const initLogger = new DebugLogger('AgentLoopInit');
 
+export function summarizeToolResult(result: unknown): string {
+  if (!result || typeof result !== 'object') {
+    return 'completed';
+  }
+  const record = result as { success?: unknown; code?: unknown; results?: unknown };
+  const code = typeof record.code === 'string' ? ` code=${record.code}` : '';
+  if (record.success === false) {
+    return `failed${code}`;
+  }
+  if (Array.isArray(record.results)) {
+    return `success items=${record.results.length}${code}`;
+  }
+  if (record.success === true) {
+    return `success${code}`;
+  }
+  return `completed${code}`;
+}
+
+export function appendToolResultReasoning(reasoningLog: string[], result: unknown): void {
+  if (!result || typeof result !== 'object') {
+    return;
+  }
+  const resultObj = result as {
+    success?: boolean;
+    results?: unknown[];
+    error?: string;
+    code?: string;
+  };
+  if (resultObj.success === false || resultObj.error) {
+    reasoningLog.push(`  ❌ failed${resultObj.code ? ` (${resultObj.code})` : ''}`);
+  } else if (Array.isArray(resultObj.results)) {
+    reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
+  } else if (resultObj.success !== undefined) {
+    reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
+  }
+}
+
 // __dirname is available globally in CJS output (NodeNext compiles to CommonJS)
 declare const __dirname: string;
 
@@ -165,7 +202,7 @@ export function initMainAgentLoop(
       // The instance handler keeps only the log side effect for runs that
       // pass no per-call handler (operator report/worker lanes).
       onToolUse: (toolName, _input, result) => {
-        initLogger.info(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
+        initLogger.info(`[Tool] ${toolName} -> ${summarizeToolResult(result)}`);
       },
       onTokenUsage: (record) => {
         try {
@@ -246,15 +283,8 @@ export function initMainAgentLoop(
       if (!reasoningLog.includes(`🔧 ${toolName}`)) {
         reasoningLog.push(`🔧 ${toolName}`);
       }
-      const resultObj = result as { success?: boolean; results?: unknown[]; error?: string };
-      if (resultObj?.error) {
-        reasoningLog.push(`  ❌ ${resultObj.error}`);
-      } else if (resultObj?.results && Array.isArray(resultObj.results)) {
-        reasoningLog.push(`  ✓ ${resultObj.results.length} items`);
-      } else if (resultObj?.success !== undefined) {
-        reasoningLog.push(`  ✓ ${resultObj.success ? 'success' : 'failed'}`);
-      }
-      initLogger.info(`[Tool] ${toolName} -> ${JSON.stringify(result).slice(0, 80)}`);
+      appendToolResultReasoning(reasoningLog, result);
+      initLogger.info(`[Tool] ${toolName} -> ${summarizeToolResult(result)}`);
       options?.onToolUse?.(toolName, input, result);
     },
   });

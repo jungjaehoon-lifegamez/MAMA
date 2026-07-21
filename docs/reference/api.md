@@ -1057,7 +1057,11 @@ available.
 `context_compile` requires an active worker envelope because it persists trusted packet
 provenance. Start MAMA with `MAMA_ENVELOPE_ISSUANCE=enabled` or `required` for live packet
 creation; managed dashboard/wiki prompts fall back to `mama_search` when no active envelope is
-available.
+available. Model-run audit rows store task, seed-ref, and failure digest references rather than
+the submitted text or raw IDs. Gateway scope audits likewise store model-requested scope IDs as
+stable SHA-256 references while retaining scope kind, mismatch status, and the host-issued
+envelope snapshot. Out-of-scope denials return stable codes without reflecting the
+rejected connector or destination value.
 
 ---
 
