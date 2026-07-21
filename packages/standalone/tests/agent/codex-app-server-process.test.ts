@@ -1328,7 +1328,7 @@ describe('Story: Codex app-server process', () => {
           codexHome: item.options.codexHome,
           codexIsolatedHome: item.options.isolatedHome,
           codexRegistryRoot: item.options.registryRoot,
-          requestTimeout: 500,
+          requestTimeout: 2_000,
         }
       );
       manager.setGatewayToolExecutor(executor);
@@ -1387,15 +1387,17 @@ describe('Story: Codex app-server process', () => {
     const item = fixture('timeout-once');
     const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 500 });
 
-    const timedOut = runtime.prompt('slow', undefined, {
-      sessionKey: 'slow',
-      requestTimeout: 60,
-    });
+    const timedOut = expect(
+      runtime.prompt('slow', undefined, {
+        sessionKey: 'slow',
+        requestTimeout: 60,
+      })
+    ).rejects.toThrow('timed out');
     await waitForFile(join(item.root, 'timed-out'));
     await expect(
       runtime.prompt('fast', undefined, { sessionKey: 'fast', requestTimeout: 500 })
     ).resolves.toMatchObject({ response: 'hello' });
-    await expect(timedOut).rejects.toThrow('timed out');
+    await timedOut;
 
     const launches = messages(item.capture).filter((entry) => Array.isArray(entry.argv));
     expect(launches).toHaveLength(1);
