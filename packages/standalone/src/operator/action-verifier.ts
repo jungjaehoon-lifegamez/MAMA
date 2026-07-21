@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import type { TaskRecord, TemporalGenerationRecord } from './task-ledger.js';
 import {
   temporalNoUpdateScope,
+  temporalReceiptInvariantError,
   type TemporalEffectReceipt,
   type TemporalWorkContext,
 } from './temporal-effect.js';
@@ -149,33 +150,14 @@ export function verifyTemporalEffect(
   const effects: string[] = [];
   const receipt = deps.getTemporalEffect(before.attemptId);
   if (!receipt) return temporalFailure('temporal effect receipt missing', effects);
-  if (receipt.workorderAttemptId !== before.attemptId) {
-    return temporalFailure('temporal receipt attempt mismatch', effects);
-  }
-  if (receipt.taskId !== before.taskId) {
-    return temporalFailure('temporal receipt task mismatch', effects);
-  }
-  if (receipt.generationKey !== before.generationKey) {
-    return temporalFailure('temporal receipt generation mismatch', effects);
-  }
-  if (receipt.occurrenceKey !== before.occurrenceKey) {
-    return temporalFailure('temporal receipt occurrence mismatch', effects);
-  }
-  if (
-    receipt.beforeRevision !== before.revision ||
-    receipt.afterRevision !== receipt.beforeRevision + 1
-  ) {
-    return temporalFailure('temporal receipt revision invariant failed', effects);
-  }
-  if (!receipt.reason.trim()) {
-    return temporalFailure('temporal receipt reason missing', effects);
-  }
-  if (!Number.isSafeInteger(receipt.createdAt)) {
-    return temporalFailure('temporal receipt creation time is invalid', effects);
-  }
-  if (new Set(receipt.changedFields).size !== receipt.changedFields.length) {
-    return temporalFailure('temporal receipt changed fields contain duplicates', effects);
-  }
+  const receiptError = temporalReceiptInvariantError(receipt, {
+    attemptId: before.attemptId,
+    taskId: before.taskId,
+    generationKey: before.generationKey,
+    occurrenceKey: before.occurrenceKey,
+    beforeRevision: before.revision,
+  });
+  if (receiptError) return temporalFailure(receiptError, effects);
 
   const generation = deps.getTemporalGeneration(before.generationKey);
   if (
@@ -191,35 +173,7 @@ export function verifyTemporalEffect(
     return temporalFailure('temporal generation invariant failed', effects);
   }
 
-  const workflowFields = new Set(['status', 'deadline', 'due_at']);
-  const resolvedEffectFields = new Set(['status', 'due_at']);
-  const hasWorkflowChange = receipt.changedFields.some((field) => workflowFields.has(field));
-  const hasResolvedEffect = receipt.changedFields.some((field) => resolvedEffectFields.has(field));
-  const markerChanged = receipt.changedFields.includes('temporal_reconciled_occurrence_key');
   const requiresNote = receipt.outcome === 'final_no_update' || receipt.outcome === 'deferred';
-  if (receipt.outcome === 'resolved') {
-    if (!hasResolvedEffect || !markerChanged || receipt.nextTemporalCheckAt !== null) {
-      return temporalFailure('resolved temporal receipt markers are invalid', effects);
-    }
-  } else if (receipt.outcome === 'final_no_update') {
-    if (
-      hasWorkflowChange ||
-      !markerChanged ||
-      receipt.nextTemporalCheckAt !== null ||
-      !receipt.reason.includes('\nEvidence:')
-    ) {
-      return temporalFailure('final_no_update temporal receipt markers are invalid', effects);
-    }
-  } else if (
-    hasWorkflowChange ||
-    markerChanged ||
-    !receipt.changedFields.includes('next_temporal_check_at') ||
-    receipt.nextTemporalCheckAt === null ||
-    receipt.nextTemporalCheckAt <= receipt.createdAt
-  ) {
-    return temporalFailure('deferred temporal receipt markers are invalid', effects);
-  }
-
   if (
     requiresNote &&
     deps.getScopedNoteMaxId(temporalNoUpdateScope(before)) <= before.scopedNoteMaxId
