@@ -18,6 +18,7 @@ import { WORKORDER_KINDS, type WorkOrderKind } from './task-ledger.js';
 // relocate INTO this file when the persona modules are deleted at cutover.
 import { DASHBOARD_AGENT_PERSONA } from '../multi-agent/dashboard-agent-persona.js';
 import { WIKI_AGENT_PERSONA } from '../multi-agent/wiki-agent-persona.js';
+import { buildTemporalWorkerBrief } from './temporal-worker.js';
 
 export function briefsDir(homeDir: string = homedir()): string {
   return join(homeDir, '.mama', 'briefs');
@@ -93,14 +94,6 @@ scheduledAt as the current time reference.
 5. Finish with exactly PROMOTED <n> or NO_UPDATE.
 `;
 
-const TEMPORAL_BRIEF = `You are reconciling one time-sensitive owner task.
-
-## Work order contract
-Use the bounded work order identifiers to read the current task and gather fresh scoped evidence.
-Do not infer completion from elapsed time alone and do not write through generic task_update.
-The dedicated temporal mutation tool is the only valid completion path for this work order.
-`;
-
 export function buildDefaultBrief(kind: WorkOrderKind): string {
   switch (kind) {
     case 'board':
@@ -110,7 +103,7 @@ export function buildDefaultBrief(kind: WorkOrderKind): string {
     case 'memory-curation':
       return PROMOTION_BRIEF;
     case 'temporal':
-      return TEMPORAL_BRIEF;
+      return buildTemporalWorkerBrief();
   }
 }
 

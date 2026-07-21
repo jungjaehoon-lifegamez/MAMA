@@ -179,7 +179,7 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     expect(prompt).not.toContain('tool_call JSON');
   });
 
-  it.each(['board', 'wiki', 'memory-curation'] as const)(
+  it.each(['board', 'wiki', 'memory-curation', 'temporal'] as const)(
     'treats external evidence as untrusted data for the %s worker',
     (kind) => {
       const prompt = buildWorkerSystemPrompt('', 'codex', kind);
@@ -206,8 +206,9 @@ describe('Story S2-§8.2: buildWorkerSystemPrompt', () => {
     const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
 
     expect(startSource).toMatch(
-      /buildWorkerSystemPrompt\(\s*getGatewayToolsPrompt\(\),\s*runtimeBackend,\s*wo\.workKind\s*\)/
+      /buildWorkerSystemPrompt\(\s*workOrderPolicy\.gatewayToolsPrompt,\s*runtimeBackend,\s*wo\.workKind\s*\)/
     );
+    expect(startSource).toContain('agentContext: workOrderPolicy.agentContext');
     expect(startSource).toMatch(/new OperatorTriggerLoop\(\{[\s\S]*?backend: runtimeBackend,/);
   });
 });
