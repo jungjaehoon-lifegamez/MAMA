@@ -258,8 +258,8 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'destination_out_of_scope',
-      envelope_hash: 'envhash_telegram',
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(result.error).toContain('destination_out_of_scope');
     expect(gateway.sendMessage).not.toHaveBeenCalled();
   });
@@ -326,8 +326,8 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'memory_scope_out_of_scope',
-      envelope_hash: 'envhash_search_scope',
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(mamaApi.suggest).not.toHaveBeenCalled();
   });
 
@@ -477,8 +477,8 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'memory_scope_out_of_scope',
-      envelope_hash: 'envhash_empty_memory_scopes',
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(mamaApi.suggest).not.toHaveBeenCalled();
   });
 
@@ -562,8 +562,8 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'scoped_checkpoint_unsupported',
-      envelope_hash: 'envhash_checkpoint_scope',
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(mamaApi.loadCheckpoint).not.toHaveBeenCalled();
   });
 
@@ -641,8 +641,8 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'tier_violation',
-      envelope_hash: 'envhash_tier3',
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(result.error).toContain('tier_violation');
     expect(mamaApi.save).not.toHaveBeenCalled();
   });

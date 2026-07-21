@@ -1469,6 +1469,7 @@ export async function runAgentLoop(
     flag: temporalFlag,
     stage2Flag,
     backend: runtimeBackend,
+    envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     effectiveTools: temporalEffectiveTools,
     availableTools: temporalAvailableTools,
     transportReady: Boolean(agentLoopClient.runWithContent),

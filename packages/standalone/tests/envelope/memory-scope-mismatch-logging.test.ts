@@ -682,7 +682,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
     db.close();
   });
 
-  it('denies report_publish and wiki_publish under tier 3 with tier metadata after tool rename', async () => {
+  it('denies report_publish and wiki_publish under tier 3 without reflecting host metadata', async () => {
     const tools: Array<'report_publish' | 'wiki_publish'> = ['report_publish', 'wiki_publish'];
 
     for (const toolName of tools) {
@@ -723,10 +723,10 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       expect(result).toMatchObject({
         success: false,
         code: 'tier_violation',
-        tier_required: 2,
-        allowed: false,
-        envelope_hash: envelope.envelope_hash,
       });
+      expect(result).not.toHaveProperty('tier_required');
+      expect(result).not.toHaveProperty('allowed');
+      expect(result).not.toHaveProperty('envelope_hash');
       db.close();
     }
   });

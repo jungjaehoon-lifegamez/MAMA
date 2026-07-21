@@ -536,8 +536,8 @@ describe('STORY-B6: context_compile gateway tool surface', () => {
     expect(result).toMatchObject({
       success: false,
       code: 'memory_scope_out_of_scope',
-      envelope_hash: context.envelope?.envelope_hash,
     });
+    expect(result).not.toHaveProperty('envelope_hash');
     expect(service.compileAndPersistContext).not.toHaveBeenCalled();
     expect(metricsStore.record).toHaveBeenCalledWith(
       expect.objectContaining({

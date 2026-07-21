@@ -134,6 +134,7 @@ describe('Story S2-T3: extracted workorder hooks', () => {
           reason:
             'temporal-effect-final_no_update;reason_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;reason_length=29;evidence_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;evidence_length=20',
           nextTemporalCheckAt: null,
+          attestationVersion: 1,
           contextPacketId: 'ctxp_workorder_hook_test',
           contextPacketSha256: 'e'.repeat(64),
           createdAt: 10,

@@ -144,6 +144,48 @@ function serializeTaskToolRecord(
   };
 }
 
+function temporalContextPacketBinding(context: TemporalWorkContext): string {
+  return `temporal:${context.taskId}:${context.generationKey}`;
+}
+
+function bindTemporalContextPacketTask(context: TemporalWorkContext, task: string): string {
+  return `${temporalContextPacketBinding(context)}\n${task}`;
+}
+
+function temporalIdentifierRef(value: string): string {
+  return `sha256:${createHash('sha256').update(value).digest('hex')}`;
+}
+
+function temporalPacketReferencesBoundSource(
+  context: TemporalWorkContext,
+  sourceRefs: readonly unknown[]
+): boolean {
+  const rawRefs = sourceRefs.filter(
+    (value): value is Record<string, unknown> =>
+      typeof value === 'object' &&
+      value !== null &&
+      !Array.isArray(value) &&
+      (value as Record<string, unknown>).kind === 'raw'
+  );
+  if (context.sourceEventId) {
+    return rawRefs.some(
+      (ref) =>
+        typeof ref.raw_id === 'string' &&
+        temporalIdentifierRef(ref.raw_id) === context.sourceEventId
+    );
+  }
+  if (!context.sourceChannel) return true;
+  return rawRefs.some((ref) => {
+    if (typeof ref.connector !== 'string') return false;
+    const candidates = [ref.source_id, ref.channel_id]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .flatMap((value) => [value, `${ref.connector}:${value}`]);
+    return candidates.some(
+      (candidate) => temporalIdentifierRef(candidate) === context.sourceChannel
+    );
+  });
+}
+
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
     warn: (...args: unknown[]) => void;
@@ -965,6 +1007,7 @@ export class GatewayToolExecutor {
         if (!packet) return null;
         return {
           packet_id: packet.packet_id,
+          task: packet.task,
           packet_json: packet.packet_json,
           source_refs: packet.source_refs,
           created_at: packet.created_at,
@@ -1210,10 +1253,8 @@ export class GatewayToolExecutor {
           this.logEnvelopeActivity(ctx, 'envelope_violation', toolName, err.message);
           const denial: EnvelopeDenialResult = {
             success: false,
-            error: err.message,
+            error: `[${err.code}] Envelope policy denied this tool call`,
             code: err.code,
-            envelope_hash: ctx.envelope.envelope_hash,
-            ...err.metadata,
           };
           return denial;
         }
@@ -2858,6 +2899,17 @@ export class GatewayToolExecutor {
           ) {
             throw new AgentError(
               'task_temporal_reconcile requires source-backed fresh evidence',
+              'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
+          if (
+            !packet.task.startsWith(`${temporalContextPacketBinding(context)}\n`) ||
+            !temporalPacketReferencesBoundSource(context, packet.source_refs)
+          ) {
+            throw new AgentError(
+              'task_temporal_reconcile context packet is not bound to the active task source',
               'TOOL_ERROR',
               undefined,
               false
@@ -4621,11 +4673,14 @@ export class GatewayToolExecutor {
 
     try {
       const temporalContext = ctx.temporalWorkContext;
+      const effectiveInput = temporalContext
+        ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
+        : input;
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
         envelope: ctx.envelope,
         modelRunId: ctx.modelRunId ?? null,
-        input,
+        input: effectiveInput,
         signal: ctx.signal,
         beforePersist: temporalContext
           ? () => {
@@ -4838,7 +4893,6 @@ function sanitizeGatewayFailureResult(
     success: false,
     error: gatewayFailureRef(failure, temporal),
     ...(typeof record.code === 'string' ? { code: record.code } : {}),
-    ...(typeof record.envelope_hash === 'string' ? { envelope_hash: record.envelope_hash } : {}),
   } as GatewayToolResult;
 }
 

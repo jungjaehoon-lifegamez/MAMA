@@ -29,6 +29,8 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
   }
 
   db.exec(`
+    DROP INDEX IF EXISTS idx_operator_temporal_generations_task_occurrence;
+
     CREATE TABLE IF NOT EXISTS operator_temporal_generations (
       generation_key TEXT PRIMARY KEY,
       task_id INTEGER NOT NULL REFERENCES operator_tasks(id),
@@ -54,6 +56,7 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       after_revision INTEGER NOT NULL CHECK (after_revision >= 0),
       changed_fields TEXT NOT NULL,
       reason TEXT NOT NULL,
+      attestation_version INTEGER NOT NULL DEFAULT 1 CHECK (attestation_version IN (0, 1)),
       context_packet_id TEXT NOT NULL,
       context_packet_sha256 TEXT NOT NULL,
       next_temporal_check_at INTEGER,
@@ -67,14 +70,48 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       ON operator_tasks(id)
       WHERE kind = 'owner' AND status IN ('pending','in_progress','review','blocked')
         AND (due_at IS NOT NULL OR deadline IS NOT NULL OR next_temporal_check_at IS NOT NULL);
-    CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_task_occurrence
-      ON operator_temporal_generations(task_id, temporal_epoch, occurrence_key, check_at);
+    CREATE INDEX IF NOT EXISTS idx_operator_tasks_temporal_open_event
+      ON operator_tasks(source_event_id, id)
+      WHERE kind = 'system' AND source_channel = 'workorder:temporal'
+        AND status IN ('pending','in_progress');
     CREATE UNIQUE INDEX IF NOT EXISTS idx_operator_temporal_generations_identity
       ON operator_temporal_generations(task_id, temporal_epoch, occurrence_key, check_at);
+    CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_active
+      ON operator_temporal_generations(generation_key, last_workorder_id)
+      WHERE disposition = 'active' AND last_workorder_id IS NOT NULL;
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_generations_workorder
       ON operator_temporal_generations(last_workorder_id);
     CREATE INDEX IF NOT EXISTS idx_operator_temporal_effects_task_occurrence
       ON operator_temporal_effects(task_id, occurrence_key, created_at);
+
+    CREATE TRIGGER IF NOT EXISTS trg_operator_tasks_legacy_deadline_write
+    AFTER UPDATE OF deadline ON operator_tasks
+    WHEN NEW.kind = 'owner'
+      AND NEW.deadline IS NOT OLD.deadline
+      AND NEW.due_at IS OLD.due_at
+      AND NEW.temporal_epoch = OLD.temporal_epoch
+    BEGIN
+      UPDATE operator_tasks
+      SET due_at = NULL,
+          deadline_offset_minutes = NULL,
+          revision = OLD.revision + 1,
+          temporal_epoch = OLD.temporal_epoch + 1,
+          temporal_reconciled_occurrence_key = NULL,
+          last_temporal_checked_at = NULL,
+          next_temporal_check_at = NULL,
+          last_temporal_attempt_id = NULL
+      WHERE id = NEW.id;
+      UPDATE operator_temporal_generations
+      SET disposition = 'superseded', reason = 'legacy-deadline-write', updated_at = NEW.updated_at
+      WHERE task_id = NEW.id AND disposition = 'active';
+      UPDATE operator_tasks
+      SET status = 'cancelled', latest_event = 'legacy-deadline-write', updated_at = NEW.updated_at
+      WHERE kind = 'system' AND source_channel = 'workorder:temporal'
+        AND status IN ('pending','in_progress')
+        AND source_event_id IN (
+          SELECT generation_key FROM operator_temporal_generations WHERE task_id = NEW.id
+        );
+    END;
   `);
 
   const effectColumns = new Set(
@@ -88,4 +125,21 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
   if (!effectColumns.has('context_packet_sha256')) {
     db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN context_packet_sha256 TEXT`);
   }
+  if (!effectColumns.has('attestation_version')) {
+    db.exec(
+      `ALTER TABLE operator_temporal_effects
+       ADD COLUMN attestation_version INTEGER NOT NULL DEFAULT 0
+       CHECK (attestation_version IN (0, 1))`
+    );
+  }
+  db.exec(`
+    UPDATE operator_temporal_effects
+    SET attestation_version = 1
+    WHERE attestation_version = 0
+      AND context_packet_id IS NOT NULL
+      AND length(trim(context_packet_id)) > 0
+      AND context_packet_sha256 IS NOT NULL
+      AND length(context_packet_sha256) = 64
+      AND context_packet_sha256 NOT GLOB '*[^0-9a-f]*'
+  `);
 }

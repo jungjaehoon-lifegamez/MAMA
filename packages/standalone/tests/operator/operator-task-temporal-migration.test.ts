@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
+import { applyOperatorTaskTemporalMigration } from '../../src/db/migrations/operator-task-temporal.js';
+import { temporalReceiptInvariantError } from '../../src/operator/temporal-effect.js';
+import { occurrenceKeyForTask, temporalGenerationKey } from '../../src/operator/task-temporal.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 
 const TEMPORAL_COLUMNS = [
@@ -22,7 +25,7 @@ function columnNames(db: SQLiteDatabase): string[] {
   );
 }
 
-function objectSql(db: SQLiteDatabase, type: 'table' | 'index', name: string): string {
+function objectSql(db: SQLiteDatabase, type: 'table' | 'index' | 'trigger', name: string): string {
   const row = db
     .prepare('SELECT sql FROM sqlite_master WHERE type = ? AND name = ?')
     .get(type, name) as { sql: string | null } | undefined;
@@ -48,13 +51,15 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
 
     for (const index of [
       'idx_operator_tasks_temporal_candidates',
-      'idx_operator_temporal_generations_task_occurrence',
+      'idx_operator_tasks_temporal_open_event',
       'idx_operator_temporal_generations_identity',
+      'idx_operator_temporal_generations_active',
       'idx_operator_temporal_generations_workorder',
       'idx_operator_temporal_effects_task_occurrence',
     ]) {
       expect(objectSql(db, 'index', index)).not.toBe('');
     }
+    expect(objectSql(db, 'index', 'idx_operator_temporal_generations_task_occurrence')).toBe('');
     db.close();
   });
 
@@ -155,5 +160,133 @@ describe('Story A2 Task 1: temporal task schema migration', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('normalizes exact-time state across a legacy deadline write and re-upgrade', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
+    const task = ledger.create({
+      title: 'mixed-version task',
+      due_at: '2026-07-22T09:00:00+09:00',
+    });
+    const occurrenceKey = occurrenceKeyForTask(task)!;
+    const generationKey = temporalGenerationKey(task.id, occurrenceKey, task.dueAt!);
+    const generation = ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    db.prepare(
+      `UPDATE operator_tasks
+       SET temporal_reconciled_occurrence_key = 'old-occurrence',
+           last_temporal_checked_at = 100,
+           next_temporal_check_at = 200,
+           last_temporal_attempt_id = 300
+       WHERE id = ?`
+    ).run(task.id);
+
+    db.prepare(`UPDATE operator_tasks SET deadline = ?, updated_at = ? WHERE id = ?`).run(
+      '2026-08-01',
+      400,
+      task.id
+    );
+    new TaskLedger(db);
+
+    expect(db.prepare('SELECT * FROM operator_tasks WHERE id = ?').get(task.id)).toMatchObject({
+      deadline: '2026-08-01',
+      due_at: null,
+      deadline_offset_minutes: null,
+      revision: 2,
+      temporal_epoch: 2,
+      temporal_reconciled_occurrence_key: null,
+      last_temporal_checked_at: null,
+      next_temporal_check_at: null,
+      last_temporal_attempt_id: null,
+    });
+    expect(objectSql(db, 'trigger', 'trg_operator_tasks_legacy_deadline_write')).not.toBe('');
+    expect(ledger.getTemporalGeneration(generationKey)?.disposition).toBe('superseded');
+    expect(ledger.getWorkOrderById(generation.workOrder.id)?.status).toBe('cancelled');
+    db.close();
+  });
+
+  it('classifies a pre-attestation receipt as readable but non-authoritative', () => {
+    const db = new Database(':memory:');
+    const ledger = new TaskLedger(db, {
+      now: () => Date.parse('2026-07-21T15:00:00Z'),
+      timeZone: 'Asia/Seoul',
+    });
+    const task = ledger.create({ title: 'legacy receipt task', deadline: '2026-07-21' });
+    const occurrenceKey = occurrenceKeyForTask(task)!;
+    const generationKey = temporalGenerationKey(
+      task.id,
+      occurrenceKey,
+      Date.parse('2026-07-21T15:00:00Z')
+    );
+    const generation = ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: Date.parse('2026-07-21T15:00:00Z'),
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    db.exec(`
+      DROP TABLE operator_temporal_effects;
+      CREATE TABLE operator_temporal_effects (
+        workorder_attempt_id INTEGER PRIMARY KEY,
+        task_id INTEGER NOT NULL,
+        generation_key TEXT NOT NULL,
+        occurrence_key TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        before_revision INTEGER NOT NULL,
+        after_revision INTEGER NOT NULL,
+        changed_fields TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        context_packet_id TEXT,
+        context_packet_sha256 TEXT,
+        next_temporal_check_at INTEGER,
+        created_at INTEGER NOT NULL
+      );
+    `);
+    db.prepare(
+      `INSERT INTO operator_temporal_effects
+         (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
+          before_revision, after_revision, changed_fields, reason,
+          context_packet_id, context_packet_sha256, next_temporal_check_at, created_at)
+       VALUES (?, ?, ?, ?, 'final_no_update', 1, 2, '[]', 'legacy receipt',
+               NULL, NULL, NULL, ?)`
+    ).run(
+      generation.workOrder.id,
+      task.id,
+      generationKey,
+      occurrenceKey,
+      Date.parse('2026-07-21T15:00:00Z')
+    );
+
+    applyOperatorTaskTemporalMigration(db);
+    const receipt = ledger.getTemporalEffect(generation.workOrder.id)!;
+
+    expect(receipt).toMatchObject({
+      attestationVersion: 0,
+      contextPacketId: '',
+      contextPacketSha256: '',
+    });
+    expect(
+      temporalReceiptInvariantError(receipt, {
+        attemptId: generation.workOrder.id,
+        taskId: task.id,
+        generationKey,
+        occurrenceKey,
+      })
+    ).toMatch(/legacy.*quarantined/i);
+    db.close();
   });
 });
