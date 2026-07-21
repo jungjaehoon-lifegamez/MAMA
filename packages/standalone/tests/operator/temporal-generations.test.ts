@@ -109,7 +109,7 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     ledger.enqueueTemporalGeneration(input);
     expect(() =>
       ledger.enqueueTemporalGeneration({ ...input, checkAt: input.checkAt + 1 })
-    ).toThrow(/conflicts/);
+    ).toThrow(/canonical|conflicts/);
 
     const other = ledger.create({ title: 'other', due_at: '2026-07-22T09:00:00+09:00' });
     expect(() =>
@@ -146,7 +146,12 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     const task = scheduledTask();
     const input = inputFor(task);
     const first = ledger.enqueueTemporalGeneration(input);
+    const firstClaim = ledger.claimNextWorkOrder()!;
+    ledger.requeueTemporalWorkOrder(firstClaim.id, 'retry one');
+    const secondClaim = ledger.claimNextWorkOrder()!;
+    ledger.requeueTemporalWorkOrder(secondClaim.id, 'retry two');
     const claimed = ledger.claimNextWorkOrder()!;
+    expect(() => ledger.requeueTemporalWorkOrder(claimed.id, 'too many')).toThrow(/budget/);
     ledger.exhaustTemporalWorkOrder(claimed.id, 'no evidence after retries');
 
     expect(ledger.getTemporalGeneration(input.generationKey)).toMatchObject({
@@ -156,8 +161,9 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     });
     const duplicate = ledger.enqueueTemporalGeneration(input);
     expect(duplicate.created).toBe(false);
-    expect(duplicate.workOrder.id).toBe(first.workOrder.id);
-    expect(db.prepare(`SELECT COUNT(*) AS count FROM operator_tasks`).get()).toEqual({ count: 2 });
+    expect(duplicate.workOrder.id).toBe(claimed.id);
+    expect(duplicate.workOrder.id).not.toBe(first.workOrder.id);
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM operator_tasks`).get()).toEqual({ count: 4 });
   });
 
   it('bounds temporal retry and exhaustion reasons', () => {
@@ -166,7 +172,55 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     const claimed = ledger.claimNextWorkOrder()!;
     expect(() => ledger.requeueTemporalWorkOrder(claimed.id, '')).toThrow(/1-500/);
     expect(() => ledger.exhaustTemporalWorkOrder(claimed.id, 'x'.repeat(501))).toThrow(/1-500/);
+    expect(() => ledger.exhaustTemporalWorkOrder(claimed.id, 'too early')).toThrow(
+      /requires attempt/
+    );
     expect(ledger.loadTemporalWorkContext(claimed.id).attemptId).toBe(claimed.id);
+  });
+
+  it('keeps generation creation atomic when the attempt insert fails', () => {
+    const target = scheduledTask();
+    db.exec(`
+      CREATE TRIGGER reject_temporal_attempt
+      BEFORE INSERT ON operator_tasks
+      WHEN NEW.source_channel = 'workorder:temporal'
+      BEGIN
+        SELECT RAISE(ABORT, 'synthetic temporal insert failure');
+      END;
+    `);
+    expect(() => ledger.enqueueTemporalGeneration(inputFor(target))).toThrow(/synthetic/);
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM operator_temporal_generations`).get()).toEqual(
+      {
+        count: 0,
+      }
+    );
+    expect(db.prepare(`SELECT COUNT(*) AS count FROM operator_tasks`).get()).toEqual({ count: 1 });
+  });
+
+  it('rolls back the old row and replacement when retry ownership update fails', () => {
+    const target = scheduledTask();
+    const first = ledger.enqueueTemporalGeneration(inputFor(target));
+    const claimed = ledger.claimNextWorkOrder()!;
+    db.exec(`
+      CREATE TRIGGER reject_temporal_ownership_update
+      BEFORE UPDATE OF last_workorder_id ON operator_temporal_generations
+      BEGIN
+        SELECT RAISE(ABORT, 'synthetic ownership update failure');
+      END;
+    `);
+    expect(() => ledger.requeueTemporalWorkOrder(claimed.id, 'retry')).toThrow(/synthetic/);
+    expect(ledger.loadTemporalWorkContext(claimed.id).attemptId).toBe(claimed.id);
+    expect(ledger.getTemporalGeneration(first.generation.generationKey)?.lastWorkOrderId).toBe(
+      claimed.id
+    );
+    expect(
+      db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM operator_tasks
+           WHERE source_channel = 'workorder:temporal'`
+        )
+        .get()
+    ).toEqual({ count: 1 });
   });
 
   it('supersedes and cancels old ownership when a due occurrence changes', () => {
