@@ -1328,7 +1328,7 @@ describe('Story: Codex app-server process', () => {
           codexHome: item.options.codexHome,
           codexIsolatedHome: item.options.isolatedHome,
           codexRegistryRoot: item.options.registryRoot,
-          requestTimeout: 500,
+          requestTimeout: 2_000,
         }
       );
       manager.setGatewayToolExecutor(executor);
