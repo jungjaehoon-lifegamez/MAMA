@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.25.0] / mama-core [1.9.0] / mama-os [0.25.0] - 2026-07-22
+
 ### Added — Verified temporal owner-task reconciliation
 
 - **Active overdue decisions** — optional temporal workorders now inspect exact-time and date-only
@@ -24,6 +26,11 @@ All notable changes to this project will be documented in this file.
   effects.
 - **Bounded shutdown** — temporal admission stops and open attempts are durably paused before the
   runtime waits for an in-flight worker to drain.
+
+### Upgrade notes
+
+- This minor release bumps only `@jungjaehoon/mama-os` to `0.25.0`; MAMA Core, MCP Server, and the
+  Claude Code plugin keep their existing versions.
 
 ## [0.24.2] / mama-core [1.9.0] / mama-os [0.24.2] - 2026-07-22
 
