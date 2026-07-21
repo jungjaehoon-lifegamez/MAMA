@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0] / mama-core [1.9.0] / mama-os [0.24.0] - 2026-07-21
+
+### Added — Codex app-server backend parity
+
+- **Native Codex app-server transport** — MAMA now runs Codex through one managed,
+  multiplexed `codex app-server --stdio` process with durable thread IDs, explicit fresh-session
+  handling, and a current runtime bootstrap after daemon restarts.
+- **Native MAMA host tools for Codex** — Codex receives the same role-scoped gateway and memory
+  tools as Claude, including MAMA-owned connector surfaces such as Trello. Tool calls flow through
+  MAMA's canonical host bridge rather than a separate Trello app or a text-parsed MCP workaround.
+- **Code-Act parity** — `code_act` is available to Codex and reuses the same role, tier, runtime,
+  channel, and Reactive-envelope authorization gates as direct host-tool calls.
+- **Codex configuration and UI support** — the default Codex model is `gpt-5.4`, custom model IDs
+  remain selectable, and stored `codex-mcp` backend values migrate to `codex` automatically.
+
+### Fixed
+
+- **Turn isolation and recovery** — timed-out or late Codex turns are reconciled without cancelling
+  unrelated confirmed conversations; unresolved starts trigger a bounded process recovery, and
+  cancelled tool calls cannot continue mutating host state.
+- **Managed runtime integrity** — Codex auth and managed configuration are repaired only when their
+  content changes, instruction sources are constrained to managed roots (including symlinks), and
+  external MCP secret changes safely refresh the process without leaking values in errors.
+- **Fail-closed backend handling** — unknown backend names are rejected instead of silently falling
+  back to Claude, while the single supported legacy alias is migrated explicitly.
+
+### Upgrade notes
+
+- This release bumps only `@jungjaehoon/mama-os` to `0.24.0`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+- Existing Codex users do not need to rewrite configuration. Authenticate with `codex login`; MAMA
+  synchronizes the credentials into its managed Codex home and migrates legacy backend values.
+
 ## [0.23.0] / mama-core [1.9.0] / mama-os [0.23.0] - 2026-07-18
 
 ### Added — Owner console (PR #153, Stage 0+1)

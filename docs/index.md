@@ -53,7 +53,7 @@ _Step-by-step instructions for specific tasks_
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
-- [Codex Backend](guides/codex-backend.md) - Codex CLI backend setup and mixed swarm
+- [Codex Backend](guides/codex-backend.md) - Codex app-server setup and mixed swarm
 - [Multi-Agent Advanced](guides/multi-agent-advanced.md) - Council, Workflow DAG, Swarm, UltraWork
 - [Code-Act Sandbox](guides/code-act-sandbox.md) - QuickJS/WASM isolated code execution
 
@@ -151,5 +151,6 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.23 — Operator runtime: self-evolving trigger loop, `/ui` operator board, wiki v5 daily journal + lessons, scheduled memory promotion
-**Last Updated:** 2026-07-12
+**Status:** MAMA OS v0.24 — Codex app-server parity with durable threads, native MAMA host tools,
+role-scoped Code-Act, and legacy backend migration
+**Last Updated:** 2026-07-21
