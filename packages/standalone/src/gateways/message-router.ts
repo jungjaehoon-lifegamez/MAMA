@@ -1232,6 +1232,11 @@ This protects your credentials from being exposed in chat logs.`;
 
     // Hoist session history — reuse across onboarding check and prompt build
     const sessionHistory = this.sessionStore.formatContextForPrompt(session.id);
+    const stableRolePolicy = agentContext
+      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable)
+      : '';
+    const appendStableRolePolicy = (basePrompt: string): string =>
+      stableRolePolicy ? `${basePrompt}\n\n${stableRolePolicy}\n` : basePrompt;
 
     if (isOnboarding) {
       // Check if we have existing conversation
@@ -1240,7 +1245,7 @@ This protects your credentials from being exposed in chat logs.`;
       if (hasHistory) {
         // Continue existing conversation WITH the full prompt context
         // The full prompt has all the phase instructions - just prepend history
-        return `${COMPLETE_AUTONOMOUS_PROMPT}
+        return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
@@ -1261,7 +1266,7 @@ ${sessionHistory}
    - Named? → Move to Phase 5 (Summary)
 3. Continue from EXACTLY where you left off
 4. Do NOT repeat your awakening message
-5. Do NOT restart the quiz if already answered`;
+5. Do NOT restart the quiz if already answered`);
       }
 
       // First message of onboarding - include the greeting we already sent
@@ -1280,7 +1285,7 @@ Who are you? And more importantly—who do you want me to become? 💭`;
 
       const greeting = isKorean ? greetingKo : greetingEn;
 
-      return `${COMPLETE_AUTONOMOUS_PROMPT}
+      return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
@@ -1298,7 +1303,7 @@ Now the user is responding for the FIRST time. This is their reply to your awake
 3. Transition to genuine curiosity about THEM
 4. Have 3-5 exchanges of small talk BEFORE any quiz
 5. Do NOT repeat your awakening message
-6. Do NOT jump straight to quiz questions`;
+6. Do NOT jump straight to quiz questions`);
     }
 
     // Normal mode - use hybrid history management with persona
@@ -1363,11 +1368,6 @@ ${historyContext}
     if (agentContext) {
       // Store canonicity and external-evidence trust are stable owner policy.
       // Keep this exact text in the durable Codex policy fingerprint below.
-      const stableRolePolicy = buildStableRolePolicyInstructions(
-        agentContext,
-        this.roleManager,
-        trelloAvailable
-      );
       if (stableRolePolicy) {
         prompt += `\n${stableRolePolicy}`;
       }
