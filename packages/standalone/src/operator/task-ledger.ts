@@ -996,6 +996,12 @@ export class TaskLedger implements TaskSource {
     return this.loadTemporalWorkContextInternal(attemptId);
   }
 
+  assertTemporalWorkContextActive(suppliedContext: TemporalWorkContext): TemporalWorkContext {
+    const trustedContext = this.loadTemporalWorkContextInternal(suppliedContext.attemptId);
+    this.assertTemporalContextMatches(suppliedContext, trustedContext);
+    return trustedContext;
+  }
+
   getTemporalEffect(attemptId: number): TemporalEffectReceipt | null {
     const row = this.db
       .prepare(`SELECT * FROM operator_temporal_effects WHERE workorder_attempt_id = ?`)
@@ -1052,8 +1058,7 @@ export class TaskLedger implements TaskSource {
     let receipt: TemporalEffectReceipt | null = null;
     this.db.exec('BEGIN IMMEDIATE');
     try {
-      const context = this.loadTemporalWorkContextInternal(suppliedContext.attemptId);
-      this.assertTemporalContextMatches(suppliedContext, context);
+      const context = this.assertTemporalWorkContextActive(suppliedContext);
       if (input.expected_revision !== context.revision) {
         throw new Error(
           `temporal effect revision mismatch: expected ${input.expected_revision}, current ${context.revision}`

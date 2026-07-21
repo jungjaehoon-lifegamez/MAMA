@@ -122,6 +122,7 @@ import {
   type WikiPublishAdapter,
 } from '../wiki-artifacts/wiki-publish-adapter.js';
 import type { WikiPagePublisher, WikiPublishPageInput } from '../wiki-artifacts/types.js';
+import type { TemporalReconcileInput, TemporalWorkContext } from '../operator/temporal-effect.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -179,6 +180,7 @@ type ActiveGatewayExecutionContext = {
   modelRunId?: string | null;
   gatewayCallId?: string;
   workorderAttemptId?: number;
+  temporalWorkContext?: TemporalWorkContext;
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -260,6 +262,49 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_update',
   'mama_add',
   'mama_ingest',
+]);
+
+const TEMPORAL_WRITE_TOOLS = new Set<string>([
+  'mama_save',
+  'context_compile',
+  'mama_update',
+  'mama_add',
+  'mama_ingest',
+  'report_publish',
+  'report_request',
+  'workorder_request',
+  'wiki_publish',
+  'obsidian',
+  'task_create',
+  'task_update',
+  'contract_no_update',
+  'task_temporal_reconcile',
+  'Write',
+  'Bash',
+  'discord_send',
+  'slack_send',
+  'telegram_send',
+  'webchat_send',
+  'delegate',
+  'os_add_bot',
+  'os_set_permissions',
+  'os_set_model',
+  'os_restart_bot',
+  'os_stop_bot',
+  'agent_update',
+  'agent_create',
+  'viewer_navigate',
+  'viewer_notify',
+  'save_integration_token',
+  'browser_navigate',
+  'browser_screenshot',
+  'browser_click',
+  'browser_type',
+  'browser_scroll',
+  'browser_evaluate',
+  'browser_pdf',
+  'browser_close',
+  'agent_test',
 ]);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
@@ -614,6 +659,7 @@ export class GatewayToolExecutor {
       modelRunId: executionContext?.modelRunId ?? null,
       gatewayCallId: executionContext?.gatewayCallId,
       workorderAttemptId: executionContext?.workorderAttemptId,
+      temporalWorkContext: executionContext?.temporalWorkContext,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -656,6 +702,8 @@ export class GatewayToolExecutor {
       gatewayCallId: active.gatewayCallId ?? fallback.gatewayCallId,
       // Never merged from fallback - attempt identity is issued for one claimed run only.
       workorderAttemptId: active.workorderAttemptId,
+      // Never merged from fallback - temporal authority belongs to one claimed run only.
+      temporalWorkContext: active.temporalWorkContext,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -698,6 +746,37 @@ export class GatewayToolExecutor {
     }
     const activeContext = this.normalizeExecutionContext(executionContext);
     return this.executionContextStorage.run(activeContext, fn);
+  }
+
+  private requireActiveTemporalWriteAuthority(toolName: string): TemporalWorkContext | null {
+    const context = this.getExecutionState().temporalWorkContext;
+    if (toolName === 'task_temporal_reconcile' && !context) {
+      throw new AgentError(
+        'task_temporal_reconcile requires an active host-issued temporal work context',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+    if (!context || !TEMPORAL_WRITE_TOOLS.has(toolName)) return context ?? null;
+    if (!this.taskLedger) {
+      throw new AgentError(
+        'Temporal work authority cannot be checked because the task ledger is unavailable',
+        'WORKORDER_SUPERSEDED',
+        undefined,
+        false
+      );
+    }
+    try {
+      return this.taskLedger.assertTemporalWorkContextActive(context);
+    } catch (error) {
+      throw new AgentError(
+        `Temporal workorder is no longer active: ${error instanceof Error ? error.message : String(error)}`,
+        'WORKORDER_SUPERSEDED',
+        error instanceof Error ? error : undefined,
+        false
+      );
+    }
   }
 
   setCurrentAgentContext(agentId: string, source: string, channelId: string): void {
@@ -1877,6 +1956,8 @@ export class GatewayToolExecutor {
       }
     }
 
+    this.requireActiveTemporalWriteAuthority(toolName);
+
     try {
       // Handle non-MAMA tools first
       switch (toolName) {
@@ -2362,6 +2443,21 @@ export class GatewayToolExecutor {
               false
             );
           }
+          if (this.getExecutionState().temporalWorkContext) {
+            const slotNames = Object.keys(slotsInput);
+            if (
+              slotNames.length !== 1 ||
+              slotNames[0] !== 'pipeline' ||
+              typeof slotsInput.pipeline !== 'string'
+            ) {
+              throw new AgentError(
+                'Temporal report_publish accepts exactly the host-derived pipeline slot',
+                'TOOL_ERROR',
+                undefined,
+                false
+              );
+            }
+          }
           // Stage-2 shadow seam: a per-run capture override takes precedence
           // over the global singleton (capture runs never touch the live store).
           const activePublisher =
@@ -2631,6 +2727,24 @@ export class GatewayToolExecutor {
           return {
             success: true,
             task: serializeTaskToolRecord(this.taskLedger.update(id, patch as never)),
+          };
+        }
+        case 'task_temporal_reconcile': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const context = this.getExecutionState().temporalWorkContext;
+          if (!context) {
+            throw new AgentError(
+              'task_temporal_reconcile requires trusted temporal context',
+              'WORKORDER_SUPERSEDED',
+              undefined,
+              false
+            );
+          }
+          return {
+            success: true,
+            receipt: this.taskLedger.applyTemporalEffect(context, input as TemporalReconcileInput),
           };
         }
         case 'schedule_upcoming': {

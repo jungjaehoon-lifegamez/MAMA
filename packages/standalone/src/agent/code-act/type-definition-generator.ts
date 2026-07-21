@@ -33,7 +33,7 @@ export class TypeDefinitionGenerator {
             const opt = p.required ? '' : '?';
             return `${p.name}${opt}: ${p.type}`;
           })
-          .join(', ');
+          .join(',');
 
         lines.push(`declare function ${meta.name}(${params}): ${meta.returnType};`);
       }

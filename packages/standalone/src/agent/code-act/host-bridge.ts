@@ -767,6 +767,26 @@ const TOOL_REGISTRY: ToolMeta[] = [
       '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
     category: 'memory',
   },
+  {
+    name: 'task_temporal_reconcile',
+    description:
+      'Commit the current host-issued temporal work result. Identity fields are not accepted.',
+    params: [
+      { name: 'expected_revision', type: 'number', required: true },
+      {
+        name: 'outcome',
+        type: "'resolved' | 'final_no_update' | 'deferred'",
+        required: true,
+      },
+      { name: 'reason', type: 'string', required: true },
+      { name: 'status', type: 'string', required: false },
+      { name: 'due_at', type: 'string | null', required: false },
+      { name: 'evidence_summary', type: 'string', required: false },
+      { name: 'next_temporal_check_at', type: 'string', required: false },
+    ],
+    returnType: '{ receipt: { taskId: number; workorderAttemptId: number; outcome: string } }',
+    category: 'memory',
+  },
 ];
 
 /** Read-only tool names for Tier 3 (strictest) */
@@ -816,6 +836,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   // Native task ledger writes: reconcile runs maintain work items (M8).
   'task_create',
   'task_update',
+  'task_temporal_reconcile',
   'contract_no_update',
 ]);
 

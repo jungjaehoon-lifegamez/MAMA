@@ -98,6 +98,7 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'wiki_publish',
   'task_create',
   'task_update',
+  'task_temporal_reconcile',
   'contract_no_update',
 ]);
 
@@ -381,6 +382,8 @@ const WORKORDER_CODE_ACT_POLICIES = {
       'kagemusha_tasks',
       'schedule_upcoming',
       'task_list',
+      'task_temporal_reconcile',
+      'report_publish',
     ],
   },
 } as const satisfies Record<WorkOrderKind, WorkOrderCodeActPolicy>;
@@ -1276,6 +1279,9 @@ export async function runAgentLoop(
           },
           wo.id
         );
+        if (wo.workKind === 'temporal') {
+          runOptions.temporalWorkContext = taskLedger.loadTemporalWorkContext(wo.id);
+        }
         if (runtimeBackend === 'codex') {
           runOptions.agentContext = buildWorkOrderCodexAgentContext(
             wo.workKind,
