@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildWorkOrderCodexAgentContext,
   deriveCodeActToolPolicy,
   resolveCodeActMemoryScopes,
   resolveCodeActRawConnectors,
@@ -150,6 +151,41 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         { kind: 'project', id: 'project_tinklestar' },
         { kind: 'project', id: 'kakao:user_alpha' },
       ]);
+    });
+  });
+
+  describe('AC #5: workorder runners receive an explicit Code-Act role', () => {
+    it('maps board workorders to the dashboard agent gateway allowlist', () => {
+      const context = buildWorkOrderCodexAgentContext(
+        'board',
+        {
+          'dashboard-agent': {
+            name: 'dashboard-agent',
+            display_name: 'Dashboard',
+            trigger_prefix: '!dashboard',
+            tier: 2,
+            useCodeAct: true,
+            gateway_tool_permissions: {
+              allowed: ['kagemusha_tasks', 'task_list', 'report_publish'],
+              blocked: ['mama_save'],
+            },
+          },
+        },
+        'gpt-5.4'
+      );
+
+      expect(context).toMatchObject({
+        source: 'operator',
+        platform: 'cli',
+        roleName: 'dashboard-agent',
+        backend: 'codex',
+        tier: 2,
+        role: {
+          allowedTools: ['code_act', 'kagemusha_tasks', 'task_list', 'report_publish'],
+          blockedTools: ['mama_save'],
+          model: 'gpt-5.4',
+        },
+      });
     });
   });
 });

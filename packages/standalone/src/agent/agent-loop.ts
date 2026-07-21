@@ -1562,13 +1562,21 @@ export class AgentLoop {
             errorMessage.includes('request_too_large') ||
             errorMessage.includes('context window') ||
             errorMessage.includes('context_length_exceeded');
+          const isCodexPolicyMismatch = errorMessage.includes(
+            'Codex app-server thread policy mismatch; reset the session explicitly'
+          );
 
-          if (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong)) {
-            const reason = isSessionNotFound
-              ? 'not found in CLI'
-              : isSessionInUse
-                ? 'already in use'
-                : 'prompt too long (context overflow)';
+          if (
+            (isCodex && isCodexPolicyMismatch) ||
+            (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong))
+          ) {
+            const reason = isCodexPolicyMismatch
+              ? 'policy mismatch'
+              : isSessionNotFound
+                ? 'not found in CLI'
+                : isSessionInUse
+                  ? 'already in use'
+                  : 'prompt too long (context overflow)';
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one

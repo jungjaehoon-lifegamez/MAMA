@@ -309,6 +309,51 @@ function buildCodeActRole(policy: {
   };
 }
 
+const WORKORDER_CODE_ACT_AGENTS = {
+  board: 'dashboard-agent',
+  wiki: 'wiki-agent',
+  'memory-curation': 'memory',
+} as const;
+
+export function buildWorkOrderCodexAgentContext(
+  kind: keyof typeof WORKORDER_CODE_ACT_AGENTS,
+  agents: Record<string, Omit<AgentPersonaConfig, 'id'>> | undefined,
+  model: string
+): AgentContext {
+  const agentId = WORKORDER_CODE_ACT_AGENTS[kind];
+  const resolved = resolveCodeActAgentPolicy(undefined, agents, agentId);
+  if (resolved.error || !resolved.agentConfig || !resolved.policy?.allowedTools) {
+    throw new Error(
+      `[stage2] Codex workorder '${kind}' has no usable Code-Act policy: ${resolved.error ?? agentId}`
+    );
+  }
+  const blockedTools = resolved.policy.blockedTools ?? [];
+  const allowedTools = uniqueToolList(['code_act', ...resolved.policy.allowedTools]);
+  return {
+    source: 'operator',
+    platform: 'cli',
+    roleName: agentId,
+    role: {
+      allowedTools,
+      blockedTools,
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+      model,
+      maxTurns: resolved.agentConfig.max_turns,
+    },
+    session: {
+      sessionId: `operator:worker:${kind}`,
+      channelId: `worker:${kind}`,
+      startedAt: new Date(),
+    },
+    capabilities: allowedTools,
+    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+    tier: resolved.agentConfig.tier ?? 2,
+    backend: 'codex',
+  };
+}
+
 type CodeActModelRunAdapter = Pick<DatabaseAdapter, 'prepare'>;
 
 type CodeActExecutionResultLike = {
@@ -1164,6 +1209,13 @@ export async function runAgentLoop(
         const runOptions: Record<string, unknown> = {
           systemPrompt: buildWorkerSystemPrompt(getGatewayToolsPrompt(), runtimeBackend),
         };
+        if (runtimeBackend === 'codex') {
+          runOptions.agentContext = buildWorkOrderCodexAgentContext(
+            wo.workKind,
+            config.multi_agent?.agents,
+            config.agent.model
+          );
+        }
         if (stage2Flag === 'shadow') {
           // Shadow ≡ board only. A non-board order here (e.g. enqueued at
           // 'on' before a rollback) would run LIVE with no capture seam
