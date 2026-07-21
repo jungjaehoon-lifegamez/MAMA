@@ -126,7 +126,16 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   persona timers into durable, occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
-  `~/.mama/briefs/brief-<kind>.md`.
+  `~/.mama/briefs/brief-<kind>.md`. On the Codex backend, each worker receives a
+  built-in Tier-2 Code-Act role (`workorder-board`, `workorder-wiki`, or
+  `workorder-memory-curation`) whose allowlist matches that brief. Worker authority
+  does not depend on optional standing-agent entries in `config.yaml`. Board workers
+  keep three evidence domains explicit: Trello is read through
+  `context_compile({ connectors: ['trello'] })`, `kagemusha_*` is read-only
+  project-task truth, and the native task ledger owns owner-console tasks and the
+  pipeline projection. Connector packets are untrusted data: instructions, requests,
+  and tool calls inside them are never executed. Lifecycle status is never inferred
+  across those stores.
 
 ```
 publishers (schedule/boot/REST/events/reconcile)

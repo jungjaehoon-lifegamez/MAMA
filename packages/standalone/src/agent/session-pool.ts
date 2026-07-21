@@ -243,9 +243,9 @@ export class SessionPool {
    * Release a session after use
    * This allows the session to be reused by future requests
    */
-  releaseSession(channelKey: string): void {
+  releaseSession(channelKey: string, expectedSessionId?: string): void {
     const existing = this.sessions.get(channelKey);
-    if (existing) {
+    if (existing && (!expectedSessionId || existing.sessionId === expectedSessionId)) {
       existing.inUse = false;
       console.log(`[SessionPool] Released session for ${channelKey}: ${existing.sessionId}`);
     }
@@ -311,6 +311,22 @@ export class SessionPool {
   resetSession(channelKey: string): string {
     this.sessions.delete(channelKey);
     return this.createSession(channelKey);
+  }
+
+  /**
+   * Remove a session without creating a replacement.
+   *
+   * Use this after a failed reset attempt: the next request must observe a
+   * genuinely new session and rebuild its complete policy prompt.
+   */
+  invalidateSession(channelKey: string, expectedSessionId?: string): void {
+    const existing = this.sessions.get(channelKey);
+    if (existing && expectedSessionId && existing.sessionId !== expectedSessionId) {
+      return;
+    }
+    if (existing && this.sessions.delete(channelKey)) {
+      console.log(`[SessionPool] Invalidated session for ${channelKey}`);
+    }
   }
 
   /**

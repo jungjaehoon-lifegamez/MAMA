@@ -958,6 +958,8 @@ export interface AgentLoopOptions {
   backend?: 'claude' | 'codex';
   /** System prompt for Claude */
   systemPrompt?: string;
+  /** Lazily rebuild the complete prompt when a durable Codex thread must be replaced. */
+  freshSessionSystemPrompt?: () => Promise<string>;
   /** Stable identity/rules fingerprint for durable Codex threads. */
   sessionPolicyFingerprint?: string;
   /** User identifier for the frontdoor message source */

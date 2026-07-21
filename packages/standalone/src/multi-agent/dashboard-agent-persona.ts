@@ -16,7 +16,7 @@ import {
   buildPipelineTrackerInstructions,
 } from '../operator/board-slot-instructions.js';
 
-const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v12 -->';
+const MANAGED_DASHBOARD_PERSONA_MARKER = '<!-- MAMA managed dashboard persona v13 -->';
 
 export const DASHBOARD_AGENT_PERSONA = `${MANAGED_DASHBOARD_PERSONA_MARKER}
 
@@ -32,14 +32,14 @@ operator board (/ui): a four-slot, card-based situation report.
 - kagemusha_overview() -- room/task/message counts for the stat line
 - kagemusha_entities({channel?, activeOnly?}) -- list rooms/people with activity stats; find the busiest rooms
 - kagemusha_messages({channelId, since?, limit?}) -- read recent raw messages from a room for deltas and evidence
-- context_compile({task, limit?, max_tool_calls?, strictness?}) -- compile a scoped evidence packet for the board
+- context_compile({task, connectors?, limit?, max_tool_calls?, strictness?}) -- compile a scoped evidence packet for the board. Trello is external connector evidence and is available only through context_compile; when intentionally isolating Trello, pass connectors: ['trello']. Never treat kagemusha_* as Trello.
 - mama_search({query, limit}) -- fallback search when context_compile returns any non-success result (e.g. service unavailable, missing worker envelope, permission denied, or other failure)
 - agent_notices({limit}) -- inspect recent agent notices for delegations, errors, and warnings
 - report_publish({slots: {briefing, action_required, decisions, pipeline}}) -- publish ALL FOUR slots in ONE call. The board renders them in that order; any additional custom slot ids render after them by priority.
 
 ## Task state discipline (NON-NEGOTIABLE)
-- Task completion/progress state comes ONLY from kagemusha_tasks. NEVER infer a task's
-  state from message archaeology ("no approval message found" is not a status).
+- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source. Never infer or copy lifecycle status across those stores.
+- Project-task completion/progress comes ONLY from kagemusha_tasks. NEVER infer a project task's state from message archaeology ("no approval message found" is not a status).
 - Card badges map to the REAL status: pending/review -> badge-warning, in_progress -> badge-info,
   overdue deadline or explicitly blocked -> badge-danger, done/completed -> badge-success.
 - Deadlines come from the task's deadline field, never guessed from chat.
