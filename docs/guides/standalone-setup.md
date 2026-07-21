@@ -259,6 +259,50 @@ Production notes:
   shared verifier access to the issuer secret unless M7/M8 move to an asymmetric
   capability format such as Biscuit-style tokens.
 
+### Temporal Reconciliation (Opt-In)
+
+Temporal reconciliation is disabled by default. Enable it only after the Stage-2 workorder
+pipeline is running in live mode:
+
+```bash
+export MAMA_STAGE2_WORKORDERS=on
+export MAMA_TEMPORAL_RECONCILE=on
+mama start
+```
+
+The daemon validates the complete path before starting the scanner. `on` requires:
+
+- `MAMA_STAGE2_WORKORDERS=on` (not `off` or `shadow`);
+- a Claude or Codex backend;
+- the built-in temporal worker policy with `task_temporal_reconcile` available through the
+  active transport; and
+- a working Stage-2 consumer.
+
+An incompatible `on` configuration fails during boot before any temporal timer starts. With the
+flag unset or `off`, MAMA starts normally, creates no temporal worker/timer, and pauses existing
+open temporal attempts so they can be resumed safely after re-enabling the feature.
+
+The scanner runs once per minute. A scan selects at most four due exact/deferred occurrences and
+one due date-only occurrence, and never allows more than ten temporal workorders to remain open.
+Each occurrence has a three-attempt budget. A daemon restart recovers a stale pre-transaction
+claim through that same budget; an already committed receipt is not rerun. Exhausted generations
+remain exhausted across later scans. Owner alarms for stale claims and exhaustion are best-effort
+and deduplicated, not exactly-once delivery.
+
+Time precision and workflow state are separate:
+
+- `due_at` must be valid RFC 3339 with `Z` or an explicit numeric offset. MAMA normalizes the
+  instant and retains the source offset separately.
+- Existing `due_date`/`deadline` values remain `YYYY-MM-DD` date-only values. MAMA adds an exact
+  `due_at` only when fresh evidence supplies both a time and time zone.
+- `temporal_state` is derived for display and scanning; overdue never means `blocked`, and elapsed
+  time alone never means `done`.
+
+Trello is connector evidence read through `context_compile`, Kagemusha is read-only project-task
+truth, and the native task ledger owns owner-console workflow state. This feature does not write
+Trello, copy Kagemusha/Trello lifecycle state into native tasks, or infer completion from a missing
+calendar event.
+
 ---
 
 ## Configuration
