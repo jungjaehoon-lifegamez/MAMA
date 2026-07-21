@@ -23,12 +23,6 @@
 - **Context:** Exposure already exists — multi-agent pm processes use it today. Adoption for the conductor is its own round (prompt/persona rework).
 - **Depends on:** agent-boundary-repair branch merged.
 
-### Codex per-call model/resumeSession + codex report-thread reset
-
-- **What:** Decide deliberately whether codex should honor per-call `model`/`resumeSession` (Task 3 forwards ONLY systemPrompt on purpose — activating the others changes thread lifecycle, codex-mcp-process.ts thread wipe on `resumeSession === false`). Also implement a codex report-thread reset so Task 6's stateless guarantee holds there (freshSession is pool-level only on codex; the internal threadId persists — a loud log marks this today).
-- **Why:** Without it, a codex-backend deployment keeps the immortal report thread Task 6 killed on claude.
-- **Context:** Default deployments run claude; gap is latent, logged loudly.
-
 ### Multi-agent pool getSharedProcess lane accumulation audit
 
 - **What:** Measure dashboard-cron/reconcile shared-process session growth over a week; apply the Task-6 stateless pattern if durations grow.
