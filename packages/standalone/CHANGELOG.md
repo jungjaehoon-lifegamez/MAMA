@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-07-22
+
+Verified temporal owner-task reconciliation: MAMA can now inspect overdue owner tasks against fresh,
+source-bound connector evidence and atomically resolve, finalize, or defer them through the same
+role-scoped host-tool contract on Claude and Codex. The release also includes conservative receipt
+migration, mixed-version task safety, and bounded shutdown handling. Full details are in the
+repository root CHANGELOG.md.
+
 ## [0.24.2] - 2026-07-22
 
 Workorder forward-compatibility patch: older binaries now ignore and preserve system workorders
