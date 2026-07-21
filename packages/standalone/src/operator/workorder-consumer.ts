@@ -22,8 +22,9 @@
  * Completion hooks (plan E3/E4): per-kind before/after seams re-home the
  * post-run host effects the legacy closures owned (board bracket
  * verification, promotion event re-emission, wiki noUpdate reading). Hook
- * errors remain observe-only for existing kinds. A kind may opt into a typed
- * blocking verdict; A1 does not enable that option for any production kind.
+ * errors remain observe-only for existing kinds. Temporal work opts into a
+ * blocking verdict, with its durable receipt still authoritative over runner
+ * or verifier transport failures.
  */
 
 import {
@@ -31,6 +32,7 @@ import {
   type WorkOrderKind,
   type WorkOrderRecord,
   type EnqueueWorkOrderInput,
+  type TemporalAttemptState,
   type TemporalWorkFailureResult,
 } from './task-ledger.js';
 import { workerRun, type WorkerRunner } from './worker-run.js';
@@ -41,6 +43,7 @@ export interface WorkOrderLedgerPort {
   failWorkOrder(id: number, reason: string): void;
   /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
+  inspectTemporalAttempt(attemptId: number): TemporalAttemptState;
   failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult;
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
   listStaleClaims(): WorkOrderRecord[];
@@ -71,7 +74,7 @@ export interface WorkOrderHook {
 }
 
 export interface WorkOrderConsumerEvent {
-  type: 'complete' | 'failed' | 'requeued' | 'exhausted' | 'stale-claim';
+  type: 'complete' | 'failed' | 'requeued' | 'exhausted' | 'stale-claim' | 'superseded';
   workKind: WorkOrderKind;
   workOrderId: number;
   reason?: string;
@@ -119,7 +122,11 @@ const MAX_EFFECT_VERDICT_REASON_LENGTH = 500;
 export class WorkOrderConsumer {
   private readonly deps: WorkOrderConsumerDeps;
   private readonly hooks = new Map<WorkOrderKind, WorkOrderHook>();
-  private readonly lastAlarmAt = new Map<WorkOrderKind, number>();
+  private readonly lastAlarmAt = new Map<string, number>();
+  private readonly unresolvedTemporalEffects = new Map<
+    number,
+    { workOrder: WorkOrderRecord; reason: string }
+  >();
   private timer: NodeJS.Timeout | null = null;
   private consuming = false;
   private activeTick: Promise<unknown> | null = null;
@@ -145,8 +152,13 @@ export class WorkOrderConsumer {
     for (const wo of this.deps.ledger.listStaleClaims()) {
       this.log(`[workorder-consumer] stale claim recovered: ${wo.workKind}#${wo.id}`);
       this.emitEvent({ type: 'stale-claim', workKind: wo.workKind, workOrderId: wo.id });
-      this.alarm(wo.workKind, `workorder ${wo.workKind}#${wo.id} stale claim (daemon crash?)`);
+      this.alarm(
+        wo.workKind,
+        `workorder ${wo.workKind}#${wo.id} stale claim (daemon crash?)`,
+        wo.workKind === 'temporal' ? 'temporal-stale-claim' : wo.workKind
+      );
       this.handleFailure(wo, 'stale-claim');
+      if (this.unresolvedTemporalEffects.size > 0) break;
     }
   }
 
@@ -194,6 +206,12 @@ export class WorkOrderConsumer {
     if (this.consuming) return 'skipped';
     this.consuming = true;
     try {
+      // Unknown durable state is a hard claim barrier. Recheck it before any
+      // new model work so a database outage cannot produce duplicate effects.
+      if (this.unresolvedTemporalEffects.size > 0) {
+        this.recheckUnresolvedTemporalEffects();
+        return 'drained';
+      }
       // Drain is BOUNDED by the pending count at tick start: a row requeued
       // by this tick's failure policy waits for the NEXT tick (natural
       // backoff - otherwise a failing order retries in a tight loop).
@@ -203,6 +221,7 @@ export class WorkOrderConsumer {
         if (!wo) break;
         await this.runOne(wo);
         remaining--;
+        if (this.unresolvedTemporalEffects.size > 0) break;
       }
       return 'drained';
     } finally {
@@ -301,6 +320,10 @@ export class WorkOrderConsumer {
     this.log(
       `[workorder-consumer] ${wo.workKind}#${wo.id} response head: ${response.slice(0, 200).replace(/\n/g, ' | ')}`
     );
+    if (wo.workKind === 'temporal') {
+      this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing');
+      return;
+    }
     this.deps.ledger.completeWorkOrder(wo.id);
     this.emitEvent({ type: 'complete', workKind: wo.workKind, workOrderId: wo.id });
     this.log(`[workorder-consumer] completed ${wo.workKind}#${wo.id}`);
@@ -313,25 +336,7 @@ export class WorkOrderConsumer {
    */
   private handleFailure(wo: WorkOrderRecord, reason: string): void {
     if (wo.workKind === 'temporal') {
-      const result = this.deps.ledger.failTemporalWorkOrder(wo.id, reason);
-      this.emitEvent({ type: 'failed', workKind: wo.workKind, workOrderId: wo.id, reason });
-      if (result.disposition === 'requeued') {
-        this.emitEvent({
-          type: 'requeued',
-          workKind: wo.workKind,
-          workOrderId: result.replacement.id,
-        });
-        this.log(
-          `[workorder-consumer] failed temporal#${wo.id} (${reason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
-        );
-        return;
-      }
-      this.log(`[workorder-consumer] failed temporal#${wo.id}: ${reason}`);
-      this.emitEvent({ type: 'exhausted', workKind: wo.workKind, workOrderId: wo.id, reason });
-      this.alarm(
-        wo.workKind,
-        `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${reason}`
-      );
+      this.arbitrateTemporalAttempt(wo, reason);
       return;
     }
 
@@ -358,15 +363,126 @@ export class WorkOrderConsumer {
     );
   }
 
+  /** Durable row+generation+receipt state always wins over runner prose/errors. */
+  private arbitrateTemporalAttempt(wo: WorkOrderRecord, reason: string): void {
+    let state: TemporalAttemptState;
+    try {
+      state = this.deps.ledger.inspectTemporalAttempt(wo.id);
+    } catch (err) {
+      this.deferTemporalArbitration(wo, reason, err);
+      return;
+    }
+
+    if (state.workOrder.status === 'done' && state.receipt) {
+      this.unresolvedTemporalEffects.delete(wo.id);
+      this.emitEvent({ type: 'complete', workKind: 'temporal', workOrderId: wo.id });
+      this.log(
+        `[workorder-consumer] completed temporal#${wo.id} from receipt (${state.receipt.outcome})`
+      );
+      return;
+    }
+    if (state.generation.disposition === 'superseded' || state.workOrder.status === 'cancelled') {
+      this.unresolvedTemporalEffects.delete(wo.id);
+      this.emitEvent({ type: 'superseded', workKind: 'temporal', workOrderId: wo.id });
+      this.log(`[workorder-consumer] temporal#${wo.id} superseded; no retry required`);
+      return;
+    }
+    if (
+      state.workOrder.status === 'failed' &&
+      state.generation.disposition === 'active' &&
+      state.generation.lastWorkOrderId !== null &&
+      state.generation.lastWorkOrderId !== wo.id
+    ) {
+      this.unresolvedTemporalEffects.delete(wo.id);
+      this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
+      this.emitEvent({
+        type: 'requeued',
+        workKind: 'temporal',
+        workOrderId: state.generation.lastWorkOrderId,
+      });
+      this.log(
+        `[workorder-consumer] temporal#${wo.id} retry was already committed as #${state.generation.lastWorkOrderId}`
+      );
+      return;
+    }
+    if (
+      state.workOrder.status === 'failed' &&
+      state.generation.disposition === 'exhausted' &&
+      state.generation.lastWorkOrderId === wo.id
+    ) {
+      this.unresolvedTemporalEffects.delete(wo.id);
+      this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
+      this.emitEvent({ type: 'exhausted', workKind: 'temporal', workOrderId: wo.id, reason });
+      this.log(`[workorder-consumer] temporal#${wo.id} exhaustion was already committed`);
+      this.alarm(
+        'temporal',
+        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${reason}`
+      );
+      return;
+    }
+    if (state.workOrder.status !== 'in_progress') {
+      this.deferTemporalArbitration(
+        wo,
+        reason,
+        new Error(
+          `attempt is '${state.workOrder.status}' with generation '${state.generation.disposition}'`
+        )
+      );
+      return;
+    }
+
+    let result: TemporalWorkFailureResult;
+    try {
+      result = this.deps.ledger.failTemporalWorkOrder(wo.id, reason);
+    } catch (err) {
+      // A competing effect/supersession may have won after the read. Do not
+      // guess which transition won; force another authoritative read first.
+      this.deferTemporalArbitration(wo, reason, err);
+      return;
+    }
+    this.unresolvedTemporalEffects.delete(wo.id);
+    this.emitEvent({ type: 'failed', workKind: 'temporal', workOrderId: wo.id, reason });
+    if (result.disposition === 'requeued') {
+      this.emitEvent({
+        type: 'requeued',
+        workKind: 'temporal',
+        workOrderId: result.replacement.id,
+      });
+      this.log(
+        `[workorder-consumer] failed temporal#${wo.id} (${reason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
+      );
+      return;
+    }
+    this.log(`[workorder-consumer] failed temporal#${wo.id}: ${reason}`);
+    this.emitEvent({ type: 'exhausted', workKind: 'temporal', workOrderId: wo.id, reason });
+    this.alarm(
+      'temporal',
+      `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${reason}`
+    );
+  }
+
+  private deferTemporalArbitration(wo: WorkOrderRecord, reason: string, err: unknown): void {
+    this.unresolvedTemporalEffects.set(wo.id, { workOrder: wo, reason });
+    const message = `workorder temporal#${wo.id} effect state unresolved: ${errMessage(err)}`;
+    this.log(`[workorder-consumer] ${message}`);
+    this.alarm('temporal', message, 'temporal-state-unresolved');
+  }
+
+  private recheckUnresolvedTemporalEffects(): void {
+    for (const pending of [...this.unresolvedTemporalEffects.values()]) {
+      this.arbitrateTemporalAttempt(pending.workOrder, pending.reason);
+    }
+  }
+
   /** Owner alarm: passive notice + active telegram, deduped per kind (6h). */
-  private alarm(kind: WorkOrderKind, message: string): void {
+  private alarm(kind: WorkOrderKind, message: string, dedupeKey: string = kind): void {
     const now = this.deps.now?.() ?? Date.now();
-    const last = this.lastAlarmAt.get(kind);
+    const last = this.lastAlarmAt.get(dedupeKey);
     if (last !== undefined && now - last < ALARM_DEDUP_MS) {
       this.log(`[workorder-consumer] alarm deduped (${kind}): ${message}`);
       return;
     }
-    this.lastAlarmAt.set(kind, now);
+    this.lastAlarmAt.set(dedupeKey, now);
     try {
       this.deps.noticeOwner(message);
     } catch (err) {

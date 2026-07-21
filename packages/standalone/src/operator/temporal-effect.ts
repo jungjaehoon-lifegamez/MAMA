@@ -50,6 +50,77 @@ export interface TemporalEffectReceipt {
   createdAt: number;
 }
 
+export interface TemporalReceiptExpectation {
+  attemptId: number;
+  taskId: number;
+  generationKey: string;
+  occurrenceKey: string;
+  beforeRevision?: number;
+}
+
+/** Shared immutable receipt checks used by both live audit and recovery. */
+export function temporalReceiptInvariantError(
+  receipt: TemporalEffectReceipt,
+  expected: TemporalReceiptExpectation
+): string | null {
+  if (receipt.workorderAttemptId !== expected.attemptId) {
+    return 'temporal receipt attempt mismatch';
+  }
+  if (receipt.taskId !== expected.taskId) {
+    return 'temporal receipt task mismatch';
+  }
+  if (receipt.generationKey !== expected.generationKey) {
+    return 'temporal receipt generation mismatch';
+  }
+  if (receipt.occurrenceKey !== expected.occurrenceKey) {
+    return 'temporal receipt occurrence mismatch';
+  }
+  if (
+    (expected.beforeRevision !== undefined && receipt.beforeRevision !== expected.beforeRevision) ||
+    receipt.afterRevision !== receipt.beforeRevision + 1
+  ) {
+    return 'temporal receipt revision invariant failed';
+  }
+  if (!receipt.reason.trim()) {
+    return 'temporal receipt reason missing';
+  }
+  if (!Number.isSafeInteger(receipt.createdAt)) {
+    return 'temporal receipt creation time is invalid';
+  }
+  if (new Set(receipt.changedFields).size !== receipt.changedFields.length) {
+    return 'temporal receipt changed fields contain duplicates';
+  }
+
+  const workflowFields = new Set(['status', 'deadline', 'due_at']);
+  const resolvedEffectFields = new Set(['status', 'due_at']);
+  const hasWorkflowChange = receipt.changedFields.some((field) => workflowFields.has(field));
+  const hasResolvedEffect = receipt.changedFields.some((field) => resolvedEffectFields.has(field));
+  const markerChanged = receipt.changedFields.includes('temporal_reconciled_occurrence_key');
+  if (receipt.outcome === 'resolved') {
+    if (!hasResolvedEffect || !markerChanged || receipt.nextTemporalCheckAt !== null) {
+      return 'resolved temporal receipt markers are invalid';
+    }
+  } else if (receipt.outcome === 'final_no_update') {
+    if (
+      hasWorkflowChange ||
+      !markerChanged ||
+      receipt.nextTemporalCheckAt !== null ||
+      !receipt.reason.includes('\nEvidence:')
+    ) {
+      return 'final_no_update temporal receipt markers are invalid';
+    }
+  } else if (
+    hasWorkflowChange ||
+    markerChanged ||
+    !receipt.changedFields.includes('next_temporal_check_at') ||
+    receipt.nextTemporalCheckAt === null ||
+    receipt.nextTemporalCheckAt <= receipt.createdAt
+  ) {
+    return 'deferred temporal receipt markers are invalid';
+  }
+  return null;
+}
+
 export function temporalNoUpdateScope(context: TemporalWorkContext): string {
   return `temporal:${context.taskId}:${context.occurrenceKey}:${context.checkAt}`;
 }

@@ -25,6 +25,7 @@ import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
 import {
   temporalNoUpdateScope,
+  temporalReceiptInvariantError,
   type TemporalEffectReceipt,
   type TemporalReconcileInput,
   type TemporalWorkContext,
@@ -151,6 +152,13 @@ export interface TemporalGenerationEnqueueResult {
   generation: TemporalGenerationRecord;
   workOrder: WorkOrderRecord;
   created: boolean;
+}
+
+/** Authoritative terminal-arbitration view for one temporal attempt. */
+export interface TemporalAttemptState {
+  workOrder: WorkOrderRecord;
+  generation: TemporalGenerationRecord;
+  receipt: TemporalEffectReceipt | null;
 }
 
 export type TemporalWorkFailureResult =
@@ -1044,6 +1052,131 @@ export class TaskLedger implements TaskSource {
       nextTemporalCheckAt: row.next_temporal_check_at,
       createdAt: row.created_at,
     };
+  }
+
+  /**
+   * Read and validate the durable state that decides a temporal attempt's
+   * terminal outcome. This intentionally does not require an active attempt:
+   * consumers must be able to arbitrate committed, superseded, and exhausted
+   * attempts after runner/auditor failures and daemon restarts.
+   */
+  inspectTemporalAttempt(attemptId: number): TemporalAttemptState {
+    const workOrder = this.getWorkOrderById(attemptId);
+    if (!workOrder || workOrder.workKind !== 'temporal') {
+      throw new Error(`temporal attempt state: no temporal attempt ${attemptId}`);
+    }
+    const generationKey = this.requirePayloadString(workOrder.payload, 'generationKey', attemptId);
+    const generation = this.getTemporalGeneration(generationKey);
+    if (!generation) {
+      throw new Error(`temporal attempt state: generation '${generationKey}' is missing`);
+    }
+    this.assertTemporalPayloadMatches(workOrder, generation);
+    const receipt = this.getTemporalEffect(attemptId);
+
+    if (receipt) {
+      const receiptError = temporalReceiptInvariantError(receipt, {
+        attemptId,
+        taskId: generation.taskId,
+        generationKey: generation.generationKey,
+        occurrenceKey: generation.occurrenceKey,
+      });
+      if (receiptError) {
+        throw new Error(`temporal attempt state: ${receiptError}`);
+      }
+      if (
+        workOrder.status !== 'done' ||
+        generation.lastWorkOrderId !== attemptId ||
+        generation.disposition !== receipt.outcome
+      ) {
+        throw new Error(`temporal attempt state: receipt ${attemptId} is not atomically committed`);
+      }
+      const task = this.getById(generation.taskId);
+      if (!task || task.revision < receipt.afterRevision) {
+        throw new Error(`temporal attempt state: receipt ${attemptId} owner revision is invalid`);
+      }
+      if (receipt.outcome !== 'resolved') {
+        const scope = temporalNoUpdateScope({
+          attemptId,
+          generationKey: generation.generationKey,
+          taskId: generation.taskId,
+          temporalEpoch: generation.temporalEpoch,
+          occurrenceKey: generation.occurrenceKey,
+          checkAt: generation.checkAt,
+          revision: receipt.beforeRevision,
+          sourceChannel: null,
+          sourceEventId: null,
+        });
+        const note = this.db
+          .prepare(
+            `SELECT id FROM operator_no_update_notes
+             WHERE scope = ? AND reason = ? AND created_at = ? LIMIT 1`
+          )
+          .get(scope, receipt.reason, receipt.createdAt) as { id: number } | undefined;
+        if (!note) {
+          throw new Error(`temporal attempt state: exact-scope no-update note is missing`);
+        }
+      }
+      if (task.revision === receipt.afterRevision) {
+        if (
+          task.lastTemporalAttemptId !== attemptId ||
+          task.lastTemporalCheckedAt !== receipt.createdAt
+        ) {
+          throw new Error(`temporal attempt state: owner attempt markers are invalid`);
+        }
+        if (receipt.outcome === 'resolved' || receipt.outcome === 'final_no_update') {
+          if (
+            task.temporalReconciledOccurrenceKey !== generation.occurrenceKey ||
+            task.nextTemporalCheckAt !== null
+          ) {
+            throw new Error(`temporal attempt state: owner final markers are invalid`);
+          }
+        } else if (task.nextTemporalCheckAt !== receipt.nextTemporalCheckAt) {
+          throw new Error(`temporal attempt state: owner deferred check is invalid`);
+        }
+      }
+    } else if (workOrder.status === 'done') {
+      throw new Error(`temporal attempt state: done attempt ${attemptId} has no receipt`);
+    }
+
+    if (workOrder.status === 'in_progress') {
+      if (
+        receipt ||
+        generation.disposition !== 'active' ||
+        generation.lastWorkOrderId !== attemptId
+      ) {
+        throw new Error(`temporal attempt state: active attempt ${attemptId} lost ownership`);
+      }
+    }
+    if (workOrder.status === 'cancelled' && generation.disposition !== 'superseded') {
+      throw new Error(`temporal attempt state: cancelled attempt ${attemptId} is not superseded`);
+    }
+    if (
+      workOrder.status === 'failed' &&
+      generation.disposition === 'active' &&
+      generation.lastWorkOrderId !== attemptId
+    ) {
+      const replacement =
+        generation.lastWorkOrderId === null
+          ? null
+          : this.getWorkOrderById(generation.lastWorkOrderId);
+      if (
+        !replacement ||
+        replacement.workKind !== 'temporal' ||
+        (replacement.status !== 'pending' && replacement.status !== 'in_progress')
+      ) {
+        throw new Error(`temporal attempt state: retry replacement is missing or terminal`);
+      }
+      this.assertTemporalPayloadMatches(replacement, generation);
+    }
+
+    if (
+      generation.disposition === 'superseded' &&
+      workOrder.status !== 'cancelled' &&
+      workOrder.status !== 'failed'
+    ) {
+      throw new Error(`temporal attempt state: superseded attempt ${attemptId} is still open`);
+    }
+    return { workOrder, generation, receipt };
   }
 
   applyTemporalEffect(
