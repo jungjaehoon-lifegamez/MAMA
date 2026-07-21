@@ -21,7 +21,8 @@ All notable changes to this project will be documented in this file.
 
 - **Turn isolation and recovery** — timed-out or late Codex turns are reconciled without cancelling
   unrelated confirmed conversations; unresolved starts trigger a bounded process recovery, and
-  cancelled tool calls cannot continue mutating host state.
+  cancellation stops new tool callbacks and reconciles callbacks that already started before the
+  turn failure is surfaced.
 - **Managed runtime integrity** — Codex auth and managed configuration are repaired only when their
   content changes, instruction sources are constrained to managed roots (including symlinks), and
   external MCP secret changes safely refresh the process without leaking values in errors.
