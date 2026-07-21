@@ -121,6 +121,34 @@ describe('ConfigManager', () => {
       expect(loaded.memory_policy).toEqual(DEFAULT_CONFIG.memory_policy);
     });
 
+    it('should migrate legacy codex-mcp backends to the app-server codex backend', async () => {
+      const mamaDir = join(testDir, '.mama');
+      await mkdir(mamaDir, { recursive: true });
+      const configPath = join(mamaDir, 'config.yaml');
+      const legacyConfig = {
+        version: 1,
+        agent: { ...DEFAULT_CONFIG.agent, backend: 'codex-mcp', model: 'gpt-5.2-codex' },
+        database: { path: '~/.test/db.sqlite' },
+        multi_agent: {
+          ...getDefaultMultiAgentConfig(),
+          agents: {
+            legacy: {
+              backend: 'codex-mcp',
+              model: 'gpt-5.2-codex',
+              enabled: true,
+            },
+          },
+        },
+      };
+
+      await writeFile(configPath, yaml.dump(legacyConfig));
+
+      const loaded = await loadConfig();
+
+      expect(loaded.agent.backend).toBe('codex');
+      expect(loaded.multi_agent?.agents.legacy.backend).toBe('codex');
+    });
+
     it('should keep implicit memory policy disabled unless explicitly configured', async () => {
       const mamaDir = join(testDir, '.mama');
       await mkdir(mamaDir, { recursive: true });

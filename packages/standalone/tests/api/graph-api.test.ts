@@ -580,6 +580,25 @@ describe('graph api helpers', () => {
     });
 
     describe('AC: migrates persisted legacy Gemini backend configs', () => {
+      it('migrates the previous codex-mcp backend alias to codex app-server', () => {
+        const migrated = migrateLegacyManagedBackends({
+          agent: { backend: 'codex-mcp', model: 'gpt-5.2-codex' },
+          multi_agent: {
+            backend: 'codex-mcp',
+            agents: {
+              inherited: { model: 'gpt-5.2-codex' },
+              explicit: { backend: 'codex-mcp', model: 'gpt-5.2-codex' },
+            },
+          },
+        });
+
+        expect(migrated.agent.backend).toBe('codex');
+        expect(migrated.multi_agent.backend).toBe('codex');
+        expect(migrated.multi_agent.agents.inherited.backend).toBe('codex');
+        expect(migrated.multi_agent.agents.explicit.backend).toBe('codex');
+        expect(validateConfigUpdate(migrated)).toEqual([]);
+      });
+
       it('migrates persisted legacy Gemini managed-agent backends before validation', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 

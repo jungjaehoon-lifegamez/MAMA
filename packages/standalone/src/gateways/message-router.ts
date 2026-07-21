@@ -789,6 +789,11 @@ This protects your credentials from being exposed in chat logs.`;
     // - New CLI session: start with --session-id (inject full system prompt)
     // - Continuing CLI session: use --resume flag (minimal injection - CLI has context)
     const shouldResume = !isNewCliSession;
+    // Codex persists thread IDs independently from the in-memory SessionPool.
+    // After a daemon restart the pool is new, but the durable Codex thread may
+    // still exist and should be resumed. Keep prompt/context freshness separate
+    // from backend conversation continuity.
+    const shouldResumeBackend = this.config.backend === 'codex' ? true : shouldResume;
 
     // For resumed sessions: inject minimal context only
     // Persistent CLI keeps the process alive with full system prompt from initial request
@@ -852,7 +857,7 @@ This protects your credentials from being exposed in chat logs.`;
         source: message.source,
         channelId: message.channelId,
         agentContext,
-        resumeSession: shouldResume, // Use --resume flag for continuing sessions
+        resumeSession: shouldResumeBackend,
         cliSessionId, // Pass CLI session ID to avoid double-locking
         streamCallbacks: wrappedOnStream || processOptions?.onStream,
         envelope,

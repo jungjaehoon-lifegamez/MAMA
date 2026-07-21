@@ -79,6 +79,13 @@ const { DebugLogger } = debugLogger as unknown as {
 };
 const codeActLogger = new DebugLogger('CodeAct');
 type RuntimeBackend = 'claude' | 'codex';
+
+export function requireRuntimeBackend(value: unknown): RuntimeBackend {
+  if (value === 'claude' || value === 'codex') {
+    return value;
+  }
+  throw new Error(`Unsupported agent backend: ${String(value)}`);
+}
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
@@ -434,10 +441,8 @@ export async function startCommand(options: StartOptions = {}): Promise<void> {
     process.exit(1);
   }
 
-  const validBackends = ['claude', 'codex'] as const;
-  const backend = config.agent.backend;
-  const isValidBackend = validBackends.includes(backend as RuntimeBackend);
-  process.env.MAMA_BACKEND = isValidBackend ? backend : 'claude';
+  const backend = requireRuntimeBackend(config.agent.backend);
+  process.env.MAMA_BACKEND = backend;
 
   if (backend === 'codex') {
     console.log('✓ Codex app-server backend (authentication handled by Codex login)');
@@ -600,14 +605,8 @@ export async function runAgentLoop(
     metricsStore,
   });
 
-  const validBackends = ['claude', 'codex'] as const;
-  const rawBackend = config.agent.backend;
-  const isValidBackend = validBackends.includes(rawBackend as RuntimeBackend);
-  const runtimeBackend: RuntimeBackend = isValidBackend ? (rawBackend as RuntimeBackend) : 'claude';
+  const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   process.env.MAMA_BACKEND = runtimeBackend;
-  if (rawBackend && !isValidBackend) {
-    console.warn(`[Config] Unknown backend "${rawBackend}", falling back to "claude"`);
-  }
   const agentLoopBackend: 'claude' | 'codex' = runtimeBackend;
 
   // Initialize main agent loop + client (reasoning state is closure-scoped inside)

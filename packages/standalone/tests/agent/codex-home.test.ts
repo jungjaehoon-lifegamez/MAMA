@@ -1008,15 +1008,15 @@ describe('Story: Codex home config generation', () => {
       const policyChanged = make('secret-two', 'installer-b', true);
       try {
         const firstHash = buildCodexAppServerLaunchConfig(first.configPath, {}).fingerprint;
-        const secretHash = buildCodexAppServerLaunchConfig(
-          secretChanged.configPath,
-          {}
-        ).fingerprint;
+        const firstLaunch = buildCodexAppServerLaunchConfig(first.configPath, {});
+        const secretLaunch = buildCodexAppServerLaunchConfig(secretChanged.configPath, {});
+        const secretHash = secretLaunch.fingerprint;
         const policyHash = buildCodexAppServerLaunchConfig(
           policyChanged.configPath,
           {}
         ).fingerprint;
         expect(firstHash).toBe(secretHash);
+        expect(firstLaunch.secretFingerprint).not.toBe(secretLaunch.secretFingerprint);
         expect(firstHash).not.toBe(policyHash);
         expect(firstHash).toMatch(/^[a-f0-9]{64}$/);
       } finally {
