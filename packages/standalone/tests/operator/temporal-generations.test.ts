@@ -253,4 +253,64 @@ describe('Story A2 Task 4: temporal generation ownership', () => {
     expect(reopened.temporalEpoch).toBe(task.temporalEpoch + 1);
     expect(generation.generation.occurrenceKey).toContain(`epoch:${reopened.temporalEpoch}:`);
   });
+
+  it('pauses open temporal work without closing its active generation', () => {
+    const task = scheduledTask();
+    const created = ledger.enqueueTemporalGeneration(inputFor(task));
+    expect(ledger.claimNextWorkOrder()?.id).toBe(created.workOrder.id);
+
+    expect(ledger.pauseActiveTemporalWork('feature-disabled')).toBe(1);
+
+    expect(ledger.inspectTemporalAttempt(created.workOrder.id)).toMatchObject({
+      workOrder: { status: 'cancelled' },
+      generation: { disposition: 'active', lastWorkOrderId: created.workOrder.id },
+      receipt: null,
+    });
+    expect(ledger.countOpenWorkOrders('temporal')).toBe(0);
+  });
+
+  it('pauses every open temporal row even when generation ownership is inconsistent', () => {
+    const first = ledger.enqueueTemporalGeneration(inputFor(scheduledTask()));
+    const secondTask = ledger.create({
+      title: 'second temporal target',
+      due_at: '2026-07-22T09:00:00+09:00',
+      source_channel: 'trello:synthetic-board',
+      source_event_id: 'synthetic-card-2',
+    });
+    const second = ledger.enqueueTemporalGeneration(inputFor(secondTask));
+    db.prepare(`DELETE FROM operator_temporal_generations WHERE generation_key = ?`).run(
+      second.generation.generationKey
+    );
+
+    expect(ledger.pauseActiveTemporalWork('feature-disabled')).toBe(2);
+
+    expect(ledger.getWorkOrderById(first.workOrder.id)?.status).toBe('cancelled');
+    expect(ledger.getWorkOrderById(second.workOrder.id)?.status).toBe('cancelled');
+    expect(ledger.getTemporalGeneration(first.generation.generationKey)?.disposition).toBe(
+      'active'
+    );
+    expect(ledger.getTemporalGeneration(second.generation.generationKey)).toBeNull();
+    expect(ledger.countOpenWorkOrders('temporal')).toBe(0);
+  });
+
+  it('resumes one paused attempt without incrementing its retry count', () => {
+    const task = scheduledTask();
+    const first = ledger.enqueueTemporalGeneration(inputFor(task));
+    const firstClaim = ledger.claimNextWorkOrder()!;
+    const second = ledger.requeueTemporalWorkOrder(firstClaim.id, 'retry before pause');
+    expect(second.payload.attempts).toBe(2);
+    ledger.pauseActiveTemporalWork('feature-disabled');
+
+    const resumed = ledger.resumePausedTemporalWork();
+    const duplicate = ledger.resumePausedTemporalWork();
+
+    expect(resumed).toHaveLength(1);
+    expect(resumed[0]).toMatchObject({ status: 'pending', payload: { attempts: 2 } });
+    expect(resumed[0].id).not.toBe(first.workOrder.id);
+    expect(duplicate).toEqual([]);
+    expect(ledger.getTemporalGeneration(first.generation.generationKey)?.lastWorkOrderId).toBe(
+      resumed[0].id
+    );
+    expect(ledger.countOpenWorkOrders('temporal')).toBe(1);
+  });
 });
