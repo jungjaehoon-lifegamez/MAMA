@@ -23,7 +23,7 @@ Call tools via JSON block:
 - **drive_browse**(folderId?, driveId?, query?) — Browse files and folders in Google Drive
 - **drive_find_folder**(driveId, path) — Resolve a Google Drive folder path to a folder ID
 - **drive_download**(fileId, fileName?) — Download a Google Drive file into the private MAMA workspace
-- **drive_upload**(localPath, folderId, fileName?) — Upload a private MAMA workspace file to Google Drive
+- **drive_upload**(localPath, folderId, fileName?, destinationCapability?) — Upload a private MAMA workspace file to Google Drive
 - **kagemusha_overview**((none)) — Get overview: room/task/message counts across all channels
 - **kagemusha_entities**(channel?, activeOnly?, limit?) — List people and project channels with activity stats
 - **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).
@@ -37,6 +37,10 @@ Call tools via JSON block:
 - **discord_send**(channel_id, message?, file_path?) — Send message or file to Discord
 - **slack_send**(channel_id, message?, file_path?) — Send message or file to Slack
 - **telegram_send**(chat_id, message?, file_path?, sticker_emotion?) — Send message, file, or sticker to Telegram
+- **ocr_image**(path, lang?) — Extract OCR regions from an image in the private MAMA workspace
+- **create_fb_overlay**(imagePath, annotations, outputPath?) — Create a Korean text overlay image from OCR bounding boxes
+- **translate_conti**(imagePath, ocrResults?, translations?, outputPath?) — Run the two-step OCR and translated-overlay workflow for a storyboard image
+- **drive_translate_conti**(drivePath) — Return optional guidance for composing the Drive image translation tools
 
 ## Browser (Playwright)
 

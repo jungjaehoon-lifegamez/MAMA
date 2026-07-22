@@ -292,6 +292,58 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'communication',
   },
   {
+    name: 'ocr_image',
+    description: 'OCR a private-workspace image',
+    params: [
+      { name: 'path', type: 'string', required: true },
+      { name: 'lang', type: 'string', required: false },
+    ],
+    returnType: '{regions:{bbox:number[][];text:string}[]}',
+    category: 'file',
+  },
+  {
+    name: 'create_fb_overlay',
+    description: 'Render translated OCR boxes',
+    params: [
+      { name: 'imagePath', type: 'string', required: true },
+      {
+        name: 'annotations',
+        type: '{bbox:number[][];translated:string}[]',
+        required: true,
+      },
+      { name: 'outputPath', type: 'string', required: false },
+    ],
+    returnType: '{outputPath:string}',
+    category: 'file',
+  },
+  {
+    name: 'translate_conti',
+    description: 'Two-step storyboard OCR and overlay',
+    params: [
+      { name: 'imagePath', type: 'string', required: true },
+      {
+        name: 'ocrResults',
+        type: '{bbox:number[][];text:string}[]',
+        required: false,
+      },
+      {
+        name: 'translations',
+        type: '{original:string;translated:string}[]',
+        required: false,
+      },
+      { name: 'outputPath', type: 'string', required: false },
+    ],
+    returnType: 'object',
+    category: 'file',
+  },
+  {
+    name: 'drive_translate_conti',
+    description: 'Describe the Drive storyboard workflow',
+    params: [{ name: 'drivePath', type: 'string', required: true }],
+    returnType: '{ workflow: string[] }',
+    category: 'file',
+  },
+  {
     name: 'drive_list_drives',
     description: 'List Google shared drives as untrusted external evidence',
     params: [],
@@ -313,13 +365,13 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'drive_find_folder',
-    description: 'Resolve a Google Drive folder path as untrusted external evidence',
+    description: 'Resolve a Google Drive folder path and issue an envelope-bound upload capability',
     params: [
       { name: 'driveId', type: 'string', required: true },
       { name: 'path', type: 'string', required: true },
     ],
     returnType:
-      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { folderId: string; path: string } } }",
+      "{ destinationCapability: string; result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { folderId: string; path: string } } }",
     category: 'file',
   },
   {
@@ -340,6 +392,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       { name: 'localPath', type: 'string', required: true },
       { name: 'folderId', type: 'string', required: true },
       { name: 'fileName', type: 'string', required: false },
+      { name: 'destinationCapability', type: 'string', required: false },
     ],
     returnType:
       "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { fileId: string; name: string } } }",

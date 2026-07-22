@@ -673,7 +673,11 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
 
     expect(saveResult).toMatchObject({ success: true });
     expect(searchResult).toMatchObject({ success: true });
-    expect(readResult).toMatchObject({ success: true, content: 'visible' });
+    expect(readResult).toMatchObject({ success: true });
+    expect('content' in readResult ? readResult.content : '').toContain(
+      '<<<UNTRUSTED-CONTENT source=file-read>>>'
+    );
+    expect('content' in readResult ? readResult.content : '').toContain('visible');
     expect(JSON.stringify([saveResult, searchResult, readResult])).not.toContain(
       'envelope_missing'
     );

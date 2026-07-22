@@ -167,7 +167,17 @@ export class RoleManager {
     // Expand ~ to home directory for comparison
     const expandedPath = this.expandPath(path);
 
-    for (const pattern of role.allowedPaths) {
+    const configuredWorkspace = process.env.MAMA_WORKSPACE?.replace(/\/$/, '');
+    const allowedPatterns = role.allowedPaths.map((pattern) =>
+      configuredWorkspace && pattern === '~/.mama/workspace/**'
+        ? `${configuredWorkspace}/**`
+        : pattern
+    );
+    // `~/.mama/workspace/**` is the logical private-workspace capability,
+    // not a hard-coded deployment path. The start command resolves a custom
+    // workspace into MAMA_WORKSPACE, so permission checks must project the
+    // same capability onto that runtime root.
+    for (const pattern of allowedPatterns) {
       const expandedPattern = this.expandPath(pattern);
       if (minimatch(expandedPath, expandedPattern, { dot: true })) {
         return true;

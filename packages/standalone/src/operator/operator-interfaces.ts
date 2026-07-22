@@ -58,11 +58,7 @@ export interface OperatorAgentResponse {
  * Ports Kagemusha `KagemushaAgentLoop.chat` (agent/agent-loop.ts:269).
  */
 export interface OperatorAgentLoop {
-  chat(
-    userMessage: string,
-    callbacks?: unknown,
-    channel?: string
-  ): Promise<OperatorAgentResponse>;
+  chat(userMessage: string, callbacks?: unknown, channel?: string): Promise<OperatorAgentResponse>;
 }
 
 /**
@@ -73,7 +69,10 @@ export interface OperatorMemoryPort {
   /** Persist an operational decision/lesson. Binds to mama-core `save`/`saveMemory`. */
   save(input: { topic: string; content: string; scopes?: unknown }): Promise<{ id: string } | void>;
   /** Semantic recall. Binds to mama-core `recallMemory`/`suggest`. */
-  recall(query: string, opts?: { limit?: number }): Promise<ReadonlyArray<{ topic: string; content: string; similarity?: number }>>;
+  recall(
+    query: string,
+    opts?: { limit?: number }
+  ): Promise<ReadonlyArray<{ topic: string; content: string; similarity?: number }>>;
 }
 
 /** Operator-owned task. Ports Kagemusha `Task` (runtime/task-store.ts:3). */
@@ -109,7 +108,7 @@ export interface ReportSink {
  * bound inside the implementation, never here. Ports Kagemusha `sendTelegram`.
  */
 export interface OutputSink {
-  send(text: string): Promise<void>;
+  send(text: string, deliveryId?: string): Promise<void>;
 }
 
 /**

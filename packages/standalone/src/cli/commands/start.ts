@@ -758,6 +758,12 @@ export async function runAgentLoop(
 
   const sessionStore = new SessionStore(db);
 
+  // Establish one canonical private workspace for gateway files, OCR, Drive,
+  // Telegram media, and the persona runtime. An explicit environment override
+  // remains authoritative; otherwise honor config.workspace.path.
+  process.env.MAMA_WORKSPACE =
+    process.env.MAMA_WORKSPACE || expandPath(config.workspace?.path || '~/.mama/workspace');
+
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
 
@@ -1214,7 +1220,7 @@ export async function runAgentLoop(
   // M2.4 freshness: the connector sink nudges the trigger loop when a poll indexes new rows. The
   // loop is constructed AFTER initConnectors (below), so hand initConnectors a stable forwarder now
   // and point it at the loop once it exists. Null until then -> nudge no-ops (no loop = nothing to
-  // wake), which preserves today's behavior when MAMA_TRIGGER_LOOP is unset.
+  // wake), which remains safe while the trigger loop is still booting or explicitly disabled.
   const triggerLoopNudge: { current: (() => void) | null } = { current: null };
   // M8: board-reconcile feed. The trigger loop is built BEFORE the event bus
   // exists (initApiServer), so it emits through this mutable sink (same
@@ -1498,10 +1504,12 @@ export async function runAgentLoop(
     gateways.push({ stop: () => Promise.resolve(connectorSchedulerStop()) });
   }
 
-  // ── Trigger loop (M1, flag-gated, additive): agent-evolved triggers on the live stream ──
-  // Runs ONLY with MAMA_TRIGGER_LOOP=1. Placed after initConnectors (which feeds
+  // ── Trigger loop (M1, default-on): agent-evolved triggers on the live stream ──
+  // MAMA_TRIGGER_LOOP=0 is the explicit opt-out. Placed after initConnectors (which feeds
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
-  if (process.env.MAMA_TRIGGER_LOOP === '1') {
+  const { isOperatorTriggerLoopEnabled, resolveOperatorReportChatId } =
+    await import('../../operator/runtime-config.js');
+  if (isOperatorTriggerLoopEnabled(process.env)) {
     let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
     // DB permission, registry constructor) must not abort the whole daemon before Phase
@@ -1521,14 +1529,22 @@ export async function runAgentLoop(
         await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
+      const { FilePendingReportStore } = await import('../../operator/pending-report-store.js');
 
       const triggerRegistry = new TriggerRegistry(operatorDb);
       // Owner-report leg (M1.5): destination chat comes from env (~/.mama/start.sh),
       // never source. No chat configured or no telegram gateway -> loop stays read-only.
-      const reportChatId = process.env.MAMA_TRIGGER_LOOP_REPORT_CHAT || '';
+      const reportChatId = resolveOperatorReportChatId(process.env, config.telegram?.allowed_chats);
       const reportOutput =
         reportChatId && telegramGateway
-          ? { send: (text: string) => telegramGateway.sendMessage(reportChatId, text) }
+          ? {
+              send: (text: string, deliveryId?: string) =>
+                telegramGateway.sendMessage(
+                  reportChatId,
+                  text,
+                  deliveryId ?? `operator-report:legacy:${randomUUID()}`
+                ),
+            }
           : undefined;
       // Scheduled full-report leg (M2): local hours from env (~/.mama/start.sh), never source.
       // Empty/absent -> [] -> leg off. Requires the same telegram sink as the digest leg.
@@ -1662,6 +1678,10 @@ export async function runAgentLoop(
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
         persistLastFullReport: (iso, text) => persistLastFullReport(iso, text),
+        pendingReportStore: new FilePendingReportStore(
+          expandPath('~/.mama/operator/pending-owner-reports.json'),
+          (line) => console.error(line)
+        ),
         config: {
           tickMs: Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000),
           drainLimit: Number(process.env.MAMA_TRIGGER_LOOP_DRAIN_LIMIT || 200),
@@ -1696,7 +1716,7 @@ export async function runAgentLoop(
           // hook above (single owner); nothing to close here.
         },
       });
-      console.log('✓ Trigger loop enabled (MAMA_TRIGGER_LOOP=1, read-only surface mode)');
+      temporalLogger.info('Trigger loop enabled (default-on, read-only surface mode)');
     } catch (error) {
       await stopTriggerAgentRuntime?.().catch(() => {});
       console.error(

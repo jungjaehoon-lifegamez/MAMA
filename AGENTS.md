@@ -54,6 +54,22 @@ MAMA/
 | **Build all packages**        | `pnpm build` (root)                                                                                    | TypeScript compile for mama-core and standalone                    |
 | **Lint + format**             | `pnpm lint:fix && pnpm format`                                                                         | ESLint + Prettier auto-fix                                         |
 
+### Kagemusha Telegram parity (mandatory reference)
+
+Before implementing or reviewing Telegram owner-console, Drive/image translation, Code-Act tool
+projection, Codex session continuity, or operator-report delivery, read
+`docs/development/kagemusha-telegram-parity.md` in full.
+
+- Main agents and subagents must cite the relevant `TG-0N` scenario IDs in plans, changes, tests,
+  and findings.
+- Compare the complete Kagemusha user path recorded there; do not infer parity from matching tool
+  names or isolated helper tests.
+- Preserve Kagemusha's agent freedom: expose coherent safe primitives and context, but do not
+  hard-code one scenario's tool order into host orchestration.
+- Update the artifact's evidence/status when behavior changes.
+- Do not expand parity work with unrelated findings unless they are release-blocking security or
+  data-loss issues.
+
 ---
 
 ## CONVENTIONS
