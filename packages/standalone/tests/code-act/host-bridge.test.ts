@@ -263,7 +263,9 @@ describe('HostBridge', () => {
       const bridge = new HostBridge(makeExecutor({ execute: executeFn }), undefined, {
         executionSurface: 'code_act',
       });
-      const sandbox = new CodeActSandbox({ timeoutMs: 100 });
+      // Leave enough budget for per-execution QuickJS module initialization on slow CI runners.
+      // This test still relies on the sandbox's own deadline to abort the active host call.
+      const sandbox = new CodeActSandbox({ timeoutMs: 1_000 });
       bridge.injectInto(sandbox, 1);
 
       const result = await sandbox.execute('browser_wait_for("#late", 999999)');
@@ -273,7 +275,7 @@ describe('HostBridge', () => {
       expect(executeFn.mock.calls[0]?.[1]).toMatchObject({ selector: '#late' });
       const boundedTimeout = Number(executeFn.mock.calls[0]?.[1]?.timeout);
       expect(boundedTimeout).toBeGreaterThan(0);
-      expect(boundedTimeout).toBeLessThanOrEqual(100);
+      expect(boundedTimeout).toBeLessThanOrEqual(1_000);
     });
 
     it('does not report a timed-out mutation before an abort-ignoring send settles', async () => {
