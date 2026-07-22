@@ -11,6 +11,85 @@ describe('CodeActSandbox', () => {
     expect(DEFAULT_SANDBOX_CONFIG.timeoutMs).toBe(300_000);
   });
 
+  it('TG-03 applies the five-minute deadline and abort guards to multi-image composition', async () => {
+    const sandbox = new CodeActSandbox();
+    const observedDeadlines: number[] = [];
+    const observedSignals: AbortSignal[] = [];
+    sandbox.registerAbortableFunction(
+      'translate_conti',
+      async (context, input) => {
+        observedDeadlines.push(context.deadlineMs);
+        observedSignals.push(context.signal);
+        const image = input as { id: string };
+        return { id: image.id, translated: true };
+      },
+      { settleOnAbort: true }
+    );
+
+    const startedAt = Date.now();
+    const result = await sandbox.execute(`
+      var images = ['image-1', 'image-2', 'image-3', 'image-4'];
+      var translated = [];
+      for (var i = 0; i < images.length; i++) {
+        translated.push(translate_conti({ id: images[i] }));
+      }
+      translated;
+    `);
+
+    expect(result).toMatchObject({
+      success: true,
+      value: [
+        { id: 'image-1', translated: true },
+        { id: 'image-2', translated: true },
+        { id: 'image-3', translated: true },
+        { id: 'image-4', translated: true },
+      ],
+    });
+    expect(observedDeadlines).toHaveLength(4);
+    expect(new Set(observedDeadlines)).toHaveLength(1);
+    expect(observedDeadlines[0] - startedAt).toBeGreaterThanOrEqual(300_000);
+    expect(observedDeadlines[0] - startedAt).toBeLessThan(300_100);
+    expect(observedSignals.every((signal) => !signal.aborted)).toBe(true);
+
+    const parent = new AbortController();
+    let markMutationStarted: (() => void) | undefined;
+    const mutationStarted = new Promise<void>((resolve) => {
+      markMutationStarted = resolve;
+    });
+    let settleMutation: (() => void) | undefined;
+    const mutationSettled = new Promise<void>((resolve) => {
+      settleMutation = resolve;
+    });
+    let mutationSignal: AbortSignal | undefined;
+    const guarded = new CodeActSandbox();
+    guarded.registerAbortableFunction(
+      'translate_conti',
+      async (context) => {
+        mutationSignal = context.signal;
+        markMutationStarted?.();
+        await mutationSettled;
+        return { uploaded: true };
+      },
+      { settleOnAbort: true }
+    );
+
+    const guardedRun = guarded.execute('translate_conti({ id: "image-5" })', {
+      signal: parent.signal,
+    });
+    await mutationStarted;
+    parent.abort(new Error('owning turn stopped'));
+    settleMutation?.();
+
+    await expect(guardedRun).resolves.toMatchObject({
+      success: false,
+      error: {
+        code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT',
+        retryable: false,
+      },
+    });
+    expect(mutationSignal?.aborted).toBe(true);
+  });
+
   describe('basic execution', () => {
     it('evaluates simple expressions', async () => {
       const sandbox = new CodeActSandbox();
