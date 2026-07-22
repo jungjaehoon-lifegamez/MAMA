@@ -82,6 +82,7 @@ import type {
   TemporalReconcileToolInput,
 } from './types.js';
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
+import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
 import {
@@ -4552,14 +4553,27 @@ export class GatewayToolExecutor {
       parentToolName: 'code_act',
     };
     const bridge = new HostBridge(this, this.roleManager, nestedExecutionContext);
+    let usedUntrustedDriveEvidence = false;
+    bridge.onToolUse = (toolName, _toolInput, result) => {
+      if (result !== undefined && toolName.startsWith('drive_') && toolName !== 'drive_upload') {
+        usedUntrustedDriveEvidence = true;
+      }
+    };
     bridge.injectInto(sandbox, policy.names);
 
     const result = await sandbox.execute(input.code);
+    const successfulMessage = JSON.stringify({
+      value: result.value,
+      logs: result.logs,
+      metrics: result.metrics,
+    });
 
     return {
       success: result.success,
       message: result.success
-        ? JSON.stringify({ value: result.value, logs: result.logs, metrics: result.metrics })
+        ? usedUntrustedDriveEvidence
+          ? wrapUntrustedContent('google-drive-code-act', successfulMessage)
+          : successfulMessage
         : `Code-Act error: ${result.error?.message || 'Unknown error'}`,
     } as GatewayToolResult;
   }

@@ -64,7 +64,7 @@ MAMA OS has full system access — so security is not optional, it's foundationa
 - **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode for unknown sources, bulk extraction limits. Built from a real incident, not theory.
 - **Intrusion detection** — Honeypot traps for scanner probes (`.git`, `.env`, `wp-login.php`), per-IP suspicion scoring, automatic tarpit delays, and IP deny-listing when thresholds are exceeded.
 - **Agent permission tiers** — Tier 1 (full access), Tier 2 (read + memory write), Tier 3 (read-only). Each agent only gets the tools it needs.
-- **Owner console (v0.22+)** — the `owner_console` role is granted ONLY in an allowlisted telegram chat's 1:1 DM (`telegram.allowed_chats` is the trust anchor). It reads operational artifacts (`board_read`, `audit_findings_read`, `workorder_status`), can browse/download/upload Drive files through owner-only Code-Act functions, and issues work (`report_request`, `workorder_request`) fire-and-forget. Drive uploads are restricted to the private MAMA workspace; memory writes refuse secret-shaped content.
+- **Owner console (v0.22+)** — the `owner_console` role is granted ONLY in an allowlisted telegram chat's 1:1 DM (`telegram.allowed_chats` is the trust anchor). It reads operational artifacts (`board_read`, `audit_findings_read`, `workorder_status`), can browse/download/upload Drive files through owner-only direct tools or Code-Act functions, and issues work (`report_request`, `workorder_request`) fire-and-forget. Drive uploads accept files only from the private MAMA workspace and target only configured Drive folders or shared drives; memory writes refuse secret-shaped content.
 - **Stage-2 workorder pipeline (v0.23, flag-gated)** — `MAMA_STAGE2_WORKORDERS=off|shadow|on` converts the scheduled board/wiki/memory-promotion runs into durable, occurrence-keyed workorders consumed serially on the operator lane; briefs live in `~/.mama/briefs/`. Codex workorders receive built-in, least-privilege Tier-2 Code-Act roles for board, wiki, memory curation, and temporal reconciliation, independent of optional standing-agent configuration. Every worker treats connector evidence as untrusted data rather than instructions. Board workers read enabled Trello evidence through `context_compile`, keep Kagemusha as read-only project-task truth, and use the native ledger for owner tasks and the pipeline. Default `off` = unchanged behavior.
 - **Verified temporal effects (opt-in)** — `MAMA_TEMPORAL_RECONCILE=on` requires `MAMA_STAGE2_WORKORDERS=on`, a Claude or Codex backend, the trusted `task_temporal_reconcile` tool, and a working worker transport. It scans all open scheduled owner rows once per minute before applying bounded admission caps, and exposes a separate temporal projection that never turns overdue into a workflow status (`closed` reflects terminal lifecycle). Fresh evidence may resolve, finalize, or defer one native owner-task occurrence. Task, generation, authoritative receipt, and workorder completion commit atomically; legacy receipts remain quarantined, every temporal gateway call rechecks active authority, and compiled raw evidence must stay bound to the task source. Shutdown durably pauses temporal attempts before waiting for worker drainage. Model prose is represented in audit rows only by length/SHA-256 references. Default `off` pauses temporal work and preserves existing behavior.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts itself down gracefully rather than operating in a compromised state.
@@ -98,26 +98,46 @@ mama connector add slack      # Activate + auth guide
 mama connector list           # Status of all connectors
 ```
 
-| Connector       | Prerequisites                                                                                                                    | Config                           |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
-| **Slack**       | Bot Token (api.slack.com → OAuth scopes)                                                                                         | `bot_token`, `app_token`         |
-| **Discord**     | Bot Token (discord.com/developers → MESSAGE CONTENT INTENT)                                                                      | `token`, `default_channel_id`    |
-| **Telegram**    | Bot Token (@BotFather); text, captions, photos, image documents, and regular documents are accepted                              | `token`, `allowed_chats`         |
-| **Chatwork**    | API Token (account settings)                                                                                                     | `api_token`, `room_ids`          |
-| **iMessage**    | macOS only (reads local chat.db)                                                                                                 | No config needed                 |
-| **Gmail**       | [gws CLI](https://github.com/nicholasgasior/gws) installed + Google OAuth                                                        | `gws` in PATH                    |
-| **Calendar**    | gws CLI installed + Google OAuth                                                                                                 | `gws` in PATH                    |
-| **Drive**       | gws CLI installed + Google OAuth; polling consumes all change pages, owner console also has direct file operations               | `gws` in PATH                    |
-| **Sheets**      | gws CLI installed + Google OAuth                                                                                                 | `gws` in PATH, `spreadsheet_ids` |
-| **Notion**      | Integration Token (notion.so/my-integrations)                                                                                    | `api_token`, `database_ids`      |
-| **Obsidian**    | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled | `vault_path` in config.yaml      |
-| **Trello**      | API Key + Token (trello.com/app-key)                                                                                             | `api_key`, `token`, `board_ids`  |
-| **Kagemusha**   | Kagemusha running locally                                                                                                        | Reads `kagemusha.db` directly    |
-| **Claude Code** | Claude Code plugin installed                                                                                                     | Automatic via hooks              |
+| Connector       | Prerequisites                                                                                                                        | Config                           |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------- |
+| **Slack**       | Bot Token (api.slack.com → OAuth scopes)                                                                                             | `bot_token`, `app_token`         |
+| **Discord**     | Bot Token (discord.com/developers → MESSAGE CONTENT INTENT)                                                                          | `token`, `default_channel_id`    |
+| **Telegram**    | Bot Token (@BotFather); text, captions, photos, image documents, and regular documents are accepted                                  | `token`, `allowed_chats`         |
+| **Chatwork**    | API Token (account settings)                                                                                                         | `api_token`, `room_ids`          |
+| **iMessage**    | macOS only (reads local chat.db)                                                                                                     | No config needed                 |
+| **Gmail**       | [gws CLI](https://github.com/nicholasgasior/gws) installed + Google OAuth                                                            | `gws` in PATH                    |
+| **Calendar**    | gws CLI installed + Google OAuth                                                                                                     | `gws` in PATH                    |
+| **Drive**       | gws CLI installed + Google OAuth; bounded polls continue through change-page backlogs, owner console also has direct file operations | `gws` in PATH                    |
+| **Sheets**      | gws CLI installed + Google OAuth                                                                                                     | `gws` in PATH, `spreadsheet_ids` |
+| **Notion**      | Integration Token (notion.so/my-integrations)                                                                                        | `api_token`, `database_ids`      |
+| **Obsidian**    | [Obsidian](https://obsidian.md) installed + [Obsidian Terminal](https://github.com/polyipseity/obsidian-terminal) plugin enabled     | `vault_path` in config.yaml      |
+| **Trello**      | API Key + Token (trello.com/app-key)                                                                                                 | `api_key`, `token`, `board_ids`  |
+| **Kagemusha**   | Kagemusha running locally                                                                                                            | Reads `kagemusha.db` directly    |
+| **Claude Code** | Claude Code plugin installed                                                                                                         | Automatic via hooks              |
 
 **Google Workspace connectors** (Gmail, Calendar, Drive, Sheets) require the [gws CLI](https://github.com/nicholasgasior/gws) — a Google Workspace command-line tool. Install it, run `gws auth` once for OAuth, then MAMA polls via CLI.
 
 Each connector classifies its source (truth / hub / spoke / reference) for the 3-pass extraction pipeline. Config: `~/.mama/connectors.json`.
+
+For owner Drive access, enable the connector and declare every permitted destination as a
+non-ignored channel. `folderId` permits that folder; `driveId` permits the configured shared drive.
+
+```json
+{
+  "drive": {
+    "enabled": true,
+    "pollIntervalMinutes": 5,
+    "channels": {
+      "project-docs": {
+        "role": "deliverable",
+        "name": "Project docs",
+        "folderId": "GOOGLE_DRIVE_FOLDER_ID"
+      }
+    },
+    "auth": { "type": "cli", "cli": "gws", "cliAuthCommand": "gws auth login" }
+  }
+}
+```
 
 ## Knowledge Agents
 

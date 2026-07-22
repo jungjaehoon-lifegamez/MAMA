@@ -1,6 +1,6 @@
 /**
  * DriveConnector — polls Google Drive changes via the gws CLI tool.
- * Uses child_process.execSync to call gws CLI commands.
+ * Uses short synchronous gws checks during setup and asynchronous calls while polling.
  * Emits file_change NormalizedItems for files modified in configured folders.
  */
 
@@ -16,7 +16,9 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
-import { execGws } from '../framework/gws-utils.js';
+import { execGwsAsync } from '../framework/gws-utils.js';
+
+const MAX_CHANGE_PAGES_PER_POLL = 2;
 
 interface DriveFile {
   name: string;
@@ -166,7 +168,7 @@ export class DriveConnector implements IConnector {
    * Poll changes from a single drive (personal or shared).
    * Returns items and updates the page token.
    */
-  private pollDrive(tokenKey: string, driveId?: string): NormalizedItem[] {
+  private async pollDrive(tokenKey: string, driveId?: string): Promise<NormalizedItem[]> {
     // Get or initialize page token
     let pageToken = this.pageTokens.get(tokenKey);
     if (!pageToken) {
@@ -175,9 +177,13 @@ export class DriveConnector implements IConnector {
         tokenParams.driveId = driveId;
         tokenParams.supportsAllDrives = true;
       }
-      const tokenResult = execGws(
-        `drive changes getStartPageToken --params '${JSON.stringify(tokenParams)}'`
-      ) as StartPageTokenResult;
+      const tokenResult = (await execGwsAsync([
+        'drive',
+        'changes',
+        'getStartPageToken',
+        '--params',
+        JSON.stringify(tokenParams),
+      ])) as StartPageTokenResult;
       pageToken = tokenResult.startPageToken;
       this.pageTokens.set(tokenKey, pageToken);
     }
@@ -188,7 +194,7 @@ export class DriveConnector implements IConnector {
     let terminalStartPageToken: string | undefined;
     let reachedTerminalPage = false;
 
-    for (let page = 0; page < 1_000; page += 1) {
+    for (let page = 0; page < MAX_CHANGE_PAGES_PER_POLL; page += 1) {
       if (visitedPageTokens.has(requestPageToken)) {
         throw new Error(`Drive changes pagination repeated a page token for ${tokenKey}`);
       }
@@ -207,9 +213,13 @@ export class DriveConnector implements IConnector {
         params.driveId = driveId;
       }
 
-      const changeList = execGws(
-        `drive changes list --params '${JSON.stringify(params)}'`
-      ) as DriveChangeList;
+      const changeList = (await execGwsAsync([
+        'drive',
+        'changes',
+        'list',
+        '--params',
+        JSON.stringify(params),
+      ])) as DriveChangeList;
 
       for (const change of changeList.changes) {
         if (!change.file) continue;
@@ -259,11 +269,15 @@ export class DriveConnector implements IConnector {
         reachedTerminalPage = true;
         break;
       }
+      if (visitedPageTokens.has(changeList.nextPageToken)) {
+        throw new Error(`Drive changes pagination repeated a page token for ${tokenKey}`);
+      }
       requestPageToken = changeList.nextPageToken;
     }
 
     if (!reachedTerminalPage) {
-      throw new Error(`Drive changes pagination exceeded 1000 pages for ${tokenKey}`);
+      this.pageTokens.set(tokenKey, requestPageToken);
+      return items;
     }
 
     if (typeof terminalStartPageToken !== 'string' || terminalStartPageToken.length === 0) {
@@ -286,13 +300,13 @@ export class DriveConnector implements IConnector {
         (c) => c.folderId && !c.driveId
       );
       if (hasFolderChannels) {
-        allItems.push(...this.pollDrive('drive'));
+        allItems.push(...(await this.pollDrive('drive')));
       }
 
       // 2. Poll each shared drive
       for (const { driveId, channelKey } of this.getSharedDriveIds()) {
         try {
-          allItems.push(...this.pollDrive(`shared:${driveId}`, driveId));
+          allItems.push(...(await this.pollDrive(`shared:${driveId}`, driveId)));
         } catch (err) {
           hadError = true;
           this.lastError =

@@ -18,6 +18,7 @@ const SEND_TOOLS_TO_DESTINATION_KIND: Record<string, string> = {
   chatwork_send: 'chatwork',
   discord_send: 'discord',
   webchat_send: 'webchat',
+  drive_upload: 'drive',
 };
 
 const WRITE_OR_SEND_TOOLS = new Set<string>([
@@ -38,6 +39,7 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'report_publish',
   'wiki_publish',
   'human.correction',
+  'drive_upload',
 ]);
 
 const MEMORY_SCOPED_TOOLS = new Set<string>([
@@ -78,7 +80,10 @@ export class EnvelopeEnforcer {
       return;
     }
 
-    const destinationId = getStringArg(args, 'chat_id') ?? getStringArg(args, 'channel_id');
+    const destinationId =
+      getStringArg(args, 'chat_id') ??
+      getStringArg(args, 'channel_id') ??
+      getStringArg(args, 'folderId');
     if (!destinationId) {
       throw new EnvelopeViolation(
         `Tool ${toolName} called without destination id`,
@@ -175,6 +180,10 @@ export class EnvelopeEnforcer {
 }
 
 function requestedRawConnectorsForTool(toolName: string, args: unknown): string[] {
+  if (toolName.startsWith('drive_')) {
+    return ['drive'];
+  }
+
   if (toolName === 'context_compile') {
     return uniqueStrings([
       ...(getStringArrayArg(args, 'connectors') ?? []),

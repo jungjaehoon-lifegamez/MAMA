@@ -5,7 +5,7 @@
  * requiring an actual Telegram bot connection.
  */
 
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -549,6 +549,48 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     expect(mockApi.getFile).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
     warnSpy.mockRestore();
+    await gateway.stop();
+  });
+
+  it('fails closed for media when no inbound allowlist is configured', async () => {
+    const fetchImpl = vi.fn(async () => jpegResponse());
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: {},
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-')),
+      fetchImpl,
+    });
+    await gateway.start();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 119),
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    expect(mockApi.getFile).not.toHaveBeenCalled();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    await gateway.stop();
+  });
+
+  it('deletes downloaded media after constructing safe routed content', async () => {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    });
+    await gateway.start();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 120),
+      photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
+    });
+
+    expect(await readdir(mediaRoot)).toEqual([]);
     await gateway.stop();
   });
 

@@ -36,8 +36,60 @@ describe('DriveToolService', () => {
       'drives',
       'list',
       '--params',
-      JSON.stringify({ fields: 'drives(id,name)' }),
+      JSON.stringify({ fields: 'nextPageToken,drives(id,name)' }),
     ]);
+  });
+
+  it('lists every shared-drive page', async () => {
+    const runGws = vi
+      .fn<DriveGwsRunner>()
+      .mockResolvedValueOnce(
+        '{"drives":[{"id":"drive-1","name":"Studio"}],"nextPageToken":"page-2"}'
+      )
+      .mockResolvedValueOnce('{"drives":[{"id":"drive-2","name":"Archive"}]}');
+    const service = new DriveToolService({ workspaceRoot: makeRoot(), runGws });
+
+    await expect(service.listDrives()).resolves.toEqual([
+      { id: 'drive-1', name: 'Studio' },
+      { id: 'drive-2', name: 'Archive' },
+    ]);
+    const secondArgs = runGws.mock.calls[1]?.[0] ?? [];
+    const paramsIndex = secondArgs.indexOf('--params');
+    expect(JSON.parse(secondArgs[paramsIndex + 1] ?? '{}')).toMatchObject({
+      pageToken: 'page-2',
+    });
+  });
+
+  it('browses every file page', async () => {
+    const runGws = vi
+      .fn<DriveGwsRunner>()
+      .mockResolvedValueOnce('{"files":[{"id":"file-1","name":"A"}],"nextPageToken":"page-2"}')
+      .mockResolvedValueOnce('{"files":[{"id":"file-2","name":"B"}]}');
+    const service = new DriveToolService({ workspaceRoot: makeRoot(), runGws });
+
+    await expect(service.browse({ driveId: 'drive-1' })).resolves.toEqual([
+      { id: 'file-1', name: 'A' },
+      { id: 'file-2', name: 'B' },
+    ]);
+    const secondArgs = runGws.mock.calls[1]?.[0] ?? [];
+    const paramsIndex = secondArgs.indexOf('--params');
+    expect(JSON.parse(secondArgs[paramsIndex + 1] ?? '{}')).toMatchObject({
+      pageToken: 'page-2',
+    });
+  });
+
+  it('browses a folder without treating its ID as a shared-drive ID', async () => {
+    const runGws = vi.fn<DriveGwsRunner>().mockResolvedValue('{"files":[]}');
+    const service = new DriveToolService({ workspaceRoot: makeRoot(), runGws });
+
+    await service.browse({ folderId: 'folder-1' });
+
+    const args = runGws.mock.calls[0]?.[0] ?? [];
+    const paramsIndex = args.indexOf('--params');
+    const params = JSON.parse(args[paramsIndex + 1] ?? '{}') as Record<string, unknown>;
+    expect(params.q).toContain("'folder-1' in parents");
+    expect(params).not.toHaveProperty('driveId');
+    expect(params).not.toHaveProperty('corpora');
   });
 
   it('rejects unsupported browse queries before invoking gws', async () => {

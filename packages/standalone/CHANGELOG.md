@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Telegram and Google Drive owner-workflow parity: allowlisted Telegram chats now support captions,
+photos, image documents, and regular documents, while the verified owner console can browse,
+download, and upload Drive files through the same role-scoped direct-tool and Code-Act contract on
+Claude and Codex. Media downloads are bounded and transient, forwarded image analysis and Drive
+reads remain untrusted, Drive uploads are limited to configured destinations, and Drive polling is
+asynchronous and page-bounded. Full details are in the repository root CHANGELOG.md.
+
 ## [0.25.0] - 2026-07-22
 
 Verified temporal owner-task reconciliation: MAMA can now inspect overdue owner tasks against fresh,

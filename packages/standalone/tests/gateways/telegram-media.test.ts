@@ -228,4 +228,45 @@ describe('TelegramMediaDownloader', () => {
     expect((error as Error).message).toBe('Telegram media download failed');
     expect((error as Error).message).not.toContain(BOT_TOKEN);
   });
+
+  it('times out a stalled response stream and removes the partial file', async () => {
+    const mediaRoot = await tempMediaRoot();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+    });
+
+    await expect(
+      downloadTelegramMedia({
+        botToken: BOT_TOKEN,
+        fileId: 'file-id',
+        fileUniqueId: 'unique-id',
+        kind: 'document',
+        mediaRoot,
+        timeoutMs: 10,
+        getFile: async () => ({ file_path: 'documents/file.bin' }),
+        fetchImpl: async () => response(body),
+      })
+    ).rejects.toThrow('Telegram media download timed out');
+
+    expect(await readdir(mediaRoot)).toEqual([]);
+  });
+
+  it('times out a stalled Telegram fetch with a stable error', async () => {
+    const mediaRoot = await tempMediaRoot();
+
+    await expect(
+      downloadTelegramMedia({
+        botToken: BOT_TOKEN,
+        fileId: 'file-id',
+        fileUniqueId: 'unique-id',
+        kind: 'document',
+        mediaRoot,
+        timeoutMs: 10,
+        getFile: async () => ({ file_path: 'documents/file.bin' }),
+        fetchImpl: async () => new Promise<Response>(() => {}),
+      })
+    ).rejects.toThrow('Telegram media download timed out');
+  });
 });

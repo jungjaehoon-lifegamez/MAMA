@@ -21,6 +21,7 @@ const SAFE_DRIVE_ID = /^[A-Za-z0-9_-]+$/;
 const SAFE_QUERY =
   /^(name|mimeType)\s+(contains|=)\s+'[^']*'(\s+(and|or)\s+(name|mimeType)\s+(contains|=)\s+'[^']*')*$/;
 const DEFAULT_DRIVE_DOWNLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
+const MAX_DRIVE_LIST_PAGES = 1_000;
 
 export type DriveGwsRunner = (args: string[]) => Promise<string>;
 
@@ -91,6 +92,15 @@ function readObjectArray(value: unknown, field: string): Array<Record<string, un
   return value as Array<Record<string, unknown>>;
 }
 
+function readNextPageToken(result: Record<string, unknown>): string | undefined {
+  const token = result.nextPageToken;
+  if (token === undefined) return undefined;
+  if (typeof token !== 'string' || token.length === 0) {
+    throw new Error('gws returned an invalid nextPageToken.');
+  }
+  return token;
+}
+
 function sanitizeFileName(value: string | undefined, fallback: string): string {
   const candidate = Array.from(basename(value?.trim() || fallback), (character) => {
     const code = character.charCodeAt(0);
@@ -135,21 +145,31 @@ export class DriveToolService {
   }
 
   async listDrives(): Promise<Array<Record<string, unknown>>> {
-    const result = parseObject(
-      await this.runGws([
-        'drive',
-        'drives',
-        'list',
-        '--params',
-        JSON.stringify({ fields: 'drives(id,name)' }),
-      ])
-    );
-    return readObjectArray(result.drives, 'drives');
+    const drives: Array<Record<string, unknown>> = [];
+    const seenTokens = new Set<string>();
+    let pageToken: string | undefined;
+    for (let page = 0; page < MAX_DRIVE_LIST_PAGES; page += 1) {
+      const result = parseObject(
+        await this.runGws([
+          'drive',
+          'drives',
+          'list',
+          '--params',
+          JSON.stringify({ fields: 'nextPageToken,drives(id,name)', pageToken }),
+        ])
+      );
+      drives.push(...readObjectArray(result.drives, 'drives'));
+      pageToken = readNextPageToken(result);
+      if (!pageToken) return drives;
+      if (seenTokens.has(pageToken)) throw new Error('gws returned a repeated nextPageToken.');
+      seenTokens.add(pageToken);
+    }
+    throw new Error(`Drive listing exceeded ${MAX_DRIVE_LIST_PAGES} pages.`);
   }
 
   async browse(input: DriveBrowseInput): Promise<Array<Record<string, unknown>>> {
     const parentId = requireDriveId(input.folderId ?? input.driveId, 'folderId or driveId');
-    const driveId = requireDriveId(input.driveId ?? parentId, 'driveId');
+    const driveId = input.driveId ? requireDriveId(input.driveId, 'driveId') : undefined;
     let query = `'${parentId}' in parents`;
     if (input.query) {
       if (!SAFE_QUERY.test(input.query)) {
@@ -159,19 +179,32 @@ export class DriveToolService {
       }
       query += ` and ${input.query}`;
     }
-    const params = {
+    const params: Record<string, unknown> = {
       q: query,
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
-      corpora: 'drive',
-      driveId,
-      fields: 'files(id,name,mimeType,size,createdTime,modifiedTime)',
+      fields: 'nextPageToken,files(id,name,mimeType,size,createdTime,modifiedTime)',
       orderBy: 'name',
     };
-    const result = parseObject(
-      await this.runGws(['drive', 'files', 'list', '--params', JSON.stringify(params)])
-    );
-    return readObjectArray(result.files, 'files');
+    if (driveId) {
+      params.corpora = 'drive';
+      params.driveId = driveId;
+    }
+    const files: Array<Record<string, unknown>> = [];
+    const seenTokens = new Set<string>();
+    let pageToken: string | undefined;
+    for (let page = 0; page < MAX_DRIVE_LIST_PAGES; page += 1) {
+      if (pageToken) params.pageToken = pageToken;
+      const result = parseObject(
+        await this.runGws(['drive', 'files', 'list', '--params', JSON.stringify(params)])
+      );
+      files.push(...readObjectArray(result.files, 'files'));
+      pageToken = readNextPageToken(result);
+      if (!pageToken) return files;
+      if (seenTokens.has(pageToken)) throw new Error('gws returned a repeated nextPageToken.');
+      seenTokens.add(pageToken);
+    }
+    throw new Error(`Drive browsing exceeded ${MAX_DRIVE_LIST_PAGES} pages.`);
   }
 
   async findFolder(input: DriveFindFolderInput): Promise<{ folderId: string; path: string }> {

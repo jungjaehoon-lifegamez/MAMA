@@ -10,7 +10,7 @@
  * - Typing indicator, error handling
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -267,6 +267,12 @@ export class TelegramGateway extends BaseGateway {
       }
     }
 
+    const hasMedia = Boolean((msg.photo && msg.photo.length > 0) || msg.document);
+    if (hasMedia && (!this.config.allowedChats || this.config.allowedChats.length === 0)) {
+      console.warn('[Telegram] Dropped media because telegram.allowed_chats is not configured');
+      return;
+    }
+
     const selectedText = msg.text ?? msg.caption ?? '';
     const selectedEntities = msg.text !== undefined ? msg.entities : msg.caption_entities;
 
@@ -319,6 +325,7 @@ export class TelegramGateway extends BaseGateway {
 
     const attachments: MessageAttachment[] = [];
     const contentBlocks: ContentBlock[] = [];
+    let transientMediaPath: string | undefined;
     try {
       if (msg.photo && msg.photo.length > 0) {
         const photo = msg.photo[msg.photo.length - 1];
@@ -332,6 +339,7 @@ export class TelegramGateway extends BaseGateway {
           getFile: (fileId) => api.getFile(fileId),
           fetchImpl: this.fetchImpl,
         });
+        transientMediaPath = downloaded.localPath;
         const detectedType = detectImageType(await readFile(downloaded.localPath));
         if (!detectedType) {
           await presenter.fail('This image format is not supported.');
@@ -355,6 +363,7 @@ export class TelegramGateway extends BaseGateway {
         for (const block of imageBlocks) {
           contentBlocks.push({ type: 'image', source: block.source });
         }
+        delete attachment.localPath;
         if (!text.trim()) {
           text = '[Image]';
         }
@@ -371,6 +380,7 @@ export class TelegramGateway extends BaseGateway {
           getFile: (fileId) => api.getFile(fileId),
           fetchImpl: this.fetchImpl,
         });
+        transientMediaPath = downloaded.localPath;
         const detectedType = detectImageType(await readFile(downloaded.localPath));
         if (downloaded.mimeType.startsWith('image/') && !detectedType) {
           await presenter.fail('This image format is not supported.');
@@ -407,12 +417,17 @@ export class TelegramGateway extends BaseGateway {
             text = `[File: ${downloaded.filename}]`;
           }
         }
+        delete attachment.localPath;
       }
     } catch {
       await presenter.fail(
         msg.document ? 'The file could not be downloaded.' : 'The image could not be downloaded.'
       );
       return;
+    } finally {
+      if (transientMediaPath) {
+        await unlink(transientMediaPath).catch(() => {});
+      }
     }
 
     if (!text.trim()) {

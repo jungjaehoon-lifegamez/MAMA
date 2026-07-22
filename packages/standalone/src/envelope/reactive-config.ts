@@ -203,6 +203,7 @@ export function getReactiveRoutePolicy(
       ...route.rawConnectors,
       ...(isOwnerConsole ? ['kagemusha'] : []),
       ...(isOwnerConsole && enabledConnectorNames.includes('trello') ? ['trello'] : []),
+      ...(isOwnerConsole && enabledConnectorNames.includes('drive') ? ['drive'] : []),
     ])
   );
 
@@ -219,10 +220,14 @@ export function getReactiveRoutePolicy(
 export function createDefaultReactiveEnvelopeConfig(
   config: MAMAConfig,
   env: EnvLike = process.env,
-  enabledConnectorNames: readonly string[] = []
+  enabledConnectorNames: readonly string[] = [],
+  connectorDestinations: readonly DestinationRef[] = []
 ): ReactiveEnvelopeConfig {
   const budgetSeconds = reactiveBudgetSeconds(config);
   const connectorSnapshot = Object.freeze([...enabledConnectorNames]);
+  const destinationSnapshot = Object.freeze(
+    connectorDestinations.map((destination) => ({ ...destination }))
+  );
   resolveReactiveProjectRoot(config, env);
   const policyCache = new WeakMap<NormalizedMessage, ReactiveRoutePolicy>();
   const policyFor = (message: NormalizedMessage): ReactiveRoutePolicy => {
@@ -240,7 +245,13 @@ export function createDefaultReactiveEnvelopeConfig(
     rawConnectorsFor: (message) => [...policyFor(message).rawConnectors],
     memoryScopesFor: (message) => [...policyFor(message).memoryScopes],
     sourceFor: (message) => policyFor(message).source,
-    allowedDestinationsFor: (message) => [...policyFor(message).allowedDestinations],
+    allowedDestinationsFor: (message) => {
+      const policy = policyFor(message);
+      return [
+        ...policy.allowedDestinations,
+        ...(policy.rawConnectors.includes('drive') ? destinationSnapshot : []),
+      ];
+    },
     reactiveBudgetSeconds: budgetSeconds,
   };
 }

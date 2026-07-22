@@ -72,7 +72,11 @@ export class TelegramResponsePresenter {
     if (this.handle || this.finalized) {
       return;
     }
-    this.handle = await this.adapter.send('⏳');
+    try {
+      this.handle = await this.adapter.send('⏳');
+    } catch {
+      this.handle = null;
+    }
   }
 
   callbacks(): StreamCallbacks {

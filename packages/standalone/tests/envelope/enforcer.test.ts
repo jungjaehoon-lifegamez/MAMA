@@ -132,6 +132,48 @@ describe('EnvelopeEnforcer', () => {
     ).not.toThrow();
   });
 
+  it('requires Drive tools to stay inside the raw Drive connector scope', () => {
+    const withoutDrive = makeEnvelope();
+    const withDrive = makeEnvelope({
+      scope: {
+        ...makeEnvelope().scope,
+        raw_connectors: ['telegram', 'drive'],
+      },
+    });
+
+    expect(() => enforcer.check(withoutDrive, 'drive_browse', { folderId: 'folder-1' })).toThrow(
+      /connector_out_of_scope/
+    );
+    expect(() => enforcer.check(withDrive, 'drive_browse', { folderId: 'folder-1' })).not.toThrow();
+  });
+
+  it('requires Drive uploads to target a host-authorized folder destination', () => {
+    const base = makeEnvelope();
+    const withFolder = makeEnvelope({
+      scope: {
+        ...base.scope,
+        raw_connectors: [...base.scope.raw_connectors, 'drive'],
+        allowed_destinations: [
+          ...base.scope.allowed_destinations,
+          { kind: 'drive', id: 'folder-1' } as never,
+        ],
+      },
+    });
+
+    expect(() =>
+      enforcer.check(withFolder, 'drive_upload', {
+        localPath: '/workspace/outbound/file.txt',
+        folderId: 'folder-2',
+      })
+    ).toThrow(/destination_out_of_scope/);
+    expect(() =>
+      enforcer.check(withFolder, 'drive_upload', {
+        localPath: '/workspace/outbound/file.txt',
+        folderId: 'folder-1',
+      })
+    ).not.toThrow();
+  });
+
   it('rejects kagemusha_messages without channelId', () => {
     const env = makeEnvelope({
       scope: {
@@ -149,6 +191,23 @@ describe('EnvelopeEnforcer', () => {
     const env = makeEnvelope({ tier: 3 });
 
     expect(() => enforcer.check(env, 'mama_save', { topic: 'x' })).toThrow(/tier_violation/);
+    expect(() =>
+      enforcer.check(
+        makeEnvelope({
+          tier: 3,
+          scope: {
+            ...env.scope,
+            raw_connectors: [...env.scope.raw_connectors, 'drive'],
+            allowed_destinations: [
+              ...env.scope.allowed_destinations,
+              { kind: 'drive', id: 'folder-1' } as never,
+            ],
+          },
+        }),
+        'drive_upload',
+        { localPath: '/workspace/file.txt', folderId: 'folder-1' }
+      )
+    ).toThrow(/tier_violation/);
   });
 
   it('allows read tools at tier 3', () => {

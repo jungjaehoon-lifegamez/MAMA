@@ -29,6 +29,18 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.send).toHaveBeenCalledTimes(1);
   });
 
+  it('continues without a placeholder when the initial send fails', async () => {
+    const adapter = makeAdapter();
+    adapter.send.mockRejectedValueOnce(new Error('placeholder unavailable'));
+    const presenter = new TelegramResponsePresenter(adapter);
+
+    await expect(presenter.start()).resolves.toBeUndefined();
+    await presenter.finalize('Final answer');
+
+    expect(adapter.send).toHaveBeenNthCalledWith(2, 'Final answer');
+    expect(adapter.edit).not.toHaveBeenCalled();
+  });
+
   it('accumulates deltas and edits no faster than the throttle', async () => {
     const adapter = makeAdapter();
     const presenter = new TelegramResponsePresenter(adapter, { throttleMs: 800 });

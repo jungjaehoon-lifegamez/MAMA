@@ -4,6 +4,7 @@ import { basename, extname, resolve, sep } from 'node:path';
 
 const TELEGRAM_HOSTED_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
 const DEFAULT_ATTACHMENT_LIMIT_BYTES = 25 * 1024 * 1024;
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
 
 export interface TelegramFileMetadata {
   file_path?: string;
@@ -20,6 +21,7 @@ export interface TelegramMediaDownloadRequest {
   kind: 'photo' | 'document';
   mediaRoot: string;
   maxBytes?: number;
+  timeoutMs?: number;
   getFile: (fileId: string) => Promise<TelegramFileMetadata>;
   fetchImpl?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
@@ -34,6 +36,23 @@ export interface TelegramMediaDownloadResult {
 }
 
 class TelegramMediaError extends Error {}
+
+async function withDownloadTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new TelegramMediaError('Telegram media download timed out')),
+          timeoutMs
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function configuredAttachmentLimit(): number {
   const configured = Number(process.env.MAMA_ATTACHMENT_MAX_DOWNLOAD_BYTES);
@@ -102,11 +121,13 @@ export async function downloadTelegramMedia(
   request: TelegramMediaDownloadRequest
 ): Promise<TelegramMediaDownloadResult> {
   const limit = effectiveLimit(request.maxBytes);
+  const timeoutMs =
+    request.timeoutMs && request.timeoutMs > 0 ? request.timeoutMs : DEFAULT_DOWNLOAD_TIMEOUT_MS;
   if (request.declaredSize !== undefined && request.declaredSize > limit) {
     throw new TelegramMediaError('Telegram media exceeds the download limit');
   }
 
-  const metadata = await request.getFile(request.fileId);
+  const metadata = await withDownloadTimeout(request.getFile(request.fileId), timeoutMs);
   if (metadata.file_size !== undefined && metadata.file_size > limit) {
     throw new TelegramMediaError('Telegram media exceeds the download limit');
   }
@@ -119,8 +140,16 @@ export async function downloadTelegramMedia(
   const fetchImpl = request.fetchImpl ?? fetch;
   let response: Response;
   try {
-    response = await fetchImpl(downloadUrl(request.botToken, filePath));
-  } catch {
+    response = await withDownloadTimeout(
+      fetchImpl(downloadUrl(request.botToken, filePath), {
+        signal: AbortSignal.timeout(timeoutMs),
+      }),
+      timeoutMs
+    );
+  } catch (error) {
+    if (error instanceof TelegramMediaError) {
+      throw error;
+    }
     throw new TelegramMediaError('Telegram media download failed');
   }
   if (!response.ok || !response.body) {
@@ -146,7 +175,7 @@ export async function downloadTelegramMedia(
     const reader = response.body.getReader();
     let streamComplete = false;
     while (!streamComplete) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withDownloadTimeout(reader.read(), timeoutMs);
       if (done) {
         streamComplete = true;
         continue;

@@ -6,6 +6,7 @@ import type { ConnectorConfig } from '../../src/connectors/framework/types.js';
 // Mock child_process
 vi.mock('child_process', () => ({
   execSync: vi.fn(),
+  execFile: vi.fn(),
 }));
 
 // Mock fs to prevent state file I/O from interfering with tests
@@ -16,8 +17,9 @@ vi.mock('fs', () => ({
   mkdirSync: vi.fn(),
 }));
 
-import { execSync } from 'child_process';
+import { execFile, execSync } from 'child_process';
 const mockExecSync = vi.mocked(execSync);
+const mockExecFile = vi.mocked(execFile);
 
 function makeConfig(overrides: Partial<ConnectorConfig> = {}): ConnectorConfig {
   return {
@@ -82,6 +84,20 @@ describe('DriveConnector', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockExecSync.mockReturnValue('' as unknown as ReturnType<typeof execSync>);
+    mockExecFile.mockImplementation(((
+      _file: string,
+      args: string[],
+      _options: unknown,
+      callback: (error: Error | null, stdout: string, stderr: string) => void
+    ) => {
+      try {
+        const stdout = String(mockExecSync(`gws ${args.join(' ')}`));
+        callback(null, stdout, '');
+      } catch (error) {
+        callback(error instanceof Error ? error : new Error(String(error)), '', '');
+      }
+      return {} as ReturnType<typeof execFile>;
+    }) as typeof execFile);
   });
 
   describe('name and type', () => {
@@ -401,6 +417,43 @@ describe('DriveConnector', () => {
       expect(firstPoll.map((item) => item.metadata?.fileId)).toEqual(['file-1', 'file-2']);
       expect(String(mockExecSync.mock.calls[3]?.[0])).toContain('page-002');
       expect(String(mockExecSync.mock.calls[4]?.[0])).toContain('token-003');
+    });
+
+    it('continues a large changes backlog across bounded polls', async () => {
+      mockExecSync
+        .mockReturnValueOnce('' as unknown as ReturnType<typeof execSync>)
+        .mockReturnValueOnce(
+          makeStartPageToken('token-001') as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList(
+            [{ fileId: 'file-1', time: '2024-01-01T00:00:00.000Z' }],
+            null,
+            'page-002'
+          ) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList(
+            [{ fileId: 'file-2', time: '2024-01-01T00:01:00.000Z' }],
+            null,
+            'page-003'
+          ) as unknown as ReturnType<typeof execSync>
+        )
+        .mockReturnValueOnce(
+          makeChangeList(
+            [{ fileId: 'file-3', time: '2024-01-01T00:02:00.000Z' }],
+            'token-004'
+          ) as unknown as ReturnType<typeof execSync>
+        );
+
+      const connector = new DriveConnector(makeConfig());
+      await connector.init();
+      const firstPoll = await connector.poll(new Date(0));
+      const secondPoll = await connector.poll(new Date(0));
+
+      expect(firstPoll.map((item) => item.metadata?.fileId)).toEqual(['file-1', 'file-2']);
+      expect(secondPoll.map((item) => item.metadata?.fileId)).toEqual(['file-3']);
+      expect(String(mockExecSync.mock.calls[4]?.[0])).toContain('page-003');
     });
 
     it('fails loudly when the changes API repeats a pagination token', async () => {
