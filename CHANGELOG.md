@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.1] / mama-core [1.9.0] / mama-os [0.27.1] - 2026-07-22
+
+### Fixed — Codex session and Code-Act runtime stability
+
+- **Proactive Codex policy rotation** — durable thread policy compatibility and presence are
+  checked before the first model request, so a release, role-policy change, or missing registry
+  opens a full current-policy thread directly instead of relying on an error fallback.
+- **Bounded concurrent Code-Act isolation** — every QuickJS execution owns an async WASM module,
+  preventing cross-lane runtime disposal races. A wall-clock deadline covers host calls, abort is
+  propagated to nested tools, browser waits are clamped to the remaining budget, and a process-wide
+  eight-module ceiling prevents stalled reads from accumulating memory. Parent-turn cancellation
+  removes queued executions immediately; side-effecting calls retain their slot until the
+  underlying operation and every sibling mutation settle or a finite settlement grace expires.
+  Late or still-unknown writes become structural non-retryable turn failures across native,
+  app-server, HTTP, and MCP transports, and workorders do not requeue them automatically. MCP calls
+  are serialized and latched after an ambiguous mutation. Drive downloads remove artifacts created
+  after cancellation; browser screenshots publish only operation-owned temporary files, reject
+  existing destinations, and cannot traverse nested paths or symlinks.
+- **Code-Act progress detection** — the repeated-tool guard distinguishes different Code-Act
+  programs while retaining the global 50-call ceiling and blocking fifteen identical programs.
+- **Shutdown-safe workorder drain** — once shutdown begins, the consumer stops claiming queued
+  work and leaves an interrupted active claim for the existing boot-recovery policy instead of
+  failing every pending workorder with `Agent loop is stopping`.
+
+### Upgrade notes
+
+- This patch bumps only `@jungjaehoon/mama-os` to `0.27.1`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+
 ## [0.27.0] / mama-core [1.9.0] / mama-os [0.27.0] - 2026-07-22
 
 ### Added — Owner-agent execution and Telegram parity

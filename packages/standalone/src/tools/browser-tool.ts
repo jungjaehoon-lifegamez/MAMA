@@ -6,6 +6,9 @@
  */
 
 import type { Browser, Page, BrowserContext } from 'playwright';
+import { constants, copyFileSync, existsSync, mkdirSync, realpathSync, unlinkSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export interface BrowserToolConfig {
   /** Headless mode (default: true) */
@@ -94,6 +97,39 @@ export class BrowserTool {
     return this.page!;
   }
 
+  private screenshotPaths(
+    filename: string | undefined,
+    prefix: string
+  ): {
+    outputPath: string;
+    temporaryPath: string;
+  } {
+    const configuredRoot = resolve(this.config.screenshotDir);
+    mkdirSync(configuredRoot, { recursive: true });
+    const root = realpathSync(configuredRoot);
+    const name = filename?.trim() || `${prefix}-${Date.now()}-${randomUUID()}.png`;
+    if (name !== basename(name)) {
+      throw new Error('Screenshot filename must not contain directory components');
+    }
+    const outputPath = resolve(root, name);
+    const relativePath = relative(root, outputPath);
+    if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+      throw new Error(
+        'Screenshot filename must resolve inside the configured screenshot directory'
+      );
+    }
+    return {
+      outputPath,
+      temporaryPath: resolve(root, `.mama-screenshot-${randomUUID()}.tmp.png`),
+    };
+  }
+
+  private removeOwnedArtifact(path: string): void {
+    if (existsSync(path)) {
+      unlinkSync(path);
+    }
+  }
+
   /**
    * Navigate to URL
    */
@@ -115,41 +151,55 @@ export class BrowserTool {
   /**
    * Take screenshot
    */
-  async screenshot(filename?: string): Promise<{ success: boolean; path: string }> {
+  async screenshot(
+    filename?: string,
+    signal?: AbortSignal
+  ): Promise<{ success: boolean; path: string }> {
+    signal?.throwIfAborted();
     const page = await this.ensureBrowser();
+    signal?.throwIfAborted();
 
-    const { mkdirSync, existsSync } = await import('fs');
-    if (!existsSync(this.config.screenshotDir)) {
-      mkdirSync(this.config.screenshotDir, { recursive: true });
+    const { outputPath, temporaryPath } = this.screenshotPaths(filename, 'screenshot');
+
+    try {
+      await page.screenshot({ path: temporaryPath, fullPage: false });
+      signal?.throwIfAborted();
+      copyFileSync(temporaryPath, outputPath, constants.COPYFILE_EXCL);
+      this.removeOwnedArtifact(temporaryPath);
+    } catch (error) {
+      this.removeOwnedArtifact(temporaryPath);
+      throw error;
     }
+    console.log(`[Browser] Screenshot saved: ${outputPath}`);
 
-    const name = filename || `screenshot-${Date.now()}.png`;
-    const path = `${this.config.screenshotDir}/${name}`;
-
-    await page.screenshot({ path, fullPage: false });
-    console.log(`[Browser] Screenshot saved: ${path}`);
-
-    return { success: true, path };
+    return { success: true, path: outputPath };
   }
 
   /**
    * Take full page screenshot
    */
-  async screenshotFullPage(filename?: string): Promise<{ success: boolean; path: string }> {
+  async screenshotFullPage(
+    filename?: string,
+    signal?: AbortSignal
+  ): Promise<{ success: boolean; path: string }> {
+    signal?.throwIfAborted();
     const page = await this.ensureBrowser();
+    signal?.throwIfAborted();
 
-    const { mkdirSync, existsSync } = await import('fs');
-    if (!existsSync(this.config.screenshotDir)) {
-      mkdirSync(this.config.screenshotDir, { recursive: true });
+    const { outputPath, temporaryPath } = this.screenshotPaths(filename, 'fullpage');
+
+    try {
+      await page.screenshot({ path: temporaryPath, fullPage: true });
+      signal?.throwIfAborted();
+      copyFileSync(temporaryPath, outputPath, constants.COPYFILE_EXCL);
+      this.removeOwnedArtifact(temporaryPath);
+    } catch (error) {
+      this.removeOwnedArtifact(temporaryPath);
+      throw error;
     }
+    console.log(`[Browser] Full page screenshot saved: ${outputPath}`);
 
-    const name = filename || `fullpage-${Date.now()}.png`;
-    const path = `${this.config.screenshotDir}/${name}`;
-
-    await page.screenshot({ path, fullPage: true });
-    console.log(`[Browser] Full page screenshot saved: ${path}`);
-
-    return { success: true, path };
+    return { success: true, path: outputPath };
   }
 
   /**

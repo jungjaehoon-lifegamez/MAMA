@@ -48,12 +48,38 @@ export interface HostToolCallResult {
   stop?: boolean;
   /** Fail the active model turn after returning this error result to the host. */
   abort?: boolean;
+  /** Trusted terminal mutation code; never derived from model-visible text. */
+  terminalCode?: HostToolTerminalCode;
 }
 
 /** Tools and executor scoped to one prompt run. */
 export interface HostToolBridge {
   readonly tools: readonly HostToolDefinition[];
   execute(call: HostToolCall): Promise<HostToolCallResult>;
+}
+
+export type HostToolTerminalCode =
+  | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
+  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+
+export function isHostToolTerminalCode(value: unknown): value is HostToolTerminalCode {
+  return (
+    value === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
+    value === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+  );
+}
+
+/** Typed transport for a trusted host-tool terminal result across Codex app-server. */
+export class HostToolTerminalError extends Error {
+  readonly retryable = false;
+
+  constructor(
+    readonly terminalCode: HostToolTerminalCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'HostToolTerminalError';
+  }
 }
 
 // ─── Result Types ────────────────────────────────────────────────────────────
@@ -103,6 +129,8 @@ export interface PromptOptions {
    */
   requestTimeout?: number;
 }
+
+export type SessionPolicyStatus = 'missing' | 'compatible' | 'mismatch';
 
 // ─── Metrics ─────────────────────────────────────────────────────────────────
 
@@ -167,6 +195,9 @@ export interface IModelRunner {
     callbacks?: PromptCallbacks,
     options?: PromptOptions
   ): Promise<PromptResult>;
+
+  /** Read-only durable-session policy preflight. Codex uses this to rotate before a request. */
+  getSessionPolicyStatus?(options: PromptOptions): SessionPolicyStatus;
 
   /** Set the session/channel ID */
   setSessionId(id: string): void;

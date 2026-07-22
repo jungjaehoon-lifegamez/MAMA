@@ -1469,6 +1469,54 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
     });
 
     describe('Story GT-CODE-ACT: request-scoped sandbox tools', () => {
+      it('returns a structural terminal result for an ambiguous Code-Act mutation', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        let markSendStarted: (() => void) | undefined;
+        const sendStarted = new Promise<void>((resolve) => {
+          markSendStarted = resolve;
+        });
+        executor.setTelegramGateway({
+          sendMessage: vi.fn().mockImplementation(async () => {
+            markSendStarted?.();
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }),
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        });
+        const context = {
+          ...createViewerContext(),
+          source: 'telegram',
+          platform: 'telegram' as const,
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        };
+        executor.setAgentContext(context);
+        const controller = new AbortController();
+        const execution = executor.execute(
+          'code_act',
+          { code: 'telegram_send("7777", "hello")' },
+          {
+            agentContext: context,
+            source: 'telegram',
+            channelId: '7777',
+            executionSurface: 'model_tool',
+            signal: controller.signal,
+          }
+        );
+        await sendStarted;
+        controller.abort(new Error('owning turn stopped'));
+
+        const result = await execution;
+
+        expect(result).toMatchObject({
+          success: false,
+          code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          retryable: false,
+          abort: true,
+        });
+      });
+
       it('composes structured OCR output directly into the translation primitive', async () => {
         const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
         executor.setAgentContext(createViewerContext());

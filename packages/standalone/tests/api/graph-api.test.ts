@@ -360,6 +360,43 @@ describe('graph api helpers', () => {
         }
       });
 
+      it('preserves terminal mutation metadata in the HTTP response', async () => {
+        const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
+        process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';
+        const executeCodeAct = vi.fn().mockResolvedValue({
+          success: false,
+          error: 'Mutation outcome is unknown',
+          terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          retryable: false,
+          abort: true,
+          logs: [],
+          metrics: { durationMs: 1, hostCallCount: 1, memoryUsedBytes: 0 },
+        });
+        try {
+          const handler = createGraphHandler({ executeCodeAct });
+          const req = createBodyReq('/api/code-act', JSON.stringify({ code: 'mutate()' }), {
+            remoteAddress: '127.0.0.91',
+            headers: { authorization: 'Bearer test-code-act-token' },
+          });
+          const res = createMockRes();
+
+          expect(await handler(req, res as unknown as ServerResponse)).toBe(true);
+          expect(res._status).toBe(200);
+          expect(JSON.parse(res._body)).toMatchObject({
+            success: false,
+            terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+            retryable: false,
+            abort: true,
+          });
+        } finally {
+          if (previousAuthToken === undefined) {
+            delete process.env.MAMA_AUTH_TOKEN;
+          } else {
+            process.env.MAMA_AUTH_TOKEN = previousAuthToken;
+          }
+        }
+      });
+
       it('rejects malformed Code-Act agent identity before execution', async () => {
         const previousAuthToken = process.env.MAMA_AUTH_TOKEN;
         process.env.MAMA_AUTH_TOKEN = 'test-code-act-token';

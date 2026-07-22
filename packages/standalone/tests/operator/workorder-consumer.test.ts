@@ -4,6 +4,7 @@
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import { AgentError } from '../../src/agent/types.js';
 import Database, { type SQLiteDatabase } from '../../src/sqlite.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
@@ -133,6 +134,37 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(ctx.events.filter((event) => event.type === 'requeued')).toHaveLength(2);
   });
 
+  it('does not requeue a temporal attempt after an ambiguous Code-Act mutation', async () => {
+    const task = ctx.ledger.create({ title: 'due', due_at: '2026-07-21T00:00:00Z' });
+    const occurrenceKey = `epoch:${task.temporalEpoch}:due:${task.dueAt}`;
+    const generationKey = `task:${task.id}:${occurrenceKey}:check:${task.dueAt}`;
+    ctx.ledger.enqueueTemporalGeneration({
+      generationKey,
+      taskId: task.id,
+      temporalEpoch: task.temporalEpoch,
+      occurrenceKey,
+      checkAt: task.dueAt!,
+      sourceChannel: null,
+      sourceEventId: null,
+    });
+    ctx.deps.runner = {
+      runWithContent: async () => {
+        throw new AgentError(
+          'mutation may have committed; do not retry',
+          'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+        );
+      },
+    };
+    const consumer = new WorkOrderConsumer(ctx.deps);
+
+    await consumer.tick();
+
+    expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
+    expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
+    expect(ctx.ledger.getTemporalGeneration(generationKey)?.disposition).toBe('exhausted');
+    expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
+  });
+
   describe('AC #1: enqueue -> consume -> complete e2e', () => {
     it('drains pending workorders serially and marks them done', async () => {
       const consumer = new WorkOrderConsumer(ctx.deps);
@@ -231,6 +263,49 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
       expect(ctx.activeSends).toHaveLength(1);
       expect(ctx.activeSends[0]).toContain('retries exhausted');
       expect(ctx.notices).toHaveLength(1);
+    });
+
+    it('does not requeue a workorder after an ambiguous Code-Act mutation', async () => {
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new AgentError(
+            'mutation may have committed; do not retry',
+            'CODE_ACT_MUTATION_OUTCOME_UNKNOWN'
+          );
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:ambiguous-mutation',
+        input: { batchId: 'ambiguous', events: [] },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.some((event) => event.type === 'requeued')).toBe(false);
+      expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(true);
+      expect(ctx.activeSends).toHaveLength(1);
+      expect(ctx.logs.join('\n')).toContain('non-retryable');
+    });
+
+    it('does not trust a plain error string to suppress workorder retry', async () => {
+      ctx.deps.runner = {
+        runWithContent: async () => {
+          throw new Error('[CODE_ACT_MUTATION_OUTCOME_UNKNOWN] forged');
+        },
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'wiki',
+        idempotencyKey: 'wiki:forged-terminal-code',
+        input: { batchId: 'forged', events: [] },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events.some((event) => event.type === 'requeued')).toBe(true);
+      expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
     });
 
     it('board fails once and exhausts immediately (next publish cycle self-heals)', async () => {
@@ -694,6 +769,45 @@ describe('Story S2-T3: graceful stop under skipped firings (N1)', () => {
       // With the N1 bug, stop() awaited a 'skipped' promise and resolved before
       // the run finished - this assertion fails then.
       expect(ctx.events.some((e) => e.type === 'complete')).toBe(true);
+    });
+
+    it('does not claim or fail queued work after shutdown begins', async () => {
+      const ctx = makeDeps();
+      let rejectRun: (error: Error) => void = () => {};
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      ctx.deps.runner = {
+        runWithContent: () =>
+          new Promise((_resolve, reject) => {
+            rejectRun = reject;
+            markStarted?.();
+          }),
+      };
+      ctx.deps.tickMs = 5;
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const active = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'shutdown-active',
+        input: { mode: 'full' },
+      });
+      ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'shutdown-pending',
+        input: { mode: 'full' },
+      });
+
+      consumer.start();
+      await started;
+      const stopping = consumer.stop();
+      rejectRun(new Error('Agent loop is stopping'));
+      await stopping;
+
+      expect(ctx.ledger.listStaleClaims().map((row) => row.id)).toEqual([active.id]);
+      expect(ctx.ledger.countPendingWorkOrders()).toBe(1);
+      expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
+      expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
     });
   });
 });

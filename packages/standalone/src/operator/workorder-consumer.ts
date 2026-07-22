@@ -29,6 +29,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { AgentError } from '../agent/types.js';
+
 import {
   TEMPORAL_WORKORDER_MAX_ATTEMPTS,
   type WorkOrderKind,
@@ -46,7 +48,11 @@ export interface WorkOrderLedgerPort {
   /** Atomic fail+replacement (retry) - one transaction (PR bot round). */
   requeueWorkOrder(wo: WorkOrderRecord, reason: string): WorkOrderRecord;
   inspectTemporalAttempt(attemptId: number): TemporalAttemptState;
-  failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult;
+  failTemporalWorkOrder(
+    attemptId: number,
+    reason: string,
+    allowRetry?: boolean
+  ): TemporalWorkFailureResult;
   enqueueWorkOrder(order: EnqueueWorkOrderInput): WorkOrderRecord;
   listStaleClaims(): WorkOrderRecord[];
   countPendingWorkOrders(): number;
@@ -127,10 +133,11 @@ export class WorkOrderConsumer {
   private readonly lastAlarmAt = new Map<string, number>();
   private readonly unresolvedTemporalEffects = new Map<
     number,
-    { workOrder: WorkOrderRecord; reason: string }
+    { workOrder: WorkOrderRecord; reason: string; allowRetry: boolean }
   >();
   private timer: NodeJS.Timeout | null = null;
   private consuming = false;
+  private stopping = false;
   private activeTick: Promise<unknown> | null = null;
 
   constructor(deps: WorkOrderConsumerDeps) {
@@ -168,6 +175,7 @@ export class WorkOrderConsumer {
     if (this.timer) {
       throw new Error('[workorder-consumer] already started');
     }
+    this.stopping = false;
     const tickMs = this.deps.tickMs ?? DEFAULT_TICK_MS;
     this.timer = setInterval(() => {
       // Only track a REAL tick: during a long run subsequent firings resolve
@@ -189,6 +197,7 @@ export class WorkOrderConsumer {
   /** Graceful: awaits an in-flight tick so shutdown does not race the
    *  operator-DB close into "database is not open" noise (review m4). */
   async stop(): Promise<void> {
+    this.stopping = true;
     if (this.timer) {
       clearInterval(this.timer);
       this.timer = null;
@@ -205,7 +214,7 @@ export class WorkOrderConsumer {
    * plan G4) - long runs span multiple tick firings.
    */
   async tick(): Promise<'drained' | 'skipped'> {
-    if (this.consuming) return 'skipped';
+    if (this.consuming || this.stopping) return 'skipped';
     this.consuming = true;
     try {
       // Unknown durable state is a hard claim barrier. Recheck it before any
@@ -218,11 +227,12 @@ export class WorkOrderConsumer {
       // by this tick's failure policy waits for the NEXT tick (natural
       // backoff - otherwise a failing order retries in a tight loop).
       let remaining = this.deps.ledger.countPendingWorkOrders();
-      while (remaining > 0) {
+      while (remaining > 0 && !this.stopping) {
         const wo = this.deps.ledger.claimNextWorkOrder();
         if (!wo) break;
         await this.runOne(wo);
         remaining--;
+        if (this.stopping) break;
         if (this.unresolvedTemporalEffects.size > 0) break;
       }
       return 'drained';
@@ -232,6 +242,10 @@ export class WorkOrderConsumer {
   }
 
   private async runOne(wo: WorkOrderRecord): Promise<void> {
+    if (this.stopping) {
+      this.log(`[workorder-consumer] leaving ${wo.workKind}#${wo.id} for boot recovery`);
+      return;
+    }
     let brief: string | null;
     try {
       brief = this.deps.loadBrief(wo.workKind);
@@ -272,7 +286,12 @@ export class WorkOrderConsumer {
         runOptions,
       });
     } catch (err) {
-      this.handleFailure(wo, errMessage(err));
+      if (this.stopping) {
+        this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);
+        return;
+      }
+      const reason = errMessage(err);
+      this.handleFailure(wo, reason, !isAmbiguousCodeActMutation(err));
       return;
     }
 
@@ -338,14 +357,14 @@ export class WorkOrderConsumer {
    * fresh row, same occurrence key - the terminal row freed it) or declare
    * retries-exhausted with an owner alarm.
    */
-  private handleFailure(wo: WorkOrderRecord, reason: string): void {
+  private handleFailure(wo: WorkOrderRecord, reason: string, allowRetry = true): void {
     if (wo.workKind === 'temporal') {
-      this.arbitrateTemporalAttempt(wo, reason);
+      this.arbitrateTemporalAttempt(wo, reason, allowRetry);
       return;
     }
 
     const maxAttempts = WORKORDER_MAX_ATTEMPTS[wo.workKind];
-    if (wo.payload.attempts < maxAttempts) {
+    if (allowRetry && wo.payload.attempts < maxAttempts) {
       // Atomic fail+requeue (PR bot round): a crash between separate fail and
       // enqueue calls would silently lose the retry.
       const requeued = this.deps.ledger.requeueWorkOrder(wo, reason);
@@ -355,6 +374,12 @@ export class WorkOrderConsumer {
         `[workorder-consumer] failed ${wo.workKind}#${wo.id} (${reason}) -> requeued #${requeued.id} (attempt ${wo.payload.attempts + 1}/${maxAttempts})`
       );
       return;
+    }
+
+    if (!allowRetry) {
+      this.log(
+        `[workorder-consumer] ${wo.workKind}#${wo.id} has a non-retryable ambiguous mutation outcome`
+      );
     }
 
     this.deps.ledger.failWorkOrder(wo.id, reason);
@@ -368,13 +393,13 @@ export class WorkOrderConsumer {
   }
 
   /** Durable row+generation+receipt state always wins over runner prose/errors. */
-  private arbitrateTemporalAttempt(wo: WorkOrderRecord, reason: string): void {
+  private arbitrateTemporalAttempt(wo: WorkOrderRecord, reason: string, allowRetry = true): void {
     const auditReason = temporalFailureAuditReason(reason);
     let state: TemporalAttemptState;
     try {
       state = this.deps.ledger.inspectTemporalAttempt(wo.id);
     } catch (err) {
-      this.deferTemporalArbitration(wo, auditReason, err);
+      this.deferTemporalArbitration(wo, auditReason, err, allowRetry);
       return;
     }
 
@@ -446,18 +471,19 @@ export class WorkOrderConsumer {
         auditReason,
         new Error(
           `attempt is '${state.workOrder.status}' with generation '${state.generation.disposition}'`
-        )
+        ),
+        allowRetry
       );
       return;
     }
 
     let result: TemporalWorkFailureResult;
     try {
-      result = this.deps.ledger.failTemporalWorkOrder(wo.id, auditReason);
+      result = this.deps.ledger.failTemporalWorkOrder(wo.id, auditReason, allowRetry);
     } catch (err) {
       // A competing effect/supersession may have won after the read. Do not
       // guess which transition won; force another authoritative read first.
-      this.deferTemporalArbitration(wo, auditReason, err);
+      this.deferTemporalArbitration(wo, auditReason, err, allowRetry);
       return;
     }
     this.unresolvedTemporalEffects.delete(wo.id);
@@ -483,7 +509,11 @@ export class WorkOrderConsumer {
       );
       return;
     }
-    this.log(`[workorder-consumer] failed temporal#${wo.id}: ${auditReason}`);
+    this.log(
+      result.retrySuppressed
+        ? `[workorder-consumer] failed temporal#${wo.id}: non-retryable ambiguous mutation outcome`
+        : `[workorder-consumer] failed temporal#${wo.id}: ${auditReason}`
+    );
     this.emitEvent({
       type: 'exhausted',
       workKind: 'temporal',
@@ -492,12 +522,19 @@ export class WorkOrderConsumer {
     });
     this.alarm(
       'temporal',
-      `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${auditReason}`
+      result.retrySuppressed
+        ? `workorder temporal#${wo.id} automatic retry suppressed because a mutation outcome is ambiguous: ${auditReason}`
+        : `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${auditReason}`
     );
   }
 
-  private deferTemporalArbitration(wo: WorkOrderRecord, reason: string, err: unknown): void {
-    this.unresolvedTemporalEffects.set(wo.id, { workOrder: wo, reason });
+  private deferTemporalArbitration(
+    wo: WorkOrderRecord,
+    reason: string,
+    err: unknown,
+    allowRetry = true
+  ): void {
+    this.unresolvedTemporalEffects.set(wo.id, { workOrder: wo, reason, allowRetry });
     const message = `workorder temporal#${wo.id} effect state unresolved: ${errMessage(err)}`;
     this.log(`[workorder-consumer] ${message}`);
     this.alarm('temporal', message, 'temporal-state-unresolved');
@@ -505,7 +542,7 @@ export class WorkOrderConsumer {
 
   private recheckUnresolvedTemporalEffects(): void {
     for (const pending of [...this.unresolvedTemporalEffects.values()]) {
-      this.arbitrateTemporalAttempt(pending.workOrder, pending.reason);
+      this.arbitrateTemporalAttempt(pending.workOrder, pending.reason, pending.allowRetry);
     }
   }
 
@@ -547,6 +584,14 @@ export class WorkOrderConsumer {
 
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isAmbiguousCodeActMutation(error: unknown): boolean {
+  return (
+    error instanceof AgentError &&
+    (error.code === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
+      error.code === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN')
+  );
 }
 
 function temporalFailureAuditReason(reason: string): string {

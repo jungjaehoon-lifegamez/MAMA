@@ -929,6 +929,9 @@ export const READ_ONLY_TOOLS = new Set([
   'drive_download',
 ]);
 
+/** Read-shaped calls that still create a local artifact and therefore need write settlement. */
+const LOCAL_ARTIFACT_TOOLS = new Set(['browser_screenshot', 'drive_download']);
+
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
@@ -1003,39 +1006,62 @@ export class HostBridge {
         continue;
       }
 
-      sandbox.registerFunction(desc.name, async (...args: unknown[]) => {
-        const input = this._buildInput(desc, args);
+      sandbox.registerAbortableFunction(
+        desc.name,
+        async (hostContext, ...args: unknown[]) => {
+          const input = this._buildInput(desc, args);
 
-        // Validate required params before execution
-        const missing = desc.params
-          .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
-          .map((p) => `${p.name}: ${p.type}`);
-        if (missing.length > 0) {
-          const sig = desc.params
-            .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
-            .join(', ');
-          throw new Error(
-            `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
-              `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
-          );
+          if (desc.name === 'browser_wait_for') {
+            const remainingMs = Math.max(1, hostContext.deadlineMs - Date.now());
+            const requestedTimeout = Number(input.timeout);
+            input.timeout =
+              Number.isFinite(requestedTimeout) && requestedTimeout > 0
+                ? Math.min(requestedTimeout, remainingMs)
+                : Math.min(10_000, remainingMs);
+          }
+
+          // Validate required params before execution
+          const missing = desc.params
+            .filter((p) => p.required && (input[p.name] === undefined || input[p.name] === null))
+            .map((p) => `${p.name}: ${p.type}`);
+          if (missing.length > 0) {
+            const sig = desc.params
+              .map((p) => `${p.name}${p.required ? '' : '?'}: ${p.type}`)
+              .join(', ');
+            throw new Error(
+              `${desc.name}() missing required param(s): ${missing.join(', ')}. ` +
+                `Usage: ${desc.name}({${sig}}) or ${desc.name}(${desc.params.map((p) => p.name).join(', ')})`
+            );
+          }
+
+          this.onToolUse?.(desc.name, input, undefined);
+          const executionContext = this.executionContext
+            ? {
+                ...this.executionContext,
+                signal: this.executionContext.signal
+                  ? AbortSignal.any([this.executionContext.signal, hostContext.signal])
+                  : hostContext.signal,
+              }
+            : undefined;
+          const result = executionContext
+            ? await this.executor.execute(desc.name, input as GatewayToolInput, executionContext)
+            : await this.executor.execute(desc.name, input as GatewayToolInput);
+          this.onToolUse?.(desc.name, input, result);
+
+          if (!result.success) {
+            const r = result as GatewayToolResult & { message?: string; error?: string };
+            const msg = r.message || r.error || `${desc.name} failed`;
+            throw new Error(`${desc.name}(): ${msg}`);
+          }
+
+          // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
+          const { success: _, ...payload } = result as unknown as Record<string, unknown>;
+          return Object.keys(payload).length === 0 ? true : payload;
+        },
+        {
+          settleOnAbort: !READ_ONLY_TOOLS.has(desc.name) || LOCAL_ARTIFACT_TOOLS.has(desc.name),
         }
-
-        this.onToolUse?.(desc.name, input, undefined);
-        const result = this.executionContext
-          ? await this.executor.execute(desc.name, input as GatewayToolInput, this.executionContext)
-          : await this.executor.execute(desc.name, input as GatewayToolInput);
-        this.onToolUse?.(desc.name, input, result);
-
-        if (!result.success) {
-          const r = result as GatewayToolResult & { message?: string; error?: string };
-          const msg = r.message || r.error || `${desc.name} failed`;
-          throw new Error(`${desc.name}(): ${msg}`);
-        }
-
-        // Unwrap: strip `success` field so return shape matches TOOL_REGISTRY returnType
-        const { success: _, ...payload } = result as unknown as Record<string, unknown>;
-        return Object.keys(payload).length === 0 ? true : payload;
-      });
+      );
     }
   }
 

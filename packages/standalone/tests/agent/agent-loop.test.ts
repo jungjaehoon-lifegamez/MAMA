@@ -14,8 +14,10 @@ import {
   loadBackendAgentsMd,
   sanitizeLegacyCodexAgentsMd,
 } from '../../src/agent/agent-loop.js';
+import { HostToolTerminalError } from '../../src/agent/model-runner.js';
 import type { HostToolBridge, PromptOptions } from '../../src/agent/model-runner.js';
 import type { OAuthManager } from '../../src/auth/index.js';
+import { AgentError } from '../../src/agent/types.js';
 import type { AgentContext, AgentLoopOptions, MAMAApiInterface } from '../../src/agent/types.js';
 import { makeSignedEnvelope } from '../envelope/fixtures.js';
 import { summarizeReportToolUse } from '../../src/operator/report-run.js';
@@ -116,12 +118,17 @@ function parseDeliveredCodeActDeclarations(systemPrompt: string): CanonicalDecla
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
-const { codexRuntimeProcessMock, laneManagerEnqueueWithSessionMock, sessionPoolInvalidateMock } =
-  vi.hoisted(() => ({
-    codexRuntimeProcessMock: vi.fn(),
-    laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
-    sessionPoolInvalidateMock: vi.fn(),
-  }));
+const {
+  codexRuntimeProcessMock,
+  codexSessionPolicyStatusMock,
+  laneManagerEnqueueWithSessionMock,
+  sessionPoolInvalidateMock,
+} = vi.hoisted(() => ({
+  codexRuntimeProcessMock: vi.fn(),
+  codexSessionPolicyStatusMock: vi.fn().mockReturnValue('compatible'),
+  laneManagerEnqueueWithSessionMock: vi.fn((_, fn) => fn()),
+  sessionPoolInvalidateMock: vi.fn(),
+}));
 
 const persistentPromptMock = vi.fn().mockResolvedValue({
   response: 'Mock response',
@@ -188,6 +195,7 @@ vi.mock('../../src/multi-agent/runtime-process.js', () => {
       codexRuntimeProcessMock(options);
       return {
         prompt: persistentPromptMock,
+        getSessionPolicyStatus: codexSessionPolicyStatusMock,
         setSystemPrompt: persistentSetSystemPromptMock,
         setSessionId: vi.fn(),
         stop: vi.fn(),
@@ -321,6 +329,7 @@ describe('AgentLoop', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     codexRuntimeProcessMock.mockClear();
+    codexSessionPolicyStatusMock.mockReset().mockReturnValue('compatible');
     persistentPromptMock.mockReset().mockResolvedValue({
       response: 'Mock response',
       usage: { input_tokens: 10, output_tokens: 5 },
@@ -370,6 +379,35 @@ describe('AgentLoop', () => {
 
       expect(onError).toHaveBeenCalledTimes(1);
       expect(onError).toHaveBeenCalledWith(modelError);
+    });
+
+    it('preserves a trusted terminal mutation code from the Codex runtime', async () => {
+      persistentPromptMock.mockRejectedValueOnce(
+        new HostToolTerminalError(
+          'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          'Mutation outcome is unknown'
+        )
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt' },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      const failure = await agentLoop
+        .run('fail safely', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: codexContext(),
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(AgentError);
+      expect(failure).toMatchObject({
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+      });
     });
 
     it('keeps individual role-allowed native tools when Code-Act is disabled', async () => {
@@ -1273,6 +1311,81 @@ describe('AgentLoop', () => {
       );
     });
 
+    it('stops the Claude tool loop after an ambiguous Code-Act mutation', async () => {
+      persistentPromptMock.mockResolvedValueOnce({
+        response: '```js\ntelegram_send("chat-1", "hello")\n```',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'claude-session',
+      });
+      gatewayExecutorExecuteMock.mockResolvedValueOnce({
+        success: false,
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+        abort: true,
+        message: 'Mutation outcome is unknown; automatic retry is forbidden',
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('send once', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+        })
+      ).rejects.toThrow('CODE_ACT_MUTATION_OUTCOME_UNKNOWN');
+
+      expect(persistentPromptMock).toHaveBeenCalledTimes(1);
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not execute later tools from the same Claude response after a terminal result', async () => {
+      persistentPromptMock.mockResolvedValueOnce({
+        response: '',
+        usage: { input_tokens: 10, output_tokens: 5 },
+        session_id: 'claude-session',
+        toolUseBlocks: [
+          {
+            id: 'ambiguous-code-act',
+            name: 'mcp__code-act__code_act',
+            input: { code: 'telegram_send("chat-1", "first")' },
+          },
+          {
+            id: 'must-not-run',
+            name: 'telegram_send',
+            input: { chat_id: 'chat-1', message: 'second' },
+          },
+        ],
+      });
+      gatewayExecutorExecuteMock.mockResolvedValueOnce({
+        success: false,
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+        abort: true,
+        message: 'Mutation outcome is unknown; automatic retry is forbidden',
+      });
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'claude', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('send once', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createChatBotContext()),
+        })
+      ).rejects.toThrow('CODE_ACT_MUTATION_OUTCOME_UNKNOWN');
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(1);
+    });
+
     it('routes the Claude MCP compatibility name through canonical GatewayToolExecutor code_act', async () => {
       persistentPromptMock
         .mockResolvedValueOnce({
@@ -1438,6 +1551,181 @@ describe('AgentLoop', () => {
         source: 'telegram',
         channelId: '5551000001',
         agentContext: codexContext(),
+      });
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(14);
+      expect(blocked).toMatchObject({ isError: true, abort: true });
+    });
+
+    it('does not treat distinct Code-Act programs as one repeated native call', async () => {
+      const nativeResults: Array<Awaited<ReturnType<HostToolBridge['execute']>>> = [];
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 15; index += 1) {
+            nativeResults.push(
+              await bridge.execute({
+                callId: `code-act-${index}`,
+                name: 'code_act',
+                input: { code: `step_${index}()` },
+              })
+            );
+          }
+          return {
+            response: 'done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true, maxTurns: 20 },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('run distinct steps', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(codexContext()),
+      });
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(15);
+      expect(nativeResults).toHaveLength(15);
+      expect(nativeResults.every((result) => result.abort !== true)).toBe(true);
+    });
+
+    it('structurally aborts a native turn after an ambiguous Code-Act mutation', async () => {
+      let nativeResult: Awaited<ReturnType<HostToolBridge['execute']>> | undefined;
+      gatewayExecutorExecuteMock.mockResolvedValueOnce({
+        success: false,
+        code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+        abort: true,
+        message: 'Mutation outcome is unknown; automatic retry is forbidden',
+      });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          nativeResult = await bridge.execute({
+            callId: 'ambiguous-mutation',
+            name: 'code_act',
+            input: { code: 'telegram_send("chat-1", "hello")' },
+          });
+          return {
+            response: 'stopped',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('send once', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(codexContext()),
+      });
+
+      expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(1);
+      expect(nativeResult).toMatchObject({
+        isError: true,
+        abort: true,
+        terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        content: expect.stringContaining('CODE_ACT_MUTATION_OUTCOME_UNKNOWN'),
+      });
+    });
+
+    it('preserves a terminal mutation result when its native call is already aborted', async () => {
+      const callController = new AbortController();
+      let nativeResult: Awaited<ReturnType<HostToolBridge['execute']>> | undefined;
+      gatewayExecutorExecuteMock.mockImplementationOnce(async () => {
+        callController.abort(new Error('parent cancelled'));
+        return {
+          success: false,
+          code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          retryable: false,
+          abort: true,
+          message: 'Mutation outcome is unknown; automatic retry is forbidden',
+        };
+      });
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          nativeResult = await bridge.execute({
+            callId: 'aborted-ambiguous-mutation',
+            name: 'code_act',
+            input: { code: 'telegram_send("chat-1", "hello")' },
+            signal: callController.signal,
+          });
+          return {
+            response: 'stopped',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('send once', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(codexContext()),
+      });
+
+      expect(nativeResult).toMatchObject({
+        isError: true,
+        abort: true,
+        terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      });
+    });
+
+    it('still stops an identical Code-Act program repeated fifteen times', async () => {
+      let blocked: Awaited<ReturnType<HostToolBridge['execute']>> | undefined;
+      persistentPromptMock.mockImplementationOnce(
+        async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+          const bridge = promptOptions?.hostToolBridge;
+          if (!bridge) throw new Error('missing native bridge');
+          for (let index = 1; index <= 15; index += 1) {
+            const result = await bridge.execute({
+              callId: `same-code-act-${index}`,
+              name: 'code_act',
+              input: { code: 'same_step()' },
+            });
+            if (index === 15) blocked = result;
+          }
+          return {
+            response: 'done',
+            usage: { input_tokens: 10, output_tokens: 5 },
+            session_id: 'codex-thread',
+          };
+        }
+      );
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true, maxTurns: 20 },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await agentLoop.run('repeat the same step', {
+        source: 'telegram',
+        channelId: '5551000001',
+        agentContext: withOuterCodeAct(codexContext()),
       });
 
       expect(gatewayExecutorExecuteMock).toHaveBeenCalledTimes(14);
@@ -2586,6 +2874,116 @@ Skills provide additional tools.
   });
 
   describe('error handling', () => {
+    it.each(['mismatch', 'missing'] as const)(
+      'opens the full current Codex policy before the first model request when durable status is %s',
+      async (policyStatus) => {
+        codexSessionPolicyStatusMock.mockReturnValue(policyStatus);
+        const deliveredPolicies: Array<{ resume: boolean; prompt: string }> = [];
+        const onError = vi.fn();
+        const onCliSessionReset = vi.fn();
+        const freshSessionSystemPrompt = vi.fn().mockResolvedValue('full current owner policy');
+        persistentPromptMock.mockImplementationOnce(
+          async (_text: string, _callbacks: unknown, promptOptions?: PromptOptions) => {
+            deliveredPolicies.push({
+              resume: promptOptions?.resumeSession ?? true,
+              prompt: promptOptions?.systemPrompt ?? '',
+            });
+            return {
+              response: 'Started with the current policy',
+              usage: { input_tokens: 10, output_tokens: 5 },
+              session_id: 'fresh-codex-thread',
+            };
+          }
+        );
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+          {},
+          { mamaApi: createMockApi() }
+        );
+
+        const result = await agentLoop.run('Continue the owner conversation', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          systemPrompt: 'minimal resumed policy prompt',
+          freshSessionSystemPrompt,
+          onCliSessionReset,
+          streamCallbacks: { onError },
+        });
+
+        expect(codexSessionPolicyStatusMock).toHaveBeenCalledTimes(1);
+        expect(deliveredPolicies).toHaveLength(1);
+        expect(deliveredPolicies[0]?.resume).toBe(false);
+        expect(deliveredPolicies[0]?.prompt).toContain('full current owner policy');
+        expect(freshSessionSystemPrompt).toHaveBeenCalledTimes(1);
+        expect(onCliSessionReset).toHaveBeenCalledWith('fresh-test-session');
+        expect(onError).not.toHaveBeenCalled();
+        expect(result.response).toBe('Started with the current policy');
+      }
+    );
+
+    it('invalidates a proactive Codex replacement when the full policy rebuild fails', async () => {
+      codexSessionPolicyStatusMock.mockReturnValue('mismatch');
+      const rebuildError = new Error('could not rebuild proactive owner policy');
+      const onError = vi.fn();
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('Continue the owner conversation', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          systemPrompt: 'minimal resumed policy prompt',
+          freshSessionSystemPrompt: vi.fn().mockRejectedValue(rebuildError),
+          streamCallbacks: { onError },
+        })
+      ).rejects.toThrow('CLI error: could not rebuild proactive owner policy');
+
+      expect(persistentPromptMock).not.toHaveBeenCalled();
+      expect(sessionPoolInvalidateMock).toHaveBeenCalledWith(
+        'default:default',
+        'fresh-test-session'
+      );
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith(rebuildError);
+    });
+
+    it('invalidates a proactive Codex replacement when its first model request fails', async () => {
+      codexSessionPolicyStatusMock.mockReturnValue('missing');
+      const startupError = new Error('fresh Codex thread startup failed');
+      persistentPromptMock.mockRejectedValueOnce(startupError);
+      const agentLoop = new AgentLoop(
+        createMockOAuthManager(),
+        { backend: 'codex', systemPrompt: 'base prompt', useCodeAct: true },
+        {},
+        { mamaApi: createMockApi() }
+      );
+
+      await expect(
+        agentLoop.run('Continue the owner conversation', {
+          source: 'telegram',
+          channelId: '5551000001',
+          agentContext: withOuterCodeAct(createCodexContext()),
+          resumeSession: true,
+          systemPrompt: 'minimal resumed policy prompt',
+          freshSessionSystemPrompt: vi.fn().mockResolvedValue('full current owner policy'),
+        })
+      ).rejects.toThrow('CLI error: fresh Codex thread startup failed');
+
+      expect(sessionPoolInvalidateMock).toHaveBeenCalledWith(
+        'default:default',
+        'fresh-test-session'
+      );
+    });
+
     it('resets a stale Codex thread and retries once on a policy mismatch', async () => {
       const resumePolicies: boolean[] = [];
       const deliveredPrompts: string[] = [];
