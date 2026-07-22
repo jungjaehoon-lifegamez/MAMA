@@ -88,7 +88,12 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
     const allowed =
       isToolAvailableAtTier(tool.name, tier) &&
       (!tool.name.startsWith('drive_') || input.roleName === 'owner_console') &&
-      driveToolAllowed(tool.name, envelopeRawConnectors, envelopeDestinationKinds) &&
+      driveToolAllowed(
+        tool.name,
+        envelopeRawConnectors,
+        envelopeDestinationKinds,
+        input.roleName === 'owner_console'
+      ) &&
       (roleAllowedTools === null || matchesAny(tool.name, roleAllowedTools)) &&
       !matchesAny(tool.name, roleBlockedTools) &&
       !matchesAny(tool.name, runtimeDisallowedTools) &&
@@ -128,8 +133,12 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
 function driveToolAllowed(
   toolName: string,
   rawConnectors: readonly string[] | null,
-  destinationKinds: readonly string[] | null
+  destinationKinds: readonly string[] | null,
+  ownerConsole: boolean
 ): boolean {
+  if (ownerConsole && toolName.startsWith('drive_')) {
+    return true;
+  }
   if (!toolName.startsWith('drive_') || (rawConnectors === null && destinationKinds === null)) {
     return true;
   }

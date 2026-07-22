@@ -1698,7 +1698,7 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           });
         });
 
-        it('does not advertise Drive inside a model turn that has no Drive-scoped envelope', async () => {
+        it('keeps owner Drive composition available without a Drive-scoped envelope', async () => {
           const executor = new GatewayToolExecutor({
             mamaApi: createMockApi(),
             envelopeIssuanceMode: 'off',
@@ -1722,8 +1722,8 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           );
 
           expect(JSON.parse(String(result.message)).value).toEqual({
-            browse: 'undefined',
-            upload: 'undefined',
+            browse: 'function',
+            upload: 'function',
           });
         });
 
