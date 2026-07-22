@@ -24,7 +24,15 @@ export interface MemoryScope {
 }
 
 export interface DestinationRef {
-  kind: 'telegram' | 'slack' | 'chatwork' | 'discord' | 'webchat' | 'obsidian' | 'dashboard_slot';
+  kind:
+    | 'telegram'
+    | 'slack'
+    | 'chatwork'
+    | 'discord'
+    | 'webchat'
+    | 'obsidian'
+    | 'dashboard_slot'
+    | 'drive';
   id: string;
 }
 

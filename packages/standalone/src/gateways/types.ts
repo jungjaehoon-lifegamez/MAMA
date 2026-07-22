@@ -54,8 +54,10 @@ export interface NormalizedMessage {
 export interface MessageAttachment {
   /** Attachment type */
   type: 'image' | 'file';
-  /** Original URL */
-  url: string;
+  /** Original network URL when the source exposes a non-secret URL */
+  url?: string;
+  /** Opaque source reference for attachments whose authenticated URL must stay secret */
+  sourceRef?: string;
   /** Local file path (after download) */
   localPath?: string;
   /** File name */

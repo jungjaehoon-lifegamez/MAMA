@@ -19,6 +19,11 @@ Call tools via JSON block:
 
 ## Business Data (progressive exploration: overview -> entities -> tasks -> messages)
 
+- **drive_list_drives**() — List Google shared drives available to the verified owner console
+- **drive_browse**(folderId?, driveId?, query?) — Browse files and folders in Google Drive
+- **drive_find_folder**(driveId, path) — Resolve a Google Drive folder path to a folder ID
+- **drive_download**(fileId, fileName?) — Download a Google Drive file into the private MAMA workspace
+- **drive_upload**(localPath, folderId, fileName?) — Upload a private MAMA workspace file to Google Drive
 - **kagemusha_overview**((none)) — Get overview: room/task/message counts across all channels
 - **kagemusha_entities**(channel?, activeOnly?, limit?) — List people and project channels with activity stats
 - **kagemusha_tasks**(sourceRoom?, status?, priority?, search?, limit?) — Query tasks by room, status, priority, or text search. READ-ONLY project-task truth. Status vocabulary: pending|in_progress|review|done|completed|cancelled|dismissed|active (no "blocked" - an empty result for an unknown status is a vocabulary miss, not missing work).

@@ -443,3 +443,37 @@ describe('Story M1R Task 5: verified-owner Trello scope widening', () => {
     expect(policy.rawConnectors.includes('trello')).toBe(roleName === 'owner_console');
   });
 });
+
+describe('verified-owner Drive scope widening', () => {
+  const config = makeConfig({
+    telegram: { enabled: true, token: 'redacted', allowed_chats: ['7777'] },
+    roles: DEFAULT_ROLES,
+  } as unknown as Partial<MAMAConfig>);
+  const message: NormalizedMessage = {
+    source: 'telegram',
+    channelId: '7777',
+    userId: 'telegram:user',
+    text: 'upload the result',
+    metadata: { chatType: 'private' },
+  };
+
+  it('adds enabled Drive to the verified owner raw connector scope', () => {
+    expect(
+      getReactiveRoutePolicy(message, config, { HOME: '/tmp/home' }, ['drive']).rawConnectors
+    ).toContain('drive');
+  });
+
+  it('adds only configured Drive destinations to the verified owner envelope', () => {
+    const reactiveConfig = createDefaultReactiveEnvelopeConfig(
+      config,
+      { HOME: '/tmp/home' },
+      ['drive'],
+      [{ kind: 'drive', id: 'folder-1' } as never]
+    );
+
+    expect(reactiveConfig.allowedDestinationsFor?.(message)).toContainEqual({
+      kind: 'drive',
+      id: 'folder-1',
+    });
+  });
+});

@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] / mama-core [1.9.0] / mama-os [0.26.0] - 2026-07-22
+
+### Added — Telegram media and owner Drive parity
+
+- **Telegram media conversations** — allowlisted chats can send captions, photos, image documents,
+  and regular documents through the same message router and single-message response presenter used
+  for text conversations.
+- **Owner Drive operations** — the verified Telegram owner console can list shared drives, browse
+  folders, resolve folder paths, download files into the private MAMA workspace, and upload private
+  workspace files to explicitly configured Drive destinations. Claude and Codex use the same
+  role-scoped direct-tool and Code-Act surfaces.
+
+### Security and reliability
+
+- **Fail-closed media handling** — Telegram media requires a non-empty `allowed_chats` trust anchor,
+  downloads are size- and time-bounded, transient files are removed after safe prompt construction,
+  and forwarded image analysis remains wrapped as untrusted content.
+- **Drive envelope enforcement** — Drive reads require the enabled connector in the active envelope;
+  uploads additionally require a configured non-ignored folder or shared-drive destination and a
+  write-capable tier. Drive-derived Code-Act results remain marked untrusted after transformations.
+- **Bounded connector polling** — Drive change pagination continues across polling cycles without
+  blocking the daemon event loop, and repeated or malformed page tokens fail explicitly.
+
+### Upgrade notes
+
+- This minor release bumps only `@jungjaehoon/mama-os` to `0.26.0`; MAMA Core, MCP Server, and the
+  Claude Code plugin keep their existing versions.
+
 ## [0.25.0] / mama-core [1.9.0] / mama-os [0.25.0] - 2026-07-22
 
 ### Added — Verified temporal owner-task reconciliation

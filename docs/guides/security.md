@@ -84,9 +84,14 @@ resolved per message by trust checks — never by static configuration:
   long credentials) with `code: secret_material_refused` — secrets never enter
   memory, even when the owner pastes them. This is a behavior change visible to
   users who previously saved such content.
-- **Forwarded-message provenance:** telegram forwards and connector-derived
-  third-party text are wrapped in untrusted-content delimiters before reaching
-  any prompt, so injected instructions inside them are treated as data.
+- **Telegram media fails closed:** photos and documents are accepted only when
+  `allowed_chats` is non-empty. Downloads have explicit size and timeout bounds,
+  prompt construction uses private transient files, and those files are deleted
+  before the message is routed onward.
+- **Forwarded-message provenance:** telegram forwards (including image-analysis
+  text) and connector-derived third-party data are wrapped in untrusted-content
+  delimiters before reaching any prompt, so injected instructions inside them
+  are treated as data.
 - **Tool advertising is role-filtered:** each role's system prompt advertises
   only the tools that role can actually execute, so a prompt-injected tool name
   outside the role's allowlist fails both advertisement and execution.
@@ -1187,6 +1192,14 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 - `browser_get_text`, `browser_screenshot` — Browser read
 - `os_list_bots`, `os_get_config` — Status read
 - `pr_review_threads` — PR data read
+
+Agent-bound Code-Act sessions may expose additional role-scoped functions such
+as the owner Drive tools. They do not widen authority: Drive reads require the
+enabled `drive` connector in the active Reactive envelope, and `drive_upload`
+also requires a write-capable tier plus a destination matching a non-ignored
+`folderId` or `driveId` in `~/.mama/connectors.json`. Drive-derived results are
+re-wrapped as untrusted data after Code-Act evaluation so JavaScript transforms
+cannot remove the trust boundary.
 
 ### HTTP API Access
 

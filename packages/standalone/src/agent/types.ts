@@ -698,6 +698,28 @@ export interface CodeActInput {
   blockedTools?: string[];
 }
 
+export interface DriveBrowseInput {
+  folderId?: string;
+  driveId?: string;
+  query?: string;
+}
+
+export interface DriveFindFolderInput {
+  driveId: string;
+  path: string;
+}
+
+export interface DriveDownloadInput {
+  fileId: string;
+  fileName?: string;
+}
+
+export interface DriveUploadInput {
+  localPath: string;
+  folderId: string;
+  fileName?: string;
+}
+
 /**
  * Union type for all MCP tool inputs
  */
@@ -729,6 +751,10 @@ export type GatewayToolInput =
   | RestartBotInput
   | StopBotInput
   | CodeActInput
+  | DriveBrowseInput
+  | DriveFindFolderInput
+  | DriveDownloadInput
+  | DriveUploadInput
   | TemporalReconcileToolInput;
 
 /**
@@ -749,6 +775,11 @@ export type GatewayToolName =
   | 'discord_send'
   | 'slack_send'
   | 'telegram_send'
+  | 'drive_list_drives'
+  | 'drive_browse'
+  | 'drive_find_folder'
+  | 'drive_download'
+  | 'drive_upload'
   | 'translate_image'
   | 'save_integration_token'
   | 'browser_navigate'

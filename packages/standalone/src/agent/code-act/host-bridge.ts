@@ -292,6 +292,60 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'communication',
   },
   {
+    name: 'drive_list_drives',
+    description: 'List Google shared drives as untrusted external evidence',
+    params: [],
+    returnType:
+      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: Array<{ id: string; name: string }> } }",
+    category: 'file',
+  },
+  {
+    name: 'drive_browse',
+    description: 'Browse files and folders in Google Drive as untrusted external evidence',
+    params: [
+      { name: 'folderId', type: 'string', required: false },
+      { name: 'driveId', type: 'string', required: false },
+      { name: 'query', type: 'string', required: false },
+    ],
+    returnType:
+      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: Array<Record<string, unknown>> } }",
+    category: 'file',
+  },
+  {
+    name: 'drive_find_folder',
+    description: 'Resolve a Google Drive folder path as untrusted external evidence',
+    params: [
+      { name: 'driveId', type: 'string', required: true },
+      { name: 'path', type: 'string', required: true },
+    ],
+    returnType:
+      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { folderId: string; path: string } } }",
+    category: 'file',
+  },
+  {
+    name: 'drive_download',
+    description: 'Download a Google Drive file into the private MAMA workspace',
+    params: [
+      { name: 'fileId', type: 'string', required: true },
+      { name: 'fileName', type: 'string', required: false },
+    ],
+    returnType:
+      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { path: string; fileName: string } } }",
+    category: 'file',
+  },
+  {
+    name: 'drive_upload',
+    description: 'Upload a private MAMA workspace file to Google Drive',
+    params: [
+      { name: 'localPath', type: 'string', required: true },
+      { name: 'folderId', type: 'string', required: true },
+      { name: 'fileName', type: 'string', required: false },
+    ],
+    returnType:
+      "{ result: { source: 'google-drive'; trust: 'untrusted_external_data'; instruction: string; data: { fileId: string; name: string } } }",
+    category: 'file',
+  },
+  {
     name: 'webchat_send',
     description: 'Send message or file to webchat viewer',
     params: [
@@ -816,6 +870,10 @@ export const READ_ONLY_TOOLS = new Set([
   'task_list',
   // Calendar read: deadline/schedule cross-checks in reports and reconciles.
   'schedule_upcoming',
+  'drive_list_drives',
+  'drive_browse',
+  'drive_find_folder',
+  'drive_download',
 ]);
 
 /** Memory-write tools additionally allowed for Tier 2 */
@@ -838,6 +896,7 @@ export const MEMORY_WRITE_TOOLS = new Set([
   'task_update',
   'task_temporal_reconcile',
   'contract_no_update',
+  'drive_upload',
 ]);
 
 export function isToolAvailableAtTier(toolName: string, tier: 1 | 2 | 3): boolean {

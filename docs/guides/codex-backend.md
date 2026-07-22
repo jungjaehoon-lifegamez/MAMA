@@ -125,6 +125,12 @@ MAMA rejects new tool callbacks and waits for any callback that already started 
 reporting the turn failure. An external side effect may still finish if its provider call had
 already begun and does not support cooperative cancellation.
 
+For the verified Telegram owner console, this includes Google Drive parity when the Drive connector
+is enabled: list, browse, folder resolution, and download require Drive in the active envelope;
+upload additionally requires a write-capable tier and a destination configured as a non-ignored
+`folderId` or `driveId`. Drive read results stay wrapped as untrusted data after Code-Act execution,
+even when the sandbox transforms or summarizes them.
+
 MAMA intentionally excludes the `mama` and legacy `code-act` MCP servers from the Codex app-server
 MCP registry. Exposing them there would create a second route around the canonical host bridge.
 Other explicitly configured external MCP servers may still be projected into app-server after

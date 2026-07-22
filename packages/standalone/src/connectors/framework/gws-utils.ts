@@ -1,4 +1,4 @@
-import { execSync } from 'child_process';
+import { execFile, execSync } from 'child_process';
 
 export function parseGwsOutput(raw: string): unknown {
   const lines = raw.split('\n');
@@ -24,4 +24,29 @@ export function execGws(args: string, options?: { maxBuffer?: number }): unknown
     timeout: 60_000,
   });
   return parseGwsOutput(raw);
+}
+
+export async function execGwsAsync(
+  args: string[],
+  options?: { maxBuffer?: number }
+): Promise<unknown> {
+  const stdout = await new Promise<string>((resolve, reject) => {
+    execFile(
+      'gws',
+      args,
+      {
+        encoding: 'utf8',
+        maxBuffer: options?.maxBuffer,
+        timeout: 60_000,
+      },
+      (error, value) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(value);
+      }
+    );
+  });
+  return parseGwsOutput(stdout);
 }

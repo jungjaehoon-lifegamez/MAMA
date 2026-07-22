@@ -151,6 +151,6 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.24 — Codex app-server parity with durable threads, native MAMA host tools,
-role-scoped Code-Act, and legacy backend migration
-**Last Updated:** 2026-07-21
+**Status:** MAMA OS v0.25 — verified temporal owner-task reconciliation with source-bound evidence,
+authoritative receipts, mixed-version safety, and bounded shutdown handling
+**Last Updated:** 2026-07-22
