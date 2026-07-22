@@ -152,7 +152,7 @@ The QuickJS WASM engine provides a fully isolated environment.
 | ----------------------- | ---------------------------------------------------------------------------------- |
 | **Node.js API access**  | `require`, `process`, `fs` not injected (do not exist)                             |
 | **Network access**      | No `fetch()`, `XMLHttpRequest`, or sockets                                         |
-| **Infinite loops**      | Engine-level CPU timeout (default 30 seconds)                                      |
+| **Infinite loops**      | Engine-level CPU timeout (default 5 minutes)                                       |
 | **Memory exhaustion**   | `setMemoryLimit()` hard cap (default 256MB via quickjs-emscripten WASM allocation) |
 | **Prototype pollution** | QuickJS isolates from host Object.prototype                                        |
 | **Code injection**      | Only injected functions are available                                              |
