@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.26.0] / mama-core [1.9.0] / mama-os [0.26.0] - 2026-07-22
+
 ### Added — Telegram media and owner Drive parity
 
 - **Telegram media conversations** — allowlisted chats can send captions, photos, image documents,
@@ -24,6 +26,11 @@ All notable changes to this project will be documented in this file.
   write-capable tier. Drive-derived Code-Act results remain marked untrusted after transformations.
 - **Bounded connector polling** — Drive change pagination continues across polling cycles without
   blocking the daemon event loop, and repeated or malformed page tokens fail explicitly.
+
+### Upgrade notes
+
+- This minor release bumps only `@jungjaehoon/mama-os` to `0.26.0`; MAMA Core, MCP Server, and the
+  Claude Code plugin keep their existing versions.
 
 ## [0.25.0] / mama-core [1.9.0] / mama-os [0.25.0] - 2026-07-22
 

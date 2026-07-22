@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-07-22
+
 Telegram and Google Drive owner-workflow parity: allowlisted Telegram chats now support captions,
 photos, image documents, and regular documents, while the verified owner console can browse,
 download, and upload Drive files through the same role-scoped direct-tool and Code-Act contract on
