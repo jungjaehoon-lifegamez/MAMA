@@ -269,7 +269,11 @@ export class TelegramGateway extends BaseGateway {
 
     const hasMedia = Boolean((msg.photo && msg.photo.length > 0) || msg.document);
     if (hasMedia && (!this.config.allowedChats || this.config.allowedChats.length === 0)) {
-      console.warn('[Telegram] Dropped media because telegram.allowed_chats is not configured');
+      const lastWarn = this.rejectedChatWarnAt.get(String(msg.chat.id)) ?? 0;
+      if (now - lastWarn > REJECTED_CHAT_WARN_INTERVAL_MS) {
+        this.rejectedChatWarnAt.set(String(msg.chat.id), now);
+        console.warn('[Telegram] Dropped media because telegram.allowed_chats is not configured');
+      }
       return;
     }
 

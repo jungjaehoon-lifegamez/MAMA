@@ -574,6 +574,34 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  it('rate-caps dropped-media warnings when no inbound allowlist is configured', async () => {
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: {},
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-warn-')),
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    });
+    await gateway.start();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 121),
+      photo: [{ file_id: 'photo-1', file_unique_id: 'photo-u-1', width: 10, height: 10 }],
+    });
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 122),
+      photo: [{ file_id: 'photo-2', file_unique_id: 'photo-u-2', width: 10, height: 10 }],
+    });
+
+    const warnings = warnSpy.mock.calls.flat().join('\n');
+    expect(
+      warnings.match(/Dropped media because telegram\.allowed_chats is not configured/g)
+    ).toHaveLength(1);
+    warnSpy.mockRestore();
+    await gateway.stop();
+  });
+
   it('deletes downloaded media after constructing safe routed content', async () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
     const gateway = new TelegramGateway({

@@ -174,6 +174,28 @@ describe('EnvelopeEnforcer', () => {
     ).not.toThrow();
   });
 
+  it('validates the destination field used by each tool instead of an unrelated allowed field', () => {
+    const base = makeEnvelope();
+    const withFolder = makeEnvelope({
+      scope: {
+        ...base.scope,
+        raw_connectors: [...base.scope.raw_connectors, 'drive'],
+        allowed_destinations: [
+          ...base.scope.allowed_destinations,
+          { kind: 'drive', id: 'folder-1' } as never,
+        ],
+      },
+    });
+
+    expect(() =>
+      enforcer.check(withFolder, 'drive_upload', {
+        chat_id: 'folder-1',
+        folderId: 'folder-2',
+        localPath: '/workspace/outbound/file.txt',
+      })
+    ).toThrow(/destination_out_of_scope/);
+  });
+
   it('rejects kagemusha_messages without channelId', () => {
     const env = makeEnvelope({
       scope: {
