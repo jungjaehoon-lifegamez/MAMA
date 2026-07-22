@@ -198,6 +198,35 @@ register({
   category: 'utility',
   params: 'chat_id, message?, file_path?, sticker_emotion?',
 });
+register({
+  name: 'drive_list_drives',
+  description: 'List Google shared drives available to the verified owner console',
+  category: 'business_data',
+});
+register({
+  name: 'drive_browse',
+  description: 'Browse files and folders in Google Drive',
+  category: 'business_data',
+  params: 'folderId?, driveId?, query?',
+});
+register({
+  name: 'drive_find_folder',
+  description: 'Resolve a Google Drive folder path to a folder ID',
+  category: 'business_data',
+  params: 'driveId, path',
+});
+register({
+  name: 'drive_download',
+  description: 'Download a Google Drive file into the private MAMA workspace',
+  category: 'business_data',
+  params: 'fileId, fileName?',
+});
+register({
+  name: 'drive_upload',
+  description: 'Upload a private MAMA workspace file to Google Drive',
+  category: 'business_data',
+  params: 'localPath, folderId, fileName?',
+});
 
 // Browser tools (Playwright)
 register({

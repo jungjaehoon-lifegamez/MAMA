@@ -440,11 +440,11 @@ MAMA: [replies in thread, preserving context]
 
 ### Configuration Options
 
-| Option          | Type     | Required | Description                          |
-| --------------- | -------- | -------- | ------------------------------------ |
-| `enabled`       | boolean  | Yes      | Enable Telegram gateway              |
-| `token`         | string   | Yes      | Bot token from @BotFather            |
-| `allowed_chats` | string[] | No       | Allowed chat IDs (empty = allow all) |
+| Option          | Type     | Required | Description                                           |
+| --------------- | -------- | -------- | ----------------------------------------------------- |
+| `enabled`       | boolean  | Yes      | Enable Telegram gateway                               |
+| `token`         | string   | Yes      | Bot token from @BotFather                             |
+| `allowed_chats` | string[] | No       | Trusted chat IDs; required for media and owner access |
 
 ### Security: Allowed Chats
 
@@ -462,10 +462,12 @@ gateways:
 
 **How it works:**
 
-- If `allowed_chats` is empty or not set: Bot responds to anyone — and startup
-  emits a loud SECURITY WARNING. The owner console is DISABLED in this state.
+- If `allowed_chats` is empty or not set: the bot accepts text from anyone and startup emits a loud
+  SECURITY WARNING. Media is rejected and the owner console is disabled in this state.
 - If `allowed_chats` has IDs: Bot only responds to those chat IDs
 - Unauthorized chats are dropped with a rate-capped warning in the daemon log
+- Allowlisted chats can send captions, photos, image documents, and regular documents. Downloads
+  are size- and time-bounded; temporary files are removed after the prompt payload is built.
 
 **⚠️ `allowed_chats` is the OWNER TRUST ANCHOR (v0.22+):** any allowlisted
 chat's 1:1 private DM is granted the `owner_console` role — a wide operational
@@ -506,14 +508,14 @@ gateways:
 > artifacts and write memory. If teammates should chat without owner powers,
 > run a separate bot for them instead of widening this list.
 
-**Public bot (anyone can use):**
+**Public text-only bot (anyone can use):**
 
 ```yaml
 gateways:
   telegram:
     enabled: true
     token: '123456789:ABCdefGHIjklMNOpqrsTUVwxyz'
-    # No allowed_chats = open to everyone
+    # No allowed_chats = text is open to everyone; media and owner tools are disabled
 ```
 
 ### Usage Examples

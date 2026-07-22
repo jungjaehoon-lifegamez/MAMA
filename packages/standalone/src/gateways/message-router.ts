@@ -48,6 +48,7 @@ import { extractSaveCandidates } from '../memory/save-candidate-extractor.js';
 import {
   stripUntrustedBlocks,
   UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION,
+  wrapUntrustedContent,
 } from '../utils/untrusted-content.js';
 import { logSecurityEventOnly } from '../security/security-monitor.js';
 import { buildReportCarryPrefix } from '../operator/report-carry.js';
@@ -71,6 +72,12 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('MessageRouter');
+
+export function protectImageAnalysis(message: NormalizedMessage, analysisText: string): string {
+  return message.metadata?.untrustedWrapped
+    ? wrapUntrustedContent('telegram-forward-image', analysisText)
+    : analysisText;
+}
 
 interface SessionPolicyFingerprintInput {
   baseInstructions: string;
@@ -1047,7 +1054,10 @@ This protects your credentials from being exposed in chat logs.`;
         // Pre-analyze images via shared ImageAnalyzer
         if (hasImages) {
           const { getImageAnalyzer } = await import('./image-analyzer.js');
-          const analysisText = await getImageAnalyzer().processContentBlocks(message.contentBlocks);
+          const analysisText = protectImageAnalysis(
+            message,
+            await getImageAnalyzer().processContentBlocks(message.contentBlocks)
+          );
           contentBlocks.length = 0;
           contentBlocks.push({
             type: 'text',

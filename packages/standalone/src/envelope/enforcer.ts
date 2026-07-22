@@ -12,13 +12,23 @@ export class EnvelopeViolation extends Error {
   }
 }
 
-const SEND_TOOLS_TO_DESTINATION_KIND: Record<string, string> = {
+const SEND_TOOLS_TO_DESTINATION_KIND = {
   telegram_send: 'telegram',
   slack_send: 'slack',
   chatwork_send: 'chatwork',
   discord_send: 'discord',
   webchat_send: 'webchat',
-};
+  drive_upload: 'drive',
+} as const;
+
+const DESTINATION_ID_FIELD_BY_TOOL = {
+  telegram_send: 'chat_id',
+  slack_send: 'channel_id',
+  chatwork_send: 'channel_id',
+  discord_send: 'channel_id',
+  webchat_send: 'session_id',
+  drive_upload: 'folderId',
+} satisfies Record<keyof typeof SEND_TOOLS_TO_DESTINATION_KIND, string>;
 
 const WRITE_OR_SEND_TOOLS = new Set<string>([
   'mama_save',
@@ -38,6 +48,7 @@ const WRITE_OR_SEND_TOOLS = new Set<string>([
   'report_publish',
   'wiki_publish',
   'human.correction',
+  'drive_upload',
 ]);
 
 const MEMORY_SCOPED_TOOLS = new Set<string>([
@@ -73,12 +84,14 @@ export class EnvelopeEnforcer {
   }
 
   private checkDestination(envelope: Envelope, toolName: string, args: unknown): void {
-    const destinationKind = SEND_TOOLS_TO_DESTINATION_KIND[toolName];
-    if (!destinationKind) {
+    if (!Object.hasOwn(SEND_TOOLS_TO_DESTINATION_KIND, toolName)) {
       return;
     }
 
-    const destinationId = getStringArg(args, 'chat_id') ?? getStringArg(args, 'channel_id');
+    const destinationToolName = toolName as keyof typeof SEND_TOOLS_TO_DESTINATION_KIND;
+    const destinationKind = SEND_TOOLS_TO_DESTINATION_KIND[destinationToolName];
+    const destinationField = DESTINATION_ID_FIELD_BY_TOOL[destinationToolName];
+    const destinationId = getStringArg(args, destinationField);
     if (!destinationId) {
       throw new EnvelopeViolation(
         `Tool ${toolName} called without destination id`,
@@ -175,6 +188,10 @@ export class EnvelopeEnforcer {
 }
 
 function requestedRawConnectorsForTool(toolName: string, args: unknown): string[] {
+  if (toolName.startsWith('drive_')) {
+    return ['drive'];
+  }
+
   if (toolName === 'context_compile') {
     return uniqueStrings([
       ...(getStringArrayArg(args, 'connectors') ?? []),

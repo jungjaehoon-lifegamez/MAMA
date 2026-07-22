@@ -114,9 +114,8 @@ export const DEFAULT_ROLES: RolesConfig = {
     },
     // Owner console: granted ONLY when the telegram inbound is verified-owner
     // (allowed_chats locked AND the message is a 1:1 DM from an allowlisted
-    // chat). Read/query surface is wide; execution (Bash/Write), system
-    // control, and delegation stay blocked - secrets remain structurally
-    // unreachable regardless of what the model is asked.
+    // chat). Read/query surface is wide and Drive mutations are constrained to
+    // the private workspace; Bash/Write, system control, and delegation stay blocked.
     owner_console: {
       model: 'claude-sonnet-4-6',
       maxTurns: 10,
@@ -132,6 +131,11 @@ export const DEFAULT_ROLES: RolesConfig = {
         'task_create',
         'task_update',
         'schedule_upcoming',
+        'drive_list_drives',
+        'drive_browse',
+        'drive_find_folder',
+        'drive_download',
+        'drive_upload',
         'obsidian',
         'Read',
         'board_read',

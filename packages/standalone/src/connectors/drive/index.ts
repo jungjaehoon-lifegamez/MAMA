@@ -1,6 +1,6 @@
 /**
  * DriveConnector — polls Google Drive changes via the gws CLI tool.
- * Uses child_process.execSync to call gws CLI commands.
+ * Uses short synchronous gws checks during setup and asynchronous calls while polling.
  * Emits file_change NormalizedItems for files modified in configured folders.
  */
 
@@ -16,7 +16,9 @@ import type {
   IConnector,
   NormalizedItem,
 } from '../framework/types.js';
-import { execGws } from '../framework/gws-utils.js';
+import { execGwsAsync } from '../framework/gws-utils.js';
+
+const MAX_CHANGE_PAGES_PER_POLL = 2;
 
 interface DriveFile {
   name: string;
@@ -38,6 +40,7 @@ interface DriveChange {
 interface DriveChangeList {
   changes: DriveChange[];
   newStartPageToken?: string;
+  nextPageToken?: string;
 }
 
 interface StartPageTokenResult {
@@ -56,7 +59,13 @@ export class DriveConnector implements IConnector {
   /** Stored page tokens per poll session (single global token for Drive changes API) */
   private pageTokens: Map<string, string> = new Map();
 
-  private readonly stateFilePath = join(homedir(), '.mama', 'connectors', 'drive', 'drive-state.json');
+  private readonly stateFilePath = join(
+    homedir(),
+    '.mama',
+    'connectors',
+    'drive',
+    'drive-state.json'
+  );
 
   constructor(config: ConnectorConfig) {
     this.config = config;
@@ -78,7 +87,9 @@ export class DriveConnector implements IConnector {
         for (const [k, v] of Object.entries(data.pageTokens ?? {})) {
           this.pageTokens.set(k, v as string);
         }
-      } catch { /* ignore corrupt state */ }
+      } catch {
+        /* ignore corrupt state */
+      }
     }
   }
 
@@ -157,10 +168,7 @@ export class DriveConnector implements IConnector {
    * Poll changes from a single drive (personal or shared).
    * Returns items and updates the page token.
    */
-  private pollDrive(
-    tokenKey: string,
-    driveId?: string
-  ): NormalizedItem[] {
+  private async pollDrive(tokenKey: string, driveId?: string): Promise<NormalizedItem[]> {
     // Get or initialize page token
     let pageToken = this.pageTokens.get(tokenKey);
     if (!pageToken) {
@@ -169,77 +177,115 @@ export class DriveConnector implements IConnector {
         tokenParams.driveId = driveId;
         tokenParams.supportsAllDrives = true;
       }
-      const tokenResult = execGws(
-        `drive changes getStartPageToken --params '${JSON.stringify(tokenParams)}'`
-      ) as StartPageTokenResult;
+      const tokenResult = (await execGwsAsync([
+        'drive',
+        'changes',
+        'getStartPageToken',
+        '--params',
+        JSON.stringify(tokenParams),
+      ])) as StartPageTokenResult;
       pageToken = tokenResult.startPageToken;
       this.pageTokens.set(tokenKey, pageToken);
     }
 
-    const params: Record<string, unknown> = {
-      pageToken,
-      pageSize: 100,
-      fields:
-        'changes(fileId,time,removed,file(name,mimeType,modifiedTime,lastModifyingUser,parents,driveId)),newStartPageToken',
-      includeRemoved: false,
-      includeItemsFromAllDrives: true,
-      supportsAllDrives: true,
-    };
-    if (driveId) {
-      params.driveId = driveId;
-    }
-
-    const changeList = execGws(
-      `drive changes list --params '${JSON.stringify(params)}'`
-    ) as DriveChangeList;
-
     const items: NormalizedItem[] = [];
-    for (const change of changeList.changes) {
-      if (!change.file) continue;
+    const visitedPageTokens = new Set<string>();
+    let requestPageToken = pageToken;
+    let terminalStartPageToken: string | undefined;
+    let reachedTerminalPage = false;
 
-      const file = change.file;
-      const parents = file.parents ?? [];
+    for (let page = 0; page < MAX_CHANGE_PAGES_PER_POLL; page += 1) {
+      if (visitedPageTokens.has(requestPageToken)) {
+        throw new Error(`Drive changes pagination repeated a page token for ${tokenKey}`);
+      }
+      visitedPageTokens.add(requestPageToken);
 
-      // Match by parent folder or by shared drive ID
-      let channelName: string | null = null;
-      const folderMatch = this.findChannelByParent(parents);
-      if (folderMatch) {
-        channelName = folderMatch[1];
-      } else if (driveId) {
-        // For shared drives: use the channel key as channel name
-        for (const [key, cfg] of Object.entries(this.config.channels)) {
-          if (cfg.driveId === driveId) {
-            channelName = cfg.name ?? key;
-            break;
-          }
-        }
+      const params: Record<string, unknown> = {
+        pageToken: requestPageToken,
+        pageSize: 100,
+        fields:
+          'changes(fileId,time,removed,file(name,mimeType,modifiedTime,lastModifyingUser,parents,driveId)),nextPageToken,newStartPageToken',
+        includeRemoved: false,
+        includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+      };
+      if (driveId) {
+        params.driveId = driveId;
       }
 
-      if (!channelName) continue;
+      const changeList = (await execGwsAsync([
+        'drive',
+        'changes',
+        'list',
+        '--params',
+        JSON.stringify(params),
+      ])) as DriveChangeList;
 
-      const author = file.lastModifyingUser?.displayName ?? 'unknown';
-      items.push({
-        source: 'drive',
-        sourceId: `${change.fileId}:${change.time}`,
-        channel: channelName,
-        author,
-        content: `modified: ${file.name} (${file.mimeType})`,
-        timestamp: new Date(change.time),
-        type: 'file_change',
-        metadata: {
-          fileId: change.fileId,
-          fileName: file.name,
-          mimeType: file.mimeType,
-          modifiedTime: file.modifiedTime,
-          parents,
-          driveId: driveId || undefined,
-        },
-      });
+      for (const change of changeList.changes) {
+        if (!change.file) continue;
+
+        const file = change.file;
+        const parents = file.parents ?? [];
+
+        // Match by parent folder or by shared drive ID
+        let channelName: string | null = null;
+        const folderMatch = this.findChannelByParent(parents);
+        if (folderMatch) {
+          channelName = folderMatch[1];
+        } else if (driveId) {
+          // For shared drives: use the channel key as channel name
+          for (const [key, cfg] of Object.entries(this.config.channels)) {
+            if (cfg.driveId === driveId) {
+              channelName = cfg.name ?? key;
+              break;
+            }
+          }
+        }
+
+        if (!channelName) continue;
+
+        const author = file.lastModifyingUser?.displayName ?? 'unknown';
+        items.push({
+          source: 'drive',
+          sourceId: `${change.fileId}:${change.time}`,
+          channel: channelName,
+          author,
+          content: `modified: ${file.name} (${file.mimeType})`,
+          timestamp: new Date(change.time),
+          type: 'file_change',
+          metadata: {
+            fileId: change.fileId,
+            fileName: file.name,
+            mimeType: file.mimeType,
+            modifiedTime: file.modifiedTime,
+            parents,
+            driveId: driveId || undefined,
+          },
+        });
+      }
+
+      if (!changeList.nextPageToken) {
+        terminalStartPageToken = changeList.newStartPageToken;
+        reachedTerminalPage = true;
+        break;
+      }
+      if (visitedPageTokens.has(changeList.nextPageToken)) {
+        throw new Error(`Drive changes pagination repeated a page token for ${tokenKey}`);
+      }
+      requestPageToken = changeList.nextPageToken;
     }
 
-    if (changeList.newStartPageToken) {
-      this.pageTokens.set(tokenKey, changeList.newStartPageToken);
+    if (!reachedTerminalPage) {
+      this.pageTokens.set(tokenKey, requestPageToken);
+      return items;
     }
+
+    if (typeof terminalStartPageToken !== 'string' || terminalStartPageToken.length === 0) {
+      throw new Error(
+        `Drive changes terminal page omitted the new start page token for ${tokenKey}`
+      );
+    }
+    this.pageTokens.set(tokenKey, terminalStartPageToken);
 
     return items;
   }
@@ -254,14 +300,19 @@ export class DriveConnector implements IConnector {
         (c) => c.folderId && !c.driveId
       );
       if (hasFolderChannels) {
-        allItems.push(...this.pollDrive('drive'));
+        allItems.push(...(await this.pollDrive('drive')));
       }
 
       // 2. Poll each shared drive
       for (const { driveId, channelKey } of this.getSharedDriveIds()) {
         try {
-          allItems.push(...this.pollDrive(`shared:${driveId}`, driveId));
+          allItems.push(...(await this.pollDrive(`shared:${driveId}`, driveId)));
         } catch (err) {
+          hadError = true;
+          this.lastError =
+            err instanceof Error
+              ? `Shared drive ${channelKey}: ${err.message}`
+              : `Shared drive ${channelKey}: ${String(err)}`;
           console.error(`[drive] Shared drive ${channelKey} poll error:`, err);
         }
       }

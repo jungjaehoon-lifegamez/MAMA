@@ -10,6 +10,7 @@ export interface CodeActRoleToolPolicy {
 
 export interface CodeActToolPolicyInput {
   readonly tier: CodeActTier;
+  readonly roleName?: string;
   readonly role?: CodeActRoleToolPolicy;
   readonly disallowedTools?: readonly string[];
   readonly requestedAllowedTools?: unknown;
@@ -17,9 +18,10 @@ export interface CodeActToolPolicyInput {
 }
 
 export interface CodeActToolPolicyFingerprintData {
-  readonly version: 1;
+  readonly version: 2;
   readonly inputs: {
     readonly tier: CodeActTier;
+    readonly roleName: string | null;
     readonly roleAllowedTools: readonly string[] | null;
     readonly roleBlockedTools: readonly string[];
     readonly runtimeDisallowedTools: readonly string[];
@@ -69,6 +71,7 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
   for (const tool of registry) {
     const allowed =
       isToolAvailableAtTier(tool.name, tier) &&
+      (!tool.name.startsWith('drive_') || input.roleName === 'owner_console') &&
       (roleAllowedTools === null || matchesAny(tool.name, roleAllowedTools)) &&
       !matchesAny(tool.name, roleBlockedTools) &&
       !matchesAny(tool.name, runtimeDisallowedTools) &&
@@ -83,9 +86,10 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
   );
   const names = Object.freeze(definitions.map((tool) => tool.name));
   const fingerprintData: CodeActToolPolicyFingerprintData = {
-    version: 1,
+    version: 2,
     inputs: {
       tier,
+      roleName: input.roleName ?? null,
       roleAllowedTools,
       roleBlockedTools,
       runtimeDisallowedTools,
