@@ -4,7 +4,12 @@ import type {
   PromptCallbacks as ClaudePromptCallbacks,
   PromptResult as ClaudePromptResult,
 } from '../agent/persistent-cli-process.js';
-import type { IModelRunner, RunnerMetrics, PromptOptions } from '../agent/model-runner.js';
+import type {
+  IModelRunner,
+  RunnerMetrics,
+  PromptOptions,
+  SessionPolicyStatus,
+} from '../agent/model-runner.js';
 
 export interface AgentRuntimeProcess {
   sendMessage(content: string, callbacks?: ClaudePromptCallbacks): Promise<ClaudePromptResult>;
@@ -81,6 +86,18 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
     options?: PromptOptions
   ): Promise<ClaudePromptResult> {
     return this.execute(content, callbacks, options);
+  }
+
+  getSessionPolicyStatus(options: PromptOptions): SessionPolicyStatus {
+    return this.appServer.getSessionPolicyStatus({
+      sessionKey: options.sessionKey ?? options.sessionId ?? this.defaultSessionKey,
+      model: options.model ?? this.options.model,
+      systemPrompt: options.systemPrompt ?? this.systemPrompt,
+      requestTimeout: options.requestTimeout ?? this.options.requestTimeout,
+      policyFingerprint: options.sessionPolicyFingerprint,
+      resumeSession: options.resumeSession,
+      hostToolBridge: options.hostToolBridge,
+    });
   }
 
   // ─── AgentRuntimeProcess.sendMessage() ─────────────────────────────────

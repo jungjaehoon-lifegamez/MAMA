@@ -230,7 +230,125 @@ describe('HostBridge', () => {
       const result = await sandbox.execute('mama_search({ query: "test" })');
 
       expect(result.success).toBe(true);
-      expect(executeFn).toHaveBeenCalledWith('mama_search', { query: 'test' }, executionContext);
+      expect(executeFn).toHaveBeenCalledWith(
+        'mama_search',
+        { query: 'test' },
+        expect.objectContaining(executionContext)
+      );
+      expect(executeFn.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('propagates the sandbox deadline and bounds browser waits to the remaining time', async () => {
+      let observedAbort = false;
+      const executeFn = vi
+        .fn()
+        .mockImplementation(
+          async (
+            _toolName: string,
+            _input: Record<string, unknown>,
+            context: GatewayToolExecutionContext
+          ) => {
+            await new Promise<void>((_resolve, reject) => {
+              context.signal?.addEventListener(
+                'abort',
+                () => {
+                  observedAbort = true;
+                  reject(context.signal?.reason);
+                },
+                { once: true }
+              );
+            });
+          }
+        );
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }), undefined, {
+        executionSurface: 'code_act',
+      });
+      const sandbox = new CodeActSandbox({ timeoutMs: 100 });
+      bridge.injectInto(sandbox, 1);
+
+      const result = await sandbox.execute('browser_wait_for("#late", 999999)');
+
+      expect(result.success).toBe(false);
+      expect(observedAbort).toBe(true);
+      expect(executeFn.mock.calls[0]?.[1]).toMatchObject({ selector: '#late' });
+      const boundedTimeout = Number(executeFn.mock.calls[0]?.[1]?.timeout);
+      expect(boundedTimeout).toBeGreaterThan(0);
+      expect(boundedTimeout).toBeLessThanOrEqual(100);
+    });
+
+    it('does not report a timed-out mutation before an abort-ignoring send settles', async () => {
+      let sent = false;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const executeFn = vi.fn().mockImplementation(async () => {
+        markStarted?.();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        sent = true;
+        return { success: true };
+      });
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }), undefined, {
+        executionSurface: 'code_act',
+      });
+      const sandbox = new CodeActSandbox({ timeoutMs: 1_000 });
+      bridge.injectInto(sandbox, 1);
+
+      const controller = new AbortController();
+      const run = sandbox.execute('telegram_send("chat-1", "hello")', {
+        signal: controller.signal,
+      });
+      await started;
+      const abortedAt = Date.now();
+      controller.abort(new Error('owning turn stopped'));
+      const result = await run;
+
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(140);
+      expect(sent).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('may be committed');
+      expect(result.error?.message).toContain('do not retry');
+    });
+
+    it('treats local artifact producers as settlement-required operations', async () => {
+      let fileCreated = false;
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const executeFn = vi.fn().mockImplementation(async () => {
+        markStarted?.();
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        fileCreated = true;
+        return { success: true, result: { path: '/private/workspace/download.png' } };
+      });
+      const bridge = new HostBridge(makeExecutor({ execute: executeFn }), undefined, {
+        executionSurface: 'code_act',
+      });
+      const sandbox = new CodeActSandbox({
+        timeoutMs: 1_000,
+        mutationSettlementGraceMs: 500,
+      });
+      bridge.injectInto(sandbox, 1);
+
+      const controller = new AbortController();
+      const run = sandbox.execute("drive_download({ fileId: 'file-1' })", {
+        signal: controller.signal,
+      });
+      await started;
+      const abortedAt = Date.now();
+      controller.abort(new Error('owning turn stopped'));
+      const result = await run;
+
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(140);
+      expect(fileCreated).toBe(true);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT',
+          retryable: false,
+        },
+      });
     });
 
     it('passes positional args mapped to param names', async () => {

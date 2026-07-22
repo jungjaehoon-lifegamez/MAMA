@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexAppServerProcess } from '../../src/agent/codex-app-server-process.js';
+import { HostToolTerminalError } from '../../src/agent/model-runner.js';
 import type {
   HostToolBridge,
   HostToolCall,
@@ -270,13 +271,13 @@ rl.on('line', line => {
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}});
     if (mode === 'exit-after-turn') setTimeout(() => process.exit(23), 5);
     };
-    if (['tool-success','code-act-tool-success','tool-failure','tool-null-result','tool-error-stop','tool-abort-completed-first','tool-malformed','tool-malformed-once','tool-malformed-turn','tool-malformed-call','tool-malformed-tool','tool-malformed-namespace','tool-unknown','tool-duplicate','tool-duplicate-conflict','tool-serialized','tool-queue-cancel','tool-stop','tool-stale'].includes(mode)) {
+    if (['tool-success','code-act-tool-success','tool-failure','tool-null-result','tool-error-stop','tool-abort-completed-first','tool-terminal-exit','tool-interrupt-hang','tool-malformed','tool-malformed-once','tool-malformed-turn','tool-malformed-call','tool-malformed-tool','tool-malformed-namespace','tool-unknown','tool-duplicate','tool-duplicate-conflict','tool-serialized','tool-queue-cancel','tool-stop','tool-stale'].includes(mode)) {
       if (mode === 'tool-stale' && fs.existsSync(${JSON.stringify(join(root, 'tool-issued'))})) { complete(); return; }
       if (mode === 'tool-stale') fs.writeFileSync(${JSON.stringify(join(root, 'tool-issued'))},'1');
       if (mode === 'tool-malformed-once' && fs.existsSync(${JSON.stringify(join(root, 'malformed-tool-issued'))})) { complete(); return; }
       if (mode === 'tool-malformed-once') fs.writeFileSync(${JSON.stringify(join(root, 'malformed-tool-issued'))},'1');
       const params=mode === 'tool-malformed' || mode === 'tool-malformed-once'?{...toolParams,arguments:[]}:mode === 'tool-malformed-turn'?{...toolParams,turnId:7}:mode === 'tool-malformed-call'?{...toolParams,callId:7}:mode === 'tool-malformed-tool'?{...toolParams,tool:7}:mode === 'tool-malformed-namespace'?{...toolParams,namespace:7}:mode === 'tool-unknown'?{...toolParams,tool:'not_advertised'}:toolParams;
-      const callback=mode === 'tool-stop'?()=>{}:mode === 'tool-error-stop'?()=>send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'interrupted')}}):mode === 'tool-abort-completed-first'?()=>send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}}):afterToolReply;
+      const callback=['tool-stop','tool-interrupt-hang'].includes(mode)?()=>{}:mode === 'tool-terminal-exit'?()=>process.exit(23):mode === 'tool-error-stop'?()=>send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'interrupted')}}):mode === 'tool-abort-completed-first'?()=>send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(id,'completed')}}):afterToolReply;
       requestTool(requestBase,params,callback);
       if (mode === 'tool-duplicate') requestTool(requestBase+1,{...params},afterToolReply);
       if (mode === 'tool-duplicate-conflict') requestTool(requestBase+1,{...params,arguments:{topic:'different'}},afterToolReply);
@@ -293,6 +294,7 @@ rl.on('line', line => {
     return;
   }
   if (message.method === 'turn/interrupt') {
+    if (mode === 'tool-interrupt-hang') return;
     send({jsonrpc:'2.0',id:message.id,result:{} });
     send({jsonrpc:'2.0',method:'turn/completed',params:{threadId:message.params.threadId,turn:fullTurn(message.params.turnId,'interrupted')}});
     return;
@@ -885,6 +887,55 @@ describe('Story: Codex app-server process', () => {
     expect(interruptIndex).toBeGreaterThan(replyIndex);
   });
 
+  it('preserves a trusted terminal mutation code across the app-server interrupt', async () => {
+    const item = fixture('tool-stop');
+    const runner = new CodexAppServerProcess(item.options);
+
+    const failure = await runner
+      .prompt('hi', undefined, {
+        hostToolBridge: hostBridge(async () => ({
+          content: 'Mutation outcome is unknown',
+          isError: true,
+          abort: true,
+          terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        })),
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(HostToolTerminalError);
+    expect(failure).toMatchObject({
+      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      retryable: false,
+    });
+    await runner.stop();
+  });
+
+  it.each(['tool-terminal-exit', 'tool-interrupt-hang'])(
+    'preserves a trusted terminal mutation code when %s disrupts settlement',
+    async (mode) => {
+      const item = fixture(mode);
+      const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 60 });
+
+      const failure = await runner
+        .prompt('hi', undefined, {
+          hostToolBridge: hostBridge(async () => ({
+            content: 'Mutation outcome is unknown',
+            isError: true,
+            abort: true,
+            terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          })),
+        })
+        .catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(HostToolTerminalError);
+      expect(failure).toMatchObject({
+        terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+        retryable: false,
+      });
+      await runner.stop();
+    }
+  );
+
   it('rejects a fatal host-tool abort when completed arrives before interrupt wins', async () => {
     const item = fixture('tool-abort-completed-first');
     const runner = new CodexAppServerProcess(item.options);
@@ -1458,28 +1509,93 @@ describe('Story: Codex app-server process', () => {
 
   it('aborts an active host tool before reporting a turn timeout', async () => {
     const item = fixture('tool-success');
-    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 60 });
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
     let observedAbort = false;
+    let resolveToolStarted: (() => void) | undefined;
+    const toolStarted = new Promise<void>((resolve) => {
+      resolveToolStarted = resolve;
+    });
 
-    await expect(
-      runner.prompt('slow tool', undefined, {
-        hostToolBridge: hostBridge(
-          (call) =>
-            new Promise((resolve) => {
-              call.signal?.addEventListener(
-                'abort',
-                () => {
-                  observedAbort = true;
-                  resolve({ content: 'cancelled', isError: true });
-                },
-                { once: true }
-              );
-            })
-        ),
-      })
-    ).rejects.toThrow('timed out');
+    const prompt = runner.prompt('slow tool', undefined, {
+      hostToolBridge: hostBridge(
+        (call) =>
+          new Promise((resolve) => {
+            call.signal?.addEventListener(
+              'abort',
+              () => {
+                observedAbort = true;
+                resolve({ content: 'cancelled', isError: true });
+              },
+              { once: true }
+            );
+            resolveToolStarted?.();
+          })
+      ),
+    });
+    await toolStarted;
+    const firstStart = messages(item.capture).find((entry) => entry.method === 'turn/start');
+    const threadId = (firstStart?.params as Record<string, unknown>)?.threadId;
+    expect(typeof threadId).toBe('string');
+    (
+      runner as unknown as {
+        timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
+      }
+    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 500);
+
+    await expect(prompt).rejects.toThrow('manual turn timed out');
 
     expect(observedAbort).toBe(true);
+    await runner.stop();
+  });
+
+  it('promotes a terminal mutation settled after timeout over the original cancellation', async () => {
+    const item = fixture('tool-success');
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    let resolveToolStarted: (() => void) | undefined;
+    const toolStarted = new Promise<void>((resolve) => {
+      resolveToolStarted = resolve;
+    });
+
+    const prompt = runner.prompt('ambiguous mutation', undefined, {
+      hostToolBridge: hostBridge(
+        (call) =>
+          new Promise((resolve) => {
+            call.signal?.addEventListener(
+              'abort',
+              () => {
+                setTimeout(
+                  () =>
+                    resolve({
+                      content: 'Mutation outcome is unknown',
+                      isError: true,
+                      abort: true,
+                      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+                    }),
+                  20
+                );
+              },
+              { once: true }
+            );
+            resolveToolStarted?.();
+          })
+      ),
+    });
+    await toolStarted;
+    const firstStart = messages(item.capture).find((entry) => entry.method === 'turn/start');
+    const threadId = (firstStart?.params as Record<string, unknown>)?.threadId;
+    expect(typeof threadId).toBe('string');
+    (
+      runner as unknown as {
+        timeoutTurn(threadId: string, error: Error, requestTimeout: number): void;
+      }
+    ).timeoutTurn(String(threadId), new Error('manual turn timed out'), 500);
+
+    const failure = await prompt.catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(HostToolTerminalError);
+    expect(failure).toMatchObject({
+      terminalCode: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+      retryable: false,
+    });
     await runner.stop();
   });
 
@@ -1560,6 +1676,23 @@ describe('Story: Codex app-server process', () => {
       await second.stop();
     }
   );
+
+  it('reports durable policy compatibility without attempting a model request', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess(item.options);
+    expect(first.getSessionPolicyStatus()).toBe('missing');
+    await first.prompt('hi');
+    expect(first.getSessionPolicyStatus()).toBe('compatible');
+    await first.stop();
+
+    const changed = new CodexAppServerProcess({
+      ...item.options,
+      policyFingerprint: 'changed-policy',
+    });
+    expect(changed.getSessionPolicyStatus()).toBe('mismatch');
+    expect(messages(item.capture).filter((entry) => entry.method === 'turn/start')).toHaveLength(1);
+    await changed.stop();
+  });
 
   it('keeps MCP secrets out of argv and redacts echoed stderr from errors', async () => {
     const secret = 'super-secret-token';

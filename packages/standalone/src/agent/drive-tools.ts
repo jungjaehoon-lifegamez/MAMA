@@ -23,7 +23,10 @@ const SAFE_QUERY =
 const DEFAULT_DRIVE_DOWNLOAD_LIMIT_BYTES = 100 * 1024 * 1024;
 const MAX_DRIVE_LIST_PAGES = 1_000;
 
-export type DriveGwsRunner = (args: string[]) => Promise<string>;
+export type DriveGwsRunner = (
+  args: string[],
+  options?: { signal?: AbortSignal }
+) => Promise<string>;
 
 export interface DriveToolServiceOptions {
   workspaceRoot?: string;
@@ -61,11 +64,15 @@ export interface DriveUploadInput {
   destinationCapability?: string;
 }
 
-async function defaultRunGws(args: string[]): Promise<string> {
+async function defaultRunGws(
+  args: string[],
+  options: { signal?: AbortSignal } = {}
+): Promise<string> {
   const { stdout } = await execFileAsync('gws', args, {
     encoding: 'utf8',
     timeout: 120_000,
     maxBuffer: 10 * 1024 * 1024,
+    signal: options.signal,
   });
   return stdout;
 }
@@ -245,19 +252,27 @@ export class DriveToolService {
     return { folderId: currentId, path: input.path, traversedFolderIds };
   }
 
-  async download(input: DriveDownloadInput): Promise<{ path: string; fileName: string }> {
+  async download(
+    input: DriveDownloadInput,
+    signal?: AbortSignal
+  ): Promise<{ path: string; fileName: string }> {
+    signal?.throwIfAborted();
     const fileId = requireDriveId(input.fileId, 'fileId');
     mkdirSync(this.downloadRoot, { recursive: true, mode: 0o700 });
     chmodSync(this.downloadRoot, 0o700);
     const metadata = parseObject(
-      await this.runGws([
-        'drive',
-        'files',
-        'get',
-        '--params',
-        JSON.stringify({ fileId, supportsAllDrives: true, fields: 'name,size' }),
-      ])
+      await this.runGws(
+        [
+          'drive',
+          'files',
+          'get',
+          '--params',
+          JSON.stringify({ fileId, supportsAllDrives: true, fields: 'name,size' }),
+        ],
+        { signal }
+      )
     );
+    signal?.throwIfAborted();
     const declaredSize = Number(metadata.size);
     if (Number.isFinite(declaredSize) && declaredSize > this.maxDownloadBytes) {
       throw new Error('Drive file exceeds the download limit.');
@@ -268,15 +283,19 @@ export class DriveToolService {
     const tempPath = join(this.downloadRoot, `.${id}.part`);
     const outputPath = join(this.downloadRoot, `${id}-${fileName}`);
     try {
-      await this.runGws([
-        'drive',
-        'files',
-        'get',
-        '--params',
-        JSON.stringify({ fileId, alt: 'media', supportsAllDrives: true }),
-        '--output',
-        tempPath,
-      ]);
+      await this.runGws(
+        [
+          'drive',
+          'files',
+          'get',
+          '--params',
+          JSON.stringify({ fileId, alt: 'media', supportsAllDrives: true }),
+          '--output',
+          tempPath,
+        ],
+        { signal }
+      );
+      signal?.throwIfAborted();
       if (!existsSync(tempPath)) {
         throw new Error('Drive download did not create the requested file.');
       }
@@ -286,9 +305,15 @@ export class DriveToolService {
       chmodSync(tempPath, 0o600);
       renameSync(tempPath, outputPath);
       chmodSync(outputPath, 0o600);
+      signal?.throwIfAborted();
       return { path: outputPath, fileName };
     } catch (error) {
-      if (existsSync(tempPath)) unlinkSync(tempPath);
+      if (existsSync(tempPath)) {
+        unlinkSync(tempPath);
+      }
+      if (existsSync(outputPath)) {
+        unlinkSync(outputPath);
+      }
       throw error;
     }
   }
