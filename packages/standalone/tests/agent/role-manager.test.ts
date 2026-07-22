@@ -207,6 +207,30 @@ describe('RoleManager', () => {
       expect(manager.isPathAllowed(role, `${home}/.mama/test.txt`)).toBe(true);
       expect(manager.isPathAllowed(role, '~/.mama/test.txt')).toBe(true);
     });
+
+    it('maps the default private-workspace capability onto MAMA_WORKSPACE', () => {
+      const previousWorkspace = process.env.MAMA_WORKSPACE;
+      process.env.MAMA_WORKSPACE = '/private/custom-mama-workspace';
+      const role: RoleConfig = {
+        allowedTools: ['Read'],
+        allowedPaths: ['~/.mama/workspace/**'],
+      };
+      const manager = new RoleManager();
+
+      expect(
+        manager.isPathAllowed(role, '/private/custom-mama-workspace/media/inbound/file.pdf')
+      ).toBe(true);
+      expect(
+        manager.isPathAllowed(
+          role,
+          `${process.env.HOME || ''}/.mama/workspace/media/inbound/old-root-secret.pdf`
+        )
+      ).toBe(false);
+      expect(manager.isPathAllowed(role, '/private/other/file.pdf')).toBe(false);
+
+      if (previousWorkspace === undefined) delete process.env.MAMA_WORKSPACE;
+      else process.env.MAMA_WORKSPACE = previousWorkspace;
+    });
   });
 
   describe('canSystemControl()', () => {

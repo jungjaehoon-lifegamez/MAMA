@@ -128,8 +128,11 @@ already begun and does not support cooperative cancellation.
 For the verified Telegram owner console, this includes Google Drive parity when the Drive connector
 is enabled: list, browse, folder resolution, and download require Drive in the active envelope;
 upload additionally requires a write-capable tier and a destination configured as a non-ignored
-`folderId` or `driveId`. Drive read results stay wrapped as untrusted data after Code-Act execution,
-even when the sandbox transforms or summarizes them.
+`folderId` or `driveId`. A nested folder found under that root is represented by a short-lived,
+envelope-bound destination capability; `drive_upload` must present it to write back to the resolved
+folder. Without Drive scope the functions are not advertised inside Code-Act. Drive read results
+stay wrapped as untrusted data after Code-Act execution, even when the sandbox transforms or
+summarizes them.
 
 MAMA intentionally excludes the `mama` and legacy `code-act` MCP servers from the Codex app-server
 MCP registry. Exposing them there would create a second route around the canonical host bridge.

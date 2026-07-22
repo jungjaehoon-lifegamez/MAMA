@@ -15,10 +15,14 @@ export interface CodeActToolPolicyInput {
   readonly disallowedTools?: readonly string[];
   readonly requestedAllowedTools?: unknown;
   readonly requestedBlockedTools?: unknown;
+  /** Undefined preserves non-runtime callers; [] explicitly means no destination authority. */
+  readonly envelopeDestinationKinds?: readonly string[];
+  /** Undefined preserves non-runtime callers; [] explicitly means no connector read authority. */
+  readonly envelopeRawConnectors?: readonly string[];
 }
 
 export interface CodeActToolPolicyFingerprintData {
-  readonly version: 2;
+  readonly version: 4;
   readonly inputs: {
     readonly tier: CodeActTier;
     readonly roleName: string | null;
@@ -27,6 +31,8 @@ export interface CodeActToolPolicyFingerprintData {
     readonly runtimeDisallowedTools: readonly string[];
     readonly requestedAllowedTools: readonly string[] | null;
     readonly requestedBlockedTools: readonly string[];
+    readonly envelopeDestinationKinds: readonly string[] | null;
+    readonly envelopeRawConnectors: readonly string[] | null;
   };
   readonly tools: readonly ToolMeta[];
 }
@@ -66,12 +72,23 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
   const requestedBlockedTools =
     normalizeModelPatterns(input.requestedBlockedTools, 'requestedBlockedTools', registryNames) ??
     [];
+  const envelopeDestinationKinds = input.envelopeDestinationKinds
+    ? [...new Set(input.envelopeDestinationKinds)].sort(compareStrings)
+    : input.envelopeDestinationKinds === undefined
+      ? null
+      : [];
+  const envelopeRawConnectors = input.envelopeRawConnectors
+    ? [...new Set(input.envelopeRawConnectors)].sort(compareStrings)
+    : input.envelopeRawConnectors === undefined
+      ? null
+      : [];
 
   const definitionsByName = new Map<string, ToolMeta>();
   for (const tool of registry) {
     const allowed =
       isToolAvailableAtTier(tool.name, tier) &&
       (!tool.name.startsWith('drive_') || input.roleName === 'owner_console') &&
+      driveToolAllowed(tool.name, envelopeRawConnectors, envelopeDestinationKinds) &&
       (roleAllowedTools === null || matchesAny(tool.name, roleAllowedTools)) &&
       !matchesAny(tool.name, roleBlockedTools) &&
       !matchesAny(tool.name, runtimeDisallowedTools) &&
@@ -86,7 +103,7 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
   );
   const names = Object.freeze(definitions.map((tool) => tool.name));
   const fingerprintData: CodeActToolPolicyFingerprintData = {
-    version: 2,
+    version: 4,
     inputs: {
       tier,
       roleName: input.roleName ?? null,
@@ -95,6 +112,8 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
       runtimeDisallowedTools,
       requestedAllowedTools,
       requestedBlockedTools,
+      envelopeDestinationKinds,
+      envelopeRawConnectors,
     },
     tools: definitions.map(cloneToolMeta),
   };
@@ -104,6 +123,26 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
     definitions,
     fingerprintPayload: JSON.stringify(fingerprintData),
   });
+}
+
+function driveToolAllowed(
+  toolName: string,
+  rawConnectors: readonly string[] | null,
+  destinationKinds: readonly string[] | null
+): boolean {
+  if (!toolName.startsWith('drive_') || (rawConnectors === null && destinationKinds === null)) {
+    return true;
+  }
+
+  const canRead = rawConnectors?.includes('drive') === true;
+  const canWrite = destinationKinds?.includes('drive') === true;
+  if (toolName === 'drive_upload') {
+    return canWrite;
+  }
+  if (toolName === 'drive_translate_conti') {
+    return canRead && canWrite;
+  }
+  return canRead;
 }
 
 export function requireCodeActTier(tier: unknown): CodeActTier {

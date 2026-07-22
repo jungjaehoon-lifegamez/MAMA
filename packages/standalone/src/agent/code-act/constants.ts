@@ -10,10 +10,13 @@ export function getCodeActInstructions(
 
   const blockedToolsSection = isCodex
     ? `**DO NOT use these built-in tools** (they bypass MAMA's pipeline):
-- \`exec_command\` → use \`code_act({ code: "Bash({command: '...'})" })\` instead
-- \`apply_patch\` → use \`code_act({ code: "Write({file_path: '...', content: '...'})" })\` instead
+- \`exec_command\`
+- \`apply_patch\`
 - \`request_user_input\` — not available (headless daemon)
 - \`update_plan\` — not available (no plan mode)
+
+Use only functions in the current allowlist below. Never assume that Bash, Write,
+or a communication function exists unless it is listed for this run.
 
 `
     : '';
@@ -57,6 +60,18 @@ The functions listed below are **ONLY available inside code_act** — they are N
 - \`mcp__brave-devtools__*\` — browser control
 - \`mcp__searxng__*\` — search engine`;
 
+  const compositionContract = `
+### Composition contract
+
+Treat the listed functions as composable primitives, not as a fixed workflow.
+Plan and combine whichever primitives are needed for the user's requested outcome.
+Guidance functions are optional; they never replace agent judgment.
+For requested writes, uploads, messages, or other side effects, continue until each
+required tool returns success. Never claim an artifact or delivery exists after a
+failed or skipped call. If a necessary primitive is absent, name that exact missing
+function only after checking the current allowlist.
+`;
+
   return `## Code-Act: Gateway Tool Execution via Sandbox
 
 ${transportIntroduction}
@@ -66,6 +81,7 @@ ${transportIntroduction}
 ${blockedToolsSection}${directToolSection}
 
 ${gatewayToolsList}
+${compositionContract}
 
 **code_act rules:**
 - Functions are **synchronous** (no async/await needed)

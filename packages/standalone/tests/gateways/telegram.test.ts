@@ -6,10 +6,26 @@
  */
 
 import { mkdtemp, readdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { afterAll, describe, it, expect, vi, beforeEach } from 'vitest';
+
+const originalLedgerPath = process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH;
+let ledgerSequence = 0;
+
+beforeEach(() => {
+  process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH = join(
+    tmpdir(),
+    `mama-telegram-test-ledger-${process.pid}-${ledgerSequence++}.json`
+  );
+});
+
+afterAll(() => {
+  if (originalLedgerPath === undefined) delete process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH;
+  else process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH = originalLedgerPath;
+});
 
 const mockApi = {
   sendMessage: vi.fn().mockResolvedValue({ message_id: 1 }),
@@ -53,6 +69,8 @@ vi.mock('../../src/gateways/tool-status-tracker.js', () => ({
 
 import { TelegramGateway } from '../../src/gateways/telegram.js';
 import { MessageRouter } from '../../src/gateways/message-router.js';
+import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
+import { splitTelegramMessage } from '../../src/gateways/telegram-response-presenter.js';
 
 // Mock MessageRouter
 const mockMessageRouter = {
@@ -119,36 +137,23 @@ describe('TelegramGateway basics', () => {
 });
 
 describe('TelegramGateway - message splitting', () => {
-  let gateway: TelegramGateway;
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-    gateway = new TelegramGateway({
-      token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
-    });
-  });
-
   it('should not split messages under 4096 chars', () => {
     const shortText = 'Hello, world!';
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks = (gateway as any).splitMessage(shortText, 4096);
+    const chunks = splitTelegramMessage(shortText, 4096);
     expect(chunks).toHaveLength(1);
     expect(chunks[0]).toBe(shortText);
   });
 
   it('should not split a message of exactly 4096 chars', () => {
     const exactText = 'a'.repeat(4096);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks = (gateway as any).splitMessage(exactText, 4096);
+    const chunks = splitTelegramMessage(exactText, 4096);
     expect(chunks).toHaveLength(1);
     expect(chunks[0]).toBe(exactText);
   });
 
   it('should split a message exceeding 4096 chars into multiple chunks', () => {
     const longText = 'a'.repeat(8192);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks = (gateway as any).splitMessage(longText, 4096);
+    const chunks = splitTelegramMessage(longText, 4096);
     expect(chunks.length).toBeGreaterThan(1);
     for (const chunk of chunks) {
       expect(chunk.length).toBeLessThanOrEqual(4096);
@@ -157,19 +162,88 @@ describe('TelegramGateway - message splitting', () => {
 
   it('should preserve the full content after splitting', () => {
     const longText = 'x'.repeat(9000);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks = (gateway as any).splitMessage(longText, 4096);
+    const chunks = splitTelegramMessage(longText, 4096);
     expect(chunks.join('')).toBe(longText);
+  });
+
+  it('does not split a Unicode surrogate pair at the Telegram boundary', () => {
+    const text = `${'a'.repeat(4095)}😀tail`;
+    const chunks = splitTelegramMessage(text, 4096);
+
+    expect(chunks.join('')).toBe(text);
+    expect(chunks.every((chunk: string) => !chunk.includes('�'))).toBe(true);
+    expect(chunks[0].endsWith('😀')).toBe(true);
   });
 
   it('should prefer splitting at newline boundaries when possible', () => {
     const line1 = 'a'.repeat(3000) + '\n';
     const line2 = 'b'.repeat(3000);
     const text = line1 + line2;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const chunks = (gateway as any).splitMessage(text, 4096);
+    const chunks = splitTelegramMessage(text, 4096);
     expect(chunks.length).toBeGreaterThanOrEqual(2);
     expect(chunks.join('')).toBe(text);
+  });
+
+  it('retries the failed chunk without resending earlier confirmed chunks', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const ledgerPath = join(
+      await mkdtemp(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
+      'ledger.json'
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    mockApi.sendMessage
+      .mockResolvedValueOnce({ message_id: 1 })
+      .mockRejectedValueOnce(new Error('ambiguous timeout'))
+      .mockResolvedValueOnce({ message_id: 3 });
+    const text = 'x'.repeat(9_000);
+
+    await expect(gateway.sendMessage('7777', text, 'operation-1')).rejects.toThrow(
+      'ambiguous timeout'
+    );
+    const uncertain = new TelegramMessageLedger(ledgerPath).listUndelivered()[0];
+    expect(JSON.parse(uncertain.response ?? '{}')).toMatchObject({
+      nextIndex: 1,
+      uncertain: true,
+    });
+    await expect(gateway.sendMessage('7777', text, 'operation-1')).resolves.toBeUndefined();
+
+    expect(mockApi.sendMessage.mock.calls.map((call) => String(call[1]).length)).toEqual([
+      4096, 4096, 4096, 808,
+    ]);
+    await gateway.stop();
+  });
+
+  it('retries a definite Telegram 429 rejection instead of marking it delivered', async () => {
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    const ledgerPath = join(
+      await mkdtemp(join(tmpdir(), 'mama-telegram-outbound-ledger-')),
+      'ledger.json'
+    );
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+    mockApi.sendMessage
+      .mockRejectedValueOnce(Object.assign(new Error('Too Many Requests'), { error_code: 429 }))
+      .mockResolvedValueOnce({ message_id: 2 });
+
+    await expect(gateway.sendMessage('7777', 'report', 'operation-429')).rejects.toThrow();
+    const rejected = new TelegramMessageLedger(ledgerPath).listUndelivered()[0];
+    expect(JSON.parse(rejected.response ?? '{}')).toMatchObject({
+      nextIndex: 0,
+      uncertain: false,
+    });
+    await expect(gateway.sendMessage('7777', 'report', 'operation-429')).resolves.toBeUndefined();
+
+    expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['report', 'report']);
+    await gateway.stop();
   });
 });
 
@@ -408,6 +482,8 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
+    mockApi.editMessageText.mockReset().mockResolvedValue(undefined);
     mockApi.getFile.mockResolvedValue({ file_path: 'photos/file.jpg', file_size: 4 });
     (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockResolvedValue({
       response: '||⏱️ 1 turns||\ntest',
@@ -440,6 +516,10 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     expect(routed[0].contentBlocks?.some((block) => block.type === 'image')).toBe(true);
     expect(routed[0].contentBlocks?.some((block) => 'localPath' in block)).toBe(false);
     expect(JSON.stringify(routed[0].contentBlocks)).not.toContain('.mama/workspace/media');
+    const attachment = (routed[0] as { metadata?: { attachments?: Array<{ localPath?: string }> } })
+      .metadata?.attachments?.[0];
+    expect(attachment?.localPath).toMatch(/\.jpg$/);
+    expect(attachment?.localPath && existsSync(attachment.localPath)).toBe(true);
     await gateway.stop();
   });
 
@@ -480,9 +560,15 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('downloads a document but routes only safe metadata without a local path', async () => {
+  it('keeps an uploaded document readable for the routed turn without exposing it in user text', async () => {
     const gateway = await makeGateway(vi.fn(async () => new Response(new Uint8Array([1, 2]))));
     mockApi.getFile.mockResolvedValue({ file_path: 'documents/file.pdf', file_size: 2 });
+    let readableDuringRoute = false;
+    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockImplementation(async (message) => {
+      const localPath = message.metadata.attachments[0].localPath;
+      readableDuringRoute = typeof localPath === 'string' && existsSync(localPath);
+      return { response: 'ok', duration: 1 };
+    });
 
     await privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 104),
@@ -500,6 +586,8 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     expect(JSON.stringify(routed.contentBlocks)).toContain('brief.pdf');
     expect(JSON.stringify(routed.contentBlocks)).not.toContain('.mama/');
     expect(routed.metadata.attachments[0].sourceRef).toBe('telegram:document-u');
+    expect(routed.metadata.attachments[0].localPath).toMatch(/brief\.pdf$/);
+    expect(readableDuringRoute).toBe(true);
     expect(routed.metadata.attachments[0].url).toBeUndefined();
     await gateway.stop();
   });
@@ -526,6 +614,8 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       true
     );
     expect(routed.contentBlocks?.some((block: object) => 'localPath' in block)).toBe(false);
+    expect(routed.metadata.attachments[0].localPath).toMatch(/reference\.png$/);
+    expect(existsSync(routed.metadata.attachments[0].localPath)).toBe(true);
     await gateway.stop();
   });
 
@@ -602,7 +692,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
-  it('deletes downloaded media after constructing safe routed content', async () => {
+  it('retains downloaded image media for bounded follow-up tool use', async () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
@@ -618,7 +708,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    expect(await readdir(mediaRoot)).toEqual([]);
+    expect(await readdir(mediaRoot)).toHaveLength(1);
     await gateway.stop();
   });
 
@@ -634,6 +724,220 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  it('serializes the full processing and response-delivery boundary per Telegram chat', async () => {
+    let releaseFirst!: () => void;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const order: string[] = [];
+    mockMessageRouter.process.mockImplementation(async (message: { text: string }) => {
+      order.push(`process:${message.text}`);
+      if (message.text === 'first') await firstBlocked;
+      return { response: `response:${message.text}`, duration: 1 };
+    });
+    const gateway = await makeGateway();
+
+    const first = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 130),
+      text: 'first',
+    });
+    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    const second = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 131),
+      text: 'second',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    releaseFirst();
+    await Promise.all([first, second]);
+
+    expect(order).toEqual(['process:first', 'process:second']);
+    await gateway.stop();
+  });
+
+  it('serializes an external report behind the active Telegram turn for the same chat', async () => {
+    let releaseTurn!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    mockMessageRouter.process.mockImplementationOnce(async () => {
+      await blocked;
+      return { response: 'turn answer', duration: 1 };
+    });
+    const gateway = await makeGateway();
+    const turn = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 132),
+      text: 'first',
+    });
+    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    mockApi.sendMessage.mockClear();
+
+    const report = gateway.sendMessage('7777', 'scheduled report');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'scheduled report');
+
+    releaseTurn();
+    await Promise.all([turn, report]);
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'scheduled report');
+    await gateway.stop();
+  });
+
+  it('does not let a detached report inherit a stale active-turn queue bypass', async () => {
+    let releaseReport!: () => void;
+    const reportReady = new Promise<void>((resolve) => {
+      releaseReport = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondBlocked = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let detachedReport: Promise<void> | undefined;
+    const gateway = await makeGateway();
+    mockMessageRouter.process.mockImplementation(async (message: { text: string }) => {
+      if (message.text === 'first') {
+        detachedReport = (async () => {
+          await reportReady;
+          await gateway.sendMessage('7777', 'detached report');
+        })();
+        return { response: 'first answer', duration: 1 };
+      }
+      await secondBlocked;
+      return { response: 'second answer', duration: 1 };
+    });
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 133),
+      text: 'first',
+    });
+    const second = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 134),
+      text: 'second',
+    });
+    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(2));
+    mockApi.sendMessage.mockClear();
+
+    releaseReport();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'detached report');
+
+    releaseSecond();
+    await Promise.all([second, detachedReport]);
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'detached report');
+    await gateway.stop();
+  });
+
+  it('allows an explicit in-turn Telegram tool send without deadlocking its own chat queue', async () => {
+    const gateway = await makeGateway();
+    mockMessageRouter.process.mockImplementationOnce(async () => {
+      await gateway.sendMessageFromActiveTurn('7777', 'tool side effect');
+      return { response: 'turn answer', duration: 1 };
+    });
+
+    await expect(
+      privateHandler(gateway).handleMessage({
+        ...makeBaseMessage(7777, 42, 135),
+        text: 'send it',
+      })
+    ).resolves.toBeUndefined();
+
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'tool side effect');
+    await gateway.stop();
+  });
+
+  it('revalidates an active processing turn before periodic recovery sends anything', async () => {
+    let releaseTurn!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    });
+    mockMessageRouter.process.mockImplementationOnce(async () => {
+      await blocked;
+      return { response: 'completed normally', duration: 1 };
+    });
+    const gateway = await makeGateway();
+    const turn = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 136),
+      text: 'long turn',
+    });
+    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    const recovery = (
+      gateway as unknown as { recoverPendingInboundDeliveries(): Promise<void> }
+    ).recoverPendingInboundDeliveries();
+
+    releaseTurn();
+    await Promise.all([turn, recovery]);
+
+    expect(mockApi.sendMessage.mock.calls.flat().join('\n')).not.toContain('interrupted');
+    await gateway.stop();
+  });
+
+  it('revalidates a ready response after the live presenter finishes delivery', async () => {
+    let releaseEdit!: () => void;
+    const editBlocked = new Promise<void>((resolve) => {
+      releaseEdit = resolve;
+    });
+    mockApi.editMessageText.mockImplementationOnce(async () => editBlocked);
+    mockMessageRouter.process.mockResolvedValueOnce({ response: 'ready race answer', duration: 1 });
+    const gateway = await makeGateway();
+    const turn = privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 138),
+      text: 'ready race',
+    });
+    await vi.waitFor(() => expect(mockApi.editMessageText).toHaveBeenCalledOnce());
+    const recovery = (
+      gateway as unknown as { recoverPendingInboundDeliveries(): Promise<void> }
+    ).recoverPendingInboundDeliveries();
+
+    releaseEdit();
+    await Promise.all([turn, recovery]);
+
+    expect(mockApi.editMessageText).toHaveBeenCalledTimes(1);
+    expect(mockApi.sendMessage).not.toHaveBeenCalledWith(7777, 'ready race answer');
+    await gateway.stop();
+  });
+
+  it('resumes only the first unconfirmed inbound response chunk after a send failure', async () => {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-chunk-resume-'));
+    const ledgerPath = join(mediaRoot, 'ledger.json');
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      messageLedgerPath: ledgerPath,
+    });
+    const response = 'a'.repeat(4096) + 'b'.repeat(4096) + 'c'.repeat(300);
+    mockMessageRouter.process.mockResolvedValueOnce({ response, duration: 1 });
+    mockApi.sendMessage
+      .mockResolvedValueOnce({ message_id: 1 })
+      .mockResolvedValueOnce({ message_id: 2 })
+      .mockRejectedValueOnce(new Error('third chunk failed'));
+    await gateway.start();
+
+    await expect(
+      privateHandler(gateway).handleMessage({
+        ...makeBaseMessage(7777, 42, 137),
+        text: 'long response',
+      })
+    ).rejects.toThrow('third chunk failed');
+    expect(new TelegramMessageLedger(ledgerPath).get('7777:137')).toMatchObject({
+      state: 'ready',
+      nextChunkIndex: 2,
+      deliveryUncertain: true,
+    });
+
+    mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 3 });
+    await (
+      gateway as unknown as { recoverPendingInboundDeliveries(): Promise<void> }
+    ).recoverPendingInboundDeliveries();
+
+    expect(mockApi.sendMessage.mock.calls.map((call) => call[1])).toEqual(['c'.repeat(300)]);
+    expect(new TelegramMessageLedger(ledgerPath).get('7777:137')).toMatchObject({
+      state: 'delivered',
+    });
+    await gateway.stop();
+  });
+
   it('still drops the same Telegram message ID', async () => {
     const gateway = await makeGateway();
     const message = { ...makeBaseMessage(7777, 42, 108), text: 'yes' };
@@ -642,6 +946,73 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await privateHandler(gateway).handleMessage(message);
 
     expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    await gateway.stop();
+  });
+
+  it('does not reprocess a completed Telegram message after a gateway restart', async () => {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-restart-dedup-'));
+    const options = {
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    };
+    const message = { ...makeBaseMessage(7777, 42, 123), text: 'run once' };
+    const first = new TelegramGateway(options);
+    await first.start();
+    await privateHandler(first).handleMessage(message);
+    await first.stop();
+
+    const second = new TelegramGateway(options);
+    await second.start();
+    await privateHandler(second).handleMessage(message);
+
+    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    await second.stop();
+  });
+
+  it('delivers a durable ready response during startup without rerunning the agent turn', async () => {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-ready-replay-'));
+    const ledgerPath = join(mediaRoot, 'ledger.json');
+    const ledger = new TelegramMessageLedger(ledgerPath);
+    ledger.claim('7777:124');
+    ledger.markReady('7777:124', 'response recovered from outbox');
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'response recovered from outbox');
+    expect(new TelegramMessageLedger(ledgerPath).get('7777:124')).toMatchObject({
+      state: 'delivered',
+    });
+    await gateway.stop();
+  });
+
+  it('makes an interrupted turn visible during startup without rerunning unknown side effects', async () => {
+    const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-claimed-recovery-'));
+    const ledgerPath = join(mediaRoot, 'ledger.json');
+    new TelegramMessageLedger(ledgerPath).claim('7777:125');
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      messageRouter: mockMessageRouter,
+      config: { allowedChats: ['7777'] },
+      mediaRoot,
+      messageLedgerPath: ledgerPath,
+    });
+    await gateway.start();
+
+    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(String(mockApi.sendMessage.mock.calls.at(-1)?.[1])).toContain('interrupted');
+    expect(new TelegramMessageLedger(ledgerPath).get('7777:125')).toMatchObject({
+      state: 'delivered',
+    });
     await gateway.stop();
   });
 

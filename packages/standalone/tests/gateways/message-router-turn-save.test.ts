@@ -78,7 +78,9 @@ describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
       // Drains are PER-QUEUE by their own peeked counts (review N2 - a combined
       // count over-drained one queue, dropping mid-turn notices undisplayed).
       expect(source).toMatch(/drain\(channelKey, pendingChannelNoticeCount\)/);
-      expect(source).toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY, pendingBroadcastNoticeCount\)/);
+      expect(source).toMatch(
+        /drain\(\s*OPERATOR_BROADCAST_NOTICE_KEY,\s*pendingBroadcastNoticeCount\s*\)/
+      );
       // Bare (count-less) broadcast drain must not come back.
       expect(source).not.toMatch(/drain\(OPERATOR_BROADCAST_NOTICE_KEY\)[^,]/);
       // The dead-letter key must not come back.

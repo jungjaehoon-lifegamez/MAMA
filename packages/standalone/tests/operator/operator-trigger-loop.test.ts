@@ -14,6 +14,7 @@ import type {
   OperatorMemoryPort,
 } from '../../src/operator/operator-interfaces.js';
 import type { CreateTriggerInput } from '../../src/operator/trigger-types.js';
+import type { PendingReportState } from '../../src/operator/pending-report-store.js';
 
 function ev(id: number, channelId: string, content: string): OperatorChannelEvent {
   return {
@@ -109,6 +110,92 @@ describe('OperatorTriggerLoop', () => {
     expect(logs.some((l) => l.includes('fire'))).toBe(true);
   });
 
+  it('persists the report window before cursor commit and delivers it after restart', async () => {
+    let pending: PendingReportState | null = null;
+    const order: string[] = [];
+    const pendingReportStore = {
+      load: () => pending,
+      save: (state: PendingReportState) => {
+        order.push('save');
+        pending = structuredClone(state);
+      },
+    };
+    const originalCommit = delta.commit.bind(delta);
+    delta.commit = (events) => {
+      order.push('commit');
+      originalCommit(events);
+    };
+    delta.queue = [ev(1, 'owner', 'restart-safe update')];
+
+    await makeLoop({ pendingReportStore, output: { send: vi.fn(async () => {}) } }).tick();
+
+    expect(order.slice(0, 2)).toEqual(['save', 'commit']);
+    const send = vi.fn(async () => {});
+    const recovered = makeLoop({
+      pendingReportStore,
+      output: { send },
+      reportAsk: async () => 'recovered owner report',
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+        reportEveryNTicks: 1,
+      },
+    });
+
+    await recovered.tick();
+
+    expect(send).toHaveBeenCalledWith(
+      'recovered owner report',
+      expect.stringMatching(/^operator-report:digest:/)
+    );
+    expect(pending?.digest.windowTotal).toBe(0);
+  });
+
+  it('still forwards replayed connector events to board reconciliation after report dedupe', async () => {
+    let pending: PendingReportState | null = null;
+    const pendingReportStore = {
+      load: () => pending,
+      save: (state: PendingReportState) => {
+        pending = structuredClone(state);
+      },
+    };
+    const event = ev(1, 'owner', 'board delta that must survive restart');
+    delta.queue = [event];
+
+    await makeLoop({ pendingReportStore, output: { send: vi.fn(async () => {}) } }).tick();
+
+    delta.queue = [event];
+    const onChannelDelta = vi.fn();
+    await makeLoop({
+      pendingReportStore,
+      output: { send: vi.fn(async () => {}) },
+      onChannelDelta,
+    }).tick();
+
+    expect(onChannelDelta).toHaveBeenCalledOnce();
+    expect(onChannelDelta).toHaveBeenCalledWith(
+      'slack:owner',
+      expect.arrayContaining([expect.stringContaining('board delta that must survive restart')])
+    );
+    expect(pending?.digest.windowTotal).toBe(1);
+  });
+
+  it('does not retain connector excerpts when no owner-report sink is configured', async () => {
+    const pendingReportStore = {
+      load: vi.fn(() => null),
+      save: vi.fn(),
+    };
+    delta.queue = [ev(1, 'private-channel', 'private connector excerpt')];
+
+    await makeLoop({ pendingReportStore }).tick();
+
+    expect(pendingReportStore.load).not.toHaveBeenCalled();
+    expect(pendingReportStore.save).not.toHaveBeenCalled();
+  });
+
   it('author runs on its cadence with the recent-events window and persists agent specs', async () => {
     const askAgent = vi.fn(async () =>
       JSON.stringify([
@@ -185,7 +272,10 @@ describe('OperatorTriggerLoop', () => {
     await loop.tick(); // fire buffered
     const r2 = await loop.tick(); // report tick
     expect(r2.reported).toBe(true);
-    expect(send).toHaveBeenCalledWith('owner digest text');
+    expect(send).toHaveBeenCalledWith(
+      'owner digest text',
+      expect.stringMatching(/^operator-report:digest:/)
+    );
     // no activity afterwards -> no more sends
     await loop.tick();
     await loop.tick();
@@ -284,7 +374,10 @@ describe('OperatorTriggerLoop', () => {
     const r = await loop.tick();
     expect(r.fires).toBe(0);
     expect(r.fullReported).toBe(true);
-    expect(send).toHaveBeenCalledWith('FULL REPORT text');
+    expect(send).toHaveBeenCalledWith(
+      'FULL REPORT text',
+      'operator-report:scheduled:2026-07-09:08'
+    );
     expect(markFired).toHaveBeenCalledWith('2026-07-09:08');
     // A DELIVERED report advances the delta anchor (fire-time ISO timestamp).
     expect(markSuccess).toHaveBeenCalledTimes(1);
@@ -322,7 +415,10 @@ describe('OperatorTriggerLoop', () => {
     expect(r.reported).toBe(true);
     expect(r.fullReported).toBe(true);
     expect(reportAsk).toHaveBeenCalledTimes(2); // digest + full both on the persona path
-    expect(send).toHaveBeenCalledWith('persona-composed report');
+    expect(send).toHaveBeenCalledWith(
+      'persona-composed report',
+      expect.stringMatching(/^operator-report:/)
+    );
     expect(askAgent).toHaveBeenCalledTimes(1); // author pass only - never report composition
     const authorPrompt = String(askAgent.mock.calls[0][0]);
     expect(authorPrompt).toContain('TRIGGERS'); // sanity: askAgent got the authoring prompt
@@ -354,11 +450,14 @@ describe('OperatorTriggerLoop', () => {
     const r = await loop.tick();
     expect(r.drained).toBe(0);
     expect(r.fullReported).toBe(true);
-    expect(send).toHaveBeenCalledWith('Scheduled report: quiet window.');
+    expect(send).toHaveBeenCalledWith(
+      'Scheduled report: quiet window.',
+      'operator-report:scheduled:2026-07-09:13'
+    );
     expect(markFired).toHaveBeenCalledWith('2026-07-09:13');
   });
 
-  it('scheduled full report: agent NOTHING suppresses the send but still marks the hour (fire once)', async () => {
+  it('scheduled full report: agent NOTHING is retryable and does not consume the hour', async () => {
     const send = vi.fn();
     const markFired = vi.fn();
     const markSuccess = vi.fn();
@@ -382,11 +481,9 @@ describe('OperatorTriggerLoop', () => {
       },
     });
     delta.queue = [ev(1, 'ch-a', 'chatter')];
-    const r = await loop.tick();
-    expect(r.fullReported).toBe(false);
+    await expect(loop.tick()).rejects.toThrow('Full owner report returned no content');
     expect(send).not.toHaveBeenCalled();
-    expect(markFired).toHaveBeenCalledWith('k');
-    // A NOTHING-suppressed report is NOT delivered -> the anchor must not advance.
+    expect(markFired).not.toHaveBeenCalled();
     expect(markSuccess).not.toHaveBeenCalled();
   });
 
@@ -747,5 +844,325 @@ describe('Story OPS-1 / S1-T3: on-demand full report + scheduled suppression', (
       expect(scheduler.state.fired).toEqual(['2026-07-17:13']);
       expect(scheduler.state.success.length).toBe(1);
     });
+  });
+});
+
+describe('TG-06: durable owner-report delivery identity', () => {
+  function durableLoop(
+    pendingRef: { current: PendingReportState | null },
+    over: Partial<ConstructorParameters<typeof OperatorTriggerLoop>[0]> = {}
+  ): OperatorTriggerLoop {
+    const localDb = new Database(':memory:');
+    const localDelta = new FakeDelta();
+    return new OperatorTriggerLoop({
+      delta: localDelta,
+      memory: fakeMem(),
+      registry: new TriggerRegistry(localDb),
+      askAgent: async () => '[]',
+      review: async () => ({ action: 'kept' as const }),
+      pendingReportStore: {
+        load: () => pendingRef.current,
+        save: (state) => {
+          pendingRef.current = structuredClone(state);
+        },
+      },
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+      ...over,
+    });
+  }
+
+  it('retries the exact persisted report and delivery id after a pre-send restart', async () => {
+    const pendingRef: { current: PendingReportState | null } = { current: null };
+    const attempts: Array<{ text: string; deliveryId?: string }> = [];
+    let fired = false;
+    const scheduler = {
+      shouldFire: () => ({ fire: !fired, hourKey: '2026-07-22:12' }),
+      markFired: () => {
+        fired = true;
+      },
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const firstAsk = vi.fn(async () => 'stable report body');
+    const first = durableLoop(pendingRef, {
+      output: {
+        send: async (text, deliveryId) => {
+          attempts.push({ text, deliveryId });
+          throw new Error('telegram unavailable');
+        },
+      },
+      reportAsk: firstAsk,
+      reportScheduler: scheduler,
+    });
+
+    await expect(first.tick()).rejects.toThrow('telegram unavailable');
+    expect(pendingRef.current?.delivery?.text).toBe('stable report body');
+    expect(pendingRef.current?.delivery?.deliveryId).toBeTruthy();
+
+    const recoveryAsk = vi.fn(async () => 'must not regenerate');
+    const recovered = durableLoop(pendingRef, {
+      output: {
+        send: async (text, deliveryId) => {
+          attempts.push({ text, deliveryId });
+        },
+      },
+      reportAsk: recoveryAsk,
+      reportScheduler: scheduler,
+    });
+    await recovered.tick();
+
+    expect(recoveryAsk).not.toHaveBeenCalled();
+    expect(attempts).toHaveLength(2);
+    expect(attempts[1]).toEqual(attempts[0]);
+    expect(pendingRef.current?.delivery).toBeUndefined();
+    expect(scheduler.markSuccess).toHaveBeenCalledOnce();
+  });
+
+  it('replays the same id after an accepted send whose completion state was not persisted', async () => {
+    let durable: PendingReportState | null = null;
+    let saveCount = 0;
+    const visible = new Set<string>();
+    const deliveries: string[] = [];
+    let fired = false;
+    const scheduler = {
+      shouldFire: () => ({ fire: !fired, hourKey: '2026-07-22:13' }),
+      markFired: () => {
+        fired = true;
+      },
+      loadLastSuccess: () => null,
+      markSuccess: vi.fn(),
+    };
+    const first = new OperatorTriggerLoop({
+      delta: new FakeDelta(),
+      memory: fakeMem(),
+      registry: new TriggerRegistry(new Database(':memory:')),
+      askAgent: async () => '[]',
+      reportAsk: async () => 'accepted report',
+      review: async () => ({ action: 'kept' as const }),
+      output: {
+        send: async (_text, deliveryId) => {
+          expect(deliveryId).toBeTruthy();
+          deliveries.push(deliveryId!);
+          visible.add(deliveryId!);
+        },
+      },
+      reportScheduler: scheduler,
+      pendingReportStore: {
+        load: () => durable,
+        save: (state) => {
+          saveCount += 1;
+          if (saveCount === 1) {
+            durable = structuredClone(state);
+            return;
+          }
+          throw new Error('simulated crash before completion persistence');
+        },
+      },
+      config: {
+        tickMs: 60_000,
+        drainLimit: 50,
+        authorEveryNTicks: 99,
+        reviewEveryNTicks: 99,
+        authorWindowSize: 10,
+      },
+      log: () => {},
+    });
+
+    await expect(first.tick()).rejects.toThrow('completion persistence');
+    expect(durable?.delivery).toBeDefined();
+    expect(visible.size).toBe(1);
+
+    const recovered = durableLoop(
+      {
+        get current() {
+          return durable;
+        },
+        set current(value) {
+          durable = value;
+        },
+      },
+      {
+        output: {
+          send: async (_text, deliveryId) => {
+            deliveries.push(deliveryId!);
+            visible.add(deliveryId!);
+          },
+        },
+        reportAsk: vi.fn(async () => 'must not regenerate'),
+        reportScheduler: scheduler,
+      }
+    );
+    await recovered.tick();
+
+    expect(deliveries).toHaveLength(2);
+    expect(deliveries[1]).toBe(deliveries[0]);
+    expect(visible.size).toBe(1);
+  });
+
+  it('uses independent delivery ids for identical on-demand and scheduled reports in one hour', async () => {
+    const ids: string[] = [];
+    const onDemand = durableLoop(
+      { current: null },
+      {
+        output: { send: async (_text, deliveryId) => ids.push(deliveryId!) },
+        reportAsk: async () => 'same body',
+      }
+    );
+    expect(onDemand.startFullReport().accepted).toBe(true);
+    await vi.waitFor(() => expect(ids).toHaveLength(1));
+
+    const scheduled = durableLoop(
+      { current: null },
+      {
+        output: { send: async (_text, deliveryId) => ids.push(deliveryId!) },
+        reportAsk: async () => 'same body',
+        reportScheduler: {
+          shouldFire: () => ({ fire: true, hourKey: '2026-07-22:14' }),
+          markFired: vi.fn(),
+          loadLastSuccess: () => null,
+          markSuccess: vi.fn(),
+        },
+      }
+    );
+    await scheduled.tick();
+
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBeTruthy();
+    expect(ids[1]).toBeTruthy();
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
+  it('persists an accepted on-demand occurrence before report composition completes', async () => {
+    const pendingRef: { current: PendingReportState | null } = { current: null };
+    let releaseAsk!: (value: string) => void;
+    const askBlocked = new Promise<string>((resolve) => {
+      releaseAsk = resolve;
+    });
+    const send = vi.fn(async () => {});
+    const loop = durableLoop(pendingRef, {
+      output: { send },
+      reportAsk: async () => askBlocked,
+    });
+
+    expect(loop.startFullReport()).toEqual({ accepted: true });
+    expect(pendingRef.current?.request).toMatchObject({
+      mode: 'full',
+      occurrence: { kind: 'on_demand_full' },
+    });
+    expect(pendingRef.current?.request?.deliveryId).toBeTruthy();
+    expect(send).not.toHaveBeenCalled();
+
+    releaseAsk('durably accepted report');
+    await vi.waitFor(() => expect(send).toHaveBeenCalledOnce());
+    expect(pendingRef.current?.request).toBeUndefined();
+    expect(pendingRef.current?.delivery).toBeUndefined();
+  });
+
+  it('recovers an accepted on-demand request on startup with the same delivery id', async () => {
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const deliveryId = 'operator-report:on_demand_full:accepted-before-crash';
+    const pendingRef: { current: PendingReportState | null } = {
+      current: {
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        request: {
+          mode: 'full',
+          deliveryId,
+          occurrence: {
+            kind: 'on_demand_full',
+            firedAtIso: '2026-07-22T04:30:00.000Z',
+          },
+          acceptedAtIso: '2026-07-22T04:30:00.000Z',
+        },
+      },
+    };
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'recovered request report');
+    const loop = durableLoop(pendingRef, { output: { send }, reportAsk });
+
+    const stop = loop.start();
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledWith('recovered request report', deliveryId);
+    });
+    stop();
+
+    expect(reportAsk).toHaveBeenCalledOnce();
+    expect(pendingRef.current?.request).toBeUndefined();
+  });
+
+  it('returns busy instead of substituting an older pending delivery for a new request', async () => {
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const pendingRef: { current: PendingReportState | null } = {
+      current: {
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'full',
+          text: 'older scheduled report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-07-22T04:00:00.000Z',
+          deliveryId: 'operator-report:scheduled:2026-07-22:13',
+          occurrence: { kind: 'scheduled_full', hourKey: '2026-07-22:13' },
+        },
+      },
+    };
+    const reportAsk = vi.fn(async () => 'must not create a new report');
+    const loop = durableLoop(pendingRef, {
+      output: { send: async () => {} },
+      reportAsk,
+    });
+
+    expect(loop.startFullReport()).toEqual({ accepted: false, reason: 'busy' });
+    expect(reportAsk).not.toHaveBeenCalled();
+    expect(pendingRef.current?.delivery?.text).toBe('older scheduled report');
+  });
+
+  it('replays a persisted delivery immediately on loop start without waiting for the first tick', async () => {
+    const snapshot = new (
+      await import('../../src/operator/situation-report.js')
+    ).SituationReporter().snapshot();
+    const pendingRef: { current: PendingReportState | null } = {
+      current: {
+        version: 1,
+        digest: snapshot,
+        full: snapshot,
+        delivery: {
+          mode: 'digest',
+          text: 'startup recovery report',
+          citedTriggerIds: [],
+          createdAtIso: '2026-07-22T03:30:00.000Z',
+          deliveryId: 'operator-report:digest:startup-recovery',
+          occurrence: { kind: 'digest' },
+        },
+      },
+    };
+    const send = vi.fn(async () => {});
+    const reportAsk = vi.fn(async () => 'must not regenerate');
+    const loop = durableLoop(pendingRef, { output: { send }, reportAsk });
+
+    const stop = loop.start();
+    await vi.waitFor(() => {
+      expect(send).toHaveBeenCalledWith(
+        'startup recovery report',
+        'operator-report:digest:startup-recovery'
+      );
+      expect(pendingRef.current?.delivery).toBeUndefined();
+    });
+    stop();
+
+    expect(reportAsk).not.toHaveBeenCalled();
   });
 });

@@ -58,6 +58,7 @@ export interface DriveUploadInput {
   localPath: string;
   folderId: string;
   fileName?: string;
+  destinationCapability?: string;
 }
 
 async function defaultRunGws(args: string[]): Promise<string> {
@@ -207,7 +208,11 @@ export class DriveToolService {
     throw new Error(`Drive browsing exceeded ${MAX_DRIVE_LIST_PAGES} pages.`);
   }
 
-  async findFolder(input: DriveFindFolderInput): Promise<{ folderId: string; path: string }> {
+  async findFolder(input: DriveFindFolderInput): Promise<{
+    folderId: string;
+    path: string;
+    traversedFolderIds: string[];
+  }> {
     const driveId = requireDriveId(input.driveId, 'driveId');
     const segments = input.path.split('/').filter(Boolean);
     if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
@@ -215,6 +220,7 @@ export class DriveToolService {
     }
 
     let currentId = driveId;
+    const traversedFolderIds = [driveId];
     for (const segment of segments) {
       const escaped = segment.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
       const params = {
@@ -234,8 +240,9 @@ export class DriveToolService {
         throw new Error(`Drive folder not found: ${segment}`);
       }
       currentId = folderId;
+      traversedFolderIds.push(folderId);
     }
-    return { folderId: currentId, path: input.path };
+    return { folderId: currentId, path: input.path, traversedFolderIds };
   }
 
   async download(input: DriveDownloadInput): Promise<{ path: string; fileName: string }> {

@@ -146,6 +146,31 @@ describe('Code-Act Integration', () => {
       expect(instructions).not.toContain('mcp__code-act__code_act');
     });
 
+    it('preserves agent composition freedom instead of prescribing one owner workflow', () => {
+      const instructions = getCodeActInstructions('codex', [
+        'drive_find_folder',
+        'drive_browse',
+        'drive_download',
+        'translate_conti',
+        'drive_upload',
+        'telegram_send',
+      ]);
+
+      expect(instructions).toContain('composable primitives');
+      expect(instructions).toContain('requested outcome');
+      expect(instructions).toContain('Guidance functions are optional');
+      expect(instructions).not.toContain('Drive image translation workflow');
+      expect(instructions).not.toContain('same resolved Drive folder');
+    });
+
+    it('never advertises unavailable Bash or Write functions on a narrowed Codex run', () => {
+      const instructions = getCodeActInstructions('codex', ['Read', 'drive_browse']);
+
+      expect(instructions).toContain('only functions in the current allowlist');
+      expect(instructions).not.toContain('Bash({command:');
+      expect(instructions).not.toContain('Write({file_path:');
+    });
+
     it('preserves Claude MCP guidance', () => {
       const instructions = getCodeActInstructions('claude', ['mama_search']);
 
@@ -160,10 +185,9 @@ describe('Code-Act Integration', () => {
     expect(fullPrompt).toContain('declare function mama_search');
     expect(fullPrompt).toContain('declare function Read');
     expect(fullPrompt).toContain('## Code-Act');
-    // Budget raised for the complete owner workflow surface. The six owner
-    // recall/board/audit/report/workorder signatures add ~750 chars while
-    // keeping their real parameter and return types visible to Code-Act.
-    expect(fullPrompt.length).toBeLessThan(11000);
+    // The first-turn-only declaration budget includes the complete owner
+    // query, Drive, image translation, and delivery surface.
+    expect(fullPrompt.length).toBeLessThan(12000);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

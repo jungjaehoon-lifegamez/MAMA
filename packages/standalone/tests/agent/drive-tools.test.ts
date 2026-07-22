@@ -111,7 +111,11 @@ describe('DriveToolService', () => {
 
     await expect(
       service.findFolder({ driveId: 'drive-1', path: "Team/Director's" })
-    ).resolves.toEqual({ folderId: 'folder-b', path: "Team/Director's" });
+    ).resolves.toEqual({
+      folderId: 'folder-b',
+      path: "Team/Director's",
+      traversedFolderIds: ['drive-1', 'folder-a', 'folder-b'],
+    });
     const secondArgs = runGws.mock.calls[1]?.[0] ?? [];
     const paramsIndex = secondArgs.indexOf('--params');
     const params = JSON.parse(secondArgs[paramsIndex + 1] ?? '{}') as { q?: string };

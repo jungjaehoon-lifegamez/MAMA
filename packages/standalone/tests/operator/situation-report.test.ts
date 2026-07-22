@@ -32,6 +32,38 @@ function fire(
 }
 
 describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
+  it('round-trips its pending aggregate for daemon restart recovery', () => {
+    const original = new SituationReporter();
+    original.recordWindow([ev(1, 'owner', 'pending owner update')]);
+    original.recordFire({
+      triggerId: 'late-task',
+      kind: 'temporal',
+      channelId: 'owner',
+      recalled: [{ topic: 'meeting', content: 'deadline already passed' }],
+    });
+    original.recordAuthored(2);
+
+    const restored = new SituationReporter();
+    restored.restore(original.snapshot());
+
+    expect(restored.hasActivity()).toBe(true);
+    expect(restored.buildPrompt('digest')).toContain('pending owner update');
+    expect(restored.buildPrompt('digest')).toContain('late-task');
+    expect(restored.buildPrompt('digest')).toContain('deadline already passed');
+  });
+
+  it('does not count the same persisted connector event twice after crash replay', () => {
+    const original = new SituationReporter();
+    const event = ev(1, 'owner', 'one durable event');
+    original.recordWindow([event]);
+    const restored = new SituationReporter();
+    restored.restore(original.snapshot());
+
+    restored.recordWindow([event]);
+
+    expect(restored.snapshot().windowTotal).toBe(1);
+    expect(restored.buildPrompt('digest')).toContain('owner: 1 msg');
+  });
   // ---- ported M1.5 behaviors ----
   it('no activity -> no agent call, no send', async () => {
     const askAgent = vi.fn();
@@ -69,6 +101,24 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     r.recordFire(fire('t1', 'k', 'c'));
     expect(await r.report(askAgent, { send }, 'digest')).toBe(false);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('treats an empty full report as a retryable failure and retains its buffer', async () => {
+    const askAgent = vi
+      .fn<(prompt: string) => Promise<string>>()
+      .mockResolvedValueOnce('NOTHING')
+      .mockResolvedValueOnce('recovered full report');
+    const send = vi.fn(async () => {});
+    const r = new SituationReporter();
+    r.recordWindow([ev(1, 'slack:a', 'must survive')]);
+
+    await expect(r.report(askAgent, { send }, 'full')).rejects.toThrow(
+      'Full owner report returned no content'
+    );
+    expect(r.hasActivity()).toBe(true);
+
+    await expect(r.report(askAgent, { send }, 'full')).resolves.toBe(true);
+    expect(send).toHaveBeenCalledWith('recovered full report');
   });
 
   it('send failure propagates loudly (no-fallback), buffer preserved for retry', async () => {
@@ -215,6 +265,23 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     const prompt = r.buildPrompt('full');
     expect(prompt).toContain('more channel(s)'); // collapsed tail
     expect(prompt).toContain('ch:19'); // busiest channel shown
+  });
+
+  it('restart snapshots retain the busiest channels instead of the latest inserted channels', () => {
+    const original = new SituationReporter();
+    for (let index = 0; index < 20; index += 1) {
+      original.recordWindow([ev(index, 'busiest-first', `critical-${index}`)]);
+    }
+    for (let index = 0; index < 60; index += 1) {
+      original.recordWindow([ev(100 + index, `tail-${index}`, `tail-${index}`)]);
+    }
+
+    const restored = new SituationReporter();
+    restored.restore(original.snapshot());
+    const prompt = restored.buildPrompt('full');
+
+    expect(prompt).toContain('busiest-first: 20 msg');
+    expect(prompt).toContain('more channel(s)');
   });
 
   it('full self-gather teaches the tool_call protocol and forbids native gathering (M3 GAP1)', () => {

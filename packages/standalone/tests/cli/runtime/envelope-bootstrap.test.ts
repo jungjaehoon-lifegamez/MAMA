@@ -65,7 +65,7 @@ function makeOwnerConfig(): MAMAConfig {
 
 function writeConnectorConfig(
   home: string,
-  input: { enabled?: boolean; malformed?: boolean } = {}
+  input: { enabled?: boolean; malformed?: boolean; includeDrive?: boolean } = {}
 ): void {
   const configDir = join(home, '.mama');
   mkdirSync(configDir, { recursive: true });
@@ -78,6 +78,27 @@ function writeConnectorConfig(
           channels: {},
           auth: { type: 'token', tokenName: 'TRELLO_TOKEN' },
         },
+        ...(input.includeDrive
+          ? {
+              drive: {
+                enabled: true,
+                pollIntervalMinutes: 15,
+                channels: {
+                  deliverable: {
+                    role: 'deliverable',
+                    folderId: 'folder-deliverable',
+                    driveId: 'drive-shared',
+                  },
+                  reference: {
+                    role: 'reference',
+                    folderId: 'folder-reference',
+                    driveId: 'drive-shared',
+                  },
+                },
+                auth: { type: 'cli', cli: 'gws' },
+              },
+            }
+          : {}),
       });
   writeFileSync(join(configDir, 'connectors.json'), contents, 'utf8');
 }
@@ -260,6 +281,33 @@ describe('STORY-M1R-BOOTSTRAP-3: off-mode behavior', () => {
         rmSync(tempHome, { recursive: true, force: true });
       }
     });
+  });
+});
+
+describe('STORY-TG-DRIVE-PARITY: Drive destination safety', () => {
+  it('authorizes only configured deliverable folders, never reference folders or a drive root', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'mama-envelope-drive-home-'));
+    try {
+      writeConnectorConfig(tempHome, { includeDrive: true });
+      const db: SQLiteDatabase = new Database(':memory:');
+      const bootstrap = buildRuntimeEnvelopeBootstrap(db, makeOwnerConfig(), {
+        ...makeKeyEnv('enabled'),
+        HOME: tempHome,
+      });
+      const destinations = bootstrap.envelopeConfig!.allowedDestinationsFor({
+        source: 'telegram',
+        channelId: '7777',
+        userId: '7777',
+        text: 'upload translated images',
+        metadata: { chatType: 'private' },
+      });
+
+      expect(destinations).toContainEqual({ kind: 'drive', id: 'folder-deliverable' });
+      expect(destinations).not.toContainEqual({ kind: 'drive', id: 'folder-reference' });
+      expect(destinations).not.toContainEqual({ kind: 'drive', id: 'drive-shared' });
+    } finally {
+      rmSync(tempHome, { recursive: true, force: true });
+    }
   });
 });
 

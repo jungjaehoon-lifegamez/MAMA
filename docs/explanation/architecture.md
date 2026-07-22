@@ -114,9 +114,10 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
 - **Lanes:** chat serializes on the `main` global lane; ALL operator work
   (scheduled situation reports, workers) serializes on a separate `operator`
   global lane - long runs never block owner replies.
-- **Trigger loop** (`MAMA_TRIGGER_LOOP=1`): agent-evolved triggers on the live
+- **Trigger loop** (default on; `MAMA_TRIGGER_LOOP=0` opts out): agent-evolved triggers on the live
   connector stream + scheduled full situation reports (configurable local
-  hours) delivered to the owner channel.
+  hours) delivered to the owner channel. Pending report windows are persisted before connector
+  cursors advance, so daemon restarts do not silently discard an owner update.
 - **Owner console:** the `owner_console` role resolves ONLY via trust-conditional
   escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
   operational artifacts (board, audit findings, workorder status) and can issue

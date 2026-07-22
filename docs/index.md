@@ -89,6 +89,8 @@ _Contributing, testing, and development guidelines_
 - [Testing Guide](development/testing.md) - Test suite and testing practices
 - [Code Standards](development/code-standards.md) - Coding conventions
 - [Release Process](development/release-process.md) - How releases are created
+- [Kagemusha Telegram Parity Contract](development/kagemusha-telegram-parity.md) -
+  End-to-end owner-console behavior, evidence, and review scenarios
 
 ---
 
@@ -151,6 +153,6 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.25 — verified temporal owner-task reconciliation with source-bound evidence,
-authoritative receipts, mixed-version safety, and bounded shutdown handling
+**Status:** MAMA OS v0.27 — verified composable owner workflows, durable Telegram delivery,
+restart-safe reports, Codex session continuity, and attachment privacy boundaries
 **Last Updated:** 2026-07-22

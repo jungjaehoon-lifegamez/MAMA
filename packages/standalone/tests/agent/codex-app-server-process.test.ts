@@ -240,7 +240,7 @@ rl.on('line', line => {
     }
     if (mode === 'turn-start-late-once' && !fs.existsSync(${JSON.stringify(join(root, 'late-turn-start'))})) {
       fs.writeFileSync(${JSON.stringify(join(root, 'late-turn-start'))},'1');
-      setTimeout(()=>send({jsonrpc:'2.0',id:message.id,result:{turn:fullTurn(id)}}),100);
+      setTimeout(()=>send({jsonrpc:'2.0',id:message.id,result:{turn:fullTurn(id)}}),300);
       return;
     }
     const requestBase = 700 + turn * 10;
@@ -288,7 +288,8 @@ rl.on('line', line => {
       return;
     }
     if (earlyTool) return;
-    if (mode === 'delayed') { const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release'))})){clearInterval(interval);complete();}},5); } else if(mode === 'unknown-response') setTimeout(complete,20); else complete();
+    if (mode === 'progress-delayed') { let progress=0; const interval=setInterval(()=>{progress += 1;send({jsonrpc:'2.0',method:'item/agentMessage/delta',params:{threadId:message.params.threadId,turnId:id,delta:'tick'}});if(progress===4){clearInterval(interval);complete();}},25); }
+    else if (mode === 'delayed') { const interval=setInterval(()=>{if(fs.existsSync(${JSON.stringify(join(root, 'release'))})){clearInterval(interval);complete();}},5); } else if(mode === 'unknown-response') setTimeout(complete,20); else complete();
     return;
   }
   if (message.method === 'turn/interrupt') {
@@ -1385,17 +1386,17 @@ describe('Story: Codex app-server process', () => {
 
   it('keeps sibling sessions alive when one multiplexed turn times out', async () => {
     const item = fixture('timeout-once');
-    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 500 });
+    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 1_000 });
 
     const timedOut = expect(
       runtime.prompt('slow', undefined, {
         sessionKey: 'slow',
-        requestTimeout: 60,
+        requestTimeout: 250,
       })
     ).rejects.toThrow('timed out');
     await waitForFile(join(item.root, 'timed-out'));
     await expect(
-      runtime.prompt('fast', undefined, { sessionKey: 'fast', requestTimeout: 500 })
+      runtime.prompt('fast', undefined, { sessionKey: 'fast', requestTimeout: 1_000 })
     ).resolves.toMatchObject({ response: 'hello' });
     await timedOut;
 
@@ -1407,13 +1408,13 @@ describe('Story: Codex app-server process', () => {
 
   it('interrupts a late acknowledged turn before retrying the same durable thread', async () => {
     const item = fixture('turn-start-late-once');
-    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 500 });
+    const runtime = new CodexRuntimeProcess({ ...item.options, requestTimeout: 1_000 });
 
     await expect(
-      runtime.prompt('first', undefined, { sessionKey: 'same', requestTimeout: 60 })
+      runtime.prompt('first', undefined, { sessionKey: 'same', requestTimeout: 150 })
     ).rejects.toThrow('timed out');
     await expect(
-      runtime.prompt('retry', undefined, { sessionKey: 'same', requestTimeout: 500 })
+      runtime.prompt('retry', undefined, { sessionKey: 'same', requestTimeout: 1_000 })
     ).resolves.toMatchObject({ response: 'hello' });
 
     const sent = messages(item.capture);
@@ -1479,6 +1480,17 @@ describe('Story: Codex app-server process', () => {
     ).rejects.toThrow('timed out');
 
     expect(observedAbort).toBe(true);
+    await runner.stop();
+  });
+
+  it('treats streamed progress as activity and refreshes the turn idle timeout', async () => {
+    const item = fixture('progress-delayed');
+    const runner = new CodexAppServerProcess({ ...item.options, requestTimeout: 500 });
+    await runner.prompt('warm connection');
+
+    await expect(
+      runner.prompt('long but active', undefined, { requestTimeout: 45 })
+    ).resolves.toMatchObject({ response: 'ticktickticktickhello' });
     await runner.stop();
   });
 
@@ -1777,6 +1789,33 @@ describe('Story: Codex app-server process', () => {
     expect(resumeIndex).toBeGreaterThan(-1);
     expect(input).toContain('fresh runtime bootstrap after restart');
     expect(input).toContain('second message');
+  });
+
+  it('does not re-inject a per-call system prompt while the same durable thread stays live', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'initial durable policy',
+      policyFingerprint: 'stable-policy',
+    });
+
+    await runner.prompt('first message');
+    await runner.prompt('second message', undefined, {
+      systemPrompt: 'per-call context that must not be replayed',
+      policyFingerprint: 'stable-policy',
+    });
+    await runner.stop();
+
+    const turns = messages(item.capture).filter((entry) => entry.method === 'turn/start');
+    const secondInput = (
+      (turns[1]?.params as Record<string, unknown>)?.input as Array<{ text?: string }>
+    )?.[0]?.text;
+    expect(turns).toHaveLength(2);
+    expect(secondInput).toBe('second message');
+    expect(secondInput).not.toContain('per-call context');
+    expect(messages(item.capture).filter((entry) => entry.method === 'thread/start')).toHaveLength(
+      1
+    );
   });
 
   it('does not overwrite managed authentication when the source is missing', async () => {

@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, open, rename, unlink } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readdir, rename, unlink } from 'node:fs/promises';
 import { basename, extname, resolve, sep } from 'node:path';
 
 const TELEGRAM_HOSTED_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024;
 const DEFAULT_ATTACHMENT_LIMIT_BYTES = 25 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 30_000;
+const DEFAULT_MEDIA_TTL_MS = 24 * 60 * 60_000;
+const DEFAULT_MEDIA_QUOTA_BYTES = 256 * 1024 * 1024;
+const activeFinalPaths = new Set<string>();
 
 export interface TelegramFileMetadata {
   file_path?: string;
@@ -36,6 +39,83 @@ export interface TelegramMediaDownloadResult {
 }
 
 class TelegramMediaError extends Error {}
+
+export interface TelegramMediaPruneOptions {
+  nowMs?: number;
+  ttlMs?: number;
+  maxTotalBytes?: number;
+  preservePath?: string;
+}
+
+function configuredPositiveNumber(name: string, fallback: number): number {
+  const configured = Number(process.env[name]);
+  return Number.isFinite(configured) && configured > 0 ? configured : fallback;
+}
+
+/**
+ * Bound retained Telegram media across turns. Non-regular entries are removed,
+ * expired files are deleted, then the oldest remaining files are evicted until
+ * the cumulative quota is met. A just-downloaded file may be preserved while
+ * older files are reclaimed.
+ */
+export async function pruneTelegramMediaRoot(
+  mediaRoot: string,
+  options: TelegramMediaPruneOptions = {}
+): Promise<void> {
+  const root = resolve(mediaRoot);
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  const nowMs = options.nowMs ?? Date.now();
+  const ttlMs =
+    options.ttlMs ?? configuredPositiveNumber('MAMA_TELEGRAM_MEDIA_TTL_MS', DEFAULT_MEDIA_TTL_MS);
+  const maxTotalBytes =
+    options.maxTotalBytes ??
+    configuredPositiveNumber('MAMA_TELEGRAM_MEDIA_MAX_TOTAL_BYTES', DEFAULT_MEDIA_QUOTA_BYTES);
+  const preservePath = options.preservePath ? resolve(options.preservePath) : null;
+  if (preservePath) assertWithinRoot(root, preservePath);
+
+  const retained: Array<{ path: string; size: number; mtimeMs: number }> = [];
+  for (const name of await readdir(root)) {
+    const path = resolve(root, name);
+    assertWithinRoot(root, path);
+    let info: Awaited<ReturnType<typeof lstat>>;
+    try {
+      info = await lstat(path);
+    } catch {
+      continue;
+    }
+    if (name.endsWith('.part') && nowMs - info.mtimeMs <= DEFAULT_DOWNLOAD_TIMEOUT_MS * 2) {
+      continue;
+    }
+    if (!info.isFile() || info.isSymbolicLink()) {
+      await unlink(path).catch(() => {});
+      continue;
+    }
+    if (path !== preservePath && !activeFinalPaths.has(path) && nowMs - info.mtimeMs > ttlMs) {
+      await unlink(path).catch(() => {});
+      continue;
+    }
+    retained.push({ path, size: info.size, mtimeMs: info.mtimeMs });
+  }
+
+  let totalBytes = retained.reduce((total, file) => total + file.size, 0);
+  for (const file of retained.sort((left, right) => left.mtimeMs - right.mtimeMs)) {
+    if (totalBytes <= maxTotalBytes) break;
+    if (file.path === preservePath || activeFinalPaths.has(file.path)) continue;
+    try {
+      await unlink(file.path);
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') {
+        throw error;
+      }
+      // Another overlapping sweep already evicted this exact file. It is no
+      // longer part of the actual quota even though this sweep counted it.
+    }
+    totalBytes -= file.size;
+  }
+  if (totalBytes > maxTotalBytes) {
+    throw new TelegramMediaError('Telegram media storage quota exceeded');
+  }
+}
 
 async function withDownloadTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -136,6 +216,7 @@ export async function downloadTelegramMedia(
   const root = resolve(request.mediaRoot);
   await mkdir(root, { recursive: true, mode: 0o700 });
   await chmod(root, 0o700);
+  await pruneTelegramMediaRoot(root);
 
   const fetchImpl = request.fetchImpl ?? fetch;
   let response: Response;
@@ -170,6 +251,7 @@ export async function downloadTelegramMedia(
 
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   let totalBytes = 0;
+  activeFinalPaths.add(finalPath);
   try {
     handle = await open(tempPath, 'wx', 0o600);
     const reader = response.body.getReader();
@@ -192,15 +274,19 @@ export async function downloadTelegramMedia(
     await chmod(tempPath, 0o600);
     await rename(tempPath, finalPath);
     await chmod(finalPath, 0o600);
+    await pruneTelegramMediaRoot(root, { preservePath: finalPath });
   } catch (error) {
     if (handle) {
       await handle.close().catch(() => {});
     }
     await unlink(tempPath).catch(() => {});
+    await unlink(finalPath).catch(() => {});
     if (error instanceof TelegramMediaError) {
       throw error;
     }
     throw new TelegramMediaError('Telegram media download failed');
+  } finally {
+    activeFinalPaths.delete(finalPath);
   }
 
   return {

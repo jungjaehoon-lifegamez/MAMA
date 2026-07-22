@@ -467,38 +467,6 @@ export interface UpdateInput {
 export type LoadCheckpointInput = Record<string, never>;
 
 /**
- * Input for translate_image tool
- */
-export interface TranslateImageInput {
-  /** Base64-encoded image data */
-  image_data: string;
-  /** MIME type (image/jpeg, image/png, etc.) */
-  media_type: string;
-  /** Source language (auto-detect if not provided) */
-  source_lang?: string;
-  /** Target language (default: Korean) */
-  target_lang?: string;
-  /** Discord channel ID for screenshot delivery */
-  channel_id?: string;
-}
-
-/**
- * Result from translate_image tool
- */
-export interface TranslateImageResult {
-  /** Whether translation succeeded */
-  success: boolean;
-  /** Translated text content */
-  translation?: string;
-  /** Path to generated HTML file */
-  html_path?: string;
-  /** Path to screenshot (if Discord channel provided) */
-  screenshot_path?: string;
-  /** Error message if failed */
-  error?: string;
-}
-
-/**
  * Browser navigate input
  */
 export interface BrowserNavigateInput {
@@ -718,6 +686,7 @@ export interface DriveUploadInput {
   localPath: string;
   folderId: string;
   fileName?: string;
+  destinationCapability?: string;
 }
 
 /**
@@ -732,7 +701,6 @@ export type GatewayToolInput =
   | IngestInput
   | UpdateInput
   | LoadCheckpointInput
-  | TranslateImageInput
   | BrowserNavigateInput
   | BrowserScreenshotInput
   | BrowserClickInput
@@ -775,12 +743,15 @@ export type GatewayToolName =
   | 'discord_send'
   | 'slack_send'
   | 'telegram_send'
+  | 'ocr_image'
+  | 'create_fb_overlay'
+  | 'translate_conti'
+  | 'drive_translate_conti'
   | 'drive_list_drives'
   | 'drive_browse'
   | 'drive_find_folder'
   | 'drive_download'
   | 'drive_upload'
-  | 'translate_image'
   | 'save_integration_token'
   | 'browser_navigate'
   | 'browser_screenshot'
@@ -961,7 +932,6 @@ export type GatewayToolResult =
   | UpdateResult
   | LoadCheckpointResult
   | EnvelopeDenialResult
-  | TranslateImageResult
   | { success: boolean; [key: string]: unknown };
 
 // ============================================================================

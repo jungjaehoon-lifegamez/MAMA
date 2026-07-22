@@ -73,8 +73,8 @@ export function buildRuntimeEnvelopeBootstrap(
   const driveDestinations = Object.freeze(
     connectorConfig.ok && connectorConfig.config.drive?.enabled
       ? Object.values(connectorConfig.config.drive.channels)
-          .filter((channel) => channel.role !== 'ignore')
-          .flatMap((channel) => [channel.folderId, channel.driveId])
+          .filter((channel) => channel.role === 'deliverable')
+          .map((channel) => channel.folderId ?? channel.driveId)
           .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
           .map((id) => ({ kind: 'drive' as const, id }))
       : []

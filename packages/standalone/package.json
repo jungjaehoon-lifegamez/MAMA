@@ -1,6 +1,6 @@
 {
   "name": "@jungjaehoon/mama-os",
-  "version": "0.26.0",
+  "version": "0.27.0",
   "description": "MAMA OS - Local AI Runtime. Your scattered knowledge, organized by AI agents that never sleep.",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,6 +11,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
+    "setup:ocr": "node scripts/setup-ocr.js",
+    "check:ocr": "node scripts/setup-ocr.js --check",
     "build": "tsc && pnpm exec tsx scripts/generate-gateway-tools.ts && rm -rf public/viewer/js && tsc -p public/viewer/tsconfig.viewer.json && pnpm run build:ui",
     "build:ui": "pnpm --dir ui run bundle",
     "dev:ui": "pnpm --dir ui run dev",

@@ -29,6 +29,20 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.send).toHaveBeenCalledTimes(1);
   });
 
+  it('replaces the placeholder with an explicit queue status', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { throttleMs: 800 });
+    await presenter.start();
+
+    presenter.markQueued();
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(adapter.edit).toHaveBeenCalledWith(
+      'message-1',
+      '⏳ Waiting for the earlier task to finish.'
+    );
+  });
+
   it('continues without a placeholder when the initial send fails', async () => {
     const adapter = makeAdapter();
     adapter.send.mockRejectedValueOnce(new Error('placeholder unavailable'));
@@ -103,6 +117,22 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.delete).not.toHaveBeenCalled();
   });
 
+  it('redacts inbound attachment paths from a custom MAMA_WORKSPACE', async () => {
+    const previousWorkspace = process.env.MAMA_WORKSPACE;
+    process.env.MAMA_WORKSPACE = '/private/custom workspace';
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter);
+    await presenter.start();
+
+    await presenter.finalize(
+      'Saved at /private/custom workspace/media/inbound/telegram/private-image.png'
+    );
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', 'Saved at [attachment]');
+    if (previousWorkspace === undefined) delete process.env.MAMA_WORKSPACE;
+    else process.env.MAMA_WORKSPACE = previousWorkspace;
+  });
+
   it('edits the first long-response chunk and sends the remaining chunks', async () => {
     const adapter = makeAdapter();
     const presenter = new TelegramResponsePresenter(adapter, { maxLength: 10 });
@@ -113,6 +143,39 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.edit).toHaveBeenCalledWith('message-1', '1234567890');
     expect(adapter.send).toHaveBeenNthCalledWith(2, 'abcdefghij');
     expect(adapter.send).toHaveBeenNthCalledWith(3, 'XYZ');
+  });
+
+  it('keeps a Unicode surrogate pair together when chunking a response', async () => {
+    const adapter = makeAdapter();
+    const presenter = new TelegramResponsePresenter(adapter, { maxLength: 5 });
+    await presenter.start();
+
+    await presenter.finalize('1234😀tail');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', '1234😀');
+    expect(adapter.send).toHaveBeenNthCalledWith(2, 'tail');
+  });
+
+  it('does not retry an ambiguously failed later chunk and can publish a visible failure notice', async () => {
+    const adapter = makeAdapter();
+    adapter.send
+      .mockResolvedValueOnce('message-1')
+      .mockRejectedValueOnce(new Error('chunk failed'))
+      .mockResolvedValueOnce('failure-message');
+    const presenter = new TelegramResponsePresenter(adapter, { maxLength: 5 });
+    await presenter.start();
+
+    await expect(presenter.finalize('123456789')).rejects.toThrow('chunk failed');
+    await presenter.fail('Response delivery stopped after a partial send.');
+
+    expect(adapter.edit).toHaveBeenCalledWith('message-1', '12345');
+    expect(adapter.send).toHaveBeenCalledWith('6789');
+    expect(
+      adapter.send.mock.calls
+        .slice(2)
+        .map(([text]) => text)
+        .join('')
+    ).toBe('Response delivery stopped after a partial send.');
   });
 
   it('sends all chunks normally when no placeholder exists', async () => {
@@ -128,7 +191,7 @@ describe('TelegramResponsePresenter', () => {
 
   it('deletes a stale placeholder and sends the final response when editing fails', async () => {
     const adapter = makeAdapter();
-    adapter.edit.mockRejectedValueOnce(new Error('edit failed'));
+    adapter.edit.mockRejectedValueOnce(new Error('Bad Request: message to edit not found'));
     const presenter = new TelegramResponsePresenter(adapter);
     await presenter.start();
 
@@ -136,6 +199,18 @@ describe('TelegramResponsePresenter', () => {
 
     expect(adapter.delete).toHaveBeenCalledWith('message-1');
     expect(adapter.send).toHaveBeenNthCalledWith(2, 'Final answer');
+  });
+
+  it('treats Telegram message-not-modified as a successful final edit', async () => {
+    const adapter = makeAdapter();
+    adapter.edit.mockRejectedValueOnce(new Error('Bad Request: message is not modified'));
+    const presenter = new TelegramResponsePresenter(adapter);
+    await presenter.start();
+
+    await presenter.finalize('Final answer');
+
+    expect(adapter.delete).not.toHaveBeenCalled();
+    expect(adapter.send).toHaveBeenCalledTimes(1);
   });
 
   it('turns empty final output into an explicit error', async () => {
@@ -211,5 +286,49 @@ describe('TelegramResponsePresenter', () => {
     expect(adapter.edit).toHaveBeenCalledWith('message-1', '12345');
     expect(adapter.send.mock.calls.map(([text]) => text)).toEqual(['⏳', 'abcde', 'XYZ']);
     expect(adapter.delete).not.toHaveBeenCalled();
+  });
+
+  it('persists each uncertain attempt and confirmed next chunk in order', async () => {
+    const adapter = makeAdapter();
+    const progress: Array<[number, boolean]> = [];
+    const presenter = new TelegramResponsePresenter(adapter, {
+      maxLength: 5,
+      onChunkProgress: async (nextIndex, uncertain) => {
+        progress.push([nextIndex, uncertain]);
+      },
+    });
+    await presenter.start();
+
+    await presenter.finalize('12345abcdeXYZ');
+
+    expect(progress).toEqual([
+      [0, true],
+      [1, false],
+      [1, true],
+      [2, false],
+      [2, true],
+      [3, false],
+    ]);
+  });
+
+  it('resumes a recovered response from the first unconfirmed chunk', async () => {
+    const adapter = makeAdapter();
+    const progress: Array<[number, boolean]> = [];
+    const presenter = new TelegramResponsePresenter(adapter, {
+      maxLength: 5,
+      resumeFromChunk: 2,
+      onChunkProgress: async (nextIndex, uncertain) => {
+        progress.push([nextIndex, uncertain]);
+      },
+    });
+
+    await presenter.finalize('12345abcdeXYZ');
+
+    expect(adapter.edit).not.toHaveBeenCalled();
+    expect(adapter.send.mock.calls.map(([text]) => text)).toEqual(['XYZ']);
+    expect(progress).toEqual([
+      [2, true],
+      [3, false],
+    ]);
   });
 });
