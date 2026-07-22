@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.3] / mama-core [1.9.0] / mama-os [0.27.3] - 2026-07-22
+
+### Fixed
+
+- **Owner-selected Drive delivery parity** — the verified `owner_console` can now resolve and
+  upload to the Drive folder explicitly selected for the active owner request, matching
+  Kagemusha's proven same-folder delivery behavior. Static envelope destinations and short-lived
+  capabilities continue to constrain non-owner and capability-bearing calls; uploads remain
+  restricted to files inside MAMA's private workspace.
+
+### Upgrade notes
+
+- This patch bumps only `@jungjaehoon/mama-os` to `0.27.3`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+
 ## [0.27.2] / mama-core [1.9.0] / mama-os [0.27.2] - 2026-07-22
 
 ### Fixed

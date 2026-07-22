@@ -1194,10 +1194,12 @@ User Code → QuickJS WASM Sandbox → Host Bridge → Gateway Tools (Tier 2)
 - `pr_review_threads` — PR data read
 
 Agent-bound Code-Act sessions may expose additional role-scoped functions such
-as the owner Drive tools. They do not widen authority: Drive reads require the
-enabled `drive` connector in the active Reactive envelope, and `drive_upload`
-also requires a write-capable tier plus a destination matching a non-ignored
-`folderId` or `driveId` in `~/.mama/connectors.json`. Drive-derived results are
+as the owner Drive tools. Only a verified `owner_console` receives that surface;
+wildcard non-owner roles remain structurally blocked. The owner may select a
+Drive folder for the active request without predeclaring it in
+`~/.mama/connectors.json`. If a configured-root destination capability is
+supplied, it is still validated. Upload sources remain restricted to regular
+files inside the private MAMA workspace, and Drive-derived results are
 re-wrapped as untrusted data after Code-Act evaluation so JavaScript transforms
 cannot remove the trust boundary.
 
