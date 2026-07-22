@@ -1,10 +1,13 @@
-import { mkdtemp, mkdir, readdir, stat } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { downloadTelegramMedia } from '../../src/gateways/telegram-media.js';
+import {
+  downloadTelegramMedia,
+  pruneTelegramMediaRoot,
+} from '../../src/gateways/telegram-media.js';
 
 const BOT_TOKEN = 'secret-bot-token';
 
@@ -17,6 +20,48 @@ function response(body: BodyInit, init?: ResponseInit): Response {
 }
 
 describe('TelegramMediaDownloader', () => {
+  it('removes expired retained documents and unsafe entries before later turns', async () => {
+    const mediaRoot = await tempMediaRoot();
+    const expired = join(mediaRoot, 'expired.pdf');
+    const fresh = join(mediaRoot, 'fresh.pdf');
+    const unsafe = join(mediaRoot, 'unsafe-link');
+    await writeFile(expired, 'old');
+    await writeFile(fresh, 'new');
+    await symlink(fresh, unsafe);
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    await utimes(expired, old, old);
+
+    await pruneTelegramMediaRoot(mediaRoot, {
+      nowMs: Date.now(),
+      ttlMs: 60 * 60_000,
+      maxTotalBytes: 1024,
+    });
+
+    expect((await readdir(mediaRoot)).sort()).toEqual(['fresh.pdf']);
+  });
+
+  it('enforces a cumulative retained-media quota by evicting oldest files first', async () => {
+    const mediaRoot = await tempMediaRoot();
+    const oldest = join(mediaRoot, 'oldest.bin');
+    const middle = join(mediaRoot, 'middle.bin');
+    const newest = join(mediaRoot, 'newest.bin');
+    await writeFile(oldest, '1111');
+    await writeFile(middle, '2222');
+    await writeFile(newest, '3333');
+    const now = Date.now();
+    await utimes(oldest, new Date(now - 3_000), new Date(now - 3_000));
+    await utimes(middle, new Date(now - 2_000), new Date(now - 2_000));
+    await utimes(newest, new Date(now - 1_000), new Date(now - 1_000));
+
+    await pruneTelegramMediaRoot(mediaRoot, {
+      nowMs: now,
+      ttlMs: 60_000,
+      maxTotalBytes: 8,
+    });
+
+    expect((await readdir(mediaRoot)).sort()).toEqual(['middle.bin', 'newest.bin']);
+  });
+
   it('downloads to a private directory without returning an authenticated URL', async () => {
     const mediaRoot = await tempMediaRoot();
     await mkdir(mediaRoot, { recursive: true, mode: 0o755 });

@@ -295,6 +295,197 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(gateway.sendMessage).toHaveBeenCalledWith('tg:OWN', 'safe');
   });
 
+  it('issues an envelope-bound capability for a discovered Drive child folder and rejects forgery', async () => {
+    const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
+    const driveTools = {
+      findFolder: vi.fn().mockResolvedValue({
+        folderId: 'folder-child',
+        path: 'project/output',
+        traversedFolderIds: ['drive-root', 'folder-project', 'folder-child'],
+      }),
+      upload: vi.fn().mockResolvedValue({ fileId: 'uploaded-1', name: 'translated.png' }),
+    };
+    (
+      executor as unknown as {
+        driveTools: typeof driveTools;
+      }
+    ).driveTools = driveTools;
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_drive_capability',
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['telegram', 'drive'],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [
+          { kind: 'telegram', id: 'tg:OWN' },
+          { kind: 'drive', id: 'folder-project' },
+        ],
+      },
+    });
+    const executionContext = {
+      agentId: 'worker',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool' as const,
+      agentContext: {
+        source: 'telegram',
+        platform: 'telegram' as const,
+        roleName: 'owner_console',
+        role: { allowedTools: ['drive_find_folder', 'drive_upload'] },
+        session: {
+          sessionId: 'session-drive-capability',
+          channelId: 'tg:OWN',
+          userId: 'owner',
+          startedAt: new Date(),
+        },
+        capabilities: [],
+        limitations: [],
+      },
+    };
+
+    const found = await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'project/output' } as GatewayToolInput,
+      executionContext
+    );
+    const capability = (found as { destinationCapability?: string }).destinationCapability;
+    expect(capability).toMatch(/^drivecap_/);
+
+    const uploaded = await executor.execute(
+      'drive_upload',
+      {
+        localPath: '/workspace/project-a/translated.png',
+        folderId: 'folder-child',
+        destinationCapability: capability,
+      } as GatewayToolInput,
+      executionContext
+    );
+    const forged = await executor.execute(
+      'drive_upload',
+      {
+        localPath: '/workspace/project-a/secret.png',
+        folderId: 'folder-child',
+        destinationCapability: `${capability}-forged`,
+      } as GatewayToolInput,
+      executionContext
+    );
+
+    expect(uploaded).toMatchObject({ success: true });
+    expect(driveTools.upload).toHaveBeenCalledTimes(1);
+    expect(forged).toMatchObject({ success: false, code: 'destination_capability_invalid' });
+  });
+
+  it('denies a resolved Drive folder that is not below a configured destination', async () => {
+    const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
+    const driveTools = {
+      findFolder: vi.fn().mockResolvedValue({
+        folderId: 'other-child',
+        path: 'other/child',
+        traversedFolderIds: ['drive-root', 'other-parent', 'other-child'],
+      }),
+    };
+    (executor as unknown as { driveTools: typeof driveTools }).driveTools = driveTools;
+    const envelope = makeEnvelope({
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['drive'],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [{ kind: 'drive', id: 'configured-folder' }],
+      },
+    });
+
+    const result = await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'other/child' } as GatewayToolInput,
+      {
+        agentId: 'owner_console',
+        source: 'telegram',
+        channelId: 'tg:OWN',
+        envelope,
+        executionSurface: 'model_tool',
+        agentContext: {
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'owner_console',
+          role: { allowedTools: ['drive_find_folder'] },
+          session: {
+            sessionId: 'session-drive-denied',
+            channelId: 'tg:OWN',
+            startedAt: new Date(),
+          },
+          capabilities: [],
+          limitations: [],
+        },
+      }
+    );
+
+    expect(result).toMatchObject({ success: false, code: 'destination_out_of_scope' });
+    expect(result).not.toHaveProperty('destinationCapability');
+  });
+
+  it('prunes expired Drive destination capabilities before issuing another one', async () => {
+    const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
+    const driveTools = {
+      findFolder: vi.fn().mockResolvedValue({
+        folderId: 'folder-child',
+        path: 'project/output',
+        traversedFolderIds: ['drive-root', 'folder-project', 'folder-child'],
+      }),
+    };
+    (executor as unknown as { driveTools: typeof driveTools }).driveTools = driveTools;
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_drive_capability_prune',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['drive'],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [{ kind: 'drive', id: 'folder-project' }],
+      },
+    });
+    const executionContext = {
+      agentId: 'owner_console',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool' as const,
+      agentContext: {
+        source: 'telegram',
+        platform: 'telegram' as const,
+        roleName: 'owner_console',
+        role: { allowedTools: ['drive_find_folder'] },
+        session: { sessionId: 'session-drive-prune', startedAt: new Date() },
+        capabilities: [],
+        limitations: [],
+      },
+    };
+
+    await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'project/output' } as GatewayToolInput,
+      executionContext
+    );
+    const capabilities = (
+      executor as unknown as {
+        driveDestinationCapabilities: Map<string, { expiresAt: number }>;
+      }
+    ).driveDestinationCapabilities;
+    expect(capabilities.size).toBe(1);
+    const first = capabilities.values().next().value;
+    if (!first) throw new Error('Expected the first Drive capability');
+    first.expiresAt = Date.now() - 1;
+
+    await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'project/output' } as GatewayToolInput,
+      executionContext
+    );
+
+    expect(capabilities.size).toBe(1);
+    expect([...capabilities.values()].every((record) => record.expiresAt > Date.now())).toBe(true);
+  });
+
   it('rejects mama_search requested scopes outside the envelope before calling MAMA API', async () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });

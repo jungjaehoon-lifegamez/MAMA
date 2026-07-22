@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdir, readFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
@@ -1338,7 +1338,182 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('Telegram output parity', () => {
+      it('sends image outputs as photos and falls back to documents when Telegram rejects the photo', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'mama-telegram-output-'));
+        const outputPath = join(workspace, 'translated.png');
+        await writeFile(outputPath, 'image-result');
+        const realOutputPath = realpathSync(outputPath);
+        const previousWorkspace = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const telegramGateway = {
+          sendMessage: vi.fn(),
+          sendFile: vi.fn().mockResolvedValue(undefined),
+          sendImage: vi.fn().mockRejectedValueOnce(new Error('PHOTO_INVALID_DIMENSIONS')),
+          sendSticker: vi.fn(),
+        };
+        executor.setTelegramGateway(telegramGateway);
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        });
+
+        const result = await executor.execute('telegram_send', {
+          chat_id: '7777',
+          file_path: outputPath,
+          message: 'Translated file',
+        });
+
+        expect(result).toEqual({ success: true });
+        expect(telegramGateway.sendImage).toHaveBeenCalledWith(
+          '7777',
+          realOutputPath,
+          'Translated file'
+        );
+        expect(telegramGateway.sendFile).toHaveBeenCalledWith(
+          '7777',
+          realOutputPath,
+          'Translated file'
+        );
+        if (previousWorkspace === undefined) {
+          delete process.env.MAMA_WORKSPACE;
+        } else {
+          process.env.MAMA_WORKSPACE = previousWorkspace;
+        }
+        await rm(workspace, { recursive: true, force: true });
+      });
+
+      it('does not duplicate an image as a document after an ambiguous Telegram network failure', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'mama-telegram-output-ambiguous-'));
+        const outputPath = join(workspace, 'translated.png');
+        await writeFile(outputPath, 'image-result');
+        const previousWorkspace = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const telegramGateway = {
+          sendMessage: vi.fn(),
+          sendFile: vi.fn(),
+          sendImage: vi.fn().mockRejectedValueOnce(new Error('ETIMEDOUT after upload')),
+          sendSticker: vi.fn(),
+        };
+        executor.setTelegramGateway(telegramGateway);
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'owner_console',
+          role: DEFAULT_ROLES.definitions.owner_console,
+        });
+
+        const result = await executor.execute('telegram_send', {
+          chat_id: '7777',
+          file_path: outputPath,
+        });
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringContaining('ETIMEDOUT'),
+        });
+        expect(telegramGateway.sendFile).not.toHaveBeenCalled();
+        if (previousWorkspace === undefined) delete process.env.MAMA_WORKSPACE;
+        else process.env.MAMA_WORKSPACE = previousWorkspace;
+        await rm(workspace, { recursive: true, force: true });
+      });
+
+      it('rejects outbound files outside the private MAMA workspace', async () => {
+        const workspace = await mkdtemp(join(tmpdir(), 'mama-telegram-output-root-'));
+        const outside = await mkdtemp(join(tmpdir(), 'mama-telegram-output-outside-'));
+        const outsidePath = join(outside, 'secret.png');
+        await writeFile(outsidePath, 'not-an-output');
+        const previousWorkspace = process.env.MAMA_WORKSPACE;
+        process.env.MAMA_WORKSPACE = workspace;
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        const telegramGateway = {
+          sendMessage: vi.fn(),
+          sendFile: vi.fn(),
+          sendImage: vi.fn(),
+          sendSticker: vi.fn(),
+        };
+        executor.setTelegramGateway(telegramGateway);
+        executor.setAgentContext({
+          ...createViewerContext(),
+          source: 'telegram',
+          platform: 'telegram',
+          roleName: 'owner_console',
+          role: { ...DEFAULT_ROLES.definitions.owner_console, allowedTools: ['telegram_send'] },
+        });
+
+        const result = await executor.execute('telegram_send', {
+          chat_id: '7777',
+          file_path: outsidePath,
+        });
+
+        expect(result).toMatchObject({
+          success: false,
+          error: expect.stringContaining('workspace'),
+        });
+        expect(telegramGateway.sendImage).not.toHaveBeenCalled();
+        expect(telegramGateway.sendFile).not.toHaveBeenCalled();
+        if (previousWorkspace === undefined) {
+          delete process.env.MAMA_WORKSPACE;
+        } else {
+          process.env.MAMA_WORKSPACE = previousWorkspace;
+        }
+        await rm(workspace, { recursive: true, force: true });
+        await rm(outside, { recursive: true, force: true });
+      });
+    });
+
     describe('Story GT-CODE-ACT: request-scoped sandbox tools', () => {
+      it('composes structured OCR output directly into the translation primitive', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        const bbox = [
+          [0, 0],
+          [10, 0],
+          [10, 10],
+          [0, 10],
+        ];
+        const translateConti = vi.fn().mockResolvedValue({
+          outputPath: '/private/workspace/page_KR.png',
+          translatedCount: 1,
+        });
+        (
+          executor as unknown as {
+            imageTranslationTools: {
+              ocrImage(): Promise<{ regions: Array<{ bbox: number[][]; text: string }> }>;
+              translateConti: typeof translateConti;
+            };
+          }
+        ).imageTranslationTools = {
+          ocrImage: async () => ({ regions: [{ bbox, text: 'こんにちは' }] }),
+          translateConti,
+        };
+
+        const result = await executor.execute('code_act', {
+          code: `
+            var ocr = ocr_image({ path: '/private/workspace/page.png' });
+            var translated = translate_conti({
+              imagePath: '/private/workspace/page.png',
+              ocrResults: ocr.regions,
+              translations: [{ original: ocr.regions[0].text, translated: 'Hello' }]
+            });
+            ({ text: ocr.regions[0].text, outputPath: translated.outputPath });
+          `,
+        });
+
+        expect(result.success).toBe(true);
+        expect(String(result.message)).toContain('こんにちは');
+        expect(String(result.message)).toContain('/private/workspace/page_KR.png');
+        expect(translateConti).toHaveBeenCalledWith(
+          expect.objectContaining({ ocrResults: [{ bbox, text: 'こんにちは' }] })
+        );
+      });
+
       describe('AC #1: request allowlists narrow injected Code-Act functions', () => {
         it('only exposes request-allowed gateway tools inside code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
@@ -1472,6 +1647,35 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
           expect(directChatResult).toMatchObject({
             success: false,
             error: expect.stringContaining('owner_console'),
+          });
+        });
+
+        it('does not advertise Drive inside a model turn that has no Drive-scoped envelope', async () => {
+          const executor = new GatewayToolExecutor({
+            mamaApi: createMockApi(),
+            envelopeIssuanceMode: 'off',
+          });
+          const context = {
+            ...createViewerContext(),
+            roleName: 'owner_console',
+            role: DEFAULT_ROLES.definitions.owner_console,
+          };
+
+          const result = await executor.execute(
+            'code_act',
+            { code: '({ browse: typeof drive_browse, upload: typeof drive_upload })' },
+            {
+              agentContext: context,
+              agentId: 'owner_console',
+              source: 'telegram',
+              channelId: '7777',
+              executionSurface: 'model_tool',
+            }
+          );
+
+          expect(JSON.parse(String(result.message)).value).toEqual({
+            browse: 'undefined',
+            upload: 'undefined',
           });
         });
 

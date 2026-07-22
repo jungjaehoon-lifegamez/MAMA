@@ -28,6 +28,14 @@ import { applyReview, type ReviewDecision } from './trigger-review.js';
 import { SituationReporter } from './situation-report.js';
 import type { ReportSchedule } from './report-scheduler.js';
 import type { BackendType } from '../agent/model-runner.js';
+import { randomUUID } from 'node:crypto';
+import type {
+  PendingReportDelivery,
+  PendingReportOccurrence,
+  PendingReportRequest,
+  PendingReportStore,
+} from './pending-report-store.js';
+import type { ReportMode } from './situation-report.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -95,6 +103,8 @@ export interface TriggerLoopDeps {
   fullReportBoardLines?: string[];
   /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
   persistLastFullReport?: (deliveredAtIso: string, text: string) => void;
+  /** Durable report accumulator written before connector cursors advance. */
+  pendingReportStore?: PendingReportStore;
   config: TriggerLoopConfig;
   log: (line: string) => void;
 }
@@ -117,6 +127,8 @@ export class OperatorTriggerLoop {
   private nudgeTimer: ReturnType<typeof setTimeout> | null = null;
   private digest: SituationReporter;
   private fullReporter: SituationReporter;
+  private pendingDelivery: PendingReportDelivery | undefined;
+  private pendingRequest: PendingReportRequest | undefined;
 
   constructor(deps: TriggerLoopDeps) {
     this.deps = deps;
@@ -153,6 +165,129 @@ export class OperatorTriggerLoop {
       recordTriggerUse,
       persistLastFullReport: deps.persistLastFullReport,
     });
+    const pending = deps.output ? deps.pendingReportStore?.load() : null;
+    if (pending) {
+      this.digest.restore(pending.digest);
+      this.fullReporter.restore(pending.full);
+      this.pendingDelivery = pending.delivery;
+      this.pendingRequest = pending.request;
+      deps.log('[trigger-loop] restored pending owner-report buffer');
+    }
+  }
+
+  private persistPendingReports(): void {
+    if (!this.deps.output) return;
+    this.deps.pendingReportStore?.save({
+      version: 1,
+      digest: this.digest.snapshot(),
+      full: this.fullReporter.snapshot(),
+      ...(this.pendingDelivery ? { delivery: this.pendingDelivery } : {}),
+      ...(this.pendingRequest ? { request: this.pendingRequest } : {}),
+    });
+  }
+
+  private reporterFor(mode: ReportMode): SituationReporter {
+    return mode === 'full' ? this.fullReporter : this.digest;
+  }
+
+  private deliveryIdFor(occurrence: PendingReportOccurrence): string {
+    if (occurrence.kind === 'scheduled_full' && occurrence.hourKey) {
+      return `operator-report:scheduled:${occurrence.hourKey}`;
+    }
+    return `operator-report:${occurrence.kind}:${randomUUID()}`;
+  }
+
+  private async deliverPendingReport(recovered: boolean): Promise<PendingReportDelivery | null> {
+    const pending = this.pendingDelivery;
+    const output = this.deps.output;
+    if (!pending || !output) {
+      return null;
+    }
+
+    await this.reporterFor(pending.mode).deliverPrepared(pending, output);
+    if (pending.mode === 'full' && this.deps.reportScheduler) {
+      if (pending.occurrence.hourKey) {
+        this.deps.reportScheduler.markFired(pending.occurrence.hourKey);
+      }
+      if (pending.occurrence.firedAtIso) {
+        this.deps.reportScheduler.markSuccess(pending.occurrence.firedAtIso);
+      }
+    }
+    this.pendingDelivery = undefined;
+    this.persistPendingReports();
+    if (recovered) {
+      this.deps.log(
+        `[trigger-loop] recovered pending ${pending.mode} owner report delivery=${pending.deliveryId}`
+      );
+    }
+    return pending;
+  }
+
+  private async prepareAndDeliverReport(
+    askAgent: AskAgent,
+    mode: ReportMode,
+    occurrence: PendingReportOccurrence
+  ): Promise<boolean> {
+    if (!this.deps.output) {
+      return false;
+    }
+    if (this.pendingDelivery) {
+      throw new Error('A pending owner report must be recovered before composing another report');
+    }
+    const deliveryId = this.deliveryIdFor(occurrence);
+    const prepared = await this.reporterFor(mode).prepareReport(askAgent, mode, deliveryId);
+    if (!prepared) {
+      this.persistPendingReports();
+      return false;
+    }
+    this.pendingDelivery = {
+      ...prepared,
+      deliveryId,
+      occurrence,
+    };
+    // Persist the exact owner-visible text and operation identity before the
+    // first external send. A restart replays this record, never a regeneration.
+    this.persistPendingReports();
+    await this.deliverPendingReport(false);
+    return true;
+  }
+
+  private async preparePendingRequest(): Promise<boolean> {
+    const request = this.pendingRequest;
+    if (!request || !this.deps.output) return false;
+    if (this.pendingDelivery) {
+      throw new Error('A pending owner report delivery must be recovered before its request');
+    }
+    const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
+    const prepared = await this.fullReporter.prepareReport(
+      reportAsk,
+      request.mode,
+      request.deliveryId
+    );
+    if (!prepared) {
+      this.pendingRequest = undefined;
+      this.persistPendingReports();
+      return false;
+    }
+    this.pendingDelivery = {
+      ...prepared,
+      deliveryId: request.deliveryId,
+      occurrence: request.occurrence,
+    };
+    this.pendingRequest = undefined;
+    this.persistPendingReports();
+    await this.deliverPendingReport(false);
+    return true;
+  }
+
+  private async recoverPendingReportWork(): Promise<void> {
+    await this.deliverPendingReport(true);
+    if (this.pendingRequest) {
+      const sent = await this.preparePendingRequest();
+      this.deps.log(
+        `[trigger-loop] recovered on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
+      );
+    }
   }
 
   async tick(): Promise<TickResult> {
@@ -162,15 +297,23 @@ export class OperatorTriggerLoop {
     this.tickCount += 1;
     const tick = this.tickCount;
 
+    // Outbox recovery is the first effect in a tick. It reuses the persisted
+    // delivery id, allowing Telegram's confirmed-chunk ledger to suppress a
+    // send that was accepted just before the prior daemon stopped.
+    await this.recoverPendingReportWork();
+
     // 1. Drain new deltas (commit AFTER processing - at-least-once).
     const events = delta.drainNew(config.drainLimit);
+    const reportEvents = output
+      ? events.filter((event) => !this.digest.hasRecordedEvent(event))
+      : events;
     if (events.length > 0) {
       log(`[trigger-loop] tick ${tick}: drained ${events.length} events`);
     }
 
     // 2. Match + fire + recordFire, folding fire activity into the report accumulators.
     let fires = 0;
-    for (const event of events) {
+    for (const event of reportEvents) {
       const signals = matchTriggers(event, registry);
       for (const signal of signals) {
         const result = await fireTrigger(signal, memory);
@@ -179,12 +322,14 @@ export class OperatorTriggerLoop {
           registry.recordFire(signal.triggerId);
         }
         // Carry the recalled {topic, content} (agent-authored memoryQuery drove it) into the report.
-        this.digest.recordFire({
-          triggerId: signal.triggerId ?? signal.detector,
-          kind: signal.kind,
-          channelId: signal.channelId,
-          recalled: result.recalled,
-        });
+        if (output) {
+          this.digest.recordFire({
+            triggerId: signal.triggerId ?? signal.detector,
+            kind: signal.kind,
+            channelId: signal.channelId,
+            recalled: result.recalled,
+          });
+        }
         if (fullLegOn) {
           this.fullReporter.recordFire({
             triggerId: signal.triggerId ?? signal.detector,
@@ -199,12 +344,29 @@ export class OperatorTriggerLoop {
         );
       }
     }
+    // Persist the report window BEFORE advancing the connector cursor. A daemon
+    // crash may repeat an event, but it cannot silently lose an owner update.
+    if (reportEvents.length > 0) {
+      if (output) {
+        this.digest.recordWindow(reportEvents);
+        if (fullLegOn) {
+          this.fullReporter.recordWindow(reportEvents);
+        }
+      }
+      this.recentEvents = [...this.recentEvents, ...reportEvents].slice(-config.authorWindowSize);
+      this.persistPendingReports();
+    }
     delta.commit(events);
 
     // M8: feed the board-reconcile leg AFTER commit (the loop's cursor is
     // authoritative; reconcile is a freshness layer repaired by the 30-min cron).
     if (this.deps.onChannelDelta && events.length > 0) {
       const byChannel = new Map<string, OperatorChannelEvent[]>();
+      // Report dedupe and board reconciliation have different durability
+      // boundaries. A report snapshot may already contain a replayed event,
+      // while the board callback did not run before the prior crash. Always
+      // replay committed connector rows into reconciliation; that layer owns
+      // its own bounded coalescing/idempotency.
       for (const event of events) {
         const key = `${event.channel}:${event.channelId}`;
         const bucket = byChannel.get(key) ?? [];
@@ -227,16 +389,6 @@ export class OperatorTriggerLoop {
       }
     }
 
-    // Feed the drained window into the report accumulators (bounded per-channel) and keep the
-    // author window. The digest reports on ALL channels seen, not only the ones that fired.
-    if (events.length > 0) {
-      this.digest.recordWindow(events);
-      if (fullLegOn) {
-        this.fullReporter.recordWindow(events);
-      }
-      this.recentEvents = [...this.recentEvents, ...events].slice(-config.authorWindowSize);
-    }
-
     // 3. Agent authors new triggers from the recent window.
     let authored = 0;
     if (tick % config.authorEveryNTicks === 0 && this.recentEvents.length > 0) {
@@ -245,10 +397,13 @@ export class OperatorTriggerLoop {
       });
       authored = created.length;
       if (authored > 0) {
-        this.digest.recordAuthored(authored);
+        if (output) {
+          this.digest.recordAuthored(authored);
+        }
         if (fullLegOn) {
           this.fullReporter.recordAuthored(authored);
         }
+        this.persistPendingReports();
       }
       log(`[trigger-loop] tick ${tick}: author pass created ${authored} trigger(s)`);
     }
@@ -272,7 +427,7 @@ export class OperatorTriggerLoop {
     const reportAsk = this.deps.reportAsk ?? askAgent;
     const reportEvery = config.reportEveryNTicks ?? 0;
     if (output && reportEvery > 0 && tick % reportEvery === 0 && this.digest.hasActivity()) {
-      reported = await this.digest.report(reportAsk, output, 'digest');
+      reported = await this.prepareAndDeliverReport(reportAsk, 'digest', { kind: 'digest' });
       log(`[trigger-loop] tick ${tick}: owner digest ${reported ? 'SENT' : 'suppressed by agent'}`);
     }
 
@@ -304,14 +459,11 @@ export class OperatorTriggerLoop {
           // leave a gap (messages arriving while the run executes fall after the gather
           // but before a completion-time anchor). Overlap is tolerable; gaps are not.
           const firedAtIso = new Date().toISOString();
-          fullReported = await this.fullReporter.report(reportAsk, output, 'full');
-          reportScheduler.markFired(hourKey); // reached only if report() did not throw (sent OR agent-suppressed)
-          if (fullReported) {
-            // ONLY a delivered report advances the delta anchor. A NOTHING-suppressed
-            // report or a Task-4 ENVELOPE_EXPIRED abort must NOT advance it, so the
-            // next report's window still covers everything this run missed.
-            reportScheduler.markSuccess(firedAtIso);
-          }
+          fullReported = await this.prepareAndDeliverReport(reportAsk, 'full', {
+            kind: 'scheduled_full',
+            hourKey,
+            firedAtIso,
+          });
           log(
             `[trigger-loop] tick ${tick}: full report ${fullReported ? 'SENT' : 'suppressed by agent'} (${hourKey})`
           );
@@ -351,22 +503,36 @@ export class OperatorTriggerLoop {
     if (!output) {
       return { accepted: false, reason: 'unavailable' };
     }
-    if (this.running) {
+    if (this.running || this.pendingDelivery || this.pendingRequest) {
       return { accepted: false, reason: 'busy' };
     }
-    this.running = true;
-    const reportAsk = this.deps.reportAsk ?? this.deps.askAgent;
     const firedAtIso = new Date().toISOString();
-    void this.fullReporter
-      .report(reportAsk, output, 'full')
+    const hourKey = reportScheduler?.shouldFire(new Date()).hourKey;
+    const occurrence: PendingReportOccurrence = {
+      kind: 'on_demand_full',
+      ...(hourKey ? { hourKey } : {}),
+      firedAtIso,
+    };
+    this.pendingRequest = {
+      mode: 'full',
+      deliveryId: this.deliveryIdFor(occurrence),
+      occurrence,
+      acceptedAtIso: firedAtIso,
+    };
+    try {
+      this.persistPendingReports();
+    } catch (error) {
+      this.pendingRequest = undefined;
+      this.deps.log(
+        `[trigger-loop] on-demand full report could not be accepted durably: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return { accepted: false, reason: 'unavailable' };
+    }
+    this.running = true;
+    void this.preparePendingRequest()
       .then((sent) => {
-        if (reportScheduler) {
-          const { hourKey } = reportScheduler.shouldFire(new Date());
-          reportScheduler.markFired(hourKey);
-          if (sent) {
-            reportScheduler.markSuccess(firedAtIso);
-          }
-        }
         this.deps.log(
           `[trigger-loop] on-demand full report ${sent ? 'SENT' : 'suppressed by agent'}`
         );
@@ -420,6 +586,20 @@ export class OperatorTriggerLoop {
    */
   start(): () => void {
     const { config, log } = this.deps;
+    if ((this.pendingDelivery || this.pendingRequest) && !this.running) {
+      this.running = true;
+      void this.recoverPendingReportWork()
+        .catch((error: unknown) => {
+          log(
+            `[trigger-loop] startup report recovery failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        })
+        .finally(() => {
+          this.running = false;
+        });
+    }
     const handle = setInterval(() => {
       if (this.running) {
         log('[trigger-loop] tick skipped: previous tick still running');

@@ -21,13 +21,22 @@ describe('Code-Act canonical tool policy', () => {
     const expectedInnerTools = owner.allowedTools.filter((tool) => tool !== 'code_act');
     const registryNames = HostBridge.getToolRegistry().map((tool) => tool.name);
     const policy = projectCodeActToolPolicy({
-      tier: 2,
+      tier: 1,
       roleName: 'owner_console',
       role: owner,
     });
 
     expect(registryNames).toEqual(expect.arrayContaining(expectedInnerTools));
     expect(policy.names).toEqual([...expectedInnerTools].sort());
+    expect(policy.names).toEqual(
+      expect.arrayContaining([
+        'telegram_send',
+        'ocr_image',
+        'create_fb_overlay',
+        'translate_conti',
+        'drive_translate_conti',
+      ])
+    );
   });
 
   it('expands role wildcards into sorted, deduplicated registry names', () => {
@@ -98,6 +107,48 @@ describe('Code-Act canonical tool policy', () => {
     expect(missingRole.names.some((name) => name.startsWith('drive_'))).toBe(false);
   });
 
+  it('does not advertise Drive functions when the active envelope has no Drive connector', () => {
+    const withoutDrive = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+      envelopeDestinationKinds: [],
+      envelopeRawConnectors: [],
+    });
+    const withDrive = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+      envelopeDestinationKinds: ['telegram', 'drive'],
+      envelopeRawConnectors: ['drive'],
+    });
+
+    expect(withoutDrive.names.some((name) => name.startsWith('drive_'))).toBe(false);
+    expect(withDrive.names).toContain('drive_browse');
+    expect(withDrive.names).toContain('drive_upload');
+  });
+
+  it('advertises Drive reads but not writes when the envelope has a read-only Drive connector', () => {
+    const policy = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+      envelopeDestinationKinds: ['telegram'],
+      envelopeRawConnectors: ['drive'],
+    });
+
+    expect(policy.names).toEqual(
+      expect.arrayContaining([
+        'drive_list_drives',
+        'drive_browse',
+        'drive_find_folder',
+        'drive_download',
+      ])
+    );
+    expect(policy.names).not.toContain('drive_upload');
+    expect(policy.names).not.toContain('drive_translate_conti');
+  });
+
   it('allows both model fields to narrow but never widen the role policy', () => {
     const policy = projectCodeActToolPolicy({
       tier: 1,
@@ -161,6 +212,8 @@ describe('Code-Act canonical tool policy', () => {
       runtimeDisallowedTools: ['mama_load_checkpoint'],
       requestedAllowedTools: ['Read', 'mama_search'],
       requestedBlockedTools: [],
+      envelopeDestinationKinds: null,
+      envelopeRawConnectors: null,
     });
     const search = fingerprint.tools.find((tool: { name: string }) => tool.name === 'mama_search');
     expect(search?.params).toContainEqual({

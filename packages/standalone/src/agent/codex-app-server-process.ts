@@ -76,6 +76,7 @@ interface PendingTurn {
   chunks: string[];
   usage: PromptResult['usage'];
   timer: NodeJS.Timeout;
+  requestTimeout: number;
   queuedNotifications: Array<{ method: string; params: unknown }>;
   queuedToolRequests: ServerToolRequest[];
   toolCallQueue: Promise<void>;
@@ -919,6 +920,7 @@ export class CodexAppServerProcess {
         chunks: [],
         usage: { input_tokens: 0, output_tokens: 0 },
         timer,
+        requestTimeout,
         queuedNotifications: [],
         queuedToolRequests: [],
         toolCallQueue: Promise.resolve(),
@@ -1163,6 +1165,7 @@ export class CodexAppServerProcess {
         return;
       }
       if (typeof data.delta === 'string') {
+        this.refreshTurnIdleTimeout(turn);
         turn.chunks.push(data.delta);
         try {
           turn.onDelta?.(data.delta);
@@ -1177,6 +1180,7 @@ export class CodexAppServerProcess {
         return;
       }
       const last = object(object(data.tokenUsage)?.last);
+      this.refreshTurnIdleTimeout(turn);
       turn.usage = {
         input_tokens: typeof last?.inputTokens === 'number' ? last.inputTokens : 0,
         output_tokens: typeof last?.outputTokens === 'number' ? last.outputTokens : 0,
@@ -1320,6 +1324,7 @@ export class CodexAppServerProcess {
         );
         return;
       }
+      this.refreshTurnIdleTimeout(turn);
       this.dispatchDynamicToolCall(request, turn, callId, tool, data.namespace, input);
     } catch (error: unknown) {
       this.failToolProtocol(request, turn, this.toError(error));
@@ -1431,6 +1436,7 @@ export class CodexAppServerProcess {
         }
         return;
       }
+      this.refreshTurnIdleTimeout(turn);
       this.reply(request.child, { jsonrpc: '2.0', id: request.id, result });
       if (abortError && !turn.stoppingCallIds.has(callId)) {
         turn.stoppingCallIds.add(callId);
@@ -1500,6 +1506,20 @@ export class CodexAppServerProcess {
     return error instanceof Error
       ? new Error(this.redact(error.message))
       : new Error(this.redact(String(error)));
+  }
+
+  private refreshTurnIdleTimeout(turn: PendingTurn): void {
+    if (this.turns.get(turn.threadId) !== turn) {
+      return;
+    }
+    clearTimeout(turn.timer);
+    turn.timer = setTimeout(() => {
+      const error = new Error(
+        `Codex app-server turn timed out after ${turn.requestTimeout}ms without progress`
+      );
+      this.timeoutTurn(turn.threadId, error, turn.requestTimeout);
+    }, turn.requestTimeout);
+    turn.timer.unref();
   }
 
   private failTurn(threadId: string, error: Error): void {

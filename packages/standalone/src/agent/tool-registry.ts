@@ -199,6 +199,30 @@ register({
   params: 'chat_id, message?, file_path?, sticker_emotion?',
 });
 register({
+  name: 'ocr_image',
+  description: 'Extract OCR regions from an image in the private MAMA workspace',
+  category: 'utility',
+  params: 'path, lang?',
+});
+register({
+  name: 'create_fb_overlay',
+  description: 'Create a Korean text overlay image from OCR bounding boxes',
+  category: 'utility',
+  params: 'imagePath, annotations, outputPath?',
+});
+register({
+  name: 'translate_conti',
+  description: 'Run the two-step OCR and translated-overlay workflow for a storyboard image',
+  category: 'utility',
+  params: 'imagePath, ocrResults?, translations?, outputPath?',
+});
+register({
+  name: 'drive_translate_conti',
+  description: 'Return optional guidance for composing the Drive image translation tools',
+  category: 'utility',
+  params: 'drivePath',
+});
+register({
   name: 'drive_list_drives',
   description: 'List Google shared drives available to the verified owner console',
   category: 'business_data',
@@ -225,7 +249,7 @@ register({
   name: 'drive_upload',
   description: 'Upload a private MAMA workspace file to Google Drive',
   category: 'business_data',
-  params: 'localPath, folderId, fileName?',
+  params: 'localPath, folderId, fileName?, destinationCapability?',
 });
 
 // Browser tools (Playwright)

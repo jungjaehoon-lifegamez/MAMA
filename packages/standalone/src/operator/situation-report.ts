@@ -16,6 +16,7 @@
  * in the owner's language if inferable. NO personal strings in this source.
  */
 import type { OperatorChannelEvent, OutputSink } from './operator-interfaces.js';
+import { createHash } from 'node:crypto';
 import type { AskAgent } from './trigger-author.js';
 import type { BackendType } from '../agent/model-runner.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
@@ -36,11 +37,22 @@ export interface FireActivity {
 
 export type ReportMode = 'digest' | 'full';
 
+export interface PreparedSituationReport {
+  mode: ReportMode;
+  text: string;
+  citedTriggerIds: string[];
+  createdAtIso: string;
+  deliveryId?: string;
+}
+
 /** Deterministic prompt-size bounds (mind memory + prompt length; see plan design decision 4). */
 const MAX_EXCERPTS_PER_CHANNEL = 5;
 const MAX_EXCERPT_CHARS = 160;
 const MAX_CHANNELS_IN_PROMPT = 12;
+const MAX_CHANNELS_IN_SNAPSHOT = MAX_CHANNELS_IN_PROMPT * 4;
 const MAX_RECALLED = 20;
+const MAX_FIRES_IN_SNAPSHOT = 100;
+const MAX_SEEN_EVENT_KEYS = 10_000;
 
 interface ChannelWindow {
   count: number;
@@ -53,6 +65,22 @@ interface FireAgg {
   channelId: string;
   count: number;
   topics: Set<string>;
+}
+
+export interface SituationReporterSnapshot {
+  version: 1;
+  channels: Array<{ channelId: string; count: number; excerpts: string[] }>;
+  windowTotal: number;
+  fires: Array<{
+    triggerId: string;
+    kind: string;
+    channelId: string;
+    count: number;
+    topics: string[];
+  }>;
+  authored: number;
+  recalled: Array<{ topic: string; content: string }>;
+  eventKeys?: string[];
 }
 
 export interface SituationReporterOptions {
@@ -103,6 +131,7 @@ export class SituationReporter {
   private fireAgg = new Map<string, FireAgg>();
   private authored = 0;
   private recalled = new Map<string, string>(); // topic -> content (deduped, bounded)
+  private eventKeys = new Set<string>();
   private opts: SituationReporterOptions;
 
   constructor(opts: SituationReporterOptions = {}) {
@@ -112,6 +141,13 @@ export class SituationReporter {
   /** Fold a batch of drained events into the bounded per-channel window. */
   recordWindow(events: OperatorChannelEvent[]): void {
     for (const e of events) {
+      const eventKey = this.eventKey(e);
+      if (this.eventKeys.has(eventKey)) continue;
+      this.eventKeys.add(eventKey);
+      if (this.eventKeys.size > MAX_SEEN_EVENT_KEYS) {
+        const oldest = this.eventKeys.values().next().value;
+        if (oldest) this.eventKeys.delete(oldest);
+      }
       const w = this.windowByChannel.get(e.channelId) ?? { count: 0, excerpts: [] };
       w.count += 1;
       const text = e.content.trim();
@@ -124,6 +160,20 @@ export class SituationReporter {
       this.windowByChannel.set(e.channelId, w);
       this.windowTotal += 1;
     }
+  }
+
+  hasRecordedEvent(event: OperatorChannelEvent): boolean {
+    return (
+      this.eventKeys.has(this.eventKey(event)) || this.eventKeys.has(this.legacyEventKey(event))
+    );
+  }
+
+  private eventKey(event: OperatorChannelEvent): string {
+    return createHash('sha256').update(this.legacyEventKey(event)).digest('hex');
+  }
+
+  private legacyEventKey(event: OperatorChannelEvent): string {
+    return `${event.channel}:${event.channelId}:${event.eventIndexId ?? event.id}`;
   }
 
   /** Fold one fire into the aggregate; merge the memory it recalled (agent-query-driven). */
@@ -155,23 +205,90 @@ export class SituationReporter {
     return this.windowTotal > 0 || this.fireAgg.size > 0 || this.authored > 0;
   }
 
+  snapshot(): SituationReporterSnapshot {
+    return {
+      version: 1,
+      channels: [...this.windowByChannel.entries()]
+        .sort((a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]))
+        .slice(0, MAX_CHANNELS_IN_SNAPSHOT)
+        .map(([channelId, window]) => ({
+          channelId: channelId.slice(0, 512),
+          count: window.count,
+          excerpts: window.excerpts.map((excerpt) => excerpt.slice(0, MAX_EXCERPT_CHARS)),
+        })),
+      windowTotal: this.windowTotal,
+      fires: [...this.fireAgg.values()]
+        .sort(
+          (a, b) =>
+            b.count - a.count ||
+            a.triggerId.localeCompare(b.triggerId) ||
+            a.channelId.localeCompare(b.channelId)
+        )
+        .slice(0, MAX_FIRES_IN_SNAPSHOT)
+        .map((fire) => ({
+          triggerId: fire.triggerId.slice(0, 512),
+          kind: fire.kind.slice(0, 512),
+          channelId: fire.channelId.slice(0, 512),
+          count: fire.count,
+          topics: [...fire.topics].slice(-MAX_RECALLED).map((topic) => topic.slice(0, 512)),
+        })),
+      authored: this.authored,
+      recalled: [...this.recalled.entries()].map(([topic, content]) => ({
+        topic: topic.slice(0, 512),
+        content: content.slice(0, MAX_EXCERPT_CHARS),
+      })),
+      eventKeys: [...this.eventKeys].map((key) => key.slice(0, 1_024)),
+    };
+  }
+
+  restore(snapshot: SituationReporterSnapshot): void {
+    if (snapshot.version !== 1) {
+      throw new Error('Unsupported situation reporter snapshot version');
+    }
+    this.reset();
+    for (const channel of snapshot.channels.slice(0, MAX_CHANNELS_IN_SNAPSHOT)) {
+      this.windowByChannel.set(channel.channelId, {
+        count: Math.max(0, channel.count),
+        excerpts: channel.excerpts.slice(-MAX_EXCERPTS_PER_CHANNEL),
+      });
+    }
+    this.windowTotal = Math.max(0, snapshot.windowTotal);
+    for (const fire of snapshot.fires.slice(0, MAX_FIRES_IN_SNAPSHOT)) {
+      this.fireAgg.set(`${fire.triggerId}|${fire.channelId}`, {
+        triggerId: fire.triggerId,
+        kind: fire.kind,
+        channelId: fire.channelId,
+        count: Math.max(0, fire.count),
+        topics: new Set(fire.topics.slice(0, MAX_RECALLED)),
+      });
+    }
+    this.authored = Math.max(0, snapshot.authored);
+    for (const item of snapshot.recalled.slice(0, MAX_RECALLED)) {
+      this.recalled.set(item.topic, item.content.slice(0, MAX_EXCERPT_CHARS));
+    }
+    this.eventKeys = new Set((snapshot.eventKeys ?? []).slice(-MAX_SEEN_EVENT_KEYS));
+  }
+
   /**
    * Agent composes the report from the aggregate; sink delivers it. Returns true if a report was
    * sent, false if there was nothing to say or the agent suppressed it (NOTHING).
    */
-  async report(
+  async prepareReport(
     askAgent: AskAgent,
-    output: Pick<OutputSink, 'send'>,
-    mode: ReportMode
-  ): Promise<boolean> {
+    mode: ReportMode,
+    deliveryId?: string
+  ): Promise<PreparedSituationReport | null> {
     // M2.1: the scheduled FULL report is a duty report - it composes even on an empty window
     // (the owner relies on it arriving; a quiet window is itself the news). Digests stay gated.
-    if (mode !== 'full' && !this.hasActivity()) return false;
+    if (mode !== 'full' && !this.hasActivity()) return null;
 
     const raw = (await askAgent(this.buildPrompt(mode))).trim();
     if (raw === '' || /^NOTHING\b/i.test(raw)) {
+      if (mode === 'full') {
+        throw new Error('Full owner report returned no content');
+      }
       this.reset(); // agent judged nothing worth reporting - drop the buffer quietly
-      return false;
+      return null;
     }
 
     // Parse + strip the USED_TRIGGERS machine trailer (the owner never sees it)
@@ -191,23 +308,47 @@ export class SituationReporter {
       ];
     }
     if (text === '') {
+      if (mode === 'full') {
+        throw new Error('Full owner report returned no content');
+      }
       this.reset(); // trailer-only reply: nothing was delivered, so no credit either
-      return false;
+      return null;
     }
 
-    await output.send(text); // throws loudly on failure; buffer kept for retry (no-fallback)
+    return {
+      mode,
+      text,
+      citedTriggerIds: cited,
+      createdAtIso: new Date().toISOString(),
+      ...(deliveryId ? { deliveryId } : {}),
+    };
+  }
+
+  async deliverPrepared(
+    prepared: PreparedSituationReport,
+    output: Pick<OutputSink, 'send'>
+  ): Promise<void> {
+    if (prepared.mode !== 'digest' && prepared.mode !== 'full') {
+      throw new Error('Unsupported prepared report mode');
+    }
+
+    if (prepared.deliveryId) {
+      await output.send(prepared.text, prepared.deliveryId);
+    } else {
+      await output.send(prepared.text);
+    }
     // Credit only AFTER a successful send: success means "cited in a DELIVERED
     // report". Crediting before send would double-count on the retry path
     // (send throws -> buffer kept -> next cadence re-cites the same fires).
-    if (cited.length > 0) {
-      this.opts.recordTriggerUse?.(cited);
+    if (prepared.citedTriggerIds.length > 0) {
+      this.opts.recordTriggerUse?.(prepared.citedTriggerIds);
     }
     // Context carry (plan v6 S1-T4): persist the DELIVERED full report so the
     // chat console can reference "the report you just got" instead of
     // fabricating one. Same success condition as the delta anchor.
-    if (mode === 'full') {
+    if (prepared.mode === 'full') {
       try {
-        this.opts.persistLastFullReport?.(new Date().toISOString(), text);
+        this.opts.persistLastFullReport?.(new Date().toISOString(), prepared.text);
       } catch (error) {
         // Carry is derived state - persistence failure must not fail the
         // delivered report, but it must be loud.
@@ -219,6 +360,18 @@ export class SituationReporter {
       }
     }
     this.reset();
+  }
+
+  async report(
+    askAgent: AskAgent,
+    output: Pick<OutputSink, 'send'>,
+    mode: ReportMode
+  ): Promise<boolean> {
+    const prepared = await this.prepareReport(askAgent, mode);
+    if (!prepared) {
+      return false;
+    }
+    await this.deliverPrepared(prepared, output);
     return true;
   }
 
@@ -228,6 +381,7 @@ export class SituationReporter {
     this.fireAgg.clear();
     this.authored = 0;
     this.recalled.clear();
+    this.eventKeys.clear();
   }
 
   /** Public for testability. Aggregate window + fire activity + recalled memory -> agent prompt. */

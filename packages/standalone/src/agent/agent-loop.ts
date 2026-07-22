@@ -752,6 +752,10 @@ export class AgentLoop {
           roleName: options.agentContext?.roleName,
           role: options.agentContext?.role,
           disallowedTools: this.disallowedTools,
+          envelopeDestinationKinds:
+            options.envelope?.scope.allowed_destinations.map((destination) => destination.kind) ??
+            [],
+          envelopeRawConnectors: options.envelope?.scope.raw_connectors ?? [],
         });
         const typeDefs = TypeDefinitionGenerator.generate(policy);
         const codeActPrompt = wrapGeneratedPromptSection(
@@ -1220,6 +1224,10 @@ export class AgentLoop {
           roleName: options?.agentContext?.roleName,
           role: options?.agentContext?.role,
           disallowedTools: this.disallowedTools,
+          envelopeDestinationKinds:
+            options?.envelope?.scope.allowed_destinations.map((destination) => destination.kind) ??
+            [],
+          envelopeRawConnectors: options?.envelope?.scope.raw_connectors ?? [],
         })
       : undefined;
     const outerCodeActAllowed =

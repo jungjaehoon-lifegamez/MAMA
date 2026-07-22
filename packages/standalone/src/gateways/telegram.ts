@@ -11,8 +11,10 @@
  */
 
 import { readFile, unlink } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import { Bot } from 'grammy';
 import type { Context } from 'grammy';
@@ -22,13 +24,45 @@ import type { MessageRouter, ProcessingResult } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { buildContentBlocks, detectImageType } from './attachment-utils.js';
-import { downloadTelegramMedia, type TelegramMediaDownloadRequest } from './telegram-media.js';
-import { TelegramResponsePresenter } from './telegram-response-presenter.js';
+import {
+  downloadTelegramMedia,
+  pruneTelegramMediaRoot,
+  type TelegramMediaDownloadRequest,
+} from './telegram-media.js';
+import { splitTelegramMessage, TelegramResponsePresenter } from './telegram-response-presenter.js';
+import { TelegramMessageLedger } from './telegram-message-ledger.js';
 
 const TELEGRAM_MAX_LENGTH = 4096;
 const MESSAGE_DEDUP_TTL_MS = 60_000;
 const REJECTED_CHAT_WARN_INTERVAL_MS = 60_000;
 const TYPING_INTERVAL_MS = 4_000;
+
+function parseOutboundChunkProgress(value: string): { nextIndex: number; uncertain: boolean } {
+  const parsed: unknown = JSON.parse(value);
+  if (!parsed || typeof parsed !== 'object') throw new Error('Invalid Telegram outbound progress');
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    !Number.isSafeInteger(record.nextIndex) ||
+    (record.nextIndex as number) < 0 ||
+    typeof record.uncertain !== 'boolean'
+  ) {
+    throw new Error('Invalid Telegram outbound progress');
+  }
+  return { nextIndex: record.nextIndex as number, uncertain: record.uncertain };
+}
+
+function isDefiniteTelegramApiRejection(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const record = error as Record<string, unknown>;
+  if (Number.isSafeInteger(record.error_code)) return true;
+  const response = record.response;
+  return (
+    Boolean(response) &&
+    typeof response === 'object' &&
+    Number.isSafeInteger((response as Record<string, unknown>).error_code)
+  );
+}
 
 const EMOTION_EMOJI: Record<string, string[]> = {
   happy: ['😊', '😀', '😄', '🙂'],
@@ -78,6 +112,8 @@ export interface TelegramGatewayOptions {
   mediaRoot?: string;
   /** Internal test seam for the external Telegram file request. */
   fetchImpl?: TelegramMediaDownloadRequest['fetchImpl'];
+  /** Internal test/operations seam for restart-safe completed-message deduplication. */
+  messageLedgerPath?: string;
 }
 
 /**
@@ -95,6 +131,9 @@ export class TelegramGateway extends BaseGateway {
   private lastMessageAt: number | undefined;
   private readonly mediaRoot: string;
   private readonly fetchImpl?: TelegramMediaDownloadRequest['fetchImpl'];
+  private readonly messageLedger: TelegramMessageLedger;
+  private readonly chatTails = new Map<string, Promise<void>>();
+  private readonly activeChat = new AsyncLocalStorage<string>();
 
   // Telegram update dedup
   private recentMessageIds = new Map<string, number>();
@@ -120,8 +159,20 @@ export class TelegramGateway extends BaseGateway {
       allowedChats: options.config?.allowedChats || [],
     };
     this.mediaRoot =
-      options.mediaRoot ?? join(homedir(), '.mama', 'workspace', 'media', 'inbound', 'telegram');
+      options.mediaRoot ??
+      join(
+        process.env.MAMA_WORKSPACE || join(homedir(), '.mama', 'workspace'),
+        'media',
+        'inbound',
+        'telegram'
+      );
     this.fetchImpl = options.fetchImpl;
+    this.messageLedger = new TelegramMessageLedger(
+      options.messageLedgerPath ??
+        process.env.MAMA_TELEGRAM_MESSAGE_LEDGER_PATH ??
+        `${this.mediaRoot}.processed-message-ids.json`,
+      { log: (line) => console.error(line) }
+    );
   }
 
   async start(): Promise<void> {
@@ -146,6 +197,9 @@ export class TelegramGateway extends BaseGateway {
             timestamp: new Date(),
             data: { error: error instanceof Error ? error.message : String(error) },
           });
+          // Let grammY treat the update as failed. The durable message ledger
+          // prevents unsafe turn re-execution and replays a ready outbox response.
+          throw error;
         }
       });
 
@@ -158,6 +212,8 @@ export class TelegramGateway extends BaseGateway {
       this.botId = this.bot.botInfo.id;
       this.botUsername = this.bot.botInfo.username || '';
       console.log(`Telegram bot logged in as @${this.botUsername}`);
+
+      await this.recoverPendingInboundDeliveries();
 
       if (this.config.allowedChats && this.config.allowedChats.length > 0) {
         console.log(
@@ -174,6 +230,8 @@ export class TelegramGateway extends BaseGateway {
       this.connected = true;
       this.lastError = null;
 
+      await pruneTelegramMediaRoot(this.mediaRoot);
+
       // Periodic dedup cleanup
       this.dedupCleanupTimer = setInterval(() => {
         const now = Date.now();
@@ -185,6 +243,20 @@ export class TelegramGateway extends BaseGateway {
             this.rejectedChatWarnAt.delete(key);
           }
         }
+        void pruneTelegramMediaRoot(this.mediaRoot).catch((error: unknown) => {
+          console.error(
+            `[Telegram] media retention cleanup failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        });
+        void this.recoverPendingInboundDeliveries().catch((error: unknown) => {
+          console.error(
+            `[Telegram] pending response recovery failed: ${
+              error instanceof Error ? error.message : String(error)
+            }`
+          );
+        });
       }, 60_000);
 
       this.emitEvent({
@@ -236,6 +308,34 @@ export class TelegramGateway extends BaseGateway {
   }
 
   private async handleMessage(msg: NonNullable<Context['message']>): Promise<void> {
+    const chatKey = String(msg.chat?.id ?? 'unknown');
+    await this.runInChatQueue(chatKey, () => this.processMessage(msg));
+  }
+
+  private async runInChatQueue<T>(
+    chatKey: string,
+    work: () => Promise<T>,
+    allowReentrant = false
+  ): Promise<T> {
+    if (allowReentrant && this.activeChat.getStore() === chatKey) return work();
+    const previous = this.chatTails.get(chatKey);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const currentTail = (previous ?? Promise.resolve()).catch(() => {}).then(() => gate);
+    this.chatTails.set(chatKey, currentTail);
+
+    try {
+      if (previous) await previous.catch(() => {});
+      return await this.activeChat.run(chatKey, work);
+    } finally {
+      release();
+      if (this.chatTails.get(chatKey) === currentTail) this.chatTails.delete(chatKey);
+    }
+  }
+
+  private async processMessage(msg: NonNullable<Context['message']>): Promise<void> {
     if (!msg.from || !msg.chat) return;
 
     const now = Date.now();
@@ -243,6 +343,7 @@ export class TelegramGateway extends BaseGateway {
     // Telegram update dedup (60s TTL). Do not deduplicate by text content:
     // repeated short replies and emoji are distinct conversation turns.
     const messageKey = `${msg.chat.id}:${msg.message_id}`;
+    if (this.messageLedger.get(messageKey)?.state === 'delivered') return;
     if (this.recentMessageIds.has(messageKey)) return;
     this.recentMessageIds.set(messageKey, now);
 
@@ -311,21 +412,40 @@ export class TelegramGateway extends BaseGateway {
     // happen first so caption provenance follows the same trust boundary.
     const isForwarded = Boolean(msg.forward_origin);
 
+    const durableEntry = this.messageLedger.get(messageKey);
     const numChatId = msg.chat.id;
     const api = this.bot!.api;
-    const presenter = new TelegramResponsePresenter({
-      send: async (content) => {
-        const sent = await api.sendMessage(numChatId, content);
-        return String(sent.message_id);
-      },
-      edit: async (handle, content) => {
-        await api.editMessageText(numChatId, Number(handle), content);
-      },
-      delete: async (handle) => {
-        await api.deleteMessage(numChatId, Number(handle));
-      },
-    });
-    await presenter.start();
+    const presenter = this.createResponsePresenter(
+      numChatId,
+      messageKey,
+      durableEntry?.nextChunkIndex ?? 0
+    );
+    if (durableEntry?.state !== 'ready') await presenter.start();
+    if (durableEntry?.state === 'ready' && durableEntry.response !== undefined) {
+      try {
+        await presenter.finalize(durableEntry.response);
+        this.messageLedger.markDelivered(messageKey);
+      } catch (error) {
+        this.recentMessageIds.delete(messageKey);
+        throw error;
+      }
+      return;
+    }
+    if (durableEntry?.state === 'processing') {
+      const interruptedNotice =
+        'The previous processing attempt was interrupted. It was not rerun because its external ' +
+        'side effects could not be proven safe to repeat. Please send a new message if you want ' +
+        'to retry it.';
+      this.messageLedger.markReady(messageKey, interruptedNotice);
+      try {
+        await presenter.finalize(interruptedNotice);
+        this.messageLedger.markDelivered(messageKey);
+      } catch (error) {
+        this.recentMessageIds.delete(messageKey);
+        throw error;
+      }
+      return;
+    }
 
     const attachments: MessageAttachment[] = [];
     const contentBlocks: ContentBlock[] = [];
@@ -367,7 +487,9 @@ export class TelegramGateway extends BaseGateway {
         for (const block of imageBlocks) {
           contentBlocks.push({ type: 'image', source: block.source });
         }
-        delete attachment.localPath;
+        // Keep the private local path for bounded OCR/overlay follow-ups. The
+        // media retention sweeper removes it after the configured TTL/quota.
+        transientMediaPath = undefined;
         if (!text.trim()) {
           text = '[Image]';
         }
@@ -412,6 +534,7 @@ export class TelegramGateway extends BaseGateway {
           if (!text.trim()) {
             text = `[Image: ${downloaded.filename}]`;
           }
+          transientMediaPath = undefined;
         } else {
           contentBlocks.push({
             type: 'text',
@@ -420,8 +543,10 @@ export class TelegramGateway extends BaseGateway {
           if (!text.trim()) {
             text = `[File: ${downloaded.filename}]`;
           }
+          // Documents remain in the private inbound workspace so the routed
+          // turn and a bounded follow-up can read the actual attachment.
+          transientMediaPath = undefined;
         }
-        delete attachment.localPath;
       }
     } catch {
       await presenter.fail(
@@ -480,60 +605,304 @@ export class TelegramGateway extends BaseGateway {
     sendTyping();
     const typingInterval = setInterval(sendTyping, TYPING_INTERVAL_MS);
 
-    // Process through message router
-    let result: ProcessingResult;
     try {
-      result = await this.messageRouter.process(normalizedMessage, {
-        onStream: presenter.callbacks(),
+      // Process through message router
+      let result: ProcessingResult;
+      this.messageLedger.claim(messageKey);
+      try {
+        result = await this.messageRouter.process(normalizedMessage, {
+          onStream: presenter.callbacks(),
+          onQueued: () => presenter.markQueued(),
+        });
+      } catch (error) {
+        const failureNotice = 'An error occurred while processing the message.';
+        this.messageLedger.markReady(messageKey, failureNotice);
+        try {
+          await presenter.fail(failureNotice);
+          this.messageLedger.markDelivered(messageKey);
+        } catch {
+          this.recentMessageIds.delete(messageKey);
+        }
+        throw error;
+      }
+
+      this.messageLedger.markReady(messageKey, result.response);
+      try {
+        await presenter.finalize(result.response);
+        this.messageLedger.markDelivered(messageKey);
+      } catch (error) {
+        this.recentMessageIds.delete(messageKey);
+        throw error;
+      }
+
+      this.lastMessageAt = Date.now();
+
+      memoryLogger.logMessage('Telegram', 'MAMA', result.response, true);
+
+      this.emitEvent({
+        type: 'message_sent',
+        source: 'telegram',
+        timestamp: new Date(),
+        data: {
+          chatId,
+          responseLength: result.response.length,
+          duration: result.duration,
+        },
       });
-      await presenter.finalize(result.response);
-    } catch (error) {
-      await presenter.fail('An error occurred while processing the message.');
-      throw error;
     } finally {
       clearInterval(typingInterval);
     }
-
-    this.lastMessageAt = Date.now();
-
-    memoryLogger.logMessage('Telegram', 'MAMA', result.response, true);
-
-    this.emitEvent({
-      type: 'message_sent',
-      source: 'telegram',
-      timestamp: new Date(),
-      data: {
-        chatId,
-        responseLength: result.response.length,
-        duration: result.duration,
-      },
-    });
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
+  async sendMessage(chatId: string, text: string, idempotencyKey?: string): Promise<void> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
     if (!text.trim()) return;
-    const chunks = this.splitMessage(text, TELEGRAM_MAX_LENGTH);
+    await this.runInChatQueue(chatId, () => this.sendMessageNow(chatId, text, idempotencyKey));
+  }
+
+  async sendMessageFromActiveTurn(
+    chatId: string,
+    text: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    if (!text.trim()) return;
+    await this.runInChatQueue(
+      chatId,
+      () => this.sendMessageNow(chatId, text, idempotencyKey),
+      true
+    );
+  }
+
+  private async sendMessageNow(
+    chatId: string,
+    text: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    const bot = this.bot;
+    if (!bot) throw new Error('Telegram gateway not connected');
+    const chunks = splitTelegramMessage(text, TELEGRAM_MAX_LENGTH);
     const numChatId = Number(chatId);
-    for (const chunk of chunks) {
-      await this.bot.api.sendMessage(numChatId, chunk);
+    if (!idempotencyKey) {
+      for (const chunk of chunks) await bot.api.sendMessage(numChatId, chunk);
+      return;
+    }
+
+    const ledgerKey = this.outboundLedgerKey(idempotencyKey, 'text');
+    const existing = this.messageLedger.get(ledgerKey);
+    if (existing?.state === 'delivered') return;
+    if (!existing) this.messageLedger.claim(ledgerKey);
+
+    let nextIndex = 0;
+    if (existing?.state === 'ready' && existing.response) {
+      const progress = parseOutboundChunkProgress(existing.response);
+      nextIndex = progress.nextIndex;
+      if (progress.uncertain) {
+        console.warn(
+          `[Telegram] Retrying delivery ${ledgerKey} from chunk ${nextIndex} after an ` +
+            'ambiguous prior acceptance; at-least-once delivery may duplicate that chunk'
+        );
+      }
+    }
+    for (let index = nextIndex; index < chunks.length; index += 1) {
+      this.messageLedger.markReady(
+        ledgerKey,
+        JSON.stringify({ version: 1, nextIndex: index, uncertain: true })
+      );
+      try {
+        await bot.api.sendMessage(numChatId, chunks[index]);
+      } catch (error) {
+        if (isDefiniteTelegramApiRejection(error)) {
+          this.messageLedger.markReady(
+            ledgerKey,
+            JSON.stringify({ version: 1, nextIndex: index, uncertain: false })
+          );
+        }
+        throw error;
+      }
+      this.messageLedger.markReady(
+        ledgerKey,
+        JSON.stringify({ version: 1, nextIndex: index + 1, uncertain: false })
+      );
+    }
+    this.messageLedger.markDelivered(ledgerKey);
+  }
+
+  async sendFile(
+    chatId: string,
+    filePath: string,
+    caption?: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    const { InputFile } = await import('grammy');
+    await this.runInChatQueue(chatId, () =>
+      this.sendOutboundOnce(idempotencyKey, 'file', () =>
+        this.bot!.api.sendDocument(Number(chatId), new InputFile(filePath), { caption }).then(
+          () => {}
+        )
+      )
+    );
+  }
+
+  async sendFileFromActiveTurn(
+    chatId: string,
+    filePath: string,
+    caption?: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    const { InputFile } = await import('grammy');
+    await this.runInChatQueue(
+      chatId,
+      () =>
+        this.sendOutboundOnce(idempotencyKey, 'file', () =>
+          this.bot!.api.sendDocument(Number(chatId), new InputFile(filePath), { caption }).then(
+            () => {}
+          )
+        ),
+      true
+    );
+  }
+
+  async sendImage(
+    chatId: string,
+    imagePath: string,
+    caption?: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    const { InputFile } = await import('grammy');
+    await this.runInChatQueue(chatId, () =>
+      this.sendOutboundOnce(idempotencyKey, 'image', () =>
+        this.bot!.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption }).then(
+          () => {}
+        )
+      )
+    );
+  }
+
+  async sendImageFromActiveTurn(
+    chatId: string,
+    imagePath: string,
+    caption?: string,
+    idempotencyKey?: string
+  ): Promise<void> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    const { InputFile } = await import('grammy');
+    await this.runInChatQueue(
+      chatId,
+      () =>
+        this.sendOutboundOnce(idempotencyKey, 'image', () =>
+          this.bot!.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption }).then(
+            () => {}
+          )
+        ),
+      true
+    );
+  }
+
+  private async sendOutboundOnce(
+    idempotencyKey: string | undefined,
+    kind: string,
+    send: () => Promise<void>
+  ): Promise<void> {
+    if (!idempotencyKey) {
+      await send();
+      return;
+    }
+    const ledgerKey = this.outboundLedgerKey(idempotencyKey, kind);
+    const existing = this.messageLedger.get(ledgerKey);
+    if (existing?.state === 'delivered') return;
+    if (!existing) this.messageLedger.claim(ledgerKey);
+    await send();
+    this.messageLedger.markDelivered(ledgerKey);
+  }
+
+  private async recoverPendingInboundDeliveries(): Promise<void> {
+    for (const snapshot of this.messageLedger.listUndelivered()) {
+      if (snapshot.key.startsWith('outbound:')) continue;
+      const separator = snapshot.key.lastIndexOf(':');
+      if (separator <= 0) continue;
+      const chatId = snapshot.key.slice(0, separator);
+      await this.runInChatQueue(chatId, async () => {
+        const entry = this.messageLedger.get(snapshot.key);
+        if (!entry || entry.state === 'delivered') return;
+        if (entry.state === 'processing' && this.messageLedger.isOwnedByCurrentProcess(entry)) {
+          return;
+        }
+        const response =
+          entry.state === 'ready' && entry.response !== undefined
+            ? entry.response
+            : 'The previous processing attempt was interrupted. It was not rerun because its ' +
+              'external side effects could not be proven safe to repeat. Please send a new message ' +
+              'if you want to retry it.';
+        if (entry.state !== 'ready') this.messageLedger.markReady(entry.key, response);
+        if (entry.deliveryUncertain) {
+          console.warn(
+            `[Telegram] Resuming inbound delivery ${entry.key} from uncertain chunk ` +
+              `${entry.nextChunkIndex ?? 0}; that chunk may appear twice`
+          );
+        }
+        const presenter = this.createResponsePresenter(
+          Number(chatId),
+          entry.key,
+          entry.nextChunkIndex ?? 0
+        );
+        await presenter.finalize(response);
+        this.messageLedger.markDelivered(entry.key);
+      });
     }
   }
 
-  async sendFile(chatId: string, filePath: string, caption?: string): Promise<void> {
-    if (!this.bot) throw new Error('Telegram gateway not connected');
-    const { InputFile } = await import('grammy');
-    await this.bot.api.sendDocument(Number(chatId), new InputFile(filePath), { caption });
+  private createResponsePresenter(
+    chatId: number,
+    messageKey: string,
+    resumeFromChunk = 0
+  ): TelegramResponsePresenter {
+    const api = this.bot!.api;
+    return new TelegramResponsePresenter(
+      {
+        send: async (content) => {
+          const sent = await api.sendMessage(chatId, content);
+          return String(sent.message_id);
+        },
+        edit: async (handle, content) => {
+          await api.editMessageText(chatId, Number(handle), content);
+        },
+        delete: async (handle) => {
+          await api.deleteMessage(chatId, Number(handle));
+        },
+      },
+      {
+        resumeFromChunk,
+        onChunkProgress: (nextIndex, uncertain) => {
+          if (this.messageLedger.get(messageKey)?.state === 'ready') {
+            this.messageLedger.markDeliveryProgress(messageKey, nextIndex, uncertain);
+          }
+        },
+      }
+    );
   }
 
-  async sendImage(chatId: string, imagePath: string, caption?: string): Promise<void> {
-    if (!this.bot) throw new Error('Telegram gateway not connected');
-    const { InputFile } = await import('grammy');
-    await this.bot.api.sendPhoto(Number(chatId), new InputFile(imagePath), { caption });
+  private outboundLedgerKey(idempotencyKey: string, kind: string): string {
+    const digest = createHash('sha256').update(`${kind}\0${idempotencyKey}`).digest('hex');
+    return `outbound:${digest}`;
   }
 
   async sendSticker(chatId: string | number, emotion: string): Promise<boolean> {
     if (!this.bot) throw new Error('Telegram gateway not connected');
+    return this.runInChatQueue(String(chatId), () => this.sendStickerNow(chatId, emotion));
+  }
+
+  async sendStickerFromActiveTurn(chatId: string | number, emotion: string): Promise<boolean> {
+    if (!this.bot) throw new Error('Telegram gateway not connected');
+    return this.runInChatQueue(String(chatId), () => this.sendStickerNow(chatId, emotion), true);
+  }
+
+  private async sendStickerNow(chatId: string | number, emotion: string): Promise<boolean> {
+    const bot = this.bot;
+    if (!bot) throw new Error('Telegram gateway not connected');
     await this.loadStickerSet();
 
     const candidates = EMOTION_EMOJI[emotion] ?? EMOTION_EMOJI.happy;
@@ -541,11 +910,11 @@ export class TelegramGateway extends BaseGateway {
     for (const emoji of candidates) {
       const fileId = this.stickerCache.get(emoji);
       if (fileId) {
-        await this.bot.api.sendSticker(numChatId, fileId);
+        await bot.api.sendSticker(numChatId, fileId);
         return true;
       }
     }
-    await this.bot.api.sendMessage(numChatId, candidates[0]);
+    await bot.api.sendMessage(numChatId, candidates[0]);
     return false;
   }
 
@@ -555,23 +924,6 @@ export class TelegramGateway extends BaseGateway {
 
   getLastMessageAt(): number | undefined {
     return this.lastMessageAt;
-  }
-
-  private splitMessage(text: string, maxLength: number): string[] {
-    if (text.length <= maxLength) return [text];
-    const chunks: string[] = [];
-    let remaining = text;
-    while (remaining.length > 0) {
-      if (remaining.length <= maxLength) {
-        chunks.push(remaining);
-        break;
-      }
-      const newline = remaining.lastIndexOf('\n', maxLength);
-      const splitAt = newline > maxLength * 0.3 ? newline + 1 : maxLength;
-      chunks.push(remaining.slice(0, splitAt));
-      remaining = remaining.slice(splitAt);
-    }
-    return chunks;
   }
 
   private async loadStickerSet(): Promise<void> {

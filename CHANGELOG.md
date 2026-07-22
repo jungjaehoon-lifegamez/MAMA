@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.0] / mama-core [1.9.0] / mama-os [0.27.0] - 2026-07-22
+
+### Added — Owner-agent execution and Telegram parity
+
+- **Composable owner workflows** — the Telegram owner can freely combine Drive discovery,
+  attachment reading, structured OCR, image translation, same-folder upload, and Telegram return
+  through one role-scoped Code-Act surface instead of relying on a prebuilt scenario workflow.
+- **Local document and image processing** — PDF and Office attachments have bounded local text
+  extraction, OCR setup diagnostics, provenance-carrying image regions, and a canonical private
+  workspace shared by Drive, browser capture, and image output tools.
+- **Durable Telegram delivery** — inbound responses and owner reports persist delivery progress,
+  serialize by chat, resume from the first unconfirmed chunk after restart, and retain undelivered
+  work when the bounded ledger reaches capacity.
+
+### Fixed
+
+- **Owner report recovery** — on-demand full-report requests are persisted before composition,
+  prepared text is persisted before the first send, startup resumes either phase, and a newer
+  request cannot silently replace older pending work.
+- **Codex session continuity** — continued app-server threads avoid repeated full prompt injection,
+  while an explicit policy mismatch replaces the stale thread once with the current bounded owner
+  policy and attachment context.
+- **Attachment privacy and authority** — custom workspaces replace the logical default capability,
+  private attachment paths are shown only to verified owner DMs, Drive descendant destinations use
+  envelope-bound authority, and archive-controlled errors never enter model-visible text.
+
+### Upgrade notes
+
+- This minor release bumps only `@jungjaehoon/mama-os` to `0.27.0`; MAMA Core, MCP Server, and the
+  Claude Code plugin keep their existing versions.
+
 ## [0.26.0] / mama-core [1.9.0] / mama-os [0.26.0] - 2026-07-22
 
 ### Added — Telegram media and owner Drive parity

@@ -19,6 +19,28 @@ const { DebugLogger } = debugLogger as {
   };
 };
 const logger = new DebugLogger('SessionStore');
+const USER_CONTEXT_HEAD_CHARS = 300;
+const MEDIA_CONTEXT_TAIL_CHARS = 1_200;
+const HOST_VERIFIED_MEDIA_MARKER = '\n\nHost-verified uploaded ';
+
+function truncateUserContext(content: string): string {
+  const mediaMarker = content.lastIndexOf(HOST_VERIFIED_MEDIA_MARKER);
+  if (mediaMarker < 0) {
+    return content.length > USER_CONTEXT_HEAD_CHARS
+      ? `${content.slice(0, USER_CONTEXT_HEAD_CHARS)}...`
+      : content;
+  }
+
+  const head = content.slice(0, mediaMarker);
+  const media = content.slice(mediaMarker + 2);
+  const boundedHead =
+    head.length > USER_CONTEXT_HEAD_CHARS ? `${head.slice(0, USER_CONTEXT_HEAD_CHARS)}...` : head;
+  const boundedMedia =
+    media.length > MEDIA_CONTEXT_TAIL_CHARS
+      ? `${media.slice(0, MEDIA_CONTEXT_TAIL_CHARS)}...`
+      : media;
+  return `${boundedHead}\n\n${boundedMedia}`;
+}
 
 // ============================================================================
 // Database row types
@@ -275,6 +297,28 @@ export class SessionStore {
     return result.changes > 0;
   }
 
+  /** Remove the most recent uncommitted turn after an agent failure. */
+  discardIncompleteTurn(sessionId: string): boolean {
+    const session = this.getById(sessionId);
+    if (!session) {
+      return false;
+    }
+    let history: ConversationTurn[];
+    try {
+      history = JSON.parse(session.context || '[]');
+    } catch {
+      history = [];
+    }
+    if (history.length === 0) {
+      return false;
+    }
+    history.pop();
+    const result = this.db
+      .prepare('UPDATE messenger_sessions SET context = ?, last_active = ? WHERE id = ?')
+      .run(JSON.stringify(history), Date.now(), sessionId);
+    return result.changes > 0;
+  }
+
   /**
    * Get conversation history for a session by ID
    */
@@ -415,7 +459,7 @@ export class SessionStore {
     // tool_use blocks, verbose metadata (||⏱️ N turns||), and related decisions
     return recentTurns
       .map((turn) => {
-        const userMsg = turn.user.length > 300 ? turn.user.slice(0, 300) + '...' : turn.user;
+        const userMsg = truncateUserContext(turn.user);
         // Strip tool_use noise and metadata before truncating
         let botMsg = turn.bot
           .replace(/\|\|[^|]*\|\|/g, '') // Remove ||⏱️ N turns|| markers
