@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.2] - 2026-07-22
+
+- Code-Act now uses the Kagemusha five-minute composition budget so bounded multi-image Drive and
+  OCR workflows do not fail at the previous 30-second whole-program deadline. Existing memory,
+  call-count, concurrency, cancellation, and mutation-settlement guards are unchanged.
+
 ## [0.27.1] - 2026-07-22
 
 Codex app-server policy changes and missing durable records are now detected before a model request

@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import { CodeActSandbox } from '../../src/agent/code-act/sandbox.js';
+import { DEFAULT_SANDBOX_CONFIG } from '../../src/agent/code-act/types.js';
 
 describe('CodeActSandbox', () => {
   beforeAll(async () => {
     await CodeActSandbox.warmup();
+  });
+
+  it('preserves the Kagemusha five-minute budget for composed media workflows', () => {
+    expect(DEFAULT_SANDBOX_CONFIG.timeoutMs).toBe(300_000);
   });
 
   describe('basic execution', () => {

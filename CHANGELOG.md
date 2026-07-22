@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.27.2] / mama-core [1.9.0] / mama-os [0.27.2] - 2026-07-22
+
+### Fixed
+
+- **Kagemusha-parity media composition budget** — Code-Act now keeps the reference five-minute
+  execution budget, allowing one owner turn to compose several bounded Drive downloads and OCR
+  calls without the previous 30-second whole-program deadline aborting a healthy workflow. Memory,
+  host-call, concurrency, parent-cancellation, and mutation-settlement safety limits remain active.
+
+### Upgrade notes
+
+- This patch bumps only `@jungjaehoon/mama-os` to `0.27.2`; MAMA Core, MCP Server, and the Claude
+  Code plugin keep their existing versions.
+
 ## [0.27.1] / mama-core [1.9.0] / mama-os [0.27.1] - 2026-07-22
 
 ### Fixed — Codex session and Code-Act runtime stability

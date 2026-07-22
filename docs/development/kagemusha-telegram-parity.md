@@ -136,6 +136,21 @@ entry. Coverage, security, and temporal reviewers closed every P0-P3 finding; ex
 Code-Act variants remain bounded by the outer run ceiling and must pass the same role, disallowed
 tool, and envelope checks on every nested host call.
 
+## Runtime verification correction: 2026-07-22 multi-image owner turn
+
+A real owner turn downloaded four Drive images and composed OCR calls in one Code-Act program. The
+first OCR calls completed in roughly 18-22 seconds each, but MAMA's 30-second whole-program deadline
+aborted the next `translate_conti` call. Because that tool may create an output artifact, the
+existing settlement guard correctly returned `CODE_ACT_MUTATION_OUTCOME_UNKNOWN` after its finite
+grace instead of retrying an uncertain operation. The Telegram turn therefore failed even though
+the same composition fits Kagemusha's 300-second Code-Act budget.
+
+The parity correction sets MAMA's default Code-Act budget to the reference 300 seconds. It does not
+split the agent-selected program or introduce a scenario workflow. The memory cap, 50 host-call
+ceiling, eight-execution process cap, parent cancellation, abort propagation, and five-second
+mutation-settlement boundary remain unchanged. `code-act/sandbox.test.ts` pins the reference budget,
+and the MCP request timeout continues to derive from the sandbox deadline plus settlement grace.
+
 The workorder consumer now raises its stopping barrier before awaiting the active tick. It leaves
 the active claim for the existing boot-recovery transaction and never claims another pending row
 after shutdown starts. This is verified independently of model behavior in
