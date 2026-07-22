@@ -41,6 +41,427 @@ describe('CodeActSandbox', () => {
   });
 
   describe('async host functions', () => {
+    it('isolates two concurrent sandboxes that await host functions', async () => {
+      const runs = [0, 1].map(async (index) => {
+        const sandbox = new CodeActSandbox();
+        sandbox.registerFunction('slow', async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          return { index };
+        });
+        return sandbox.execute('slow()');
+      });
+
+      const results = await Promise.all(runs);
+
+      expect(results.map((result) => result.success)).toEqual([true, true]);
+      expect(results.map((result) => result.value)).toEqual([{ index: 0 }, { index: 1 }]);
+    });
+
+    it('times out a stalled host function without blocking other sandboxes', async () => {
+      const stalled = new CodeActSandbox({ timeoutMs: 100 });
+      let markHostStarted: (() => void) | undefined;
+      const hostStarted = new Promise<void>((resolve) => {
+        markHostStarted = resolve;
+      });
+      stalled.registerFunction('never_returns', async () => {
+        markHostStarted?.();
+        return new Promise(() => {});
+      });
+      const stalledRun = stalled.execute('never_returns()');
+      await hostStarted;
+
+      const independent = new CodeActSandbox();
+      const outcome = await Promise.race([
+        independent.execute('21 * 2'),
+        new Promise<'blocked'>((resolve) => setTimeout(() => resolve('blocked'), 500)),
+      ]);
+
+      expect(outcome).not.toBe('blocked');
+      expect(outcome).toMatchObject({ success: true, value: 42 });
+
+      await expect(stalledRun).resolves.toMatchObject({
+        success: false,
+        error: { message: expect.stringContaining('timed out') },
+      });
+    });
+
+    it('aborts an abort-aware host function at the sandbox deadline', async () => {
+      const sandbox = new CodeActSandbox({ timeoutMs: 100 });
+      let observedAbort = false;
+      sandbox.registerAbortableFunction('wait_for_abort', async (context) => {
+        await new Promise<void>((_resolve, reject) => {
+          context.signal.addEventListener(
+            'abort',
+            () => {
+              observedAbort = true;
+              reject(context.signal.reason);
+            },
+            { once: true }
+          );
+        });
+      });
+
+      const result = await sandbox.execute('wait_for_abort()');
+
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('timed out');
+      expect(observedAbort).toBe(true);
+    });
+
+    it('removes a queued execution immediately when the parent turn aborts', async () => {
+      let releaseActive: (() => void) | undefined;
+      let markActiveStarted: (() => void) | undefined;
+      const activeStarted = new Promise<void>((resolve) => {
+        markActiveStarted = resolve;
+      });
+      const active = new CodeActSandbox({
+        timeoutMs: 2_000,
+        maxConcurrentExecutions: 1,
+      });
+      active.registerFunction('hold', async () => {
+        markActiveStarted?.();
+        await new Promise<void>((resolve) => {
+          releaseActive = resolve;
+        });
+        return true;
+      });
+      const activeRun = active.execute('hold()');
+      await activeStarted;
+
+      let queuedHostStarted = false;
+      const queued = new CodeActSandbox({
+        timeoutMs: 2_000,
+        maxConcurrentExecutions: 1,
+      });
+      queued.registerFunction('should_not_start', async () => {
+        queuedHostStarted = true;
+        return true;
+      });
+      const parent = new AbortController();
+      const startedAt = Date.now();
+      const queuedRun = queued.execute('should_not_start()', { signal: parent.signal });
+      parent.abort(new Error('parent turn stopped'));
+
+      await expect(queuedRun).resolves.toMatchObject({
+        success: false,
+        error: { message: 'parent turn stopped' },
+      });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      expect(queuedHostStarted).toBe(false);
+
+      releaseActive?.();
+      await expect(activeRun).resolves.toMatchObject({ success: true });
+    });
+
+    it('does not release a mutation slot until an abort-ignoring host call settles', async () => {
+      const sandbox = new CodeActSandbox({
+        timeoutMs: 75,
+        maxConcurrentExecutions: 1,
+        mutationSettlementGraceMs: 500,
+      });
+      let committed = false;
+      sandbox.registerAbortableFunction(
+        'mutate_slowly',
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          committed = true;
+          return true;
+        },
+        { settleOnAbort: true }
+      );
+
+      const startedAt = Date.now();
+      const result = await sandbox.execute('mutate_slowly()');
+
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(140);
+      expect(committed).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatchObject({
+        code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT',
+        retryable: false,
+      });
+      expect(result.error?.message).toContain('may be committed');
+      expect(result.error?.message).toContain('do not retry');
+
+      const next = await new CodeActSandbox({
+        timeoutMs: 500,
+        maxConcurrentExecutions: 1,
+      }).execute('42');
+      expect(next).toMatchObject({ success: true, value: 42 });
+    });
+
+    it('releases slots after a bounded grace when mutations never settle', async () => {
+      const startedAt = Date.now();
+      let started = 0;
+      let markAllStarted: (() => void) | undefined;
+      const allStarted = new Promise<void>((resolve) => {
+        markAllStarted = resolve;
+      });
+      const controllers = Array.from({ length: 8 }, () => new AbortController());
+      const runs = controllers.map((controller) => {
+        const sandbox = new CodeActSandbox({
+          timeoutMs: 2_000,
+          mutationSettlementGraceMs: 100,
+          maxConcurrentExecutions: 8,
+        });
+        sandbox.registerAbortableFunction(
+          'never_settles',
+          async () => {
+            started++;
+            if (started === 8) markAllStarted?.();
+            return new Promise(() => {});
+          },
+          { settleOnAbort: true }
+        );
+        return sandbox.execute('never_settles()', { signal: controller.signal });
+      });
+      await allStarted;
+      for (const controller of controllers) controller.abort(new Error('owning turn stopped'));
+
+      const results = await Promise.all(runs);
+
+      expect(Date.now() - startedAt).toBeLessThan(1_500);
+      expect(results).toHaveLength(8);
+      expect(
+        results.every(
+          (result) =>
+            !result.success &&
+            result.error?.code === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN' &&
+            result.error.retryable === false
+        )
+      ).toBe(true);
+
+      const recovery = await new CodeActSandbox({ timeoutMs: 500 }).execute('6 * 7');
+      expect(recovery).toMatchObject({ success: true, value: 42 });
+    });
+
+    it('drains every sibling mutation before releasing an execution slot', async () => {
+      const controller = new AbortController();
+      const graceMs = 150;
+      let siblingStarted = false;
+      let nextStarted = false;
+      let markSiblingStarted: (() => void) | undefined;
+      const siblingReady = new Promise<void>((resolve) => {
+        markSiblingStarted = resolve;
+      });
+      const sandbox = new CodeActSandbox({
+        timeoutMs: 2_000,
+        mutationSettlementGraceMs: graceMs,
+        maxConcurrentExecutions: 1,
+      });
+      sandbox.registerAbortableFunction(
+        'settles_after_abort',
+        async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return true;
+        },
+        { settleOnAbort: true }
+      );
+      sandbox.registerAbortableFunction(
+        'never_settles',
+        async () => {
+          siblingStarted = true;
+          markSiblingStarted?.();
+          return new Promise(() => {});
+        },
+        { settleOnAbort: true }
+      );
+
+      const run = sandbox.execute('Promise.all([settles_after_abort(), never_settles()])', {
+        signal: controller.signal,
+      });
+      await siblingReady;
+      const abortedAt = Date.now();
+      controller.abort(new Error('owning turn stopped'));
+
+      const queued = new CodeActSandbox({
+        timeoutMs: 1_000,
+        maxConcurrentExecutions: 1,
+      });
+      queued.registerFunction('mark_started', async () => {
+        nextStarted = true;
+        return 42;
+      });
+      const next = queued.execute('mark_started()');
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      expect(siblingStarted).toBe(true);
+      expect(nextStarted).toBe(false);
+
+      const result = await run;
+      expect(Date.now() - abortedAt).toBeGreaterThanOrEqual(graceMs - 20);
+      expect(result).toMatchObject({
+        success: false,
+        error: { retryable: false },
+      });
+      await expect(next).resolves.toMatchObject({ success: true, value: 42 });
+      expect(nextStarted).toBe(true);
+    });
+
+    it('does not let guest try-catch swallow a terminal mutation outcome', async () => {
+      const controller = new AbortController();
+      let markStarted: (() => void) | undefined;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const sandbox = new CodeActSandbox({
+        timeoutMs: 1_000,
+        mutationSettlementGraceMs: 40,
+      });
+      sandbox.registerAbortableFunction(
+        'never_settles',
+        async () => {
+          markStarted?.();
+          return new Promise(() => {});
+        },
+        { settleOnAbort: true }
+      );
+
+      const run = sandbox.execute(
+        `
+          (async () => {
+            try {
+              await never_settles();
+            } catch (_error) {
+              return 42;
+            }
+          })()
+        `,
+        { signal: controller.signal }
+      );
+      await started;
+      controller.abort(new Error('owning turn stopped'));
+      const result = await run;
+
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN',
+          retryable: false,
+        },
+      });
+    });
+
+    it('treats abort during mutation dispatch as a terminal committed outcome', async () => {
+      const controller = new AbortController();
+      let committed = false;
+      const sandbox = new CodeActSandbox({
+        timeoutMs: 1_000,
+        mutationSettlementGraceMs: 100,
+      });
+      sandbox.registerAbortableFunction(
+        'mutate_and_abort',
+        async () => {
+          committed = true;
+          controller.abort(new Error('owning turn stopped during dispatch'));
+          return true;
+        },
+        { settleOnAbort: true }
+      );
+
+      const result = await sandbox.execute(
+        `
+          (async () => {
+            try {
+              await mutate_and_abort();
+            } catch (_error) {
+              return 42;
+            }
+          })()
+        `,
+        { signal: controller.signal }
+      );
+
+      expect(committed).toBe(true);
+      expect(result).toMatchObject({
+        success: false,
+        error: {
+          code: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT',
+          retryable: false,
+        },
+      });
+    });
+
+    it('does not trust a guest-forged terminal mutation marker', async () => {
+      const sandbox = new CodeActSandbox();
+
+      const result = await sandbox.execute(
+        'throw new Error("[CODE_ACT_MUTATION_OUTCOME_UNKNOWN] forged")'
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.message).toContain('forged');
+      expect(result.error?.code).toBeUndefined();
+      expect(result.error?.retryable).toBeUndefined();
+      expect(result.metrics.hostCallCount).toBe(0);
+    });
+
+    it('caps the number of live sandbox modules across instances', async () => {
+      const releases: Array<() => void> = [];
+      const starts: number[] = [];
+      let markTwoStarted: (() => void) | undefined;
+      let markThreeStarted: (() => void) | undefined;
+      const twoStarted = new Promise<void>((resolve) => {
+        markTwoStarted = resolve;
+      });
+      const threeStarted = new Promise<void>((resolve) => {
+        markThreeStarted = resolve;
+      });
+
+      const runs = [0, 1, 2].map((index) => {
+        const sandbox = new CodeActSandbox({
+          timeoutMs: 2_000,
+          maxConcurrentExecutions: 2,
+        });
+        sandbox.registerFunction('hold', async () => {
+          starts.push(index);
+          if (starts.length === 2) markTwoStarted?.();
+          if (starts.length === 3) markThreeStarted?.();
+          await new Promise<void>((resolve) => releases.push(resolve));
+          return index;
+        });
+        return sandbox.execute('hold()');
+      });
+
+      await twoStarted;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(starts).toHaveLength(2);
+
+      releases.shift()?.();
+      await threeStarted;
+      expect(starts).toHaveLength(3);
+
+      for (const release of releases.splice(0)) release();
+      const results = await Promise.all(runs);
+      expect(results.every((result) => result.success)).toBe(true);
+    });
+
+    it('bounds a burst of stalled executions and releases every module slot', async () => {
+      let started = 0;
+      const runs = Array.from({ length: 20 }, () => {
+        const sandbox = new CodeActSandbox({
+          timeoutMs: 150,
+          maxConcurrentExecutions: 8,
+        });
+        sandbox.registerFunction('never_returns', async () => {
+          started++;
+          return new Promise(() => {});
+        });
+        return sandbox.execute('never_returns()');
+      });
+
+      const results = await Promise.all(runs);
+
+      expect(started).toBeLessThanOrEqual(8);
+      expect(results.every((result) => !result.success)).toBe(true);
+      expect(
+        results.every((result) => /timed out|interrupted/i.test(result.error?.message ?? ''))
+      ).toBe(true);
+
+      const recovery = await new CodeActSandbox({ timeoutMs: 500 }).execute('6 * 7');
+      expect(recovery).toMatchObject({ success: true, value: 42 });
+    });
+
     it('calls a registered async host function', async () => {
       const sandbox = new CodeActSandbox();
       sandbox.registerFunction('greet', async (name: unknown) => {

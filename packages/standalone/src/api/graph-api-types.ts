@@ -60,6 +60,9 @@ export interface CodeActResult {
   value?: unknown;
   logs?: string[];
   error?: string;
+  terminalCode?: 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
+  retryable?: boolean;
+  abort?: boolean;
   metrics?: { durationMs: number; hostCallCount: number; memoryUsedBytes: number };
 }
 

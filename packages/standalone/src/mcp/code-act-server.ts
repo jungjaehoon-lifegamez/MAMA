@@ -11,8 +11,13 @@
  * - The actual sandbox execution happens in MAMA OS process (shared GatewayToolExecutor)
  */
 
-import http from 'http';
 import readline from 'readline';
+import { callCodeActAPI } from './code-act-api-client.js';
+import {
+  CODE_ACT_MCP_REQUEST_TIMEOUT_MS,
+  SerializedCodeActGate,
+  terminalMcpResult,
+} from './code-act-terminal-transport.js';
 
 // MCP servers must use stderr for logging (stdout = JSON-RPC)
 const log = (msg: string) => process.stderr.write(`[code-act-mcp] ${msg}\n`);
@@ -63,61 +68,7 @@ function formatToolListForLog(value: string[] | undefined): string {
   return value.length > 0 ? value.join(',') : '<none>';
 }
 
-function callCodeActAPI(code: string): Promise<{
-  success: boolean;
-  value?: unknown;
-  logs?: string[];
-  error?: string;
-  toolCalls?: { name: string; input: Record<string, unknown> }[];
-}> {
-  return new Promise((resolve, reject) => {
-    const body = JSON.stringify({
-      code,
-      ...(CALLER_AGENT_ID ? { agent_id: CALLER_AGENT_ID } : {}),
-      ...(CALLER_ALLOWED_TOOLS ? { allowed_tools: CALLER_ALLOWED_TOOLS } : {}),
-      ...(CALLER_BLOCKED_TOOLS ? { blocked_tools: CALLER_BLOCKED_TOOLS } : {}),
-    });
-    const headers: Record<string, string | number> = {
-      'Content-Type': 'application/json',
-      'Content-Length': Buffer.byteLength(body),
-    };
-    if (MAMA_AUTH_TOKEN) {
-      headers.Authorization = `Bearer ${MAMA_AUTH_TOKEN}`;
-    }
-    const req = http.request(
-      {
-        hostname: '127.0.0.1',
-        port: MAMA_API_PORT,
-        path: '/api/code-act',
-        method: 'POST',
-        headers,
-        timeout: 30_000,
-      },
-      (res) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => {
-          data += chunk.toString();
-        });
-        res.on('end', () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch {
-            reject(
-              new Error(`Invalid JSON response (HTTP ${res.statusCode}): ${data.substring(0, 200)}`)
-            );
-          }
-        });
-      }
-    );
-    req.on('error', (err) => reject(new Error(`Code-Act API connection failed: ${err.message}`)));
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('Code-Act API timeout'));
-    });
-    req.write(body);
-    req.end();
-  });
-}
+const codeActGate = new SerializedCodeActGate();
 
 function send(msg: Record<string, unknown>): void {
   const json = JSON.stringify(msg);
@@ -198,7 +149,26 @@ async function handleRequest(
       }
 
       try {
-        const result = await callCodeActAPI(code);
+        const gated = await codeActGate.run(() =>
+          callCodeActAPI(
+            {
+              code,
+              ...(CALLER_AGENT_ID ? { agent_id: CALLER_AGENT_ID } : {}),
+              ...(CALLER_ALLOWED_TOOLS ? { allowed_tools: CALLER_ALLOWED_TOOLS } : {}),
+              ...(CALLER_BLOCKED_TOOLS ? { blocked_tools: CALLER_BLOCKED_TOOLS } : {}),
+            },
+            {
+              port: MAMA_API_PORT,
+              authToken: MAMA_AUTH_TOKEN,
+              timeoutMs: CODE_ACT_MCP_REQUEST_TIMEOUT_MS,
+            }
+          )
+        );
+        if (gated.terminal) {
+          reply(id, terminalMcpResult(gated.terminal));
+          break;
+        }
+        const result = gated.result!;
         if (result.success) {
           const output: string[] = [];
           // Show tool calls executed during code-act

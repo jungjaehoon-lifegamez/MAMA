@@ -24,9 +24,14 @@ import { createContextCompileService } from '../../agent/context-compile-service
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
+import type { ExecutionResult } from '../../agent/code-act/types.js';
 import { SessionStore, MessageRouter, initChannelHistory } from '../../gateways/index.js';
 import { createGraphHandler } from '../../api/graph-api.js';
-import type { CodeActExecutionContext, GraphHandlerOptions } from '../../api/graph-api-types.js';
+import type {
+  CodeActExecutionContext,
+  CodeActResult,
+  GraphHandlerOptions,
+} from '../../api/graph-api-types.js';
 import Database from '../../sqlite.js';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -97,6 +102,23 @@ export function requireRuntimeBackend(value: unknown): RuntimeBackend {
     return value;
   }
   throw new Error(`Unsupported agent backend: ${String(value)}`);
+}
+
+export function serializeCodeActExecutionResult(
+  result: ExecutionResult,
+  toolCalls: { name: string; input: Record<string, unknown> }[]
+): CodeActResult & { toolCalls: { name: string; input: Record<string, unknown> }[] } {
+  return {
+    success: result.success,
+    value: result.value,
+    logs: result.logs,
+    error: result.error?.message,
+    ...(result.error?.code
+      ? { terminalCode: result.error.code, retryable: false, abort: true }
+      : {}),
+    metrics: result.metrics,
+    toolCalls,
+  };
 }
 const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
 const CODE_ACT_MUTATION_TOOLS = new Set([
@@ -978,16 +1000,9 @@ export async function runAgentLoop(
       // Per-request executionContext carries envelope data; this routing context is legacy fallback.
       toolExecutor.setCurrentAgentContext(codeActAgentId, 'api', 'code-act');
       bridge.injectInto(sandbox, codeActTier, codeActRole);
-      const result = await sandbox.execute(code);
+      const result = await sandbox.execute(code, { signal: executionContext?.signal });
       finalizeCodeActParentModelRun(getAdapter(), parentRun.modelRunId, result);
-      return {
-        success: result.success,
-        value: result.value,
-        logs: result.logs,
-        error: result.error?.message,
-        metrics: result.metrics,
-        toolCalls,
-      };
+      return serializeCodeActExecutionResult(result, toolCalls);
     } catch (error) {
       failCodeActParentModelRun(getAdapter(), parentRun.modelRunId, error);
       throw error;

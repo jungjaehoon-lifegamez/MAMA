@@ -19,8 +19,16 @@ export type { CodeActBackend } from './constants.js';
 export type {
   SandboxConfig,
   ExecutionResult,
+  SandboxExecutionOptions,
   HostFunction,
+  HostFunctionContext,
+  AbortableHostFunction,
+  HostFunctionRegistrationOptions,
   FunctionDescriptor,
   ParamDescriptor,
 } from './types.js';
-export { DEFAULT_SANDBOX_CONFIG } from './types.js';
+export {
+  CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT,
+  CODE_ACT_MUTATION_OUTCOME_UNKNOWN,
+  DEFAULT_SANDBOX_CONFIG,
+} from './types.js';

@@ -90,6 +90,64 @@ authority is represented by an envelope-bound short-lived capability, skill text
 tools needed for requested side effects, and prompt guidance states a general composition/outcome
 contract rather than a scenario-specific pipeline.
 
+## Runtime verification correction: 2026-07-22 post-v0.27.0
+
+The first real owner Telegram turn after the v0.27.0 restart exposed four gaps that contract-only
+verification had not proved:
+
+1. The new daemon tried to resume a durable Codex thread before checking its stored policy
+   fingerprint. A release policy change therefore produced one avoidable policy-mismatch error
+   before the recovery path opened a current-policy thread.
+2. An operator wiki Code-Act run overlapped the owner turn. Two runtimes created from the shared
+   async QuickJS WASM module then disposed concurrently, reproducing `QuickJSUseAfterFree` with only
+   two delayed host calls.
+3. The native repeat guard counted only the outer tool name. Fifteen different Code-Act programs
+   therefore looked like fifteen identical calls and failed healthy wiki and memory-curation work.
+4. A supervised restart stopped the agent before the workorder consumer. The still-running drain
+   then claimed queued rows and failed them with `Agent loop is stopping` instead of preserving
+   pending work for the replacement daemon.
+
+The v0.27.1 correction checks durable policy compatibility and presence before the first model
+request, gives every QuickJS execution an isolated async module, and keys Code-Act repetition by
+the normalized program while retaining the total native-call ceiling. A stalled host call cannot
+own a process-global QuickJS queue or an unbounded live module: the same wall-clock budget covers
+host calls, abort-aware nested tools receive its signal, browser waits are clamped to the remaining
+time, and at most eight execution modules are live process-wide. Regression evidence is in
+`agent-loop.test.ts`, `codex-app-server-process.test.ts`, `code-act/sandbox.test.ts`, and
+`code-act/host-bridge.test.ts`.
+
+Parent-turn cancellation is part of the same execution signal and removes a queued sandbox before
+it creates a module. Read-only calls may release their module at the deadline. A side-effecting host
+call instead retains its slot until the underlying promise settles or the finite settlement grace
+expires. Concurrent sibling mutations are drained as one execution before its QuickJS context or
+slot is released. A late commit is marked committed-after-abort; a call still unresolved at the
+grace boundary is marked outcome-unknown. Both are structural, non-retryable turn failures across
+native, app-server, HTTP, and MCP transports, and the workorder consumer will not create a
+replacement attempt. MCP calls serialize around a terminal latch, and its request timeout exceeds
+the sandbox deadline plus settlement grace. After a mutation request is transmitted, disconnects,
+timeouts, HTTP 5xx responses, and malformed 200 responses become outcome-unknown before the MCP
+queue is released. Drive downloads receive the abort signal and remove late artifacts. Browser
+screenshots write an operation-owned temporary file, publish exclusively with collision-free
+names, and reject existing filenames, directory components, and nested symlink escape paths.
+
+The correction review also requires a replacement SessionPool entry to remain provisional until
+its first fresh Codex request succeeds. A rebuild or first-request failure invalidates that exact
+entry. Coverage, security, and temporal reviewers closed every P0-P3 finding; expression-only
+Code-Act variants remain bounded by the outer run ceiling and must pass the same role, disallowed
+tool, and envelope checks on every nested host call.
+
+The workorder consumer now raises its stopping barrier before awaiting the active tick. It leaves
+the active claim for the existing boot-recovery transaction and never claims another pending row
+after shutdown starts. This is verified independently of model behavior in
+`workorder-consumer.test.ts`.
+
+Final runtime evidence on 2026-07-22 used the rebuilt v0.27.1 daemon. `wiki#329` completed in
+83 seconds after five distinct Code-Act programs, with no repeat-guard, policy, or QuickJS error.
+A supervised restart then interrupted only the active `board#331` claim, logged it for boot
+recovery, and preserved already-pending workorders `#332` and `#333`; no pending row failed with
+`Agent loop is stopping`. The replacement daemon was a single PID with Telegram connected and a
+98/100 health score.
+
 ## Review finding format
 
 Every finding must use this compact form:
@@ -113,7 +171,7 @@ change unless they are release-blocking security or data-loss issues.
 - [x] TG-05 same-session and reset prompt-cost tests pass.
 - [x] TG-06 report/outbox restart matrix passes.
 - [x] Focused TG-03 freedom-contract tests pass after the correction (2 files, 13 tests).
-- [x] Final corrective standalone test (4,493 passed, 6 skipped), typecheck, build, and
+- [x] Final corrective standalone test (4,550 passed, 6 skipped), typecheck, build, lint, format, and
       `git diff --check` pass.
 - [x] Final reviewers read this artifact first, reported by scenario ID, and every finding was
       closed with a regression test listed in the review-closure section.

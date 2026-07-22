@@ -1567,7 +1567,12 @@ export class GatewayToolExecutor {
         ? sanitizeGatewayFailureResult(rawResult, Boolean(activeCtx.temporalWorkContext))
         : rawResult;
       result = activeCtx.temporalWorkContext ? auditResult : rawResult;
-      activeCtx.signal?.throwIfAborted();
+      const rawResultRecord = rawResult as Record<string, unknown>;
+      const terminalNonRetryable =
+        rawResultRecord.abort === true && rawResultRecord.retryable === false;
+      if (!terminalNonRetryable) {
+        activeCtx.signal?.throwIfAborted();
+      }
     } catch (error) {
       const shouldSanitizeAuditFailure =
         Boolean(activeCtx.temporalWorkContext) ||
@@ -2333,7 +2338,10 @@ export class GatewayToolExecutor {
           return {
             success: true,
             result: asUntrustedDriveEvidence(
-              await this.driveTools.download(input as DriveDownloadInput)
+              await this.driveTools.download(
+                input as DriveDownloadInput,
+                this.getExecutionState().signal
+              )
             ),
           };
         case 'drive_upload':
@@ -3726,8 +3734,8 @@ export class GatewayToolExecutor {
   ): Promise<{ success: boolean; path?: string; error?: string }> {
     try {
       const result = input.full_page
-        ? await this.browserTool.screenshotFullPage(input.filename)
-        : await this.browserTool.screenshot(input.filename);
+        ? await this.browserTool.screenshotFullPage(input.filename, this.getExecutionState().signal)
+        : await this.browserTool.screenshot(input.filename, this.getExecutionState().signal);
       return { success: true, path: result.path };
     } catch (err) {
       return { success: false, error: `Screenshot failed: ${err}` };
@@ -4763,6 +4771,8 @@ export class GatewayToolExecutor {
     const {
       CodeActSandbox,
       CodeActToolPolicyValidationError,
+      CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT,
+      CODE_ACT_MUTATION_OUTCOME_UNKNOWN,
       HostBridge,
       projectCodeActToolPolicy,
     } = await import('./code-act/index.js');
@@ -4819,7 +4829,20 @@ export class GatewayToolExecutor {
     };
     bridge.injectInto(sandbox, policy.names);
 
-    const result = await sandbox.execute(input.code);
+    const result = await sandbox.execute(input.code, { signal: state.signal });
+    const terminalMutationCodes = new Set([
+      CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT,
+      CODE_ACT_MUTATION_OUTCOME_UNKNOWN,
+    ]);
+    if (result.error?.code && terminalMutationCodes.has(result.error.code)) {
+      return {
+        success: false,
+        code: result.error.code,
+        retryable: false,
+        abort: true,
+        message: `Code-Act error: ${result.error.message}`,
+      } as GatewayToolResult;
+    }
     const successfulMessage = JSON.stringify({
       value: result.value,
       logs: result.logs,
@@ -5256,6 +5279,8 @@ function sanitizeGatewayFailureResult(
     success: false,
     error: gatewayFailureRef(failure, temporal),
     ...(typeof record.code === 'string' ? { code: record.code } : {}),
+    ...(record.retryable === false ? { retryable: false } : {}),
+    ...(record.abort === true ? { abort: true } : {}),
   } as GatewayToolResult;
 }
 
