@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.3] - 2026-07-22
+
+- Verified owner-console Drive workflows can resolve and upload to the folder explicitly selected
+  by the owner even when that shared drive is not one of the static connector deliverable roots.
+  Non-owner Drive access, capability validation, and private-workspace upload containment remain
+  enforced.
+
 ## [0.27.2] - 2026-07-22
 
 - Code-Act now uses the Kagemusha five-minute composition budget so bounded multi-image Drive and
