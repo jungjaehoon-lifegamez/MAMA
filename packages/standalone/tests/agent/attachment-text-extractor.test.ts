@@ -1,7 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { extractAttachmentText } from '../../src/agent/attachment-text-extractor.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 
@@ -12,6 +13,16 @@ afterEach(async () => {
 });
 
 describe('attachment text extraction', () => {
+  it('keeps the macOS PDF byte limit on a valid UTF-8 boundary', () => {
+    const script = readFileSync(
+      resolve(__dirname, '../../scripts/attachment/extract-pdf-text.swift'),
+      'utf-8'
+    );
+
+    expect(script).toContain('String(data: candidate, encoding: .utf8)');
+    expect(script).not.toContain('let bounded = data.prefix(remaining)');
+  });
+
   it('preserves ordinary source-code reads outside the Office/PDF extractors', async () => {
     const path = await writeFixture('agent.ts', "export const status = 'ready';\n");
 

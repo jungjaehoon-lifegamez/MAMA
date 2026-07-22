@@ -761,8 +761,10 @@ export async function runAgentLoop(
   // Establish one canonical private workspace for gateway files, OCR, Drive,
   // Telegram media, and the persona runtime. An explicit environment override
   // remains authoritative; otherwise honor config.workspace.path.
-  process.env.MAMA_WORKSPACE =
-    process.env.MAMA_WORKSPACE || expandPath(config.workspace?.path || '~/.mama/workspace');
+  const workspaceRoot = expandPath(
+    process.env.MAMA_WORKSPACE || config.workspace?.path || '~/.mama/workspace'
+  );
+  process.env.MAMA_WORKSPACE = workspaceRoot;
 
   // Initialize channel history with SQLite persistence (Sprint 3 F5)
   initChannelHistory(db);
@@ -1563,7 +1565,7 @@ export async function runAgentLoop(
         : undefined;
       const triggerAgentRuntime = createTriggerAgentRuntime(runtimeBackend, {
         model: config.agent.model,
-        cwd: expandPath(config.workspace?.path || '~/.mama/workspace'),
+        cwd: workspaceRoot,
         command: process.env.MAMA_CODEX_COMMAND,
       });
       stopTriggerAgentRuntime = () => triggerAgentRuntime.stop();

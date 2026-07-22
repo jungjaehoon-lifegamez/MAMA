@@ -1341,6 +1341,12 @@ export class GatewayToolExecutor {
     rootId: string,
     folderId: string
   ): string {
+    const nowMs = Date.now();
+    for (const [key, record] of this.driveDestinationCapabilities) {
+      if (record.expiresAt <= nowMs) {
+        this.driveDestinationCapabilities.delete(key);
+      }
+    }
     const capability = `drivecap_${randomUUID()}`;
     const envelopeExpiry = Date.parse(envelope.expires_at);
     this.driveDestinationCapabilities.set(capability, {
@@ -1348,8 +1354,8 @@ export class GatewayToolExecutor {
       rootId,
       folderId,
       expiresAt: Math.min(
-        Number.isFinite(envelopeExpiry) ? envelopeExpiry : Date.now(),
-        Date.now() + 10 * 60_000
+        Number.isFinite(envelopeExpiry) ? envelopeExpiry : nowMs,
+        nowMs + 10 * 60_000
       ),
     });
     return capability;

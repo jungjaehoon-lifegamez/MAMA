@@ -23,6 +23,16 @@ describe('trigger runtime provider wiring', () => {
     expect(startSource).toContain('await triggerAgentRuntime.stop()');
   });
 
+  it('uses one resolved workspace for host policy and the trigger runtime', () => {
+    const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+
+    expect(startSource).toContain('const workspaceRoot = expandPath(');
+    expect(startSource).toContain('process.env.MAMA_WORKSPACE = workspaceRoot');
+    expect(startSource).toMatch(
+      /createTriggerAgentRuntime\(runtimeBackend,[\s\S]*?cwd:\s*workspaceRoot/
+    );
+  });
+
   it('preflights temporal compatibility before initializing timer-bearing services', () => {
     const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
     const preflight = startSource.indexOf('preflightTemporalStartup(process.env');

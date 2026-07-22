@@ -19,7 +19,16 @@ for index in 0..<document.pageCount {
     let data = (separator + text).data(using: .utf8) ?? Data()
     let remaining = maxBytes - written
     if remaining <= 0 { break }
-    let bounded = data.prefix(remaining)
+    var bounded = Data()
+    var prefixLength = min(remaining, data.count)
+    while prefixLength > 0 {
+      let candidate = Data(data.prefix(prefixLength))
+      if String(data: candidate, encoding: .utf8) != nil {
+        bounded = candidate
+        break
+      }
+      prefixLength -= 1
+    }
     FileHandle.standardOutput.write(bounded)
     written += bounded.count
     if bounded.count < data.count { break }

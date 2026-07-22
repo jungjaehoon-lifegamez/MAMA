@@ -424,6 +424,68 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(result).not.toHaveProperty('destinationCapability');
   });
 
+  it('prunes expired Drive destination capabilities before issuing another one', async () => {
+    const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
+    const driveTools = {
+      findFolder: vi.fn().mockResolvedValue({
+        folderId: 'folder-child',
+        path: 'project/output',
+        traversedFolderIds: ['drive-root', 'folder-project', 'folder-child'],
+      }),
+    };
+    (executor as unknown as { driveTools: typeof driveTools }).driveTools = driveTools;
+    const envelope = makeEnvelope({
+      envelope_hash: 'envhash_drive_capability_prune',
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      scope: {
+        project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+        raw_connectors: ['drive'],
+        memory_scopes: [{ kind: 'project', id: '/workspace/project-a' }],
+        allowed_destinations: [{ kind: 'drive', id: 'folder-project' }],
+      },
+    });
+    const executionContext = {
+      agentId: 'owner_console',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool' as const,
+      agentContext: {
+        source: 'telegram',
+        platform: 'telegram' as const,
+        roleName: 'owner_console',
+        role: { allowedTools: ['drive_find_folder'] },
+        session: { sessionId: 'session-drive-prune', startedAt: new Date() },
+        capabilities: [],
+        limitations: [],
+      },
+    };
+
+    await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'project/output' } as GatewayToolInput,
+      executionContext
+    );
+    const capabilities = (
+      executor as unknown as {
+        driveDestinationCapabilities: Map<string, { expiresAt: number }>;
+      }
+    ).driveDestinationCapabilities;
+    expect(capabilities.size).toBe(1);
+    const first = capabilities.values().next().value;
+    if (!first) throw new Error('Expected the first Drive capability');
+    first.expiresAt = Date.now() - 1;
+
+    await executor.execute(
+      'drive_find_folder',
+      { driveId: 'drive-root', path: 'project/output' } as GatewayToolInput,
+      executionContext
+    );
+
+    expect(capabilities.size).toBe(1);
+    expect([...capabilities.values()].every((record) => record.expiresAt > Date.now())).toBe(true);
+  });
+
   it('rejects mama_search requested scopes outside the envelope before calling MAMA API', async () => {
     const mamaApi = makeMAMAApi();
     const executor = new GatewayToolExecutor({ mamaApi });
