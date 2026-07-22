@@ -376,7 +376,7 @@ describe('gateway-tool-executor envelope integration', () => {
     expect(forged).toMatchObject({ success: false, code: 'destination_capability_invalid' });
   });
 
-  it('denies a resolved Drive folder that is not below a configured destination', async () => {
+  it('allows owner_console to resolve and upload to the explicitly selected Drive folder', async () => {
     const executor = new GatewayToolExecutor({ mamaApi: makeMAMAApi() });
     const driveTools = {
       findFolder: vi.fn().mockResolvedValue({
@@ -384,6 +384,7 @@ describe('gateway-tool-executor envelope integration', () => {
         path: 'other/child',
         traversedFolderIds: ['drive-root', 'other-parent', 'other-child'],
       }),
+      upload: vi.fn().mockResolvedValue({ fileId: 'uploaded-owner', name: 'translated.png' }),
     };
     (executor as unknown as { driveTools: typeof driveTools }).driveTools = driveTools;
     const envelope = makeEnvelope({
@@ -395,33 +396,43 @@ describe('gateway-tool-executor envelope integration', () => {
       },
     });
 
-    const result = await executor.execute(
+    const executionContext = {
+      agentId: 'owner_console',
+      source: 'telegram',
+      channelId: 'tg:OWN',
+      envelope,
+      executionSurface: 'model_tool' as const,
+      agentContext: {
+        source: 'telegram',
+        platform: 'telegram' as const,
+        roleName: 'owner_console',
+        role: { allowedTools: ['drive_find_folder', 'drive_upload'] },
+        session: {
+          sessionId: 'session-drive-owner-selected',
+          channelId: 'tg:OWN',
+          startedAt: new Date(),
+        },
+        capabilities: [],
+        limitations: [],
+      },
+    };
+    const found = await executor.execute(
       'drive_find_folder',
       { driveId: 'drive-root', path: 'other/child' } as GatewayToolInput,
+      executionContext
+    );
+    const uploaded = await executor.execute(
+      'drive_upload',
       {
-        agentId: 'owner_console',
-        source: 'telegram',
-        channelId: 'tg:OWN',
-        envelope,
-        executionSurface: 'model_tool',
-        agentContext: {
-          source: 'telegram',
-          platform: 'telegram',
-          roleName: 'owner_console',
-          role: { allowedTools: ['drive_find_folder'] },
-          session: {
-            sessionId: 'session-drive-denied',
-            channelId: 'tg:OWN',
-            startedAt: new Date(),
-          },
-          capabilities: [],
-          limitations: [],
-        },
-      }
+        localPath: '/workspace/project-a/translated.png',
+        folderId: 'other-child',
+      } as GatewayToolInput,
+      executionContext
     );
 
-    expect(result).toMatchObject({ success: false, code: 'destination_out_of_scope' });
-    expect(result).not.toHaveProperty('destinationCapability');
+    expect(found).toMatchObject({ success: true });
+    expect(uploaded).toMatchObject({ success: true });
+    expect(driveTools.upload).toHaveBeenCalledOnce();
   });
 
   it('prunes expired Drive destination capabilities before issuing another one', async () => {

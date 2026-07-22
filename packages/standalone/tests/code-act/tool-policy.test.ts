@@ -107,7 +107,7 @@ describe('Code-Act canonical tool policy', () => {
     expect(missingRole.names.some((name) => name.startsWith('drive_'))).toBe(false);
   });
 
-  it('does not advertise Drive functions when the active envelope has no Drive connector', () => {
+  it('keeps the full Drive composition surface for owner_console without static Drive scope', () => {
     const withoutDrive = projectCodeActToolPolicy({
       tier: 2,
       roleName: 'owner_console',
@@ -123,12 +123,20 @@ describe('Code-Act canonical tool policy', () => {
       envelopeRawConnectors: ['drive'],
     });
 
-    expect(withoutDrive.names.some((name) => name.startsWith('drive_'))).toBe(false);
+    expect(withoutDrive.names).toEqual(
+      expect.arrayContaining([
+        'drive_list_drives',
+        'drive_browse',
+        'drive_find_folder',
+        'drive_download',
+        'drive_upload',
+      ])
+    );
     expect(withDrive.names).toContain('drive_browse');
     expect(withDrive.names).toContain('drive_upload');
   });
 
-  it('advertises Drive reads but not writes when the envelope has a read-only Drive connector', () => {
+  it('keeps owner_console Drive writes when the envelope has only a read connector', () => {
     const policy = projectCodeActToolPolicy({
       tier: 2,
       roleName: 'owner_console',
@@ -145,8 +153,7 @@ describe('Code-Act canonical tool policy', () => {
         'drive_download',
       ])
     );
-    expect(policy.names).not.toContain('drive_upload');
-    expect(policy.names).not.toContain('drive_translate_conti');
+    expect(policy.names).toContain('drive_upload');
   });
 
   it('allows both model fields to narrow but never widen the role policy', () => {

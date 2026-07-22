@@ -1370,12 +1370,15 @@ export class GatewayToolExecutor {
     const allowLegacyBypass = isTruthyEnv('MAMA_ENVELOPE_ALLOW_LEGACY_BYPASS');
 
     if (ctx?.envelope) {
+      const ownerConsoleDriveSelection =
+        ctx.agentContext?.roleName === 'owner_console' &&
+        (toolName === 'drive_find_folder' || toolName === 'drive_upload');
       let enforcementInput: GatewayToolInput = input;
       if (toolName === 'drive_find_folder') {
         const hasDriveDestination = ctx.envelope.scope.allowed_destinations.some(
           (destination) => destination.kind === 'drive'
         );
-        if (!hasDriveDestination) {
+        if (!hasDriveDestination && !ownerConsoleDriveSelection) {
           return {
             success: false,
             error: '[destination_out_of_scope] Envelope policy denied this tool call',
@@ -1401,6 +1404,8 @@ export class GatewayToolExecutor {
             } as GatewayToolResult;
           }
           enforcementInput = { ...upload, folderId: capability.rootId } as GatewayToolInput;
+        } else if (ownerConsoleDriveSelection) {
+          return undefined;
         }
       }
       try {
@@ -2317,7 +2322,8 @@ export class GatewayToolExecutor {
             (destination) =>
               destination.kind === 'drive' && folder.traversedFolderIds.includes(destination.id)
           )?.id;
-          if (ctx.envelope && !allowedRootId) {
+          const ownerConsoleSelection = ctx.agentContext?.roleName === 'owner_console';
+          if (ctx.envelope && !allowedRootId && !ownerConsoleSelection) {
             return {
               success: false,
               error: '[destination_out_of_scope] Resolved Drive folder is outside configured roots',
