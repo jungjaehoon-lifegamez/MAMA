@@ -129,9 +129,10 @@ For the verified Telegram owner console, Code-Act exposes the complete Google Dr
 surface even when the active envelope has no static Drive destination. The owner may list, browse,
 resolve, download, and upload to the folder selected for the active request. A configured
 non-ignored `folderId` or `driveId` can still issue a short-lived, envelope-bound destination
-capability; when `drive_upload` supplies one, the executor validates it. Non-owner roles cannot gain
-Drive tools, and Drive read results stay wrapped as untrusted data after Code-Act execution even
-when the sandbox transforms or summarizes them.
+capability; when `drive_upload` supplies one, the executor validates it. Non-owner roles receive
+only role-permitted Drive tools authorized by configured connector/envelope scope and cannot use
+the owner's cross-root selection. Drive read results stay wrapped as untrusted data after Code-Act
+execution even when the sandbox transforms or summarizes them.
 
 MAMA intentionally excludes the `mama` and legacy `code-act` MCP servers from the Codex app-server
 MCP registry. Exposing them there would create a second route around the canonical host bridge.

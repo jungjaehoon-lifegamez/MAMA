@@ -1252,5 +1252,5 @@ If you have security concerns or found a vulnerability:
 
 ---
 
-_Last updated: 2026-04-10_
-_MAMA OS v0.18.0_
+_Last updated: 2026-07-22_
+_MAMA OS v0.27.3_
