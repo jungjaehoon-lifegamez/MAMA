@@ -238,8 +238,17 @@ describe('CodeActSandbox', () => {
     });
 
     it('does not release a mutation slot until an abort-ignoring host call settles', async () => {
+      const parent = new AbortController();
+      let markMutationStarted: (() => void) | undefined;
+      const mutationStarted = new Promise<void>((resolve) => {
+        markMutationStarted = resolve;
+      });
+      let settleMutation: (() => void) | undefined;
+      const mutationSettlement = new Promise<void>((resolve) => {
+        settleMutation = resolve;
+      });
       const sandbox = new CodeActSandbox({
-        timeoutMs: 75,
+        timeoutMs: 2_000,
         maxConcurrentExecutions: 1,
         mutationSettlementGraceMs: 500,
       });
@@ -247,17 +256,42 @@ describe('CodeActSandbox', () => {
       sandbox.registerAbortableFunction(
         'mutate_slowly',
         async () => {
-          await new Promise((resolve) => setTimeout(resolve, 150));
+          markMutationStarted?.();
+          await mutationSettlement;
           committed = true;
           return true;
         },
         { settleOnAbort: true }
       );
 
-      const startedAt = Date.now();
-      const result = await sandbox.execute('mutate_slowly()');
+      const activeRun = sandbox.execute('mutate_slowly()', { signal: parent.signal });
+      await mutationStarted;
+      parent.abort(new Error('owning turn stopped'));
 
-      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(140);
+      let queuedHostStarted = false;
+      let markQueuedHostStarted: (() => void) | undefined;
+      const queuedHostStartedSignal = new Promise<void>((resolve) => {
+        markQueuedHostStarted = resolve;
+      });
+      const queued = new CodeActSandbox({
+        timeoutMs: 2_000,
+        maxConcurrentExecutions: 1,
+      });
+      queued.registerFunction('mark_started', async () => {
+        queuedHostStarted = true;
+        markQueuedHostStarted?.();
+        return 42;
+      });
+      const queuedRun = queued.execute('mark_started()');
+      const queuedStateBeforeSettlement = await Promise.race([
+        queuedHostStartedSignal.then(() => 'started' as const),
+        new Promise<'waiting'>((resolve) => setTimeout(() => resolve('waiting'), 50)),
+      ]);
+
+      settleMutation?.();
+      const [result, next] = await Promise.all([activeRun, queuedRun]);
+
+      expect(queuedStateBeforeSettlement).toBe('waiting');
       expect(committed).toBe(true);
       expect(result.success).toBe(false);
       expect(result.error).toMatchObject({
@@ -266,11 +300,7 @@ describe('CodeActSandbox', () => {
       });
       expect(result.error?.message).toContain('may be committed');
       expect(result.error?.message).toContain('do not retry');
-
-      const next = await new CodeActSandbox({
-        timeoutMs: 500,
-        maxConcurrentExecutions: 1,
-      }).execute('42');
+      expect(queuedHostStarted).toBe(true);
       expect(next).toMatchObject({ success: true, value: 42 });
     });
 
