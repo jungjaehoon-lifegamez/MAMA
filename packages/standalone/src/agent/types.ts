@@ -1224,7 +1224,9 @@ export type AgentErrorCode =
   | 'UNKNOWN_TOOL'
   | 'INVALID_RESPONSE'
   | 'ENVELOPE_EXPIRED'
-  | 'WORKORDER_SUPERSEDED';
+  | 'WORKORDER_SUPERSEDED'
+  | 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT'
+  | 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN';
 
 /**
  * Custom error class for agent loop errors

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.1] - 2026-07-22
+
+Codex app-server policy changes and missing durable records are now detected before a model request
+and opened with the full current policy. Concurrent Code-Act runs use isolated, wall-clock-bounded
+QuickJS async WASM modules under a process-wide live-module ceiling, and nested tools receive the
+deadline and parent-turn abort signals. Side-effecting calls keep their bounded slot until their
+commit state and every sibling mutation settle or a finite grace expires; late and unknown outcomes
+stop the model turn across native, app-server, HTTP, and MCP transports and cannot be requeued by
+the workorder consumer. MCP calls serialize and latch ambiguous outcomes. Cancelled Drive downloads
+clean up local artifacts, while browser screenshots use exclusive operation-owned temporary files
+and reject existing, nested, or escaping destinations. The loop guard distinguishes different
+Code-Act programs while still stopping identical repetition. Workorder shutdown also stops before
+claiming more queued rows, preserving pending work for the restarted daemon. Full details are in
+the repository root CHANGELOG.md.
+
+## [0.27.0] - 2026-07-22
+
+Composable owner workflows and durable Telegram parity: Drive, attachment, OCR, translation,
+same-folder upload, and Telegram delivery share one owner-scoped Code-Act surface; inbound response
+and report delivery progress survives daemon restarts. Full details are in the repository root
+CHANGELOG.md.
+
 ## [0.26.0] - 2026-07-22
 
 Telegram and Google Drive owner-workflow parity: allowlisted Telegram chats now support captions,

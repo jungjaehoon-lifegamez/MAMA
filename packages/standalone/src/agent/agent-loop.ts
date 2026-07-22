@@ -16,7 +16,14 @@ import type { PromptLayer } from './prompt-size-monitor.js';
 import { filterSkillCatalogForContext, loadInstalledSkills } from './skill-loader.js';
 import { PersistentCLIAdapter } from './persistent-cli-adapter.js';
 import { CodexRuntimeProcess } from '../multi-agent/runtime-process.js';
-import type { HostToolBridge, HostToolCall, IModelRunner } from './model-runner.js';
+import {
+  HostToolTerminalError,
+  isHostToolTerminalCode,
+  type HostToolBridge,
+  type HostToolCall,
+  type HostToolTerminalCode,
+  type IModelRunner,
+} from './model-runner.js';
 import { GatewayToolExecutor } from './gateway-tool-executor.js';
 import { envelopeExpired } from '../envelope/run-guard.js';
 import { ToolRegistry } from './tool-registry.js';
@@ -114,6 +121,16 @@ interface RunScope {
   /** Pre-compaction injection latch - per run, or one run's latch would let an
    *  overlapping run skip required compaction and overflow its context. */
   preCompactInjected?: boolean;
+}
+
+type InternalToolResultBlock = ToolResultBlock & {
+  abort?: boolean;
+  terminalCode?: HostToolTerminalCode;
+};
+
+function historyToolResult(result: InternalToolResultBlock): ToolResultBlock {
+  const { abort: _abort, terminalCode: _terminalCode, ...block } = result;
+  return block;
 }
 
 /**
@@ -1297,7 +1314,7 @@ export class AgentLoop {
 
       let nativeToolCallCount = 0;
       let nativeConsecutiveToolCalls = 0;
-      let nativeLastToolName = '';
+      let nativeLastToolSignature = '';
       const hostToolBridge: HostToolBridge | undefined =
         isCodex && this.isGatewayMode
           ? {
@@ -1322,8 +1339,12 @@ export class AgentLoop {
                   };
                 }
 
+                const toolSignature =
+                  call.name === CODE_ACT_MARKER && typeof call.input.code === 'string'
+                    ? `${call.name}:${call.input.code.trim()}`
+                    : call.name;
                 const nextConsecutiveCount =
-                  call.name === nativeLastToolName ? nativeConsecutiveToolCalls + 1 : 1;
+                  toolSignature === nativeLastToolSignature ? nativeConsecutiveToolCalls + 1 : 1;
                 if (nextConsecutiveCount >= MAX_CONSECUTIVE_SAME_TOOL) {
                   return {
                     content: `Infinite loop detected: Tool "${call.name}" called ${nextConsecutiveCount} times consecutively`,
@@ -1334,7 +1355,7 @@ export class AgentLoop {
 
                 nativeToolCallCount += 1;
                 nativeConsecutiveToolCalls = nextConsecutiveCount;
-                nativeLastToolName = call.name;
+                nativeLastToolSignature = toolSignature;
                 const toolUse: ToolUseBlock = {
                   type: 'tool_use',
                   id: call.callId,
@@ -1361,23 +1382,29 @@ export class AgentLoop {
                   callExecutionContext,
                   runScope
                 );
-                callSignal.throwIfAborted();
                 if (!toolResult) {
+                  callSignal.throwIfAborted();
                   return {
                     content: `Native tool "${call.name}" returned no result`,
                     isError: true,
                     abort: true,
                   };
                 }
-                history.push({ role: 'user', content: [toolResult] });
+                if (!toolResult.terminalCode) {
+                  callSignal.throwIfAborted();
+                }
+                const persistedToolResult = historyToolResult(toolResult);
+                history.push({ role: 'user', content: [persistedToolResult] });
                 runScope.onTurn?.({
                   turn,
                   role: 'user',
-                  content: [toolResult],
+                  content: [persistedToolResult],
                 });
                 return {
                   content: toolResult.content,
                   isError: toolResult.is_error === true,
+                  abort: toolResult.abort === true,
+                  terminalCode: toolResult.terminalCode,
                   stop:
                     toolResult.is_error !== true &&
                     (options?.stopAfterSuccessfulTools ?? []).includes(call.name),
@@ -1551,9 +1578,11 @@ export class AgentLoop {
         let piResult;
         // Claude: First turn → --session-id (inject system prompt), subsequent → --resume
         // Codex: resumeSession only controls threadId reset (false=new thread, true=continue)
-        const shouldResume = isCodex
+        let shouldResume = isCodex
           ? turn > 1 || (options?.freshSession === true ? false : (options?.resumeSession ?? true))
           : !sessionIsNew || turn > 1;
+        let requestSystemPrompt = perCallSystemPrompt;
+        let provisionalCodexSessionId: string | undefined;
         // Both Claude PersistentCLI and Codex app-server preserve context - only send new messages
         const promptText = this.formatLastMessageOnly(history);
         const promptStart = Date.now();
@@ -1572,6 +1601,14 @@ export class AgentLoop {
               }`
             );
           }
+          if (normalizedError instanceof HostToolTerminalError) {
+            throw new AgentError(
+              normalizedError.message,
+              normalizedError.terminalCode,
+              normalizedError,
+              false
+            );
+          }
           throw new AgentError(
             `CLI error: ${normalizedError.message}`,
             'CLI_ERROR',
@@ -1580,10 +1617,48 @@ export class AgentLoop {
           );
         };
         try {
+          const durablePolicyStatus =
+            isCodex && turn === 1 && shouldResume
+              ? this.agent.getSessionPolicyStatus?.({
+                  model: options?.model,
+                  resumeSession: true,
+                  systemPrompt: requestSystemPrompt,
+                  sessionKey: channelKey,
+                  sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
+                  sessionId: resolvedCliSessionId ?? undefined,
+                  requestTimeout: options?.requestTimeoutMs,
+                  hostToolBridge,
+                })
+              : undefined;
+          if (durablePolicyStatus === 'mismatch' || durablePolicyStatus === 'missing') {
+            console.log(
+              `[AgentLoop] Codex durable session ${durablePolicyStatus}; ` +
+                'opening the full policy before model request'
+            );
+            const newSessionId = this.sessionPool.resetSession(channelKey);
+            options?.onCliSessionReset?.(newSessionId);
+            resolvedCliSessionId = newSessionId;
+            provisionalCodexSessionId = newSessionId;
+            try {
+              if (options?.freshSessionSystemPrompt) {
+                requestSystemPrompt = prepareSystemPrompt(
+                  await options.freshSessionSystemPrompt(),
+                  false
+                );
+              }
+            } catch (rebuildError) {
+              this.sessionPool.invalidateSession(channelKey, newSessionId);
+              provisionalCodexSessionId = undefined;
+              attemptReportedError =
+                rebuildError instanceof Error ? rebuildError : new Error(String(rebuildError));
+              throw rebuildError;
+            }
+            shouldResume = false;
+          }
           piResult = await this.agent.prompt(promptText, callbacks, {
             model: options?.model,
             resumeSession: shouldResume,
-            systemPrompt: perCallSystemPrompt,
+            systemPrompt: requestSystemPrompt,
             sessionKey: channelKey,
             sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
             sessionId: resolvedCliSessionId ?? undefined,
@@ -1592,7 +1667,12 @@ export class AgentLoop {
             requestTimeout: options?.requestTimeoutMs,
             hostToolBridge,
           });
+          provisionalCodexSessionId = undefined;
         } catch (error) {
+          if (provisionalCodexSessionId) {
+            this.sessionPool.invalidateSession(channelKey, provisionalCodexSessionId);
+            provisionalCodexSessionId = undefined;
+          }
           const errorMessage = error instanceof Error ? error.message : String(error);
           console.error(`[AgentLoop] ${this.backend} CLI error:`, errorMessage);
 
@@ -1897,12 +1977,13 @@ export class AgentLoop {
             }
           }
 
-          const toolResults = await this.executeTools(
+          const internalToolResults = await this.executeTools(
             response.content,
             options?.stopAfterSuccessfulTools ?? [],
             toolExecutionContext,
             runScope
           );
+          const toolResults = internalToolResults.map(historyToolResult);
 
           // Add tool results to history
           history.push({
@@ -1916,6 +1997,16 @@ export class AgentLoop {
             role: 'user',
             content: toolResults,
           });
+
+          const terminalToolResult = internalToolResults.find((result) => result.abort === true);
+          if (terminalToolResult) {
+            throw new AgentError(
+              terminalToolResult.content,
+              terminalToolResult.terminalCode ?? 'TOOL_ERROR',
+              undefined,
+              false
+            );
+          }
 
           const stopAfterSuccessfulTools = options?.stopAfterSuccessfulTools ?? [];
           const shouldStopAfterTool =
@@ -2052,18 +2143,20 @@ export class AgentLoop {
     stopAfterSuccessfulTools: string[] = [],
     executionContext: AgentToolExecutionContext | null = null,
     runScope: RunScope = { tier: 1 }
-  ): Promise<ToolResultBlock[]> {
+  ): Promise<InternalToolResultBlock[]> {
     const modelToolContext = withExecutionSurface(executionContext, 'model_tool');
     const reactiveInternalContext = withExecutionSurface(executionContext, 'reactive_internal');
     const toolUseBlocks = content.filter(
       (block): block is ToolUseBlock => block.type === 'tool_use'
     );
 
-    const results: ToolResultBlock[] = [];
+    const results: InternalToolResultBlock[] = [];
 
     for (const toolUse of toolUseBlocks) {
       let result: string;
       let isError = false;
+      let abort = false;
+      let terminalCode: HostToolTerminalCode | undefined;
       const executionToolName =
         toolUse.name === CODE_ACT_MCP_COMPAT_NAME ? CODE_ACT_MARKER : toolUse.name;
 
@@ -2098,6 +2191,14 @@ export class AgentLoop {
         if (toolFailed) {
           isError = true;
         }
+        const toolResultRecord = toolResult as Record<string, unknown>;
+        abort = toolResultRecord.abort === true;
+        terminalCode =
+          abort &&
+          toolResultRecord.retryable === false &&
+          isHostToolTerminalCode(toolResultRecord.code)
+            ? toolResultRecord.code
+            : undefined;
 
         if (contractContext) {
           result = `${contractContext}\n\n---\n\n${result}`;
@@ -2141,7 +2242,13 @@ export class AgentLoop {
         tool_use_id: toolUse.id,
         content: result,
         is_error: isError,
+        ...(abort ? { abort: true } : {}),
+        ...(terminalCode ? { terminalCode } : {}),
       });
+
+      if (abort) {
+        break;
+      }
 
       if (!isError && stopAfterSuccessfulTools.includes(executionToolName)) {
         break;

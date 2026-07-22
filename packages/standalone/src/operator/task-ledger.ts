@@ -168,7 +168,12 @@ export interface TemporalAttemptState {
 
 export type TemporalWorkFailureResult =
   | { disposition: 'requeued'; replacement: WorkOrderRecord; attempt: number; maxAttempts: number }
-  | { disposition: 'exhausted'; attempt: number; maxAttempts: number }
+  | {
+      disposition: 'exhausted';
+      attempt: number;
+      maxAttempts: number;
+      retrySuppressed?: boolean;
+    }
   | { disposition: 'superseded'; attempt: number; maxAttempts: number };
 
 export interface CreateTaskInput {
@@ -1489,7 +1494,11 @@ export class TaskLedger implements TaskSource {
     }
   }
 
-  failTemporalWorkOrder(attemptId: number, reason: string): TemporalWorkFailureResult {
+  failTemporalWorkOrder(
+    attemptId: number,
+    reason: string,
+    allowRetry = true
+  ): TemporalWorkFailureResult {
     this.assertTemporalReason(reason);
     const auditReason = this.temporalAuditText('worker-failure', [`failure=${reason}`]);
     let result: TemporalWorkFailureResult | null = null;
@@ -1508,7 +1517,15 @@ export class TaskLedger implements TaskSource {
       const context = this.loadTemporalWorkContextInternal(attemptId);
       const workOrder = this.getWorkOrderById(attemptId)!;
       const attempt = workOrder.payload.attempts;
-      if (attempt < TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
+      if (!allowRetry) {
+        this.exhaustTemporalWorkOrderInTransaction(context, auditReason);
+        result = {
+          disposition: 'exhausted',
+          attempt,
+          maxAttempts: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
+          retrySuppressed: true,
+        };
+      } else if (attempt < TEMPORAL_WORKORDER_MAX_ATTEMPTS) {
         result = {
           disposition: 'requeued',
           replacement: this.requeueTemporalWorkOrderInTransaction(context, workOrder, auditReason),

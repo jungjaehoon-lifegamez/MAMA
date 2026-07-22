@@ -75,8 +75,9 @@ describe('Story M1R: Code-Act envelope context propagation', () => {
       expect(executeFn).toHaveBeenCalledWith(
         'mama_search',
         { query: 'contracts' },
-        executionContext
+        expect.objectContaining(executionContext)
       );
+      expect(executeFn.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     });
 
     it('preserves a host-issued workorder attempt id in nested Code-Act gateway calls', async () => {

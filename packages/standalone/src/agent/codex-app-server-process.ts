@@ -15,7 +15,14 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline';
 
-import type { HostToolBridge, HostToolDefinition, PromptResult } from './model-runner.js';
+import {
+  HostToolTerminalError,
+  isHostToolTerminalCode,
+  type HostToolBridge,
+  type HostToolDefinition,
+  type PromptResult,
+  type SessionPolicyStatus,
+} from './model-runner.js';
 import type { PromptCallbacks } from './types.js';
 import {
   buildCodexAppServerLaunchConfig,
@@ -86,6 +93,7 @@ interface PendingTurn {
   abortController: AbortController;
   intentionalStop: boolean;
   abortError?: Error;
+  settledTerminalError?: HostToolTerminalError;
   onDelta?: (text: string) => void;
   resolve: (result: PromptResult) => void;
   reject: (error: Error) => void;
@@ -535,6 +543,16 @@ export class CodexAppServerProcess {
     });
   }
 
+  getSessionPolicyStatus(overrides: CodexAppServerPromptOptions = {}): SessionPolicyStatus {
+    const session = this.resolveSessionPolicy(overrides);
+    const record = this.registry.load(session.sessionKey);
+    if (!record) {
+      return 'missing';
+    }
+    const launch = buildCodexAppServerLaunchConfig(this.options.mcpConfigPath, process.env);
+    return this.registryPolicyMatches(record, session, launch) ? 'compatible' : 'mismatch';
+  }
+
   async stop(): Promise<void> {
     this.stopped = true;
     await this.shutdown(new Error('Codex app-server process stopped'));
@@ -630,14 +648,22 @@ export class CodexAppServerProcess {
     if (!record) {
       return;
     }
-    const matches =
+    if (!this.registryPolicyMatches(record, session, launch)) {
+      throw new Error('Codex app-server thread policy mismatch; reset the session explicitly');
+    }
+  }
+
+  private registryPolicyMatches(
+    record: NonNullable<ReturnType<CodexThreadRegistry['load']>>,
+    session: SessionPolicy,
+    launch: CodexAppServerLaunchConfig
+  ): boolean {
+    return (
       record.model === session.model &&
       record.cwd === session.cwd &&
       record.systemPromptFingerprint === this.policyFingerprint(session) &&
-      record.mcpConfigFingerprint === launch.fingerprint;
-    if (!matches) {
-      throw new Error('Codex app-server thread policy mismatch; reset the session explicitly');
-    }
+      record.mcpConfigFingerprint === launch.fingerprint
+    );
   }
 
   private prepareManagedFiles(launch: CodexAppServerLaunchConfig): boolean {
@@ -1410,8 +1436,13 @@ export class CodexAppServerProcess {
           }
           const abortError =
             resultData.abort === true && resultData.isError
-              ? new Error(resultData.content)
+              ? isHostToolTerminalCode(resultData.terminalCode)
+                ? new HostToolTerminalError(resultData.terminalCode, resultData.content)
+                : new Error(resultData.content)
               : undefined;
+          if (abortError instanceof HostToolTerminalError) {
+            turn.settledTerminalError ??= abortError;
+          }
           return {
             result: this.toolResult(!resultData.isError, resultData.content),
             stop: resultData.stop === true && !resultData.isError,
@@ -1503,6 +1534,9 @@ export class CodexAppServerProcess {
   }
 
   private toError(error: unknown): Error {
+    if (error instanceof HostToolTerminalError) {
+      return new HostToolTerminalError(error.terminalCode, this.redact(error.message));
+    }
     return error instanceof Error
       ? new Error(this.redact(error.message))
       : new Error(this.redact(String(error)));
@@ -1537,7 +1571,10 @@ export class CodexAppServerProcess {
     // caller sees failure. This prevents retries from racing a late mutation.
     void turn.toolCallQueue.finally(() => {
       this.clearTurnCallbacks(turn);
-      turn.reject(safe);
+      const terminalError =
+        turn.settledTerminalError ??
+        (turn.abortError instanceof HostToolTerminalError ? turn.abortError : undefined);
+      turn.reject(this.toError(terminalError ?? safe));
     });
   }
 
