@@ -227,9 +227,10 @@ MAMA OS has full system access via the backend CLI — so security is foundation
 - **Owner-console trust model (v0.22+)** — Telegram media and owner access require an explicit
   `allowed_chats` allowlist (text-only open mode warns loudly at boot); the `owner_console` role is
   granted only in an allowlisted chat's 1:1 DM. That verified owner may compose Drive operations
-  against the folder selected in the active request; non-owner Drive access stays blocked, supplied
-  destination capabilities remain validated, and uploads can read only private MAMA workspace
-  files. Memory writes refuse secret-shaped content, and Telegram forwarded messages,
+  against the folder selected in the active request. Non-owner Drive operations remain limited to
+  role-permitted tools and configured connector/envelope scope; they cannot select arbitrary roots.
+  Supplied destination capabilities remain validated, and uploads can read only private MAMA
+  workspace files. Memory writes refuse secret-shaped content, and Telegram forwarded messages,
   forwarded-image analysis, and Drive-derived Code-Act output are wrapped as untrusted at their
   model boundaries.
 - **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts down gracefully rather than operating compromised.
