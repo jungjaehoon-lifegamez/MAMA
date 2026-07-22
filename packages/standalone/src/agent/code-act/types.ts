@@ -1,7 +1,7 @@
 export interface SandboxConfig {
   memoryLimitBytes: number; // default: 32MB
   maxStackSizeBytes: number; // default: 512KB
-  timeoutMs: number; // default: 30_000
+  timeoutMs: number; // default: 300_000
   maxConcurrentCalls: number; // default: 50
   maxConcurrentExecutions: number; // default: 8 (process-wide hard maximum)
   mutationSettlementGraceMs: number; // default: 5_000 (bounded ambiguous-write drain)
@@ -71,7 +71,7 @@ export interface ParamDescriptor {
 export const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
   memoryLimitBytes: 32 * 1024 * 1024,
   maxStackSizeBytes: 512 * 1024,
-  timeoutMs: 30_000,
+  timeoutMs: 300_000,
   maxConcurrentCalls: 50,
   maxConcurrentExecutions: 8,
   mutationSettlementGraceMs: 5_000,
