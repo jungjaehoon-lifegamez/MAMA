@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  buildOperatorReportAgentPolicy,
   buildWorkOrderAgentPolicy,
   deriveCodeActToolPolicy,
   resolveCodeActMemoryScopes,
@@ -12,6 +13,8 @@ import {
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
+import { CODE_ACT_MARKER } from '../../src/agent/code-act/index.js';
+import { ToolRegistry } from '../../src/agent/tool-registry.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -282,6 +285,90 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         }
       }
     );
+
+    it('gives the operator report lane a Code-Act role so it can execute gather tools', () => {
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const context = policy.agentContext;
+      const projected = projectCodeActToolPolicy({ tier: context.tier, role: context.role });
+
+      expect(context).toMatchObject({
+        source: 'operator',
+        platform: 'cli',
+        roleName: 'operator-report',
+        backend: 'codex',
+        // The report may mama_save, matching the write tier its envelope already carries.
+        tier: 2,
+        role: { blockedTools: [], model: 'gpt-5.4' },
+      });
+      // The regression this guards: without a role, roleAllowsOuterCodeAct() returns
+      // false, the generic gateway catalog is stripped, and the report agent runs with
+      // ZERO tool definitions - every full report then logs "executed NO gateway gather
+      // tools" while still being sent.
+      expect(
+        ToolRegistry.getHostToolDefinitions({
+          allowedTools: context.role.allowedTools,
+          blockedTools: context.role.blockedTools,
+        }).some((tool) => tool.name === CODE_ACT_MARKER)
+      ).toBe(true);
+      expect(projected.names).toEqual([
+        'context_compile',
+        'kagemusha_entities',
+        'kagemusha_messages',
+        'kagemusha_overview',
+        'kagemusha_tasks',
+        'mama_recall',
+        'mama_save',
+        'mama_search',
+        'report_publish',
+        'schedule_upcoming',
+        'task_list',
+      ]);
+      // Prompt/permission coherence: advertise exactly what the executor will run.
+      const advertised = [
+        ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
+      ].map((match) => match[1]);
+      expect(advertised.sort()).toEqual([...projected.names].sort());
+      // The report envelope grants no send surface and filters trello out of its raw
+      // connectors, so no destination or task-mutation tool may be advertised.
+      for (const forbidden of ['task_create', 'task_update', 'send_message', 'Bash', 'Write']) {
+        expect(projected.names).not.toContain(forbidden);
+        expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
+      }
+    });
+
+    it('covers every gather tool the report audit counts as substance', () => {
+      const policy = buildOperatorReportAgentPolicy('gpt-5.4', 'codex');
+      const projected = projectCodeActToolPolicy({
+        tier: policy.agentContext.tier,
+        role: policy.agentContext.role,
+      });
+      // report-run.ts GATHER_TOOLS: a full report that executes none of these is WARNED
+      // as substance-unverified, so the role must be able to execute all of them.
+      for (const gather of [
+        'kagemusha_overview',
+        'kagemusha_entities',
+        'kagemusha_tasks',
+        'kagemusha_messages',
+        'mama_recall',
+        'mama_search',
+        'context_compile',
+      ]) {
+        expect(projected.names).toContain(gather);
+      }
+    });
+
+    it('passes the report role into the report lane run', () => {
+      const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+      const reportRun = startSource.slice(
+        startSource.indexOf('sessionKey: OPERATOR_REPORT_SESSION_KEY')
+      );
+      // A report run without agentContext is exactly the zero-tool regression; the
+      // freshSession marker anchors the assertion to the report lane's run options.
+      expect(reportRun).toMatch(
+        /agentContext:\s*buildOperatorReportAgentPolicy\([\s\S]{0,120}?\)\s*\.?\s*\n?\s*\.?agentContext/
+      );
+      expect(reportRun.slice(0, reportRun.indexOf('freshSession: true'))).toContain('agentContext');
+    });
 
     it('wires one temporal runtime from projected and registered transport tools', () => {
       const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
