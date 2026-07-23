@@ -774,11 +774,17 @@ describe('MessageRouter', () => {
         });
 
         expect(systemPrompt).toContain('Owner console operating discipline');
-        // The reported failure was an agent that answers "please check X" instead of
-        // checking X and reporting the result.
         expect(systemPrompt).toContain('Gather before answering');
         expect(systemPrompt).toContain('Never claim a check you did not run');
         expect(systemPrompt).toContain('Synthesize, do not dump');
+        // Observed 2026-07-23: the agent gathers and analyses well, then closes by
+        // offering to do the obvious next step instead of doing it. These two rules
+        // target that closing move and draw the boundary it needs to act inside.
+        expect(systemPrompt).toContain('Act by default; ask only before the irreversible');
+        expect(systemPrompt).toContain('Do not close by offering work you could have done');
+        // The boundary must name irreversible effects, not just assert one exists.
+        expect(systemPrompt).toContain('telegram_send');
+        expect(systemPrompt).toContain('drive_upload');
       } finally {
         resetRoleManager();
       }
