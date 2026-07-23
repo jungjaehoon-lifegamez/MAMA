@@ -78,6 +78,7 @@ import {
   failModelRunInAdapter,
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
+import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
@@ -421,9 +422,81 @@ const WORKORDER_TOOL_POLICIES = {
   },
 } as const satisfies Record<WorkOrderKind, WorkOrderToolPolicy>;
 
+/**
+ * Gateway tools the scheduled operator report must be able to EXECUTE.
+ *
+ * The report lane is a short-lived operator job like the Stage-2 workers, so its permissions
+ * are built in rather than derived from optional persona config. Membership is dictated by
+ * what the report is actually instructed to call: report-run.ts GATHER_TOOLS (the audit that
+ * decides whether a full report has task-board substance), the fullReportSelfGather lines,
+ * the board_publish lines, and the single mama_save the report may make.
+ *
+ * Its envelope grants no destinations and filters trello out of the raw connectors
+ * (scopeDaemonRawConnectors 'operator-report'), so no send or task-mutation tool belongs here.
+ */
+const OPERATOR_REPORT_TOOL_POLICY = {
+  roleName: 'operator-report',
+  allowedTools: [
+    'context_compile',
+    'kagemusha_entities',
+    'kagemusha_messages',
+    'kagemusha_overview',
+    'kagemusha_tasks',
+    'mama_recall',
+    'mama_save',
+    'mama_search',
+    'report_publish',
+    'schedule_upcoming',
+    'task_list',
+  ],
+} as const satisfies WorkOrderToolPolicy;
+
 export interface WorkOrderAgentPolicy {
   agentContext: AgentContext;
   gatewayToolsPrompt: string;
+}
+
+/**
+ * Build the Code-Act role the operator report lane runs under.
+ *
+ * Without an agentContext.role, roleAllowsOuterCodeAct() returns false (agent-loop.ts), the
+ * Code-Act branch of prepareSystemPrompt strips the generic gateway catalog, and NOTHING
+ * replaces it - the report agent then runs with zero tool definitions and every full report
+ * logs "executed NO gateway gather tools" while still being delivered. Mirrors
+ * buildWorkOrderAgentPolicy so both operator job families get their permissions the same way.
+ */
+export function buildOperatorReportAgentPolicy(
+  model: string,
+  backend: RuntimeBackend
+): WorkOrderAgentPolicy {
+  const blockedTools: string[] = [];
+  const innerTools = uniqueToolList(OPERATOR_REPORT_TOOL_POLICY.allowedTools);
+  const allowedTools = uniqueToolList(['code_act', ...innerTools]);
+  const agentContext: AgentContext = {
+    source: 'operator',
+    platform: 'cli',
+    roleName: OPERATOR_REPORT_TOOL_POLICY.roleName,
+    role: {
+      allowedTools,
+      blockedTools,
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+      model,
+    },
+    session: {
+      sessionId: OPERATOR_REPORT_SESSION_KEY,
+      channelId: 'report',
+      startedAt: new Date(),
+    },
+    capabilities: allowedTools,
+    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+    // Write tier: the report may persist one durable decision via mama_save, matching the
+    // tier its envelope already carries.
+    tier: 2,
+    backend,
+  };
+  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
 }
 
 export function buildWorkOrderAgentPolicy(
@@ -1542,8 +1615,7 @@ export async function runAgentLoop(
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
       const { persistLastFullReport } = await import('../../operator/report-carry.js');
-      const { createPersonaReportAsk, OPERATOR_REPORT_SESSION_KEY } =
-        await import('../../operator/report-run.js');
+      const { createPersonaReportAsk } = await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
       const { FilePendingReportStore } = await import('../../operator/pending-report-store.js');
@@ -1660,6 +1732,13 @@ export async function runAgentLoop(
                 sessionKey: OPERATOR_REPORT_SESSION_KEY,
                 source: 'operator',
                 channelId: 'report',
+                // Without a role the Code-Act branch strips the gateway catalog and
+                // injects nothing back, so the report agent gets ZERO tools and cannot
+                // gather no matter what the prompt instructs (roleAllowsOuterCodeAct
+                // fails closed on an absent role - agent-loop.ts). Same built-in
+                // least-privilege treatment the Stage-2 workers get.
+                agentContext: buildOperatorReportAgentPolicy(config.agent.model, runtimeBackend)
+                  .agentContext,
                 // Stateless report lane: each run starts on a fresh session so the
                 // continuous session no longer accumulates every run's gather dumps
                 // (measured 146s -> 521s growth over 3 days). Continuity comes from
