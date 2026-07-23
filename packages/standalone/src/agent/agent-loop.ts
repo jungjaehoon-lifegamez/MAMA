@@ -1501,6 +1501,20 @@ export class AgentLoop {
         console.log(`[AgentLoop] No systemPrompt in options - using spawn default for this call`);
       }
 
+      // Codex re-anchors a rehydrated durable thread through thread/resume's
+      // baseInstructions rather than replaying instructions as user text. A CONTINUE
+      // turn's per-call prompt is deliberately minimal (message-router
+      // buildMinimalResumePrompt), so resuming with it would REPLACE the thread's full
+      // policy with a stub - only freshSessionSystemPrompt rebuilds the complete one.
+      // That rebuild costs an embedding search, so hand the backend a lazy builder it
+      // invokes only inside the resume branch; a live thread never pays for it.
+      const freshSystemPromptBuilder = options?.freshSessionSystemPrompt;
+      const resumeInstructions =
+        isCodex && freshSystemPromptBuilder
+          ? async (): Promise<string> =>
+              prepareSystemPrompt(await freshSystemPromptBuilder(), false)
+          : undefined;
+
       // Reset StopContinuation state for this channel to prevent leaking
       // retry counts from previous invocations
       if (this.stopContinuationHandler) {
@@ -1659,6 +1673,7 @@ export class AgentLoop {
             model: options?.model,
             resumeSession: shouldResume,
             systemPrompt: requestSystemPrompt,
+            resumeInstructions,
             sessionKey: channelKey,
             sessionPolicyFingerprint: effectiveSessionPolicyFingerprint,
             sessionId: resolvedCliSessionId ?? undefined,
