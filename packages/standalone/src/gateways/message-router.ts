@@ -152,20 +152,45 @@ export function hashSessionPolicyFingerprint({
 function buildStableRolePolicyInstructions(
   agentContext: AgentContext,
   roleManager: RoleManager,
-  trelloAvailable: boolean
+  trelloAvailable: boolean,
+  options: { includeOperatingDiscipline?: boolean } = {}
 ): string {
   if (agentContext.roleName !== 'owner_console') {
     return '';
   }
+  const { includeOperatingDiscipline = true } = options;
   const trelloBoundary =
     trelloAvailable && roleManager.isToolAllowed(agentContext.role, 'context_compile')
       ? `
 - ${UNTRUSTED_EXTERNAL_EVIDENCE_INSTRUCTION}
 - Trello is separate external connector evidence and is available only through context_compile. When intentionally isolating Trello evidence, use context_compile({ task: "...", connectors: ['trello'] }); never claim that kagemusha_* is Trello or substitute one store for the other.`
       : '';
-  return `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
+  const evidencePolicy = `- Task-store canonicity: kagemusha_* is the READ-ONLY project-task truth; the native ledger (task_list/task_create/task_update) holds owner-console tasks. Their status vocabularies DIFFER (e.g. kagemusha has no 'blocked') - when a status query returns nothing, say the vocabulary difference instead of inferring the work is gone.${trelloBoundary}
 - Answer status questions from artifacts first (board_read, workorder_status, audit_findings_read), then live queries; memory recall is the LAST resort and may be stale - cite which source answered.`;
+  return includeOperatingDiscipline
+    ? `${evidencePolicy}\n\n${OWNER_CONSOLE_OPERATING_DISCIPLINE}`
+    : evidencePolicy;
 }
+
+/**
+ * Owner-console operating posture, restated on every owner turn.
+ *
+ * Without it the only behavioural instruction the chat persona carries is "Be concise", which
+ * reliably yields a cautious advisor ("you may want to check X") instead of an operator that
+ * checks X and reports the result. The scheduled operator report already carries an equivalent
+ * SOP (situation-report.ts buildPrompt); this is the interactive half of the same contract.
+ *
+ * English default, mechanism only - no personal, business, or channel strings (locale overrides
+ * belong in ~/.mama/operator/*.json, as with the other operator prompts).
+ */
+const OWNER_CONSOLE_OPERATING_DISCIPLINE = `## Owner console operating discipline (applies to every reply)
+- You are the owner's operator, not an advisor. Report what you found and what you did; do not hand back work you could have done yourself.
+- Gather before answering. Any question about status, work, or what happened is answered by CALLING your gateway tools first. Never reply "please check X" when a gateway tool can check X - check it, then report.
+- Never claim a check you did not run. If a tool errored or was denied, name the tool and the error; a missing answer is reported as missing, never smoothed over.
+- Multi-step requests: decide the steps and carry them out, then report the outcome. Do not return the plan as a suggestion and stop.
+- Synthesize, do not dump. A raw tool result is evidence, not an answer - say what it means for the owner and cite which source answered.
+- Before saying something is done, verify it (re-read the artifact or re-run the query) and say what you verified.
+- Reply in the language the owner writes in.`;
 
 /** Channel-less host alarms (workorder failures) park here; every resumed
  *  owner turn reads this key in addition to its own channel key. */
@@ -1359,8 +1384,17 @@ This protects your credentials from being exposed in chat logs.`;
     const stableRolePolicy = agentContext
       ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable)
       : '';
-    const appendStableRolePolicy = (basePrompt: string): string =>
-      stableRolePolicy ? `${basePrompt}\n\n${stableRolePolicy}\n` : basePrompt;
+    // Onboarding is guided first contact, not operator duty. The awakening persona asks the
+    // user's name and runs a personality quiz; ordering it to gather via gateway tools and
+    // execute multi-step work would fight that flow and aim it at connectors that do not
+    // exist yet. Evidence policy still travels; the operating posture does not.
+    const onboardingRolePolicy = agentContext
+      ? buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable, {
+          includeOperatingDiscipline: false,
+        })
+      : '';
+    const appendOnboardingRolePolicy = (basePrompt: string): string =>
+      onboardingRolePolicy ? `${basePrompt}\n\n${onboardingRolePolicy}\n` : basePrompt;
 
     if (isOnboarding) {
       // Check if we have existing conversation
@@ -1369,7 +1403,7 @@ This protects your credentials from being exposed in chat logs.`;
       if (hasHistory) {
         // Continue existing conversation WITH the full prompt context
         // The full prompt has all the phase instructions - just prepend history
-        return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
+        return appendOnboardingRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
@@ -1409,7 +1443,7 @@ Who are you? And more importantly—who do you want me to become? 💭`;
 
       const greeting = isKorean ? greetingKo : greetingEn;
 
-      return appendStableRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
+      return appendOnboardingRolePolicy(`${COMPLETE_AUTONOMOUS_PROMPT}
 
 ---
 
