@@ -1120,11 +1120,16 @@ export class AgentLoop {
     // Convert string prompt to text content block
     const content: ContentBlock[] = [{ type: 'text', text: prompt }];
 
+    // Per-call session key wins over the instance default (same contract as
+    // runWithContent): overlapping runs on a shared AgentLoop must never
+    // depend on a mutated this.sessionKey to pick their lane.
+    const sessionKey = options?.sessionKey || this.sessionKey;
+
     // Use lane-based queueing if enabled
     if (this.useLanes) {
-      const globalLane = this.resolveGlobalLaneForSession(this.sessionKey);
+      const globalLane = this.resolveGlobalLaneForSession(sessionKey);
       return this.laneManager.enqueueWithSession(
-        this.sessionKey,
+        sessionKey,
         () => this.runWithContentInternal(content, options),
         globalLane
       );
