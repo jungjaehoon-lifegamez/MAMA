@@ -299,9 +299,16 @@ export class TrelloConnector implements IConnector {
                 channel: channelName,
                 author: 'trello',
                 content,
-                timestamp: new Date(card.dateLastActivity),
+                // First sight is an OBSERVATION, stamped now: on install (or a
+                // state reset) dateLastActivity can be years old, which parks
+                // the card's only enriched item below every since-window and
+                // makes it invisible to retrieval (live incident 2026-07-24).
+                // Moves/updates keep the card's own activity time - the change
+                // just happened, so it is both fresh and semantically exact.
+                timestamp: isNew ? new Date() : new Date(card.dateLastActivity),
                 type: 'kanban_card',
                 metadata: {
+                  lastActivityAt: card.dateLastActivity,
                   boardId,
                   cardId: card.id,
                   listName: list.name,
