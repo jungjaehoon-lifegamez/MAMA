@@ -338,6 +338,164 @@ describe('TrelloConnector', () => {
     });
   });
 
+  describe('labels + assignees enrichment', () => {
+    // Owner question this exists for: "who owns this card and which revision
+    // round is it in?" Production boards track both ON the card (members + a
+    // 初稿/1回修正-style label), so the poller ingests them and treats a
+    // label/member change on an unmoved card as a change worth emitting.
+    type FakeCard = {
+      id: string;
+      name: string;
+      idMembers?: string[];
+      labels?: Array<{ name: string; color: string | null }>;
+      dateLastActivity?: string;
+    };
+    const richLists = (name: string, cards: FakeCard[]) => [
+      {
+        id: 'l1',
+        name,
+        cards: cards.map((c) => ({
+          idMembers: [],
+          labels: [],
+          dateLastActivity: '2024-01-01T00:00:00.000Z',
+          ...c,
+        })),
+      },
+    ];
+    const routedFetch = (
+      lists: unknown,
+      members: Array<{ id: string; fullName?: string; username?: string }> | 'fail'
+    ) =>
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.includes('/lists')) return { ok: true, json: async () => lists };
+        if (u.includes('/members?')) {
+          if (members === 'fail') return { ok: false, status: 500 };
+          return { ok: true, json: async () => members };
+        }
+        return { ok: false, status: 404 };
+      });
+
+    it('new cards carry resolved assignee names and labels in content and metadata', async () => {
+      const lists = richLists('進行', [
+        {
+          id: 'c1',
+          name: 'ex_100_card',
+          idMembers: ['m1', 'm2'],
+          labels: [
+            { name: '初稿', color: 'sky' },
+            { name: 'artist-a', color: 'green' },
+          ],
+        },
+      ]);
+      vi.stubGlobal(
+        'fetch',
+        routedFetch(lists, [
+          { id: 'm1', fullName: 'Alice Kim' },
+          { id: 'm2', username: 'bob' },
+        ])
+      );
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(1);
+      expect(items[0]?.content).toBe(
+        'ex_100_card | 進行 | labels: 初稿, artist-a | assignees: Alice Kim, bob'
+      );
+      expect(items[0]?.metadata).toMatchObject({
+        labels: ['初稿', 'artist-a'],
+        memberNames: ['Alice Kim', 'bob'],
+        members: ['m1', 'm2'],
+      });
+    });
+
+    it('a label change on an unmoved card emits with the old -> new transition', async () => {
+      const card: FakeCard = {
+        id: 'c1',
+        name: 'ex_100_card',
+        idMembers: ['m1'],
+        labels: [{ name: '初稿', color: 'sky' }],
+      };
+      const roster = [{ id: 'm1', fullName: 'Alice Kim' }];
+      vi.stubGlobal('fetch', routedFetch(richLists('進行', [card]), roster));
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      await connector.poll(new Date(0)); // baseline
+
+      vi.stubGlobal(
+        'fetch',
+        routedFetch(
+          richLists('進行', [{ ...card, labels: [{ name: '1回修正', color: 'sky' }] }]),
+          roster
+        )
+      );
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(1);
+      expect(items[0]?.content).toContain('(labels: 初稿 -> 1回修正)');
+      expect(items[0]?.content).toContain('| labels: 1回修正');
+      // A pure label change is not a move.
+      expect(items[0]?.content).not.toContain('(from:');
+    });
+
+    it('member-name resolution failure degrades to raw ids, never drops the poll', async () => {
+      vi.stubGlobal(
+        'fetch',
+        routedFetch(
+          richLists('進行', [{ id: 'c1', name: 'ex_100_card', idMembers: ['m9'] }]),
+          'fail'
+        )
+      );
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      const items = await connector.poll(new Date(0));
+      expect(items).toHaveLength(1);
+      expect(items[0]?.content).toContain('assignees: m9');
+    });
+
+    it('skips the member roster call when no open card has members', async () => {
+      const mockFetch = routedFetch(richLists('進行', [{ id: 'c1', name: 'plain_card' }]), []);
+      vi.stubGlobal('fetch', mockFetch);
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      await connector.poll(new Date(0));
+      expect(mockFetch.mock.calls.map((c) => String(c[0]))).toHaveLength(1);
+    });
+
+    it('legacy plain-listName state upgrades silently instead of flooding every card', async () => {
+      const fs = await import('fs');
+      vi.mocked(fs.existsSync).mockReturnValue(true);
+      vi.mocked(fs.readFileSync).mockReturnValue(
+        JSON.stringify({ lastCardStates: { 'board-abc123': { c1: '進行' } } })
+      );
+      vi.stubGlobal(
+        'fetch',
+        routedFetch(
+          richLists('進行', [
+            {
+              id: 'c1',
+              name: 'ex_100_card',
+              idMembers: ['m1'],
+              labels: [{ name: '初稿', color: 'sky' }],
+            },
+          ]),
+          [{ id: 'm1', fullName: 'Alice Kim' }]
+        )
+      );
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      // Same list + newly-visible labels/members must NOT emit (the legacy
+      // baseline has no label/member knowledge to diff against) ...
+      expect(await connector.poll(new Date(0))).toHaveLength(0);
+      // ... and the persisted state is upgraded to v2 so future label changes DO emit.
+      const written = vi
+        .mocked(fs.writeFileSync)
+        .mock.calls.map((c) => String(c[1]))
+        .find((s) => s.includes('lastCardStates'));
+      expect(written).toBeDefined();
+      expect(written).toContain('v2:');
+    });
+  });
+
   describe('healthCheck', () => {
     it('reflects lastPollTime and lastPollCount after poll', async () => {
       vi.stubGlobal(
