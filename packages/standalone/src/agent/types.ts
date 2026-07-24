@@ -793,6 +793,7 @@ export type GatewayToolName =
   | 'kagemusha_messages'
   | 'trello_search'
   | 'trello_card'
+  | 'trello_kanban'
   // Native task ledger (M8: operator-owned work items)
   | 'task_list'
   | 'task_create'
