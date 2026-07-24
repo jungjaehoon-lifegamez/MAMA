@@ -3090,6 +3090,22 @@ export class GatewayToolExecutor {
             };
           }
         }
+        case 'trello_kanban': {
+          const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
+          const kanbanInput = input as { maxCardsPerList?: number };
+          try {
+            const columns = await getTrelloKanban({
+              maxCardsPerList: kanbanInput.maxCardsPerList,
+            });
+            return { success: true, columns };
+          } catch (err) {
+            return {
+              success: false,
+              code: 'trello_query_failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
         case 'kagemusha_messages': {
           const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');
           const msgInput = input as {
