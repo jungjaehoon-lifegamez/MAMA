@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.5] - 2026-07-24
+
+Observability repairs: the report audit now sees Code-Act gather, and token
+telemetry flows again on the Stage-2 workorder path.
+
+- The full-report tool-use audit classifies the host tools a `code_act` run
+  actually executed (carried as `hostToolsInvoked` in the result), ending the
+  false "executed NO gateway gather tools" warning introduced when the report
+  lane moved onto Code-Act in 0.27.4. A compute-only or write-only report still
+  warns; the no-fallback guarantee is unchanged.
+- Stage-2 workorder runs record `tokens_used` in `agent_activity` again. The
+  legacy persona recorder was lost at the 07-21 cutover, blinding cost
+  measurement (13,927 runs unmeasured). Usage now rides the worker run result
+  through the consumer's completion events, including temporal completions,
+  whose receipt arbitration path previously dropped it.
+- Absent usage persists as NULL instead of a fabricated 0, so "unmeasured"
+  stays distinguishable from "measured as free"; explicitly reported zeros
+  still store 0, keeping aggregates comparable with the pre-cutover baseline.
+
 ## [0.27.4] - 2026-07-24
 
 Restores the operator agent's tool surface and gives the owner console an explicit operating
