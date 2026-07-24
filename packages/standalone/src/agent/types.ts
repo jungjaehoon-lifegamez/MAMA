@@ -143,12 +143,6 @@ export type GatewayToolExecutionContext = {
   backgroundTasks?: BackgroundTaskRegistry;
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
-  /**
-   * Stage-2 shadow seam: report_publish resolves this INSTEAD of the global
-   * reportPublisher singleton when set (capture runs must never touch the
-   * live report store). Strictly per-run - never merged from fallback state.
-   */
-  reportPublisherOverride?: (slots: Record<string, string>) => void;
 };
 
 // ============================================================================
@@ -1005,8 +999,6 @@ export interface AgentLoopOptions {
    * Provides platform, role, and permission information
    */
   agentContext?: AgentContext;
-  /** Stage-2 shadow seam: per-run report_publish override (see GatewayToolExecutionContext). */
-  reportPublisherOverride?: (slots: Record<string, string>) => void;
   /** Host-issued claimed system-row id; never accepted from model tool input. */
   workorderAttemptId?: number;
   /** Host-built temporal authority for one claimed temporal workorder. */

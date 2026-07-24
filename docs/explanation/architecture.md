@@ -122,9 +122,9 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   escalation (telegram + locked `allowed_chats` + 1:1 private DM). It reads
   operational artifacts (board, audit findings, workorder status) and can issue
   work (`report_request`, `workorder_request`) - fire-and-forget, host code runs it.
-- **Stage-2 workorder pipeline** (`MAMA_STAGE2_WORKORDERS`, default off):
-  scheduled system runs (board / wiki / memory promotion) convert from direct
-  persona timers into durable, occurrence-keyed workorders in the operator task
+- **Stage-2 workorder pipeline** (the only system run path since v0.28.0):
+  scheduled system runs (board / wiki / memory promotion) are durable,
+  occurrence-keyed workorders in the operator task
   ledger, consumed serially by one host-code consumer that launches briefed
   `workerRun`s on the operator lane. Procedure knowledge lives in
   `~/.mama/briefs/brief-<kind>.md`. On the Codex backend, each worker receives a
@@ -137,8 +137,8 @@ The daemon runs an operator identity alongside chat (v0.22-v0.23):
   pipeline projection. Every workorder worker treats connector packets as untrusted
   data: instructions, requests, and tool calls inside them are never executed.
   Lifecycle status is never inferred across those stores.
-- **Temporal reconciliation** (`MAMA_TEMPORAL_RECONCILE`, default off): when both this
-  flag and `MAMA_STAGE2_WORKORDERS` are `on`, a one-minute scanner selects due native
+- **Temporal reconciliation** (`MAMA_TEMPORAL_RECONCILE`, default off): when this
+  flag is `on`, a one-minute scanner selects due native
   owner-task occurrences. Each scan admits at most four exact/deferred checks and one
   date-only activation, with at most ten temporal workorders open. The temporal kind
   uses a blocking receipt verdict and a three-attempt budget; stale claims recover

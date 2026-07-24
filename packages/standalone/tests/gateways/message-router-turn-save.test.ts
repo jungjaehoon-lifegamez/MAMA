@@ -90,31 +90,19 @@ describe('Story S2-T3: operator notice broadcast key coherence (M1)', () => {
 });
 
 /**
- * Story S2-T3 (review round 3 F1): the production temporal assembly owns the
- * boot cleanup ordering while start.ts keeps the execution-time defense.
+ * v0.28.0: the legacy persona run path and the shadow capture harness are
+ * deleted - guard against re-introduction (the dual path was a seam-bug
+ * generator; workorders are the only system run path).
  */
-describe('Story S2-T3: shadow rollback wiring coherence (N4/F1)', () => {
-  const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
-  const temporalInitSource = readFileSync(
-    join(__dirname, '../../src/cli/runtime/temporal-init.ts'),
-    'utf-8'
-  );
-
-  describe('AC #1: shadow rollback wiring', () => {
-    it('boot pass cancels non-board orders BEFORE bootRecover, and runOptionsFor refuses non-board at shadow', () => {
-      // (a) scoped cleanup call with exactly the non-board kinds...
-      expect(temporalInitSource).toMatch(
-        /cancelOpenWorkOrders\('shadow-board-only',\s*\[\s*'wiki',\s*'memory-curation',?\s*\]\)/
-      );
-      // (b) ...ordered before bootRecover in the same boot pass.
-      const cleanupIdx = temporalInitSource.indexOf("cancelOpenWorkOrders('shadow-board-only'");
-      const recoverIdx = temporalInitSource.indexOf('input.consumer.bootRecover()');
-      expect(cleanupIdx).toBeGreaterThan(-1);
-      expect(recoverIdx).toBeGreaterThan(cleanupIdx);
-      // (c) defense-in-depth: non-board runs refused at shadow inside runOptionsFor.
-      expect(startSource).toMatch(
-        /workKind !== 'board'[\s\S]{0,200}shadow is board-only - refusing live/
-      );
-    });
+describe('legacy run path stays deleted (v0.28.0)', () => {
+  it('no executeValidatedRun, publish gates, or shadow branches in the wiring files', () => {
+    const startSource = readFileSync(join(__dirname, '../../src/cli/commands/start.ts'), 'utf-8');
+    const apiRoutesSource = readFileSync(
+      join(__dirname, '../../src/cli/runtime/api-routes-init.ts'),
+      'utf-8'
+    );
+    expect(apiRoutesSource).not.toMatch(/async function executeValidatedRun/);
+    expect(apiRoutesSource).not.toMatch(/resolvePublishAction|resolveReconcileAction/);
+    expect(startSource).not.toMatch(/shadowCapture|reportPublisherOverride/);
   });
 });

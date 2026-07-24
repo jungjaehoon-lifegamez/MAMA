@@ -24,9 +24,7 @@ import http from 'node:http';
 import { AgentLoop } from '../../agent/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import type { MessageRouter } from '../../gateways/index.js';
-import { ValidationSessionService } from '../../validation/session-service.js';
-import type { ValidationSessionRow } from '../../validation/types.js';
-import { getLatestVersion, logActivity } from '../../db/agent-store.js';
+import { logActivity } from '../../db/agent-store.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { buildMemoryAgentDashboardPayload } from '../../memory/memory-agent-dashboard.js';
 import type { ApiServer } from '../../api/index.js';
@@ -42,9 +40,6 @@ import type { AgentEventBus } from '../../multi-agent/agent-event-bus.js';
 import { API_PORT, EMBEDDING_PORT } from './utilities.js';
 import { runCodeAudit, type CodeAuditReport } from '../../observability/code-audit.js';
 import {
-  readStage2Flag,
-  resolvePublishAction,
-  resolveReconcileAction,
   validateWorkOrderPayload,
   boardFullKey,
   boardManualKey,
@@ -116,13 +111,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     workOrderConsumer,
   } = params;
 
-  // ── Stage-2 publisher gate (plan S2-T2) ───────────────────────────────
-  // Throws at boot on a malformed flag value (no-fallback: a typo must not
-  // silently revert a believed-active migration to legacy).
-  const stage2Flag = readStage2Flag();
-  if (stage2Flag !== 'off') {
-    console.log(`[stage2] workorder publishers active (flag=${stage2Flag})`);
-  }
+  // ── Stage-2 workorder publishers ──────────────────────────────────────
+  // The ONLY system run path since v0.28.0: every scheduled/boot/manual run
+  // below enqueues an occurrence-keyed workorder for the consumer lane (the
+  // legacy executeValidatedRun persona runs were removed after the 2026-07-22
+  // production cutover).
   const enqueueWorkOrderOrThrow = (
     workKind: WorkOrderKind,
     idempotencyKey: string,
@@ -137,164 +130,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     const wo = ledger.enqueueWorkOrder({ workKind, idempotencyKey, input: payload, priority });
     console.log(`[stage2] enqueued workorder ${workKind}#${wo.id} key=${idempotencyKey}`);
   };
-
-  // ── Validation Session Service ────────────────────────────────────────
-  const validationService = sessionsDb ? new ValidationSessionService(sessionsDb) : null;
-
-  /**
-   * executeValidatedRun — wraps pm.getSharedProcess().sendMessage()
-   * with validation session lifecycle (before → execute → after → classify).
-   */
-  async function executeValidatedRun(
-    agentId: string,
-    prompt: string,
-    opts?: { requestTimeout?: number }
-  ): Promise<{ response?: string; noUpdate?: boolean }> {
-    const pm = toolExecutor.getAgentProcessManager();
-    if (!pm) throw new Error(`AgentProcessManager not available`);
-
-    let agentVersion = 0;
-    let session: ValidationSessionRow | null = null;
-    const startTime = Date.now();
-
-    try {
-      const ver = sessionsDb ? getLatestVersion(sessionsDb, agentId) : null;
-      agentVersion = ver?.version ?? 0;
-      session = validationService?.startSession(agentId, agentVersion, 'system_run') ?? null;
-    } catch (bootstrapErr) {
-      routesLogger.warn(
-        '[executeValidatedRun] Failed to initialize validation bootstrap:',
-        bootstrapErr
-      );
-      agentVersion = 0;
-      session = null;
-    }
-
-    if (sessionsDb) {
-      try {
-        const startRow = logActivity(sessionsDb, {
-          agent_id: agentId,
-          agent_version: agentVersion,
-          type: 'task_start',
-          input_summary: prompt.slice(0, 200),
-          run_id: session?.id,
-          execution_status: 'started',
-          trigger_reason: 'system_run',
-        });
-        if (session) {
-          try {
-            validationService?.recordRun(session.id, { activityId: startRow.id });
-          } catch (telemetryErr) {
-            routesLogger.warn(
-              '[executeValidatedRun] Failed to link startup activity to validation session:',
-              telemetryErr
-            );
-          }
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[executeValidatedRun] Failed to write startup telemetry:', telemetryErr);
-      }
-    }
-
-    try {
-      const process = await pm.getSharedProcess(agentId, opts);
-      const result = await process.sendMessage(prompt);
-      const durationMs = Date.now() - startTime;
-      const noUpdate = result?.response?.includes('NO_UPDATE');
-      const usage = result?.usage;
-      const tokensUsed = usage ? (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) : 0;
-      try {
-        if (sessionsDb) {
-          const completeRow = logActivity(sessionsDb, {
-            agent_id: agentId,
-            agent_version: agentVersion,
-            type: noUpdate ? 'task_skipped' : 'task_complete',
-            input_summary: prompt.slice(0, 200),
-            output_summary: result?.response?.slice(0, 500),
-            duration_ms: durationMs,
-            tokens_used: tokensUsed,
-            run_id: session?.id,
-            execution_status: 'completed',
-            trigger_reason: 'system_run',
-          });
-          if (session) {
-            validationService?.recordRun(session.id, {
-              activityId: completeRow.id,
-              duration_ms: durationMs,
-              tokens_used: tokensUsed,
-            });
-          }
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn(
-          '[executeValidatedRun] Failed to write completion telemetry:',
-          telemetryErr
-        );
-      }
-
-      try {
-        if (session && validationService) {
-          validationService.finalizeSession(session.id, {
-            execution_status: 'completed',
-            metrics: {
-              duration_ms: durationMs,
-              token_cost: tokensUsed,
-            },
-          });
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn(
-          '[executeValidatedRun] Failed to finalize validation session:',
-          telemetryErr
-        );
-      }
-
-      return { response: result?.response, noUpdate };
-    } catch (err) {
-      const durationMs = Date.now() - startTime;
-      const originalError = err;
-      try {
-        if (sessionsDb) {
-          const errorRow = logActivity(sessionsDb, {
-            agent_id: agentId,
-            agent_version: agentVersion,
-            type: 'task_error',
-            input_summary: prompt.slice(0, 200),
-            error_message: err instanceof Error ? err.message : String(err),
-            duration_ms: durationMs,
-            run_id: session?.id,
-            execution_status: 'failed',
-            trigger_reason: 'system_run',
-          });
-          if (session) {
-            validationService?.recordRun(session.id, {
-              activityId: errorRow.id,
-              duration_ms: durationMs,
-            });
-          }
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn('[executeValidatedRun] Failed to write error telemetry:', telemetryErr);
-      }
-
-      try {
-        if (session && validationService) {
-          validationService.finalizeSession(session.id, {
-            execution_status: 'failed',
-            error_message: err instanceof Error ? err.message : String(err),
-            metrics: { duration_ms: durationMs },
-          });
-        }
-      } catch (telemetryErr) {
-        routesLogger.warn(
-          '[executeValidatedRun] Failed to finalize failed validation session:',
-          telemetryErr
-        );
-      }
-
-      throw originalError;
-    }
-  }
 
   // Wire EventBus to tool executor for agent_notices tool
   toolExecutor.setAgentEventBus(eventBus);
@@ -390,154 +225,61 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
   }
 
   if (dashboardAgentConfigured) {
-    // ── Dashboard Agent ───────────────────────────────────────────────
+    // ── Dashboard board publisher ─────────────────────────────────────
+    // Persona seeding stays: the optional legacy dashboard-agent config is
+    // still usable via multi-agent delegation; only its RUN path here was
+    // replaced by board workorders (consumer lane, brief-owned prompt).
     const { ensureDashboardPersona } = await import('../../multi-agent/dashboard-agent-persona.js');
     ensureDashboardPersona();
     routesLogger.debug('[Dashboard Agent] Persona ensured at ~/.mama/personas/dashboard.md');
 
-    // Dashboard cron: 30-min interval via AgentProcessManager
-    // Built PER RUN: today's date gives report context and auxiliary D-day.
-    // Temporal categories still come only from task_list.temporal_state.
-    const buildDashboardPrompt =
-      () => `You are triggered on a schedule. Today is ${new Date().toISOString().slice(0, 10)}. Before writing anything, determine if an update is needed:
-
-1. Use agent_notices({limit: 50}) to find the most recent dashboard-agent publish/task_complete notice. Treat that as the last briefing boundary.
-2. Use context_compile first to find recent substantive decisions (limit 20, max_tool_calls 2, strictness "balanced").
-   Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
-   Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
-   If context_compile is unavailable because there is no active worker envelope, fall back to mama_search once (limit 20).
-3. If NO substantive decisions or agent alerts exist since the last dashboard publish → respond "NO_UPDATE" and stop. Do NOT call report_publish.
-4. If new substantive information exists -> analyze it and publish ALL FOUR board slots (briefing, action_required, decisions, pipeline) in a SINGLE report_publish call, using the board HTML vocabulary from your persona. The pipeline slot is the item tracker projected from task_list (see your persona); use temporal_state as the canonical time category and D-day only as an auxiliary display computed from today's date.
-5. Do NOT call mama_save for the briefing; report_publish and agent_activity are the durable operational record.
-
-This saves resources. Only publish when there is genuinely new information to report.`;
-
-    // Owner-initiated refresh skips the NO_UPDATE delta gate: an explicit
-    // request means "rebuild the board now", not "tell me nothing changed".
-    const buildForcedDashboardPrompt = () =>
-      buildDashboardPrompt().replace(
-        /3\. If NO substantive decisions[^\n]*\n/,
-        '3. The owner explicitly requested a fresh board: do NOT reply NO_UPDATE. Rebuild and publish even if nothing changed since the last publish.\n'
-      );
-
-    const doDashboardRun = async (opts?: { force?: boolean }) => {
-      // Stage-2 gate at the FUNCTION level: schedule, boot, manual REST all
-      // funnel here, so this single gate covers every entry path (plan F4).
-      const boardAction = resolvePublishAction(stage2Flag, 'board');
-      if (boardAction !== 'legacy') {
-        try {
-          const now = Date.now();
-          enqueueWorkOrderOrThrow(
-            'board',
-            opts?.force ? boardManualKey(now) : boardFullKey(now),
-            { mode: 'full', ...(opts?.force ? { force: true } : {}) },
-            opts?.force ? 'high' : undefined
-          );
-        } catch (err) {
-          routesLogger.error(
-            '[stage2] board enqueue failed:',
-            err instanceof Error ? err.message : err
-          );
-        }
-        // 'enqueue' (on): legacy stops - an enqueue failure must NOT silently
-        // fall back to a legacy run; the next occurrence retries.
-        // 'both' (shadow): legacy keeps publishing live below.
-        if (boardAction === 'enqueue') return;
-      }
-      const pm = toolExecutor.getAgentProcessManager();
-      if (!pm) {
-        routesLogger.warn('[Dashboard Agent] AgentProcessManager not available yet');
-        return;
-      }
+    // Schedule/boot/manual all funnel here: one occurrence-keyed board
+    // workorder per entry. An enqueue failure is logged loudly and the next
+    // occurrence retries - there is no fallback run path.
+    const runDashboardAgent = (opts?: { force?: boolean }): void => {
       try {
-        // console.log on run outcomes: the DebugLogger only surfaces warn/error in the
-        // daemon log, and a silent outcome reads as a hang from the outside.
-        console.log(
-          `[Dashboard Agent] run started${opts?.force ? ' (owner-forced, delta gate bypassed)' : ''}`
-        );
-        const { noUpdate } = await executeValidatedRun(
-          'dashboard-agent',
-          opts?.force ? buildForcedDashboardPrompt() : buildDashboardPrompt()
-        );
-        console.log(
-          noUpdate
-            ? '[Dashboard Agent] no changes detected, publish skipped'
-            : '[Dashboard Agent] board published'
+        const now = Date.now();
+        enqueueWorkOrderOrThrow(
+          'board',
+          opts?.force ? boardManualKey(now) : boardFullKey(now),
+          { mode: 'full', ...(opts?.force ? { force: true } : {}) },
+          opts?.force ? 'high' : undefined
         );
       } catch (err) {
-        routesLogger.error('[Dashboard Agent] Error:', err instanceof Error ? err.message : err);
+        routesLogger.error(
+          '[stage2] board enqueue failed:',
+          err instanceof Error ? err.message : err
+        );
       }
     };
-
-    // ONE board-writer queue: dashboard cron, manual refresh, AND reconcile runs
-    // all serialize here -- the shared agent process rejects concurrent requests
-    // ('Process is busy' class). Per-job rejection propagates to the caller
-    // while the chain itself survives (M8 review: a caller must be able to
-    // distinguish its own job's failure).
-    let boardWriterChain: Promise<void> = Promise.resolve();
-    const boardWriterQueue = {
-      push(job: () => Promise<void>): Promise<void> {
-        const jobPromise = boardWriterChain.then(job);
-        boardWriterChain = jobPromise.catch(() => {});
-        return jobPromise;
-      },
-    };
-    const runDashboardAgent = (opts?: { force?: boolean }): Promise<void> =>
-      boardWriterQueue.push(() => doDashboardRun(opts)).catch(() => {});
 
     // First run after 10s (let connectors poll first), then every 30 min
     setTimeout(runDashboardAgent, 10_000);
     setInterval(runDashboardAgent, 30 * 60 * 1000);
 
-    // Manual trigger (owner-forced: bypasses the delta gate)
+    // Manual trigger (owner-forced: the workorder carries force=true so the
+    // worker brief skips its NO_UPDATE delta gate)
     apiServer.app.post('/api/report/agent-refresh', requireAuth, async (_req, res) => {
-      runDashboardAgent({ force: true }).catch(() => {});
-      res.json({ ok: true, message: 'Dashboard agent triggered (forced refresh)' });
+      runDashboardAgent({ force: true });
+      res.json({ ok: true, message: 'Board refresh workorder enqueued (forced)' });
     });
 
     // -- M8 board reconcile leg (freshness layer; default OFF, opt-in like
     // MAMA_TRIGGER_LOOP). The trigger loop emits operator:channel-delta after
     // committing its cursor; the 30-min cron above remains the repair pass.
     if (process.env.MAMA_BOARD_RECONCILE === '1') {
-      const { buildReconcilePrompt, ReconcileScheduler } =
-        await import('../../operator/board-reconcile.js');
-      const { captureSnapshot, verifyAfterRun, OBLIGATED_TOOLS } =
-        await import('../../operator/action-verifier.js');
-      const kagemushaContext =
-        (process.env.MAMA_RECONCILE_TASK_CONTEXT ?? 'native') === 'kagemusha';
+      const { ReconcileScheduler } = await import('../../operator/board-reconcile.js');
+      const { captureSnapshot, verifyAfterRun } = await import('../../operator/action-verifier.js');
 
-      // Verifier deps (M8 Phase 2): run-bound signals only -- trace rows from
-      // the dashboard agent's gateway_tool_call activity, notes from the
-      // operator ledger. Observe, never block.
+      // Verifier deps (M8 Phase 2): run-bound signals only -- notes from the
+      // operator ledger, board slots. Observe, never block. Trace queries are
+      // worker-keyed (buildWorkerTraceQueries below): reconcile runs execute
+      // on the workorder consumer lane only.
       const reconcileLedger = toolExecutor.getTaskLedger();
-      // gateway_tool_call rows now populate normalized_tool_name at the logging
-      // site; the input_summary fallback covers rows written before that fix.
-      const traceToolList = OBLIGATED_TOOLS.map((t) => `'${t}'`).join(',');
       const verifierDeps = {
         getSlots: () => apiServer.reportStore.getAllSorted(),
         getLedgerHash: () => reconcileLedger?.payloadHash() ?? '',
         getScopedNoteMaxId: (scope: string) => reconcileLedger?.maxNoUpdateId(scope) ?? 0,
-        getTraceMaxId: () => {
-          if (!sessionsDb) return 0;
-          const row = sessionsDb
-            .prepare(
-              `SELECT MAX(id) AS max_id FROM agent_activity
-               WHERE type = 'gateway_tool_call' AND agent_id = 'dashboard-agent'`
-            )
-            .get() as { max_id: number | null };
-          return row.max_id ?? 0;
-        },
-        countObligatedTraceRowsSince: (maxId: number) => {
-          if (!sessionsDb) return 0;
-          const row = sessionsDb
-            .prepare(
-              `SELECT COUNT(*) AS n FROM agent_activity
-               WHERE type = 'gateway_tool_call' AND agent_id = 'dashboard-agent'
-                 AND id > ? AND (normalized_tool_name IN (${traceToolList}) OR input_summary IN (${traceToolList}))`
-            )
-            .get(maxId) as { n: number };
-          return row.n;
-        },
       };
 
       // Stage-2 board completion hook (plan D1/E3/G1): the consumer wraps
@@ -611,69 +353,24 @@ This saves resources. Only publish when there is genuinely new information to re
         globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
         log: (line) => console.log(line),
         run: (channelKey, deltaLines) => {
-          // Stage-2: at 'on' the reconcile leg becomes a board workorder (its
-          // bracket verification moves to the consumer's completion hook);
-          // shadow/off keep the legacy bracket-verified path (plan C1).
-          if (resolveReconcileAction(stage2Flag) === 'enqueue') {
-            try {
-              enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
-                mode: 'reconcile',
-                channelKey,
-                deltaLines,
-              });
-            } catch (err) {
-              routesLogger.error(
-                '[stage2] reconcile enqueue failed:',
-                err instanceof Error ? err.message : err
-              );
-              // REJECT so ReconcileScheduler restores pendingLines - a
-              // resolved failure silently drops this delta (PR bot round).
-              return Promise.reject(err instanceof Error ? err : new Error(String(err)));
-            }
-            return Promise.resolve();
-          }
-          return boardWriterQueue.push(async () => {
-            const scope = `reconcile:${channelKey}`;
-            const before = captureSnapshot(verifierDeps, scope);
-            const prompt = buildReconcilePrompt({
+          // The reconcile leg is a board workorder; its bracket verification
+          // runs in the consumer's completion hook (registered above).
+          try {
+            enqueueWorkOrderOrThrow('board', boardReconcileKey(channelKey, Date.now()), {
+              mode: 'reconcile',
               channelKey,
               deltaLines,
-              todayIso: new Date().toISOString().slice(0, 10),
-              kagemushaContext,
             });
-            await executeValidatedRun('dashboard-agent', prompt, {
-              requestTimeout: 300_000,
-            });
-            const verdict = verifyAfterRun(verifierDeps, before, scope);
-            const outcome = verdict.verified ? 'reconcile_verified' : 'reconcile_unverified';
-            console.log(
-              `[reconcile] ${outcome} channel=${channelKey}${verdict.effects.length > 0 ? ` (${verdict.effects.join('; ')})` : ''}`
+          } catch (err) {
+            routesLogger.error(
+              '[stage2] reconcile enqueue failed:',
+              err instanceof Error ? err.message : err
             );
-            try {
-              if (sessionsDb) {
-                logActivity(sessionsDb, {
-                  agent_id: 'dashboard-agent',
-                  agent_version: 0,
-                  type: outcome,
-                  input_summary: `reconcile ${channelKey}`,
-                  output_summary: verdict.effects.join('; '),
-                  execution_status: 'completed',
-                  trigger_reason: 'reconcile',
-                });
-              }
-            } catch {
-              /* telemetry only */
-            }
-            if (!verdict.verified) {
-              // Loud, never blocking (observability over restriction).
-              eventBus.emit({
-                type: 'agent:action',
-                agent: 'Dashboard Agent',
-                action: 'reconcile_unverified',
-                target: channelKey,
-              });
-            }
-          });
+            // REJECT so ReconcileScheduler restores pendingLines - a
+            // resolved failure silently drops this delta (PR bot round).
+            return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+          }
+          return Promise.resolve();
         },
       });
       eventBus.on('operator:channel-delta', (event) => {
@@ -767,60 +464,22 @@ This saves resources. Only publish when there is genuinely new information to re
       });
     });
 
-    // Wiki trigger via executeValidatedRun
-    const doWikiRun = async (trigger: string) => {
-      // Stage-2 gate (function level, plan F4). Wiki never enters shadow
-      // (resolvePublishAction returns 'legacy' there) - its Obsidian writes
-      // have no capture seam.
-      if (resolvePublishAction(stage2Flag, 'wiki') === 'enqueue') {
-        try {
-          const now = Date.now();
-          enqueueWorkOrderOrThrow(
-            'wiki',
-            wikiBatchKey(trigger, now),
-            { batchId: `${now}-${trigger}`, events: [trigger] },
-            trigger === 'manual' ? 'high' : undefined
-          );
-        } catch (err) {
-          routesLogger.error(
-            '[stage2] wiki enqueue failed:',
-            err instanceof Error ? err.message : err
-          );
-        }
-        return;
-      }
-      if (!toolExecutor.getAgentProcessManager()) {
-        routesLogger.warn('[Wiki Agent] AgentProcessManager not available yet');
-        return;
-      }
+    // Wiki compile runs are workorders: enqueue-only, the consumer lane runs
+    // them serially under the wiki brief (no direct persona run path).
+    const runWikiAgent = (trigger: string): void => {
       try {
-        routesLogger.debug('[Wiki Agent] Checking for updates...');
-
-        const wikiPrompt = `You are triggered on a schedule. Before writing anything, determine if an update is needed:
-
-1. Use agent_notices({limit: 100}) to find the most recent wiki-agent compiled/publish/task_complete notice. Treat that as the last compilation boundary.
-2. NOVELTY CHECK by recency, not semantics: call mama_search({limit: 30}) with NO query -- that returns the newest decisions in creation order regardless of language or wording (semantic/lexical search misses cross-language items, which caused missed compilations). Compare created_at against the boundary.
-3. If NO substantive decisions are newer than the boundary -> respond "NO_UPDATE" and stop. Do NOT call obsidian or wiki_publish.
-4. If new items exist, use context_compile first to gather supporting context (limit 30, max_tool_calls 3, strictness "balanced").
-   Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes".
-   Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text; filter those operational summaries after the packet returns.
-   If the packet misses some of the new items from step 2 (it often will for cross-language content), write from the step-2 items directly -- the recency list is authoritative for WHAT is new; the packet only enriches.
-   If context_compile is unavailable because there is no active worker envelope, fall back to ONE queried mama_search for enrichment and continue from the step-2 recency list.
-5. Then follow your persona: APPEND today's daily note (daily/YYYY-MM-DD.md, create with the section skeleton on first write of the day), then promote qualifying lesson candidates into lessons/ pages (search before create; update, never duplicate). Do NOT write per-task status pages.
-6. Do NOT call mama_save for the compilation; Obsidian/wiki files plus agent_activity are the durable operational record.
-
-This saves resources. Only compile when there is genuinely new information to document.`;
-
-        const { noUpdate } = await executeValidatedRun('wiki-agent', wikiPrompt, {
-          requestTimeout: 600_000,
-        });
-        if (noUpdate) {
-          routesLogger.debug('[Wiki Agent] No changes detected, skipped');
-        } else {
-          routesLogger.debug('[Wiki Agent] Compilation complete');
-        }
+        const now = Date.now();
+        enqueueWorkOrderOrThrow(
+          'wiki',
+          wikiBatchKey(trigger, now),
+          { batchId: `${now}-${trigger}`, events: [trigger] },
+          trigger === 'manual' ? 'high' : undefined
+        );
       } catch (err) {
-        routesLogger.error('[Wiki Agent] Error:', err instanceof Error ? err.message : err);
+        routesLogger.error(
+          '[stage2] wiki enqueue failed:',
+          err instanceof Error ? err.message : err
+        );
       }
     };
 
@@ -832,16 +491,6 @@ This saves resources. Only compile when there is genuinely new information to do
         after: buildWikiAfterHook((line) => routesLogger.debug(line)),
       });
     }
-
-    // Serialize ALL wiki runs (boot, event-driven, manual) on one chain -- the
-    // shared agent process rejects concurrent requests, so the boot run and a
-    // manual trigger raced into 'Process is busy' (same pattern as the
-    // dashboard agent's runDashboardAgent chain above).
-    let wikiRunChain: Promise<void> = Promise.resolve();
-    const runWikiAgent = (trigger: string): Promise<void> => {
-      wikiRunChain = wikiRunChain.then(() => doWikiRun(trigger)).catch(() => {});
-      return wikiRunChain;
-    };
 
     // Event-driven: compile when extraction completes. Trailing-edge debounce so
     // bursts of extraction:completed events coalesce into one wiki compile run.
@@ -871,8 +520,8 @@ This saves resources. Only compile when there is genuinely new information to do
 
     // Manual trigger API
     apiServer.app.post('/api/wiki/compile', requireAuth, async (_req, res) => {
-      runWikiAgent('manual').catch(() => {});
-      res.json({ ok: true, message: 'Wiki compilation triggered' });
+      runWikiAgent('manual');
+      res.json({ ok: true, message: 'Wiki compile workorder enqueued' });
     });
 
     // First run after 15s (let connectors and dashboard agent go first)
@@ -895,67 +544,23 @@ This saves resources. Only compile when there is genuinely new information to do
       Math.max(1, Number(process.env.MAMA_MEMORY_PROMOTION_HOURS) || 6) * 60 * 60 * 1000;
     const PROMOTION_INITIAL_DELAY_MS = 10 * 60 * 1000; // let connectors poll first
 
-    const buildPromotionPrompt = (nowIso: string): string =>
-      'PROMOTION RUN. You are curating durable business memory from recent data. ' +
-      `The current time is ${nowIso}.\n` +
-      '1. agent_notices({limit: 100}): find your latest promotion notice (action "promoted" ' +
-      'or "no_update") and treat it as the boundary; default to the last 24h when absent.\n' +
-      '2. kagemusha_entities({activeOnly: true}) to find the rooms active since the boundary, ' +
-      'then kagemusha_messages({channelId, since: <boundary ISO>}) on the busiest 3-4 rooms.\n' +
-      '3. For each candidate judgment, mama_search first to find the existing topic; reuse it ' +
-      'so the evolution chain stays intact.\n' +
-      '4. Promote at most 5 durable judgments per run via mama_save, following the PROMOTION RUN ' +
-      'rules in your persona (pricing/scope agreements, standing client preferences, process ' +
-      'rules, recurring risk patterns; NEVER task lifecycle states, greetings, or logistics). ' +
-      'Include scopes (the source channel, and the project when identifiable) and event_date.\n' +
-      '5. Finish with exactly PROMOTED <n> or NO_UPDATE.';
-
-    const doPromotionRun = async (opts?: { manual?: boolean }) => {
-      // Stage-2 gate (function level, plan F4). Promotion never enters shadow
-      // - its mama_save writes have no capture seam.
-      if (resolvePublishAction(stage2Flag, 'memory-curation') === 'enqueue') {
-        try {
-          const now = Date.now();
-          enqueueWorkOrderOrThrow(
-            'memory-curation',
-            opts?.manual ? promotionManualKey(now) : promotionKey(now),
-            { scheduledAt: new Date(now).toISOString() },
-            opts?.manual ? 'high' : undefined
-          );
-        } catch (err) {
-          routesLogger.error(
-            '[stage2] promotion enqueue failed:',
-            err instanceof Error ? err.message : err
-          );
-        }
-        return;
-      }
-      if (!toolExecutor.getAgentProcessManager()) {
-        routesLogger.warn('[Memory Promotion] AgentProcessManager not available yet');
-        return;
-      }
+    // Promotion runs are workorders: enqueue-only, the consumer lane runs
+    // them under the memory-curation brief. The PROMOTED <n> parse and its
+    // event emissions live in the completion hook below.
+    const runMemoryPromotion = (opts?: { manual?: boolean }): void => {
       try {
-        const { response, noUpdate } = await executeValidatedRun(
-          'memory',
-          buildPromotionPrompt(new Date().toISOString()),
-          { requestTimeout: 600_000 }
+        const now = Date.now();
+        enqueueWorkOrderOrThrow(
+          'memory-curation',
+          opts?.manual ? promotionManualKey(now) : promotionKey(now),
+          { scheduledAt: new Date(now).toISOString() },
+          opts?.manual ? 'high' : undefined
         );
-        const promotedMatch = response?.match(/PROMOTED\s+(\d+)/);
-        const saved = promotedMatch ? Number(promotedMatch[1]) : 0;
-        eventBus.emit({
-          type: 'agent:action',
-          agent: 'Memory Agent',
-          action: noUpdate || saved === 0 ? 'no_update' : 'promoted',
-          target: `promotion run: ${saved} saved`,
-        });
-        if (saved > 0) {
-          eventBus.emit({ type: 'memory:promoted', saved });
-          console.log(`[Memory Promotion] Promoted ${saved} durable judgments`);
-        } else {
-          routesLogger.debug('[Memory Promotion] Nothing qualified for promotion');
-        }
       } catch (err) {
-        routesLogger.error('[Memory Promotion] Error:', err instanceof Error ? err.message : err);
+        routesLogger.error(
+          '[stage2] promotion enqueue failed:',
+          err instanceof Error ? err.message : err
+        );
       }
     };
 
@@ -974,20 +579,12 @@ This saves resources. Only compile when there is genuinely new information to do
       });
     }
 
-    // Serialize all promotion runs on one chain (same 'Process is busy' class
-    // as the dashboard and wiki agents).
-    let promotionRunChain: Promise<void> = Promise.resolve();
-    const runMemoryPromotion = (opts?: { manual?: boolean }): Promise<void> => {
-      promotionRunChain = promotionRunChain.then(() => doPromotionRun(opts)).catch(() => {});
-      return promotionRunChain;
-    };
-
     setTimeout(() => runMemoryPromotion(), PROMOTION_INITIAL_DELAY_MS);
     setInterval(() => runMemoryPromotion(), PROMOTION_INTERVAL_MS);
 
     apiServer.app.post('/api/memory/promote', requireAuth, (_req, res) => {
-      runMemoryPromotion({ manual: true }).catch(() => {});
-      res.json({ ok: true, message: 'Memory promotion run triggered' });
+      runMemoryPromotion({ manual: true });
+      res.json({ ok: true, message: 'Memory promotion workorder enqueued' });
     });
 
     console.log(

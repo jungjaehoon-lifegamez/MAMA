@@ -1,61 +1,37 @@
 /**
- * Story S2-T2: publisher gate - pure decision, occurrence keys, payload schemas.
+ * Story S2-T2: publisher contracts - occurrence keys, payload schemas, and the
+ * retired-flag boot guard (workorders are the only run path since v0.28.0).
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
 import { describe, it, expect } from 'vitest';
 import {
-  readStage2Flag,
-  resolvePublishAction,
-  resolveReconcileAction,
+  assertStage2FlagCompatible,
   validateWorkOrderPayload,
   boardFullKey,
   boardManualKey,
   boardReconcileKey,
   wikiBatchKey,
   promotionKey,
-  STAGE2_FLAGS,
 } from '../../src/operator/workorder-publishers.js';
-import { WORKORDER_KINDS } from '../../src/operator/task-ledger.js';
 
-describe('Story S2-T2: publisher gate', () => {
-  describe('AC #1: flag parsing is strict (no-fallback)', () => {
-    it('absent/empty -> off; valid values pass through', () => {
-      expect(readStage2Flag({})).toBe('off');
-      expect(readStage2Flag({ MAMA_STAGE2_WORKORDERS: '' })).toBe('off');
-      for (const flag of STAGE2_FLAGS) {
-        expect(readStage2Flag({ MAMA_STAGE2_WORKORDERS: flag })).toBe(flag);
-      }
+describe('Story S2-T2: publisher contracts', () => {
+  describe('AC #1: retired flag guard is strict (no-fallback)', () => {
+    it('absent/empty/on boot fine (the pipeline always runs)', () => {
+      expect(() => assertStage2FlagCompatible({})).not.toThrow();
+      expect(() => assertStage2FlagCompatible({ MAMA_STAGE2_WORKORDERS: '' })).not.toThrow();
+      expect(() => assertStage2FlagCompatible({ MAMA_STAGE2_WORKORDERS: 'on' })).not.toThrow();
     });
 
-    it('malformed values throw at boot instead of silently reverting to legacy', () => {
-      expect(() => readStage2Flag({ MAMA_STAGE2_WORKORDERS: '1' })).toThrow(/must be one of/);
-      expect(() => readStage2Flag({ MAMA_STAGE2_WORKORDERS: 'shado' })).toThrow(/must be one of/);
-    });
-  });
-
-  describe('AC #2: gate decision - every flag x kind combination', () => {
-    it('off -> legacy for all kinds', () => {
-      for (const kind of WORKORDER_KINDS) {
-        expect(resolvePublishAction('off', kind)).toBe('legacy');
-      }
-    });
-
-    it('on -> enqueue for all kinds', () => {
-      for (const kind of WORKORDER_KINDS) {
-        expect(resolvePublishAction('on', kind)).toBe('enqueue');
-      }
-    });
-
-    it('shadow -> board dual-runs, wiki/promotion stay pure legacy (no uncaptured writes)', () => {
-      expect(resolvePublishAction('shadow', 'board')).toBe('both');
-      expect(resolvePublishAction('shadow', 'wiki')).toBe('legacy');
-      expect(resolvePublishAction('shadow', 'memory-curation')).toBe('legacy');
-    });
-
-    it('reconcile leg converts at on ONLY (bracket verification stays legacy in shadow)', () => {
-      expect(resolveReconcileAction('off')).toBe('legacy');
-      expect(resolveReconcileAction('shadow')).toBe('legacy');
-      expect(resolveReconcileAction('on')).toBe('enqueue');
+    it('explicit legacy pins fail the boot loudly instead of silently running the pipeline', () => {
+      expect(() => assertStage2FlagCompatible({ MAMA_STAGE2_WORKORDERS: 'off' })).toThrow(
+        /no longer supported/
+      );
+      expect(() => assertStage2FlagCompatible({ MAMA_STAGE2_WORKORDERS: 'shadow' })).toThrow(
+        /no longer supported/
+      );
+      expect(() => assertStage2FlagCompatible({ MAMA_STAGE2_WORKORDERS: '1' })).toThrow(
+        /no longer supported/
+      );
     });
   });
 

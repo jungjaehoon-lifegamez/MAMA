@@ -299,10 +299,11 @@ export function initMainAgentLoop(
       let autoRecallUsed = false;
       const callOptions = withReasoningCollectors(options, reasoningLog);
 
-      // Set session key for lane-based concurrency
-      if (options?.source && options?.channelId) {
-        const sessionKey = `${options.source}:${options.channelId}:${options.userId || 'unknown'}`;
-        agentLoop.setSessionKey(sessionKey);
+      // Per-call session key for lane-based concurrency. Never mutate the
+      // shared AgentLoop: setSessionKey here raced overlapping runs, sending
+      // them down the wrong lane (observed as polluted default:* sessions).
+      if (!options?.sessionKey && options?.source && options?.channelId) {
+        callOptions.sessionKey = `${options.source}:${options.channelId}:${options.userId || 'unknown'}`;
       }
 
       if (runtimeBackend === 'codex') {
@@ -341,10 +342,9 @@ export function initMainAgentLoop(
       let autoRecallUsed = false;
       const callOptions = withReasoningCollectors(options, reasoningLog);
 
-      // Set session key for lane-based concurrency
-      if (options?.source && options?.channelId) {
-        const sessionKey = `${options.source}:${options.channelId}:${options.userId || 'unknown'}`;
-        agentLoop.setSessionKey(sessionKey);
+      // Per-call session key (see run() above: no shared-instance mutation).
+      if (!options?.sessionKey && options?.source && options?.channelId) {
+        callOptions.sessionKey = `${options.source}:${options.channelId}:${options.userId || 'unknown'}`;
       }
 
       console.log(`[AgentLoop] runWithContent called with ${content.length} blocks`);

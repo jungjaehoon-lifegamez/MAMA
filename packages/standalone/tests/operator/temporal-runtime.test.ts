@@ -45,7 +45,6 @@ function dependencies(overrides: Record<string, unknown> = {}) {
     ledger,
     options: {
       env: { MAMA_TEMPORAL_RECONCILE: 'on' },
-      stage2Flag: 'on' as const,
       backend: 'codex',
       envelopeIssuanceMode: 'enabled' as const,
       effectiveTools: ['task_temporal_reconcile'],
@@ -70,32 +69,25 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     );
   });
 
-  it('preflights both flags and pauses a Stage-2 mismatch before throwing', () => {
-    const pause = vi.fn();
+  it('preflight accepts unset/on and fails the boot on a retired legacy pin', () => {
     expect(
       preflightTemporalStartup({
         MAMA_TEMPORAL_RECONCILE: 'on',
         MAMA_STAGE2_WORKORDERS: 'on',
       })
-    ).toEqual({ temporalFlag: 'on', stage2Flag: 'on' });
+    ).toEqual({ temporalFlag: 'on' });
     expect(() =>
-      preflightTemporalStartup(
-        { MAMA_TEMPORAL_RECONCILE: 'on', MAMA_STAGE2_WORKORDERS: 'shadow' },
-        pause
-      )
-    ).toThrow(/MAMA_STAGE2_WORKORDERS=on/);
-    expect(pause).toHaveBeenCalledWith('stage2-shadow');
+      preflightTemporalStartup({ MAMA_TEMPORAL_RECONCILE: 'on', MAMA_STAGE2_WORKORDERS: 'shadow' })
+    ).toThrow(/no longer supported/);
   });
 
   it('does not mutate durable work when either startup flag is malformed', () => {
-    const pause = vi.fn();
-    expect(() => preflightTemporalStartup({ MAMA_STAGE2_WORKORDERS: 'broken' }, pause)).toThrow(
+    expect(() => preflightTemporalStartup({ MAMA_STAGE2_WORKORDERS: 'broken' })).toThrow(
       /MAMA_STAGE2_WORKORDERS/
     );
-    expect(() => preflightTemporalStartup({ MAMA_TEMPORAL_RECONCILE: 'broken' }, pause)).toThrow(
+    expect(() => preflightTemporalStartup({ MAMA_TEMPORAL_RECONCILE: 'broken' })).toThrow(
       /MAMA_TEMPORAL_RECONCILE/
     );
-    expect(pause).not.toHaveBeenCalled();
   });
 
   it('off registers no role or scheduler and pauses before returning from boot', () => {
@@ -106,18 +98,6 @@ describe('Story A2 Task 10: temporal runtime lifecycle', () => {
     expect(runtime.boot()).toEqual({ enabled: false, paused: 0, resumed: 0, enqueued: 0 });
     expect(ctx.order).toEqual(['repair', 'pause']);
   });
-
-  it.each(['off', 'shadow'] as const)(
-    'pauses and rejects on with Stage-2 %s before constructing a scheduler',
-    (stage2Flag) => {
-      const ctx = dependencies({ stage2Flag });
-      const runtime = createTemporalRuntime(ctx.options);
-      expect(() => runtime.boot()).toThrow(/MAMA_STAGE2_WORKORDERS=on/);
-      expect(ctx.order).toEqual(['repair', 'pause']);
-      expect(ctx.options.registerRole).not.toHaveBeenCalled();
-      expect(ctx.options.createScheduler).not.toHaveBeenCalled();
-    }
-  );
 
   it('rejects an incompatible backend or missing trusted tool before any timer exists', () => {
     const backend = dependencies({ backend: 'legacy' });
@@ -235,14 +215,9 @@ describe('Story A2 Task 10: temporal restart integration', () => {
       sourceChannel: task.sourceChannel,
       sourceEventId: task.sourceEventId,
     });
-    const create = (
-      flag: 'off' | 'on',
-      stage2Flag: 'off' | 'shadow' | 'on' = 'on',
-      order: string[] = []
-    ) =>
+    const create = (flag: 'off' | 'on', order: string[] = []) =>
       createTemporalRuntime({
         env: { MAMA_TEMPORAL_RECONCILE: flag },
-        stage2Flag,
         backend: 'codex',
         envelopeIssuanceMode: 'enabled',
         effectiveTools: ['task_temporal_reconcile'],
@@ -264,37 +239,12 @@ describe('Story A2 Task 10: temporal restart integration', () => {
     return { db, ledger, consumer, runs, created, generationKey, create };
   }
 
-  it.each(['off', 'shadow'] as const)(
-    'on -> Stage-2 %s pauses a stale claim before recovery and does not execute it',
-    async (stage2Flag) => {
-      const ctx = harness();
-      try {
-        const enabledRuntime = ctx.create('on');
-        expect(enabledRuntime.boot().enabled).toBe(true);
-        expect(ctx.ledger.claimNextWorkOrder()?.id).toBe(ctx.created.workOrder.id);
-        const runtime = ctx.create('on', stage2Flag);
-        expect(() => runtime.boot()).toThrow(/MAMA_STAGE2_WORKORDERS=on/);
-        ctx.consumer.bootRecover();
-        await ctx.consumer.tick();
-
-        expect(ctx.runs).toEqual([]);
-        expect(ctx.ledger.countOpenWorkOrders('temporal')).toBe(0);
-        expect(ctx.ledger.inspectTemporalAttempt(ctx.created.workOrder.id)).toMatchObject({
-          workOrder: { status: 'cancelled' },
-          generation: { disposition: 'active' },
-        });
-      } finally {
-        ctx.db.close();
-      }
-    }
-  );
-
   it('off -> on resumes exactly one paused row without spending an attempt', () => {
     const ctx = harness();
     try {
       expect(ctx.create('off').boot().paused).toBe(1);
       const order: string[] = [];
-      expect(ctx.create('on', 'on', order).boot()).toMatchObject({ enabled: true, resumed: 1 });
+      expect(ctx.create('on', order).boot()).toMatchObject({ enabled: true, resumed: 1 });
       expect(order).toEqual(['register', 'scan', 'timer']);
       expect(ctx.ledger.countOpenWorkOrders('temporal')).toBe(1);
       expect(ctx.ledger.getTemporalGeneration(ctx.generationKey)?.lastWorkOrderId).not.toBe(
@@ -330,7 +280,7 @@ describe('Story A2 Task 10: temporal restart integration', () => {
     try {
       expect(ctx.ledger.claimNextWorkOrder()?.id).toBe(ctx.created.workOrder.id);
       const order: string[] = [];
-      ctx.create('on', 'on', order).boot();
+      ctx.create('on', order).boot();
 
       expect(order).toEqual(['register', 'scan', 'timer']);
       expect(ctx.ledger.inspectTemporalAttempt(ctx.created.workOrder.id).workOrder.status).toBe(
