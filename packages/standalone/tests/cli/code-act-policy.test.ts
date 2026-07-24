@@ -197,6 +197,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'task_create',
           'task_list',
           'task_update',
+          'trello_card',
+          'trello_search',
         ],
       },
       {

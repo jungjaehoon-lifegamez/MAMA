@@ -391,6 +391,8 @@ const WORKORDER_TOOL_POLICIES = {
       'task_create',
       'task_list',
       'task_update',
+      'trello_card',
+      'trello_search',
     ],
   },
   wiki: {
