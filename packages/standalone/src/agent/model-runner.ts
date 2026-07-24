@@ -128,6 +128,14 @@ export interface PromptOptions {
    * place, so only callers that opt in (operator worker runs) are affected.
    */
   requestTimeout?: number;
+  /**
+   * Rebuilds the FULL instructions for a backend that has to rehydrate a durable
+   * session on this call. Codex re-anchors the resumed thread with them
+   * (thread/resume accepts baseInstructions) instead of replaying a per-call prompt
+   * as user text. Lazy: backends invoke it only when a resume actually happens, so
+   * live sessions never pay the rebuild.
+   */
+  resumeInstructions?: () => Promise<string>;
 }
 
 export type SessionPolicyStatus = 'missing' | 'compatible' | 'mismatch';

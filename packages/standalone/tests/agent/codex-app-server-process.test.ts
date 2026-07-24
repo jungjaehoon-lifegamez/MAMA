@@ -1924,6 +1924,85 @@ describe('Story: Codex app-server process', () => {
     expect(input).toContain('second message');
   });
 
+  it('omits baseInstructions on thread/resume when no resume instructions are supplied', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'initial runtime bootstrap',
+      policyFingerprint: 'stable-policy',
+    });
+    await first.prompt('first message');
+    await first.stop();
+
+    const resumed = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'minimal per-call prompt',
+      policyFingerprint: 'stable-policy',
+    });
+    await resumed.prompt('second message');
+    await resumed.stop();
+
+    const resume = messages(item.capture).find((entry) => entry.method === 'thread/resume');
+    expect(resume).toBeDefined();
+    expect(resume?.params).not.toHaveProperty('baseInstructions');
+  });
+
+  it('carries resume instructions on thread/resume instead of the turn-text bootstrap', async () => {
+    const item = fixture();
+    const first = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'initial runtime bootstrap',
+      policyFingerprint: 'stable-policy',
+    });
+    await first.prompt('first message');
+    await first.stop();
+
+    const resumed = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'minimal per-call prompt',
+      policyFingerprint: 'stable-policy',
+    });
+    const resumeInstructions = vi.fn().mockResolvedValue('full operator instructions');
+    await resumed.prompt('second message', undefined, { resumeInstructions });
+    await resumed.stop();
+
+    const sent = messages(item.capture);
+    const resumeIndex = sent.findIndex((entry) => entry.method === 'thread/resume');
+    const resumedTurn = sent.slice(resumeIndex + 1).find((entry) => entry.method === 'turn/start');
+    const input = (
+      (resumedTurn?.params as Record<string, unknown>)?.input as Array<{ text?: string }>
+    )?.[0]?.text;
+
+    expect(resumeIndex).toBeGreaterThan(-1);
+    expect((sent[resumeIndex]?.params as Record<string, unknown>)?.baseInstructions).toBe(
+      'full operator instructions'
+    );
+    expect(resumeInstructions).toHaveBeenCalledTimes(1);
+    // The protocol channel replaces the user-text workaround: no reminder wrapper, no
+    // minimal per-call prompt leaking into the turn.
+    expect(input).toBe('second message');
+    expect(input).not.toContain('system-reminder');
+    expect(input).not.toContain('minimal per-call prompt');
+  });
+
+  it('does not build resume instructions while the durable thread stays live', async () => {
+    const item = fixture();
+    const runner = new CodexAppServerProcess({
+      ...item.options,
+      systemPrompt: 'initial durable policy',
+      policyFingerprint: 'stable-policy',
+    });
+    const resumeInstructions = vi.fn().mockResolvedValue('full operator instructions');
+
+    await runner.prompt('first message', undefined, { resumeInstructions });
+    await runner.prompt('second message', undefined, { resumeInstructions });
+    await runner.stop();
+
+    // thread/start opened the thread; neither turn resumed, so the expensive rebuild
+    // must never run on the hot path.
+    expect(resumeInstructions).not.toHaveBeenCalled();
+  });
+
   it('does not re-inject a per-call system prompt while the same durable thread stays live', async () => {
     const item = fixture();
     const runner = new CodexAppServerProcess({

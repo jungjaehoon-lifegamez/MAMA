@@ -132,6 +132,7 @@ export class CodexRuntimeProcess extends EventEmitter implements AgentRuntimePro
         policyFingerprint: promptOptions?.sessionPolicyFingerprint,
         resumeSession: promptOptions?.resumeSession,
         hostToolBridge: promptOptions?.hostToolBridge,
+        resumeInstructions: promptOptions?.resumeInstructions,
       });
 
       this._totalLatencyMs += Date.now() - startTime;

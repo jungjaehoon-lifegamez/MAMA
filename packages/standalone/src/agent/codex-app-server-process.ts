@@ -57,6 +57,15 @@ export interface CodexAppServerPromptOptions {
   policyFingerprint?: string;
   resumeSession?: boolean;
   hostToolBridge?: HostToolBridge;
+  /**
+   * Full instructions to re-supply when this call has to resume a durable thread.
+   * `thread/resume` accepts `baseInstructions` (ThreadResumeParams), so a rehydrated
+   * thread can be re-anchored through the protocol instead of the turn-text
+   * `<system-reminder>` workaround. Lazy on purpose: rebuilding the composed prompt
+   * costs an embedding search, and a live thread never resumes - the callback runs
+   * only inside the resume branch. Omit it to keep the legacy bootstrap behaviour.
+   */
+  resumeInstructions?: () => Promise<string>;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -137,6 +146,7 @@ interface SessionPolicy {
   requestTimeout: number;
   policyFingerprint?: string;
   hostToolBridge?: HostToolBridge;
+  resumeInstructions?: () => Promise<string>;
 }
 
 interface SessionState {
@@ -593,6 +603,7 @@ export class CodexAppServerProcess {
       requestTimeout: overrides.requestTimeout ?? this.options.requestTimeout,
       policyFingerprint: overrides.policyFingerprint ?? this.options.policyFingerprint,
       hostToolBridge,
+      resumeInstructions: overrides.resumeInstructions,
     };
   }
 
@@ -788,18 +799,33 @@ export class CodexAppServerProcess {
   ): Promise<SessionState> {
     const record = this.registry.load(session.sessionKey);
     if (record) {
+      // A rehydrated thread carries its original instructions only in the model's own
+      // history, where compaction eventually erodes them. ThreadResumeParams accepts
+      // baseInstructions, so re-anchor through the protocol when the caller can supply
+      // the full text. assertRegistryPolicy already proved the stored policy fingerprint
+      // matches this session, and the caller builds these instructions from the same
+      // composed-prompt sources that produced that fingerprint - so re-supplying them
+      // restates the agreed policy rather than switching to a new one.
+      const resumeInstructions = session.resumeInstructions
+        ? await session.resumeInstructions()
+        : undefined;
+      if (session.resumeInstructions && !resumeInstructions?.trim()) {
+        // No-fallback: silently resuming without instructions is the very failure this
+        // path exists to remove.
+        throw new Error('Codex app-server resume instructions resolved to empty text');
+      }
+      const resumeParams: JsonObject = {
+        threadId: record.threadId,
+        model: session.model,
+        cwd: session.cwd,
+        approvalPolicy: 'never',
+        sandbox: session.sandbox,
+      };
+      if (resumeInstructions) {
+        resumeParams.baseInstructions = resumeInstructions;
+      }
       const result = object(
-        await this.request(
-          'thread/resume',
-          {
-            threadId: record.threadId,
-            model: session.model,
-            cwd: session.cwd,
-            approvalPolicy: 'never',
-            sandbox: session.sandbox,
-          },
-          session.requestTimeout
-        )
+        await this.request('thread/resume', resumeParams, session.requestTimeout)
       );
       this.validateResponsePolicy(result, session);
       this.validateInstructionMetadata(result, session);
@@ -807,7 +833,9 @@ export class CodexAppServerProcess {
       if (typeof resumed?.id !== 'string' || resumed.id !== record.threadId) {
         throw new Error('Codex app-server resumed an unexpected thread');
       }
-      return { threadId: record.threadId, bootstrapPending: true };
+      // Instructions delivered through the protocol make the turn-text bootstrap
+      // redundant; without them the legacy <system-reminder> replay still applies.
+      return { threadId: record.threadId, bootstrapPending: resumeInstructions === undefined };
     }
     const threadStartParams: JsonObject = {
       model: session.model,
