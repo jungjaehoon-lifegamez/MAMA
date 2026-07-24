@@ -379,7 +379,11 @@ export function initMainAgentLoop(
         autoRecallUsed
       );
       const response = `${header}\n${result.response}`;
-      return { response };
+      // totalUsage must survive this wrapper: workerRun reads it for the
+      // Stage-2 token telemetry (0.27.5). The first live run under 0.27.5
+      // recorded NULL because this return stripped the field - the structural
+      // WorkerRunner type could not catch a concrete wrapper dropping it.
+      return { response, totalUsage: result.totalUsage };
     },
   };
 
