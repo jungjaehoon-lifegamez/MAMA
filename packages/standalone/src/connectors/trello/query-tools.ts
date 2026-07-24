@@ -132,9 +132,88 @@ function summarize(card: RawSearchCard, boardNames: Map<string, string>): Trello
   };
 }
 
+interface BoardScanList {
+  name: string;
+  cards: Array<{
+    id: string;
+    name: string;
+    due: string | null;
+    dateLastActivity: string;
+    idMembers?: string[];
+    labels?: Array<{ name: string }>;
+  }>;
+}
+
+/** Board-scan substring match: Trello's /search tokenizes on word boundaries
+ *  and misses CJK substrings and underscore compounds (e.g. 'エルデリーゼ',
+ *  'ex_1055003'), which is most of this board vocabulary. Scanning open cards
+ *  per board and filtering locally is the reliable path (the same reason
+ *  Kagemusha's agent leans on its full-kanban scan). */
+async function scanBoardsForCards(
+  query: string,
+  limit: number,
+  auth: TrelloAuth,
+  fetchFn: typeof fetch
+): Promise<TrelloCardSummary[]> {
+  const needle = query.toLowerCase();
+  const matches: TrelloCardSummary[] = [];
+  for (const [boardId, boardName] of auth.boardNames) {
+    if (matches.length >= limit) break;
+    let lists: BoardScanList[];
+    try {
+      lists = await trelloGet<BoardScanList[]>(
+        `/boards/${boardId}/lists`,
+        { cards: 'open', card_fields: 'name,due,dateLastActivity,idMembers,labels' },
+        auth,
+        fetchFn
+      );
+    } catch {
+      continue; // a single unreadable board must not sink the whole search
+    }
+    const hits = lists.flatMap((list) =>
+      list.cards
+        .filter((card) => card.name.toLowerCase().includes(needle))
+        .map((card) => ({ list: list.name, card }))
+    );
+    if (hits.length === 0) continue;
+    // Resolve assignee names only for boards that actually matched.
+    let roster = new Map<string, string>();
+    if (hits.some((h) => (h.card.idMembers ?? []).length > 0)) {
+      try {
+        const members = await trelloGet<
+          Array<{ id: string; fullName?: string; username?: string }>
+        >(`/boards/${boardId}/members`, { fields: 'fullName,username' }, auth, fetchFn);
+        roster = new Map(
+          members.flatMap((m) =>
+            m.fullName || m.username ? [[m.id, m.fullName || m.username!]] : []
+          )
+        );
+      } catch {
+        /* degrade to raw ids */
+      }
+    }
+    for (const { list, card } of hits) {
+      if (matches.length >= limit) break;
+      matches.push({
+        cardId: card.id,
+        name: card.name,
+        board: boardName,
+        list,
+        labels: (card.labels ?? []).map((l) => l.name).filter(Boolean),
+        assignees: (card.idMembers ?? []).map((id) => roster.get(id) ?? id),
+        due: card.due,
+        lastActivity: card.dateLastActivity,
+      });
+    }
+  }
+  return matches;
+}
+
 /**
  * Search cards across the configured boards, LIVE. Returns current list,
- * labels (revision round / artist), and assignee names per card.
+ * labels (revision round / artist), and assignee names per card. Tries
+ * Trello's /search first (fast for ASCII terms), then fills up from a
+ * board scan with local substring matching (reliable for CJK names).
  */
 export async function searchTrelloCards(
   input: { query: string; limit?: number },
@@ -162,7 +241,15 @@ export async function searchTrelloCards(
     auth,
     fetchFn
   );
-  return (result.cards ?? []).map((card) => summarize(card, auth.boardNames));
+  const fromSearch = (result.cards ?? []).map((card) => summarize(card, auth.boardNames));
+  if (fromSearch.length >= limit || auth.boardNames.size === 0) {
+    return fromSearch.slice(0, limit);
+  }
+  const seen = new Set(fromSearch.map((c) => c.cardId));
+  const scanned = (await scanBoardsForCards(query, limit, auth, fetchFn)).filter(
+    (c) => !seen.has(c.cardId)
+  );
+  return [...fromSearch, ...scanned].slice(0, limit);
 }
 
 export interface TrelloCardDetail extends TrelloCardSummary {
