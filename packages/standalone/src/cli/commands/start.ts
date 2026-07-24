@@ -1510,6 +1510,10 @@ export async function runAgentLoop(
             type: `workorder_${event.type}`,
             input_summary: `#${event.workOrderId}`,
             output_summary: event.reason ?? '',
+            // Token telemetry continuity: the legacy persona path recorded
+            // tokens_used via executeValidatedRun; the Stage-2 cutover
+            // (2026-07-21) silently zeroed it, blinding all cost measurement.
+            tokens_used: event.tokensUsed,
             execution_status: 'completed',
             trigger_reason: 'workorder-consumer',
           });

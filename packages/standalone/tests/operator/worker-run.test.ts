@@ -43,7 +43,8 @@ describe('Story OPS-0: workerRun primitive', () => {
         input: 'Refresh the pipeline slot.',
       });
 
-      expect(result).toBe('board updated');
+      // No usage from the runner -> response only, no fabricated tokensUsed.
+      expect(result).toEqual({ response: 'board updated' });
       expect(runner.calls).toHaveLength(1);
       const { content, options } = runner.calls[0];
       expect(content).toContain('You update the owner board slots.');
@@ -52,6 +53,32 @@ describe('Story OPS-0: workerRun primitive', () => {
       expect(options.source).toBe('operator');
       expect(options.channelId).toBe('worker:board');
       expect(options.freshSession).toBe(true);
+    });
+
+    it('sums runner totalUsage into tokensUsed for activity telemetry', async () => {
+      const runner: WorkerRunner = {
+        runWithContent: vi.fn(async () => ({
+          response: 'done',
+          totalUsage: { input_tokens: 40_000, output_tokens: 3_000 },
+        })),
+      };
+      const result = await workerRun(runner, {
+        kind: 'board',
+        brief: 'brief',
+        input: 'input',
+      });
+      expect(result).toEqual({ response: 'done', tokensUsed: 43_000 });
+    });
+
+    it('drops non-finite usage instead of fabricating a number', async () => {
+      const runner: WorkerRunner = {
+        runWithContent: vi.fn(async () => ({
+          response: 'done',
+          totalUsage: { input_tokens: Number.NaN, output_tokens: 3 },
+        })),
+      };
+      const result = await workerRun(runner, { kind: 'board', brief: 'b', input: 'i' });
+      expect(result).toEqual({ response: 'done' });
     });
 
     it('maps kinds onto the operator global-lane prefix', () => {

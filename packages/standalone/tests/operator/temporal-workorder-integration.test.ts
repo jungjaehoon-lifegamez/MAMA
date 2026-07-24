@@ -174,7 +174,10 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     return nextConsumer;
   }
 
-  async function runModelAction(options: WorkerRunnerOptions): Promise<{ response: string }> {
+  async function runModelAction(options: WorkerRunnerOptions): Promise<{
+    response: string;
+    totalUsage: { input_tokens: number; output_tokens: number };
+  }> {
     const trusted = options.temporalWorkContext as TemporalWorkContext | undefined;
     if (!trusted) throw new Error('fake model transport did not receive trusted temporal context');
     const executionContext = buildAgentToolExecutionContext(
@@ -186,7 +189,12 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
     const action = actions.shift();
     if (!action) throw new Error('fake model response was not configured');
     runs.push(trusted.attemptId);
-    return { response: await action(executionContext, trusted) };
+    return {
+      response: await action(executionContext, trusted),
+      // Every fake run reports usage so the receipt-completion assertions can
+      // verify tokensUsed survives temporal arbitration (PR #175 review).
+      totalUsage: { input_tokens: 30_000, output_tokens: 1_500 },
+    };
   }
 
   function createExact(title = 'Confirm the 14:00 meeting outcome'): TaskRecord {
@@ -272,6 +280,9 @@ describe('Story A2 Task 12: temporal workorder vertical slice', () => {
       type: 'complete',
       workKind: 'temporal',
       workOrderId: attemptId,
+      // Temporal completions route through arbitrateTemporalAttempt, which must
+      // not drop the run's usage the way the pre-review code did.
+      tokensUsed: 31_500,
     });
     expect(evidenceReads).toEqual([
       {

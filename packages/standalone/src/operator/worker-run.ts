@@ -37,12 +37,24 @@ export type WorkerRunnerOptions = WorkerIdentityOptions &
   Pick<AgentLoopOptions, 'workorderAttemptId'> &
   Record<string, unknown>;
 
-/** Minimal surface of AgentLoop.runWithContent that workerRun needs (DI seam). */
+/** Minimal surface of AgentLoop.runWithContent that workerRun needs (DI seam).
+ *  totalUsage is optional because the seam is structural: the real AgentLoopResult
+ *  always carries it, but injected test runners and older adapters may not. */
 export interface WorkerRunner {
   runWithContent(
     content: ContentBlock[],
     options: WorkerRunnerOptions
-  ): Promise<{ response: string }>;
+  ): Promise<{
+    response: string;
+    totalUsage?: { input_tokens: number; output_tokens: number };
+  }>;
+}
+
+export interface WorkerRunOutput {
+  response: string;
+  /** input+output tokens of the run; undefined when the runner reported no usage
+   *  (never a fabricated 0 - absence must stay distinguishable from "free"). */
+  tokensUsed?: number;
 }
 
 export interface WorkerRunInput {
@@ -169,7 +181,7 @@ export function attachWorkOrderAttemptContext(
 export async function workerRun(
   runner: WorkerRunner,
   { kind, brief, input, runOptions }: WorkerRunInput
-): Promise<string> {
+): Promise<WorkerRunOutput> {
   if (!KIND_PATTERN.test(kind)) {
     throw new Error(`[worker-run] invalid worker kind "${kind}" (expected kebab-case)`);
   }
@@ -204,5 +216,10 @@ export async function workerRun(
   if (!response) {
     throw new Error(`[worker-run] worker "${kind}" returned an empty response`);
   }
-  return response;
+  const usage = result.totalUsage;
+  const tokensUsed =
+    usage && Number.isFinite(usage.input_tokens) && Number.isFinite(usage.output_tokens)
+      ? usage.input_tokens + usage.output_tokens
+      : undefined;
+  return tokensUsed === undefined ? { response } : { response, tokensUsed };
 }

@@ -286,7 +286,8 @@ export interface ActivityRow {
   type: string;
   input_summary: string | null;
   output_summary: string | null;
-  tokens_used: number;
+  /** NULL = the run reported no usage (unmeasured); 0 = measured as zero. */
+  tokens_used: number | null;
   tools_called: string | null;
   duration_ms: number;
   score: number | null;
@@ -342,7 +343,9 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     input.type,
     input.input_summary ?? null,
     input.output_summary ?? null,
-    input.tokens_used ?? 0,
+    // NULL, not 0: absent usage must stay distinguishable from a measured zero,
+    // or the Stage-2 telemetry restoration re-fabricates the ambiguity it fixed.
+    input.tokens_used ?? null,
     input.tools_called ? JSON.stringify(input.tools_called) : null,
     input.duration_ms ?? 0,
     input.score ?? null,

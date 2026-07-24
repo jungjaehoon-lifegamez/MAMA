@@ -86,6 +86,10 @@ export interface WorkOrderConsumerEvent {
   workKind: WorkOrderKind;
   workOrderId: number;
   reason?: string;
+  /** input+output tokens of the completed run, when the runner reported usage.
+   *  Restores the tokens_used telemetry the legacy persona path had
+   *  (executeValidatedRun) and the Stage-2 cutover lost. */
+  tokensUsed?: number;
 }
 
 export interface WorkOrderConsumerDeps {
@@ -133,7 +137,7 @@ export class WorkOrderConsumer {
   private readonly lastAlarmAt = new Map<string, number>();
   private readonly unresolvedTemporalEffects = new Map<
     number,
-    { workOrder: WorkOrderRecord; reason: string; allowRetry: boolean }
+    { workOrder: WorkOrderRecord; reason: string; allowRetry: boolean; tokensUsed?: number }
   >();
   private timer: NodeJS.Timeout | null = null;
   private consuming = false;
@@ -274,17 +278,20 @@ export class WorkOrderConsumer {
     }
 
     let response: string;
+    let tokensUsed: number | undefined;
     try {
       // Inside the try: a runOptionsFor throw/reject (shadow capture publisher
       // missing, envelope issuance failure) fails the order instead of running
       // with the live publisher / without an envelope.
       const runOptions = await this.deps.runOptionsFor?.(wo);
-      response = await workerRun(this.deps.runner, {
+      const runResult = await workerRun(this.deps.runner, {
         kind: wo.workKind,
         brief,
         input: JSON.stringify(wo.payload),
         runOptions,
       });
+      response = runResult.response;
+      tokensUsed = runResult.tokensUsed;
     } catch (err) {
       if (this.stopping) {
         this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);
@@ -339,7 +346,7 @@ export class WorkOrderConsumer {
     if (wo.workKind === 'temporal') {
       // Temporal responses may contain private task or connector evidence.
       // The durable receipt is authoritative, so never log model prose here.
-      this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing');
+      this.arbitrateTemporalAttempt(wo, 'temporal-effect-missing', true, tokensUsed);
       return;
     }
     // Shadow-gate diagnostics (§8.2): the worker's actual output decides
@@ -348,7 +355,15 @@ export class WorkOrderConsumer {
       `[workorder-consumer] ${wo.workKind}#${wo.id} response head: ${response.slice(0, 200).replace(/\n/g, ' | ')}`
     );
     this.deps.ledger.completeWorkOrder(wo.id);
-    this.emitEvent({ type: 'complete', workKind: wo.workKind, workOrderId: wo.id });
+    this.emitEvent({
+      type: 'complete',
+      workKind: wo.workKind,
+      workOrderId: wo.id,
+      // Token telemetry for agent_activity (start.ts onEvent): the consumer is
+      // the only seam that sees the run result AND emits the event. Absent when
+      // the runner reported no usage - never a fabricated zero.
+      ...(tokensUsed === undefined ? {} : { tokensUsed }),
+    });
     this.log(`[workorder-consumer] completed ${wo.workKind}#${wo.id}`);
   }
 
@@ -393,19 +408,31 @@ export class WorkOrderConsumer {
   }
 
   /** Durable row+generation+receipt state always wins over runner prose/errors. */
-  private arbitrateTemporalAttempt(wo: WorkOrderRecord, reason: string, allowRetry = true): void {
+  private arbitrateTemporalAttempt(
+    wo: WorkOrderRecord,
+    reason: string,
+    allowRetry = true,
+    tokensUsed?: number
+  ): void {
     const auditReason = temporalFailureAuditReason(reason);
     let state: TemporalAttemptState;
     try {
       state = this.deps.ledger.inspectTemporalAttempt(wo.id);
     } catch (err) {
-      this.deferTemporalArbitration(wo, auditReason, err, allowRetry);
+      this.deferTemporalArbitration(wo, auditReason, err, allowRetry, tokensUsed);
       return;
     }
 
     if (state.workOrder.status === 'done' && state.receipt) {
       this.unresolvedTemporalEffects.delete(wo.id);
-      this.emitEvent({ type: 'complete', workKind: 'temporal', workOrderId: wo.id });
+      this.emitEvent({
+        type: 'complete',
+        workKind: 'temporal',
+        workOrderId: wo.id,
+        // Temporal completions route through this receipt arbitration, not the
+        // generic complete path - carry the run's usage the same way.
+        ...(tokensUsed === undefined ? {} : { tokensUsed }),
+      });
       this.log(
         `[workorder-consumer] completed temporal#${wo.id} from receipt (${state.receipt.outcome})`
       );
@@ -472,7 +499,8 @@ export class WorkOrderConsumer {
         new Error(
           `attempt is '${state.workOrder.status}' with generation '${state.generation.disposition}'`
         ),
-        allowRetry
+        allowRetry,
+        tokensUsed
       );
       return;
     }
@@ -483,7 +511,7 @@ export class WorkOrderConsumer {
     } catch (err) {
       // A competing effect/supersession may have won after the read. Do not
       // guess which transition won; force another authoritative read first.
-      this.deferTemporalArbitration(wo, auditReason, err, allowRetry);
+      this.deferTemporalArbitration(wo, auditReason, err, allowRetry, tokensUsed);
       return;
     }
     this.unresolvedTemporalEffects.delete(wo.id);
@@ -532,9 +560,12 @@ export class WorkOrderConsumer {
     wo: WorkOrderRecord,
     reason: string,
     err: unknown,
-    allowRetry = true
+    allowRetry = true,
+    tokensUsed?: number
   ): void {
-    this.unresolvedTemporalEffects.set(wo.id, { workOrder: wo, reason, allowRetry });
+    // tokensUsed survives the deferral so a later receipt-complete still
+    // carries the run's usage (a deferred effect is not an unmeasured one).
+    this.unresolvedTemporalEffects.set(wo.id, { workOrder: wo, reason, allowRetry, tokensUsed });
     const message = `workorder temporal#${wo.id} effect state unresolved: ${errMessage(err)}`;
     this.log(`[workorder-consumer] ${message}`);
     this.alarm('temporal', message, 'temporal-state-unresolved');
@@ -542,7 +573,12 @@ export class WorkOrderConsumer {
 
   private recheckUnresolvedTemporalEffects(): void {
     for (const pending of [...this.unresolvedTemporalEffects.values()]) {
-      this.arbitrateTemporalAttempt(pending.workOrder, pending.reason, pending.allowRetry);
+      this.arbitrateTemporalAttempt(
+        pending.workOrder,
+        pending.reason,
+        pending.allowRetry,
+        pending.tokensUsed
+      );
     }
   }
 
