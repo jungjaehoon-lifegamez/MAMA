@@ -1,7 +1,14 @@
 /**
  * TrelloConnector — polls Trello boards via native fetch.
  * Auth token format: "apiKey:token" stored in config.auth.token or TRELLO_TOKEN env var.
- * Emits kanban_card NormalizedItems for moved/new cards.
+ * Emits kanban_card NormalizedItems for new/moved/updated cards.
+ *
+ * A card's operational state is more than its list: production boards track the
+ * assignee and the revision round (e.g. a "初稿" / "1回修正" label) on the card
+ * itself. The poller therefore ingests labels and resolved member names, and a
+ * label/member change on an unmoved card is a change worth emitting - owner
+ * question "who owns this and which revision round is it in" must be answerable
+ * from the raw store.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
@@ -16,10 +23,16 @@ import type {
   NormalizedItem,
 } from '../framework/types.js';
 
+interface TrelloLabel {
+  name: string;
+  color: string | null;
+}
+
 interface TrelloCard {
   id: string;
   name: string;
   idMembers: string[];
+  labels?: TrelloLabel[];
   dateLastActivity: string;
 }
 
@@ -27,6 +40,45 @@ interface TrelloList {
   id: string;
   name: string;
   cards: TrelloCard[];
+}
+
+interface TrelloBoardMember {
+  id: string;
+  fullName?: string;
+  username?: string;
+}
+
+/** Stored per-card state. Legacy entries are the plain list name; v2 entries
+ *  carry the full fingerprint so label/assignee changes are detectable. */
+interface CardState {
+  list: string;
+  labels: string[];
+  members: string[];
+}
+
+const STATE_V2_PREFIX = 'v2:';
+
+function encodeCardState(state: CardState): string {
+  return `${STATE_V2_PREFIX}${JSON.stringify([state.list, state.labels, state.members])}`;
+}
+
+function decodeCardState(raw: string): { state: CardState; legacy: boolean } {
+  if (raw.startsWith(STATE_V2_PREFIX)) {
+    try {
+      const [list, labels, members] = JSON.parse(raw.slice(STATE_V2_PREFIX.length)) as [
+        string,
+        string[],
+        string[],
+      ];
+      return { state: { list, labels: labels ?? [], members: members ?? [] }, legacy: false };
+    } catch {
+      /* fall through to legacy interpretation */
+    }
+  }
+  // Legacy value: the bare list name (pre-label/member polling). Treated as
+  // list-only so the format upgrade never floods the raw store with a
+  // "changed" item for every open card.
+  return { state: { list: raw, labels: [], members: [] }, legacy: true };
 }
 
 export class TrelloConnector implements IConnector {
@@ -41,7 +93,7 @@ export class TrelloConnector implements IConnector {
   private lastPollCount = 0;
   private lastError: string | undefined = undefined;
 
-  /** boardId → (cardId → listName) */
+  /** boardId → (cardId → encoded card state) */
   private lastCardStates: Map<string, Map<string, string>> = new Map();
 
   private readonly stateFilePath = join(
@@ -133,6 +185,36 @@ export class TrelloConnector implements IConnector {
     }
   }
 
+  private async fetchWithTimeout(url: string): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  /** id → display name for a board's members. Failure degrades to raw ids
+   *  (name resolution is enrichment, never a reason to drop a poll). */
+  private async fetchMemberNames(boardId: string): Promise<Map<string, string>> {
+    const names = new Map<string, string>();
+    try {
+      const res = await this.fetchWithTimeout(
+        `${this.baseUrl}/boards/${boardId}/members?fields=fullName,username&key=${this.apiKey}&token=${this.token}`
+      );
+      if (!res.ok) return names;
+      const members = (await res.json()) as TrelloBoardMember[];
+      for (const m of members) {
+        const name = m.fullName || m.username;
+        if (name) names.set(m.id, name);
+      }
+    } catch {
+      /* degrade to ids */
+    }
+    return names;
+  }
+
   async poll(_since: Date): Promise<NormalizedItem[]> {
     if (!this.apiKey || !this.token) throw new Error('TrelloConnector not initialized');
 
@@ -149,17 +231,10 @@ export class TrelloConnector implements IConnector {
       try {
         const url =
           `${this.baseUrl}/boards/${boardId}/lists` +
-          `?cards=open&card_fields=name,idMembers,dateLastActivity` +
+          `?cards=open&card_fields=name,idMembers,labels,dateLastActivity` +
           `&key=${this.apiKey}&token=${this.token}`;
 
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 30_000);
-        let res: Response;
-        try {
-          res = await fetch(url, { signal: controller.signal });
-        } finally {
-          clearTimeout(timeout);
-        }
+        const res = await this.fetchWithTimeout(url);
 
         if (!res.ok) {
           hadError = true;
@@ -168,6 +243,9 @@ export class TrelloConnector implements IConnector {
         }
 
         const lists = (await res.json()) as TrelloList[];
+        // Lazy: boards whose open cards carry no members need no roster call.
+        const anyMembers = lists.some((l) => l.cards.some((c) => c.idMembers.length > 0));
+        const memberNames = anyMembers ? await this.fetchMemberNames(boardId) : new Map();
 
         // Get or init previous card states for this board
         if (!this.lastCardStates.has(boardId)) {
@@ -178,16 +256,41 @@ export class TrelloConnector implements IConnector {
 
         for (const list of lists) {
           for (const card of list.cards) {
-            newCardState.set(card.id, list.name);
+            const labels = (card.labels ?? []).map((l) => l.name).filter(Boolean);
+            const assignees = card.idMembers.map((id) => memberNames.get(id) ?? id);
+            const current: CardState = { list: list.name, labels, members: assignees };
+            newCardState.set(card.id, encodeCardState(current));
 
-            const prevList = prevCardState.get(card.id);
-            const isNew = prevList === undefined;
-            const isMoved = prevList !== undefined && prevList !== list.name;
+            const prevRaw = prevCardState.get(card.id);
+            const isNew = prevRaw === undefined;
+            const prev = prevRaw !== undefined ? decodeCardState(prevRaw) : undefined;
+            const isMoved = prev !== undefined && prev.state.list !== list.name;
+            // Label/assignee deltas only fire against v2 state: a legacy entry
+            // carries no labels/members, so comparing against it would emit a
+            // one-time "changed" flood across every open card on upgrade.
+            const isUpdated =
+              prev !== undefined &&
+              !prev.legacy &&
+              !isMoved &&
+              (prev.state.labels.join(' ') !== labels.join(' ') ||
+                prev.state.members.join(' ') !== assignees.join(' '));
 
-            if (isNew || isMoved) {
+            if (isNew || isMoved || isUpdated) {
               let content = `${card.name} | ${list.name}`;
               if (isMoved) {
-                content += ` (from: ${prevList})`;
+                content += ` (from: ${prev!.state.list})`;
+              }
+              if (isUpdated && prev!.state.labels.join(' ') !== labels.join(' ')) {
+                content += ` (labels: ${prev!.state.labels.join(', ') || 'none'} -> ${labels.join(', ') || 'none'})`;
+              }
+              if (isUpdated && prev!.state.members.join(' ') !== assignees.join(' ')) {
+                content += ` (assignees changed)`;
+              }
+              if (labels.length > 0) {
+                content += ` | labels: ${labels.join(', ')}`;
+              }
+              if (assignees.length > 0) {
+                content += ` | assignees: ${assignees.join(', ')}`;
               }
 
               items.push({
@@ -204,9 +307,11 @@ export class TrelloConnector implements IConnector {
                   listName: list.name,
                   // Omit when absent: the canonical raw-ref serializer rejects
                   // undefined values ("undefined is not serializable at $.prevListName").
-                  ...(prevList !== undefined ? { prevListName: prevList } : {}),
+                  ...(prev !== undefined ? { prevListName: prev.state.list } : {}),
                   cardName: card.name,
                   members: card.idMembers,
+                  memberNames: assignees,
+                  labels,
                 },
               });
             }
