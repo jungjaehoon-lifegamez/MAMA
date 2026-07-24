@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ## [0.28.1] / mama-core [1.9.0] / mama-os [0.28.1] - 2026-07-24
 
+### Added
+
+- **Trello labels + assignees in the raw store** — the Trello poller now ingests card labels
+  and resolves member ids to display names, so "who owns this card and which revision round is
+  it in" is answerable from connector data. Content lines gain `| labels: ...` and
+  `| assignees: ...`, and a label/assignee change on an unmoved card now emits as a change
+  (with the old → new label transition inline). Existing per-card poll state upgrades silently.
+
 ### Fixed
 
 - **Owner-console brief self-update is append-only** — on the loop's first live fire the
