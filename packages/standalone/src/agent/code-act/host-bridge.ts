@@ -147,8 +147,8 @@ const TOOL_REGISTRY: ToolMeta[] = [
   },
   {
     name: 'console_brief_update',
-    description: 'Rewrite your operating brief (full replace); add dated lessons, keep owner edits',
-    params: [{ name: 'content', type: 'string', required: true }],
+    description: 'Append one dated lesson to your operating brief (the rest is preserved)',
+    params: [{ name: 'lesson', type: 'string', required: true }],
     returnType: '{ message: string }',
     category: 'os',
   },

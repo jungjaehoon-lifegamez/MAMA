@@ -2921,13 +2921,19 @@ export class GatewayToolExecutor {
           return { success: true, data: { kinds: this.taskLedger.workOrderStats() } };
         }
         case 'console_brief_update': {
-          const { updateConsoleBrief } = await import('../operator/console-brief.js');
-          const briefContent = (input as { content?: unknown }).content;
-          if (typeof briefContent !== 'string') {
-            return { success: false, error: 'console_brief_update requires string content' };
+          const { appendConsoleBriefLesson } = await import('../operator/console-brief.js');
+          // Append-only (live incident 2026-07-24): a full-replace contract had
+          // the model overwrite the entire seeded manual with its one new
+          // lesson. Accept `lesson`, with `content` as a lenient alias for
+          // threads still anchored on the old schema.
+          const rawInput = input as { lesson?: unknown; content?: unknown };
+          const lessonInput = rawInput.lesson ?? rawInput.content;
+          if (typeof lessonInput !== 'string') {
+            return { success: false, error: 'console_brief_update requires a string lesson' };
           }
+          let briefAfter: string;
           try {
-            updateConsoleBrief(briefContent);
+            briefAfter = appendConsoleBriefLesson(lessonInput);
           } catch (err) {
             return { success: false, error: err instanceof Error ? err.message : String(err) };
           }
@@ -2935,11 +2941,12 @@ export class GatewayToolExecutor {
           // brief is logged loudly, never silently absorbed. The next NEW/re-anchored
           // owner session picks it up via the policy fingerprint.
           console.log(
-            `[console-brief] agent updated its own operating brief (${briefContent.length} chars)`
+            `[console-brief] agent appended a lesson (brief now ${briefAfter.length} chars)`
           );
           return {
             success: true,
-            message: 'Operating brief updated; it applies from the next session re-anchor.',
+            message:
+              'Lesson appended to your operating brief; it applies from the next session re-anchor.',
           };
         }
         case 'board_read': {
