@@ -108,6 +108,59 @@ describe('searchTrelloCards', () => {
     ]);
   });
 
+  it('falls back to a board scan with local substring match when /search misses (CJK)', async () => {
+    // Trello's /search tokenizes on word boundaries and misses CJK substrings
+    // and underscore compounds - most of the production board vocabulary.
+    writeConfig();
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/search?')) return new Response(JSON.stringify({ cards: [] }));
+      if (u.includes('/boards/b1/lists')) {
+        return new Response(
+          JSON.stringify([
+            {
+              name: '提出中',
+              cards: [
+                {
+                  id: 'c1',
+                  name: 'ex_100_エルデリーゼ(メイド)',
+                  due: null,
+                  dateLastActivity: '2026-07-24T10:00:00.000Z',
+                  idMembers: ['m1'],
+                  labels: [{ name: '初稿' }],
+                },
+                {
+                  id: 'c2',
+                  name: 'unrelated_card',
+                  due: null,
+                  dateLastActivity: '2026-07-24T10:00:00.000Z',
+                  idMembers: [],
+                  labels: [],
+                },
+              ],
+            },
+          ])
+        );
+      }
+      if (u.includes('/boards/b1/members')) {
+        return new Response(JSON.stringify([{ id: 'm1', fullName: 'Alice Kim' }]));
+      }
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const cards = await searchTrelloCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.name).toBe('ex_100_エルデリーゼ(メイド)');
+    expect(cards[0]?.list).toBe('提出中');
+    expect(cards[0]?.labels).toEqual(['初稿']);
+    expect(cards[0]?.assignees).toEqual(['Alice Kim']);
+    // The ignore-role board (b2) is never scanned.
+    const scannedBoards = fetchFn.mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes('/boards/'));
+    expect(scannedBoards.every((u) => u.includes('/boards/b1/'))).toBe(true);
+  });
+
   it('refuses an empty query and surfaces HTTP failures loudly', async () => {
     writeConfig();
     await expect(searchTrelloCards({ query: '  ' }, { configPath })).rejects.toThrow(/non-empty/);
