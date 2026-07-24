@@ -3055,6 +3055,41 @@ export class GatewayToolExecutor {
               "Statuses in this source: pending|in_progress|review|done|completed|cancelled|dismissed|active. 'blocked' does NOT exist here - if memory mentions blocked work, compare vocabularies instead of reporting a contradiction.",
           };
         }
+        // Trello LIVE reads — the truth answer path for current-state card
+        // questions (who owns it, which revision round). Same pattern as
+        // kagemusha_*: state questions read the source live, never the
+        // connector change-log projection (2026-07-24 incident chain).
+        case 'trello_search': {
+          const { searchTrelloCards } = await import('../connectors/trello/query-tools.js');
+          const searchInput = input as { query?: string; limit?: number };
+          try {
+            const cards = await searchTrelloCards({
+              query: searchInput.query ?? '',
+              limit: searchInput.limit,
+            });
+            return { success: true, cards };
+          } catch (err) {
+            return {
+              success: false,
+              code: 'trello_query_failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
+        case 'trello_card': {
+          const { getTrelloCard } = await import('../connectors/trello/query-tools.js');
+          const cardInput = input as { cardId?: string };
+          try {
+            const card = await getTrelloCard({ cardId: cardInput.cardId ?? '' });
+            return { success: true, card };
+          } catch (err) {
+            return {
+              success: false,
+              code: 'trello_query_failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
         case 'kagemusha_messages': {
           const { queryMessages } = await import('../connectors/kagemusha/query-tools.js');
           const msgInput = input as {
