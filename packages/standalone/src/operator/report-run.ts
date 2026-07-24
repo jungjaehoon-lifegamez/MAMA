@@ -45,6 +45,32 @@ const WRITE_TOOLS = new Set<string>([
   'wiki_publish',
 ]);
 
+/** Local literal, deliberately NOT an import of code-act CODE_ACT_MARKER: this module keeps
+ *  zero agent-internal imports so the audit stays unit-testable with plain synthetic objects.
+ *  Must match code-act/constants.ts CODE_ACT_MARKER ('code_act'). */
+const CODE_ACT_TOOL_NAME = 'code_act';
+
+/** Under a Code-Act role the report gathers INSIDE the sandbox: history carries one code_act
+ *  tool_use, and the host tools it actually executed ride in the result message's
+ *  hostToolsInvoked field (executeCodeAct collects them from the HostBridge onToolUse hook).
+ *  Defensive on purpose: unparseable content, a missing field, or a wrong shape yield [] -
+ *  the audit then falls back to warning, never to a throw or a false positive. */
+function parseHostToolsInvoked(content: unknown): string[] {
+  const body = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const invoked = (parsed as { hostToolsInvoked?: unknown }).hostToolsInvoked;
+      if (Array.isArray(invoked)) {
+        return invoked.filter((name): name is string => typeof name === 'string');
+      }
+    }
+  } catch {
+    // Not JSON - no nested-tool evidence.
+  }
+  return [];
+}
+
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:
  *  keeps this module free of agent-internal imports so tests use plain synthetic objects. */
 export interface ReportHistoryMessage {
@@ -88,9 +114,11 @@ function isErroredOrDenied(block: { is_error?: boolean; content?: unknown }): bo
 export function summarizeReportToolUse(
   history: ReadonlyArray<ReportHistoryMessage>
 ): ReportToolAudit {
-  // Pass 1: index result health by tool_use_id (results live in the user messages the agent loop
-  // pushes after each tool batch - agent-loop.ts:1408-1411).
+  // Pass 1: index result health AND content by tool_use_id (results live in the user messages
+  // the agent loop pushes after each tool batch - agent-loop.ts:1408-1411). Content is kept so
+  // an executed code_act can surface the nested host tools recorded in its result message.
   const resultOkById = new Map<string, boolean>();
+  const resultContentById = new Map<string, unknown>();
   for (const msg of history) {
     if (!msg || msg.role !== 'user' || !Array.isArray(msg.content)) continue;
     for (const block of msg.content as Array<{
@@ -101,6 +129,7 @@ export function summarizeReportToolUse(
     }>) {
       if (!block || block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue;
       resultOkById.set(block.tool_use_id, !isErroredOrDenied(block));
+      resultContentById.set(block.tool_use_id, block.content);
     }
   }
   // Pass 2: classify assistant tool_use blocks; only a paired healthy result counts as executed.
@@ -114,6 +143,14 @@ export function summarizeReportToolUse(
       all.push(block.name);
       const executed = typeof block.id === 'string' && resultOkById.get(block.id) === true;
       if (!executed) continue;
+      if (block.name === CODE_ACT_TOOL_NAME) {
+        // Nested gather/write: classify what the sandbox actually executed, not code_act itself.
+        for (const nested of parseHostToolsInvoked(resultContentById.get(block.id as string))) {
+          if (GATHER_TOOLS.has(nested)) gatherTools.push(nested);
+          else if (WRITE_TOOLS.has(nested)) writeTools.push(nested);
+        }
+        continue;
+      }
       if (GATHER_TOOLS.has(block.name)) gatherTools.push(block.name);
       else if (WRITE_TOOLS.has(block.name)) writeTools.push(block.name);
     }
