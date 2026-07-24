@@ -187,8 +187,8 @@ describe('Code-Act Integration', () => {
     expect(fullPrompt).toContain('## Code-Act');
     // The first-turn-only declaration budget includes the complete owner
     // query, Drive, image translation, and delivery surface.
-    // 12000->12150: console_brief_update declaration (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(12150);
+    // 12150->12700: trello_search/trello_card live-read declarations (deliberate).
+    expect(fullPrompt.length).toBeLessThan(12700);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {
