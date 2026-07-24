@@ -262,8 +262,6 @@ type ActiveGatewayExecutionContext = {
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
   /** Per-call gateway tool blocks (e.g. OS-agent must delegate instead). */
   disallowedGatewayTools?: string[];
-  /** Stage-2 shadow seam: per-run report_publish override (never from fallback). */
-  reportPublisherOverride?: (slots: Record<string, string>) => void;
 };
 
 interface DriveDestinationCapabilityRecord {
@@ -806,7 +804,6 @@ export class GatewayToolExecutor {
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
       disallowedGatewayTools: executionContext?.disallowedGatewayTools,
-      reportPublisherOverride: executionContext?.reportPublisherOverride,
     };
   }
 
@@ -851,9 +848,6 @@ export class GatewayToolExecutor {
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
       // Never merged from fallback - blocks are strictly per-call.
       disallowedGatewayTools: active.disallowedGatewayTools,
-      // Never merged from fallback - a lingering global capture override
-      // would swallow LIVE publishes (Stage-2 shadow seam).
-      reportPublisherOverride: active.reportPublisherOverride,
     };
   }
 
@@ -2836,12 +2830,8 @@ export class GatewayToolExecutor {
               );
             }
           }
-          // Stage-2 shadow seam: a per-run capture override takes precedence
-          // over the global singleton (capture runs never touch the live store).
-          const activePublisher =
-            this.getExecutionState().reportPublisherOverride ?? this.reportPublisher;
-          if (activePublisher) {
-            activePublisher(slotsInput);
+          if (this.reportPublisher) {
+            this.reportPublisher(slotsInput);
             const slotNames = Object.keys(slotsInput);
 
             return {
@@ -2903,7 +2893,7 @@ export class GatewayToolExecutor {
               success: false,
               code: 'workorder_machinery_disabled',
               error:
-                'Stage-2 workorders are not enabled on this deployment (MAMA_STAGE2_WORKORDERS=off).',
+                'The workorder request handler is not wired on this deployment (boot-order fault).',
             };
           }
           const enqueued = this.workOrderRequestHandler(requestedKind);

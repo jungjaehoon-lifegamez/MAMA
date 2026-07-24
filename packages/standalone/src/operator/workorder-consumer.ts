@@ -6,7 +6,7 @@
  * TaskLedger and runs each through workerRun on the operator lane. It runs
  * UNCONDITIONALLY of MAMA_TRIGGER_LOOP (the publishers are unconditional, so
  * coupling consumption to an opt-in loop would strand every workorder - plan
- * A1 BLOCKER), gated only by MAMA_STAGE2_WORKORDERS=shadow|on.
+ * A1 BLOCKER). Since v0.28.0 this is the ONLY system run path.
  *
  * Serial consumption: one claim at a time, awaited to completion, with a tick
  * re-entrancy guard (a 260s board run spans 4+ ticks - overlapping ticks skip,
@@ -103,12 +103,10 @@ export interface WorkOrderConsumerDeps {
   /** Telemetry seam (agent_activity / eventBus) - optional. */
   onEvent?: (event: WorkOrderConsumerEvent) => void;
   /**
-   * Per-order extra run options (Stage-2: per-run envelope issuance + the
-   * shadow capture-publisher override). May be async - envelope issuance
-   * persists to the DB. A THROW/REJECT here fails the order loudly - at
-   * shadow, a missing capture publisher must never fall through to a live
-   * publish (plan T4 AC), and a run without an envelope would have every
-   * model_tool call denied 'envelope_missing'.
+   * Per-order extra run options (Stage-2: per-run envelope issuance). May be
+   * async - envelope issuance persists to the DB. A THROW/REJECT here fails
+   * the order loudly - a run without an envelope would have every model_tool
+   * call denied 'envelope_missing'.
    */
   runOptionsFor?: (
     wo: WorkOrderRecord
@@ -280,9 +278,8 @@ export class WorkOrderConsumer {
     let response: string;
     let tokensUsed: number | undefined;
     try {
-      // Inside the try: a runOptionsFor throw/reject (shadow capture publisher
-      // missing, envelope issuance failure) fails the order instead of running
-      // with the live publisher / without an envelope.
+      // Inside the try: a runOptionsFor throw/reject (envelope issuance
+      // failure) fails the order instead of running without an envelope.
       const runOptions = await this.deps.runOptionsFor?.(wo);
       const runResult = await workerRun(this.deps.runner, {
         kind: wo.workKind,

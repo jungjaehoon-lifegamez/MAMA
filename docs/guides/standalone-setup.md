@@ -261,11 +261,10 @@ Production notes:
 
 ### Temporal Reconciliation (Opt-In)
 
-Temporal reconciliation is disabled by default. Enable it only after the Stage-2 workorder
-pipeline is running in live mode:
+Temporal reconciliation is disabled by default (the workorder pipeline itself is always on
+since v0.28.0):
 
 ```bash
-export MAMA_STAGE2_WORKORDERS=on
 export MAMA_ENVELOPE_ISSUANCE=enabled
 export MAMA_TEMPORAL_RECONCILE=on
 mama start
@@ -273,15 +272,13 @@ mama start
 
 The daemon validates the complete path before starting the scanner. `on` requires:
 
-- `MAMA_STAGE2_WORKORDERS=on` (not `off` or `shadow`);
 - signed envelope issuance enabled (the default, or `MAMA_ENVELOPE_ISSUANCE=enabled|required`);
 - a Claude or Codex backend;
 - the built-in temporal worker policy with `task_temporal_reconcile` available through the
   active transport; and
 - a working Stage-2 consumer.
 
-Malformed flags or an incompatible Stage-2 mode fail before timer-bearing daemon services start;
-an incompatible mode first pauses existing temporal attempts transactionally. With the
+Malformed flags fail before timer-bearing daemon services start. With the
 flag unset or `off`, MAMA starts normally, creates no temporal worker/timer, and pauses existing
 open temporal attempts so they can be resumed safely after re-enabling the feature.
 

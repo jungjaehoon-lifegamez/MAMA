@@ -768,16 +768,9 @@ export async function runAgentLoop(
 ): Promise<void> {
   // ── Phase 1: Foundation ───────────────────────────────────────────────────
 
-  const temporalStartup = preflightTemporalStartup(process.env, (reason) => {
-    const preflightDbPath = expandPath('~/.mama/operator/triggers.db');
-    mkdirSync(dirname(preflightDbPath), { recursive: true });
-    const preflightDb = new Database(preflightDbPath);
-    try {
-      new TaskLedger(preflightDb).pauseActiveTemporalWork(reason);
-    } finally {
-      preflightDb.close();
-    }
-  });
+  // Fails the boot on the retired MAMA_STAGE2_WORKORDERS legacy pin
+  // (workorders are the only run path since v0.28.0).
+  const temporalStartup = preflightTemporalStartup(process.env);
 
   const runtimeBackend = requireRuntimeBackend(config.agent.backend);
   const temporalPolicy =
@@ -1335,11 +1328,11 @@ export async function runAgentLoop(
     operatorDb.close();
     throw err;
   }
-  // ── Stage-2 workorder consumer (plan S2-T3): unconditional of the trigger
-  // loop, gated only by MAMA_STAGE2_WORKORDERS. Constructed before production
-  // runtime assembly registers per-kind completion hooks, and started only
-  // after route registration and recovery complete.
-  const { stage2Flag, temporalFlag } = temporalStartup;
+  // ── Stage-2 workorder consumer (plan S2-T3): the only system run path.
+  // Constructed before production runtime assembly registers per-kind
+  // completion hooks, and started only after route registration and recovery
+  // complete.
+  const { temporalFlag } = temporalStartup;
   // Validate the worker-run timeout override at boot (no-fallback): a malformed
   // MAMA_WORKER_TIMEOUT_SECONDS must crash the daemon loudly, not silently
   // revert worker runs to the 300s bound. Mirrors readStage2Flag above.
@@ -1363,7 +1356,7 @@ export async function runAgentLoop(
       }).catch(() => {});
     },
   });
-  if (stage2Flag !== 'off') {
+  {
     const { WorkOrderConsumer } = await import('../../operator/workorder-consumer.js');
     const { loadBrief, ensureBriefs } = await import('../../operator/briefs.js');
     // Seed missing default briefs (user edits win) BEFORE the consumer exists -
@@ -1373,12 +1366,6 @@ export async function runAgentLoop(
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
     const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
       await import('../../operator/workorder-publishers.js');
-
-    // Shadow harness (kill-list at cutover): board capture publisher.
-    const shadowCapture =
-      stage2Flag === 'shadow'
-        ? (await import('../../operator/shadow-capture.js')).createShadowCapture()
-        : null;
 
     // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
     // block - the consumer runs with the loop off, so its terminal alarms
@@ -1442,21 +1429,6 @@ export async function runAgentLoop(
         );
         if (wo.workKind === 'temporal') {
           runOptions.temporalWorkContext = buildTemporalWorkerContext(taskLedger, wo);
-        }
-        if (stage2Flag === 'shadow') {
-          // Shadow ≡ board only. A non-board order here (e.g. enqueued at
-          // 'on' before a rollback) would run LIVE with no capture seam
-          // while its legacy path also runs - refuse it (throw -> fail
-          // policy; review N4 defense-in-depth behind the boot cleanup).
-          if (wo.workKind !== 'board') {
-            throw new Error(`[stage2] shadow is board-only - refusing live ${wo.workKind} run`);
-          }
-          // A shadow board run without the capture publisher would publish
-          // LIVE - refuse the run instead (throw -> failWorkOrder, plan T4).
-          if (!shadowCapture) {
-            throw new Error('[stage2] shadow capture publisher missing - refusing live publish');
-          }
-          runOptions.reportPublisherOverride = shadowCapture.publisher;
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
@@ -1529,13 +1501,6 @@ export async function runAgentLoop(
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
     toolExecutor.setWorkOrderRequestHandler((kind) => {
-      // Shadow invariant (plan B1/C2): shadow ≡ board only. A wiki/promotion
-      // workorder at shadow would run LIVE (no capture seam) while its legacy
-      // path also runs - the exact double-execution shadow exists to prevent.
-      if (stage2Flag === 'shadow' && kind !== 'board') {
-        console.warn(`[stage2] workorder_request(${kind}) rejected: shadow is board-only`);
-        return { accepted: false, reason: 'shadow-board-only' };
-      }
       try {
         const now = Date.now();
         let idempotencyKey: string;
@@ -1571,7 +1536,6 @@ export async function runAgentLoop(
   const temporalTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const temporalAssembly = assembleDaemonTemporalRuntime({
     flag: temporalFlag,
-    stage2Flag,
     backend: runtimeBackend,
     envelopeIssuanceMode: envelopeBootstrap.metadata.issuance,
     effectiveTools: temporalEffectiveTools,

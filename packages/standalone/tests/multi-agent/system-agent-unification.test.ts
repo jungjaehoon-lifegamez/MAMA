@@ -56,50 +56,39 @@ describe('system agent unification', () => {
     });
   });
 
-  describe('scheduled system-run prompts', () => {
-    it('directs dashboard and wiki runs through context_compile before mama_search fallback', async () => {
-      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
-        encoding: 'utf-8',
-      });
-
-      expect(source).toContain('Use context_compile first');
-      expect(source).toContain(
-        'Use this exact task text for context_compile: "recent substantive project decisions, task progress, agent alerts, and major changes"'
-      );
-      expect(source).toContain(
-        'Do not include dashboard_briefing, wiki_compilation, system-audit, or audit-log labels in the context_compile task text'
-      );
-      expect(source).toContain('fall back to mama_search');
-      expect(source).not.toContain('Use mama_search to find recent substantive decisions');
+  describe('scheduled system-run briefs (v0.28.0: workorders are the only run path)', () => {
+    it('directs dashboard and wiki workers through context_compile', async () => {
+      const { buildDefaultBrief } = await import('../../src/operator/briefs.js');
+      expect(buildDefaultBrief('board')).toContain('context_compile');
+      expect(buildDefaultBrief('wiki')).toContain('context_compile');
     });
 
     it('wiki novelty check is recency-based, not semantic (cross-language gap)', async () => {
-      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
-        encoding: 'utf-8',
-      });
+      const { buildDefaultBrief } = await import('../../src/operator/briefs.js');
       const { WIKI_AGENT_PERSONA } = await import('../../src/multi-agent/wiki-agent-persona.js');
 
       // Lexical scoring against the English task text filtered out Korean-only
       // decisions, so a fresh promotion was judged "nothing new". The novelty
       // check must use the no-query mama_search recency list.
-      for (const text of [source, WIKI_AGENT_PERSONA]) {
+      for (const text of [buildDefaultBrief('wiki'), WIKI_AGENT_PERSONA]) {
         expect(text).toContain('NOVELTY CHECK by recency, not semantics');
         expect(text).toContain('mama_search({limit: 30}) with NO query');
       }
     });
 
-    it('memory promotion run curates durable judgments and never task states', async () => {
+    it('memory promotion brief curates durable judgments and never task states', async () => {
+      const { buildDefaultBrief } = await import('../../src/operator/briefs.js');
+      const brief = buildDefaultBrief('memory-curation');
+      expect(brief).toContain('PROMOTION RUN');
+      expect(brief).toContain('kagemusha_messages({channelId, since: <boundary ISO>})');
+      expect(brief).toContain('Promote at most 5 durable judgments per run via mama_save');
+      expect(brief).toContain('NEVER task lifecycle states');
+      expect(brief).toContain('Finish with exactly PROMOTED <n> or NO_UPDATE');
+
+      // Promotion still feeds the wiki chain through the completion hook.
       const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
         encoding: 'utf-8',
       });
-
-      // The prompt enters the persona's PROMOTION RUN mode and self-gathers.
-      expect(source).toContain('PROMOTION RUN. You are curating durable business memory');
-      expect(source).toContain('kagemusha_messages({channelId, since: <boundary ISO>})');
-      expect(source).toContain('Promote at most 5 durable judgments per run via mama_save');
-      expect(source).toContain('NEVER task lifecycle states');
-      expect(source).toContain('Finish with exactly PROMOTED <n> or NO_UPDATE');
-      // Promotion feeds the wiki chain.
       expect(source).toContain("eventBus.onDebounced('memory:promoted'");
       expect(source).toContain('/api/memory/promote');
     });
@@ -129,16 +118,12 @@ describe('system agent unification', () => {
       );
     });
 
-    it("cron prompt is built per run and carries today's date", async () => {
-      const { readFile } = await import('node:fs/promises');
-      const { join } = await import('node:path');
-      const source = await readFile(join(process.cwd(), 'src/cli/runtime/api-routes-init.ts'), {
-        encoding: 'utf-8',
-      });
-      expect(source).toContain('const buildDashboardPrompt =');
-      expect(source).toContain('Today is ${new Date().toISOString().slice(0, 10)}');
-      expect(source).toContain('use temporal_state as the canonical time category');
-      expect(source).not.toContain('compute D-day from today');
+    it('board brief keeps the NO_UPDATE delta gate with an owner-forced override', async () => {
+      const { buildDefaultBrief } = await import('../../src/operator/briefs.js');
+      const brief = buildDefaultBrief('board');
+      expect(brief).toContain('NO_UPDATE');
+      expect(brief).toContain('force: true when the owner explicitly requested a fresh board');
+      expect(brief).toContain('publish ALL');
     });
   });
 

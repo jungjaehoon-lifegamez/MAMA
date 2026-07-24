@@ -1,63 +1,32 @@
 /**
- * Stage-2 publisher gate: pure decision + key/payload contracts for converting
- * the three system-agent run paths (dashboard/wiki/promotion) and the
- * reconcile leg into workorder enqueues.
+ * Stage-2 workorder publishers: key/payload contracts for the system run paths
+ * (dashboard/wiki/promotion, plus the reconcile leg) enqueued into the ledger.
  *
- * The gate decision is a PURE function (plan E5) so every flag x kind combo is
- * unit-testable outside the api-routes-init closures. The wiring sites call
- * resolvePublishAction and act on 'legacy' | 'enqueue' | 'both'.
- *
- * Flag: MAMA_STAGE2_WORKORDERS=off|shadow|on (tri-state; deliberate deviation
- * from the repo's `=== '1'` convention - documented in configuration-options).
- *   off    - legacy direct runs (current behavior)
- *   shadow - board ONLY dual-runs: legacy keeps publishing live AND the same
- *            occurrence is enqueued for the capture consumer. wiki/promotion
- *            stay pure legacy - their side effects (Obsidian writes, mama_save)
- *            have no capture seam and must never double-execute (plan B1/C2).
- *   on     - all three kinds (and the reconcile leg) enqueue; legacy stops.
- *
- * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md S2-T2
+ * The workorder pipeline is the ONLY run path since v0.28.0. The former
+ * MAMA_STAGE2_WORKORDERS tri-state (off = legacy persona runs, shadow = board
+ * dual-run against a capture store) and the legacy executeValidatedRun paths
+ * it gated were removed after the 2026-07-22 production cutover to 'on'
+ * (migration plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md).
  */
 
 import type { WorkOrderKind } from './task-ledger.js';
 
 export const STAGE2_FLAG_ENV = 'MAMA_STAGE2_WORKORDERS';
 
-export const STAGE2_FLAGS = ['off', 'shadow', 'on'] as const;
-export type Stage2Flag = (typeof STAGE2_FLAGS)[number];
-
-export type PublishAction = 'legacy' | 'enqueue' | 'both';
-
 /**
- * Parse the tri-state flag. Absent/empty -> 'off'. Any other value is a
- * misconfiguration and throws at boot (no-fallback: a typo silently reverting
- * to legacy would mask a believed-active migration).
+ * Boot guard for the retired flag. Unset or 'on' is fine (the pipeline always
+ * runs); 'off'/'shadow' request the removed legacy behavior and must fail the
+ * boot loudly (no-fallback: silently running the pipeline against an explicit
+ * legacy pin would mask the operator's intent).
  */
-export function readStage2Flag(env: NodeJS.ProcessEnv = process.env): Stage2Flag {
+export function assertStage2FlagCompatible(env: NodeJS.ProcessEnv = process.env): void {
   const raw = (env[STAGE2_FLAG_ENV] ?? '').trim();
-  if (raw === '') {
-    return 'off';
-  }
-  if ((STAGE2_FLAGS as readonly string[]).includes(raw)) return raw as Stage2Flag;
+  if (raw === '' || raw === 'on') return;
   throw new Error(
-    `${STAGE2_FLAG_ENV} must be one of ${STAGE2_FLAGS.join('|')} (or unset), got: '${raw}'`
+    `${STAGE2_FLAG_ENV}='${raw}' is no longer supported: legacy persona runs and shadow ` +
+      `capture were removed in v0.28.0 (workorders are the only run path). Unset the ` +
+      `variable or set it to 'on'.`
   );
-}
-
-/** Pure gate decision for the three scheduled/boot/manual run paths. */
-export function resolvePublishAction(flag: Stage2Flag, kind: WorkOrderKind): PublishAction {
-  if (flag === 'off') return 'legacy';
-  if (flag === 'on') return 'enqueue';
-  // shadow: board dual-runs; wiki/promotion must not leak uncaptured writes.
-  return kind === 'board' ? 'both' : 'legacy';
-}
-
-/**
- * The reconcile leg converts at 'on' ONLY (plan: shadow/off keep the legacy
- * bracket-verified path; its verification moves to the consumer hook at 'on').
- */
-export function resolveReconcileAction(flag: Stage2Flag): 'legacy' | 'enqueue' {
-  return flag === 'on' ? 'enqueue' : 'legacy';
 }
 
 // ── Occurrence keys (plan D5/M2) ──────────────────────────────────────────
