@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.2] / mama-core [1.9.0] / mama-os [0.28.2] - 2026-07-24
+
+### Added
+
+- **Live Trello read tools** — `trello_search` and `trello_card` answer current-state card
+  questions by reading the live board at question time (current list, labels such as the
+  revision round and artist, assignee names, due, checklists), the same pattern as the
+  `kagemusha_*` truth reads. The connector change log remains the delta/trigger source and no
+  longer serves state questions — the root fix for the projection-loss bug class.
+
+### Fixed
+
+- **First-sight Trello items stamped at observation time** — a fresh install (or poll-state
+  reset) no longer emits cards with years-old activity timestamps that sink below every
+  retrieval window; the card's own activity time moves to `metadata.lastActivityAt`.
+
 ## [0.28.1] / mama-core [1.9.0] / mama-os [0.28.1] - 2026-07-24
 
 ### Added
