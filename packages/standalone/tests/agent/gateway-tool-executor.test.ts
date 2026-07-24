@@ -1581,6 +1581,38 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         });
       });
 
+      describe('code_act result records executed host tools (report-audit evidence)', () => {
+        it('lists nested host tools that actually executed, in call order', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', {
+            code: `
+              mama_search({ query: "a" });
+              mama_search({ query: "b" });
+              ({ done: true })
+            `,
+            allowedTools: ['mama_search'],
+          });
+
+          expect(result.success).toBe(true);
+          const payload = JSON.parse(String(result.message));
+          // Post-call hook only: these names are EXECUTIONS, the evidence the
+          // report audit (report-run.ts parseHostToolsInvoked) classifies.
+          expect(payload.hostToolsInvoked).toEqual(['mama_search', 'mama_search']);
+        });
+
+        it('yields an empty list when the script calls no host tool', async () => {
+          const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+          executor.setAgentContext(createViewerContext());
+
+          const result = await executor.execute('code_act', { code: '({ math: 1 + 1 })' });
+
+          expect(result.success).toBe(true);
+          expect(JSON.parse(String(result.message)).hostToolsInvoked).toEqual([]);
+        });
+      });
+
       describe('AC #2: request blocklists subtract from injected Code-Act functions', () => {
         it('removes request-blocked gateway tools inside code_act', async () => {
           const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
