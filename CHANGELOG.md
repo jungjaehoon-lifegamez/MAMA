@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.3] / mama-core [1.9.0] / mama-os [0.28.3] - 2026-07-24
+
+### Fixed
+
+- **trello_search matches CJK card names** — Trello's `/search` tokenizes on word boundaries
+  and returned nothing for CJK substrings and underscore compounds. The tool now fills its
+  results from a per-board open-card scan with local substring matching, resolving assignee
+  rosters only for boards that matched.
+
 ## [0.28.2] / mama-core [1.9.0] / mama-os [0.28.2] - 2026-07-24
 
 ### Added
