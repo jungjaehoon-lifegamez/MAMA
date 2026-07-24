@@ -146,6 +146,13 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'os',
   },
   {
+    name: 'console_brief_update',
+    description: 'Rewrite your operating brief (full replace); add dated lessons, keep owner edits',
+    params: [{ name: 'content', type: 'string', required: true }],
+    returnType: '{ message: string }',
+    category: 'os',
+  },
+  {
     name: 'board_read',
     description: 'Read the current owner dashboard report slots',
     params: [],
