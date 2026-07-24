@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.4] - 2026-07-24
+
+Restores the operator agent's tool surface and gives the owner console an explicit operating
+discipline, after live monitoring showed the agent gathering and analysing well but handing the
+next step back instead of taking it.
+
+- The scheduled operator report now runs under a built-in least-privilege `operator-report`
+  Code-Act role. Without a role the Code-Act path stripped the gateway catalogue and injected
+  nothing back, so the report agent ran with zero tool definitions: full reports were delivered
+  while logging "executed NO gateway gather tools - task-board substance NOT verified". The role's
+  allowlist is derived from what the report is instructed to call, and its envelope still grants no
+  send surface and no Trello.
+- The owner console carries a stated operating discipline on every reply. It gathers before
+  answering, never claims a check it did not run, synthesises instead of dumping tool output, and
+  acts by default - doing reversible work (reads, analysis, ranking, drafts, and writes whose only
+  audience is the 1:1 console) and reporting the outcome, while still asking first before
+  irreversible effects that leave the conversation (cross-channel sends, shared-file uploads,
+  credential storage, uncancellable delegation). Onboarding is deliberately excluded.
+- Resumed Codex threads are re-anchored through `thread/resume`'s `baseInstructions` instead of a
+  user-text `<system-reminder>` replay. The rebuild is lazy and runs only inside the resume branch,
+  so live threads and the operator/worker lanes are byte-identical to before.
+
 ## [0.27.3] - 2026-07-22
 
 - Verified owner-console Drive workflows can resolve and upload to the folder explicitly selected
