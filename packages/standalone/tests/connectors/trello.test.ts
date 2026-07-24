@@ -269,7 +269,10 @@ describe('TrelloConnector', () => {
       expect(items[0]?.channel).toBe('project-board');
     });
 
-    it('sets timestamp from dateLastActivity', async () => {
+    it('stamps first sight at observation time and keeps dateLastActivity in metadata', async () => {
+      // Live incident 2026-07-24: first-sight items stamped with a years-old
+      // dateLastActivity sit below every since-window, making a fresh install's
+      // (or state reset's) only enriched item per card invisible to retrieval.
       const activityTime = '2024-06-15T12:00:00.000Z';
       const lists = [
         makeTrelloList('list1', 'Todo', [
@@ -282,6 +285,32 @@ describe('TrelloConnector', () => {
       );
       const connector = new TrelloConnector(makeConfig());
       await connector.init();
+      const before = Date.now();
+      const items = await connector.poll(new Date(0));
+      expect(items[0]?.timestamp.getTime()).toBeGreaterThanOrEqual(before);
+      expect(items[0]?.metadata?.lastActivityAt).toBe(activityTime);
+    });
+
+    it('keeps the card activity time as timestamp for moved cards', async () => {
+      const activityTime = '2024-06-15T12:00:00.000Z';
+      const first = [
+        makeTrelloList('list1', 'Todo', [
+          { id: 'card1', name: 'Task A', dateLastActivity: activityTime },
+        ]),
+      ];
+      const second = [
+        makeTrelloList('list2', 'Doing', [
+          { id: 'card1', name: 'Task A', dateLastActivity: activityTime },
+        ]),
+      ];
+      const mockFetch = vi
+        .fn()
+        .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue(first) })
+        .mockResolvedValueOnce({ ok: true, json: vi.fn().mockResolvedValue(second) });
+      vi.stubGlobal('fetch', mockFetch);
+      const connector = new TrelloConnector(makeConfig());
+      await connector.init();
+      await connector.poll(new Date(0));
       const items = await connector.poll(new Date(0));
       expect(items[0]?.timestamp.toISOString()).toBe(activityTime);
     });
