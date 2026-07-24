@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.4] / mama-core [1.9.0] / mama-os [0.28.4] - 2026-07-24
+
+### Added
+
+- **`trello_kanban` bulk snapshot** — one live call returns every open card grouped by
+  board+list with labels and assignee names, the right tool for whole-project reports
+  (replaces a per-card search fan-out).
+
+### Fixed
+
+- **Trello read latency** — boards are fetched in parallel into a 45-second in-process
+  snapshot; repeated `trello_search` calls within a report turn reuse one snapshot instead of
+  re-scanning every board serially (~2m40s of Trello time in a report turn drops to ~2s).
+
 ## [0.28.3] / mama-core [1.9.0] / mama-os [0.28.3] - 2026-07-24
 
 ### Fixed
