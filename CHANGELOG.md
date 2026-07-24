@@ -4,6 +4,79 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.0] / mama-core [1.9.0] / mama-os [0.28.0] - 2026-07-24
+
+### Added
+
+- **Agent-owned owner-console operating brief** — the owner console now carries an evolving
+  operations manual at `~/.mama/briefs/brief-owner-console.md`: seeded once with a mechanism
+  skeleton (reporting philosophy, procedure recipes, situational awareness, self-update rule),
+  injected into every owner-console session, and rewritten by the agent itself via the new
+  `console_brief_update` tool whenever the owner corrects its working style. Upgrades never
+  overwrite it; the code-owned act-vs-ask discipline floor remains the security boundary.
+  Brief changes re-anchor live Codex threads through the policy fingerprint.
+
+### Fixed
+
+- **Per-call session keys** — the agent-loop client wrapper no longer mutates the shared
+  AgentLoop's session key before each run. Overlapping runs could race the mutation and land on
+  the wrong session lane (observed live as polluted `default:*` zero-tool sessions); the key now
+  rides per-call options through both `run()` and `runWithContent()`.
+
+### Removed (breaking)
+
+- **Legacy persona run path deleted** — the Stage-2 workorder pipeline is now the only system
+  run path. The `MAMA_STAGE2_WORKORDERS` migration flag is retired: unset or `on` boots
+  normally, while an explicit `off`/`shadow` fails the boot loudly instead of silently running
+  the pipeline. The legacy `executeValidatedRun` persona runs, legacy dashboard/wiki/promotion
+  cron prompts, the shadow capture harness, and the `reportPublisherOverride` plumbing are all
+  removed (net −692 lines). Prompt contracts live on in the personas and packaged brief
+  defaults.
+
+### Upgrade notes
+
+- If your environment pins `MAMA_STAGE2_WORKORDERS=off` or `shadow`, remove the variable (or
+  set it to `on`) before upgrading — the daemon refuses to boot on the retired legacy modes.
+
+## [0.27.6] / mama-core [1.9.0] / mama-os [0.27.6] - 2026-07-23
+
+### Fixed
+
+- **Token telemetry hotfix** — the runtime agent-loop client wrapper was stripping
+  `totalUsage` from run results, recording NULL for every workorder completion. The wrapper now
+  forwards usage, and a source-guard test pins the contract. First live verification recorded
+  real token counts for all completions.
+
+## [0.27.5] / mama-core [1.9.0] / mama-os [0.27.5] - 2026-07-23
+
+### Added
+
+- **Stage-2 token telemetry** — workorder completions now carry the run's total token usage
+  end-to-end (WorkerRunner → workerRun → consumer completion event → `agent_activity.tokens_used`).
+  Absent usage records NULL, never a fabricated zero.
+
+### Fixed
+
+- **Report-lane Code-Act audit visibility** — host tools invoked inside Code-Act executions are
+  now collected and reported in the run's audit summary, removing the false "agent gathered no
+  evidence" classification for full reports that gathered via Code-Act.
+
+## [0.27.4] / mama-core [1.9.0] / mama-os [0.27.4] - 2026-07-23
+
+### Fixed
+
+- **Operator report lane tool regression** — the report lane runs under a dedicated built-in
+  Code-Act role (`operator-report`) whose allowlist is derived from the report instructions,
+  fixing runs that started with zero tools.
+- **Codex thread re-anchoring** — `thread/resume` now re-sends base instructions through a lazy
+  resume callback, so resumed Codex threads keep their role policy after a daemon restart.
+
+### Added
+
+- **Owner console operating discipline** — a code-owned discipline block in the stable role
+  policy: act-by-default with an explicit ask-first boundary for irreversible actions, evidence
+  and citation rules, and a ban on closing by offering work the agent could have done.
+
 ## [0.27.3] / mama-core [1.9.0] / mama-os [0.27.3] - 2026-07-22
 
 ### Fixed
