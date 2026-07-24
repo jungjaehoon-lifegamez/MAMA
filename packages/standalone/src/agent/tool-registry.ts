@@ -119,6 +119,13 @@ register({
   params: 'no params',
 });
 register({
+  name: 'console_brief_update',
+  description:
+    "Rewrite YOUR owner-console operating brief (full replace). Use it the moment the owner corrects your working style or a recipe proves wrong - one dated lesson line, keep existing content, never delete the owner's own edits. Loudly logged; applies from the next session re-anchor.",
+  category: 'os_monitoring',
+  params: 'content (full markdown body)',
+});
+register({
   name: 'workorder_request',
   description:
     'Enqueue a priority workorder (board refresh, wiki compile, or memory curation) for the system worker lane. Enqueue-and-ack ONLY: the run happens later on the operator lane - reply with a short ack, never wait for or fabricate its result.',

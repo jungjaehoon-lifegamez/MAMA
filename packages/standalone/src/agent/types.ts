@@ -787,6 +787,7 @@ export type GatewayToolName =
   | 'audit_findings_read'
   | 'workorder_request'
   | 'workorder_status'
+  | 'console_brief_update'
   // Wiki compilation
   | 'wiki_publish'
   // Obsidian vault management via CLI

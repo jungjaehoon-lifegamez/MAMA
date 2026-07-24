@@ -79,6 +79,7 @@ import {
 } from '@jungjaehoon/mama-core';
 import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core';
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
+import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
@@ -1368,6 +1369,7 @@ export async function runAgentLoop(
     // Seed missing default briefs (user edits win) BEFORE the consumer exists -
     // a normal install must never hit the brief-missing fail path.
     ensureBriefs();
+    ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
     const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
       await import('../../operator/workorder-publishers.js');

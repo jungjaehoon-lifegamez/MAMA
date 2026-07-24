@@ -187,7 +187,8 @@ describe('Code-Act Integration', () => {
     expect(fullPrompt).toContain('## Code-Act');
     // The first-turn-only declaration budget includes the complete owner
     // query, Drive, image translation, and delivery surface.
-    expect(fullPrompt.length).toBeLessThan(12000);
+    // 12000->12150: console_brief_update declaration (deliberate ceiling bump).
+    expect(fullPrompt.length).toBeLessThan(12150);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

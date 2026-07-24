@@ -2930,6 +2930,28 @@ export class GatewayToolExecutor {
           }
           return { success: true, data: { kinds: this.taskLedger.workOrderStats() } };
         }
+        case 'console_brief_update': {
+          const { updateConsoleBrief } = await import('../operator/console-brief.js');
+          const briefContent = (input as { content?: unknown }).content;
+          if (typeof briefContent !== 'string') {
+            return { success: false, error: 'console_brief_update requires string content' };
+          }
+          try {
+            updateConsoleBrief(briefContent);
+          } catch (err) {
+            return { success: false, error: err instanceof Error ? err.message : String(err) };
+          }
+          // Observability over restriction: the agent editing its own operating
+          // brief is logged loudly, never silently absorbed. The next NEW/re-anchored
+          // owner session picks it up via the policy fingerprint.
+          console.log(
+            `[console-brief] agent updated its own operating brief (${briefContent.length} chars)`
+          );
+          return {
+            success: true,
+            message: 'Operating brief updated; it applies from the next session re-anchor.',
+          };
+        }
         case 'board_read': {
           if (!this.reportReader) {
             return {
