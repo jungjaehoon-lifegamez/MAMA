@@ -121,9 +121,9 @@ register({
 register({
   name: 'console_brief_update',
   description:
-    "Rewrite YOUR owner-console operating brief (full replace). Use it the moment the owner corrects your working style or a recipe proves wrong - one dated lesson line, keep existing content, never delete the owner's own edits. Loudly logged; applies from the next session re-anchor.",
+    "Record a lesson in YOUR owner-console operating brief. Call it the moment the owner corrects your working style or a recipe proves wrong - pass ONE concrete lesson; it is appended with today's date and the rest of your brief is preserved. Loudly logged; applies from the next session re-anchor.",
   category: 'os_monitoring',
-  params: 'content (full markdown body)',
+  params: 'lesson (one concrete lesson)',
 });
 register({
   name: 'workorder_request',
