@@ -86,6 +86,10 @@ export interface WorkOrderConsumerEvent {
   workKind: WorkOrderKind;
   workOrderId: number;
   reason?: string;
+  /** input+output tokens of the completed run, when the runner reported usage.
+   *  Restores the tokens_used telemetry the legacy persona path had
+   *  (executeValidatedRun) and the Stage-2 cutover lost. */
+  tokensUsed?: number;
 }
 
 export interface WorkOrderConsumerDeps {
@@ -274,17 +278,20 @@ export class WorkOrderConsumer {
     }
 
     let response: string;
+    let tokensUsed: number | undefined;
     try {
       // Inside the try: a runOptionsFor throw/reject (shadow capture publisher
       // missing, envelope issuance failure) fails the order instead of running
       // with the live publisher / without an envelope.
       const runOptions = await this.deps.runOptionsFor?.(wo);
-      response = await workerRun(this.deps.runner, {
+      const runResult = await workerRun(this.deps.runner, {
         kind: wo.workKind,
         brief,
         input: JSON.stringify(wo.payload),
         runOptions,
       });
+      response = runResult.response;
+      tokensUsed = runResult.tokensUsed;
     } catch (err) {
       if (this.stopping) {
         this.log(`[workorder-consumer] interrupted ${wo.workKind}#${wo.id}; boot will recover it`);
@@ -348,7 +355,15 @@ export class WorkOrderConsumer {
       `[workorder-consumer] ${wo.workKind}#${wo.id} response head: ${response.slice(0, 200).replace(/\n/g, ' | ')}`
     );
     this.deps.ledger.completeWorkOrder(wo.id);
-    this.emitEvent({ type: 'complete', workKind: wo.workKind, workOrderId: wo.id });
+    this.emitEvent({
+      type: 'complete',
+      workKind: wo.workKind,
+      workOrderId: wo.id,
+      // Token telemetry for agent_activity (start.ts onEvent): the consumer is
+      // the only seam that sees the run result AND emits the event. Absent when
+      // the runner reported no usage - never a fabricated zero.
+      ...(tokensUsed === undefined ? {} : { tokensUsed }),
+    });
     this.log(`[workorder-consumer] completed ${wo.workKind}#${wo.id}`);
   }
 

@@ -165,6 +165,50 @@ describe('Story S2-T3: WorkOrderConsumer', () => {
     expect(ctx.activeSends.join('\n')).toContain('automatic retry suppressed');
   });
 
+  describe('token telemetry: run usage rides the completion event', () => {
+    it('carries totalUsage from the runner into the complete event as tokensUsed', async () => {
+      // The 05-08~07-21 measurement gap: legacy personas recorded tokens_used,
+      // the Stage-2 workorder path never did. The consumer is the only place
+      // that sees the run result AND emits the telemetry event.
+      ctx.deps.runner = {
+        runWithContent: async () => ({
+          response: 'DONE',
+          totalUsage: { input_tokens: 41_000, output_tokens: 2_200 },
+        }),
+      };
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:tokens:1',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      expect(ctx.events).toContainEqual({
+        type: 'complete',
+        workKind: 'board',
+        workOrderId: wo.id,
+        tokensUsed: 43_200,
+      });
+    });
+
+    it('omits tokensUsed when the runner reports no usage (no fake zeros)', async () => {
+      const consumer = new WorkOrderConsumer(ctx.deps);
+      const wo = ctx.ledger.enqueueWorkOrder({
+        workKind: 'board',
+        idempotencyKey: 'board:tokens:2',
+        input: { mode: 'full' },
+      });
+
+      await consumer.tick();
+
+      const complete = ctx.events.find((e) => e.type === 'complete' && e.workOrderId === wo.id);
+      expect(complete).toBeDefined();
+      expect(complete).not.toHaveProperty('tokensUsed');
+    });
+  });
+
   describe('AC #1: enqueue -> consume -> complete e2e', () => {
     it('drains pending workorders serially and marks them done', async () => {
       const consumer = new WorkOrderConsumer(ctx.deps);
