@@ -128,6 +128,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'kagemusha_messages',
         'trello_search',
         'trello_card',
+        'trello_kanban',
         'task_list',
         'task_create',
         'task_update',

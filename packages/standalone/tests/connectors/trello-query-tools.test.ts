@@ -11,6 +11,8 @@ import {
   resolveTrelloQueryAuth,
   searchTrelloCards,
   getTrelloCard,
+  getTrelloKanban,
+  clearTrelloSnapshotCache,
 } from '../../src/connectors/trello/query-tools.js';
 
 let dir: string;
@@ -37,6 +39,7 @@ function writeConfig(overrides: Record<string, unknown> = {}): void {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'mama-trello-query-'));
   configPath = join(dir, 'connectors.json');
+  clearTrelloSnapshotCache();
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -170,6 +173,65 @@ describe('searchTrelloCards', () => {
     await expect(searchTrelloCards({ query: 'q' }, { configPath, fetchFn })).rejects.toThrow(
       /HTTP 401/
     );
+  });
+});
+
+describe('getTrelloKanban + snapshot cache', () => {
+  const boardLists = [
+    {
+      id: 'l1',
+      name: '進行',
+      cards: [
+        {
+          id: 'c1',
+          name: 'ex_100_card',
+          due: null,
+          dateLastActivity: '2026-07-24T10:00:00.000Z',
+          idMembers: ['m1'],
+          labels: [{ name: '初稿' }],
+        },
+      ],
+    },
+    { id: 'l2', name: 'empty-list', cards: [] },
+  ];
+  const roster = [{ id: 'm1', fullName: 'Alice Kim' }];
+  const routed = () =>
+    vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/boards/b1/lists')) return new Response(JSON.stringify(boardLists));
+      if (u.includes('/boards/b1/members')) return new Response(JSON.stringify(roster));
+      if (u.includes('/search?')) return new Response(JSON.stringify({ cards: [] }));
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+  it('one call returns every non-empty column with labels and assignee names', async () => {
+    writeConfig();
+    const columns = await getTrelloKanban({}, { configPath, fetchFn: routed() });
+    expect(columns).toHaveLength(1); // empty list omitted
+    expect(columns[0]).toMatchObject({
+      board: 'Board One',
+      list: '進行',
+      count: 1,
+    });
+    expect(columns[0]?.cards[0]).toMatchObject({
+      name: 'ex_100_card',
+      labels: ['初稿'],
+      assignees: ['Alice Kim'],
+    });
+  });
+
+  it('repeated reads within the TTL reuse one snapshot (report-turn hot path)', async () => {
+    // The 2026-07-24 14:03 report made 15 sequential searches, each
+    // re-fetching every board (~10s x 15). One snapshot must serve them all.
+    writeConfig();
+    const fetchFn = routed();
+    await getTrelloKanban({}, { configPath, fetchFn });
+    await searchTrelloCards({ query: 'エルデリーゼ' }, { configPath, fetchFn });
+    await searchTrelloCards({ query: 'ex_100' }, { configPath, fetchFn });
+    const boardFetches = (fetchFn as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.includes('/boards/b1/lists')).length;
+    expect(boardFetches).toBe(1);
   });
 });
 
