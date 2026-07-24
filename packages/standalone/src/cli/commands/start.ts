@@ -392,6 +392,7 @@ const WORKORDER_TOOL_POLICIES = {
       'task_list',
       'task_update',
       'trello_card',
+      'trello_kanban',
       'trello_search',
     ],
   },

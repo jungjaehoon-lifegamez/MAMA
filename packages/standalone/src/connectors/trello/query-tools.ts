@@ -144,11 +144,88 @@ interface BoardScanList {
   }>;
 }
 
+interface BoardSnapshot {
+  boardId: string;
+  boardName: string;
+  lists: BoardScanList[];
+  roster: Map<string, string>;
+}
+
+/** Per-process snapshot cache. A full report asks about many cards in one
+ *  turn; without this every trello_search re-fetched every board serially
+ *  (~10s x 15 calls in the 2026-07-24 14:03 report turn). 45s keeps a turn
+ *  on one snapshot while staying far fresher than the 5-min poll cadence. */
+const SNAPSHOT_TTL_MS = 45_000;
+let snapshotCache: { at: number; boards: BoardSnapshot[] } | null = null;
+
+/** Test seam: drop the snapshot cache. */
+export function clearTrelloSnapshotCache(): void {
+  snapshotCache = null;
+}
+
+/** Fetch all boards' open cards + member rosters IN PARALLEL, cached briefly.
+ *  A single unreadable board degrades to an empty snapshot for that board
+ *  only, never sinking the whole read. */
+async function fetchBoardSnapshots(
+  auth: TrelloAuth,
+  fetchFn: typeof fetch
+): Promise<BoardSnapshot[]> {
+  if (snapshotCache && Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS) {
+    return snapshotCache.boards;
+  }
+  const boards = await Promise.all(
+    [...auth.boardNames].map(async ([boardId, boardName]): Promise<BoardSnapshot> => {
+      let lists: BoardScanList[] = [];
+      let roster = new Map<string, string>();
+      try {
+        lists = await trelloGet<BoardScanList[]>(
+          `/boards/${boardId}/lists`,
+          { cards: 'open', card_fields: 'name,due,dateLastActivity,idMembers,labels' },
+          auth,
+          fetchFn
+        );
+        if (lists.some((l) => l.cards.some((c) => (c.idMembers ?? []).length > 0))) {
+          const members = await trelloGet<
+            Array<{ id: string; fullName?: string; username?: string }>
+          >(`/boards/${boardId}/members`, { fields: 'fullName,username' }, auth, fetchFn);
+          roster = new Map(
+            members.flatMap((m) =>
+              m.fullName || m.username ? [[m.id, m.fullName || m.username!]] : []
+            )
+          );
+        }
+      } catch {
+        /* board-level degradation only */
+      }
+      return { boardId, boardName, lists, roster };
+    })
+  );
+  snapshotCache = { at: Date.now(), boards };
+  return boards;
+}
+
+function snapshotCard(
+  snap: BoardSnapshot,
+  listName: string,
+  card: BoardScanList['cards'][number]
+): TrelloCardSummary {
+  return {
+    cardId: card.id,
+    name: card.name,
+    board: snap.boardName,
+    list: listName,
+    labels: (card.labels ?? []).map((l) => l.name).filter(Boolean),
+    assignees: (card.idMembers ?? []).map((id) => snap.roster.get(id) ?? id),
+    due: card.due,
+    lastActivity: card.dateLastActivity,
+  };
+}
+
 /** Board-scan substring match: Trello's /search tokenizes on word boundaries
  *  and misses CJK substrings and underscore compounds (e.g. 'エルデリーゼ',
- *  'ex_1055003'), which is most of this board vocabulary. Scanning open cards
- *  per board and filtering locally is the reliable path (the same reason
- *  Kagemusha's agent leans on its full-kanban scan). */
+ *  'ex_1055003'), which is most of this board vocabulary. Scanning the cached
+ *  parallel snapshot and filtering locally is the reliable path (the same
+ *  reason Kagemusha's agent leans on its full-kanban scan). */
 async function scanBoardsForCards(
   query: string,
   limit: number,
@@ -157,56 +234,52 @@ async function scanBoardsForCards(
 ): Promise<TrelloCardSummary[]> {
   const needle = query.toLowerCase();
   const matches: TrelloCardSummary[] = [];
-  for (const [boardId, boardName] of auth.boardNames) {
-    if (matches.length >= limit) break;
-    let lists: BoardScanList[];
-    try {
-      lists = await trelloGet<BoardScanList[]>(
-        `/boards/${boardId}/lists`,
-        { cards: 'open', card_fields: 'name,due,dateLastActivity,idMembers,labels' },
-        auth,
-        fetchFn
-      );
-    } catch {
-      continue; // a single unreadable board must not sink the whole search
-    }
-    const hits = lists.flatMap((list) =>
-      list.cards
-        .filter((card) => card.name.toLowerCase().includes(needle))
-        .map((card) => ({ list: list.name, card }))
-    );
-    if (hits.length === 0) continue;
-    // Resolve assignee names only for boards that actually matched.
-    let roster = new Map<string, string>();
-    if (hits.some((h) => (h.card.idMembers ?? []).length > 0)) {
-      try {
-        const members = await trelloGet<
-          Array<{ id: string; fullName?: string; username?: string }>
-        >(`/boards/${boardId}/members`, { fields: 'fullName,username' }, auth, fetchFn);
-        roster = new Map(
-          members.flatMap((m) =>
-            m.fullName || m.username ? [[m.id, m.fullName || m.username!]] : []
-          )
-        );
-      } catch {
-        /* degrade to raw ids */
+  for (const snap of await fetchBoardSnapshots(auth, fetchFn)) {
+    for (const list of snap.lists) {
+      for (const card of list.cards) {
+        if (matches.length >= limit) return matches;
+        if (card.name.toLowerCase().includes(needle)) {
+          matches.push(snapshotCard(snap, list.name, card));
+        }
       }
-    }
-    for (const { list, card } of hits) {
-      if (matches.length >= limit) break;
-      matches.push({
-        cardId: card.id,
-        name: card.name,
-        board: boardName,
-        list,
-        labels: (card.labels ?? []).map((l) => l.name).filter(Boolean),
-        assignees: (card.idMembers ?? []).map((id) => roster.get(id) ?? id),
-        due: card.due,
-        lastActivity: card.dateLastActivity,
-      });
     }
   }
   return matches;
+}
+
+export interface TrelloKanbanColumn {
+  board: string;
+  list: string;
+  count: number;
+  cards: TrelloCardSummary[];
+}
+
+/**
+ * Full LIVE kanban snapshot across the configured boards - Kagemusha's
+ * primary answer tool for whole-project status. ONE call replaces a search
+ * per card: every open card with its list, labels (revision round / artist),
+ * and assignee names, grouped by board+list.
+ */
+export async function getTrelloKanban(
+  input: { maxCardsPerList?: number } = {},
+  deps: TrelloQueryDeps = {}
+): Promise<TrelloKanbanColumn[]> {
+  const maxCards = Math.max(1, Math.min(100, Math.floor(input.maxCardsPerList ?? 30)));
+  const auth = resolveTrelloQueryAuth(deps);
+  const fetchFn = deps.fetchFn ?? fetch;
+  const columns: TrelloKanbanColumn[] = [];
+  for (const snap of await fetchBoardSnapshots(auth, fetchFn)) {
+    for (const list of snap.lists) {
+      if (list.cards.length === 0) continue;
+      columns.push({
+        board: snap.boardName,
+        list: list.name,
+        count: list.cards.length,
+        cards: list.cards.slice(0, maxCards).map((card) => snapshotCard(snap, list.name, card)),
+      });
+    }
+  }
+  return columns;
 }
 
 /**

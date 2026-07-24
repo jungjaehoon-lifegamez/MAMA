@@ -111,9 +111,9 @@ describe('TypeDefinitionGenerator', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
       // Includes the owner workflow and scoped recall declarations added to
       // the canonical HostBridge surface while retaining a hard prompt cap.
-      // Ceiling raised 10150->10700 for the trello_search/trello_card live-read
-      // declarations (deliberate: the truth answer path for card state).
-      expect(dts.length).toBeLessThan(10700);
+      // Ceiling raised 10700->11100 for trello_kanban (deliberate: one bulk
+      // snapshot call replaces a per-card search fan-out in reports).
+      expect(dts.length).toBeLessThan(11100);
     });
   });
 
@@ -121,7 +121,7 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2700); // 2540->2700: trello live-read tools (deliberate)
+      expect(tokens).toBeLessThan(2800); // 2700->2800: trello_kanban (deliberate)
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {
