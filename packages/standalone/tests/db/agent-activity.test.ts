@@ -177,6 +177,34 @@ describe('Story V19.6 - Agent Activity Logging', () => {
     });
   });
 
+  describe('token telemetry: absent usage persists as NULL, never a fabricated zero', () => {
+    it('stores NULL when tokens_used is omitted and 0 only when explicitly reported', () => {
+      const unmeasured = logActivity(db, {
+        agent_id: 'workorder-board',
+        agent_version: 0,
+        type: 'workorder_complete',
+      });
+      const genuinelyFree = logActivity(db, {
+        agent_id: 'workorder-board',
+        agent_version: 0,
+        type: 'workorder_complete',
+        tokens_used: 0,
+      });
+
+      const raw = db
+        .prepare('SELECT id, tokens_used FROM agent_activity WHERE id IN (?, ?) ORDER BY id')
+        .all(unmeasured.id, genuinelyFree.id) as Array<{ id: number; tokens_used: number | null }>;
+      // "Unmeasured" must stay distinguishable from "measured as free": the
+      // 05-08~07-21 dataset can only be compared against new data if zeros mean
+      // zero (PR #175 review - agent-store used `?? 0`, re-fabricating the very
+      // ambiguity the event layer removed).
+      expect(raw).toEqual([
+        { id: unmeasured.id, tokens_used: null },
+        { id: genuinelyFree.id, tokens_used: 0 },
+      ]);
+    });
+  });
+
   describe('Acceptance Criteria - activity CRUD', () => {
     it('AC #4: logs activity with details JSON', () => {
       const row = logActivity(db, {
@@ -246,13 +274,15 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       expect(rows).toHaveLength(1);
     });
 
-    it('AC #8: defaults tokens_used and duration_ms to 0', () => {
+    it('AC #8: defaults tokens_used to NULL (unmeasured) and duration_ms to 0', () => {
       const row = logActivity(db, {
         agent_id: 'dev',
         agent_version: 1,
         type: 'task_start',
       });
-      expect(row.tokens_used).toBe(0);
+      // Contract change (PR #175): unmeasured usage persists as NULL so it stays
+      // distinguishable from a measured zero; durations remain 0-defaulted.
+      expect(row.tokens_used).toBeNull();
       expect(row.duration_ms).toBe(0);
     });
 
