@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.27.6] - 2026-07-24
+
+Hotfix: the 0.27.5 token telemetry recorded NULL for every workorder because the
+agent-loop client wrapper rebuilt its return value and stripped `totalUsage`.
+The wrapper now forwards it, and a wiring guard pins the return shape. The NULL
+rows were themselves the honest signal the 0.27.5 persistence fix was designed
+to produce - under the old zero-coercion this gap would have been invisible.
+
 ## [0.27.5] - 2026-07-24
 
 Observability repairs: the report audit now sees Code-Act gather, and token
