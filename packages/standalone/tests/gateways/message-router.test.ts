@@ -747,6 +747,122 @@ describe('MessageRouter', () => {
       }
     });
 
+    it('gives the owner console an active operating discipline instead of advisory brevity', async () => {
+      resetRoleManager();
+      const ownerChannelId = 'synthetic-owner-operating-discipline';
+      getRoleManager().setTelegramTrust([ownerChannelId]);
+      let systemPrompt = '';
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        { backend: 'codex' }
+      );
+
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId: ownerChannelId,
+          userId: ownerChannelId,
+          text: 'What is the status?',
+          metadata: { chatType: 'private' },
+        });
+
+        expect(systemPrompt).toContain('Owner console operating discipline');
+        expect(systemPrompt).toContain('Gather before answering');
+        expect(systemPrompt).toContain('Never claim a check you did not run');
+        expect(systemPrompt).toContain('Synthesize, do not dump');
+        // Observed 2026-07-23: the agent gathers and analyses well, then closes by
+        // offering to do the obvious next step instead of doing it. These two rules
+        // target that closing move and draw the boundary it needs to act inside.
+        expect(systemPrompt).toContain('Act by default; ask only before the irreversible');
+        expect(systemPrompt).toContain('Do not close by offering work you could have done');
+        // The boundary must name irreversible effects, not just assert one exists.
+        expect(systemPrompt).toContain('telegram_send');
+        expect(systemPrompt).toContain('drive_upload');
+      } finally {
+        resetRoleManager();
+      }
+    });
+
+    it('keeps the owner operating discipline out of the onboarding conversation', async () => {
+      resetRoleManager();
+      const ownerChannelId = 'synthetic-owner-onboarding';
+      getRoleManager().setTelegramTrust([ownerChannelId]);
+      let systemPrompt = '';
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        { backend: 'codex' }
+      );
+
+      // Onboarding is gated on SOUL.md being absent. Re-onboarding an existing install
+      // hits this state WITH telegram already allowlisted, so owner_console + onboarding
+      // is a normal path, not a corner case.
+      rmSync(testSoulPath, { force: true });
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId: ownerChannelId,
+          userId: ownerChannelId,
+          text: 'hello',
+          metadata: { chatType: 'private' },
+        });
+
+        expect(systemPrompt).toContain('waking up for the first time');
+        // The operator posture contradicts the awakening persona: it orders the agent to
+        // gather via gateway tools and execute multi-step work, while onboarding must ask
+        // the user's name and run a quiz against connectors that do not exist yet.
+        expect(systemPrompt).not.toContain('Owner console operating discipline');
+        expect(systemPrompt).not.toContain('Gather before answering');
+      } finally {
+        writeFileSync(testSoulPath, '# Synthetic test persona\n', { mode: 0o600 });
+        resetRoleManager();
+      }
+    });
+
+    it('keeps the owner operating discipline out of non-owner roles', async () => {
+      resetRoleManager();
+      let systemPrompt = '';
+      const customRouter = new MessageRouter(
+        sessionStore,
+        {
+          run: vi.fn(async (_prompt, options) => {
+            systemPrompt = options?.systemPrompt ?? '';
+            return { response: 'Response' };
+          }),
+        },
+        createMockMamaApi(mockDecisions),
+        { backend: 'codex' }
+      );
+
+      try {
+        await customRouter.process({
+          source: 'telegram',
+          channelId: 'untrusted-group',
+          userId: '42',
+          text: 'What is the status?',
+          metadata: { chatType: 'group' },
+        });
+
+        expect(systemPrompt).not.toContain('Owner console operating discipline');
+        expect(systemPrompt).not.toContain('Task-store canonicity');
+      } finally {
+        resetRoleManager();
+      }
+    });
+
     it('treats owner-visible Trello and context_compile evidence as untrusted data', async () => {
       resetRoleManager();
       const ownerChannelId = 'synthetic-owner-untrusted-evidence';
