@@ -1,4 +1,4 @@
-import { readStage2Flag, type Stage2Flag } from './workorder-publishers.js';
+import { assertStage2FlagCompatible } from './workorder-publishers.js';
 import type { TemporalTickResult } from './temporal-reconcile.js';
 import type { WorkOrderRecord } from './task-ledger.js';
 
@@ -6,21 +6,16 @@ export const TEMPORAL_RECONCILE_ENV = 'MAMA_TEMPORAL_RECONCILE';
 export type TemporalReconcileFlag = 'off' | 'on';
 
 export interface TemporalStartupPreflight {
-  stage2Flag: Stage2Flag;
   temporalFlag: TemporalReconcileFlag;
 }
 
 export function preflightTemporalStartup(
-  env: NodeJS.ProcessEnv = process.env,
-  pauseIncompatible?: (reason: string) => void
+  env: NodeJS.ProcessEnv = process.env
 ): TemporalStartupPreflight {
-  const stage2Flag = readStage2Flag(env);
-  const temporalFlag = resolveTemporalReconcileFlag(env);
-  if (temporalFlag === 'on' && stage2Flag !== 'on') {
-    pauseIncompatible?.(`stage2-${stage2Flag}`);
-    throw new Error(`${TEMPORAL_RECONCILE_ENV}=on requires MAMA_STAGE2_WORKORDERS=on`);
-  }
-  return { stage2Flag, temporalFlag };
+  // The retired MAMA_STAGE2_WORKORDERS legacy pin fails the boot here, before
+  // any runtime is assembled (workorders are the only run path since v0.28.0).
+  assertStage2FlagCompatible(env);
+  return { temporalFlag: resolveTemporalReconcileFlag(env) };
 }
 
 export function resolveTemporalReconcileFlag(
@@ -52,7 +47,6 @@ export interface TemporalRuntimeScheduler {
 export interface TemporalRuntimeOptions {
   env?: NodeJS.ProcessEnv;
   flag?: TemporalReconcileFlag;
-  stage2Flag: Stage2Flag;
   backend: string;
   envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   effectiveTools: readonly string[];
@@ -97,12 +91,8 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
   let booted = false;
   let stopped = false;
   let scheduler: TemporalRuntimeScheduler | null = null;
-  const stage2ValidationError =
-    flag === 'on' && options.stage2Flag !== 'on'
-      ? new Error(`${TEMPORAL_RECONCILE_ENV}=on requires MAMA_STAGE2_WORKORDERS=on`)
-      : null;
 
-  if (flag === 'on' && !stage2ValidationError) {
+  if (flag === 'on') {
     if (options.envelopeIssuanceMode === 'off') {
       throw new Error('temporal reconciliation requires envelope issuance');
     }
@@ -131,11 +121,8 @@ export function createTemporalRuntime(options: TemporalRuntimeOptions): Temporal
       if (booted) throw new Error('temporal reconciliation runtime already booted');
       booted = true;
       options.ledger.repairClosedTemporalGenerations();
-      if (flag === 'off' || stage2ValidationError) {
-        const paused = options.ledger.pauseActiveTemporalWork(
-          flag === 'off' ? 'temporal-reconcile-disabled' : `stage2-${options.stage2Flag}`
-        );
-        if (stage2ValidationError) throw stage2ValidationError;
+      if (flag === 'off') {
+        const paused = options.ledger.pauseActiveTemporalWork('temporal-reconcile-disabled');
         return {
           enabled: false,
           paused,

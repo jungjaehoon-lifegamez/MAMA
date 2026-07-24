@@ -2129,7 +2129,7 @@ export class TaskLedger implements TaskSource {
    * Boot cleanup (plan D3 + review N4): open system rows -> cancelled. A
    * rollback is not a failure - excluded from failed counters/alarms; caller
    * logs ONE summary line with the returned count. `onlyKinds` scopes the
-   * cancellation (shadow rollback cancels non-board orders only).
+   * cancellation.
    */
   cancelOpenWorkOrders(reason: string, onlyKinds?: WorkOrderKind[]): number {
     // An explicit empty scope means "cancel nothing", never "cancel all"

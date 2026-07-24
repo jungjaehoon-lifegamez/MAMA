@@ -1,7 +1,8 @@
 /**
  * Story S2-T4 (review round 1): executor-surface behavior of the Stage-2
- * additions - capture-override precedence at report_publish, and the
- * workorder_request/workorder_status cases.
+ * additions - report_publish delivery and the workorder_request /
+ * workorder_status cases. (The shadow capture-publisher override seam was
+ * removed with the legacy path in v0.28.0.)
  * Plan: docs/superpowers/plans/2026-07-18-stage2-workorder-ownership.md
  */
 import { describe, it, expect } from 'vitest';
@@ -10,28 +11,8 @@ import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 
 describe('Story S2-T4: executor surface', () => {
-  describe('AC #1: report_publish override precedence - capture runs never touch the live store', () => {
-    it('a per-call override receives the slots; the live publisher is untouched', async () => {
-      const executor = new GatewayToolExecutor({});
-      const liveCalls: unknown[] = [];
-      const captureCalls: unknown[] = [];
-      executor.setReportPublisher((slots) => void liveCalls.push(slots));
-
-      const result = (await executor.execute(
-        'report_publish',
-        { slots: { briefing: '<p>x</p>' } } as never,
-        {
-          executionSurface: 'model_tool',
-          reportPublisherOverride: (slots: Record<string, string>) => void captureCalls.push(slots),
-        } as never
-      )) as { success?: boolean };
-
-      expect(result.success).toBe(true);
-      expect(captureCalls).toHaveLength(1);
-      expect(liveCalls).toHaveLength(0);
-    });
-
-    it('without an override the live publisher still receives publishes', async () => {
+  describe('AC #1: report_publish delivers to the live publisher', () => {
+    it('the live publisher receives publishes', async () => {
       const executor = new GatewayToolExecutor({});
       const liveCalls: unknown[] = [];
       executor.setReportPublisher((slots) => void liveCalls.push(slots));
@@ -80,7 +61,7 @@ describe('Story S2-T4: executor surface', () => {
         requested.push(kind);
         return kind === 'board'
           ? { accepted: true }
-          : { accepted: false, reason: 'shadow-board-only' };
+          : { accepted: false, reason: 'enqueue-failed' };
       });
 
       const ok = (await executor.execute(
@@ -101,7 +82,7 @@ describe('Story S2-T4: executor surface', () => {
         } as never
       )) as { success?: boolean; code?: string };
       expect(rejected.success).toBe(false);
-      expect(rejected.code).toBe('workorder_shadow-board-only');
+      expect(rejected.code).toBe('workorder_enqueue-failed');
       expect(requested).toEqual(['board', 'wiki']);
     });
   });
