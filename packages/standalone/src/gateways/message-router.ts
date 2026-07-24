@@ -28,6 +28,7 @@ import type {
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
+import { loadConsoleBrief } from '../operator/console-brief.js';
 import { RoleManager, getRoleManager } from '../agent/role-manager.js';
 import { ToolRegistry } from '../agent/tool-registry.js';
 import { createAgentContext } from '../agent/context-prompt-builder.js';
@@ -1531,6 +1532,15 @@ ${historyContext}
       if (stableRolePolicy) {
         prompt += `\n${stableRolePolicy}`;
       }
+      // Agent-owned operating brief (console-brief.ts): the evolving operations
+      // manual layered ABOVE the code-owned discipline floor. Loaded per build so
+      // a self-update reaches the very next NEW session.
+      if (agentContext.roleName === 'owner_console') {
+        const consoleBrief = loadConsoleBrief();
+        if (consoleBrief.trim()) {
+          prompt += `\n\n${consoleBrief.trim()}\n`;
+        }
+      }
     }
     prompt += '\n';
 
@@ -1580,11 +1590,11 @@ ${historyContext}
       agentsContent: enhanced.agentsContent,
       rulesContent: enhanced.rulesContent,
       model,
-      stableRolePolicy: buildStableRolePolicyInstructions(
-        agentContext,
-        this.roleManager,
-        trelloAvailable
-      ),
+      stableRolePolicy:
+        buildStableRolePolicyInstructions(agentContext, this.roleManager, trelloAvailable) +
+        // Brief edits must rotate the durable-session policy (re-anchor carries
+        // the new manual); non-owner roles contribute an empty string.
+        (agentContext.roleName === 'owner_console' ? `\n${loadConsoleBrief()}` : ''),
     });
   }
 
