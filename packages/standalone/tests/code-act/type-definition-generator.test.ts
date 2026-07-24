@@ -111,7 +111,9 @@ describe('TypeDefinitionGenerator', () => {
       const dts = TypeDefinitionGenerator.generate(policy(1));
       // Includes the owner workflow and scoped recall declarations added to
       // the canonical HostBridge surface while retaining a hard prompt cap.
-      expect(dts.length).toBeLessThan(10000);
+      // Ceiling raised 10000->10150 for console_brief_update (deliberate: one owner
+      // self-update tool; the declaration line alone costs ~77 chars).
+      expect(dts.length).toBeLessThan(10150);
     });
   });
 
@@ -119,7 +121,7 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2500);
+      expect(tokens).toBeLessThan(2540);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

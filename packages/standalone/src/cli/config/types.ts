@@ -147,6 +147,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'report_request',
         'workorder_request',
         'workorder_status',
+        'console_brief_update',
         'mama_save',
         'mama_update',
         'code_act',
