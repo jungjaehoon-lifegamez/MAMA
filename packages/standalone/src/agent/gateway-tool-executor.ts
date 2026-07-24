@@ -4823,12 +4823,20 @@ export class GatewayToolExecutor {
     };
     const bridge = new HostBridge(this, this.roleManager, nestedExecutionContext);
     let usedUntrustedExternalEvidence = false;
+    // Names of host tools that actually EXECUTED inside the sandbox (post-call hook fire,
+    // result !== undefined - host-bridge.ts:1049; the pre-call fire at :1037 is skipped).
+    // Ride in the result message so downstream audits (report-run summarizeReportToolUse)
+    // can classify nested gather/write without code_act becoming an opaque blob.
+    const hostToolsInvoked: string[] = [];
     bridge.onToolUse = (toolName, _toolInput, result) => {
+      if (result === undefined) {
+        return;
+      }
+      hostToolsInvoked.push(toolName);
       if (
-        result !== undefined &&
-        ((toolName.startsWith('drive_') && toolName !== 'drive_upload') ||
-          toolName === 'ocr_image' ||
-          toolName === 'translate_conti')
+        (toolName.startsWith('drive_') && toolName !== 'drive_upload') ||
+        toolName === 'ocr_image' ||
+        toolName === 'translate_conti'
       ) {
         usedUntrustedExternalEvidence = true;
       }
@@ -4853,6 +4861,7 @@ export class GatewayToolExecutor {
       value: result.value,
       logs: result.logs,
       metrics: result.metrics,
+      hostToolsInvoked,
     });
 
     return {

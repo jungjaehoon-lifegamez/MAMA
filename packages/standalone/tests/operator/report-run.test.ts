@@ -204,3 +204,70 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     expect(ran).toBe(0);
   });
 });
+
+describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive fix)', () => {
+  /** A code_act exchange whose result message carries the nested host tools it executed
+   *  (executeCodeAct includes hostToolsInvoked in the successful message JSON). */
+  function codeActExchange(
+    hostToolsInvoked: unknown,
+    opts: { error?: boolean; rawBody?: string } = {}
+  ) {
+    const body =
+      opts.rawBody ??
+      JSON.stringify({ value: 'ok', logs: [], metrics: { calls: 1 }, hostToolsInvoked });
+    return exchange('code_act', { error: opts.error, body });
+  }
+
+  it('classifies nested host gather tools from an executed code_act result', () => {
+    const history = [
+      { role: 'user', content: [{ type: 'text', text: 'report' }] },
+      ...codeActExchange(['kagemusha_overview', 'kagemusha_tasks', 'mama_recall']),
+    ];
+    const a = summarizeReportToolUse(history);
+    expect(a.gatherTools).toEqual(['kagemusha_overview', 'kagemusha_tasks', 'mama_recall']);
+    expect(a.all).toEqual(['code_act']);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
+    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/gathered via kagemusha_overview/);
+  });
+
+  it('classifies nested writes and still warns when code_act gathered nothing', () => {
+    const a = summarizeReportToolUse([...codeActExchange(['mama_save', 'report_publish'])]);
+    expect(a.gatherTools).toEqual([]);
+    expect(a.writeTools).toEqual(['mama_save', 'report_publish']);
+    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+  });
+
+  it('an errored code_act does NOT count its nested tools (executed-only semantics)', () => {
+    const a = summarizeReportToolUse([...codeActExchange(['kagemusha_tasks'], { error: true })]);
+    expect(a.gatherTools).toEqual([]);
+    expect(a.all).toEqual(['code_act']);
+  });
+
+  it('malformed or field-less code_act results yield no nested tools and never throw', () => {
+    const a = summarizeReportToolUse([
+      ...codeActExchange(undefined, { rawBody: '{not json' }),
+      ...codeActExchange(undefined, { rawBody: '{"value":"ok","logs":[]}' }),
+      ...codeActExchange({ nested: 'wrong-shape' }),
+      ...codeActExchange([42, null, 'kagemusha_tasks']), // non-strings ignored, valid one kept
+    ]);
+    expect(a.gatherTools).toEqual(['kagemusha_tasks']);
+  });
+
+  it('mixes direct tool_use and nested code_act gather in one audit', () => {
+    const a = summarizeReportToolUse([
+      ...exchange('context_compile'),
+      ...codeActExchange(['kagemusha_overview', 'mama_save']),
+    ]);
+    expect(a.gatherTools).toEqual(['context_compile', 'kagemusha_overview']);
+    expect(a.writeTools).toEqual(['mama_save']);
+  });
+
+  it('duplicate nested names are de-duplicated in the audit line, preserved in counts', () => {
+    const a = summarizeReportToolUse([
+      ...codeActExchange(['kagemusha_tasks', 'kagemusha_tasks', 'mama_recall']),
+    ]);
+    expect(a.gatherTools).toEqual(['kagemusha_tasks', 'kagemusha_tasks', 'mama_recall']);
+    const line = formatReportToolAudit(a, true).join('\n');
+    expect(line.match(/kagemusha_tasks/g)).toHaveLength(1); // uniq() in formatting
+  });
+});
