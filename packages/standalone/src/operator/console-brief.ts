@@ -27,9 +27,10 @@ export const CONSOLE_BRIEF_DEFAULT = `# Owner Console Operating Brief
 
 This file is YOURS. It is seeded once and never overwritten by upgrades.
 When the owner corrects how you work, or a procedure fails and you learn the
-fix, record the lesson here with console_brief_update - one durable line per
-lesson, dated. This is how your operating manual grows; losing a lesson means
-repeating the failure.
+fix, record it with console_brief_update({lesson}) - one durable lesson per
+call, appended below with today's date while everything above is preserved.
+This is how your operating manual grows; losing a lesson means repeating the
+failure.
 
 ## Reporting philosophy
 
@@ -63,8 +64,11 @@ repeating the failure.
 ## Self-update rule
 
 - When the owner corrects your working style, or a recipe above proves
-  wrong, update this brief in the same turn and say you did. Keep edits
-  small and dated; never delete the owner's own edits.
+  wrong, call console_brief_update({lesson}) in the same turn and say you
+  did. One concrete lesson per call; the file itself is curated by the
+  owner - you only ever add.
+
+## Lessons
 `;
 
 export function consoleBriefPath(homeDir: string = homedir()): string {
@@ -90,20 +94,44 @@ export function loadConsoleBrief(homeDir: string = homedir()): string {
   return readFileSync(path, 'utf-8');
 }
 
-/** Full-replace write for the agent's self-update tool. Loud validation, no
- *  fallback: an empty or oversized brief is refused, never truncated. */
-export function updateConsoleBrief(content: string, homeDir: string = homedir()): void {
-  if (!content.trim()) {
-    throw new Error('console brief update refused: empty content');
+/**
+ * Append one dated lesson for the agent's self-update tool. APPEND, never
+ * replace: on the loop's first live fire (2026-07-24) the model answered a
+ * full-replace contract with just its new lesson, wiping the seeded manual
+ * including the self-update rule itself. Accretion is the mechanism Kagemusha
+ * actually validated - the agent only ever adds; reorganizing the file is the
+ * owner's (or an owner-directed session's) manual edit.
+ *
+ * Loud validation, no fallback: an empty lesson is refused, and a brief that
+ * would exceed the ceiling is refused (the manual needs owner curation),
+ * never truncated.
+ */
+export function appendConsoleBriefLesson(lesson: string, homeDir: string = homedir()): string {
+  const trimmed = lesson.trim();
+  if (!trimmed) {
+    throw new Error('console brief update refused: empty lesson');
   }
-  if (content.length > CONSOLE_BRIEF_MAX_CHARS) {
+  // A brief absent at call time (deleted, first run) is re-seeded so the
+  // lesson lands inside the full manual, not alone in an empty file.
+  let existing = loadConsoleBrief(homeDir);
+  if (!existing.trim()) {
+    ensureConsoleBrief(homeDir);
+    existing = loadConsoleBrief(homeDir);
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  const entry = `- ${date}: ${trimmed.replace(/\s*\n\s*/g, ' ')}`;
+  const base = existing.replace(/\s+$/, '');
+  const next = `${base}\n${base.includes('\n## Lessons') ? '' : '\n## Lessons\n'}${entry}\n`;
+  if (next.length > CONSOLE_BRIEF_MAX_CHARS) {
     throw new Error(
-      `console brief update refused: ${content.length} chars exceeds ${CONSOLE_BRIEF_MAX_CHARS}`
+      `console brief update refused: ${next.length} chars exceeds ${CONSOLE_BRIEF_MAX_CHARS} - ` +
+        'ask the owner to curate the brief before recording more lessons'
     );
   }
   const path = consoleBriefPath(homeDir);
   mkdirSync(join(homeDir, '.mama', 'briefs'), { recursive: true });
   const tmpPath = `${path}.tmp`;
-  writeFileSync(tmpPath, content, 'utf-8');
+  writeFileSync(tmpPath, next, 'utf-8');
   renameSync(tmpPath, path);
+  return next;
 }
