@@ -290,13 +290,15 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   `workorder_status` (Stage 2).
 - **workerRun** (src/operator/worker-run.ts): briefed FRESH lane run - host-code
   callers only, never from inside an active lane run (deadlock seal).
-- **Stage 2 workorder pipeline** (`MAMA_STAGE2_WORKORDERS=off|shadow|on`, default
-  off = legacy persona runs): publishers enqueue occurrence-keyed workorders into
-  the TaskLedger (`operator_tasks`, kind='system' rows, host-managed); a single
-  unconditional consumer claims serially and runs briefed workerRuns; briefs live
-  in `~/.mama/briefs/brief-<kind>.md` (seeded on boot, user edits win). `shadow`
-  dual-runs the BOARD only against a capture store. Malformed flag values fail
-  the boot (no-fallback). Codex workers use built-in Tier-2 Code-Act roles named
+- **Stage 2 workorder pipeline** (the ONLY system run path since v0.28.0; the
+  former `MAMA_STAGE2_WORKORDERS` migration flag is retired — unset/`on` boots,
+  explicit `off`/`shadow` fails the boot loudly): publishers enqueue
+  occurrence-keyed workorders into the TaskLedger (`operator_tasks`,
+  kind='system' rows, host-managed); a single unconditional consumer claims
+  serially and runs briefed workerRuns; briefs live in
+  `~/.mama/briefs/brief-<kind>.md` (seeded on boot, user edits win). The legacy
+  executeValidatedRun persona runs and the shadow capture harness were deleted
+  after the 2026-07-22 cutover. Codex workers use built-in Tier-2 Code-Act roles named
   `workorder-board`, `workorder-wiki`, and `workorder-memory-curation`, with exact
   brief-required tool allowlists. These short-lived roles are independent of the
   optional legacy `dashboard-agent`, `wiki-agent`, and `memory` persona config.

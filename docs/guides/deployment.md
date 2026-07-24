@@ -295,7 +295,6 @@ MAMA_SERVER_TOKEN=<secure_token>
 MAMA_SERVER_PORT=3000
 MAMA_EMBEDDING_MODEL=Xenova/multilingual-e5-small
 MAMA_ENVELOPE_ISSUANCE=enabled
-MAMA_STAGE2_WORKORDERS=off
 MAMA_TEMPORAL_RECONCILE=off
 ```
 
@@ -316,14 +315,13 @@ Use `MAMA_AUTH_TOKEN` for non-Access tunnels and temporary test exposure. Withou
 | `MAMA_SERVER_PORT`        | MCP server HTTP port; does not change MAMA OS | `3000`                         |
 | `MAMA_EMBEDDING_MODEL`    | Embedding model                               | `Xenova/multilingual-e5-small` |
 | `MAMA_ENVELOPE_ISSUANCE`  | Runtime envelope issuance                     | `enabled`                      |
-| `MAMA_STAGE2_WORKORDERS`  | Durable workorders (`off`, `shadow`, or `on`) | `off`                          |
 | `MAMA_TEMPORAL_RECONCILE` | Temporal reconciliation (`off` or `on`)       | `off`                          |
 | `MAMA_FORCE_TIER_3`       | Force Tier 3 mode                             | `false`                        |
 
-Keep both workorder flags `off` during an ordinary upgrade. A temporal rollout changes them
-together: `MAMA_STAGE2_WORKORDERS=on` first, then `MAMA_TEMPORAL_RECONCILE=on` in the same daemon
-restart after envelope and worker transport checks pass. Temporal `on` with Stage-2 not `on` fails
-startup after pausing incompatible temporal attempts.
+The durable workorder pipeline is always on since v0.28.0 (the former
+`MAMA_STAGE2_WORKORDERS` migration flag is retired: unset or `on` boots fine, an explicit
+`off`/`shadow` fails the boot loudly). Enable `MAMA_TEMPORAL_RECONCILE=on` only after envelope
+and worker transport checks pass.
 
 The MAMA OS daemon and its `/health` endpoint listen on the fixed local API port `3847`.
 

@@ -65,7 +65,7 @@ export interface WorkerRunInput {
   /** The work order payload the worker acts on. */
   input: string;
   /**
-   * Extra run options (e.g. the Stage-2 shadow capture-publisher override).
+   * Extra run options (e.g. the per-run scoped envelope).
    * Applied BEFORE the identity fields - identity always wins (plan E7/G3:
    * an override must never move a worker onto another lane or reset another
    * lane's fresh-session pool).
@@ -91,8 +91,7 @@ export const DEFAULT_WORKER_TIMEOUT_SECONDS = 600;
  * Resolve the worker-run per-request CLI timeout in ms. Unset/empty -> the
  * 600s default; any other value MUST be a positive integer number of seconds.
  * A malformed value throws (no silent fallback: a typo must not quietly revert
- * workers to the 300s bound this raise exists to lift). Mirrors the
- * MAMA_STAGE2_WORKORDERS tri-state precedent (workorder-publishers.ts).
+ * workers to the 300s bound this raise exists to lift).
  */
 export function resolveWorkerRequestTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   const raw = (env[WORKER_TIMEOUT_ENV] ?? '').trim();

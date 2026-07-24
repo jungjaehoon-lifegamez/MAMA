@@ -531,8 +531,7 @@ export function buildAgentToolExecutionContext(
       options.sourceMessageRef === undefined &&
       options.modelRunId === undefined &&
       options.workorderAttemptId === undefined &&
-      options.temporalWorkContext === undefined &&
-      options.reportPublisherOverride === undefined)
+      options.temporalWorkContext === undefined)
   ) {
     return null;
   }
@@ -563,9 +562,6 @@ export function buildAgentToolExecutionContext(
   }
   if (options.temporalWorkContext !== undefined) {
     context.temporalWorkContext = options.temporalWorkContext;
-  }
-  if (options.reportPublisherOverride !== undefined) {
-    context.reportPublisherOverride = options.reportPublisherOverride;
   }
   return context;
 }

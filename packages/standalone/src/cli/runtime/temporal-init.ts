@@ -11,7 +11,6 @@ import {
 } from '../../operator/temporal-runtime.js';
 import type { TaskLedger } from '../../operator/task-ledger.js';
 import type { WorkOrderConsumer } from '../../operator/workorder-consumer.js';
-import type { Stage2Flag } from '../../operator/workorder-publishers.js';
 
 export interface DaemonTemporalAssembly {
   runtime: TemporalRuntime;
@@ -20,7 +19,6 @@ export interface DaemonTemporalAssembly {
 
 export interface DaemonTemporalAssemblyInput {
   flag: TemporalReconcileFlag;
-  stage2Flag: Stage2Flag;
   backend: string;
   envelopeIssuanceMode: 'off' | 'enabled' | 'required';
   effectiveTools: readonly string[];
@@ -41,7 +39,6 @@ export function assembleDaemonTemporalRuntime(
 ): DaemonTemporalAssembly {
   const runtime = createTemporalRuntime({
     flag: input.flag,
-    stage2Flag: input.stage2Flag,
     backend: input.backend,
     envelopeIssuanceMode: input.envelopeIssuanceMode,
     effectiveTools: input.effectiveTools,
@@ -81,26 +78,8 @@ export function assembleDaemonTemporalRuntime(
     runtime,
     bootAfterRoutes(): TemporalRuntimeBootResult {
       const result = runtime.boot();
-      if (input.stage2Flag === 'off') {
-        const cancelled = input.ledger.cancelOpenWorkOrders('flag-off');
-        if (cancelled > 0) {
-          input.log?.(`[stage2] flag=off: cancelled ${cancelled} open workorder(s)`);
-        }
-        return result;
-      }
       if (!input.consumer) {
-        throw new Error(
-          '[stage2] boot invariant violated: flag != off but consumer not constructed'
-        );
-      }
-      if (input.stage2Flag === 'shadow') {
-        const cancelled = input.ledger.cancelOpenWorkOrders('shadow-board-only', [
-          'wiki',
-          'memory-curation',
-        ]);
-        if (cancelled > 0) {
-          input.log?.(`[stage2] shadow: cancelled ${cancelled} non-board workorder(s)`);
-        }
+        throw new Error('[stage2] boot invariant violated: consumer not constructed');
       }
       if (!runtime.enabled) input.consumer.bootRecover();
       input.consumer.start();
