@@ -145,6 +145,26 @@ describe('createPersonaReportAsk (M3-T4)', () => {
     expect(logs.join('\n')).toMatch(/NO gateway gather tools/);
   });
 
+  it('empty FINAL segment recovers the report body from an earlier assistant turn', async () => {
+    // Live incident 2026-07-27: on the claude text-gateway path the loop
+    // returns only the LAST assistant segment; after a closing tool round it
+    // was empty, killing the cadence although the composed report existed in
+    // an earlier turn.
+    const logs: string[] = [];
+    const run = async () => ({
+      response: '',
+      history: [
+        { role: 'assistant', content: [{ type: 'text', text: '1) key situation: quiet day' }] },
+        ...exchange('mama_save'),
+        { role: 'assistant', content: [{ type: 'tool_use', id: 'tu_x', name: 'noop', input: {} }] },
+      ],
+    });
+    const ask = createPersonaReportAsk({ run, log: (l) => logs.push(l), fullReportTag: TAG });
+    const out = await ask(`${TAG}\nwrite`);
+    expect(out).toBe('1) key situation: quiet day');
+    expect(logs.join('\n')).toMatch(/recovered from an earlier assistant turn/);
+  });
+
   it('a digest prompt (no tag) does not warn about missing gather tools', async () => {
     const logs: string[] = [];
     const run = async () => ({ response: 'digest', history: [] });

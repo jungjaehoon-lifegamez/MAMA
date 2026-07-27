@@ -230,9 +230,48 @@ export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E
     for (const line of formatReportToolAudit(summarizeReportToolUse(history), isFull)) {
       deps.log(line);
     }
-    if (!response || response.trim() === '') {
+    let reportText = (response ?? '').trim();
+    if (reportText === '') {
+      // Text-gateway multi-turn runs return only the LAST assistant segment
+      // (agent-loop extractTextResponse), and after a closing tool round that
+      // segment is often empty - the composed report body lives in an EARLIER
+      // assistant turn (live incident 2026-07-27: gather+save succeeded, the
+      // cadence then died on 'empty report response'). Recover the last
+      // non-empty assistant text from history (its text blocks are already
+      // stripped of tool_call JSON by the gateway parser) and stay loud.
+      reportText = lastAssistantText(history);
+      if (reportText !== '') {
+        deps.log('[trigger-loop] report body recovered from an earlier assistant turn');
+      }
+    }
+    if (reportText === '') {
       throw new Error('persona agent returned an empty report response');
     }
-    return response;
+    return reportText;
   };
+}
+
+/** Last non-empty assistant TEXT across the run history (structural walk; text
+ *  blocks on the gateway path carry prose only - tool_call JSON is parsed out
+ *  before history assembly, agent-loop.ts removeToolCallBlocks). */
+export function lastAssistantText(history: ReadonlyArray<ReportHistoryMessage>): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (!message || message.role !== 'assistant') continue;
+    const { content } = message;
+    let text = '';
+    if (typeof content === 'string') {
+      text = content;
+    } else if (Array.isArray(content)) {
+      text = content
+        .map((block) => {
+          const b = block as { type?: unknown; text?: unknown };
+          return b?.type === 'text' && typeof b.text === 'string' ? b.text : '';
+        })
+        .filter((part) => part !== '')
+        .join('\n');
+    }
+    if (text.trim() !== '') return text.trim();
+  }
+  return '';
 }
