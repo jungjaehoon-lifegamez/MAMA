@@ -150,8 +150,15 @@ export class SituationReporter {
       }
       const w = this.windowByChannel.get(e.channelId) ?? { count: 0, excerpts: [] };
       w.count += 1;
-      const text = e.content.trim();
-      if (text) {
+      const body = e.content.trim();
+      if (body) {
+        // Carry the author INTO the excerpt: the report prompt's attribution
+        // discipline can only quote senders it can see, and windows without
+        // authors produced owner-facing reports full of "(sender unclear)"
+        // (live complaint 2026-07-27). userId carries the resolved display
+        // name for connector-indexed events.
+        const author = (e.userId ?? '').trim();
+        const text = author && author !== 'unknown' ? `${author}: ${body}` : body;
         w.excerpts.push(text.slice(0, MAX_EXCERPT_CHARS));
         if (w.excerpts.length > MAX_EXCERPTS_PER_CHANNEL) {
           w.excerpts.shift();
