@@ -459,7 +459,7 @@ register({
 register({
   name: 'task_list',
   description:
-    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
+    'List work items from YOUR task board - the working tracker you maintain for the owner, who only views it (the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
   category: 'os_monitoring',
   params:
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)",
@@ -482,7 +482,7 @@ register({
 register({
   name: 'task_create',
   description:
-    'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
+    'Create a work item on YOUR task board (you maintain it; no permission needed to keep its data correct). Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
   category: 'os_monitoring',
   params:
     'title (required), status?, priority? (high|normal|low), assignee?, deadline? (YYYY-MM-DD), due_at? (RFC 3339 with explicit offset), source_channel? ("<connector>:<channelId>"), source_event_id?, latest_event?, confirmed?',
@@ -490,7 +490,7 @@ register({
 register({
   name: 'task_update',
   description:
-    'Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.',
+    'Update a work item on YOUR task board by id - correcting stale fields (assignee, status, deadline) from evidence is your job, never the owner burden. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved.',
   category: 'os_monitoring',
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?',
