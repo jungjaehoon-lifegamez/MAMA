@@ -88,7 +88,7 @@ export interface RolesConfig {
 export const DEFAULT_ROLES: RolesConfig = {
   definitions: {
     os_agent: {
-      model: 'claude-sonnet-4-6', // Full-featured model for OS control
+      model: 'claude-sonnet-5', // Full-featured model for OS control
       maxTurns: 20,
       allowedTools: ['*'],
       allowedPaths: ['~/**'],
@@ -96,7 +96,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       sensitiveAccess: true,
     },
     chat_bot: {
-      model: 'claude-sonnet-4-6', // Balanced model for chat
+      model: 'claude-sonnet-5', // Balanced model for chat
       maxTurns: 10,
       allowedTools: [
         'mama_search',
@@ -116,7 +116,7 @@ export const DEFAULT_ROLES: RolesConfig = {
     // chat). Read/query surface is wide and Drive mutations are constrained to
     // the private workspace; Bash/Write, system control, and delegation stay blocked.
     owner_console: {
-      model: 'claude-sonnet-4-6',
+      model: 'claude-sonnet-5',
       maxTurns: 10,
       allowedTools: [
         'mama_search',
@@ -718,7 +718,7 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   version: 1,
   agent: {
     backend: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: 'claude-sonnet-5',
     max_turns: 10,
     timeout: 300000, // 5 minutes
     tools: {
