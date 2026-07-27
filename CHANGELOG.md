@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.6] / mama-core [1.9.0] / mama-os [0.28.6] - 2026-07-27
+
+### Fixed — claude-backend chat and report resilience
+
+- **Corrupt-transcript self-heal** — a session whose stored transcript carries an empty content
+  block (e.g. an empty thinking block persisted by the CLI) bricked the chat with API 400 on
+  every subsequent message; the error now joins the session-reset allowlist and retries on a
+  fresh session automatically.
+- **Report body recovery** — scheduled full reports on the text-gateway path no longer die on
+  "empty report response" when the composed body lives in an earlier assistant turn; it is
+  recovered from history with a loud log.
+- **Report excerpts carry authors** — owner reports quoted channel lines as "(sender unclear)"
+  because window excerpts dropped the event author; the author now rides each excerpt.
+- **Outer Code-Act defaults on only for the codex backend** — the claude main chat is
+  persona-locked with no Code-Act transport; its instructions pointed at a tool that cannot
+  exist there. Explicit per-agent `useCodeAct` config still wins.
+
 ## [0.28.5] / mama-core [1.9.0] / mama-os [0.28.5] - 2026-07-27
 
 ### Changed
