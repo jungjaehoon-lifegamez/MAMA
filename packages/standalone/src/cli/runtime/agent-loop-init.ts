@@ -155,8 +155,16 @@ export function initMainAgentLoop(
   const conductorUseCodeAct =
     config.multi_agent?.agents?.conductor?.useCodeAct ??
     config.multi_agent?.agents?.Conductor?.useCodeAct;
+  // Backend-aware default (live incident 2026-07-27): the main claude chat is
+  // persona-locked (--tools "", no MCP config), so outer Code-Act has NO
+  // transport there - its instructions tell the model to call an MCP tool
+  // that does not exist, and the model answers with the tool NAME as text.
+  // Codex injects code_act natively, so it stays the default only there.
+  // An explicit per-agent useCodeAct in config still wins in both directions.
   const useCodeAct =
-    options?.osAgentMode === true ? false : (osAgentUseCodeAct ?? conductorUseCodeAct ?? true);
+    options?.osAgentMode === true
+      ? false
+      : (osAgentUseCodeAct ?? conductorUseCodeAct ?? runtimeBackend === 'codex');
 
   // OS Agent mode: block sub-agent-specific tools to force delegation.
   // The OS agent must use delegate() instead of doing sub-agent work directly.
