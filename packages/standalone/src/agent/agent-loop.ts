@@ -1707,10 +1707,19 @@ export class AgentLoop {
           const isCodexPolicyMismatch = errorMessage.includes(
             'Codex app-server thread policy mismatch; reset the session explicitly'
           );
+          // 4. API 400 on a resumed session whose stored transcript carries an
+          //    empty content block (live incident 2026-07-27: sonnet emitted an
+          //    empty thinking block, the CLI persisted it, and every subsequent
+          //    replay of that session died with this 400). The transcript is
+          //    unrecoverable - only a fresh session heals it.
+          const isCorruptTranscript = errorMessage.includes(
+            'text content blocks must be non-empty'
+          );
 
           if (
             (isCodex && isCodexPolicyMismatch) ||
-            (!isCodex && (isSessionNotFound || isSessionInUse || isPromptTooLong))
+            (!isCodex &&
+              (isSessionNotFound || isSessionInUse || isPromptTooLong || isCorruptTranscript))
           ) {
             const reason = isCodexPolicyMismatch
               ? 'policy mismatch'
@@ -1718,7 +1727,9 @@ export class AgentLoop {
                 ? 'not found in CLI'
                 : isSessionInUse
                   ? 'already in use'
-                  : 'prompt too long (context overflow)';
+                  : isCorruptTranscript
+                    ? 'transcript corrupt (empty content block)'
+                    : 'prompt too long (context overflow)';
             console.log(`[AgentLoop] Session ${reason}, retrying with new session`);
 
             // Reset session in pool so it creates a new one
