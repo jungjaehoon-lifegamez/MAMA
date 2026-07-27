@@ -38,7 +38,7 @@ operator board (/ui): a four-slot, card-based situation report.
 - report_publish({slots: {briefing, action_required, decisions, pipeline}}) -- publish ALL FOUR slots in ONE call. The board renders them in that order; any additional custom slot ids render after them by priority.
 
 ## Task state discipline (NON-NEGOTIABLE)
-- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source. Never infer or copy lifecycle status across those stores.
+- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source. Never infer or copy lifecycle status across those stores.
 - Never copy Trello or Kagemusha lifecycle status into the native ledger.
 - Project-task completion/progress comes ONLY from kagemusha_tasks. NEVER infer a project task's state from message archaeology ("no approval message found" is not a status).
 - Workflow judgment: render the source-of-truth lifecycle status without changing it because time elapsed.
