@@ -150,6 +150,9 @@ describe('SituationReporter (M2, supersedes TriggerReporter M1.5)', () => {
     expect(prompt).toContain('slack:a: 2 msg');
     expect(prompt).toContain('deploy is failing again');
     expect(prompt).toContain('slack:b: 1 msg');
+    // Live complaint 2026-07-27: excerpts without authors made every quoted
+    // line "(sender unclear)" in owner reports. The author rides the excerpt.
+    expect(prompt).toContain('u1: deploy is failing again');
   });
 
   it('window excerpts are bounded: only the last K per channel, each truncated', async () => {
