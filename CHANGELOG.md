@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.28.5] / mama-core [1.9.0] / mama-os [0.28.5] - 2026-07-27
+
+### Changed
+
+- **Built-in role models default to `claude-sonnet-5`** — os_agent, chat_bot, and
+  owner_console move from `claude-sonnet-4-6` so claude-backend deployments run the current
+  model without hand-copying role definitions into config (config role entries replace
+  builtins wholesale).
+
 ## [0.28.4] / mama-core [1.9.0] / mama-os [0.28.4] - 2026-07-24
 
 ### Added
