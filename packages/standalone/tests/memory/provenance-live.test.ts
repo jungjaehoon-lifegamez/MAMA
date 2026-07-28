@@ -13,7 +13,11 @@
  * and for the same reason, as the reader it mirrors.
  */
 import { describe, it, expect } from 'vitest';
-import { isEventVisibleNow, parseSourceRef } from '../../src/memory/provenance-live.js';
+import {
+  isEventVisibleNow,
+  isMessageRefVisible,
+  parseSourceRef,
+} from '../../src/memory/provenance-live.js';
 import type { IndexedEvent } from '../../src/memory/provenance-resolver.js';
 
 function event(overrides: Partial<IndexedEvent> = {}): IndexedEvent {
@@ -181,5 +185,29 @@ describe('isEventVisibleNow', () => {
         connectors: ['board'],
       })
     ).toBe(false);
+  });
+});
+
+describe('isMessageRefVisible', () => {
+  const channel = [
+    { kind: 'channel' as const, id: 'chat:c1' },
+    { kind: 'global' as const, id: 'system' },
+  ];
+
+  it('names a ref only for the channel it belongs to', () => {
+    expect(isMessageRefVisible('chat:c1:99', channel)).toBe(true);
+    expect(isMessageRefVisible('chat:c2:99', channel)).toBe(false);
+  });
+
+  // global:system is on every caller's scope set, so it must not be what admits a ref.
+  it('is not satisfied by the global sentinel alone', () => {
+    expect(isMessageRefVisible('chat:c1:99', [{ kind: 'global', id: 'system' }])).toBe(false);
+  });
+
+  // A turn id can be `generated:<uuid>`, so splitting on the last colon would
+  // mis-attribute the ref. The prefix comparison is what makes that safe.
+  it('handles a turn id that itself contains a colon', () => {
+    expect(isMessageRefVisible('chat:c1:generated:abc123', channel)).toBe(true);
+    expect(isMessageRefVisible('chat:c1x:generated:abc123', channel)).toBe(false);
   });
 });

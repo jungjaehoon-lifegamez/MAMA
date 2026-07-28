@@ -24,7 +24,12 @@ interface EventFixture {
   scopeId: string | null;
   projectId: string | null;
   tenantId: string | null;
+  /** Defaults to BASE_MS. Varied so the reader's time clause is not dead on both sides. */
+  observedMs?: number;
 }
+
+const BASE_MS = 1_785_000_000_000;
+const OLD_MS = 1_600_000_000_000;
 
 // A matrix rather than examples: scoped and unscoped, in-project and project-less,
 // granted and ungranted connectors. The divergence lived in the unscoped rows.
@@ -137,6 +142,18 @@ const EVENTS: EventFixture[] = [
     projectId: 'p2',
     tenantId: 'default',
   },
+  // The time axis. Every fixture previously shared one timestamp and no scenario set a
+  // window, so the reader's COALESCE bound never ran - the same uniformity that hid the
+  // tenant leak, on the one filter the predicate had no counterpart for at all.
+  {
+    id: 'e_old',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: 'default',
+    observedMs: OLD_MS,
+  },
 ];
 
 interface Scenario {
@@ -146,6 +163,8 @@ interface Scenario {
   projectIds: string[];
   /** deriveEffectiveTenantId() returns 'default', so production always resolves one. */
   tenantId?: string;
+  asOf?: string;
+  rangeStartMs?: number;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -218,6 +237,30 @@ const SCENARIOS: Scenario[] = [
     tenantId: 'default',
   },
   {
+    // as_of is an authority clamp, not a caller preference, so a resolver that ignored
+    // it would out-read the reader the moment anything sets it.
+    name: 'an as_of clamp that excludes the newer events',
+    scopes: [
+      { kind: 'project', id: 'alpha' },
+      { kind: 'global', id: 'system' },
+    ],
+    connectors: ['board'],
+    projectIds: ['p1'],
+    tenantId: 'default',
+    asOf: new Date(OLD_MS + 1_000).toISOString(),
+  },
+  {
+    name: 'a range that excludes the older event',
+    scopes: [
+      { kind: 'project', id: 'alpha' },
+      { kind: 'global', id: 'system' },
+    ],
+    connectors: ['board'],
+    projectIds: ['p1'],
+    tenantId: 'default',
+    rangeStartMs: OLD_MS + 1_000,
+  },
+  {
     name: 'a multi-project window with a resolved tenant',
     scopes: [
       { kind: 'project', id: 'alpha' },
@@ -272,8 +315,8 @@ beforeAll(() => {
       fixture.id,
       fixture.connector,
       `src-${fixture.id}`,
-      1_785_000_000_000,
-      1_785_000_000_000,
+      fixture.observedMs ?? BASE_MS,
+      fixture.observedMs ?? BASE_MS,
       Buffer.alloc(32),
       '2026-07-01T00:00:00.000Z',
       '2026-07-01T00:00:00.000Z',
@@ -296,7 +339,7 @@ function toIndexedEvent(fixture: EventFixture): IndexedEvent {
     eventIndexId: fixture.id,
     sourceId: `src-${fixture.id}`,
     channel: 'chan',
-    observedAt: '2026-07-01T00:00:00.000Z',
+    observedAt: new Date(fixture.observedMs ?? BASE_MS).toISOString(),
     content: 'content body',
     memoryScope:
       fixture.scopeKind && fixture.scopeId
@@ -317,6 +360,10 @@ describe('provenance visibility matches the raw reader', () => {
           connectors: scenario.connectors,
           project_refs: scenario.projectIds.map((id) => ({ id })) as never,
           ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
+          ...(scenario.asOf === undefined ? {} : { as_of: scenario.asOf }),
+          ...(scenario.rangeStartMs === undefined
+            ? {}
+            : { range: { start_ms: scenario.rangeStartMs } }),
           limit: 100,
         } as never
       );
@@ -334,6 +381,8 @@ describe('provenance visibility matches the raw reader', () => {
             connectors: scenario.connectors,
             projectIds: scenario.projectIds,
             tenantId: scenario.tenantId ?? null,
+            maxObservedMs: scenario.asOf === undefined ? null : Date.parse(scenario.asOf),
+            minObservedMs: scenario.rangeStartMs ?? null,
           })
         ).map((fixture) => fixture.id)
       );
@@ -354,6 +403,10 @@ describe('provenance visibility matches the raw reader', () => {
           connectors: scenario.connectors,
           project_refs: scenario.projectIds.map((id) => ({ id })) as never,
           ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
+          ...(scenario.asOf === undefined ? {} : { as_of: scenario.asOf }),
+          ...(scenario.rangeStartMs === undefined
+            ? {}
+            : { range: { start_ms: scenario.rangeStartMs } }),
           limit: 100,
         } as never
       );
@@ -369,6 +422,8 @@ describe('provenance visibility matches the raw reader', () => {
           connectors: scenario.connectors,
           projectIds: scenario.projectIds,
           tenantId: scenario.tenantId ?? null,
+          maxObservedMs: scenario.asOf === undefined ? null : Date.parse(scenario.asOf),
+          minObservedMs: scenario.rangeStartMs ?? null,
         });
         if (shown) {
           expect(

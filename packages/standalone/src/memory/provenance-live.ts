@@ -60,6 +60,15 @@ export interface LiveProvenanceOptions {
   /** Project and tenant window, mirroring the reader's filters on the same columns. */
   projectIds?: readonly string[];
   tenantId?: string | null;
+  /**
+   * Visibility clamp on observation time, in epoch ms. The reader bounds raw candidates
+   * by `COALESCE(event_datetime, source_timestamp_ms)`; without a counterpart here, an
+   * `as_of` boundary would hold for reading and not for citation. Nothing assigns
+   * `envelope.scope.as_of` today, so these are null in practice - implemented now
+   * because a filter with no counterpart is exactly the shape the tenant leak had.
+   */
+  minObservedMs?: number | null;
+  maxObservedMs?: number | null;
   excerptChars?: number;
 }
 
@@ -115,6 +124,8 @@ export function isEventVisibleNow(
     connectors: readonly string[];
     projectIds?: readonly string[];
     tenantId?: string | null;
+    minObservedMs?: number | null;
+    maxObservedMs?: number | null;
   }
 ): boolean {
   const { scopes, connectors } = options;
@@ -153,6 +164,23 @@ export function isEventVisibleNow(
       event.tenantId === tenantId ||
       (includesLegacyGlobalSystem && (event.tenantId ?? null) === null);
     if (!tenantMatches) {
+      return false;
+    }
+  }
+
+  // The reader's time bound. An event with no timestamp at all cannot satisfy a bound
+  // the reader applies to a COALESCE of two columns, so it is excluded when one is set.
+  const min = options.minObservedMs ?? null;
+  const max = options.maxObservedMs ?? null;
+  if (min !== null || max !== null) {
+    const observedMs = event.observedAt === null ? null : Date.parse(event.observedAt);
+    if (observedMs === null || Number.isNaN(observedMs)) {
+      return false;
+    }
+    if (min !== null && observedMs < min) {
+      return false;
+    }
+    if (max !== null && observedMs > max) {
       return false;
     }
   }
@@ -227,35 +255,48 @@ function stringOrNull(value: unknown): string | null {
  * neither is reported as unknown - never as "exists but withheld", which would confirm
  * the existence of something outside the caller's scope.
  */
+async function lookupWithLegacyFallback(
+  memoryId: string,
+  scopes: MemoryScopeRef[]
+): Promise<{
+  record: NonNullable<Awaited<ReturnType<typeof getMemoryProvenance>>>;
+  legacy: boolean;
+} | null> {
+  const scoped = await getMemoryProvenance(memoryId, { scopes });
+  if (scoped) {
+    return { record: scoped, legacy: false };
+  }
+  const unbound = await getMemoryProvenance(memoryId, { scopes, includeLegacyUnscoped: true });
+  return unbound ? { record: unbound, legacy: true } : null;
+}
+
 async function loadRecord(
   memoryId: string,
   scopes: MemoryScopeRef[]
 ): Promise<MemoryProvenanceRecord | null> {
-  const scoped = await getMemoryProvenance(memoryId, { scopes });
-  const record =
-    scoped ??
-    (await getMemoryProvenance(memoryId, {
-      scopes,
-      includeLegacyUnscoped: true,
-    }));
-  if (!record) {
+  const found = await lookupWithLegacyFallback(memoryId, scopes);
+  if (!found) {
     return null;
   }
+  const record = found.record;
   const provenance = record.provenance as Record<string, unknown> | undefined;
   return {
     modelRunId: record.model_run_id,
     contextPacketId: stringOrNull(provenance?.context_packet_id),
     sourceRefs: record.source_refs.map(parseSourceRef),
-    legacyUnscoped: scoped === null,
+    legacyUnscoped: found.legacy,
   };
 }
 
 /**
  * Which supporting memories the caller may see, resolved up front.
  *
- * The pure resolver checks visibility synchronously, so this pre-answers it for the few
- * memory refs a record carries (about nine on average here). Same gate as the record
- * itself: `getMemoryProvenance` returns null for anything outside the active scopes.
+ * The pure resolver checks visibility synchronously, so this pre-answers it for the
+ * memory refs a record carries - typically a handful, up to fifty in the live corpus.
+ * Uses the SAME two-pass gate as the record itself, legacy pass included: an ancestor
+ * with no scope bindings is admitted exactly where an unbound record is, rather than
+ * reported out of scope because the second pass was skipped. An earlier docstring
+ * claimed that parity without the code doing it.
  */
 async function resolveVisibleMemoryRefs(
   record: MemoryProvenanceRecord | null,
@@ -267,11 +308,28 @@ async function resolveVisibleMemoryRefs(
   }
   const ids = new Set(record.sourceRefs.flatMap((ref) => (ref.kind === 'memory' ? [ref.id] : [])));
   for (const id of ids) {
-    if (await getMemoryProvenance(id, { scopes })) {
+    if (await lookupWithLegacyFallback(id, scopes)) {
       visible.add(id);
     }
   }
   return visible;
+}
+
+/**
+ * Whether a message ref may be named.
+ *
+ * `sourceMessageRef` is built as `source:channelId:turnId` (message-router.ts), and a
+ * channel scope id as `source:channelId` (scope-context.ts) - so a ref belongs to a
+ * caller's channel exactly when an active channel scope is its prefix. Compared as a
+ * prefix rather than parsed, because a turn id can itself contain a colon
+ * (`generated:<uuid>`) and splitting on the last one would silently mis-attribute it.
+ *
+ * This matters beyond tidiness: every memory carrying such a ref is also bound to
+ * global:system, which every caller holds, so an unchecked ref handed a private channel
+ * identifier to any agent that could read the memory at all.
+ */
+export function isMessageRefVisible(ref: string, scopes: readonly MemoryScopeRef[]): boolean {
+  return scopes.some((scope) => scope.kind === 'channel' && ref.startsWith(`${scope.id}:`));
 }
 
 /** Resolve one memory's support against the live index and the scopes active now. */
@@ -303,13 +361,27 @@ export async function resolveMemoryProvenanceLive(
       // ref was rewritten rather than that the event moved. Treat it as gone, not as data.
       return event.connector === connector ? event : null;
     },
-    isMemoryVisible: (id) => visibleMemoryRefs.has(id),
+    isSupportVisible: (support) => {
+      if (support.kind === 'memory') {
+        return visibleMemoryRefs.has(support.id);
+      }
+      if (support.kind === 'message') {
+        return isMessageRefVisible(support.id, options.scopes);
+      }
+      // An envelope hash is opaque and names nothing outside the system: it identifies
+      // the authorization a write happened under, not a channel, person or record.
+      // Correlating memories by it stays within what the caller could already read, so
+      // it is emitted - stated here rather than left as an unexamined default.
+      return true;
+    },
     isVisible: (event) =>
       isEventVisibleNow(event, {
         scopes: options.scopes,
         connectors: options.connectors,
         ...(options.projectIds === undefined ? {} : { projectIds: options.projectIds }),
         tenantId: options.tenantId ?? null,
+        minObservedMs: options.minObservedMs ?? null,
+        maxObservedMs: options.maxObservedMs ?? null,
       }),
     ...(options.excerptChars === undefined ? {} : { excerptChars: options.excerptChars }),
   });

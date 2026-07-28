@@ -53,8 +53,18 @@ export interface ResolvedEvent {
   excerpt: string;
 }
 
-/** One support that could not be dereferenced, and why. */
+/**
+ * One support that could not be dereferenced, and why.
+ *
+ * `kind` exists because the other two fields collapse three different situations into
+ * one shape: an unparseable ref, a withheld observation, and a withheld claim all render
+ * as roughly `{null, reason}`. "A supporting observation was withheld" and "a supporting
+ * claim was withheld" are different statements about grounding, and an agent that cannot
+ * tell them apart cannot make either one.
+ */
 export interface UnresolvedSupport {
+  kind: 'event' | 'memory' | 'message' | 'unknown';
+  /** Present only for events. A memory id is withheld deliberately - see below. */
   eventIndexId: string | null;
   reason: ResolutionFailure;
 }
@@ -133,15 +143,17 @@ export interface ProvenanceResolverDeps {
    */
   isVisible(event: IndexedEvent): boolean;
   /**
-   * Whether a supporting MEMORY is visible under the scope active now.
+   * Whether a recorded support may be named under the authority active now.
    *
-   * The same rule as `isVisible`, applied to the other kind of support. Without it the
-   * resolver would name the ancestors of a visible memory whether or not the caller may
-   * see them - turning one readable claim into a list of identities from scopes the
-   * caller was never granted. Optional so the pure module stays usable without a memory
-   * store; when absent, memory supports are withheld rather than assumed visible.
+   * Applies to every non-event support, not just memories. The first version checked
+   * nothing here and the second checked only `memory:`, which left `message:` refs -
+   * built as `source:channelId:turnId` - handing a channel identifier to any caller that
+   * could read the memory. Naming a support is disclosure whatever its kind.
+   *
+   * Optional so the pure module stays usable without a store; when absent, supports are
+   * withheld rather than assumed visible. A check that fails open is not a check.
    */
-  isMemoryVisible?(memoryId: string): boolean;
+  isSupportVisible?(support: RecordedSupport): boolean;
   /** Excerpt bound in characters. */
   excerptChars?: number;
 }
@@ -219,12 +231,17 @@ export function resolveMemoryProvenance(
     // the ones that actually explain something.
     if (ref.kind !== 'raw') {
       if (ref.kind === 'unsupported') {
-        unresolved.push({ eventIndexId: null, reason: 'unsupported_ref' });
-      } else if (ref.kind === 'memory' && !(deps.isMemoryVisible?.(ref.id) ?? false)) {
+        unresolved.push({ kind: 'unknown', eventIndexId: null, reason: 'unsupported_ref' });
+      } else if (!(deps.isSupportVisible?.(ref) ?? false)) {
         // Named as absent, with the id withheld. Disclosing it would confirm that a
-        // specific memory exists just outside the caller's scope, which is the thing
-        // the top-level `unknown_memory` answer is careful not to do.
-        unresolved.push({ eventIndexId: null, reason: 'outside_scope' });
+        // specific memory exists just outside the caller's scope - the thing the
+        // top-level `unknown_memory` answer is careful not to do - or hand over the
+        // channel identifier buried in a message ref.
+        unresolved.push({
+          kind: ref.kind === 'memory' ? 'memory' : 'message',
+          eventIndexId: null,
+          reason: 'outside_scope',
+        });
       } else {
         supports.push({ kind: ref.kind, id: ref.id });
       }
@@ -233,12 +250,12 @@ export function resolveMemoryProvenance(
     eventRefCount += 1;
     const event = deps.lookupEvent(ref.connector, ref.eventIndexId);
     if (!event) {
-      unresolved.push({ eventIndexId: ref.eventIndexId, reason: 'event_deleted' });
+      unresolved.push({ kind: 'event', eventIndexId: ref.eventIndexId, reason: 'event_deleted' });
       continue;
     }
     if (!deps.isVisible(event)) {
       // Named, but nothing about it disclosed - not the channel, not a word of content.
-      unresolved.push({ eventIndexId: ref.eventIndexId, reason: 'outside_scope' });
+      unresolved.push({ kind: 'event', eventIndexId: ref.eventIndexId, reason: 'outside_scope' });
       continue;
     }
     events.push({

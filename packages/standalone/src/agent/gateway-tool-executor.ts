@@ -5223,7 +5223,14 @@ export class GatewayToolExecutor {
     const projectIds = ctx.envelope
       ? deriveEffectiveProjectRefs(ctx.envelope).map((project) => project.id)
       : [];
+    // deriveEffectiveTenantId() is a constant today and is load-bearing: the reader
+    // resolves the same value on every call, so passing anything else - or nothing -
+    // makes citation and reading disagree.
     const tenantId = deriveEffectiveTenantId();
+    // Declared on the envelope and assigned nowhere yet. Threaded so the clamp holds for
+    // citation on the day it is, rather than becoming the next uncovered filter.
+    const asOfMs = ctx.envelope?.scope.as_of ? Date.parse(ctx.envelope.scope.as_of) : NaN;
+    const maxObservedMs = Number.isNaN(asOfMs) ? null : asOfMs;
 
     try {
       const resolution = await resolveMemoryProvenanceLive(memoryId, {
@@ -5231,6 +5238,7 @@ export class GatewayToolExecutor {
         connectors,
         projectIds,
         tenantId,
+        maxObservedMs,
       });
       return { success: true, data: resolution } as GatewayToolResult;
     } catch (error) {
