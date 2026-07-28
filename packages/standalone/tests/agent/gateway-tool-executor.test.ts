@@ -371,6 +371,55 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(mockApi.recallMemory).not.toHaveBeenCalled();
       });
 
+      // Without a handle the agent reads memories it cannot point at: it can never say
+      // WHICH memory a statement rests on, so a claim has no traceable evidence and an
+      // owner correction has no address. The id is opaque, so returning it discloses
+      // nothing the summary already does not.
+      it('returns a handle for each recalled memory, and still redacts content', async () => {
+        const mockApi = createMockApi();
+        vi.mocked(mockApi.recallMemory).mockResolvedValue({
+          profile: { static: [], dynamic: [], evidence: [] },
+          memories: [
+            {
+              id: 'mem_7f3a',
+              topic: 'operator/manual-memory',
+              summary: 'the second revision was submitted',
+              kind: 'decision',
+            },
+          ],
+          graph_context: { primary: [], expanded: [], edges: [] },
+          search_meta: { query: 'submission' },
+        });
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          envelopeIssuanceMode: 'off',
+        });
+
+        const discordContext = createDiscordContext();
+        const result = (await executor.execute('mama_recall', { query: 'submission' }, {
+          agentContext: {
+            ...discordContext,
+            session: {
+              ...discordContext.session,
+              channelId: 'channel-allowed',
+              userId: 'user-allowed',
+            },
+          },
+          agentId: 'chat_bot',
+          source: 'discord',
+          channelId: 'channel-allowed',
+          executionSurface: 'model_tool',
+        } as Parameters<GatewayToolExecutor['execute']>[2])) as {
+          success: boolean;
+          bundle?: { memories?: Array<Record<string, unknown>> };
+        };
+
+        expect(result.success).toBe(true);
+        const recalled = result.bundle?.memories?.[0];
+        expect(recalled?.memoryId).toBe('mem_7f3a');
+        expect(recalled?.summary).toContain('second revision');
+      });
+
       it('should redact recall secrets that cross the truncation boundary', async () => {
         const mockApi = createMockApi();
         const boundaryCrossingSecret = `sk-${'a'.repeat(120)}`;

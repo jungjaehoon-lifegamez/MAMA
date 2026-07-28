@@ -281,6 +281,15 @@ type ScopeAuditFields = {
 };
 
 type SafeRecallMemory = {
+  /**
+   * Handle for the recalled record.
+   *
+   * Without this the agent receives prose it cannot point at: it can read a memory and
+   * then has no way to say WHICH memory a statement rests on, so a claim can never be
+   * traced back to its evidence and a correction has no address. The id is an opaque
+   * identifier, not content, so returning it discloses nothing the summary does not.
+   */
+  memoryId?: string;
   topic?: string;
   kind?: string;
   summary?: string;
@@ -449,6 +458,10 @@ function sanitizeRecallMemory(value: unknown): SafeRecallMemory | null {
   }
 
   const safe: SafeRecallMemory = {};
+  const memoryId = stringField(record, 'id');
+  if (memoryId) {
+    safe.memoryId = memoryId;
+  }
   const topic = sanitizeRecallText(stringField(record, 'topic'));
   const kind = sanitizeRecallText(stringField(record, 'kind'));
   const summary = sanitizeRecallText(stringField(record, 'summary'));
