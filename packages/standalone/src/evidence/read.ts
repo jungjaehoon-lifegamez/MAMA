@@ -62,13 +62,15 @@ const MAX_LIMIT = 1000;
  * test existed to prove one copy faithfully reproduced another copy of a function that
  * returned nothing.
  *
- * HONEST STATE OF THAT GOAL: this is not yet the only predicate. `isEventVisibleNow`
- * (memory/provenance-live.ts) and `isRawVisible` (mama-core edges/ref-validation.ts) still
- * apply the old scope rule, and their differential test passes only because its fixtures
- * never set a channel grant - it now pins two predicates on the branch neither production
- * path takes. Until those are converged, mama_provenance refuses excerpts for events
- * context_compile cites, and vice versa. Converging them is the work; claiming it is done
- * would be the same mistake in a different place.
+ * That goal is now met for the grant path: `isEventVisibleNow` (memory/provenance-live.ts)
+ * and `isRawVisible` (mama-core edges/ref-validation.ts) both DELEGATE to the shared rule
+ * in mama-core channel-grant.ts when a grant is present, and the differential's fixtures
+ * were extended to vary channel so the grant branch is actually exercised - four scenarios
+ * that fail if either side stops consulting the grant.
+ *
+ * The pre-grant rule still exists in both, for callers holding no grant. That is a second
+ * rule, not a second copy of this one: it is reached only where no grant was given, and
+ * removing it belongs with removing the last caller that has none.
  */
 export function isEventVisible(
   event: { connector: string; channel: string },
@@ -131,6 +133,58 @@ export function liveBoundaryChannels(): Record<string, string[]> {
   // error is how a read path ends up wider precisely when the configuration is broken.
   if (!loaded.ok) return {};
   return grantAsBoundaryChannels(grantFromConnectorConfig(loaded.config));
+}
+
+/**
+ * Narrow the configured grant to what THIS envelope may read.
+ *
+ * Two independent narrowings, and the second one is the whole reason this function exists
+ * rather than a one-line filter:
+ *
+ * 1. Connector - the envelope's `raw_connectors` is the standing permission.
+ *
+ * 2. CHANNEL - when the envelope names channel scopes, only those channels are readable.
+ *    Raw visibility used to be decided by the scope columns, so a per-message envelope
+ *    scoped to one channel could not reach another. Deciding it by connector alone silently
+ *    dropped that isolation: reactive envelopes for two different channels of the same
+ *    connector carry identical `raw_connectors`, so every such run would have been able to
+ *    compile 500-character excerpts out of every other configured channel of that connector.
+ *    The scope columns were the wrong mechanism - populated on 37% of rows in three
+ *    namespaces - but the isolation they were attempting is real and belongs here, where the
+ *    envelope's own channel scopes state it exactly.
+ *
+ * An envelope with no channel scope is a run that was never bound to one (a report or a
+ * scheduled worker), and it keeps the connector-level ceiling.
+ */
+export function narrowGrantToEnvelope(
+  configured: Record<string, readonly string[]>,
+  visibility: { connectors: readonly string[]; scopes: readonly { kind: string; id: string }[] }
+): Record<string, readonly string[]> {
+  // Channel scope ids are `<connector>:<channelId>` (deriveMemoryScopes). Split on the
+  // FIRST separator only: channel ids contain colons of their own.
+  const scopedChannels = new Map<string, Set<string>>();
+  for (const scope of visibility.scopes) {
+    if (scope.kind !== 'channel') continue;
+    const separator = scope.id.indexOf(':');
+    if (separator <= 0) continue;
+    const connector = scope.id.slice(0, separator);
+    const channelId = scope.id.slice(separator + 1);
+    if (channelId.length === 0) continue;
+    const existing = scopedChannels.get(connector) ?? new Set<string>();
+    existing.add(channelId);
+    scopedChannels.set(connector, existing);
+  }
+
+  const narrowed: Record<string, readonly string[]> = {};
+  for (const [connector, channels] of Object.entries(configured)) {
+    if (!visibility.connectors.includes(connector)) continue;
+    const bound = scopedChannels.get(connector);
+    // A channel scope that names no configured channel leaves the connector with an empty
+    // grant, which reads nothing. That is the correct answer: the run is bound to a channel
+    // this system was not told to look at.
+    narrowed[connector] = bound ? channels.filter((channel) => bound.has(channel)) : channels;
+  }
+  return narrowed;
 }
 
 /**

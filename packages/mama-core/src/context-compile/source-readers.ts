@@ -14,6 +14,7 @@ import type { ContextBoundary, ContextProjectRef, ContextRange, ContextRef } fro
 import { serializeContextRefForProvenance, toTwinRef } from './ref.js';
 import { assertContextBoundaryAllowsInput } from './visibility.js';
 import { applyContextBoundaryReadDefaults } from './boundary-defaults.js';
+import { channelGrantClause, type ChannelGrantClause } from './channel-grant.js';
 import type { MemoryScopeRef } from '../memory/types.js';
 
 type ContextSourceAdapter = Pick<DatabaseAdapter, 'prepare'>;
@@ -811,31 +812,20 @@ function readRawCandidatesWithinGrant(
     return resultFromCandidates([], hiddenAggregate());
   }
 
-  const clauses: string[] = [];
-  const grantedPairs: string[] = [];
-  // Kept separate from the query params: the refusal count reuses the grant clause on its
-  // own, and slicing it back out of a mixed array is how an off-by-one becomes a wrong
-  // number nobody checks.
-  const grantParams: unknown[] = [];
-  for (const [connector, channels] of Object.entries(grant)) {
-    // A connector the caller did not ask for is not read even though it is granted:
-    // the grant is a ceiling, never an instruction.
-    if (Array.isArray(requested) && !requested.includes(connector)) continue;
-    const unique = [...new Set(channels.filter((channel) => channel.trim().length > 0))];
-    if (unique.length === 0) continue;
-    grantedPairs.push(`(source_connector = ? AND channel IN (${placeholders(unique)}))`);
-    grantParams.push(connector, ...unique);
-  }
-  const params: unknown[] = [...grantParams];
+  // The rule is compiled to SQL in exactly one place (channel-grant.ts), which is also
+  // where its boolean form lives. Building the clause here a second time is how the three
+  // copies this replaces came about.
+  const granted = channelGrantClause(grant, requested, {
+    connector: 'source_connector',
+    channel: 'channel',
+  });
   // No overlap between what was asked for and what is granted reads nothing. It must not
   // fall through to an unfiltered scan.
-  if (grantedPairs.length === 0) {
-    return resultFromCandidates(
-      [],
-      refusedAggregate(countRefusedByGrant(adapter, effectiveInput, []))
-    );
+  if (granted === null) {
+    return resultFromCandidates([], refusedAggregate(countRefusedByGrant(adapter, effectiveInput)));
   }
-  clauses.push(`(${grantedPairs.join(' OR ')})`);
+  const clauses: string[] = [granted.sql];
+  const params: unknown[] = [...granted.params];
 
   const min = minVisibleTimeMs(effectiveInput);
   const max = maxVisibleTimeMs(effectiveInput);
@@ -864,7 +854,7 @@ function readRawCandidatesWithinGrant(
 
   return resultFromCandidates(
     rows.map(rawRowToCandidate),
-    refusedAggregate(countRefusedByGrant(adapter, effectiveInput, grantedPairs, grantParams))
+    refusedAggregate(countRefusedByGrant(adapter, effectiveInput, granted))
   );
 }
 
@@ -882,17 +872,21 @@ function readRawCandidatesWithinGrant(
 function countRefusedByGrant(
   adapter: ContextSourceAdapter,
   effectiveInput: ContextSourceReadInput,
-  grantedPairs: readonly string[],
-  grantParams: readonly unknown[] = []
+  granted: ChannelGrantClause | null = null
 ): number {
   const requested = effectiveInput.connectors ?? [];
   if (requested.length === 0) return 0;
 
   const clauses = [`source_connector IN (${placeholders(requested)})`];
   const params: unknown[] = [...requested];
-  if (grantedPairs.length > 0) {
-    clauses.push(`NOT (${grantedPairs.join(' OR ')})`);
-    params.push(...grantParams);
+  if (granted !== null) {
+    // `NOT (connector = ? AND channel IN (...))` is NULL when channel is NULL, so a
+    // NULL-channel row is neither selected nor counted - it vanishes from both sides of
+    // the answer. A connector that does not populate channel would have every event
+    // refused and the count would report zero, which is precisely the confident empty
+    // answer this count exists to prevent.
+    clauses.push(`(channel IS NULL OR NOT ${granted.sql})`);
+    params.push(...granted.params);
   }
   const min = minVisibleTimeMs(effectiveInput);
   const max = maxVisibleTimeMs(effectiveInput);
@@ -988,6 +982,9 @@ export function readGraphCandidates(
     startMs: min,
     asOfMs: max,
     limit: normalizeLimit(effectiveInput.limit),
+    // Graph neighbours carry an excerpt, so an ungranted raw row reached through an edge
+    // would disclose content the reader itself refuses.
+    ...(effectiveInput.boundary?.channels ? { channels: effectiveInput.boundary.channels } : {}),
   }).filter(
     (edge) => (min === null || edge.created_at >= min) && (max === null || edge.created_at <= max)
   );

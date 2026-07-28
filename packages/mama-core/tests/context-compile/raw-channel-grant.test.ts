@@ -254,6 +254,29 @@ describe('raw candidates within a channel grant', () => {
     expect(result.hidden.by_reason.channel_not_granted).toBe(1);
   });
 
+  // A connector that does not populate channel has every event refused - and the count
+  // reported zero, because NOT(...) is NULL for a NULL channel so the row fell out of both
+  // sides of the answer. A confident empty answer with clean diagnostics is exactly what
+  // the count exists to prevent.
+  it('counts a refused event whose channel is null', () => {
+    const adapter = createAdapter();
+    upsertConnectorEventIndex(adapter, {
+      source_connector: 'chat',
+      source_type: 'message',
+      source_id: 'no-channel',
+      title: 'no channel at all',
+      content: 'x',
+      event_datetime: 1_200,
+      source_timestamp_ms: 1_200,
+    });
+    event(adapter, 'chat', 'C001', 'granted');
+
+    const result = readRawCandidates(adapter, input({ boundary: grantBoundary(['chat']) }));
+
+    expect(result.candidates.map((c) => c.title)).toEqual(['granted']);
+    expect(result.hidden.by_reason.channel_not_granted).toBe(1);
+  });
+
   // Both fail-closed states must hold on this path too: skipping them would have turned a
   // deliberate "read nothing" request into a read.
   it('still honours the explicit read-nothing requests', () => {

@@ -220,7 +220,8 @@ function hasSeedRefVisibilityConstraints(
 function assertSeedRefsVisibleToInput(
   adapter: ContextCompilerAdapter | undefined,
   input: ContextCompileInput,
-  seedRefs: readonly ContextRef[]
+  seedRefs: readonly ContextRef[],
+  boundary: ContextBoundary | undefined
 ): ContextRef[] {
   if (seedRefs.length === 0) {
     return [];
@@ -253,6 +254,9 @@ function assertSeedRefsVisibleToInput(
     tenantId: input.tenant_id,
     startMs: minVisibleMs(input),
     asOfMs: maxVisibleMs(input),
+    // Without this a caller could seed a raw id from a channel the grant refuses and have
+    // its identifiers surface in the packet - a citation path reaching past the read path.
+    ...(boundary?.channels ? { channels: boundary.channels } : {}),
   });
 
   for (const ref of seedRefs) {
@@ -373,7 +377,12 @@ export async function compileContext(
     });
   }
   if (deps.adapter || hasSeedRefVisibilityConstraints(effectiveInput, boundary)) {
-    canonicalSeedRefs = assertSeedRefsVisibleToInput(deps.adapter, effectiveInput, seedRefs);
+    canonicalSeedRefs = assertSeedRefsVisibleToInput(
+      deps.adapter,
+      effectiveInput,
+      seedRefs,
+      boundary
+    );
   }
 
   const canonicalScopes = canonicalizeContextScopes(effectiveInput.scopes);

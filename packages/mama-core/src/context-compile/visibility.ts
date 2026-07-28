@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { MEMORY_SCOPE_KINDS, type MemoryScopeRef } from '../memory/types.js';
 import type { ContextBoundary, ContextProjectRef, ContextRef } from './types.js';
 import { normalizeContextRef, normalizeContextRefs } from './ref.js';
+import { isChannelGranted } from './channel-grant.js';
 
 const SCOPE_ORDER: Record<MemoryScopeRef['kind'], number> = {
   project: 0,
@@ -171,14 +172,11 @@ function assertSeedRefsAllowed(
       throw new Error(`Seed raw ref connector is outside the context boundary: ${ref.connector}`);
     }
     if (!channelGrant) continue;
-    const granted = channelGrant[ref.connector];
-    // A seed ref with no channel cannot be shown to be inside the grant, and "cannot be
-    // shown to be inside" is refused rather than assumed.
-    if (
-      granted === undefined ||
-      typeof ref.channel_id !== 'string' ||
-      !granted.includes(ref.channel_id)
-    ) {
+    // Calls the shared rule rather than re-deriving membership. An inline re-derivation
+    // here already disagreed with it on the empty-channel case, which is how a fourth copy
+    // of a decision starts: not by being written as a copy, but by being written as
+    // "obviously the same check".
+    if (!isChannelGranted(ref.connector, ref.channel_id, channelGrant)) {
       throw new Error(`Seed raw ref channel is outside the context boundary: ${ref.connector}`);
     }
   }

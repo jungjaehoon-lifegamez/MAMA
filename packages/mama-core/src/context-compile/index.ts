@@ -1,5 +1,6 @@
 export * from './types.js';
 export * from './boundary-defaults.js';
+export * from './channel-grant.js';
 export * from './ref.js';
 export * from './visibility.js';
 export * from './packet-store.js';
