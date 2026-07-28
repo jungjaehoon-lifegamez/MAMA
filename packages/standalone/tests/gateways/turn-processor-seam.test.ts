@@ -251,3 +251,31 @@ describe('the first surface routed through the seam', () => {
     expect(served.response).toBe('answered by the injected processor');
   });
 });
+
+/**
+ * A completed turn may still have no durable run handle. The distinction the contract
+ * has to preserve is between "the field was not set" and "no resolvable run exists" -
+ * they read identically when the field is optional, and only the second is a fact about
+ * the world. Null is the honest answer; absence is a shrug.
+ */
+describe('run identity is stated, not implied', () => {
+  it('requires the field on a completed turn, even when there is no run', () => {
+    const withoutRun: ProcessingResult = {
+      outcome: 'completed',
+      response: 'answered',
+      sessionId: 's1',
+      injectedDecisions: [],
+      duration: 5,
+      modelRunId: null,
+      sourceTurnId: 'turn_1',
+      sourceMessageRef: 'surface:chat:turn_1',
+    };
+
+    expect(withoutRun.outcome).toBe('completed');
+    if (withoutRun.outcome === 'completed') {
+      // Present and explicitly empty - a consumer can tell this apart from "not recorded".
+      expect('modelRunId' in withoutRun).toBe(true);
+      expect(withoutRun.modelRunId).toBeNull();
+    }
+  });
+});

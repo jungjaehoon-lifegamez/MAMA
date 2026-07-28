@@ -533,6 +533,71 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  /**
+   * The seam, driven end to end.
+   *
+   * Every other proof of this boundary so far has been structural - an import rule, a
+   * type, an object literal called directly. Those pass on a facade. This one builds a
+   * real surface, injects a processor that is NOT the router and never was, pushes an
+   * inbound message through the registered handler, and checks both directions: the
+   * normalized message reached the injected implementation, and the response it returned
+   * came back out through delivery.
+   */
+  it('carries a real inbound message across the seam to a non-router processor and back', async () => {
+    const seen: Array<{ text?: string; source?: string; channelId?: string }> = [];
+    const injected: TurnProcessor = {
+      processTurn: vi.fn(async (incoming) => {
+        seen.push({
+          text: incoming.text,
+          source: incoming.source,
+          channelId: incoming.channelId,
+        });
+        return {
+          outcome: 'completed' as const,
+          response: 'served by the injected processor',
+          sessionId: 'injected-session',
+          injectedDecisions: [],
+          duration: 3,
+          modelRunId: 'run_injected',
+          sourceTurnId: 'turn_injected',
+          sourceMessageRef: 'telegram:7777:turn_injected',
+        };
+      }),
+    };
+
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: injected,
+      config: { allowedChats: ['7777'] },
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-seam-')),
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    });
+    await gateway.start();
+
+    await privateHandler(gateway).handleMessage({
+      ...makeBaseMessage(7777, 42, 900),
+      text: 'what is open right now',
+    });
+
+    // Inbound: the surface normalized it and handed it across, not to the router.
+    expect(injected.processTurn).toHaveBeenCalledTimes(1);
+    expect(seen[0]?.text).toBe('what is open right now');
+    expect(seen[0]?.source).toBe('telegram');
+    expect(seen[0]?.channelId).toBe('7777');
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
+
+    // Outbound: what the injected processor returned is what the owner receives.
+    // The surface streams into a placeholder and finalizes by editing it, so delivery
+    // is where the answer lands - not the first send.
+    const delivered = [
+      ...mockApi.sendMessage.mock.calls.map((call) => String(call[1])),
+      ...mockApi.editMessageText.mock.calls.map((call) => String(call[2])),
+    ].join('\n');
+    expect(delivered).toContain('served by the injected processor');
+
+    await gateway.stop();
+  });
+
   it('preserves a photo caption as the routed message text', async () => {
     const gateway = await makeGateway();
 
