@@ -87,7 +87,7 @@ describe('TelegramGateway basics', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -192,7 +192,7 @@ describe('TelegramGateway - message splitting', () => {
     );
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -226,7 +226,7 @@ describe('TelegramGateway - message splitting', () => {
     );
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -254,7 +254,7 @@ describe('TelegramGateway - bot info stored after start()', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -285,7 +285,7 @@ describe('TelegramGateway - sticker send fallback', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
     await gateway.start();
   });
@@ -328,7 +328,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('does not emit message_received and warns', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -349,7 +349,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('warns once per chat within the cap window, per-chat independently', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -371,7 +371,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('wraps forwarded text and leaves direct text unwrapped', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -404,7 +404,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('emits message_received', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -423,7 +423,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
       });
       await gateway.start();
       expect(warnSpy.mock.calls.flat().join('\n')).toContain('SECURITY WARNING');
@@ -438,7 +438,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777', '8888'] },
       });
       await gateway.start();
@@ -471,7 +471,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-gateway-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl,
@@ -540,7 +540,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   it('accepts and strips a group mention from caption_entities', async () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['-7777'] },
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-group-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -623,7 +623,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-denied-')),
       fetchImpl,
@@ -646,7 +646,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {},
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-')),
       fetchImpl,
@@ -667,7 +667,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   it('rate-caps dropped-media warnings when no inbound allowlist is configured', async () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {},
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-warn-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -696,7 +696,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -901,7 +901,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const ledgerPath = join(mediaRoot, 'ledger.json');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,
@@ -953,7 +953,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-restart-dedup-'));
     const options = {
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -980,7 +980,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     ledger.markReady('7777:124', 'response recovered from outbox');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,
@@ -1001,7 +1001,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     new TelegramMessageLedger(ledgerPath).claim('7777:125');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,

@@ -212,7 +212,8 @@ export async function initGateways(
     try {
       telegramGateway = new TelegramGateway({
         token: config.telegram.token,
-        messageRouter,
+        // The router satisfies the turn contract; this surface takes nothing more.
+        turnProcessor: messageRouter,
         config: {
           allowedChats: config.telegram.allowed_chats,
         },

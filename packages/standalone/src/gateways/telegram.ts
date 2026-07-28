@@ -20,7 +20,9 @@ import { Bot } from 'grammy';
 import type { Context } from 'grammy';
 import type { ContentBlock, MessageAttachment, NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
-import type { MessageRouter, TurnProcessor, ProcessingResult } from './message-router.js';
+// Only the turn contract. This surface serves turns and reads no session data for
+// display, so reaching the concrete router would be reaching past the boundary.
+import type { TurnProcessor, ProcessingResult } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { buildContentBlocks, detectImageType } from './attachment-utils.js';
@@ -103,8 +105,7 @@ export interface TelegramGatewayOptions {
   /** Telegram bot token */
   token: string;
   /** Message router for processing messages */
-  messageRouter: MessageRouter;
-  turnProcessor?: TurnProcessor;
+  turnProcessor: TurnProcessor;
   /** Gateway configuration */
   config?: Partial<TelegramGatewayConfig>;
   /** Polling interval in ms (unused with grammY, kept for interface compat) */
@@ -153,7 +154,7 @@ export class TelegramGateway extends BaseGateway {
 
   constructor(options: TelegramGatewayOptions) {
     // The seam lives on the shared surface role, not on this gateway.
-    super({ messageRouter: options.messageRouter, turnProcessor: options.turnProcessor });
+    super({ turnProcessor: options.turnProcessor });
     this.token = options.token;
     this.config = {
       enabled: true,
