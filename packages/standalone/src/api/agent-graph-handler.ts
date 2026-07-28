@@ -170,7 +170,12 @@ function withChannelGrant(
   return {
     ...visibility,
     channels: narrowGrantToEnvelope(configured, {
-      connectors: visibility.connectors,
+      // The ENVELOPE's connectors, not the request-narrowed ones. A request filter must
+      // not become a permission: `visibility.connectors` already applies the request's
+      // narrowing at the connector check, and folding it in here as well would make
+      // "you filtered it out" and "you may not see it" the same answer - the distinction
+      // the reader builds a whole counting query to preserve.
+      connectors: envelope.scope.raw_connectors ?? [],
       scopes: envelope.scope.memory_scopes ?? [],
     }),
   };
