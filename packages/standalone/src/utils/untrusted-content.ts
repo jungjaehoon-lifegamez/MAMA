@@ -8,6 +8,29 @@
  * with role-based gateway tool permissions and envelope destination scoping.
  */
 
+import { directConnectorReadForTool } from '../envelope/tool-connector-scope.js';
+
+/**
+ * Whether a tool's OUTPUT is untrusted external evidence.
+ *
+ * The invariant: anything that reads an external system directly returns text other
+ * people wrote. That includes every direct connector reader, so this derives from the
+ * same map the envelope scope uses rather than keeping a second hand-maintained list -
+ * a reader registered for scope but forgotten here would reach a prompt unfenced.
+ *
+ * Uploading is excluded: it sends our own content outward and returns no foreign text.
+ */
+export function isUntrustedExternalEvidenceTool(toolName: string): boolean {
+  if (directConnectorReadForTool(toolName) !== null) {
+    return true;
+  }
+  return (
+    (toolName.startsWith('drive_') && toolName !== 'drive_upload') ||
+    toolName === 'ocr_image' ||
+    toolName === 'translate_conti'
+  );
+}
+
 const OPEN_MARKER = '<<<UNTRUSTED-CONTENT';
 const END_MARKER = '<<<END-UNTRUSTED-CONTENT>>>';
 
