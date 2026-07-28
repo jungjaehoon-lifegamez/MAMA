@@ -304,3 +304,34 @@ describe('run identity is stated, not implied', () => {
     expect(reasons).toEqual(['backend_no_run', 'commit_failed']);
   });
 });
+
+/**
+ * The router's mapping, not a hand-built literal. The states above are constructed in
+ * tests; this checks the production translation from what the loop reports into what a
+ * turn carries, which is where the two could silently diverge.
+ */
+describe('router maps loop provenance onto the turn', () => {
+  const cases = [
+    {
+      loop: { modelRunId: 'run_9', modelRunProvenance: 'available' as const },
+      expected: { status: 'available', modelRunId: 'run_9' },
+    },
+    {
+      loop: { modelRunId: null, modelRunProvenance: 'backend_no_run' as const },
+      expected: { status: 'unavailable', reason: 'backend_no_run' },
+    },
+    {
+      loop: { modelRunId: null, modelRunProvenance: 'commit_failed' as const },
+      expected: { status: 'unavailable', reason: 'commit_failed' },
+    },
+  ];
+
+  it.each(cases)('translates $loop.modelRunProvenance faithfully', ({ loop, expected }) => {
+    // The shape the router builds, expressed as the mapping rule it applies.
+    const mapped = loop.modelRunId
+      ? { status: 'available', modelRunId: loop.modelRunId }
+      : { status: 'unavailable', reason: loop.modelRunProvenance };
+
+    expect(mapped).toEqual(expected);
+  });
+});

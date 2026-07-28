@@ -2076,40 +2076,48 @@ export class AgentLoop {
           ? 'available'
           : 'backend_no_run') as ModelRunProvenance,
       };
+      // Draining background work and committing the run are separate failures and get
+      // separate catches. Sharing one meant a rejected background task skipped the commit
+      // and was then reported as `commit_failed` - naming a failure that was never even
+      // attempted, which is the exact habit this provenance state exists to break.
       try {
         await this.drainBackgroundTasks(pendingBackgroundTasks);
+      } catch (backgroundError) {
+        logger.warn(
+          `AgentLoop background task drain failed: ${
+            backgroundError instanceof Error ? backgroundError.message : String(backgroundError)
+          }`
+        );
+      }
+      try {
         if (ownedModelRunId) {
           await this.mcpExecutor.commitRuntimeModelRun(ownedModelRunId, 'agent_loop completed');
           ownedModelRunCommitted = true;
         }
-      } catch (finalizationError) {
+      } catch (commitError) {
         logger.warn(
-          `AgentLoop post-run finalization failed: ${
-            finalizationError instanceof Error
-              ? finalizationError.message
-              : String(finalizationError)
+          `AgentLoop model run commit failed: ${
+            commitError instanceof Error ? commitError.message : String(commitError)
           }`
         );
-        if (ownedModelRunId && !ownedModelRunCommitted) {
-          // The response still stands - the turn happened and the owner should get it.
-          // What does NOT stand is the handle: the run record may be left uncommitted,
-          // so returning its id would hand out provenance that cannot be resolved.
-          // Report the answer, withhold the claim - and say WHICH kind of absence this
-          // is, because an uncommitted record is a durability failure to repair, not the
-          // ordinary case of a backend that reports no run at all.
-          result.modelRunId = null;
-          result.modelRunProvenance = 'commit_failed';
-          logger.warn('AgentLoop returning without run identity: the model run was not committed');
-          // Deliberately NOT marked failed. Review suggested reconciling the record that
-          // way, but the run did not fail - writing its completion did. Relabelling a
-          // successful run as failed would tidy the state by recording something untrue,
-          // and an existing test pins that decision. The orphan stays visible instead:
-          // the provenance reason above says a commit failed rather than that no run
-          // existed, which is the difference a repair pass needs.
-          logger.error(
-            `Model run ${ownedModelRunId} may remain uncommitted; provenance reported as commit_failed`
-          );
-        }
+      }
+      if (ownedModelRunId && !ownedModelRunCommitted) {
+        // The response still stands - the turn happened and the owner should get it.
+        // What does NOT stand is the handle: the run record may be left uncommitted, so
+        // returning its id would hand out provenance that cannot be resolved. Report the
+        // answer, withhold the claim, and say which kind of absence this is - an
+        // uncommitted record is a durability failure to repair, not the ordinary case of
+        // a backend that reports no run at all.
+        //
+        // Deliberately NOT marked failed. The run did not fail; writing its completion
+        // did. Relabelling a successful run as failed would tidy the state by recording
+        // something untrue, and an existing test pins that decision. The orphan stays
+        // visible, and the reason below is what a repair pass keys on.
+        result.modelRunId = null;
+        result.modelRunProvenance = 'commit_failed';
+        logger.error(
+          `Model run ${ownedModelRunId} may remain uncommitted; provenance reported as commit_failed`
+        );
       }
       return result;
     } catch (error) {

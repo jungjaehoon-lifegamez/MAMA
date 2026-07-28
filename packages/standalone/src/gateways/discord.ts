@@ -950,7 +950,7 @@ export class DiscordGateway extends BaseGateway {
   private backfillChannelNames(): void {
     try {
       // Display concern, not turn processing: this surface reads session data to name
-      // its channels, which is why it still holds the concrete router.
+      // its channels, which is why it asks for that narrow capability by name.
       const router = this.sessionDirectory;
       if (!router) {
         return;
