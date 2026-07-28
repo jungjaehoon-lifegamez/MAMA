@@ -112,8 +112,10 @@ describe('TypeDefinitionGenerator', () => {
       // Includes the owner workflow and scoped recall declarations added to
       // the canonical HostBridge surface while retaining a hard prompt cap.
       // Ceiling raised 10700->11100 for trello_kanban (deliberate: one bulk
-      // snapshot call replaces a per-card search fan-out in reports).
-      expect(dts.length).toBeLessThan(11100);
+      // snapshot call replaces a per-card search fan-out in reports), then
+      // 11100->11500 for task_external_correlation (deliberate: the provenance
+      // join is what keeps cross-store claims off title matching).
+      expect(dts.length).toBeLessThan(11500);
     });
   });
 
@@ -121,7 +123,7 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2800); // 2700->2800: trello_kanban (deliberate)
+      expect(tokens).toBeLessThan(2900); // 2700->2800 trello_kanban, ->2900 correlation (deliberate)
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

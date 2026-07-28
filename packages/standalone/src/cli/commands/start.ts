@@ -468,6 +468,7 @@ const OPERATOR_REPORT_TOOL_POLICY = {
     'mama_search',
     'report_publish',
     'schedule_upcoming',
+    'task_external_correlation',
     'task_list',
     'trello_kanban',
   ],

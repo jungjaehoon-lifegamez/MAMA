@@ -326,6 +326,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         'mama_search',
         'report_publish',
         'schedule_upcoming',
+        'task_external_correlation',
         'task_list',
         'trello_kanban',
       ]);
