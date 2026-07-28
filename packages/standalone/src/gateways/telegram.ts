@@ -20,9 +20,9 @@ import { Bot } from 'grammy';
 import type { Context } from 'grammy';
 import type { ContentBlock, MessageAttachment, NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
-// Only the turn contract. This surface serves turns and reads no session data for
-// display, so reaching the concrete router would be reaching past the boundary.
-import type { TurnProcessor, ProcessingResult } from './message-router.js';
+// Only the turn contract, and from the neutral module: importing it through the router
+// module would leave a source dependency on the very thing the boundary removes.
+import type { TurnProcessor, ProcessingResult } from './turn-contract.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { buildContentBlocks, detectImageType } from './attachment-utils.js';

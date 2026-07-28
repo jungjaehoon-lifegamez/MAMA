@@ -105,7 +105,10 @@ export async function initGateways(
 
       discordGateway = new DiscordGateway({
         token: config.discord.token,
-        messageRouter,
+        // The router satisfies both capabilities today; the surface asks for each by name
+        // so that either can be replaced without handing over the other.
+        turnProcessor: messageRouter,
+        sessionDirectory: messageRouter,
         defaultChannelId: config.discord.default_channel_id,
         config: normalizedGuilds
           ? {
@@ -161,7 +164,7 @@ export async function initGateways(
       slackGateway = new SlackGateway({
         botToken: config.slack.bot_token,
         appToken: config.slack.app_token,
-        messageRouter,
+        turnProcessor: messageRouter,
         multiAgentConfig: gatewayMultiAgentConfig,
         multiAgentRuntime: gatewayMultiAgentRuntime,
       });

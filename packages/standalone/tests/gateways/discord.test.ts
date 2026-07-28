@@ -113,7 +113,8 @@ describe('DiscordGateway', () => {
     vi.clearAllMocks();
     gateway = new DiscordGateway({
       token: 'test-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
+      sessionDirectory: mockMessageRouter,
     });
   });
 
@@ -133,7 +134,8 @@ describe('DiscordGateway', () => {
     it('should accept initial guild config', () => {
       const gatewayWithConfig = new DiscordGateway({
         token: 'test-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
+        sessionDirectory: mockMessageRouter,
         config: {
           guilds: {
             '123': { requireMention: false },
@@ -321,7 +323,8 @@ describe('DiscordGateway Configuration', () => {
   it('should support wildcard guild config', () => {
     const gateway = new DiscordGateway({
       token: 'test-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
+      sessionDirectory: mockMessageRouter,
       config: {
         guilds: {
           '*': { requireMention: true },
@@ -338,7 +341,8 @@ describe('DiscordGateway Configuration', () => {
   it('should support per-channel configuration', () => {
     const gateway = new DiscordGateway({
       token: 'test-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
+      sessionDirectory: mockMessageRouter,
       config: {
         guilds: {
           '123': {

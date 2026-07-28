@@ -63,7 +63,7 @@ describe('SlackGateway', () => {
     gateway = new SlackGateway({
       botToken: 'xoxb-test-token',
       appToken: 'xapp-test-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -85,7 +85,7 @@ describe('SlackGateway', () => {
       const gatewayWithConfig = new SlackGateway({
         botToken: 'xoxb-test',
         appToken: 'xapp-test',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: {
           channels: {
             C123: { requireMention: false },
@@ -214,7 +214,7 @@ describe('SlackGateway Configuration', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {
         channels: {
           general: { requireMention: true },
@@ -236,7 +236,7 @@ describe('SlackGateway Message Handling', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
 
     expect(gateway.source).toBe('slack');
@@ -249,7 +249,7 @@ describe('SlackGateway Message Handling', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
 
     // Thread response behavior tested through integration

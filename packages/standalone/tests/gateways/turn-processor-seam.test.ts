@@ -207,8 +207,11 @@ describe('the first surface routed through the seam', () => {
       .filter((line) => line.startsWith('import') || /^\s+[A-Za-z]+,?$/.test(line))
       .join('\n');
 
-    expect(imports).toContain('TurnProcessor');
-    expect(imports).not.toContain('MessageRouter');
+    expect(imports).toContain('turn-contract.js');
+    // The forbidden thing is the MODULE, not the symbol name. Importing a contract type
+    // through the router module would satisfy a symbol check while leaving the source
+    // dependency the boundary exists to remove.
+    expect(imports).not.toContain('message-router.js');
   });
 
   // The assertion above is worthless on its own: a surface inherits from the base, so

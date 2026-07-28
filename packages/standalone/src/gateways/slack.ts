@@ -17,7 +17,7 @@ import type {
   ContentBlock,
 } from './types.js';
 import { downloadFile, buildContentBlocks } from './attachment-utils.js';
-import type { MessageRouter } from './message-router.js';
+import type { TurnProcessor } from './turn-contract.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
@@ -59,7 +59,7 @@ export interface SlackGatewayOptions {
   /** Slack app token for Socket Mode (xapp-...) */
   appToken: string;
   /** Message router for processing messages */
-  messageRouter: MessageRouter;
+  turnProcessor: TurnProcessor;
   /** Gateway configuration */
   config?: Partial<SlackGatewayConfig>;
   /** Multi-agent configuration (optional) */
@@ -100,7 +100,7 @@ export class SlackGateway extends BaseGateway {
   }
 
   constructor(options: SlackGatewayOptions) {
-    super({ turnProcessor: options.messageRouter });
+    super({ turnProcessor: options.turnProcessor });
     this.botToken = options.botToken;
     this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {

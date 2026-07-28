@@ -13,7 +13,7 @@
  *
  * Connectors do not pass through here. They are data the agent reads, never a turn.
  */
-import type { NormalizedMessage, RelatedDecision } from './types.js';
+import type { MessageSource, NormalizedMessage, RelatedDecision } from './types.js';
 import type { StreamCallbacks } from '../agent/types.js';
 
 /** Options a caller may pass alongside a turn. */
@@ -96,7 +96,7 @@ export interface TurnProcessor {
  */
 export interface SessionDirectory {
   listSessions(
-    source: string
+    source: MessageSource
   ): ReadonlyArray<{ readonly channelId: string; readonly channelName?: string | null }>;
-  updateChannelName(source: string, channelId: string, channelName: string): boolean;
+  updateChannelName(source: MessageSource, channelId: string, channelName: string): boolean;
 }
