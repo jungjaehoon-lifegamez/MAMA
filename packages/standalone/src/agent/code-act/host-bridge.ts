@@ -59,7 +59,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
     ],
     returnType:
-      "{ memoryId: string; status: 'resolved' | 'partial' | 'unresolved'; modelRunId: string | null; contextPacketId: string | null; events: Array<{ connector: string; eventIndexId: string; sourceId: string; channel: string | null; observedAt: string | null; excerpt: string }>; supports: Array<{ kind: 'memory' | 'envelope' | 'message'; id: string }>; unresolved: Array<{ kind: 'event' | 'memory' | 'message' | 'unknown'; eventIndexId: string | null; reason: string }>; reason?: string }",
+      "{ memoryId: string; status: 'resolved' | 'partial' | 'unresolved'; memoryStatus: string | null; retired: boolean; modelRunId: string | null; contextPacketId: string | null; events: Array<{ connector: string; eventIndexId: string; sourceId: string; channel: string | null; observedAt: string | null; excerpt: string }>; supports: Array<{ kind: 'memory' | 'envelope' | 'message'; id: string }>; unresolved: Array<{ kind: 'event' | 'memory' | 'message' | 'unknown'; eventIndexId: string | null; reason: string }>; reason?: string }",
     category: 'memory',
   },
   {

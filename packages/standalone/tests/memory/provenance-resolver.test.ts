@@ -266,6 +266,41 @@ describe('resolveMemoryProvenance', () => {
     expect(resolution.supports).toEqual([{ kind: 'envelope', id: 'sha256:abc' }]);
   });
 
+  // 65% of the live corpus is superseded, and every read path filters those out. Without
+  // this the tool would ground a claim on a retired record and say `resolved`, in output
+  // indistinguishable from one grounded in current truth - the exact failure it exists
+  // to prevent.
+  it('says a record has been retired instead of grounding a claim on it silently', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () => record({ status: 'superseded', retired: true }),
+      })
+    );
+
+    expect(resolution.retired).toBe(true);
+    expect(resolution.memoryStatus).toBe('superseded');
+    // The support still resolves - the record exists and its evidence is real. What must
+    // not happen is the answer reading identically to a current one.
+    expect(resolution.status).toBe('resolved');
+    expect(resolveMemoryProvenance('mem_1', deps()).retired).toBe(false);
+  });
+
+  // Recall scrubs its text; an excerpt path that did not would send connector content out
+  // through a surface whose sibling redacts it.
+  it('runs excerpts through redaction before they leave', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupEvent: () => event({ content: 'ping someone@example.com about the column' }),
+        redact: (text) => text.replace(/[^\s]+@[^\s]+/g, '[redacted]'),
+      })
+    );
+
+    expect(resolution.events[0]?.excerpt).toContain('[redacted]');
+    expect(resolution.events[0]?.excerpt).not.toContain('example.com');
+  });
+
   // Partial is its own answer. Collapsing it into either resolved or unresolved would
   // either overstate the support or discard evidence that does exist.
   it('reports partial support as partial, keeping what resolved and why the rest did not', () => {

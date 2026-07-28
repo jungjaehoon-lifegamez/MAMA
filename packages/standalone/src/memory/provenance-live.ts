@@ -52,6 +52,12 @@ interface DbManagerModule {
   initDB?: () => Promise<unknown>;
 }
 
+/**
+ * Statuses every memory read path excludes (source-readers.ts:293, and recall's own
+ * history exclusion). Mirrored so a citation cannot present a retired record as current.
+ */
+const RETIRED_MEMORY_STATUSES = new Set(['superseded', 'quarantined', 'contradicted', 'stale']);
+
 export interface LiveProvenanceOptions {
   /** Scopes active NOW. Not the scopes the memory was written under. */
   scopes: MemoryScopeRef[];
@@ -78,6 +84,8 @@ export interface LiveProvenanceOptions {
   minObservedMs?: number | null;
   maxObservedMs?: number | null;
   excerptChars?: number;
+  /** Redaction to apply to excerpts, so this surface scrubs what recall scrubs. */
+  redact?: (text: string) => string;
 }
 
 /**
@@ -228,10 +236,22 @@ async function resolveAdapter(): Promise<LookupAdapter> {
  * `value > 0` - made the mapper judge a different instant than the query: a row with
  * `event_datetime = 0` compared as 0 in SQL and as its source timestamp here. The
  * differential caught it the moment it was routed through the production mapper.
+ *
+ * The non-numeric string branch is DEFENSIVE, not faithful: SQLite orders a TEXT value
+ * above every INTEGER regardless of what it spells, so SQL would exclude such a row from
+ * any upper bound while `Date.parse` gives it a real instant. Unreachable - both columns
+ * are INTEGER-affinity, the write path passes a number, and all 30,671 live rows store
+ * integers - but it is a divergence if it ever runs, and better named than implied.
  */
 function toEpochMs(value: unknown): number | null {
   if (typeof value === 'number') {
     return Number.isFinite(value) ? value : null;
+  }
+  // better-sqlite3 returns bigint when safeIntegers is on. Nothing enables it today, but
+  // without this arm flipping that flag would null every timestamp and silently disable
+  // the time clamp entirely.
+  if (typeof value === 'bigint') {
+    return Number(value);
   }
   if (typeof value === 'string' && value.trim().length > 0) {
     const numeric = Number(value);
@@ -304,6 +324,28 @@ async function lookupWithLegacyFallback(
   return unbound ? { record: unbound, legacy: true } : null;
 }
 
+/**
+ * The stored record's status. `getMemoryProvenance` selects it nowhere, so this is a
+ * separate read rather than a field that was there all along - which is precisely why the
+ * status filter had no counterpart on this path for four review rounds.
+ */
+async function loadRetirement(
+  memoryId: string
+): Promise<{ status: string | null; retired: boolean }> {
+  const adapter = await resolveAdapter();
+  const row = adapter
+    .prepare(`SELECT status, superseded_by FROM decisions WHERE id = ? LIMIT 1`)
+    .get(memoryId) as { status?: unknown; superseded_by?: unknown } | undefined;
+  const status = typeof row?.status === 'string' ? row.status : null;
+  const supersededBy = typeof row?.superseded_by === 'string' ? row.superseded_by : null;
+  return {
+    status,
+    // Either signal retires it: the reader filters on status, and recall additionally
+    // requires `superseded_by IS NULL`.
+    retired: (status !== null && RETIRED_MEMORY_STATUSES.has(status)) || supersededBy !== null,
+  };
+}
+
 async function loadRecord(
   memoryId: string,
   scopes: MemoryScopeRef[]
@@ -313,8 +355,11 @@ async function loadRecord(
     return null;
   }
   const record = found.record;
+  const retirement = await loadRetirement(record.memory_id);
   const provenance = record.provenance as Record<string, unknown> | undefined;
   return {
+    status: retirement.status,
+    retired: retirement.retired,
     modelRunId: record.model_run_id,
     contextPacketId: stringOrNull(provenance?.context_packet_id),
     sourceRefs: record.source_refs.map(parseSourceRef),
@@ -403,6 +448,7 @@ export async function resolveMemoryProvenanceLive(
       // ref was rewritten rather than that the event moved. Treat it as gone, not as data.
       return event.connector === connector ? event : null;
     },
+    ...(options.redact === undefined ? {} : { redact: options.redact }),
     isSupportVisible: (support) => {
       if (support.kind === 'memory') {
         return visibleMemoryRefs.has(support.id);

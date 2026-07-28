@@ -5239,6 +5239,10 @@ export class GatewayToolExecutor {
         projectIds,
         tenantId,
         maxObservedMs,
+        // The same scrubbing recall applies to memory text. Without it this surface would
+        // emit connector content that its sibling redacts, which is only invisible today
+        // because no event excerpt has ever been produced.
+        redact: (text: string) => sanitizeRecallText(text) ?? '',
       });
       return { success: true, data: resolution } as GatewayToolResult;
     } catch (error) {
