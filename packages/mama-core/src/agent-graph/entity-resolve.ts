@@ -243,13 +243,8 @@ function contextBoost(
   if (!contextRefs || contextRefs.length === 0) {
     return 0;
   }
-  const edges = listVisibleTwinEdgesForRefs(adapter, contextRefs, {
-    scopes: visibility.scopes,
-    connectors: visibility.connectors,
-    projectRefs: visibility.projectRefs,
-    tenantId: visibility.tenantId,
-    asOfMs,
-  });
+  // Spread rather than re-list: see graph-query's listFilteredEdges.
+  const edges = listVisibleTwinEdgesForRefs(adapter, contextRefs, { ...visibility, asOfMs });
   return edges.some(
     (edge) =>
       (edge.subject_ref.kind === 'entity' && edge.subject_ref.id === entityId) ||
@@ -271,6 +266,7 @@ export function resolveEntity(
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
     asOfMs: input.as_of_ms,
+    ...(input.channels ? { channels: input.channels } : {}),
   };
   if (input.context_refs && input.context_refs.length > 0) {
     try {
