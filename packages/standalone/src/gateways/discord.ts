@@ -142,7 +142,12 @@ export class DiscordGateway extends BaseGateway {
   }
 
   constructor(options: DiscordGatewayOptions) {
-    super({ turnProcessor: options.messageRouter, messageRouter: options.messageRouter });
+    super({
+      turnProcessor: options.messageRouter,
+      // Named narrowly: this surface reads sessions to NAME its channels, which is a
+      // display concern, not turn ownership.
+      sessionDirectory: options.messageRouter,
+    });
     this.token = options.token;
     this.defaultChannelId = options.defaultChannelId;
     this.multiAgentRuntime = options.multiAgentRuntime;
@@ -945,7 +950,7 @@ export class DiscordGateway extends BaseGateway {
     try {
       // Display concern, not turn processing: this surface reads session data to name
       // its channels, which is why it still holds the concrete router.
-      const router = this.messageRouter;
+      const router = this.sessionDirectory;
       if (!router) {
         return;
       }

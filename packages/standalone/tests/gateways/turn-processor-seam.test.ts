@@ -32,7 +32,16 @@ function message(overrides: Partial<NormalizedMessage> = {}): NormalizedMessage 
 }
 
 function result(response: string): ProcessingResult {
-  return { response, sessionId: 's1', injectedDecisions: [], duration: 1 };
+  return {
+    outcome: 'completed',
+    response,
+    sessionId: 's1',
+    injectedDecisions: [],
+    duration: 1,
+    modelRunId: 'run_1',
+    sourceTurnId: 'turn_1',
+    sourceMessageRef: 'surface:chat-1:turn_1',
+  };
 }
 
 describe('TurnProcessor contract', () => {
@@ -202,15 +211,32 @@ describe('the first surface routed through the seam', () => {
     expect(imports).not.toContain('MessageRouter');
   });
 
+  // The assertion above is worthless on its own: a surface inherits from the base, so
+  // coupling that lives THERE is coupling the surface still has. An earlier version of
+  // this file checked only the surface and passed while the base imported the router as
+  // a runtime value and cast around the contract.
+  it('inherits from a base that does not know the router either', async () => {
+    const source = await readFile(
+      new URL('../../src/gateways/base-gateway.ts', import.meta.url),
+      'utf-8'
+    );
+
+    expect(source).not.toContain('message-router.js');
+    expect(source).toContain('turn-contract.js');
+    // No runtime escape back to the concrete implementation.
+    expect(source).not.toMatch(/as unknown as MessageRouter/);
+  });
+
   it('requires the contract rather than accepting it as an optional override', async () => {
     const source = await readFile(
       new URL('../../src/gateways/base-gateway.ts', import.meta.url),
       'utf-8'
     );
 
-    // Required contract, optional concrete router - the inversion itself.
+    // Required contract, and the only optional extra is a NARROW capability - not a
+    // router a surface could reach turn processing through.
     expect(source).toMatch(/turnProcessor:\s*TurnProcessor;/);
-    expect(source).toMatch(/messageRouter\?:\s*MessageRouter;/);
+    expect(source).toMatch(/sessionDirectory\?:\s*SessionDirectory;/);
   });
 
   it('serves a turn from an injected implementation, not from the router', async () => {
