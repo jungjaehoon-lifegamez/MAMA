@@ -1612,6 +1612,15 @@ export async function runAgentLoop(
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
       const { persistLastFullReport } = await import('../../operator/report-carry.js');
+      type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
+      // Set when a report is composed, read when that same report is delivered. Safe
+      // because ALL operator work serializes on the operator lane (SOURCE_GLOBAL_LANES),
+      // so compose and deliver cannot interleave with another report - stated here
+      // because the safety comes from the lane, not from this file.
+      let lastReportProvenance: ArtifactProvenance = {
+        status: 'unavailable',
+        reason: 'no_run_handle',
+      };
       const { createPersonaReportAsk } = await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
@@ -1744,10 +1753,23 @@ export async function runAgentLoop(
                 ...(envelope ? { envelope } : {}),
               }
             );
-            return { response: result.response, history: result.history };
+            return {
+              response: result.response,
+              history: result.history,
+              // Dropped here until now: the loop already resolves a run handle, and
+              // discarding it meant a delivered report could not be traced to the run
+              // that wrote it.
+              modelRunId: result.modelRunId,
+              ...(result.modelRunProvenance === undefined
+                ? {}
+                : { modelRunProvenance: result.modelRunProvenance }),
+            };
           },
           log: (line: string) => console.log(line),
           fullReportTag: OPERATOR_FULL_REPORT_TAG,
+          onRunProvenance: (provenance) => {
+            lastReportProvenance = provenance;
+          },
         }),
         review: (trigger, context) =>
           reviewTriggerCLI(trigger, context, triggerAgentRuntime.askReview),
@@ -1770,7 +1792,8 @@ export async function runAgentLoop(
         fullReportBoardLines: buildBoardPublishLines(),
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) => persistLastFullReport(iso, text),
+        persistLastFullReport: (iso, text) =>
+          persistLastFullReport(iso, text, lastReportProvenance),
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)
