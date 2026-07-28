@@ -30,7 +30,7 @@ function record(overrides: Partial<MemoryProvenanceRecord> = {}): MemoryProvenan
   return {
     modelRunId: 'run_1',
     contextPacketId: 'packet_1',
-    sourceRefs: [{ connector: 'board', eventIndexId: 'evt_1' }],
+    sourceRefs: [{ kind: 'raw', connector: 'board', eventIndexId: 'evt_1' }],
     ...overrides,
   };
 }
@@ -127,9 +127,56 @@ describe('resolveMemoryProvenance', () => {
 
     const malformed = resolveMemoryProvenance(
       'mem_1',
-      deps({ lookupMemoryProvenance: () => record({ sourceRefs: [{ connector: 'board' }] }) })
+      deps({ lookupMemoryProvenance: () => record({ sourceRefs: [{ kind: 'unsupported' }] }) })
     );
     expect(malformed.reason).toBe('unsupported_ref');
+  });
+
+  // Every stored memory on the live machine looks like this: provenance that points at
+  // other memories and an envelope, and at nothing observed. Reporting it as a parser
+  // limitation - which the first version did - hid the actual state of the corpus.
+  it('separates a claim resting on other claims from a claim resting on nothing', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () =>
+          record({
+            sourceRefs: [
+              { kind: 'envelope', id: 'sha256:abc' },
+              { kind: 'memory', id: 'mem_0' },
+            ],
+          }),
+      })
+    );
+
+    expect(resolution.status).toBe('unresolved');
+    expect(resolution.reason).toBe('no_event_refs');
+    expect(resolution.supports).toEqual([
+      { kind: 'envelope', id: 'sha256:abc' },
+      { kind: 'memory', id: 'mem_0' },
+    ]);
+    expect(resolution.unresolved).toEqual([]);
+  });
+
+  // Recorded support must not crowd out the reason. It is present on nearly every memory,
+  // so counting it as a failure would make one constant reason the answer for everything.
+  it('keeps recorded support from deciding the reported reason', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () =>
+          record({
+            sourceRefs: [
+              { kind: 'envelope', id: 'sha256:abc' },
+              { kind: 'raw', connector: 'board', eventIndexId: 'evt_1' },
+            ],
+          }),
+        isVisible: () => false,
+      })
+    );
+
+    expect(resolution.reason).toBe('outside_scope');
+    expect(resolution.supports).toEqual([{ kind: 'envelope', id: 'sha256:abc' }]);
   });
 
   // Partial is its own answer. Collapsing it into either resolved or unresolved would
@@ -141,8 +188,8 @@ describe('resolveMemoryProvenance', () => {
         lookupMemoryProvenance: () =>
           record({
             sourceRefs: [
-              { connector: 'board', eventIndexId: 'evt_1' },
-              { connector: 'board', eventIndexId: 'evt_gone' },
+              { kind: 'raw', connector: 'board', eventIndexId: 'evt_1' },
+              { kind: 'raw', connector: 'board', eventIndexId: 'evt_gone' },
             ],
           }),
         lookupEvent: (_connector, eventIndexId) => (eventIndexId === 'evt_1' ? event() : null),

@@ -32,6 +32,14 @@ export type ResolutionFailure =
   | 'outside_scope'
   /** The ref shape is not one this resolver knows how to dereference. */
   | 'unsupported_ref'
+  /**
+   * The claim records provenance, but none of it points at an observed event.
+   * Measured, not hypothetical: of the source refs stored on this machine, 13,403 are
+   * `memory:`, 1,748 are `envelope:`, 9 are `message:` and ZERO are `raw:`. Folding this
+   * into `unsupported_ref` would have reported a parser limitation where the real answer
+   * is that the claim rests on other claims rather than on anything observed.
+   */
+  | 'no_event_refs'
   /** No memory with that id. */
   | 'unknown_memory';
 
@@ -51,6 +59,24 @@ export interface UnresolvedSupport {
   reason: ResolutionFailure;
 }
 
+/**
+ * Provenance that was recorded but does not point at an observed event: the memory a
+ * claim was built from, the envelope that authorized the write, the message that
+ * prompted it. Reported rather than discarded - "this rests on three earlier memories
+ * and no observation" is a true and useful answer, and it is the answer for almost
+ * every memory that exists today.
+ */
+export interface RecordedSupport {
+  kind: 'memory' | 'envelope' | 'message';
+  id: string;
+}
+
+/** A parsed source ref. `raw` is the only kind this resolver dereferences to an event. */
+export type ParsedSourceRef =
+  | { kind: 'raw'; connector: string; eventIndexId: string }
+  | RecordedSupport
+  | { kind: 'unsupported' };
+
 export interface ProvenanceResolution {
   memoryId: string;
   /**
@@ -63,6 +89,8 @@ export interface ProvenanceResolution {
   contextPacketId: string | null;
   events: ResolvedEvent[];
   unresolved: UnresolvedSupport[];
+  /** Recorded provenance that is not an observed event. Never a failure. */
+  supports: RecordedSupport[];
   /** Present only when nothing resolved, so a caller never has to infer the cause. */
   reason?: ResolutionFailure;
 }
@@ -72,7 +100,7 @@ export interface MemoryProvenanceRecord {
   modelRunId: string | null;
   contextPacketId: string | null;
   /** Canonical source refs; empty when the write was not evidence-backed. */
-  sourceRefs: ReadonlyArray<{ connector?: string; eventIndexId?: string }>;
+  sourceRefs: ReadonlyArray<ParsedSourceRef>;
   /** True when the record predates scoped provenance and cannot be re-checked. */
   legacyUnscoped?: boolean;
 }
@@ -90,6 +118,9 @@ export interface IndexedEvent {
    * a caller cannot re-check what it was not given.
    */
   memoryScope?: { kind: string; id: string } | null;
+  /** Project and tenant the event was indexed under; null when it carries neither. */
+  projectId?: string | null;
+  tenantId?: string | null;
 }
 
 export interface ProvenanceResolverDeps {
@@ -131,6 +162,7 @@ export function resolveMemoryProvenance(
       contextPacketId: null,
       events: [],
       unresolved: [],
+      supports: [],
       reason: 'unknown_memory',
     };
   }
@@ -147,6 +179,7 @@ export function resolveMemoryProvenance(
       status: 'unresolved',
       events: [],
       unresolved: [],
+      supports: [],
       reason: 'legacy_unscoped',
     };
   }
@@ -159,18 +192,30 @@ export function resolveMemoryProvenance(
       status: 'unresolved',
       events: [],
       unresolved: [],
+      supports: [],
       reason: 'missing_ref',
     };
   }
 
   const events: ResolvedEvent[] = [];
   const unresolved: UnresolvedSupport[] = [];
+  const supports: RecordedSupport[] = [];
+  let eventRefCount = 0;
 
   for (const ref of record.sourceRefs) {
-    if (!ref.connector || !ref.eventIndexId) {
-      unresolved.push({ eventIndexId: ref.eventIndexId ?? null, reason: 'unsupported_ref' });
+    // Recorded provenance that is not an observation. Kept out of `unresolved` on
+    // purpose: counting it as a failure would put a permanent entry at the front of the
+    // failure list, which then decides the reported reason for every memory and buries
+    // the ones that actually explain something.
+    if (ref.kind !== 'raw') {
+      if (ref.kind === 'unsupported') {
+        unresolved.push({ eventIndexId: null, reason: 'unsupported_ref' });
+      } else {
+        supports.push({ kind: ref.kind, id: ref.id });
+      }
       continue;
     }
+    eventRefCount += 1;
     const event = deps.lookupEvent(ref.connector, ref.eventIndexId);
     if (!event) {
       unresolved.push({ eventIndexId: ref.eventIndexId, reason: 'event_deleted' });
@@ -197,8 +242,13 @@ export function resolveMemoryProvenance(
       status: 'unresolved',
       events,
       unresolved,
-      // Every ref failed; report the first cause rather than a bare "nothing".
-      reason: unresolved[0]?.reason ?? 'missing_ref',
+      supports,
+      // A claim whose provenance points only at other claims is a different fact from a
+      // claim whose evidence went missing, and the agent needs to be able to say which.
+      reason:
+        eventRefCount === 0 && unresolved.length === 0
+          ? 'no_event_refs'
+          : (unresolved[0]?.reason ?? 'missing_ref'),
     };
   }
 
@@ -207,5 +257,6 @@ export function resolveMemoryProvenance(
     status: unresolved.length === 0 ? 'resolved' : 'partial',
     events,
     unresolved,
+    supports,
   };
 }

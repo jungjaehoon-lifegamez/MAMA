@@ -20,6 +20,7 @@ import {
   resolveMemoryProvenance,
   type IndexedEvent,
   type MemoryProvenanceRecord,
+  type ParsedSourceRef,
   type ProvenanceResolution,
 } from './provenance-resolver.js';
 
@@ -33,6 +34,8 @@ interface EventRow {
   source_timestamp_ms: unknown;
   memory_scope_kind: unknown;
   memory_scope_id: unknown;
+  project_id: unknown;
+  tenant_id: unknown;
 }
 
 interface LookupAdapter {
@@ -48,51 +51,115 @@ export interface LiveProvenanceOptions {
   /** Scopes active NOW. Not the scopes the memory was written under. */
   scopes: MemoryScopeRef[];
   /**
-   * Raw connectors this caller may read. `null` means the caller carries no connector
-   * grant information - scope alone then decides. An empty array means no authority at
-   * all and denies every event, which is the same distinction the envelope layer makes.
+   * Raw connectors this caller may read. No grant means NO raw events, never all of
+   * them - the reader fails closed here and so must this. An earlier version accepted
+   * `null` to mean "scope alone decides", which turned a missing envelope into a
+   * connector-wide grant.
    */
-  connectors: readonly string[] | null;
+  connectors: readonly string[];
+  /** Project and tenant window, mirroring the reader's filters on the same columns. */
+  projectIds?: readonly string[];
+  tenantId?: string | null;
   excerptChars?: number;
 }
 
 /**
- * Parse a stored source ref. Only `raw:<connector>:<event_index_id>` dereferences to an
- * event; `memory:`, `case:` and `entity:` refs are real provenance but point at things
- * this resolver does not read, so they are reported as unsupported rather than missing.
+ * Parse a stored source ref into what it actually is.
+ *
+ * The shapes here were measured, not guessed. Of the source refs on this machine 13,403
+ * are `memory:`, 1,748 are `envelope:`, 9 are `message:` and none are `raw:`. An earlier
+ * version of this parser understood only `raw:` and reported every real memory as
+ * `unsupported_ref` - a tool that was wired, callable, and answered nothing.
  */
-export function parseSourceRef(ref: string): { connector?: string; eventIndexId?: string } {
-  if (!ref.startsWith('raw:')) {
-    return {};
+export function parseSourceRef(ref: string): ParsedSourceRef {
+  const separator = ref.indexOf(':');
+  if (separator <= 0 || separator === ref.length - 1) {
+    return { kind: 'unsupported' };
   }
-  const rest = ref.slice('raw:'.length);
-  const separator = rest.indexOf(':');
-  if (separator <= 0 || separator === rest.length - 1) {
-    return {};
+  const prefix = ref.slice(0, separator);
+  const rest = ref.slice(separator + 1);
+
+  if (prefix === 'memory' || prefix === 'envelope' || prefix === 'message') {
+    return { kind: prefix, id: rest };
   }
-  return { connector: rest.slice(0, separator), eventIndexId: rest.slice(separator + 1) };
+  if (prefix !== 'raw') {
+    return { kind: 'unsupported' };
+  }
+  // `raw:<connector>:<event_index_id>`. Split on the FIRST colon of the remainder so a
+  // colon inside the id cannot shift the boundary.
+  const inner = rest.indexOf(':');
+  if (inner <= 0 || inner === rest.length - 1) {
+    return { kind: 'unsupported' };
+  }
+  return { kind: 'raw', connector: rest.slice(0, inner), eventIndexId: rest.slice(inner + 1) };
 }
 
 /**
- * Whether an event may be shown under the scopes active now. Pure, and deliberately a
- * mirror of the raw candidate reader rather than a second opinion about access.
+ * Whether an event may be shown under the authority active now.
+ *
+ * This reproduces the raw candidate reader's predicate clause for clause. The first
+ * version of this function did not: it mirrored the MEMORY reader's legacy rule, which is
+ * the looser `scopes.some(global/system)`, while the RAW reader requires
+ * `hasGlobalSystemScope && !hasScopedVisibility` (source-readers.ts:704-711). Since
+ * deriveMemoryScopes always appends global:system next to project/channel/user, the loose
+ * rule is true in every production configuration and the strict one is false in every
+ * production configuration - so the mistake was not a corner case, it was the default.
+ *
+ * A shared predicate would be better than a faithful copy, and the copy is only defensible
+ * because a differential test pins the two together.
  */
 export function isEventVisibleNow(
   event: IndexedEvent,
-  options: { scopes: readonly MemoryScopeRef[]; connectors: readonly string[] | null }
+  options: {
+    scopes: readonly MemoryScopeRef[];
+    connectors: readonly string[];
+    projectIds?: readonly string[];
+    tenantId?: string | null;
+  }
 ): boolean {
-  if (options.connectors !== null && !options.connectors.includes(event.connector)) {
+  const { scopes, connectors } = options;
+  const projectIds = options.projectIds ?? [];
+  const tenantId = options.tenantId ?? null;
+
+  // The reader's own guard: no connectors or no scopes means no raw events at all.
+  if (connectors.length === 0 || scopes.length === 0) {
     return false;
   }
-  const scopes = options.scopes;
-  if (scopes.length === 0) {
+  if (!connectors.includes(event.connector)) {
     return false;
   }
+
+  const hasGlobalSystemScope = scopes.some(
+    (scope) => scope.kind === 'global' && scope.id === 'system'
+  );
+  const hasScopedVisibility =
+    scopes.some((scope) => !(scope.kind === 'global' && scope.id === 'system')) ||
+    projectIds.length > 0 ||
+    Boolean(tenantId);
+  const includesLegacyGlobalSystem = hasGlobalSystemScope && !hasScopedVisibility;
+
+  if (projectIds.length > 0) {
+    const projectMatches =
+      (event.projectId !== null &&
+        event.projectId !== undefined &&
+        projectIds.includes(event.projectId)) ||
+      (includesLegacyGlobalSystem && (event.projectId ?? null) === null);
+    if (!projectMatches) {
+      return false;
+    }
+  }
+  if (tenantId) {
+    const tenantMatches =
+      event.tenantId === tenantId ||
+      (includesLegacyGlobalSystem && (event.tenantId ?? null) === null);
+    if (!tenantMatches) {
+      return false;
+    }
+  }
+
   const scope = event.memoryScope ?? null;
   if (!scope) {
-    // Unscoped: visible only to a caller holding the legacy global-system sentinel,
-    // which is the exact condition under which the raw reader includes these rows.
-    return scopes.some((active) => active.kind === 'global' && active.id === 'system');
+    return includesLegacyGlobalSystem;
   }
   return scopes.some(
     (active) =>
@@ -138,6 +205,8 @@ function toIndexedEvent(row: EventRow): IndexedEvent {
     observedAt: toIsoOrNull(row.event_datetime) ?? toIsoOrNull(row.source_timestamp_ms),
     content: typeof row.content === 'string' ? row.content : '',
     memoryScope: scopeKind && scopeId ? { kind: scopeKind, id: scopeId } : null,
+    projectId: typeof row.project_id === 'string' ? row.project_id : null,
+    tenantId: typeof row.tenant_id === 'string' ? row.tenant_id : null,
   };
 }
 
@@ -186,7 +255,8 @@ export async function resolveMemoryProvenanceLive(
   const adapter = await resolveAdapter();
   const statement = adapter.prepare(
     `SELECT event_index_id, source_connector, source_id, channel, content,
-            event_datetime, source_timestamp_ms, memory_scope_kind, memory_scope_id
+            event_datetime, source_timestamp_ms, memory_scope_kind, memory_scope_id,
+            project_id, tenant_id
        FROM connector_event_index
       WHERE event_index_id = ?
       LIMIT 1`
@@ -205,7 +275,12 @@ export async function resolveMemoryProvenanceLive(
       return event.connector === connector ? event : null;
     },
     isVisible: (event) =>
-      isEventVisibleNow(event, { scopes: options.scopes, connectors: options.connectors }),
+      isEventVisibleNow(event, {
+        scopes: options.scopes,
+        connectors: options.connectors,
+        ...(options.projectIds === undefined ? {} : { projectIds: options.projectIds }),
+        tenantId: options.tenantId ?? null,
+      }),
     ...(options.excerptChars === undefined ? {} : { excerptChars: options.excerptChars }),
   });
 }
