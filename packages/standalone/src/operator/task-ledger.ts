@@ -21,6 +21,12 @@
 
 import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
+import {
+  ensureEffectLedger,
+  isUsableCause,
+  recordEffect,
+  recordUnattributedChange,
+} from '../evidence/effects.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
 import {
@@ -128,6 +134,27 @@ export interface TaskRecord extends OperatorTask {
 export interface TaskLedgerOptions {
   now?: () => number;
   timeZone?: string;
+}
+
+/**
+ * Who is making a change, supplied by the host rather than by the caller's arguments.
+ *
+ * Kept out of CreateTaskInput/UpdateTaskInput on purpose: those are agent-authored, and an
+ * agent that can write its own run id into the effect ledger can attribute its work to
+ * someone else's run. Same reason the temporal path takes its identity from trusted runtime
+ * context instead of from the tool call.
+ */
+export interface ChangeOrigin {
+  /** The model run behind this write, or null when the host itself made it. */
+  runId?: string | null;
+  /**
+   * The event this write responds to, when the host knows it.
+   *
+   * Not filled in for a plain `task_update` today, and that is the finding rather than an
+   * omission: the tool has never asked what made the agent change a work item, so those
+   * changes land in the ledger as unattributed and get counted.
+   */
+  causeEventId?: string | null;
 }
 
 export type TemporalGenerationDisposition =
@@ -399,6 +426,9 @@ export class TaskLedger implements TaskSource {
       CREATE INDEX IF NOT EXISTS idx_operator_no_update_scope
         ON operator_no_update_notes(scope, id);
     `);
+    // Same database as the tasks, so a change and its cause commit or roll back together.
+    // A ledger that can disagree with the rows it describes is worse than no ledger.
+    ensureEffectLedger(this.db as never);
     this.upgradeSchema();
     const foreignKeyViolations = this.db.pragma('foreign_key_check') as unknown[];
     if (foreignKeyViolations.length > 0) {
@@ -704,7 +734,7 @@ export class TaskLedger implements TaskSource {
    * (source_channel, source_event_id) UPSERTS - the existing row gets the new
    * latest_event (and title stays) instead of a near-duplicate row appearing.
    */
-  create(input: CreateTaskInput): TaskRecord {
+  create(input: CreateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
     if (!input.title || input.title.trim() === '') {
       throw new Error('task title must be a non-empty string');
     }
@@ -744,49 +774,132 @@ export class TaskLedger implements TaskSource {
         // Duplicate source delivery uses the same mutation boundary, including
         // exact-time normalization and no-op detection. The original title stays
         // stable across retries for backward compatibility.
-        return this.update(existing.id, {
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(input.priority !== undefined ? { priority: input.priority } : {}),
-          ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-          ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
-          ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
-          ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
-          ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
-        });
+        return this.update(
+          existing.id,
+          {
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.priority !== undefined ? { priority: input.priority } : {}),
+            ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+            ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
+            ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
+            ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
+            ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
+          },
+          // A duplicate delivery of the same event: here the cause genuinely is known,
+          // because it is the event the row is keyed on.
+          { ...origin, causeEventId: input.source_event_id ?? origin.causeEventId }
+        );
       }
     }
 
-    const result = this.db
-      .prepare(
-        `INSERT INTO operator_tasks
+    let createdId = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT INTO operator_tasks
            (title, status, priority, assignee, deadline, due_at, deadline_offset_minutes,
             revision, temporal_epoch, source_channel, source_event_id, latest_event,
             auto_created, confirmed, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        input.title.trim(),
-        input.status ?? 'pending',
-        input.priority ?? 'normal',
-        input.assignee ?? null,
-        normalizedDeadline,
-        exactDue?.dueAt ?? null,
-        exactDue?.offsetMinutes ?? null,
-        initialTemporalEpoch,
-        input.source_channel ?? null,
-        input.source_event_id ?? null,
-        input.latest_event ?? null,
-        1,
-        input.confirmed ? 1 : 0,
-        now,
-        now
-      );
-    const created = this.getById(Number(result.lastInsertRowid));
+        )
+        .run(
+          input.title.trim(),
+          input.status ?? 'pending',
+          input.priority ?? 'normal',
+          input.assignee ?? null,
+          normalizedDeadline,
+          exactDue?.dueAt ?? null,
+          exactDue?.offsetMinutes ?? null,
+          initialTemporalEpoch,
+          input.source_channel ?? null,
+          input.source_event_id ?? null,
+          input.latest_event ?? null,
+          1,
+          input.confirmed ? 1 : 0,
+          now,
+          now
+        );
+      createdId = Number(result.lastInsertRowid);
+      this.recordTaskChange({
+        kind: 'task_create',
+        taskId: createdId,
+        // `?? origin.causeEventId`, not a plain spread: a caller-supplied field that is
+        // absent must not erase what the host knows. Spreading `undefined` over the
+        // trusted value silently disabled the only unforgeable attribution channel.
+        origin: { ...origin, causeEventId: input.source_event_id ?? origin.causeEventId },
+        channel: input.source_channel ?? null,
+        // Everything the INSERT wrote. A hash over two of fifteen columns cannot tell two
+        // materially different writes apart, which is most of what a receipt is for.
+        payload: {
+          title: input.title.trim(),
+          status: input.status ?? 'pending',
+          priority: input.priority ?? 'normal',
+          assignee: input.assignee ?? null,
+          deadline: normalizedDeadline,
+          due_at: exactDue?.dueAt ?? null,
+          deadline_offset_minutes: exactDue?.offsetMinutes ?? null,
+          temporal_epoch: initialTemporalEpoch,
+          source_channel: input.source_channel ?? null,
+          source_event_id: input.source_event_id ?? null,
+          latest_event: input.latest_event ?? null,
+          confirmed: input.confirmed ? 1 : 0,
+        },
+        atMs: now,
+      });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    const created = this.getById(createdId);
     if (!created) throw new Error('task_create: inserted row could not be read back');
     return created;
   }
 
-  update(id: number, patch: UpdateTaskInput): TaskRecord {
+  /**
+   * Write the effect row for a task change.
+   *
+   * Called from inside the same transaction as the write it describes. The cause is the
+   * event the caller already recorded on the row - the tool has always accepted it, and
+   * 178 of the 179 owner tasks that carry one resolve to a real indexed event, so this is
+   * attribution that already exists rather than a new burden on the agent.
+   *
+   * When there is no cause the change is still recorded, marked unattributed. That is the
+   * honest reading of `task_update`, which has never had a cause field at all: the system
+   * has been changing owner work items without recording why, and the ledger's job is to
+   * show how often, not to pretend otherwise or to start refusing writes.
+   */
+  private recordTaskChange(input: {
+    kind: 'task_create' | 'task_update';
+    taskId: number;
+    origin: ChangeOrigin;
+    channel: string | null;
+    payload: unknown;
+    atMs: number;
+  }): void {
+    const common = {
+      runId: input.origin.runId ?? null,
+      channelId: input.channel,
+      kind: input.kind,
+      targetType: 'task' as const,
+      targetId: String(input.taskId),
+      payload: input.payload,
+      atMs: input.atMs,
+    };
+    // A cause the ledger cannot use makes the change unattributed - it never makes the
+    // change fail. Some live rows carry 400-character legacy source identifiers, and an
+    // operator that cannot close a work item because its upstream id is malformed is a
+    // worse system than one that admits it does not know why the item changed.
+    const cause = input.origin.causeEventId;
+    if (isUsableCause(cause)) {
+      recordEffect(this.db as never, { ...common, sourceEventIds: [cause] });
+      return;
+    }
+    recordUnattributedChange(this.db as never, common);
+  }
+
+  update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
     if (patch.status === 'failed') {
       throw new Error(`task_update: 'failed' is a system-only status`);
     }
@@ -888,24 +1001,41 @@ export class TaskLedger implements TaskSource {
       ] as const;
       const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
       if (changedColumns.length === 0) {
+        // Nothing moved, so nothing is recorded. This is the whole point of the ledger:
+        // a call that ran is not a change, and the two must not be countable as one.
+        //
+        // The read-back happens after the catch, not here: a throw between COMMIT and
+        // return would send this into the catch and issue ROLLBACK with no open
+        // transaction, replacing the real error with a confusing one.
         this.db.exec('COMMIT');
-        return this.toRecord(existing);
+      } else {
+        const nextRevision = existing.revision + 1;
+        const sets = changedColumns.map((column) => `${column} = ?`);
+        const values = changedColumns.map((column) => next[column]);
+        const updatedAt = this.now();
+        sets.push('revision = ?', 'updated_at = ?');
+        values.push(nextRevision, updatedAt);
+        this.db
+          .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
+          .run(...values, id);
+        this.recordTaskChange({
+          kind: 'task_update',
+          taskId: id,
+          origin,
+          channel: existing.source_channel,
+          payload: {
+            revision: nextRevision,
+            changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
+          },
+          atMs: updatedAt,
+        });
+        if (temporalChanged || terminalToOpen) {
+          this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
+        } else if (openToTerminal) {
+          this.supersedeAllActiveTemporalGenerationsInTransaction(id);
+        }
+        this.db.exec('COMMIT');
       }
-
-      const nextRevision = existing.revision + 1;
-      const sets = changedColumns.map((column) => `${column} = ?`);
-      const values = changedColumns.map((column) => next[column]);
-      sets.push('revision = ?', 'updated_at = ?');
-      values.push(nextRevision, this.now());
-      this.db
-        .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
-        .run(...values, id);
-      if (temporalChanged || terminalToOpen) {
-        this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
-      } else if (openToTerminal) {
-        this.supersedeAllActiveTemporalGenerationsInTransaction(id);
-      }
-      this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
@@ -1508,6 +1638,27 @@ export class TaskLedger implements TaskSource {
       if (ownerUpdate.changes !== 1) {
         throw new Error(`temporal effect lost owner task revision for task ${context.taskId}`);
       }
+      // The same ledger as every other owner-task change. This is the canonical case -
+      // a scheduled run closing a work item - and leaving it out would have meant the
+      // effect ledger could not see the one change type it was built to account for,
+      // with its receipt filed in a second table nobody joins against.
+      //
+      // Unattributed, and correctly so: a temporal check fires because a clock advanced,
+      // not because an event arrived. Its evidence is the context packet, which today
+      // carries recalled memories and zero connector events - measured, not assumed.
+      // Recording it as attributed would name a cause that does not exist.
+      this.recordTaskChange({
+        kind: 'task_update',
+        taskId: context.taskId,
+        origin: { runId: null },
+        channel: existing.source_channel,
+        payload: {
+          revision: afterRevision,
+          outcome: input.outcome,
+          changed: Object.fromEntries(changedFields.map((column) => [column, next[column]])),
+        },
+        atMs: now,
+      });
 
       if (rescheduled) {
         this.supersedeTemporalGenerationsInTransaction(

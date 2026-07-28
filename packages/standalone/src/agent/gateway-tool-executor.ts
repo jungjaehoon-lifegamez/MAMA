@@ -3275,7 +3275,14 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: serializeTaskToolRecord(this.taskLedger.create(input as never)),
+            task: serializeTaskToolRecord(
+              // The run id comes from trusted execution state, never from the tool call:
+              // an agent that can name its own run in the effect ledger can sign someone
+              // else's work with it.
+              this.taskLedger.create(input as never, {
+                runId: this.getExecutionState().modelRunId ?? null,
+              })
+            ),
           };
         }
         case 'task_update': {
@@ -3295,7 +3302,11 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: serializeTaskToolRecord(this.taskLedger.update(id, patch as never)),
+            task: serializeTaskToolRecord(
+              this.taskLedger.update(id, patch as never, {
+                runId: this.getExecutionState().modelRunId ?? null,
+              })
+            ),
           };
         }
         case 'task_temporal_reconcile': {
