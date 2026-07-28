@@ -90,6 +90,17 @@ export type ParsedSourceRef =
 export interface ProvenanceResolution {
   memoryId: string;
   /**
+   * The stored record's own status, and whether the system has retired it.
+   *
+   * Carried because every read path filters these out and this one did not: 65% of the
+   * live corpus is `superseded`, and without this the tool would report `resolved` for a
+   * retired claim in output identical to a current one. Grounding a statement in a record
+   * the system has explicitly replaced, confidently and invisibly, is the failure this
+   * whole tool exists to prevent.
+   */
+  memoryStatus: string | null;
+  retired: boolean;
+  /**
    * `resolved` - every support dereferenced and visible.
    * `partial`  - at least one resolved, at least one not.
    * `unresolved` - nothing could be shown, and `reason` says why.
@@ -107,6 +118,10 @@ export interface ProvenanceResolution {
 
 /** A memory's recorded provenance, reduced to what resolution needs. */
 export interface MemoryProvenanceRecord {
+  /** Raw status column, e.g. `active`, `superseded`. */
+  status?: string | null;
+  /** True when the reader's status filter, or a supersede link, would exclude it. */
+  retired?: boolean;
   modelRunId: string | null;
   contextPacketId: string | null;
   /** Canonical source refs; empty when the write was not evidence-backed. */
@@ -154,6 +169,13 @@ export interface ProvenanceResolverDeps {
    * withheld rather than assumed visible. A check that fails open is not a check.
    */
   isSupportVisible?(support: RecordedSupport): boolean;
+  /**
+   * Redaction applied to an excerpt before it leaves. Recall runs its text through a
+   * pattern list (URLs, emails, tokens, key shapes, raw refs); an excerpt path that
+   * skipped it would send connector content out through a surface whose sibling scrubs
+   * it. Optional, and identity when absent - the pure module holds no pattern list.
+   */
+  redact?(text: string): string;
   /** Excerpt bound in characters. */
   excerptChars?: number;
 }
@@ -185,6 +207,8 @@ export function resolveMemoryProvenance(
       events: [],
       unresolved: [],
       supports: [],
+      memoryStatus: null,
+      retired: false,
       reason: 'unknown_memory',
     };
   }
@@ -193,6 +217,8 @@ export function resolveMemoryProvenance(
     memoryId,
     modelRunId: record.modelRunId,
     contextPacketId: record.contextPacketId,
+    memoryStatus: record.status ?? null,
+    retired: record.retired ?? false,
   };
 
   if (record.legacyUnscoped) {
@@ -264,7 +290,7 @@ export function resolveMemoryProvenance(
       sourceId: event.sourceId,
       channel: event.channel,
       observedAt: event.observedAt,
-      excerpt: excerptOf(event.content, limit),
+      excerpt: excerptOf(deps.redact ? deps.redact(event.content) : event.content, limit),
     });
   }
 
