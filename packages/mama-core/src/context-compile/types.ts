@@ -56,6 +56,23 @@ export interface ContextBoundary {
   tenant_id?: string | null;
   as_of?: string | number | null;
   range?: ContextRange;
+  /**
+   * Which channels of each connector may be read, keyed by connector.
+   *
+   * When present this DECIDES raw visibility, and the scope/project/tenant clauses are not
+   * applied to raw rows. That is a deliberate replacement, not a relaxation, and the reason
+   * is measurable: on a live index of 30,671 events, `memory_scope_id` is populated on 37%
+   * of rows in three mutually incompatible namespaces, and 63% carry no scope at all - so a
+   * caller that names any specific scope loses exactly the two thirds of the corpus that
+   * were never labelled. A filter that hides most of the data from anyone precise enough to
+   * ask a narrow question is not a privacy boundary; it is a leak of a different kind, the
+   * kind where the system quietly answers from nothing.
+   *
+   * The grant is (connector, channel) because that is what the owner actually configures
+   * and what the connector actually emits. The caller computes it - this module enforces
+   * what it is given and never widens it.
+   */
+  channels?: Record<string, readonly string[]>;
 }
 
 export interface CanonicalContextScopes {
