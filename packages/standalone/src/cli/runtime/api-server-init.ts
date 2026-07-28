@@ -13,6 +13,7 @@ import { createApiServer } from '../../api/index.js';
 import type { ApiServer } from '../../api/index.js';
 import { createPersistentReportStore } from '../../api/report-persistence.js';
 import type { AgentSituationAdapter } from '../../api/agent-situation-handler.js';
+import { liveBoundaryChannels } from '../../evidence/read.js';
 import {
   createContextCompileService,
   type ContextCompileService,
@@ -112,6 +113,7 @@ export async function initApiServer(params: InitApiServerParams): Promise<InitAp
     suppliedContextCompileService ??
     createContextCompileService({
       memoryAdapter: mamaCoreAdapter,
+      channelGrant: liveBoundaryChannels,
     });
   const apiServer = createApiServer({
     scheduler,

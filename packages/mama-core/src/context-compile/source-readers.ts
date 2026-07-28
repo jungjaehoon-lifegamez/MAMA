@@ -698,6 +698,22 @@ export function readRawCandidates(
     return resultFromCandidates([], hiddenAggregate());
   }
 
+  // These guards hold on BOTH paths. An explicitly emptied project window and an empty
+  // scope list are deliberate "read nothing" requests, and the grant branch skipping them
+  // would have turned two fail-closed states into reads.
+  if (
+    (effectiveInput.connectors ?? []).length === 0 ||
+    (effectiveInput.scopes ?? []).length === 0 ||
+    hasExplicitEmptyProjectWindow(effectiveInput)
+  ) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
+
+  const channelGrant = effectiveInput.boundary?.channels;
+  if (channelGrant) {
+    return readRawCandidatesWithinGrant(adapter, effectiveInput, channelGrant);
+  }
+
   const connectors = effectiveInput.connectors ?? [];
   const scopes = effectiveInput.scopes ?? [];
   const projectIds = (effectiveInput.project_refs ?? []).map((project) => project.id);
@@ -709,14 +725,6 @@ export function readRawCandidates(
     projectIds.length > 0 ||
     Boolean(effectiveInput.tenant_id);
   const includesLegacyGlobalSystem = hasGlobalSystemScope && !hasScopedVisibility;
-  if (
-    connectors.length === 0 ||
-    scopes.length === 0 ||
-    hasExplicitEmptyProjectWindow(effectiveInput)
-  ) {
-    return resultFromCandidates([], hiddenAggregate());
-  }
-
   const clauses = [`source_connector IN (${placeholders(connectors)})`];
   const params: unknown[] = [...connectors];
   if (projectIds.length > 0) {
@@ -776,31 +784,164 @@ export function readRawCandidates(
     )
     .all(...params) as Array<Record<string, unknown>>;
 
-  const candidates = rows.map((row): ContextCandidate => {
-    const sourceId =
-      typeof row.source_id === 'string' && row.source_id.trim().length > 0
-        ? row.source_id
-        : undefined;
-    const ref: ContextRef = {
+  return resultFromCandidates(rows.map(rawRowToCandidate), hiddenAggregate());
+}
+
+/**
+ * Raw visibility decided by the caller's (connector, channel) grant.
+ *
+ * Two conditions, both necessary: the connector is granted, and the channel is one of the
+ * channels granted for it. Nothing else gates a row - not project, not tenant, not the
+ * derived scope columns. See ContextBoundary.channels for why those were removed rather
+ * than kept alongside: measured on the live index, they hide two thirds of the corpus from
+ * any caller precise enough to name a scope, and a reader that answers narrow questions
+ * from nothing is worse than one that answers them from the events.
+ *
+ * The grant is enforced in SQL rather than filtered afterwards, so `limit` counts rows the
+ * caller may actually see. Filtering after the limit silently turns "the 200 most recent
+ * events" into "however many of the 200 most recent events happened to be readable".
+ */
+function readRawCandidatesWithinGrant(
+  adapter: ContextSourceAdapter,
+  effectiveInput: ContextSourceReadInput,
+  grant: Record<string, readonly string[]>
+): ContextSourceReadResult {
+  const requested = effectiveInput.connectors;
+  if (Array.isArray(requested) && requested.length === 0) {
+    return resultFromCandidates([], hiddenAggregate());
+  }
+
+  const clauses: string[] = [];
+  const grantedPairs: string[] = [];
+  // Kept separate from the query params: the refusal count reuses the grant clause on its
+  // own, and slicing it back out of a mixed array is how an off-by-one becomes a wrong
+  // number nobody checks.
+  const grantParams: unknown[] = [];
+  for (const [connector, channels] of Object.entries(grant)) {
+    // A connector the caller did not ask for is not read even though it is granted:
+    // the grant is a ceiling, never an instruction.
+    if (Array.isArray(requested) && !requested.includes(connector)) continue;
+    const unique = [...new Set(channels.filter((channel) => channel.trim().length > 0))];
+    if (unique.length === 0) continue;
+    grantedPairs.push(`(source_connector = ? AND channel IN (${placeholders(unique)}))`);
+    grantParams.push(connector, ...unique);
+  }
+  const params: unknown[] = [...grantParams];
+  // No overlap between what was asked for and what is granted reads nothing. It must not
+  // fall through to an unfiltered scan.
+  if (grantedPairs.length === 0) {
+    return resultFromCandidates(
+      [],
+      refusedAggregate(countRefusedByGrant(adapter, effectiveInput, []))
+    );
+  }
+  clauses.push(`(${grantedPairs.join(' OR ')})`);
+
+  const min = minVisibleTimeMs(effectiveInput);
+  const max = maxVisibleTimeMs(effectiveInput);
+  if (min !== null) {
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
+    params.push(min);
+  }
+  if (max !== null) {
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+    params.push(max);
+  }
+  params.push(normalizeLimit(effectiveInput.limit));
+
+  const rows = adapter
+    .prepare(
+      `
+        SELECT event_index_id, source_connector, source_id, channel, title, content,
+               event_datetime, source_timestamp_ms
+        FROM connector_event_index
+        WHERE ${clauses.join('\n          AND ')}
+        ORDER BY COALESCE(event_datetime, source_timestamp_ms) DESC, event_index_id ASC
+        LIMIT ?
+      `
+    )
+    .all(...params) as Array<Record<string, unknown>>;
+
+  return resultFromCandidates(
+    rows.map(rawRowToCandidate),
+    refusedAggregate(countRefusedByGrant(adapter, effectiveInput, grantedPairs, grantParams))
+  );
+}
+
+/**
+ * How many events the grant kept out.
+ *
+ * Without this the caller cannot tell "this channel was quiet" from "you are not allowed to
+ * see this channel", because the filtering happens in SQL and leaves no trace. That
+ * distinction is the entire point: an owner asking about a board whose events are all
+ * refused would otherwise get a confident empty answer with a clean diagnostics block.
+ *
+ * Counted in the requested connectors only - rows of connectors the run never asked about
+ * are not "refused", they are simply not in question.
+ */
+function countRefusedByGrant(
+  adapter: ContextSourceAdapter,
+  effectiveInput: ContextSourceReadInput,
+  grantedPairs: readonly string[],
+  grantParams: readonly unknown[] = []
+): number {
+  const requested = effectiveInput.connectors ?? [];
+  if (requested.length === 0) return 0;
+
+  const clauses = [`source_connector IN (${placeholders(requested)})`];
+  const params: unknown[] = [...requested];
+  if (grantedPairs.length > 0) {
+    clauses.push(`NOT (${grantedPairs.join(' OR ')})`);
+    params.push(...grantParams);
+  }
+  const min = minVisibleTimeMs(effectiveInput);
+  const max = maxVisibleTimeMs(effectiveInput);
+  if (min !== null) {
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
+    params.push(min);
+  }
+  if (max !== null) {
+    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+    params.push(max);
+  }
+
+  const row = adapter
+    .prepare(`SELECT COUNT(*) AS n FROM connector_event_index WHERE ${clauses.join(' AND ')}`)
+    .get(...params) as { n?: unknown } | undefined;
+  return Number(row?.n ?? 0);
+}
+
+function refusedAggregate(refused: number): HiddenCandidateAggregate {
+  const aggregate = hiddenAggregate();
+  if (refused > 0) {
+    aggregate.total = refused;
+    aggregate.by_kind.raw = refused;
+    aggregate.by_reason.channel_not_granted = refused;
+  }
+  return aggregate;
+}
+
+function rawRowToCandidate(row: Record<string, unknown>): ContextCandidate {
+  const sourceId =
+    typeof row.source_id === 'string' && row.source_id.trim().length > 0
+      ? row.source_id
+      : undefined;
+  return {
+    ref: {
       kind: 'raw',
       connector: String(row.source_connector),
       raw_id: String(row.event_index_id),
       ...(sourceId ? { source_id: sourceId } : {}),
       channel_id: typeof row.channel === 'string' ? row.channel : null,
-    };
-    return {
-      ref,
-      title: String(row.title ?? 'Raw event'),
-      excerpt: String(row.content ?? '').slice(0, 500),
-      score: 0.7,
-      timestamp_ms: parseTimestampMs(row.event_datetime ?? row.source_timestamp_ms),
-      source: 'raw',
-      visible: true,
-      support: emptySupport('connector_event_index'),
-    };
-  });
-
-  return resultFromCandidates(candidates, hiddenAggregate());
+    },
+    title: String(row.title ?? 'Raw event'),
+    excerpt: String(row.content ?? '').slice(0, 500),
+    score: 0.7,
+    timestamp_ms: parseTimestampMs(row.event_datetime ?? row.source_timestamp_ms),
+    source: 'raw',
+    visible: true,
+    support: emptySupport('connector_event_index'),
+  };
 }
 
 export function readGraphCandidates(

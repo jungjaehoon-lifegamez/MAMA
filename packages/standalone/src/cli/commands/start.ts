@@ -21,6 +21,7 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
+import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
@@ -931,6 +932,10 @@ export async function runAgentLoop(
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const contextCompileService = createContextCompileService({
     memoryAdapter: getAdapter(),
+    // Raw visibility comes from the owner's connector config, not from the derived scope
+    // columns. Without this the compile reads nothing: measured on the live index, the
+    // scope-based predicate returns 0 of 30,671 events for the input shape sent here.
+    channelGrant: liveBoundaryChannels,
   });
   toolExecutor.setContextCompileService(contextCompileService);
   agentLoop.setContextCompileService(contextCompileService);

@@ -17,6 +17,7 @@
  * So the grant is not a new abstraction. It is the config, read as what it already is: a
  * statement of which connectors and channels this system was told to look at.
  */
+import { loadConnectorConfig } from '../connectors/config-loader.js';
 
 /** What a caller may read: connector -> the channels of it they may see. */
 export interface EvidenceGrant {
@@ -59,7 +60,15 @@ const MAX_LIMIT = 1000;
  * Deliberately NOT a mirror of anything. The previous design had one predicate for
  * reading and a second for citation, kept in step by a differential test - which meant a
  * test existed to prove one copy faithfully reproduced another copy of a function that
- * returned nothing. There is one predicate now, so there is nothing to keep in step.
+ * returned nothing.
+ *
+ * HONEST STATE OF THAT GOAL: this is not yet the only predicate. `isEventVisibleNow`
+ * (memory/provenance-live.ts) and `isRawVisible` (mama-core edges/ref-validation.ts) still
+ * apply the old scope rule, and their differential test passes only because its fixtures
+ * never set a channel grant - it now pins two predicates on the branch neither production
+ * path takes. Until those are converged, mama_provenance refuses excerpts for events
+ * context_compile cites, and vice versa. Converging them is the work; claiming it is done
+ * would be the same mistake in a different place.
  */
 export function isEventVisible(
   event: { connector: string; channel: string },
@@ -91,6 +100,37 @@ export function grantFromConnectorConfig(config: unknown): EvidenceGrant {
     channelsByConnector.set(connector, new Set(Object.keys(entry.channels as object)));
   }
   return { channelsByConnector };
+}
+
+/**
+ * The same grant in the shape the context boundary carries it.
+ *
+ * One derivation, two consumers: this module reads evidence directly, and the compile path
+ * hands the grant to mama-core's raw reader. Deriving it twice is how the two would come to
+ * disagree, and a citation path that disagrees with the reading path is exactly the defect
+ * this rebuild started from.
+ */
+export function grantAsBoundaryChannels(grant: EvidenceGrant): Record<string, string[]> {
+  const channels: Record<string, string[]> = {};
+  for (const [connector, ids] of grant.channelsByConnector) {
+    channels[connector] = [...ids];
+  }
+  return channels;
+}
+
+/**
+ * The live grant, read fresh on every call.
+ *
+ * Not cached at boot: the owner adds and removes channels while the daemon runs, and a
+ * grant captured once would keep reading a channel after it was removed - the failure
+ * mode where turning something off does not turn it off.
+ */
+export function liveBoundaryChannels(): Record<string, string[]> {
+  const loaded = loadConnectorConfig();
+  // A config that cannot be read is not a grant. Falling back to "everything" on a parse
+  // error is how a read path ends up wider precisely when the configuration is broken.
+  if (!loaded.ok) return {};
+  return grantAsBoundaryChannels(grantFromConnectorConfig(loaded.config));
 }
 
 /**
