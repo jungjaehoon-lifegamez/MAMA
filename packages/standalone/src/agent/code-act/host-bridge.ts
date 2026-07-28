@@ -864,6 +864,15 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'task_external_correlation',
+    description:
+      'Join open ledger rows to live board items by recorded provenance, never titles. Only matched rows may carry a cross-store claim; historical_only = absent from the live OPEN set, which is not completion.',
+    params: [],
+    returnType:
+      "{ correlations: Array<{ taskId: number; outcome: 'matched' | 'unmatched' | 'ambiguous' | 'historical_only' | 'not_applicable'; reason: string; externalRef: { boardId: string; itemId: string } | null; live: { board: string; list: string } | null }>; coverage: Record<string, number>; snapshot: Record<string, unknown> }",
+    category: 'memory',
+  },
+  {
     name: 'task_create',
     description: 'Create a task-ledger item; duplicate (source_channel, source_event_id) upserts.',
     params: [
@@ -984,6 +993,8 @@ export const READ_ONLY_TOOLS = new Set([
   'trello_kanban',
   // Native task ledger reads: the pipeline projection's source of truth.
   'task_list',
+  // Read-only join of the ledger against the live board; mutates nothing.
+  'task_external_correlation',
   // Calendar read: deadline/schedule cross-checks in reports and reconciles.
   'schedule_upcoming',
   'drive_list_drives',

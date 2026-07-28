@@ -3174,6 +3174,74 @@ export class GatewayToolExecutor {
             nextCursor: page.nextCursor,
           };
         }
+        case 'task_external_correlation': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const { correlateTasksWithExternalItems } =
+            await import('../operator/external-correlation.js');
+          const { buildProvenanceLookup } = await import('../operator/provenance-lookup.js');
+          const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
+          try {
+            // The whole open set is walked HERE, not by the model: a correlation over
+            // one page would answer "what did the caller happen to see" rather than
+            // "what is on the board", which is the substitution this tool exists to stop.
+            const ledger = this.taskLedger;
+            const open: Array<{
+              id: number;
+              sourceChannel: string | null;
+              sourceEventId: string | null;
+            }> = [];
+            let cursor: string | undefined;
+            do {
+              const page = ledger.listPage({ limit: 200, cursor });
+              for (const task of page.tasks) {
+                if (task.status !== 'done' && task.status !== 'cancelled') {
+                  open.push({
+                    id: task.id,
+                    sourceChannel: task.sourceChannel,
+                    sourceEventId: task.sourceEventId,
+                  });
+                }
+              }
+              cursor = page.nextCursor ?? undefined;
+            } while (cursor);
+
+            const snapshot = await getTrelloKanban({ maxCardsPerList: 100 });
+            const liveItems = snapshot.columns.flatMap((column) =>
+              column.cards.map((card) => ({
+                itemId: card.cardId,
+                board: column.board,
+                list: column.list,
+              }))
+            );
+            const result = correlateTasksWithExternalItems({
+              connector: 'trello',
+              rows: open,
+              lookupProvenance: await buildProvenanceLookup(),
+              liveItems,
+              liveSnapshotComplete: snapshot.complete,
+            });
+            return {
+              success: true,
+              correlations: result.correlations,
+              coverage: result.coverage,
+              snapshot: {
+                observedAt: snapshot.observedAt,
+                cacheAgeMs: snapshot.cacheAgeMs,
+                complete: snapshot.complete,
+                truncated: snapshot.truncated,
+                boards: snapshot.boards,
+              },
+            };
+          } catch (err) {
+            return {
+              success: false,
+              code: 'correlation_failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
+        }
         case 'task_create': {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;

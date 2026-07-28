@@ -796,6 +796,7 @@ export type GatewayToolName =
   | 'trello_kanban'
   // Native task ledger (M8: operator-owned work items)
   | 'task_list'
+  | 'task_external_correlation'
   | 'task_create'
   | 'task_update'
   | 'task_temporal_reconcile'

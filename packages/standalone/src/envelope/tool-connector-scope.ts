@@ -23,6 +23,10 @@ const DIRECT_CONNECTOR_READ_TOOLS: ReadonlyMap<string, string> = new Map([
   ['trello_card', 'trello'],
   ['trello_kanban', 'trello'],
   ['trello_search', 'trello'],
+  // Correlation reads the same live board internally to resolve ledger rows against
+  // it; registering it here keeps that read under the same scope instead of making
+  // the tool a way around it.
+  ['task_external_correlation', 'trello'],
 ]);
 
 /**

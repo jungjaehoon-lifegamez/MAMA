@@ -458,6 +458,13 @@ register({
     "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)",
 });
 register({
+  name: 'task_external_correlation',
+  description:
+    'Resolve every OPEN native task-ledger row against the live Trello board and return, per row, matched | unmatched | ambiguous | historical_only | not_applicable with a reason code, plus coverage counts and the snapshot health. The join runs on recorded provenance (source_event_id -> connector event index -> board/card id), never on titles: only a "matched" row may carry a factual cross-store statement, and "historical_only" means the item is not in the live OPEN set - archived, deleted, moved, or unread - and is NEVER evidence that the work is finished. Call this before stating any item status that mixes the two stores.',
+  category: 'os_monitoring',
+  params: '(none)',
+});
+register({
   name: 'task_create',
   description:
     'Create a work item in the native task ledger. Duplicate (source_channel, source_event_id) UPSERTS the existing row instead of duplicating it. Status "failed" is reserved for host-managed system workorders and is rejected here.',
