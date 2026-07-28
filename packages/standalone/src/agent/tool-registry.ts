@@ -452,10 +452,10 @@ register({
 register({
   name: 'task_list',
   description:
-    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low.',
+    'List operator work items from the native task ledger (owner-console tasks; the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.',
   category: 'os_monitoring',
   params:
-    "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated')",
+    "status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)",
 });
 register({
   name: 'task_create',

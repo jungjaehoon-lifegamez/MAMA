@@ -214,6 +214,63 @@ export interface ListTasksFilter {
   order?: 'deadline_priority' | 'updated';
 }
 
+export interface ListTasksPageFilter extends ListTasksFilter {
+  /** Opaque keyset cursor from a previous page's nextCursor. */
+  cursor?: string;
+}
+
+/**
+ * One page plus the numbers a caller needs to PROVE it read everything.
+ *
+ * `list()` alone cannot support a whole-situation claim: it clamps to 200 and
+ * defaults to 50, so a caller reading a 150-row board saw a third of it and could
+ * not tell. Accumulating pages until nextCursor is null, with the unique ids
+ * collected equal to total, is that proof.
+ */
+export interface ListTasksPage {
+  tasks: TaskRecord[];
+  /** Rows matching the filter, ignoring limit and cursor. */
+  total: number;
+  returned: number;
+  /** Cursor for the next page, or null when this page ends the set. */
+  nextCursor: string | null;
+}
+
+const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
+/** Keyset position of a row in the requested order; the trailing id makes it total. */
+type ListCursorPayload =
+  | { order: 'deadline_priority'; k: [number, string, number, number] }
+  | { order: 'updated'; k: [number, number] };
+
+function encodeListCursor(payload: ListCursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+/** Loud on anything malformed or from a different ordering: a cursor silently
+ *  reinterpreted under another order would skip or repeat rows, which is exactly
+ *  the incompleteness this page contract exists to rule out. */
+function decodeListCursor(
+  cursor: string,
+  order: 'deadline_priority' | 'updated'
+): ListCursorPayload {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('[task-ledger] malformed list cursor');
+  }
+  const payload = parsed as ListCursorPayload;
+  if (!payload || payload.order !== order || !Array.isArray(payload.k)) {
+    throw new Error(`[task-ledger] list cursor does not belong to order '${order}'`);
+  }
+  const expected = order === 'deadline_priority' ? 4 : 2;
+  if (payload.k.length !== expected || payload.k.some((value) => value === null)) {
+    throw new Error('[task-ledger] malformed list cursor');
+  }
+  return payload;
+}
+
 interface TaskRow {
   id: number;
   title: string;
@@ -488,8 +545,23 @@ export class TaskLedger implements TaskSource {
   }
 
   list(filter: ListTasksFilter = {}): TaskRecord[] {
-    // Owner surface only - system workorder rows never appear in board/REST/
-    // gateway listings (Stage-2 kind filter; workorders have dedicated readers).
+    const { where, params } = this.buildListPredicate(filter);
+    const rawLimit = Number(filter.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM operator_tasks
+         ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY ${TaskLedger.orderSql(filter.order)}
+         LIMIT ?`
+      )
+      .all(...params, limit) as TaskRow[];
+    return rows.map((row) => this.toRecord(row));
+  }
+
+  /** Shared filter predicate. Owner surface only - system workorder rows never appear in
+   *  board/REST/gateway listings (Stage-2 kind filter; workorders have dedicated readers). */
+  private buildListPredicate(filter: ListTasksFilter): { where: string[]; params: unknown[] } {
     const where: string[] = [`kind = 'owner'`];
     const params: unknown[] = [];
     if (filter.status) {
@@ -505,24 +577,90 @@ export class TaskLedger implements TaskSource {
       const like = `%${filter.search}%`;
       params.push(like, like, like);
     }
-    const order =
-      filter.order === 'updated'
-        ? 'updated_at DESC, id DESC'
-        : // deadline asc NULLS LAST, then priority high>normal>low, then id.
-          // LIMIT applies AFTER ordering so the true top-N is returned.
-          `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, deadline ASC,
-           CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, id ASC`;
+    return { where, params };
+  }
+
+  /** ORDER BY for both list() and listPage(); the trailing id makes it a TOTAL order,
+   *  which is what lets a keyset cursor resume without skipping or repeating a row.
+   *  LIMIT applies AFTER ordering, so a bounded read still returns the true top-N. */
+  private static orderSql(order: ListTasksFilter['order']): string {
+    return order === 'updated'
+      ? 'updated_at DESC, id DESC'
+      : // deadline asc NULLS LAST, then priority high>normal>low, then id.
+        `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, COALESCE(deadline, '') ASC,
+         CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, id ASC`;
+  }
+
+  private static cursorFor(
+    record: TaskRecord,
+    order: 'deadline_priority' | 'updated'
+  ): ListCursorPayload {
+    if (order === 'updated') {
+      return { order, k: [record.updatedAt, record.id] };
+    }
+    return {
+      order,
+      k: [
+        record.deadlineIso === null ? 1 : 0,
+        record.deadlineIso ?? '',
+        PRIORITY_RANK[record.priority] ?? 2,
+        record.id,
+      ],
+    };
+  }
+
+  /**
+   * One page of the same ordered set, with the totals that make completeness provable.
+   *
+   * Keyset, not OFFSET: an offset page silently skips or repeats rows when the set
+   * changes between pages, which would leave a "whole situation" claim resting on a
+   * read that quietly lost items.
+   */
+  listPage(filter: ListTasksPageFilter = {}): ListTasksPage {
+    const order = filter.order === 'updated' ? 'updated' : 'deadline_priority';
+    const { where, params } = this.buildListPredicate(filter);
     const rawLimit = Number(filter.limit);
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+
+    const totalRow = this.db
+      .prepare(`SELECT COUNT(*) AS total FROM operator_tasks WHERE ${where.join(' AND ')}`)
+      .get(...params) as { total: number };
+
+    const pageWhere = [...where];
+    const pageParams = [...params];
+    if (filter.cursor) {
+      const { k } = decodeListCursor(filter.cursor, order);
+      if (order === 'updated') {
+        pageWhere.push('(updated_at, id) < (?, ?)');
+      } else {
+        pageWhere.push(
+          `(CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, COALESCE(deadline, ''),
+            CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id) > (?, ?, ?, ?)`
+        );
+      }
+      pageParams.push(...k);
+    }
+
+    // limit + 1 probes for a next page instead of guessing from a full page, so the
+    // final page never hands out a cursor that resolves to nothing.
     const rows = this.db
       .prepare(
         `SELECT * FROM operator_tasks
-         ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-         ORDER BY ${order}
+         WHERE ${pageWhere.join(' AND ')}
+         ORDER BY ${TaskLedger.orderSql(filter.order)}
          LIMIT ?`
       )
-      .all(...params, limit) as TaskRow[];
-    return rows.map((row) => this.toRecord(row));
+      .all(...pageParams, limit + 1) as TaskRow[];
+
+    const hasMore = rows.length > limit;
+    const tasks = rows.slice(0, limit).map((row) => this.toRecord(row));
+    const last = tasks[tasks.length - 1];
+    return {
+      tasks,
+      total: totalRow.total,
+      returned: tasks.length,
+      nextCursor: hasMore && last ? encodeListCursor(TaskLedger.cursorFor(last, order)) : null,
+    };
   }
 
   /** Internal bounded page for temporal reconciliation; excludes rows that can never be candidates. */
