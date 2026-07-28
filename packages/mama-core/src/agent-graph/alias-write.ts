@@ -285,6 +285,9 @@ export function attachEntityAliasWithEdge(
     connectors: input.connectors,
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
+    // source_refs are caller-supplied, so this is the surface where naming a raw id from
+    // an ungranted channel would bind it to an entity the caller can read back.
+    ...(input.channels ? { channels: input.channels } : {}),
   };
   const sourceRefs = normalizeSourceRefs(input.source_refs);
   if (sourceRefs.length === 0) {
