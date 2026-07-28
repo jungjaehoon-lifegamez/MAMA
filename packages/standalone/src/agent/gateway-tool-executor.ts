@@ -3094,10 +3094,13 @@ export class GatewayToolExecutor {
           const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
           const kanbanInput = input as { maxCardsPerList?: number };
           try {
-            const columns = await getTrelloKanban({
+            // Coverage rides alongside the data: `complete`/`boards`/`truncated`/
+            // `observedAt` are what let a caller tell a truly empty board from one it
+            // failed to read, and a whole column from a sliced one.
+            const snapshot = await getTrelloKanban({
               maxCardsPerList: kanbanInput.maxCardsPerList,
             });
-            return { success: true, columns };
+            return { success: true, ...snapshot };
           } catch (err) {
             return {
               success: false,
