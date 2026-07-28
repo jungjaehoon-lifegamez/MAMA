@@ -114,6 +114,52 @@ describe('report tool-use audit (M3-T1)', () => {
 import { createPersonaReportAsk } from '../../src/operator/report-run.js';
 
 describe('createPersonaReportAsk (M3-T4)', () => {
+  // The boundary used to return prose and drop everything else, so a delivered report
+  // could not be traced to the run that wrote it - the same defect the gateway turn seam
+  // had, one layer in.
+  it('reports the run behind the report it just composed', async () => {
+    const seen: unknown[] = [];
+    const ask = createPersonaReportAsk({
+      run: async () => ({ response: 'body', history: [], modelRunId: 'mr_7' }),
+      log: () => {},
+      fullReportTag: TAG,
+      onRunProvenance: (provenance) => seen.push(provenance),
+    });
+
+    await ask('compose');
+
+    expect(seen).toEqual([{ status: 'available', modelRunId: 'mr_7' }]);
+  });
+
+  it('separates a backend that records no run from a run whose handle was lost', async () => {
+    const seen: unknown[] = [];
+    const askNoRun = createPersonaReportAsk({
+      run: async () => ({ response: 'body', history: [] }),
+      log: () => {},
+      fullReportTag: TAG,
+      onRunProvenance: (provenance) => seen.push(provenance),
+    });
+    await askNoRun('compose');
+
+    const askLost = createPersonaReportAsk({
+      run: async () => ({
+        response: 'body',
+        history: [],
+        modelRunId: null,
+        modelRunProvenance: 'commit_failed',
+      }),
+      log: () => {},
+      fullReportTag: TAG,
+      onRunProvenance: (provenance) => seen.push(provenance),
+    });
+    await askLost('compose');
+
+    expect(seen).toEqual([
+      { status: 'unavailable', reason: 'no_run_handle' },
+      { status: 'unavailable', reason: 'commit_failed' },
+    ]);
+  });
+
   const TAG = '[operator_full_report]';
 
   it('audits + logs gathered and written EXECUTIONS, then returns the response', async () => {

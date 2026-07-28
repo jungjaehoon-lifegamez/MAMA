@@ -18,6 +18,7 @@
  * ASCII-only. No personal strings.
  */
 import type { AskAgent } from './trigger-author.js';
+import type { ArtifactProvenance } from './report-carry.js';
 
 /** Dedicated persona session lane for operator reports; isolates the multi-turn gather loop from
  *  chat. runWithContent honors options.sessionKey (agent-loop.ts:879). */
@@ -192,6 +193,10 @@ export function formatReportToolAudit(audit: ReportToolAudit, isFullReport: bool
 export interface PersonaReportRunResult {
   response: string;
   history: ReadonlyArray<ReportHistoryMessage>;
+  /** The run that produced this text. Absent when the backend records no run. */
+  modelRunId?: string | null;
+  /** Set by the agent loop when a run existed but its handle could not be committed. */
+  modelRunProvenance?: string;
 }
 /** E = the envelope type; generic keeps this module free of agent/envelope imports while start.ts
  *  gets full inference (no casts): E is inferred from the injected issuer's return type. */
@@ -210,6 +215,13 @@ export interface PersonaReportAskDeps<E = unknown> {
    * omit ONLY when issuance mode is 'off'. Failures propagate (no-fallback).
    */
   issueEnvelope?: () => Promise<E>;
+  /**
+   * Receives the provenance of each composed report, so the delivered artifact can record
+   * what produced it. The runner already knows this and the boundary used to drop it on
+   * the floor - the report went out and nothing downstream could say which run stood
+   * behind it, which is the same defect the gateway turn seam had.
+   */
+  onRunProvenance?: (provenance: ArtifactProvenance) => void;
 }
 
 /**
@@ -226,7 +238,17 @@ export interface PersonaReportAskDeps<E = unknown> {
 export function createPersonaReportAsk<E = unknown>(deps: PersonaReportAskDeps<E>): AskAgent {
   return async (prompt: string): Promise<string> => {
     const envelope = deps.issueEnvelope ? await deps.issueEnvelope() : undefined;
-    const { response, history } = await deps.run(prompt, envelope);
+    const result = await deps.run(prompt, envelope);
+    const { response, history } = result;
+    deps.onRunProvenance?.(
+      result.modelRunId
+        ? { status: 'available', modelRunId: result.modelRunId }
+        : {
+            status: 'unavailable',
+            reason:
+              result.modelRunProvenance === 'commit_failed' ? 'commit_failed' : 'no_run_handle',
+          }
+    );
     const isFull = prompt.includes(deps.fullReportTag);
     for (const line of formatReportToolAudit(summarizeReportToolUse(history), isFull)) {
       deps.log(line);
