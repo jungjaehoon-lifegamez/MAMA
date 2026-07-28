@@ -274,16 +274,26 @@ export type DaemonRawConnectorPrincipal =
   | `workorder-${WorkOrderKind}`;
 
 /**
- * Trello contains owner-scoped project evidence. Among daemon-internal runs,
- * only host-issued board and temporal workorders may read it. Verified owner-console
- * chat receives its separate route-scoped envelope in envelope-bootstrap.
+ * Trello contains owner-scoped project evidence. Among daemon-internal runs, only host-issued
+ * board and temporal workorders and the scheduled operator report may read it. Verified
+ * owner-console chat receives its separate route-scoped envelope in envelope-bootstrap.
+ *
+ * The report is admitted because it must cross-check the native ledger against the live board
+ * before asserting item state; its envelope still grants NO destinations, so this widens what
+ * the report may READ, never what it may send. Read authority is enforced per tool through
+ * envelope/tool-connector-scope.ts - the api-code-act principal below stays filtered and its
+ * direct board reads are now denied rather than silently permitted by role membership.
  */
 export function scopeDaemonRawConnectors(
   enabledConnectorNames: readonly string[] | undefined,
   principal: DaemonRawConnectorPrincipal
 ): string[] {
   const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
-  if (principal === 'workorder-board' || principal === 'workorder-temporal') {
+  if (
+    principal === 'workorder-board' ||
+    principal === 'workorder-temporal' ||
+    principal === 'operator-report'
+  ) {
     return connectors;
   }
   return connectors.filter((connector) => connector !== 'trello');
@@ -435,8 +445,15 @@ const WORKORDER_TOOL_POLICIES = {
  * decides whether a full report has task-board substance), the fullReportSelfGather lines,
  * the board_publish lines, and the single mama_save the report may make.
  *
- * Its envelope grants no destinations and filters trello out of the raw connectors
- * (scopeDaemonRawConnectors 'operator-report'), so no send or task-mutation tool belongs here.
+ * Its envelope grants no destinations, so no send tool belongs here, and no task-mutation
+ * tool either: the report observes, the board workorder maintains.
+ *
+ * trello_kanban is the ONE whole-board live read. Without it the report could only restate the
+ * native ledger, which is a derived store the board workorder is forbidden to sync from Trello -
+ * so a card that moved days ago still reported as "no completion signal" (live 2026-07-28).
+ * Reading it is scoped by the envelope now that direct connector readers are mapped in
+ * envelope/tool-connector-scope.ts; without that mapping this entry alone would have granted
+ * unscoped access.
  */
 const OPERATOR_REPORT_TOOL_POLICY = {
   roleName: 'operator-report',
@@ -452,6 +469,7 @@ const OPERATOR_REPORT_TOOL_POLICY = {
     'report_publish',
     'schedule_upcoming',
     'task_list',
+    'trello_kanban',
   ],
 } as const satisfies WorkOrderToolPolicy;
 
@@ -1676,11 +1694,11 @@ export async function runAgentLoop(
                     channel_id: 'report',
                     trigger_context: { user_text: '<operator scheduled report>' },
                     scope: {
-                      // Reads: enabled non-Trello raw connectors (kagemusha_* gathers) + memory scopes.
-                      // Trello is reserved for verified owner-console plus host-issued board and
-                      // temporal workorder envelopes.
-                      // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
-                      // send surface (constraint 2).
+                      // Reads: enabled raw connectors (kagemusha_* gathers plus the live board
+                      // cross-check) + memory scopes covering mama_recall/mama_save.
+                      // allowed_destinations stays [] - NO send surface. That bounds SENDS only;
+                      // read authority is bounded per tool by envelope/tool-connector-scope.ts
+                      // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
                       raw_connectors: scopeDaemonRawConnectors(
                         codeActRawConnectors,
