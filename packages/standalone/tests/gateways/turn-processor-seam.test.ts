@@ -153,3 +153,26 @@ describe('turn outcome is discriminated', () => {
     }
   });
 });
+
+/**
+ * Session ownership belongs to the turn processor. The invariant worth pinning is
+ * structural: a caller cannot hand a session in, so ownership cannot quietly migrate to
+ * the gateway and leave one lock with two owners.
+ */
+describe('session ownership sits behind the seam', () => {
+  it('takes no session from the caller', () => {
+    const options: ProcessOptions = { onQueued: () => {} };
+    expect('sessionId' in options).toBe(false);
+    expect('session' in options).toBe(false);
+  });
+
+  it('returns the session the processor chose', async () => {
+    const processor: TurnProcessor = {
+      processTurn: vi.fn(async () => ({ ...result('ok'), sessionId: 'chosen-by-processor' })),
+    };
+
+    const returned = await processor.processTurn(message());
+
+    expect(returned.sessionId).toBe('chosen-by-processor');
+  });
+});
