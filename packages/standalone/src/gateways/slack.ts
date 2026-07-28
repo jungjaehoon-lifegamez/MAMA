@@ -548,7 +548,7 @@ export class SlackGateway extends BaseGateway {
     // Process through message router
     let result;
     try {
-      result = await this.messageRouter.process(normalizedMessage, {
+      result = await this.turnProcessor.processTurn(normalizedMessage, {
         onStream: streamCallbacks,
       });
     } finally {

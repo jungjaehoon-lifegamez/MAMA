@@ -235,6 +235,31 @@ export interface GatewayRegistry {
 }
 
 /**
+ * Options a caller may pass alongside a turn.
+ *
+ * Extracted, not invented: the same shape was written inline twice below. Naming it is
+ * what lets a gateway depend on the TURN CONTRACT rather than on the router class, which
+ * is the first step in giving the agent one runtime instead of two.
+ */
+export interface ProcessOptions {
+  /** Called immediately if the session is busy and the turn was queued. */
+  onQueued?: () => void;
+  onStream?: StreamCallbacks;
+}
+
+/**
+ * The one callable boundary between a gateway and turn processing.
+ *
+ * A gateway owns receive, normalization, progress display, delivery and its restart
+ * ledger. Everything from here inward - session locks, durable persistence, prompt
+ * assembly, the model run - belongs to whatever implements this. Today that is the
+ * message router; the point of naming it is that it does not have to stay so.
+ */
+export interface TurnProcessor {
+  processTurn(message: NormalizedMessage, options?: ProcessOptions): Promise<ProcessingResult>;
+}
+
+/**
  * Message processing result
  */
 export interface ProcessingResult {
@@ -363,7 +388,7 @@ function normalizeTranslationTargetLanguage(
  *
  * Central hub for processing messages from all messenger platforms.
  */
-export class MessageRouter {
+export class MessageRouter implements TurnProcessor {
   private sessionStore: SessionStore;
   private contextInjector: ContextInjector;
   private mamaApi: MamaApiClient;
@@ -708,12 +733,20 @@ export class MessageRouter {
    * @param processOptions - Optional callbacks for async notifications
    * @param processOptions.onQueued - Called immediately if session is busy (message queued)
    */
+  /**
+   * TurnProcessor entry point. Delegates exactly once to `process` - this is a boundary,
+   * not a behaviour change, and anything it did before it still does.
+   */
+  async processTurn(
+    message: NormalizedMessage,
+    options?: ProcessOptions
+  ): Promise<ProcessingResult> {
+    return this.process(message, options);
+  }
+
   async process(
     message: NormalizedMessage,
-    processOptions?: {
-      onQueued?: () => void;
-      onStream?: StreamCallbacks;
-    }
+    processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const channelKey = buildChannelKey(message.source, message.channelId);
     const previous = this.channelTails.get(channelKey);
@@ -743,10 +776,7 @@ export class MessageRouter {
 
   private async processInChannel(
     message: NormalizedMessage,
-    processOptions?: {
-      onQueued?: () => void;
-      onStream?: StreamCallbacks;
-    }
+    processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 

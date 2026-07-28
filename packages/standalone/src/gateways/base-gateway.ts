@@ -13,9 +13,12 @@ import type {
   MessageSource,
 } from './types.js';
 import { MessageRouter } from './message-router.js';
+import type { ProcessingResult, ProcessOptions, TurnProcessor } from './message-router.js';
 
 export interface BaseGatewayOptions {
   messageRouter: MessageRouter;
+  /** Optional override for the turn seam; defaults to the router. */
+  turnProcessor?: TurnProcessor;
   config?: Partial<GatewayConfig>;
 }
 
@@ -23,11 +26,34 @@ export abstract class BaseGateway implements Gateway {
   abstract readonly source: MessageSource;
 
   protected messageRouter: MessageRouter;
+  /**
+   * The turn seam, shared by every user-facing surface.
+   *
+   * Telegram, Discord and Slack are ONE role - the place a person reaches the agent - so
+   * the boundary belongs here rather than to any one of them. Connectors are not turn
+   * sources at all; they are data the agent reads, and they never pass through here.
+   *
+   * Defaults to the router, so behaviour is unchanged until something is injected.
+   */
+  protected turnProcessor: TurnProcessor;
   protected eventHandlers: GatewayEventHandler[] = [];
   protected connected = false;
 
   constructor(options: BaseGatewayOptions) {
     this.messageRouter = options.messageRouter;
+    // Adapter, not a cast: any router satisfying the turn contract is used directly, and
+    // anything older is wrapped, so no existing caller has to change to cross the seam.
+    const router = options.messageRouter;
+    this.turnProcessor =
+      options.turnProcessor ??
+      (typeof (router as Partial<TurnProcessor>).processTurn === 'function'
+        ? (router as unknown as TurnProcessor)
+        : {
+            processTurn: (
+              message: Parameters<MessageRouter['process']>[0],
+              processOptions?: ProcessOptions
+            ): Promise<ProcessingResult> => router.process(message, processOptions),
+          });
   }
 
   // === Abstract methods — platform-specific ===
