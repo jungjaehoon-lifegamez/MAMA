@@ -1,5 +1,6 @@
 import type { Envelope, MemoryScope } from './types.js';
 import { parseEnvelopeExpiresAt } from './expiry.js';
+import { directConnectorReadForTool } from './tool-connector-scope.js';
 
 export class EnvelopeViolation extends Error {
   constructor(
@@ -190,6 +191,14 @@ export class EnvelopeEnforcer {
 function requestedRawConnectorsForTool(toolName: string, args: unknown): string[] {
   if (toolName.startsWith('drive_')) {
     return ['drive'];
+  }
+
+  // Direct connector readers answer from a live connector API, so nothing in
+  // their arguments names the connector. Without this, envelope.scope.raw_connectors
+  // never applied to them (tool-connector-scope.ts).
+  const directConnector = directConnectorReadForTool(toolName);
+  if (directConnector !== null) {
+    return [directConnector];
   }
 
   if (toolName === 'context_compile') {

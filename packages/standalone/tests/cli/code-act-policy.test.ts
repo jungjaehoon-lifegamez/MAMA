@@ -139,16 +139,18 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('grants Trello only to host-issued board and temporal workorder principals', () => {
+    it('grants Trello to host-issued board/temporal workorders and the scheduled report', () => {
       const enabled = ['trello', 'kagemusha', 'telegram'];
 
       expect(scopeDaemonRawConnectors(enabled, 'workorder-board')).toEqual(enabled);
       expect(scopeDaemonRawConnectors(enabled, 'workorder-temporal')).toEqual(enabled);
+      // The report must cross-check the native ledger against the live board; its envelope
+      // still grants no destinations, so this is read authority only.
+      expect(scopeDaemonRawConnectors(enabled, 'operator-report')).toEqual(enabled);
       for (const principal of [
         'workorder-wiki',
         'workorder-memory-curation',
         'api-code-act',
-        'operator-report',
       ] as const) {
         expect(scopeDaemonRawConnectors(enabled, principal)).toEqual(['kagemusha', 'telegram']);
       }
@@ -325,14 +327,15 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         'report_publish',
         'schedule_upcoming',
         'task_list',
+        'trello_kanban',
       ]);
       // Prompt/permission coherence: advertise exactly what the executor will run.
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
       ].map((match) => match[1]);
       expect(advertised.sort()).toEqual([...projected.names].sort());
-      // The report envelope grants no send surface and filters trello out of its raw
-      // connectors, so no destination or task-mutation tool may be advertised.
+      // The report envelope grants no send surface, and the report observes rather than
+      // maintains the board, so no destination or task-mutation tool may be advertised.
       for (const forbidden of ['task_create', 'task_update', 'send_message', 'Bash', 'Write']) {
         expect(projected.names).not.toContain(forbidden);
         expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);

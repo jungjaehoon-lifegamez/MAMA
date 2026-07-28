@@ -136,6 +136,44 @@ describe('Code-Act canonical tool policy', () => {
     expect(withDrive.names).toContain('drive_upload');
   });
 
+  // A sandbox must never be offered a direct connector reader whose execution the
+  // envelope enforcer would then deny; both layers read tool-connector-scope.ts.
+  it('withholds direct connector readers when the envelope grants no connector read', () => {
+    const denied = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+      envelopeDestinationKinds: ['telegram'],
+      envelopeRawConnectors: [],
+    });
+    const granted = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+      envelopeDestinationKinds: ['telegram'],
+      envelopeRawConnectors: ['trello'],
+    });
+
+    expect(denied.names.some((name) => name.startsWith('trello_'))).toBe(false);
+    expect(granted.names).toEqual(
+      expect.arrayContaining(['trello_card', 'trello_kanban', 'trello_search'])
+    );
+  });
+
+  // Omitted (not []) is the "non-runtime caller, no envelope info" case: an explicit
+  // [] or null normalizes to "no connector authority" and denies, same as Drive.
+  it('does not filter direct connector readers when no envelope info is supplied', () => {
+    const policy = projectCodeActToolPolicy({
+      tier: 2,
+      roleName: 'owner_console',
+      role: DEFAULT_ROLES.definitions.owner_console,
+    });
+
+    expect(policy.names).toEqual(
+      expect.arrayContaining(['trello_card', 'trello_kanban', 'trello_search'])
+    );
+  });
+
   it('keeps owner_console Drive writes when the envelope has only a read connector', () => {
     const policy = projectCodeActToolPolicy({
       tier: 2,
