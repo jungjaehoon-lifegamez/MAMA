@@ -36,7 +36,7 @@ export interface TurnOutcomeBase {
 }
 
 /**
- * A turn that reached the model.
+ * A turn that reached the model. It may still carry no durable run handle - see below.
  *
  * Run identity lives on this branch rather than as optional fields on one flat shape,
  * because a turn can end WITHOUT reaching the model. With optional fields a caller
@@ -45,8 +45,16 @@ export interface TurnOutcomeBase {
  */
 export interface CompletedTurn extends TurnOutcomeBase {
   outcome: 'completed';
-  /** Model run this turn produced, when the backend reported one. */
-  modelRunId?: string | null;
+  /**
+   * Durable model-run handle, or null when this turn has none.
+   *
+   * Required and nullable rather than optional: absent and null would otherwise mean the
+   * same thing to a reader, and they are different questions - "was the field set" versus
+   * "does a resolvable run exist". Null is returned honestly when the backend reported no
+   * run, or when its record could not be committed; the answer still stands, the handle
+   * does not.
+   */
+  modelRunId: string | null;
   /** Stable id for this inbound turn. */
   sourceTurnId: string;
   /** Canonical reference to the message that started it. */

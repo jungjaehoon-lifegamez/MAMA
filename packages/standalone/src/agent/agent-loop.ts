@@ -2086,6 +2086,14 @@ export class AgentLoop {
               : String(finalizationError)
           }`
         );
+        if (ownedModelRunId && !ownedModelRunCommitted) {
+          // The response still stands - the turn happened and the owner should get it.
+          // What does NOT stand is the handle: the run record may be left uncommitted,
+          // so returning its id would hand out provenance that cannot be resolved.
+          // Report the answer, withhold the claim.
+          result.modelRunId = null;
+          logger.warn('AgentLoop returning without run identity: the model run was not committed');
+        }
       }
       return result;
     } catch (error) {

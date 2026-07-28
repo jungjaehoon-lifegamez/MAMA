@@ -420,6 +420,69 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
         expect(recalled?.summary).toContain('second revision');
       });
 
+      // The handle has to survive every branch, not just the one the first test used.
+      // Profile and graph records go through the same sanitizer by a different route, so
+      // a future transformation could drop identifiers there while `memories` keeps them
+      // and nothing would notice.
+      it('keeps the handle on profile and graph branches too', async () => {
+        const mockApi = createMockApi();
+        const record = (id: string, topic: string) => ({ id, topic, summary: `${topic} detail` });
+        vi.mocked(mockApi.recallMemory).mockResolvedValue({
+          profile: {
+            static: [record('mem_static', 'profile/static')],
+            dynamic: [record('mem_dynamic', 'profile/dynamic')],
+            evidence: [],
+          },
+          memories: [record('mem_main', 'memories/main')],
+          graph_context: {
+            primary: [record('mem_primary', 'graph/primary')],
+            expanded: [record('mem_expanded', 'graph/expanded')],
+            edges: [],
+          },
+          search_meta: { query: 'coverage' },
+        });
+        const executor = new GatewayToolExecutor({
+          mamaApi: mockApi,
+          envelopeIssuanceMode: 'off',
+        });
+        const discordContext = createDiscordContext();
+
+        const result = (await executor.execute('mama_recall', { query: 'coverage' }, {
+          agentContext: {
+            ...discordContext,
+            session: {
+              ...discordContext.session,
+              channelId: 'channel-allowed',
+              userId: 'user-allowed',
+            },
+          },
+          agentId: 'chat_bot',
+          source: 'discord',
+          channelId: 'channel-allowed',
+          executionSurface: 'model_tool',
+        } as Parameters<GatewayToolExecutor['execute']>[2])) as {
+          success: boolean;
+          bundle?: {
+            profile?: {
+              static?: Array<Record<string, unknown>>;
+              dynamic?: Array<Record<string, unknown>>;
+            };
+            memories?: Array<Record<string, unknown>>;
+            graph_context?: {
+              primary?: Array<Record<string, unknown>>;
+              expanded?: Array<Record<string, unknown>>;
+            };
+          };
+        };
+
+        expect(result.success).toBe(true);
+        expect(result.bundle?.profile?.static?.[0]?.memoryId).toBe('mem_static');
+        expect(result.bundle?.profile?.dynamic?.[0]?.memoryId).toBe('mem_dynamic');
+        expect(result.bundle?.memories?.[0]?.memoryId).toBe('mem_main');
+        expect(result.bundle?.graph_context?.primary?.[0]?.memoryId).toBe('mem_primary');
+        expect(result.bundle?.graph_context?.expanded?.[0]?.memoryId).toBe('mem_expanded');
+      });
+
       it('should redact recall secrets that cross the truncation boundary', async () => {
         const mockApi = createMockApi();
         const boundaryCrossingSecret = `sk-${'a'.repeat(120)}`;
