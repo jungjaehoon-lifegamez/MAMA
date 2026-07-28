@@ -47,13 +47,24 @@ vi.mock('discord.js', () => {
   };
 });
 
-// Mock MessageRouter
+// Implements the turn contract, and the router methods this surface reads for display.
+// A double with only the old router method would have forced the base to adapt at
+// runtime - the escape hatch the seam exists to remove.
+const turnResult = {
+  outcome: 'completed' as const,
+  response: 'Test response',
+  duration: 100,
+  sessionId: 'session-123',
+  injectedDecisions: [],
+  modelRunId: 'run_test',
+  sourceTurnId: 'turn_test',
+  sourceMessageRef: 'discord:test:turn_test',
+};
 const mockMessageRouter = {
-  process: vi.fn().mockResolvedValue({
-    response: 'Test response',
-    duration: 100,
-    sessionId: 'session-123',
-  }),
+  processTurn: vi.fn().mockResolvedValue(turnResult),
+  process: vi.fn().mockResolvedValue(turnResult),
+  listSessions: vi.fn().mockReturnValue([]),
+  updateChannelName: vi.fn().mockReturnValue(false),
 } as unknown as MessageRouter;
 
 describe('DiscordGateway', () => {
@@ -275,7 +286,7 @@ describe('DiscordGateway', () => {
 
       await getMessageCreateHandler()(message);
 
-      expect(mockMessageRouter.process).toHaveBeenCalledOnce();
+      expect(mockMessageRouter.processTurn).toHaveBeenCalledOnce();
       expect(message.reply).toHaveBeenCalled();
     });
 
@@ -285,7 +296,7 @@ describe('DiscordGateway', () => {
 
       await getMessageCreateHandler()(message);
 
-      expect(mockMessageRouter.process).toHaveBeenCalledOnce();
+      expect(mockMessageRouter.processTurn).toHaveBeenCalledOnce();
       expect(message.reply).toHaveBeenCalled();
     });
 
@@ -300,7 +311,7 @@ describe('DiscordGateway', () => {
 
       await getMessageCreateHandler()(message);
 
-      expect(mockMessageRouter.process).not.toHaveBeenCalled();
+      expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
       expect(message.reply).not.toHaveBeenCalled();
     });
   });

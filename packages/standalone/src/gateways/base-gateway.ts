@@ -12,8 +12,9 @@ import type {
   GatewayConfig,
   MessageSource,
 } from './types.js';
-import { MessageRouter } from './message-router.js';
-import type { ProcessingResult, ProcessOptions, TurnProcessor } from './message-router.js';
+// Contract only. Importing the concrete router here - even as a type - is what let the
+// inversion be true of one gateway and false of the class every gateway inherits from.
+import type { SessionDirectory, TurnProcessor } from './turn-contract.js';
 
 export interface BaseGatewayOptions {
   /**
@@ -22,18 +23,18 @@ export interface BaseGatewayOptions {
    */
   turnProcessor: TurnProcessor;
   /**
-   * Optional. Only surfaces that read session data for their own display concerns -
-   * naming a channel, listing what is active - need the concrete router. A surface that
-   * only serves turns must not reach past the contract.
+   * Optional, and narrow. Only surfaces that read session data for their own display
+   * concerns - naming a channel, listing what is active - ask for this. It is not a
+   * router: a surface that serves turns cannot reach past the contract through it.
    */
-  messageRouter?: MessageRouter;
+  sessionDirectory?: SessionDirectory;
   config?: Partial<GatewayConfig>;
 }
 
 export abstract class BaseGateway implements Gateway {
   abstract readonly source: MessageSource;
 
-  protected messageRouter?: MessageRouter;
+  protected sessionDirectory?: SessionDirectory;
   /**
    * The turn seam, shared by every user-facing surface.
    *
@@ -48,20 +49,10 @@ export abstract class BaseGateway implements Gateway {
   protected connected = false;
 
   constructor(options: BaseGatewayOptions) {
-    this.messageRouter = options.messageRouter;
-    // Adapter, not a cast: anything already satisfying the turn contract is used as-is,
-    // and an older router is wrapped, so a caller holding one does not have to change.
-    const processor = options.turnProcessor as TurnProcessor & Partial<MessageRouter>;
-    this.turnProcessor =
-      typeof processor.processTurn === 'function'
-        ? processor
-        : {
-            processTurn: (
-              message: Parameters<MessageRouter['process']>[0],
-              processOptions?: ProcessOptions
-            ): Promise<ProcessingResult> =>
-              (processor as unknown as MessageRouter).process(message, processOptions),
-          };
+    this.sessionDirectory = options.sessionDirectory;
+    // No adaptation, no cast: the contract is the dependency, so a caller that does not
+    // satisfy it is a compile error rather than something quietly wrapped at runtime.
+    this.turnProcessor = options.turnProcessor;
   }
 
   // === Abstract methods — platform-specific ===

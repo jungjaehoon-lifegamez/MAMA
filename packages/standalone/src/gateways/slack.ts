@@ -100,7 +100,7 @@ export class SlackGateway extends BaseGateway {
   }
 
   constructor(options: SlackGatewayOptions) {
-    super({ turnProcessor: options.messageRouter, messageRouter: options.messageRouter });
+    super({ turnProcessor: options.messageRouter });
     this.botToken = options.botToken;
     this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {

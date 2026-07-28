@@ -18,13 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type InjectedContext, type MamaApiClient } from './context-injector.js';
-import type {
-  NormalizedMessage,
-  MessageRouterConfig,
-  Session,
-  RelatedDecision,
-  ContentBlock,
-} from './types.js';
+import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
@@ -35,7 +29,8 @@ import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import type { AgentContext, AgentLoopOptions, StreamCallbacks } from '../agent/types.js';
+import type { AgentContext, AgentLoopOptions } from '../agent/types.js';
+import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -234,96 +229,18 @@ export interface GatewayRegistry {
   sendMessage(source: string, channelId: string, text: string): Promise<void>;
 }
 
-/**
- * Options a caller may pass alongside a turn.
- *
- * Extracted, not invented: the same shape was written inline twice below. Naming it is
- * what lets a gateway depend on the TURN CONTRACT rather than on the router class, which
- * is the first step in giving the agent one runtime instead of two.
- */
-export interface ProcessOptions {
-  /** Called immediately if the session is busy and the turn was queued. */
-  onQueued?: () => void;
-  onStream?: StreamCallbacks;
-}
-
-/**
- * The one callable boundary between a gateway and turn processing.
- *
- * A gateway owns receive, normalization, progress display, delivery and its restart
- * ledger. Everything from here inward - session locks, durable persistence, prompt
- * assembly, the model run - belongs to whatever implements this. Today that is the
- * message router; the point of naming it is that it does not have to stay so.
- */
-export interface TurnProcessor {
-  processTurn(message: NormalizedMessage, options?: ProcessOptions): Promise<ProcessingResult>;
-}
-
-/**
- * Session ownership, decided rather than left implicit.
- *
- * The IMPLEMENTATION owns the session. Note that nothing about a session appears in this
- * contract's input: a caller cannot pass one in, and the id it gets back is the one the
- * processor chose. That is deliberate. Durable conversation state, the backend resume
- * decision and the per-channel lock are all held together today by the router, keyed by
- * source plus channel, and splitting any of them across the boundary would mean two
- * owners of one lock.
- *
- * A gateway therefore neither selects nor persists the session for a turn. It may still
- * read session data for its own display concerns - naming a channel, listing what is
- * active - which is not turn ownership.
- *
- * Known and deliberate exception: scheduled operator reports do NOT pass through here.
- * They run their own lane against a forced fresh session, so this system currently has
- * two session models. Unifying them needs a coordinator and is out of scope for the
- * boundary; what matters here is that the split is stated instead of discovered later.
- */
-
-/** Fields every turn outcome carries, whatever happened. */
-interface TurnOutcomeBase {
-  /** Response text from agent */
-  response: string;
-  /** Session ID used */
-  sessionId: string;
-  /** Related decisions that were injected */
-  injectedDecisions: RelatedDecision[];
-  /** Processing duration in milliseconds */
-  duration: number;
-}
-
-/**
- * A turn that reached the model and produced run identity.
- *
- * The identity is here rather than optional on one flat shape because a turn can end
- * WITHOUT ever reaching the model - the security path answers directly. With optional
- * fields, a caller cannot tell "this run has no id" from "this turn had no run", and any
- * later work that resolves a delivered claim back to its evidence depends on exactly that
- * distinction.
- */
-export interface CompletedTurn extends TurnOutcomeBase {
-  outcome: 'completed';
-  /** Model run this turn produced, when the backend reported one. */
-  modelRunId?: string | null;
-  /** Stable id for this inbound turn. */
-  sourceTurnId: string;
-  /** Canonical reference to the message that started it. */
-  sourceMessageRef: string;
-}
-
-/** A turn answered without a model run - the caller must not look for run identity. */
-export interface BlockedTurn extends TurnOutcomeBase {
-  outcome: 'blocked';
-  /** Why no model run exists. */
-  reason: 'security_block';
-}
-
-/**
- * Message processing result.
- *
- * Discriminated on `outcome`. Both variants keep the original four fields, so every
- * existing caller that reads `response` or `duration` is unaffected.
- */
-export type ProcessingResult = CompletedTurn | BlockedTurn;
+// The turn contract lives in a router-neutral module (turn-contract.ts) so a surface can
+// depend on HOW a turn is served without depending on WHAT serves it. Re-exported here
+// for callers that already import these names from this module.
+export type {
+  BlockedTurn,
+  CompletedTurn,
+  ProcessingResult,
+  ProcessOptions,
+  SessionDirectory,
+  TurnOutcomeBase,
+  TurnProcessor,
+} from './turn-contract.js';
 
 /**
  * Sensitive patterns that should only be configured via MAMA OS Viewer
