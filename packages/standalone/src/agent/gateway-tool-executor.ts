@@ -142,6 +142,7 @@ import type {
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
+import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -5259,9 +5260,26 @@ export class GatewayToolExecutor {
     const maxObservedMs = Number.isNaN(asOfMs) ? null : asOfMs;
 
     try {
+      // The SAME grant the compile path reads under, derived by the same function. This is
+      // what makes citation and reading answer the same question: while these were separate
+      // rules, this tool refused excerpts for the very events context_compile was citing.
+      // Narrowed by the ENVELOPE's scopes, never by the caller's requested subset.
+      // scopeResolution.scopes is any subset the caller asked for that the envelope allows,
+      // so narrowing by it let a caller widen its own grant by simply omitting the channel
+      // scope: ask with global:system alone and the channel narrowing disappears, handing
+      // back excerpts from every other channel of the connector. Citation would then be
+      // strictly wider than reading, which is the one thing this path must never be.
+      const citationChannels = ctx.envelope
+        ? narrowGrantToEnvelope(liveBoundaryChannels(), {
+            connectors,
+            scopes: ctx.envelope.scope.memory_scopes ?? [],
+          })
+        : undefined;
+
       const resolution = await resolveMemoryProvenanceLive(memoryId, {
         scopes: scopeResolution.scopes,
         connectors,
+        ...(citationChannels ? { channels: citationChannels } : {}),
         projectIds,
         tenantId,
         maxObservedMs,

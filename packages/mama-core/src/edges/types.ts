@@ -46,6 +46,13 @@ export interface TwinVisibility {
   tenantId?: string | null;
   startMs?: number | null;
   asOfMs?: number | null;
+  /**
+   * Which channels of each connector may be read. When present it DECIDES raw visibility
+   * here exactly as it does in the reader, so a ref reached through an edge or named as a
+   * seed satisfies the same rule as a row the reader would have returned. Without it a
+   * caller could reach past the read path by citing what it could not have read.
+   */
+  channels?: Record<string, readonly string[]>;
 }
 
 export interface InsertTwinEdgeInput {
@@ -110,6 +117,9 @@ export interface ListVisibleTwinEdgesOptions {
   startMs?: number | null;
   asOfMs?: number | null;
   limit?: number;
+  /** Forwarded to the raw visibility rule. Declared so an injected implementation
+   * cannot silently drop the grant - it crossed this seam as an undeclared property. */
+  channels?: Record<string, readonly string[]>;
 }
 
 type AssertFalse<T extends false> = T;

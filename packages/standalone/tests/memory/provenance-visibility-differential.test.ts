@@ -33,6 +33,8 @@ interface EventFixture {
   observedMs?: number;
   /** Written to event_datetime when set, so it can differ from source_timestamp_ms. */
   eventDatetime?: number;
+  /** Defaults to 'chan'. Varied so the channel grant is not dead on both sides. */
+  channel?: string;
 }
 
 const BASE_MS = 1_785_000_000_000;
@@ -96,6 +98,27 @@ const EVENTS: EventFixture[] = [
     scopeId: 'c1',
     projectId: null,
     tenantId: null,
+  },
+  // The grant axis. Without channels that differ, a grant-aware predicate and a
+  // grant-blind one return the same verdict for every row, which is how the previous
+  // version of this matrix stayed green while the two rules diverged.
+  {
+    id: 'e_granted_channel',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: null,
+    channel: 'granted',
+  },
+  {
+    id: 'e_ungranted_channel',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: null,
+    channel: 'ungranted',
   },
   {
     id: 'e_other_conn',
@@ -186,9 +209,57 @@ interface Scenario {
   tenantId?: string;
   asOf?: string;
   rangeStartMs?: number;
+  /** When set, the grant decides on BOTH sides - the branch production takes. */
+  channels?: Record<string, readonly string[]>;
 }
 
 const SCENARIOS: Scenario[] = [
+  // The grant scenarios come first because they are the branch production takes. Every
+  // scenario below them exercises the pre-grant rule, which now applies only to callers
+  // that hold no grant.
+  {
+    name: 'grant: one channel of one connector',
+    scopes: [
+      { kind: 'project', id: 'alpha' },
+      { kind: 'global', id: 'system' },
+    ],
+    connectors: ['board'],
+    projectIds: [],
+    channels: { board: ['granted'] },
+  },
+  {
+    name: 'grant: several channels, one connector of two',
+    scopes: [{ kind: 'global', id: 'system' }],
+    connectors: ['board', 'gmail'],
+    projectIds: [],
+    channels: { board: ['granted', 'chan'] },
+  },
+  {
+    name: 'grant: empty for the requested connector',
+    scopes: [{ kind: 'global', id: 'system' }],
+    connectors: ['board'],
+    projectIds: [],
+    channels: { board: [] },
+  },
+  {
+    // Without project and tenant set on a grant scenario, "the grant branch skips them"
+    // is unobservable: a side that started applying either filter under a grant would
+    // still pass every assertion.
+    name: 'grant: with a project and tenant window that must NOT apply',
+    scopes: [{ kind: 'global', id: 'system' }],
+    connectors: ['board'],
+    projectIds: ['p1'],
+    tenantId: 'default',
+    channels: { board: ['granted', 'chan'] },
+  },
+  {
+    name: 'grant: with a time bound',
+    scopes: [{ kind: 'global', id: 'system' }],
+    connectors: ['board'],
+    projectIds: [],
+    channels: { board: ['granted', 'chan'] },
+    rangeStartMs: BASE_MS,
+  },
   {
     // The only scope set the runtime actually produces: deriveMemoryScopes appends
     // global:system next to the specific scopes. This is the case the first predicate
@@ -329,13 +400,14 @@ beforeAll(() => {
       event_index_id, source_connector, source_type, source_id, channel, title, content,
       event_datetime, source_timestamp_ms, content_hash, indexed_at, updated_at,
       tenant_id, project_id, memory_scope_kind, memory_scope_id
-    ) VALUES (?, ?, 'message', ?, 'chan', 'title', 'content body', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, 'message', ?, ?, 'title', 'content body', ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const fixture of EVENTS) {
     insert.run(
       fixture.id,
       fixture.connector,
       `src-${fixture.id}`,
+      fixture.channel ?? 'chan',
       fixture.eventDatetime ?? fixture.observedMs ?? BASE_MS,
       fixture.observedMs ?? BASE_MS,
       Buffer.alloc(32),
@@ -378,12 +450,23 @@ describe('provenance visibility matches the raw reader', () => {
         {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
-          project_refs: scenario.projectIds.map((id) => ({ id })) as never,
+          project_refs: scenario.projectIds.map((id) => ({ kind: 'project', id })) as never,
           ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
           ...(scenario.asOf === undefined ? {} : { as_of: scenario.asOf }),
           ...(scenario.rangeStartMs === undefined
             ? {}
             : { range: { start_ms: scenario.rangeStartMs } }),
+          ...(scenario.channels
+            ? {
+                boundary: {
+                  connectors: scenario.connectors,
+                  scopes: scenario.scopes,
+                  project_refs: scenario.projectIds.map((id) => ({ kind: 'project', id })),
+                  ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
+                  channels: scenario.channels,
+                },
+              }
+            : {}),
           limit: 100,
         } as never
       );
@@ -399,6 +482,7 @@ describe('provenance visibility matches the raw reader', () => {
           isEventVisibleNow(indexedEvent(fixture), {
             scopes: scenario.scopes as never,
             connectors: scenario.connectors,
+            ...(scenario.channels ? { channels: scenario.channels } : {}),
             projectIds: scenario.projectIds,
             tenantId: scenario.tenantId ?? null,
             maxObservedMs: scenario.asOf === undefined ? null : Date.parse(scenario.asOf),
@@ -421,12 +505,23 @@ describe('provenance visibility matches the raw reader', () => {
         {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
-          project_refs: scenario.projectIds.map((id) => ({ id })) as never,
+          project_refs: scenario.projectIds.map((id) => ({ kind: 'project', id })) as never,
           ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
           ...(scenario.asOf === undefined ? {} : { as_of: scenario.asOf }),
           ...(scenario.rangeStartMs === undefined
             ? {}
             : { range: { start_ms: scenario.rangeStartMs } }),
+          ...(scenario.channels
+            ? {
+                boundary: {
+                  connectors: scenario.connectors,
+                  scopes: scenario.scopes,
+                  project_refs: scenario.projectIds.map((id) => ({ kind: 'project', id })),
+                  ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
+                  channels: scenario.channels,
+                },
+              }
+            : {}),
           limit: 100,
         } as never
       );
@@ -439,6 +534,7 @@ describe('provenance visibility matches the raw reader', () => {
       for (const fixture of EVENTS) {
         const shown = isEventVisibleNow(indexedEvent(fixture), {
           scopes: scenario.scopes as never,
+          ...(scenario.channels ? { channels: scenario.channels } : {}),
           connectors: scenario.connectors,
           projectIds: scenario.projectIds,
           tenantId: scenario.tenantId ?? null,

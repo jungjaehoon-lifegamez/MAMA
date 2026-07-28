@@ -5,17 +5,20 @@
  * governs the whole file is that CITATION MUST NOT OUT-READ READING. If this path were
  * more permissive than the path that reads raw events normally, then citing a claim would
  * become a way to see events the read path denies - the handle would launder access.
- * So the visibility rule here mirrors the raw reader in context-compile exactly:
- * an event is visible when its scope is active, or when it carries no scope and the
- * active scopes include the legacy global-system sentinel that the reader also honors.
+ * So this path does not have its own rule any more. When the caller holds a channel grant
+ * it calls the SAME function the reader compiles into SQL (mama-core channel-grant.ts).
+ * Mirroring by hand is what this file used to do, and the mirror held right up until the
+ * reader changed - at which point citation started refusing excerpts for the very events
+ * the reader was citing, and the differential test kept passing because its fixtures never
+ * set a grant.
  *
- * That rule is not cosmetic. On this machine 19,394 of 30,671 indexed events carry no
- * scope at all - they predate scoped indexing. Denying them outright would make provenance
- * useless for most of the corpus; admitting them unconditionally would answer from data
- * the reader would refuse. Matching the reader is the only option that is both.
+ * The pre-grant rule below is retained for callers that hold no grant. It matters that it
+ * stays generous about unscoped rows: 19,394 of 30,671 indexed events carry no scope at
+ * all, so denying them outright would make provenance useless for most of the corpus.
  */
 import { getMemoryProvenance } from '@jungjaehoon/mama-core';
 import type { MemoryScopeRef } from '@jungjaehoon/mama-core';
+import { isChannelGranted, type ChannelGrant } from '@jungjaehoon/mama-core/context-compile';
 import {
   resolveMemoryProvenance,
   type IndexedEvent,
@@ -68,6 +71,12 @@ export interface LiveProvenanceOptions {
    * connector-wide grant.
    */
   connectors: readonly string[];
+  /**
+   * The channels of each connector this caller may read, when the caller holds a grant.
+   * Present means the grant decides, exactly as it does in the reader. Absent means the
+   * pre-grant rule applies, so a caller that has not been given one is unaffected.
+   */
+  channels?: ChannelGrant;
   /** Project and tenant window, mirroring the reader's filters on the same columns. */
   projectIds?: readonly string[];
   tenantId?: string | null;
@@ -120,24 +129,44 @@ export function parseSourceRef(ref: string): ParsedSourceRef {
 }
 
 /**
+ * The time bound, shared by both branches.
+ *
+ * An event with no timestamp at all cannot satisfy a bound the reader applies to a
+ * COALESCE of two columns, so it is excluded whenever one is set.
+ */
+function isWithinObservedWindow(
+  event: IndexedEvent,
+  options: { minObservedMs?: number | null; maxObservedMs?: number | null }
+): boolean {
+  const min = options.minObservedMs ?? null;
+  const max = options.maxObservedMs ?? null;
+  if (min === null && max === null) return true;
+  const observedMs = event.observedAt === null ? null : Date.parse(event.observedAt);
+  if (observedMs === null || Number.isNaN(observedMs)) return false;
+  return (min === null || observedMs >= min) && (max === null || observedMs <= max);
+}
+
+/**
  * Whether an event may be shown under the authority active now.
  *
- * This reproduces the raw candidate reader's predicate clause for clause. The first
- * version of this function did not: it mirrored the MEMORY reader's legacy rule, which is
- * the looser `scopes.some(global/system)`, while the RAW reader requires
- * `hasGlobalSystemScope && !hasScopedVisibility` (source-readers.ts:704-711). Since
- * deriveMemoryScopes always appends global:system next to project/channel/user, the loose
- * rule is true in every production configuration and the strict one is false in every
- * production configuration - so the mistake was not a corner case, it was the default.
+ * When a channel grant is supplied this DELEGATES to the shared rule rather than copying
+ * it. The previous version copied the reader clause for clause and said so in a comment,
+ * which held until the reader changed - then the copy silently became a different rule
+ * that refused excerpts for the very events the reader was citing. The differential test
+ * meant to catch that kept passing, because its fixtures never set a grant.
  *
- * A shared predicate would be better than a faithful copy, and the copy is only defensible
- * because a differential test pins the two together.
+ * "A shared predicate would be better than a faithful copy" is what the old comment here
+ * said. It was right.
+ *
+ * Without a grant the pre-grant rule still applies, so callers that have not been given
+ * one behave exactly as before.
  */
 export function isEventVisibleNow(
   event: IndexedEvent,
   options: {
     scopes: readonly MemoryScopeRef[];
     connectors: readonly string[];
+    channels?: ChannelGrant;
     projectIds?: readonly string[];
     tenantId?: string | null;
     minObservedMs?: number | null;
@@ -145,6 +174,12 @@ export function isEventVisibleNow(
   }
 ): boolean {
   const { scopes, connectors } = options;
+  if (options.channels) {
+    return (
+      isChannelGranted(event.connector, event.channel, options.channels) &&
+      isWithinObservedWindow(event, options)
+    );
+  }
   const projectIds = options.projectIds ?? [];
   const tenantId = options.tenantId ?? null;
 
@@ -184,21 +219,8 @@ export function isEventVisibleNow(
     }
   }
 
-  // The reader's time bound. An event with no timestamp at all cannot satisfy a bound
-  // the reader applies to a COALESCE of two columns, so it is excluded when one is set.
-  const min = options.minObservedMs ?? null;
-  const max = options.maxObservedMs ?? null;
-  if (min !== null || max !== null) {
-    const observedMs = event.observedAt === null ? null : Date.parse(event.observedAt);
-    if (observedMs === null || Number.isNaN(observedMs)) {
-      return false;
-    }
-    if (min !== null && observedMs < min) {
-      return false;
-    }
-    if (max !== null && observedMs > max) {
-      return false;
-    }
+  if (!isWithinObservedWindow(event, options)) {
+    return false;
   }
 
   const scope = event.memoryScope ?? null;
@@ -470,6 +492,7 @@ export async function resolveMemoryProvenanceLive(
       isEventVisibleNow(event, {
         scopes: options.scopes,
         connectors: options.connectors,
+        ...(options.channels ? { channels: options.channels } : {}),
         ...(options.projectIds === undefined ? {} : { projectIds: options.projectIds }),
         tenantId: options.tenantId ?? null,
         minObservedMs: options.minObservedMs ?? null,

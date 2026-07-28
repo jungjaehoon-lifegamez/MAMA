@@ -1,5 +1,6 @@
 import type { DatabaseAdapter } from '../db-manager.js';
 import { getTwinEdge, listTwinEdgesForRefs } from './store.js';
+import { isChannelGranted } from '../context-compile/channel-grant.js';
 import type {
   ListVisibleTwinEdgesOptions,
   TwinEdgeRecord,
@@ -243,6 +244,16 @@ function isCaseVisible(
   return false;
 }
 
+/** The time bound, shared by both branches so a grant cannot skip it. */
+function isRawWithinTime(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
+  const rawTs = row.event_datetime ?? row.source_timestamp_ms;
+  if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
+    return false;
+  }
+  const eventTsMs = parseTimestamp(rawTs);
+  return eventTsMs !== null && eventTsMs >= 0 && isWithinVisibilityTime(eventTsMs, visibility);
+}
+
 function isRawVisible(
   adapter: TwinRefVisibilityAdapter,
   id: string,
@@ -262,6 +273,20 @@ function isRawVisible(
     return false;
   }
 
+  // The grant decides, and it decides the same way here as in the reader - one rule, taken
+  // from one place. The scope/project/tenant clauses below are the pre-grant rule and are
+  // skipped when a grant is present, exactly as the reader skips them, because applying
+  // both would make a cited ref satisfy a stricter test than a read one.
+  if (visibility.channels) {
+    return (
+      isChannelGranted(
+        String(row.source_connector),
+        typeof row.channel === 'string' ? row.channel : null,
+        visibility.channels
+      ) && isRawWithinTime(row, visibility)
+    );
+  }
+
   if (
     hasProjectRefs(visibility.projectRefs) &&
     !visibility.projectRefs.some((project) => project.id === row.project_id)
@@ -277,12 +302,7 @@ function isRawVisible(
     return false;
   }
 
-  const rawTs = row.event_datetime ?? row.source_timestamp_ms;
-  if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {
-    return false;
-  }
-  const eventTsMs = parseTimestamp(rawTs);
-  if (eventTsMs === null || eventTsMs < 0 || !isWithinVisibilityTime(eventTsMs, visibility)) {
+  if (!isRawWithinTime(row, visibility)) {
     return false;
   }
 
