@@ -29,7 +29,7 @@ import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import type { AgentContext, AgentLoopOptions } from '../agent/types.js';
+import type { AgentContext, AgentLoopOptions, ModelRunProvenance } from '../agent/types.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
@@ -204,14 +204,22 @@ export interface AgentLoopClient {
   run(
     prompt: string,
     options?: AgentLoopOptions
-  ): Promise<{ response: string; modelRunId?: string | null }>;
+  ): Promise<{
+    response: string;
+    modelRunId?: string | null;
+    modelRunProvenance?: ModelRunProvenance;
+  }>;
   /**
    * Run the agent loop with multimodal content
    */
   runWithContent?(
     content: ContentBlock[],
     options?: AgentLoopOptions
-  ): Promise<{ response: string; modelRunId?: string | null }>;
+  ): Promise<{
+    response: string;
+    modelRunId?: string | null;
+    modelRunProvenance?: ModelRunProvenance;
+  }>;
 }
 
 export interface MemoryAgentProcessLike {
@@ -827,6 +835,7 @@ This protects your credentials from being exposed in chat logs.`;
     // Captured at turn scope so the completed result can carry it out; the inner
     // assignment sits inside the agent-run block and is not visible at the return.
     let completedModelRunId: string | null = null;
+    let completedProvenanceReason: 'backend_no_run' | 'commit_failed' = 'backend_no_run';
     const sourceTurnId =
       message.metadata?.messageId ?? `generated:${randomUUID().replace(/-/g, '')}`;
     const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
@@ -1216,6 +1225,9 @@ This protects your credentials from being exposed in chat logs.`;
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
           completedModelRunId = result.modelRunId ?? completedModelRunId;
+          if (result.modelRunProvenance === 'commit_failed') {
+            completedProvenanceReason = 'commit_failed';
+          }
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         } else {
           const pageCtx = this.getPageContextPrefix(message);
@@ -1225,6 +1237,9 @@ This protects your credentials from being exposed in chat logs.`;
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
           completedModelRunId = result.modelRunId ?? completedModelRunId;
+          if (result.modelRunProvenance === 'commit_failed') {
+            completedProvenanceReason = 'commit_failed';
+          }
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         }
 
@@ -1363,7 +1378,9 @@ This protects your credentials from being exposed in chat logs.`;
         sessionId: session.id,
         injectedDecisions: context.decisions,
         duration: Date.now() - startTime,
-        modelRunId: completedModelRunId,
+        provenance: completedModelRunId
+          ? { status: 'available' as const, modelRunId: completedModelRunId }
+          : { status: 'unavailable' as const, reason: completedProvenanceReason },
         sourceTurnId,
         sourceMessageRef,
       };

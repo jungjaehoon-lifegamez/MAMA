@@ -44,7 +44,7 @@ const turnResult = {
   duration: 100,
   sessionId: 'session-123',
   injectedDecisions: [],
-  modelRunId: 'run_test',
+  provenance: { status: 'available' as const, modelRunId: 'run_test' },
   sourceTurnId: 'turn_test',
   sourceMessageRef: 'slack:test:turn_test',
 };
