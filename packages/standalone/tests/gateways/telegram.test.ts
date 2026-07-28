@@ -39,9 +39,15 @@ const mockApi = {
   getStickerSet: vi.fn().mockResolvedValue({ stickers: [] }),
 };
 
+// Handlers the gateway registers with the bot, kept so a test can drive the REAL
+// registered callback instead of reaching past it into a private method.
+const registeredHandlers = new Map<string, (ctx: unknown) => Promise<void> | void>();
+
 vi.mock('grammy', () => ({
   Bot: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (ctx: unknown) => Promise<void> | void) => {
+      registeredHandlers.set(event, handler);
+    }),
     catch: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
     start: vi.fn(),
@@ -574,9 +580,16 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     await gateway.start();
 
-    await privateHandler(gateway).handleMessage({
-      ...makeBaseMessage(7777, 42, 900),
-      text: 'what is open right now',
+    // Drive the callback the gateway actually REGISTERED. Reaching past it into the
+    // private handler would leave registration itself untested: it could be rerouted or
+    // dropped entirely and this test would stay green.
+    const onMessage = registeredHandlers.get('message');
+    expect(onMessage).toBeTypeOf('function');
+    await onMessage!({
+      message: {
+        ...makeBaseMessage(7777, 42, 900),
+        text: 'what is open right now',
+      },
     });
 
     // Inbound: the surface normalized it and handed it across, not to the router.

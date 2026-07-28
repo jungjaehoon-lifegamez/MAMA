@@ -14,7 +14,7 @@
 
 // Core components
 export { MessageRouter, createMockAgentLoop } from './message-router.js';
-export type { AgentLoopClient, AgentLoopOptions, ProcessingResult } from './message-router.js';
+export type { AgentLoopClient, AgentLoopOptions } from './message-router.js';
 
 export { SessionStore } from './session-store.js';
 
@@ -102,3 +102,15 @@ export type {
   GatewayPluginModule,
   LoadedPlugin,
 } from './types.js';
+
+// The turn contract, exported directly. Re-exporting it through the router module would
+// leave every external consumer depending on the concrete implementation.
+export type {
+  BlockedTurn,
+  CompletedTurn,
+  ProcessingResult,
+  ProcessOptions,
+  SessionDirectory,
+  TurnOutcomeBase,
+  TurnProcessor,
+} from './turn-contract.js';

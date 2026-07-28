@@ -28,7 +28,8 @@ import type {
   ContentBlock,
 } from './types.js';
 import { downloadFile, buildContentBlocks } from './attachment-utils.js';
-import type { MessageRouter, ProcessingResult } from './message-router.js';
+import type { ProcessingResult } from './turn-contract.js';
+import type { SessionDirectory, TurnProcessor } from './turn-contract.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
 import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
 import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
@@ -53,7 +54,9 @@ export interface DiscordGatewayOptions {
   /** Discord bot token */
   token: string;
   /** Message router for processing messages */
-  messageRouter: MessageRouter;
+  turnProcessor: TurnProcessor;
+  /** Reading sessions to NAME channels is a display concern, asked for by name. */
+  sessionDirectory: SessionDirectory;
   /** Default channel ID for fallback message/file sends */
   defaultChannelId?: string;
   /** Gateway configuration */
@@ -143,10 +146,8 @@ export class DiscordGateway extends BaseGateway {
 
   constructor(options: DiscordGatewayOptions) {
     super({
-      turnProcessor: options.messageRouter,
-      // Named narrowly: this surface reads sessions to NAME its channels, which is a
-      // display concern, not turn ownership.
-      sessionDirectory: options.messageRouter,
+      turnProcessor: options.turnProcessor,
+      sessionDirectory: options.sessionDirectory,
     });
     this.token = options.token;
     this.defaultChannelId = options.defaultChannelId;
