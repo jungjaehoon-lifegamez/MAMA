@@ -1859,6 +1859,7 @@ export class GatewayToolExecutor {
     if (
       toolName === 'mama_search' ||
       toolName === 'mama_recall' ||
+      toolName === 'mama_provenance' ||
       toolName === 'context_compile'
     ) {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
@@ -5186,6 +5187,18 @@ export class GatewayToolExecutor {
       } as GatewayToolResult;
     }
 
+    // Tier 3 is denied context_compile, its sanctioned path to raw connector data. A
+    // per-citation event reader would reopen exactly that, one event at a time, so the
+    // same denial applies here - fail closed on a Tier-3 designation from either source.
+    const tierContext = this.getExecutionState();
+    if (tierContext.agentContext?.tier === 3 || tierContext.envelope?.tier === 3) {
+      return {
+        success: false,
+        code: 'permission_denied_tier3',
+        error: 'mama_provenance is not allowed for Tier 3 agents.',
+      } as GatewayToolResult;
+    }
+
     const scopeResolution = this.resolveMamaRecallScopes(input, 'mama_provenance');
     if (scopeResolution.denial) {
       return scopeResolution.denial;
@@ -5198,14 +5211,16 @@ export class GatewayToolExecutor {
     }
 
     const ctx = this.getExecutionState();
-    // `null` means this caller carries no connector grant to narrow by - scope alone then
-    // decides. An empty grant is not the same thing and correctly resolves nothing.
-    const connectors = ctx.envelope ? ctx.envelope.scope.raw_connectors : null;
+    // No envelope means no connector grant, and no grant means NO raw events - never all
+    // of them. The raw reader fails closed on exactly this input and so does this call.
+    const connectors = ctx.envelope?.scope.raw_connectors ?? [];
+    const projectIds = (ctx.envelope?.scope.project_refs ?? []).map((project) => project.id);
 
     try {
       const resolution = await resolveMemoryProvenanceLive(memoryId, {
         scopes: scopeResolution.scopes,
         connectors,
+        projectIds,
       });
       return { success: true, data: resolution } as GatewayToolResult;
     } catch (error) {
