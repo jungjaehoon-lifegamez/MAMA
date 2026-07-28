@@ -22,10 +22,16 @@
 import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
 import {
+  changeCoverage,
   ensureEffectLedger,
   isUsableCause,
+  listEffects,
   recordEffect,
   recordUnattributedChange,
+  type ChangeCoverage,
+  type EffectQuery,
+  type EffectRecord,
+  type EffectTarget,
 } from '../evidence/effects.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
@@ -1347,6 +1353,22 @@ export class TaskLedger implements TaskSource {
     const trustedContext = this.loadTemporalWorkContextInternal(suppliedContext.attemptId);
     this.assertTemporalContextMatches(suppliedContext, trustedContext);
     return trustedContext;
+  }
+
+  /**
+   * What this system changed, and what it changed it for.
+   *
+   * Reads live beside the writes because the effect ledger shares the tasks database on
+   * purpose. Exposed here rather than by handing out the connection: the ledger owns both
+   * halves, so a change and its account of itself cannot drift apart.
+   */
+  listChanges(query: EffectQuery = {}): EffectRecord[] {
+    return listEffects(this.db as never, query);
+  }
+
+  /** Of what this system changed, how much rests on evidence. */
+  changeCoverage(sinceMs?: number, targetType?: EffectTarget): ChangeCoverage {
+    return changeCoverage(this.db as never, sinceMs, targetType);
   }
 
   getTemporalEffect(attemptId: number): TemporalEffectReceipt | null {

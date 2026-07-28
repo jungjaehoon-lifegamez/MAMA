@@ -141,6 +141,7 @@ import type {
   TemporalEvidenceAttestation,
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
+import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -3153,6 +3154,20 @@ export class GatewayToolExecutor {
             );
           }
           return { success: true, messages: queryMessages(msgInput) };
+        }
+        case 'changes_read': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          // Coverage and totals ride with the rows for the same reason task_list carries
+          // its own: "I changed 12 things" and "I can say why for 4 of them" are
+          // different claims, and a page of rows without the count it was drawn from
+          // states more than the ledger holds.
+          return readChanges(
+            this.taskLedger,
+            input as ChangesReadInput,
+            Date.now()
+          ) as GatewayToolResult;
         }
         case 'task_list': {
           if (!this.taskLedger) {

@@ -132,6 +132,7 @@ export const DEFAULT_ROLES: RolesConfig = {
         'trello_card',
         'trello_kanban',
         'task_list',
+        'changes_read',
         'task_create',
         'task_update',
         'schedule_upcoming',

@@ -117,8 +117,12 @@ describe('TypeDefinitionGenerator', () => {
       // join is what keeps cross-store claims off title matching), then
       // 11500->12000 for mama_provenance (deliberate: the return type spells out
       // every nullable field, because a resolver that hid which supports were
-      // missing would defeat the tool).
-      expect(dts.length).toBeLessThan(12000);
+      // missing would defeat the tool), then 12000->12400 for changes_read
+      // (deliberate: without it the only way to answer "what changed since last
+      // time" is to re-read current state and infer the delta, which costs far
+      // more than these 90 tokens every run and is how a report ends up
+      // restating the board instead of naming the change).
+      expect(dts.length).toBeLessThan(12400);
     });
   });
 
@@ -126,8 +130,9 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance (deliberate)
-      expect(tokens).toBeLessThan(3000);
+      // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance,
+      // ->3100 changes_read (all deliberate)
+      expect(tokens).toBeLessThan(3100);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

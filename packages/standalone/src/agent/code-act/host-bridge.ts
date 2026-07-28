@@ -858,6 +858,25 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'changes_read',
+    description:
+      'Work-item changes THIS system made in a window, newest first, with what each rested on. cause_state "attributed" names its source events; "unattributed" means the change cannot be explained. ONE PAGE: total is the full match count, returned is what you got. Runs that changed nothing are absent by design.',
+    params: [
+      {
+        name: 'since',
+        type: 'string',
+        required: false,
+        description: 'ISO date-time or "Nd"/"Nh"/"Nm"; default 24h',
+      },
+      { name: 'target_type', type: 'string', required: false },
+      { name: 'cause_state', type: 'string', required: false },
+      { name: 'limit', type: 'number', required: false, description: 'default 50, max 200' },
+    ],
+    returnType:
+      '{ coverage: { attributed: number; unattributed: number }; since: string; total: number; returned: number; changes: Array<{ kind: string; target_type: string; target_id: string; cause_state: string; source_event_ids: string[]; channel: string | null; run_id: string | null; at: string }> }',
+    category: 'memory',
+  },
+  {
     name: 'task_list',
     description:
       'List native task-ledger work items (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. Page with cursor until nextCursor is null before claiming anything about all open items; total is the full match count.',
@@ -1009,6 +1028,8 @@ export const READ_ONLY_TOOLS = new Set([
   'trello_kanban',
   // Native task ledger reads: the pipeline projection's source of truth.
   'task_list',
+  // What the system itself changed, and on what evidence. Reads the effect ledger.
+  'changes_read',
   // Read-only join of the ledger against the live board; mutates nothing.
   'task_external_correlation',
   // Calendar read: deadline/schedule cross-checks in reports and reconciles.
