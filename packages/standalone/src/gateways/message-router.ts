@@ -259,10 +259,8 @@ export interface TurnProcessor {
   processTurn(message: NormalizedMessage, options?: ProcessOptions): Promise<ProcessingResult>;
 }
 
-/**
- * Message processing result
- */
-export interface ProcessingResult {
+/** Fields every turn outcome carries, whatever happened. */
+interface TurnOutcomeBase {
   /** Response text from agent */
   response: string;
   /** Session ID used */
@@ -272,6 +270,40 @@ export interface ProcessingResult {
   /** Processing duration in milliseconds */
   duration: number;
 }
+
+/**
+ * A turn that reached the model and produced run identity.
+ *
+ * The identity is here rather than optional on one flat shape because a turn can end
+ * WITHOUT ever reaching the model - the security path answers directly. With optional
+ * fields, a caller cannot tell "this run has no id" from "this turn had no run", and any
+ * later work that resolves a delivered claim back to its evidence depends on exactly that
+ * distinction.
+ */
+export interface CompletedTurn extends TurnOutcomeBase {
+  outcome: 'completed';
+  /** Model run this turn produced, when the backend reported one. */
+  modelRunId?: string | null;
+  /** Stable id for this inbound turn. */
+  sourceTurnId: string;
+  /** Canonical reference to the message that started it. */
+  sourceMessageRef: string;
+}
+
+/** A turn answered without a model run - the caller must not look for run identity. */
+export interface BlockedTurn extends TurnOutcomeBase {
+  outcome: 'blocked';
+  /** Why no model run exists. */
+  reason: 'security_block';
+}
+
+/**
+ * Message processing result.
+ *
+ * Discriminated on `outcome`. Both variants keep the original four fields, so every
+ * existing caller that reads `response` or `duration` is unaffected.
+ */
+export type ProcessingResult = CompletedTurn | BlockedTurn;
 
 /**
  * Sensitive patterns that should only be configured via MAMA OS Viewer
@@ -831,6 +863,8 @@ Go to the **Settings** tab to configure:
 This protects your credentials from being exposed in chat logs.`;
 
       return {
+        outcome: 'blocked',
+        reason: 'security_block',
         response: securityResponse,
         sessionId: 'security-block',
         injectedDecisions: [],
@@ -853,6 +887,9 @@ This protects your credentials from being exposed in chat logs.`;
     let cliSessionId = initialSession.sessionId;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
+    // Captured at turn scope so the completed result can carry it out; the inner
+    // assignment sits inside the agent-run block and is not visible at the return.
+    let completedModelRunId: string | null = null;
     const sourceTurnId =
       message.metadata?.messageId ?? `generated:${randomUUID().replace(/-/g, '')}`;
     const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
@@ -1241,6 +1278,7 @@ This protects your credentials from being exposed in chat logs.`;
           const result = await this.agentLoop.runWithContent(contentBlocks, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
+          completedModelRunId = result.modelRunId ?? completedModelRunId;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         } else {
           const pageCtx = this.getPageContextPrefix(message);
@@ -1249,6 +1287,7 @@ This protects your credentials from being exposed in chat logs.`;
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
+          completedModelRunId = result.modelRunId ?? completedModelRunId;
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         }
 
@@ -1378,12 +1417,18 @@ This protects your credentials from being exposed in chat logs.`;
       // Release session lock AFTER final persistence to prevent out-of-order turns
       releaseCliSessionLock();
 
-      // 6. Return result
+      // 6. Return result. Run identity rides out with it: the router already generated
+      // the turn id and message ref and already knew the model run, and kept all three
+      // to itself, so nothing downstream could refer to what a turn actually produced.
       return {
+        outcome: 'completed',
         response,
         sessionId: session.id,
         injectedDecisions: context.decisions,
         duration: Date.now() - startTime,
+        modelRunId: completedModelRunId,
+        sourceTurnId,
+        sourceMessageRef,
       };
     } finally {
       // Session persistence, media post-processing, and history writes can all

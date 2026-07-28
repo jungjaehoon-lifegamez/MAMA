@@ -80,3 +80,76 @@ describe('TurnProcessor contract', () => {
     expect(elsewhere.processTurn).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * A turn can end without ever reaching the model - the security path answers directly.
+ * With run identity as optional fields on one flat shape, a caller cannot tell "no id
+ * recorded" from "no run happened", and anything that later resolves a delivered claim
+ * back to its evidence rests on exactly that distinction.
+ */
+describe('turn outcome is discriminated', () => {
+  it('carries run identity on a completed turn', () => {
+    const completed: ProcessingResult = {
+      outcome: 'completed',
+      response: 'here is where things stand',
+      sessionId: 's1',
+      injectedDecisions: [],
+      duration: 12,
+      modelRunId: 'run_1',
+      sourceTurnId: 'turn_1',
+      sourceMessageRef: 'telegram:chat-1:turn_1',
+    };
+
+    expect(completed.outcome).toBe('completed');
+    if (completed.outcome === 'completed') {
+      expect(completed.sourceMessageRef).toContain('turn_1');
+    }
+  });
+
+  it('states why a blocked turn has no run instead of leaving it absent', () => {
+    const blocked: ProcessingResult = {
+      outcome: 'blocked',
+      reason: 'security_block',
+      response: 'refused',
+      sessionId: 'security-block',
+      injectedDecisions: [],
+      duration: 1,
+    };
+
+    expect(blocked.outcome).toBe('blocked');
+    if (blocked.outcome === 'blocked') {
+      expect(blocked.reason).toBe('security_block');
+    }
+    // The discriminant is what makes this a compile-time question rather than a
+    // runtime guess: run identity is not reachable on this branch at all.
+    expect('modelRunId' in blocked).toBe(false);
+  });
+
+  it('keeps the original fields on both branches so existing callers are untouched', () => {
+    const outcomes: ProcessingResult[] = [
+      {
+        outcome: 'completed',
+        response: 'a',
+        sessionId: 's',
+        injectedDecisions: [],
+        duration: 1,
+        modelRunId: null,
+        sourceTurnId: 't',
+        sourceMessageRef: 'r',
+      },
+      {
+        outcome: 'blocked',
+        reason: 'security_block',
+        response: 'b',
+        sessionId: 's',
+        injectedDecisions: [],
+        duration: 1,
+      },
+    ];
+
+    for (const outcome of outcomes) {
+      expect(typeof outcome.response).toBe('string');
+      expect(typeof outcome.duration).toBe('number');
+    }
+  });
+});
