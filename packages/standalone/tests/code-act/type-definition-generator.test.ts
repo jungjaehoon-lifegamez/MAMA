@@ -114,8 +114,11 @@ describe('TypeDefinitionGenerator', () => {
       // Ceiling raised 10700->11100 for trello_kanban (deliberate: one bulk
       // snapshot call replaces a per-card search fan-out in reports), then
       // 11100->11500 for task_external_correlation (deliberate: the provenance
-      // join is what keeps cross-store claims off title matching).
-      expect(dts.length).toBeLessThan(11500);
+      // join is what keeps cross-store claims off title matching), then
+      // 11500->12000 for mama_provenance (deliberate: the return type spells out
+      // every nullable field, because a resolver that hid which supports were
+      // missing would defeat the tool).
+      expect(dts.length).toBeLessThan(12000);
     });
   });
 
@@ -123,7 +126,8 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2900); // 2700->2800 trello_kanban, ->2900 correlation (deliberate)
+      // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance (deliberate)
+      expect(tokens).toBeLessThan(3000);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

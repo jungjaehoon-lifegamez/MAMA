@@ -56,6 +56,7 @@ const MEMORY_SCOPED_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
 ]);
 
@@ -230,7 +231,11 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
 }
 
 function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
-  if (!['mama_save', 'mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
+  if (
+    !['mama_save', 'mama_search', 'mama_recall', 'mama_provenance', 'context_compile'].includes(
+      toolName
+    )
+  ) {
     return [];
   }
   if (!isRecord(args) || args.scopes === undefined) {

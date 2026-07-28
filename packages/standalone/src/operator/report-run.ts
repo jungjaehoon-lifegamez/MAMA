@@ -30,6 +30,7 @@ const GATHER_TOOLS = new Set<string>([
   'kagemusha_tasks',
   'kagemusha_messages',
   'mama_recall',
+  'mama_provenance',
   'mama_search',
   'context_compile',
 ]);

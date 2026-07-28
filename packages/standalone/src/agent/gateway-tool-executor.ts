@@ -34,6 +34,7 @@ import {
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -42,6 +43,7 @@ import type {
   SaveDecisionInput,
   SearchInput,
   RecallInput,
+  ProvenanceInput,
   ContextCompileInput,
   CodeActInput,
   DriveBrowseInput,
@@ -351,6 +353,7 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
   'mama_update',
   'mama_add',
@@ -403,6 +406,7 @@ const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
 ]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
@@ -1895,7 +1899,10 @@ export class GatewayToolExecutor {
     });
   }
 
-  private resolveMamaRecallScopes(input: RecallInput): {
+  private resolveMamaRecallScopes(
+    input: { scopes?: unknown },
+    toolName: 'mama_recall' | 'mama_provenance' = 'mama_recall'
+  ): {
     scopes: MemoryScope[];
     denial?: GatewayToolResult;
   } {
@@ -1912,7 +1919,7 @@ export class GatewayToolExecutor {
         denial: {
           success: false,
           code: 'memory_scope_invalid',
-          error: 'mama_recall scopes must be valid memory scope objects.',
+          error: `${toolName} scopes must be valid memory scope objects.`,
         } as GatewayToolResult,
       };
     }
@@ -1924,7 +1931,7 @@ export class GatewayToolExecutor {
           denial: {
             success: false,
             code: 'memory_scope_denied',
-            error: 'mama_recall requires an active session or envelope for caller-supplied scopes.',
+            error: `${toolName} requires an active session or envelope for caller-supplied scopes.`,
           } as GatewayToolResult,
         };
       }
@@ -1945,7 +1952,7 @@ export class GatewayToolExecutor {
         denial: {
           success: false,
           code: 'memory_scope_denied',
-          error: 'mama_recall requested scopes outside the active session or envelope.',
+          error: `${toolName} requested scopes outside the active session or envelope.`,
         } as GatewayToolResult,
       };
     }
@@ -2763,6 +2770,8 @@ export class GatewayToolExecutor {
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
+        case 'mama_provenance':
+          return await this.handleMamaProvenance(input as ProvenanceInput);
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update': {
@@ -5152,6 +5161,57 @@ export class GatewayToolExecutor {
       return {
         success: false,
         error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
+  }
+
+  /**
+   * Answer what a stored claim rests on.
+   *
+   * The counterpart to recall, and the reason recall now returns an id at all: an agent
+   * that can only read memories can assert them, while an agent that can resolve them can
+   * say which ones a statement stands on - or that a statement stands on nothing. That
+   * second answer is the one the original bad report could not produce.
+   *
+   * Scope is re-derived here rather than trusted from the caller, and the connector grant
+   * is read off the active envelope, so this path can never show an event that the normal
+   * raw read would refuse.
+   */
+  private async handleMamaProvenance(input: ProvenanceInput): Promise<GatewayToolResult> {
+    const memoryId = typeof input.memory_id === 'string' ? input.memory_id.trim() : '';
+    if (memoryId.length === 0) {
+      return {
+        success: false,
+        error: 'memory_id is required',
+      } as GatewayToolResult;
+    }
+
+    const scopeResolution = this.resolveMamaRecallScopes(input, 'mama_provenance');
+    if (scopeResolution.denial) {
+      return scopeResolution.denial;
+    }
+    if (scopeResolution.scopes.length === 0) {
+      return {
+        success: false,
+        error: 'mama_provenance requires scopes (provide via input or active agent context)',
+      } as GatewayToolResult;
+    }
+
+    const ctx = this.getExecutionState();
+    // `null` means this caller carries no connector grant to narrow by - scope alone then
+    // decides. An empty grant is not the same thing and correctly resolves nothing.
+    const connectors = ctx.envelope ? ctx.envelope.scope.raw_connectors : null;
+
+    try {
+      const resolution = await resolveMemoryProvenanceLive(memoryId, {
+        scopes: scopeResolution.scopes,
+        connectors,
+      });
+      return { success: true, data: resolution } as GatewayToolResult;
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to resolve provenance: ${error instanceof Error ? error.message : String(error)}`,
       } as GatewayToolResult;
     }
   }

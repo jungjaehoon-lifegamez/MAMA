@@ -190,7 +190,9 @@ describe('Code-Act Integration', () => {
     // 12700->13100: trello_kanban declaration (deliberate ceiling bump).
     // 13100->13500: task_external_correlation, the provenance join that keeps
     // cross-store claims off title matching (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(13500);
+    // 13500->14000: mama_provenance, which is what lets a claim be traced back to
+    // the events behind it instead of asserted (deliberate ceiling bump).
+    expect(fullPrompt.length).toBeLessThan(14000);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {
