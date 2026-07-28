@@ -40,7 +40,7 @@ function deps(overrides: Partial<ProvenanceResolverDeps> = {}): ProvenanceResolv
     lookupMemoryProvenance: () => record(),
     lookupEvent: () => event(),
     isVisible: () => true,
-    isMemoryVisible: () => true,
+    isSupportVisible: () => true,
     ...overrides,
   };
 }
@@ -173,12 +173,14 @@ describe('resolveMemoryProvenance', () => {
               { kind: 'memory', id: 'mem_hidden' },
             ],
           }),
-        isMemoryVisible: (id) => id === 'mem_visible',
+        isSupportVisible: (support) => support.id === 'mem_visible',
       })
     );
 
     expect(resolution.supports).toEqual([{ kind: 'memory', id: 'mem_visible' }]);
-    expect(resolution.unresolved).toEqual([{ eventIndexId: null, reason: 'outside_scope' }]);
+    expect(resolution.unresolved).toEqual([
+      { kind: 'memory', eventIndexId: null, reason: 'outside_scope' },
+    ]);
     // Naming it would confirm that a specific memory exists just outside the caller's
     // reach - the same thing the top-level unknown_memory answer refuses to do.
     expect(JSON.stringify(resolution)).not.toContain('mem_hidden');
@@ -195,6 +197,52 @@ describe('resolveMemoryProvenance', () => {
 
     expect(resolution.supports).toEqual([]);
     expect(resolution.reason).toBe('outside_scope');
+  });
+
+  // A message ref is built as `source:channelId:turnId`, so naming one hands over a
+  // channel identifier. Every memory carrying one is also bound to global:system, which
+  // every caller holds - so unchecked, this reached any agent that could read the memory.
+  it('withholds a message ref from a caller outside that channel', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () =>
+          record({ sourceRefs: [{ kind: 'message', id: 'chat:private-channel:42' }] }),
+        isSupportVisible: (support) => support.kind !== 'message',
+      })
+    );
+
+    expect(resolution.supports).toEqual([]);
+    expect(resolution.unresolved).toEqual([
+      { kind: 'message', eventIndexId: null, reason: 'outside_scope' },
+    ]);
+    expect(JSON.stringify(resolution)).not.toContain('private-channel');
+  });
+
+  // Three different withholdings used to render as the same shape, so an agent could not
+  // say whether an observation or a claim was the thing it could not see.
+  it('says which kind of support was withheld', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () =>
+          record({
+            sourceRefs: [
+              { kind: 'memory', id: 'mem_hidden' },
+              { kind: 'raw', connector: 'board', eventIndexId: 'evt_1' },
+              { kind: 'unsupported' },
+            ],
+          }),
+        isSupportVisible: () => false,
+        isVisible: () => false,
+      })
+    );
+
+    expect(resolution.unresolved.map((entry) => entry.kind)).toEqual([
+      'memory',
+      'event',
+      'unknown',
+    ]);
   });
 
   // Recorded support must not crowd out the reason. It is present on nearly every memory,
@@ -237,7 +285,9 @@ describe('resolveMemoryProvenance', () => {
 
     expect(resolution.status).toBe('partial');
     expect(resolution.events).toHaveLength(1);
-    expect(resolution.unresolved).toEqual([{ eventIndexId: 'evt_gone', reason: 'event_deleted' }]);
+    expect(resolution.unresolved).toEqual([
+      { kind: 'event', eventIndexId: 'evt_gone', reason: 'event_deleted' },
+    ]);
     expect(resolution.reason).toBeUndefined();
   });
 });
