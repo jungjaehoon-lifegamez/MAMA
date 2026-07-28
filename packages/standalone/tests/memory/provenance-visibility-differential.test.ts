@@ -14,7 +14,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Database from 'better-sqlite3';
 import { readRawCandidates } from '@jungjaehoon/mama-core/context-compile';
-import { isEventVisibleNow } from '../../src/memory/provenance-live.js';
+import {
+  EVENT_INDEX_COLUMNS,
+  isEventVisibleNow,
+  toIndexedEvent,
+  type EventRow,
+} from '../../src/memory/provenance-live.js';
 import type { IndexedEvent } from '../../src/memory/provenance-resolver.js';
 
 interface EventFixture {
@@ -26,6 +31,8 @@ interface EventFixture {
   tenantId: string | null;
   /** Defaults to BASE_MS. Varied so the reader's time clause is not dead on both sides. */
   observedMs?: number;
+  /** Written to event_datetime when set, so it can differ from source_timestamp_ms. */
+  eventDatetime?: number;
 }
 
 const BASE_MS = 1_785_000_000_000;
@@ -141,6 +148,20 @@ const EVENTS: EventFixture[] = [
     scopeId: 'alpha',
     projectId: 'p2',
     tenantId: 'default',
+  },
+  // event_datetime = 0 is the mapper's disagreement case: SQL COALESCE keeps the 0
+  // because it is not NULL, while a mapper that treats 0 as absent would fall through to
+  // source_timestamp_ms and judge a different instant. Only visible now that the struct
+  // comes from the production mapper.
+  {
+    id: 'e_zero_datetime',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: 'default',
+    observedMs: BASE_MS,
+    eventDatetime: 0,
   },
   // The time axis. Every fixture previously shared one timestamp and no scenario set a
   // window, so the reader's COALESCE bound never ran - the same uniformity that hid the
@@ -315,7 +336,7 @@ beforeAll(() => {
       fixture.id,
       fixture.connector,
       `src-${fixture.id}`,
-      fixture.observedMs ?? BASE_MS,
+      fixture.eventDatetime ?? fixture.observedMs ?? BASE_MS,
       fixture.observedMs ?? BASE_MS,
       Buffer.alloc(32),
       '2026-07-01T00:00:00.000Z',
@@ -333,21 +354,20 @@ afterAll(() => {
   db.close();
 });
 
-function toIndexedEvent(fixture: EventFixture): IndexedEvent {
-  return {
-    connector: fixture.connector,
-    eventIndexId: fixture.id,
-    sourceId: `src-${fixture.id}`,
-    channel: 'chan',
-    observedAt: new Date(fixture.observedMs ?? BASE_MS).toISOString(),
-    content: 'content body',
-    memoryScope:
-      fixture.scopeKind && fixture.scopeId
-        ? { kind: fixture.scopeKind, id: fixture.scopeId }
-        : null,
-    projectId: fixture.projectId,
-    tenantId: fixture.tenantId,
-  };
+/**
+ * Read the row back and map it with the PRODUCTION mapper.
+ *
+ * The earlier version hand-built this struct from the fixture, which meant the
+ * differential proved the predicate mirrors the reader while leaving the row-to-struct
+ * mapping unjudged - the layer where a scope-column coercion bug already lived once, and
+ * where `toIsoOrNull` and SQL `COALESCE` can still disagree about a zero timestamp. Going
+ * through the real mapper closes that layer instead of chasing it one column at a time.
+ */
+function indexedEvent(fixture: EventFixture): IndexedEvent {
+  const row = db
+    .prepare(`SELECT ${EVENT_INDEX_COLUMNS} FROM connector_event_index WHERE event_index_id = ?`)
+    .get(fixture.id) as EventRow;
+  return toIndexedEvent(row);
 }
 
 describe('provenance visibility matches the raw reader', () => {
@@ -376,7 +396,7 @@ describe('provenance visibility matches the raw reader', () => {
 
       const resolverVisible = new Set(
         EVENTS.filter((fixture) =>
-          isEventVisibleNow(toIndexedEvent(fixture), {
+          isEventVisibleNow(indexedEvent(fixture), {
             scopes: scenario.scopes as never,
             connectors: scenario.connectors,
             projectIds: scenario.projectIds,
@@ -417,7 +437,7 @@ describe('provenance visibility matches the raw reader', () => {
       );
 
       for (const fixture of EVENTS) {
-        const shown = isEventVisibleNow(toIndexedEvent(fixture), {
+        const shown = isEventVisibleNow(indexedEvent(fixture), {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
           projectIds: scenario.projectIds,

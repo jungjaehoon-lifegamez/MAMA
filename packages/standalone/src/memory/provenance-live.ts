@@ -24,7 +24,12 @@ import {
   type ProvenanceResolution,
 } from './provenance-resolver.js';
 
-interface EventRow {
+/** The columns the predicate needs. Shared so a test reads exactly what production does. */
+export const EVENT_INDEX_COLUMNS = `event_index_id, source_connector, source_id, channel, content,
+            event_datetime, source_timestamp_ms, memory_scope_kind, memory_scope_id,
+            project_id, tenant_id`;
+
+export interface EventRow {
   event_index_id: unknown;
   source_connector: unknown;
   source_id: unknown;
@@ -61,7 +66,10 @@ export interface LiveProvenanceOptions {
   projectIds?: readonly string[];
   tenantId?: string | null;
   /**
-   * Visibility clamp on observation time, in epoch ms. The reader bounds raw candidates
+   * Visibility clamp on observation time, in epoch ms. Only the MAX is threaded from the
+   * call site, deliberately: the reader's lower bound comes solely from `range.start_ms`,
+   * which is caller-chosen narrowing, while the upper bound folds in `as_of`, which is an
+   * authority clamp. A future reader should not "fix" the asymmetry. The reader bounds raw candidates
    * by `COALESCE(event_datetime, source_timestamp_ms)`; without a counterpart here, an
    * `as_of` boundary would hold for reading and not for citation. Nothing assigns
    * `envelope.scope.as_of` today, so these are null in practice - implemented now
@@ -212,17 +220,43 @@ async function resolveAdapter(): Promise<LookupAdapter> {
   }
 }
 
-function toIsoOrNull(value: unknown): string | null {
-  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
-    return new Date(value).toISOString();
+/**
+ * One column to epoch ms, with SQL's notion of "absent" and no other.
+ *
+ * `COALESCE` falls through on NULL and nothing else, so 0 and negative values are
+ * PRESENT to the reader. Treating them as missing - which this did, by requiring
+ * `value > 0` - made the mapper judge a different instant than the query: a row with
+ * `event_datetime = 0` compared as 0 in SQL and as its source timestamp here. The
+ * differential caught it the moment it was routed through the production mapper.
+ */
+function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
   }
   if (typeof value === 'string' && value.trim().length > 0) {
-    return value;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) {
+      return numeric;
+    }
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
   }
   return null;
 }
 
-function toIndexedEvent(row: EventRow): IndexedEvent {
+function coalesceObservedAt(eventDatetime: unknown, sourceTimestampMs: unknown): string | null {
+  const ms = toEpochMs(eventDatetime) ?? toEpochMs(sourceTimestampMs);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+/**
+ * Row to the struct the predicate judges.
+ *
+ * Exported because it is the layer BELOW the predicate, and a differential that
+ * hand-builds its own struct proves the predicate mirrors the reader while leaving this
+ * mapping unjudged - which is where a scope-column coercion bug already lived once.
+ */
+export function toIndexedEvent(row: EventRow): IndexedEvent {
   const scopeKind = typeof row.memory_scope_kind === 'string' ? row.memory_scope_kind : null;
   const scopeId = typeof row.memory_scope_id === 'string' ? row.memory_scope_id : null;
   // Only a row with BOTH columns null is unscoped, because that is the only row the
@@ -234,7 +268,7 @@ function toIndexedEvent(row: EventRow): IndexedEvent {
     eventIndexId: String(row.event_index_id ?? ''),
     sourceId: String(row.source_id ?? ''),
     channel: typeof row.channel === 'string' ? row.channel : null,
-    observedAt: toIsoOrNull(row.event_datetime) ?? toIsoOrNull(row.source_timestamp_ms),
+    observedAt: coalesceObservedAt(row.event_datetime, row.source_timestamp_ms),
     content: typeof row.content === 'string' ? row.content : '',
     memoryScope: unscoped ? null : { kind: scopeKind ?? '', id: scopeId ?? '' },
     projectId: typeof row.project_id === 'string' ? row.project_id : null,
@@ -292,7 +326,11 @@ async function loadRecord(
  * Which supporting memories the caller may see, resolved up front.
  *
  * The pure resolver checks visibility synchronously, so this pre-answers it for the
- * memory refs a record carries - typically a handful, up to fifty in the live corpus.
+ * memory refs a record carries - typically a handful, up to fifty in the live corpus,
+ * and up to two lookups each, so ~100 serial round trips at the tail. Bounded and off
+ * the hot path (agent-invoked, not per-turn); the second lookup fires only for an
+ * ancestor with no scope bindings, of which the live corpus has two. Worth replacing
+ * with one bindings query if a memory ever carries hundreds of ancestors.
  * Uses the SAME two-pass gate as the record itself, legacy pass included: an ancestor
  * with no scope bindings is admitted exactly where an unbound record is, rather than
  * reported out of scope because the second pass was skipped. An earlier docstring
@@ -331,6 +369,12 @@ async function resolveVisibleMemoryRefs(
 export function isMessageRefVisible(ref: string, scopes: readonly MemoryScopeRef[]): boolean {
   return scopes.some((scope) => scope.kind === 'channel' && ref.startsWith(`${scope.id}:`));
 }
+// Known limit, stated rather than discovered: the channel id space is not prefix-free.
+// Real channel ids already contain colons, so a channel `S:X` produces refs that a caller
+// scoped to `S` matches. Nothing in the ref format distinguishes "channel S, turn X:99"
+// from "channel S:X, turn 99", so this cannot be resolved by parsing harder - it would
+// take a delimiter the writer does not use. There are no such colliding pairs in the live
+// scope table, so the guarantee holds on today's data rather than structurally.
 
 /** Resolve one memory's support against the live index and the scopes active now. */
 export async function resolveMemoryProvenanceLive(
@@ -341,9 +385,7 @@ export async function resolveMemoryProvenanceLive(
   const visibleMemoryRefs = await resolveVisibleMemoryRefs(record, options.scopes);
   const adapter = await resolveAdapter();
   const statement = adapter.prepare(
-    `SELECT event_index_id, source_connector, source_id, channel, content,
-            event_datetime, source_timestamp_ms, memory_scope_kind, memory_scope_id,
-            project_id, tenant_id
+    `SELECT ${EVENT_INDEX_COLUMNS}
        FROM connector_event_index
       WHERE event_index_id = ?
       LIMIT 1`
@@ -368,10 +410,14 @@ export async function resolveMemoryProvenanceLive(
       if (support.kind === 'message') {
         return isMessageRefVisible(support.id, options.scopes);
       }
-      // An envelope hash is opaque and names nothing outside the system: it identifies
-      // the authorization a write happened under, not a channel, person or record.
-      // Correlating memories by it stays within what the caller could already read, so
-      // it is emitted - stated here rather than left as an unexamined default.
+      // Envelope hashes are emitted. The reason is NOT that the hash is inert - it is a
+      // lookup key into GET /api/memory/provenance, which serves unscoped results by
+      // hash and explicitly refuses scope filters (memory-provenance-handler.ts:26-33).
+      // What makes it safe is that the route sits behind requireAdminAuth
+      // (api/index.ts:215) and no role holding mama_provenance has an admin token or a
+      // shell. That is an access control in another file, so if this tool is ever
+      // granted to a role with either, revisit this line - the hash stops being safe
+      // before anything here changes.
       return true;
     },
     isVisible: (event) =>
