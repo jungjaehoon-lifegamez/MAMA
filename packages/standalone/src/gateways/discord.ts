@@ -714,7 +714,7 @@ export class DiscordGateway extends BaseGateway {
 
     let routerResult: ProcessingResult;
     try {
-      routerResult = await this.messageRouter.process(normalizedMessage, {
+      routerResult = await this.turnProcessor.processTurn(normalizedMessage, {
         onStream: streamCallbacks,
       });
     } finally {

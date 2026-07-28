@@ -20,7 +20,7 @@ import { Bot } from 'grammy';
 import type { Context } from 'grammy';
 import type { ContentBlock, MessageAttachment, NormalizedMessage } from './types.js';
 import { BaseGateway } from './base-gateway.js';
-import type { MessageRouter, ProcessingResult } from './message-router.js';
+import type { MessageRouter, TurnProcessor, ProcessingResult } from './message-router.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
 import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { buildContentBlocks, detectImageType } from './attachment-utils.js';
@@ -104,6 +104,7 @@ export interface TelegramGatewayOptions {
   token: string;
   /** Message router for processing messages */
   messageRouter: MessageRouter;
+  turnProcessor?: TurnProcessor;
   /** Gateway configuration */
   config?: Partial<TelegramGatewayConfig>;
   /** Polling interval in ms (unused with grammY, kept for interface compat) */
@@ -151,7 +152,8 @@ export class TelegramGateway extends BaseGateway {
   }
 
   constructor(options: TelegramGatewayOptions) {
-    super({ messageRouter: options.messageRouter });
+    // The seam lives on the shared surface role, not on this gateway.
+    super({ messageRouter: options.messageRouter, turnProcessor: options.turnProcessor });
     this.token = options.token;
     this.config = {
       enabled: true,
@@ -610,7 +612,7 @@ export class TelegramGateway extends BaseGateway {
       let result: ProcessingResult;
       this.messageLedger.claim(messageKey);
       try {
-        result = await this.messageRouter.process(normalizedMessage, {
+        result = await this.turnProcessor.processTurn(normalizedMessage, {
           onStream: presenter.callbacks(),
           onQueued: () => presenter.markQueued(),
         });
