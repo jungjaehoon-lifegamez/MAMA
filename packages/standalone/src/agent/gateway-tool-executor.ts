@@ -3153,18 +3153,25 @@ export class GatewayToolExecutor {
             search?: string;
             limit?: number;
             order?: string;
+            cursor?: string;
           };
+          // total/returned/nextCursor ride with the rows: a bounded read (default 50,
+          // max 200) is otherwise indistinguishable from the whole board, and a report
+          // that says "the open items are..." from one page states more than it read.
+          const page = this.taskLedger.listPage({
+            status: listInput.status as never,
+            channel: listInput.channel,
+            search: listInput.search,
+            limit: listInput.limit,
+            order: (listInput.order as never) ?? 'deadline_priority',
+            cursor: listInput.cursor,
+          });
           return {
             success: true,
-            tasks: this.taskLedger
-              .list({
-                status: listInput.status as never,
-                channel: listInput.channel,
-                search: listInput.search,
-                limit: listInput.limit,
-                order: (listInput.order as never) ?? 'deadline_priority',
-              })
-              .map(serializeTaskToolRecord),
+            tasks: page.tasks.map(serializeTaskToolRecord),
+            total: page.total,
+            returned: page.returned,
+            nextCursor: page.nextCursor,
           };
         }
         case 'task_create': {
