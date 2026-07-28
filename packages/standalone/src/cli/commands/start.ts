@@ -325,6 +325,77 @@ function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[]
   return unique;
 }
 
+/**
+ * The connector and channel a temporal task is bound to, as plain values.
+ *
+ * The workorder payload carries only HASHED source identifiers (they are compared, never
+ * read), so the binding has to come from the owner task row. Split on the FIRST colon:
+ * `source_channel` is `<connector>:<channelId>` and channel ids contain colons of their own.
+ *
+ * Returns null when the task names no channel - which is not a failure, it is a task whose
+ * reconcile may rest on no raw evidence at all.
+ */
+/**
+ * The scope a workorder envelope carries.
+ *
+ * Extracted so the binding can be asserted directly. Composed inline, the only way to test
+ * it was to re-compose it in the test - which tests the copy, and a copy of a scope
+ * construction is how this subsystem's authority drifts from what it claims.
+ */
+export function workOrderEnvelopeScope(input: {
+  workKind: string;
+  projectId: string;
+  laneConnectors: string[];
+  temporalBinding: { connector: string; channel: string } | null;
+}): {
+  project_refs: Array<{ kind: 'project'; id: string }>;
+  raw_connectors: string[];
+  memory_scopes: MemoryScopeRef[];
+  allowed_destinations: never[];
+} {
+  const isTemporal = input.workKind === 'temporal';
+  return {
+    project_refs: [{ kind: 'project' as const, id: input.projectId }],
+    // A temporal run reads its task's connector or nothing. Every other lane keeps the
+    // connectors it was configured with.
+    raw_connectors: isTemporal
+      ? input.temporalBinding
+        ? [input.temporalBinding.connector]
+        : []
+      : input.laneConnectors,
+    memory_scopes: [
+      ...deriveMemoryScopes({
+        source: 'operator',
+        channelId: `worker:${input.workKind}`,
+        projectId: input.projectId,
+      }),
+      ...(input.temporalBinding
+        ? [
+            {
+              kind: 'channel' as const,
+              id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
+            },
+          ]
+        : []),
+    ],
+    allowed_destinations: [],
+  };
+}
+
+export function temporalTaskBinding(
+  ledger: { getById: (id: number) => { sourceChannel?: string | null } | null },
+  taskId: number
+): { connector: string; channel: string } | null {
+  const sourceChannel = ledger.getById(taskId)?.sourceChannel;
+  if (typeof sourceChannel !== 'string') return null;
+  const separator = sourceChannel.indexOf(':');
+  if (separator <= 0 || separator === sourceChannel.length - 1) return null;
+  return {
+    connector: sourceChannel.slice(0, separator),
+    channel: sourceChannel.slice(separator + 1),
+  };
+}
+
 export function resolveCodeActMemoryScopes(
   baseScopes: readonly MemoryScopeRef[],
   adapter?: Pick<DatabaseAdapter, 'prepare'>
@@ -1464,8 +1535,24 @@ export async function runAgentLoop(
           },
           wo.id
         );
+        // A temporal run is bound to ONE task on ONE channel, and the packet check
+        // (temporalPacketRawSourcesWithinBoundSource) enforces exactly that: every raw ref
+        // must match the task's connector:channel or the reconcile is refused.
+        //
+        // While raw reads returned nothing that check was vacuous. Once the channel grant
+        // makes them return rows it stops being vacuous, and a lane-wide envelope hands
+        // the compile every configured channel of every granted connector - so every
+        // raw-backed temporal run would fail a check it cannot satisfy. The envelope has
+        // to say what the run is actually bound to.
+        //
+        // A task with no source channel gets no connector at all, which is the same answer
+        // from the other direction: the check requires zero raw refs for those, so the
+        // grant must be empty rather than merely narrow.
+        let temporalBinding: { connector: string; channel: string } | null = null;
         if (wo.workKind === 'temporal') {
-          runOptions.temporalWorkContext = buildTemporalWorkerContext(taskLedger, wo);
+          const temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+          runOptions.temporalWorkContext = temporalContext;
+          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
@@ -1487,22 +1574,21 @@ export async function runAgentLoop(
             source: 'watch',
             channel_id: `worker:${wo.workKind}`,
             trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
-            scope: {
-              project_refs: [{ kind: 'project' as const, id: projectId }],
-              raw_connectors: scopeDaemonRawConnectors(
-                codeActRawConnectors,
-                `workorder-${wo.workKind}`
-              ),
-              memory_scopes: resolveCodeActMemoryScopes(
-                deriveMemoryScopes({
-                  source: 'operator',
-                  channelId: `worker:${wo.workKind}`,
-                  projectId,
-                }),
-                getAdapter()
-              ),
-              allowed_destinations: [],
-            },
+            scope: (() => {
+              const scope = workOrderEnvelopeScope({
+                workKind: wo.workKind,
+                projectId,
+                laneConnectors: scopeDaemonRawConnectors(
+                  codeActRawConnectors,
+                  `workorder-${wo.workKind}`
+                ),
+                temporalBinding,
+              });
+              return {
+                ...scope,
+                memory_scopes: resolveCodeActMemoryScopes(scope.memory_scopes, getAdapter()),
+              };
+            })(),
             tier: 2,
             budget: { wall_seconds: wallSeconds },
             expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
