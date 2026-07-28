@@ -197,6 +197,10 @@ function toIsoOrNull(value: unknown): string | null {
 function toIndexedEvent(row: EventRow): IndexedEvent {
   const scopeKind = typeof row.memory_scope_kind === 'string' ? row.memory_scope_kind : null;
   const scopeId = typeof row.memory_scope_id === 'string' ? row.memory_scope_id : null;
+  // Only a row with BOTH columns null is unscoped, because that is the only row the
+  // reader's `IS NULL AND IS NULL` clause matches. Collapsing a half-populated or
+  // empty-string row to "unscoped" would hand it the legacy allowance the reader denies.
+  const unscoped = scopeKind === null && scopeId === null;
   return {
     connector: String(row.source_connector ?? ''),
     eventIndexId: String(row.event_index_id ?? ''),
@@ -204,7 +208,7 @@ function toIndexedEvent(row: EventRow): IndexedEvent {
     channel: typeof row.channel === 'string' ? row.channel : null,
     observedAt: toIsoOrNull(row.event_datetime) ?? toIsoOrNull(row.source_timestamp_ms),
     content: typeof row.content === 'string' ? row.content : '',
-    memoryScope: scopeKind && scopeId ? { kind: scopeKind, id: scopeId } : null,
+    memoryScope: unscoped ? null : { kind: scopeKind ?? '', id: scopeId ?? '' },
     projectId: typeof row.project_id === 'string' ? row.project_id : null,
     tenantId: typeof row.tenant_id === 'string' ? row.tenant_id : null,
   };
@@ -246,12 +250,37 @@ async function loadRecord(
   };
 }
 
+/**
+ * Which supporting memories the caller may see, resolved up front.
+ *
+ * The pure resolver checks visibility synchronously, so this pre-answers it for the few
+ * memory refs a record carries (about nine on average here). Same gate as the record
+ * itself: `getMemoryProvenance` returns null for anything outside the active scopes.
+ */
+async function resolveVisibleMemoryRefs(
+  record: MemoryProvenanceRecord | null,
+  scopes: MemoryScopeRef[]
+): Promise<Set<string>> {
+  const visible = new Set<string>();
+  if (!record) {
+    return visible;
+  }
+  const ids = new Set(record.sourceRefs.flatMap((ref) => (ref.kind === 'memory' ? [ref.id] : [])));
+  for (const id of ids) {
+    if (await getMemoryProvenance(id, { scopes })) {
+      visible.add(id);
+    }
+  }
+  return visible;
+}
+
 /** Resolve one memory's support against the live index and the scopes active now. */
 export async function resolveMemoryProvenanceLive(
   memoryId: string,
   options: LiveProvenanceOptions
 ): Promise<ProvenanceResolution> {
   const record = await loadRecord(memoryId, options.scopes);
+  const visibleMemoryRefs = await resolveVisibleMemoryRefs(record, options.scopes);
   const adapter = await resolveAdapter();
   const statement = adapter.prepare(
     `SELECT event_index_id, source_connector, source_id, channel, content,
@@ -274,6 +303,7 @@ export async function resolveMemoryProvenanceLive(
       // ref was rewritten rather than that the event moved. Treat it as gone, not as data.
       return event.connector === connector ? event : null;
     },
+    isMemoryVisible: (id) => visibleMemoryRefs.has(id),
     isVisible: (event) =>
       isEventVisibleNow(event, {
         scopes: options.scopes,

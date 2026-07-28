@@ -40,6 +40,7 @@ function deps(overrides: Partial<ProvenanceResolverDeps> = {}): ProvenanceResolv
     lookupMemoryProvenance: () => record(),
     lookupEvent: () => event(),
     isVisible: () => true,
+    isMemoryVisible: () => true,
     ...overrides,
   };
 }
@@ -156,6 +157,44 @@ describe('resolveMemoryProvenance', () => {
       { kind: 'memory', id: 'mem_0' },
     ]);
     expect(resolution.unresolved).toEqual([]);
+  });
+
+  // The disclosure the first version of `supports` created: it named every ancestor
+  // memory without checking any of them, turning one readable claim into a list of
+  // identities from scopes the caller was never granted.
+  it('withholds a supporting memory the caller may not see, id included', () => {
+    const resolution = resolveMemoryProvenance(
+      'mem_1',
+      deps({
+        lookupMemoryProvenance: () =>
+          record({
+            sourceRefs: [
+              { kind: 'memory', id: 'mem_visible' },
+              { kind: 'memory', id: 'mem_hidden' },
+            ],
+          }),
+        isMemoryVisible: (id) => id === 'mem_visible',
+      })
+    );
+
+    expect(resolution.supports).toEqual([{ kind: 'memory', id: 'mem_visible' }]);
+    expect(resolution.unresolved).toEqual([{ eventIndexId: null, reason: 'outside_scope' }]);
+    // Naming it would confirm that a specific memory exists just outside the caller's
+    // reach - the same thing the top-level unknown_memory answer refuses to do.
+    expect(JSON.stringify(resolution)).not.toContain('mem_hidden');
+  });
+
+  // Without a memory store the resolver cannot re-check, so it withholds rather than
+  // assumes. Failing open here would make the check optional in practice.
+  it('withholds memory supports when it has no way to check them', () => {
+    const resolution = resolveMemoryProvenance('mem_1', {
+      lookupMemoryProvenance: () => record({ sourceRefs: [{ kind: 'memory', id: 'mem_0' }] }),
+      lookupEvent: () => null,
+      isVisible: () => true,
+    });
+
+    expect(resolution.supports).toEqual([]);
+    expect(resolution.reason).toBe('outside_scope');
   });
 
   // Recorded support must not crowd out the reason. It is present on nearly every memory,

@@ -101,6 +101,42 @@ const EVENTS: EventFixture[] = [
     projectId: null,
     tenantId: null,
   },
+  // The tenant axis. The first version of this matrix left it uniformly null on every
+  // fixture AND unset on every scenario, so the reader's tenant filter never ran on
+  // either side - and a resolver that skipped the filter entirely looked identical to
+  // one that applied it. 19,394 of the live rows are tenant-null.
+  {
+    id: 'e_tenant_default',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: 'default',
+  },
+  {
+    id: 'e_tenant_other',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p1',
+    tenantId: 'other',
+  },
+  {
+    id: 'e_user_scope',
+    connector: 'board',
+    scopeKind: 'user',
+    scopeId: 'u1',
+    projectId: null,
+    tenantId: 'default',
+  },
+  {
+    id: 'e_proj_p2',
+    connector: 'board',
+    scopeKind: 'project',
+    scopeId: 'alpha',
+    projectId: 'p2',
+    tenantId: 'default',
+  },
 ];
 
 interface Scenario {
@@ -108,6 +144,8 @@ interface Scenario {
   scopes: Array<{ kind: string; id: string }>;
   connectors: string[];
   projectIds: string[];
+  /** deriveEffectiveTenantId() returns 'default', so production always resolves one. */
+  tenantId?: string;
 }
 
 const SCENARIOS: Scenario[] = [
@@ -157,6 +195,37 @@ const SCENARIOS: Scenario[] = [
     scopes: [{ kind: 'global', id: 'system' }],
     connectors: [],
     projectIds: [],
+  },
+  // The shape production actually runs: a resolved tenant on every call.
+  {
+    name: 'production shape with a resolved tenant',
+    scopes: [
+      { kind: 'project', id: 'alpha' },
+      { kind: 'user', id: 'u1' },
+      { kind: 'global', id: 'system' },
+    ],
+    connectors: ['board'],
+    projectIds: ['p1'],
+    tenantId: 'default',
+  },
+  {
+    // A resolved tenant makes hasScopedVisibility true, so the legacy allowance can
+    // never fire here - the case where the predicate previously diverged.
+    name: 'global-system alone but with a resolved tenant',
+    scopes: [{ kind: 'global', id: 'system' }],
+    connectors: ['board'],
+    projectIds: [],
+    tenantId: 'default',
+  },
+  {
+    name: 'a multi-project window with a resolved tenant',
+    scopes: [
+      { kind: 'project', id: 'alpha' },
+      { kind: 'global', id: 'system' },
+    ],
+    connectors: ['board'],
+    projectIds: ['p1', 'p2'],
+    tenantId: 'default',
   },
 ];
 
@@ -247,6 +316,7 @@ describe('provenance visibility matches the raw reader', () => {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
           project_refs: scenario.projectIds.map((id) => ({ id })) as never,
+          ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
           limit: 100,
         } as never
       );
@@ -263,6 +333,7 @@ describe('provenance visibility matches the raw reader', () => {
             scopes: scenario.scopes as never,
             connectors: scenario.connectors,
             projectIds: scenario.projectIds,
+            tenantId: scenario.tenantId ?? null,
           })
         ).map((fixture) => fixture.id)
       );
@@ -282,6 +353,7 @@ describe('provenance visibility matches the raw reader', () => {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
           project_refs: scenario.projectIds.map((id) => ({ id })) as never,
+          ...(scenario.tenantId === undefined ? {} : { tenant_id: scenario.tenantId }),
           limit: 100,
         } as never
       );
@@ -296,6 +368,7 @@ describe('provenance visibility matches the raw reader', () => {
           scopes: scenario.scopes as never,
           connectors: scenario.connectors,
           projectIds: scenario.projectIds,
+          tenantId: scenario.tenantId ?? null,
         });
         if (shown) {
           expect(

@@ -132,6 +132,16 @@ export interface ProvenanceResolverDeps {
    * becoming a standing capability.
    */
   isVisible(event: IndexedEvent): boolean;
+  /**
+   * Whether a supporting MEMORY is visible under the scope active now.
+   *
+   * The same rule as `isVisible`, applied to the other kind of support. Without it the
+   * resolver would name the ancestors of a visible memory whether or not the caller may
+   * see them - turning one readable claim into a list of identities from scopes the
+   * caller was never granted. Optional so the pure module stays usable without a memory
+   * store; when absent, memory supports are withheld rather than assumed visible.
+   */
+  isMemoryVisible?(memoryId: string): boolean;
   /** Excerpt bound in characters. */
   excerptChars?: number;
 }
@@ -210,6 +220,11 @@ export function resolveMemoryProvenance(
     if (ref.kind !== 'raw') {
       if (ref.kind === 'unsupported') {
         unresolved.push({ eventIndexId: null, reason: 'unsupported_ref' });
+      } else if (ref.kind === 'memory' && !(deps.isMemoryVisible?.(ref.id) ?? false)) {
+        // Named as absent, with the id withheld. Disclosing it would confirm that a
+        // specific memory exists just outside the caller's scope, which is the thing
+        // the top-level `unknown_memory` answer is careful not to do.
+        unresolved.push({ eventIndexId: null, reason: 'outside_scope' });
       } else {
         supports.push({ kind: ref.kind, id: ref.id });
       }

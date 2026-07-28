@@ -35,6 +35,7 @@ import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
 import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
+import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -5214,13 +5215,22 @@ export class GatewayToolExecutor {
     // No envelope means no connector grant, and no grant means NO raw events - never all
     // of them. The raw reader fails closed on exactly this input and so does this call.
     const connectors = ctx.envelope?.scope.raw_connectors ?? [];
-    const projectIds = (ctx.envelope?.scope.project_refs ?? []).map((project) => project.id);
+    // Derived exactly the way the compile path derives them, through the same functions.
+    // Taking `project_refs` off the envelope directly and skipping tenant entirely is what
+    // made an earlier version wider than the reader: the reader always resolves a tenant
+    // ('default' today), and an absent tenant on this side skipped the filter rather than
+    // narrowing it - so tenant-null and cross-tenant rows resolved that reading refuses.
+    const projectIds = ctx.envelope
+      ? deriveEffectiveProjectRefs(ctx.envelope).map((project) => project.id)
+      : [];
+    const tenantId = deriveEffectiveTenantId();
 
     try {
       const resolution = await resolveMemoryProvenanceLive(memoryId, {
         scopes: scopeResolution.scopes,
         connectors,
         projectIds,
+        tenantId,
       });
       return { success: true, data: resolution } as GatewayToolResult;
     } catch (error) {
