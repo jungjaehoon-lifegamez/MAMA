@@ -206,18 +206,89 @@ describe('getTrelloKanban + snapshot cache', () => {
 
   it('one call returns every non-empty column with labels and assignee names', async () => {
     writeConfig();
-    const columns = await getTrelloKanban({}, { configPath, fetchFn: routed() });
-    expect(columns).toHaveLength(1); // empty list omitted
-    expect(columns[0]).toMatchObject({
+    const snapshot = await getTrelloKanban({}, { configPath, fetchFn: routed() });
+    expect(snapshot.columns).toHaveLength(1); // empty list omitted
+    expect(snapshot.columns[0]).toMatchObject({
       board: 'Board One',
       list: '進行',
       count: 1,
+      returned: 1,
     });
-    expect(columns[0]?.cards[0]).toMatchObject({
+    expect(snapshot.columns[0]?.cards[0]).toMatchObject({
       name: 'ex_100_card',
       labels: ['初稿'],
       assignees: ['Alice Kim'],
     });
+    expect(snapshot).toMatchObject({ complete: true, truncated: false });
+    expect(snapshot.cacheAgeMs).toBeLessThan(1_000); // fresh read, not a reused snapshot
+    expect(Date.parse(snapshot.observedAt)).not.toBeNaN();
+    expect(snapshot.boards).toEqual([
+      { boardId: 'b1', board: 'Board One', status: 'ok', rosterDegraded: false },
+    ]);
+  });
+
+  // The failure this encodes: an unreadable board used to return as a board with no
+  // cards, so a report could state "nothing open there" about data it never read.
+  it('marks a board whose card read failed instead of reporting it as empty', async () => {
+    writeConfig();
+    const failing = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/boards/b1/lists')) return new Response('nope', { status: 500 });
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const snapshot = await getTrelloKanban({}, { configPath, fetchFn: failing });
+
+    expect(snapshot.columns).toEqual([]);
+    expect(snapshot.complete).toBe(false);
+    expect(snapshot.boards).toEqual([
+      { boardId: 'b1', board: 'Board One', status: 'failed', rosterDegraded: false },
+    ]);
+  });
+
+  it('keeps card coverage when only the optional member roster fails', async () => {
+    writeConfig();
+    const rosterFails = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/boards/b1/lists')) return new Response(JSON.stringify(boardLists));
+      if (u.includes('/boards/b1/members')) return new Response('nope', { status: 500 });
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const snapshot = await getTrelloKanban({}, { configPath, fetchFn: rosterFails });
+
+    expect(snapshot.boards[0]).toMatchObject({ status: 'ok', rosterDegraded: true });
+    expect(snapshot.complete).toBe(true);
+    expect(snapshot.columns[0]?.cards[0]).toMatchObject({ name: 'ex_100_card' });
+  });
+
+  it('reports truncation when a column is longer than maxCardsPerList', async () => {
+    writeConfig();
+    const many = [
+      {
+        id: 'l1',
+        name: '進行',
+        cards: Array.from({ length: 3 }, (_, index) => ({
+          id: `c${index}`,
+          name: `ex_10${index}_card`,
+          due: null,
+          dateLastActivity: '2026-07-24T10:00:00.000Z',
+          idMembers: [],
+          labels: [],
+        })),
+      },
+    ];
+    const fetchFn = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.includes('/boards/b1/lists')) return new Response(JSON.stringify(many));
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+
+    const snapshot = await getTrelloKanban({ maxCardsPerList: 2 }, { configPath, fetchFn });
+
+    expect(snapshot.columns[0]).toMatchObject({ count: 3, returned: 2 });
+    expect(snapshot.truncated).toBe(true);
+    expect(snapshot.complete).toBe(false);
   });
 
   it('repeated reads within the TTL reuse one snapshot (report-turn hot path)', async () => {
