@@ -192,7 +192,10 @@ describe('Code-Act Integration', () => {
     // cross-store claims off title matching (deliberate ceiling bump).
     // 13500->14000: mama_provenance, which is what lets a claim be traced back to
     // the events behind it instead of asserted (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(14000);
+    // 14000->14400: changes_read, which is what lets the system say what IT changed
+    // and on what evidence, instead of inferring a delta from current state
+    // (deliberate ceiling bump).
+    expect(fullPrompt.length).toBeLessThan(14400);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

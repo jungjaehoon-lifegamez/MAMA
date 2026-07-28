@@ -188,6 +188,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         roleName: 'workorder-board',
         innerTools: [
           'agent_notices',
+          'changes_read',
           'context_compile',
           'contract_no_update',
           'kagemusha_entities',
@@ -316,6 +317,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         }).some((tool) => tool.name === CODE_ACT_MARKER)
       ).toBe(true);
       expect(projected.names).toEqual([
+        'changes_read',
         'kagemusha_entities',
         'kagemusha_messages',
         'kagemusha_overview',

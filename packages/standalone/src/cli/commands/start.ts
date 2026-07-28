@@ -390,6 +390,7 @@ const WORKORDER_TOOL_POLICIES = {
     roleName: 'workorder-board',
     allowedTools: [
       'agent_notices',
+      'changes_read',
       'context_compile',
       'contract_no_update',
       'kagemusha_entities',
@@ -463,6 +464,10 @@ const OPERATOR_REPORT_TOOL_POLICY = {
     // context_compile({connectors:['trello']}) - raw card bodies pulled into a tier-2
     // lane that can write durable memory. The report needs the whole-board read, not
     // raw compilation, and its gather instructions never ask for it.
+    // What the report is FOR: what moved since last time. Until now the only way to
+    // answer that was to re-read current state and infer the delta, which is how a
+    // report ends up restating the board instead of naming the change.
+    'changes_read',
     'kagemusha_entities',
     'kagemusha_messages',
     'kagemusha_overview',

@@ -352,14 +352,30 @@ export interface ChangeCoverage {
  * The single number this ledger exists to make answerable, and the one the previous shape
  * of the system could not produce at all.
  */
-export function changeCoverage(adapter: EffectAdapter, sinceMs?: number): ChangeCoverage {
+export function changeCoverage(
+  adapter: EffectAdapter,
+  sinceMs?: number,
+  targetType?: EffectTarget
+): ChangeCoverage {
+  // Coverage must describe the same population as the rows a caller is looking at, or the
+  // two halves of one answer disagree and the reader cannot tell which is wrong.
+  const clauses: string[] = [];
+  const params: unknown[] = [];
+  if (sinceMs !== undefined) {
+    clauses.push('created_at >= ?');
+    params.push(sinceMs);
+  }
+  if (targetType !== undefined) {
+    clauses.push('target_type = ?');
+    params.push(targetType);
+  }
   const rows = adapter
     .prepare(
       `SELECT cause_state, COUNT(*) AS n FROM evidence_effects
-        ${sinceMs === undefined ? '' : 'WHERE created_at >= ?'}
+        ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
         GROUP BY cause_state`
     )
-    .all(...(sinceMs === undefined ? [] : [sinceMs])) as Array<Record<string, unknown>>;
+    .all(...params) as Array<Record<string, unknown>>;
   const coverage: ChangeCoverage = { attributed: 0, unattributed: 0 };
   for (const row of rows) {
     if (row.cause_state === 'attributed') coverage.attributed = Number(row.n);
