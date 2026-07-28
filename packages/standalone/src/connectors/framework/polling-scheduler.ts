@@ -81,6 +81,39 @@ function findChannelConfig(
     | undefined;
 }
 
+/**
+ * The canonical key for a channel: the key the connector config declares it under.
+ *
+ * Connectors emit `item.channel` in whatever shape their upstream hands them, and measured
+ * across the live index that is usually a DISPLAY NAME - Trello board names against a
+ * config keyed by 24-character board ids, Slack channel names against a config keyed by
+ * channel ids, and so on for six of seven connectors. `findChannelConfig` already absorbs
+ * that by falling back to a name match, which is why nothing ever appeared broken: the
+ * binding succeeded, and then the un-canonicalised name was written to the event index,
+ * where every downstream reader compared it against the config KEY and matched nothing.
+ * Zero of 30,671 rows were readable in production.
+ *
+ * So the accommodation moves to one place and produces one answer. Names are for people;
+ * identity is the upstream's stable id, and this is where a name becomes one.
+ *
+ * Returns null when the channel is not configured at all - the honest answer, and the one
+ * that keeps an unconfigured channel out of the index rather than inventing a key for it.
+ */
+export function canonicalChannelKey(
+  item: Pick<NormalizedItem, 'source' | 'channel'>,
+  channelConfigs: Record<string, Record<string, ChannelConfig>>
+): string | null {
+  const sourceConfigs = channelConfigs[item.source];
+  if (!sourceConfigs) {
+    return null;
+  }
+  if (sourceConfigs[item.channel]) {
+    return item.channel;
+  }
+  const matched = Object.entries(sourceConfigs).find(([, cfg]) => cfg.name === item.channel);
+  return matched ? matched[0] : null;
+}
+
 function bindConfiguredScope(
   item: NormalizedItem,
   channelConfigs: Record<string, Record<string, ChannelConfig>>
@@ -194,7 +227,15 @@ export class PollingScheduler {
             `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
           );
           if (items.length > 0) {
-            const scopedItems = items.map((item) => bindConfiguredScope(item, channelConfigs));
+            const scopedItems = items.map((item) => {
+              // Canonicalise BEFORE anything durable is written. Storing the display name
+              // is what made the index unreadable; a name that reached storage was never
+              // going to be reconciled afterwards, because nothing downstream could tell
+              // it apart from an id.
+              const canonical = canonicalChannelKey(item, channelConfigs);
+              const keyed = canonical === null ? item : { ...item, channel: canonical };
+              return bindConfiguredScope(keyed, channelConfigs);
+            });
             this.rawStore.save(name, scopedItems);
             if (this.rawIndexSink) {
               await this.rawIndexSink(name, scopedItems);
