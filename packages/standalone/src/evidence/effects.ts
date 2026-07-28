@@ -22,6 +22,32 @@
  * The kinds are a closed set for the same reason the peer's are: an open `effect_kind`
  * column drifts into free text within a month, and then counting what the system actually
  * did requires reading strings. Adding a kind should be a deliberate edit here.
+ *
+ * ONE TABLE, BOTH NUMBERS. A change that could not name a cause is still recorded here,
+ * marked `unattributed` and holding an empty cause list that the schema forces to stay
+ * empty. This is not the softening warned about above - `recordEffect` still refuses a
+ * causeless effect, and a writer has to call `recordUnattributedChange` by name to admit
+ * one. It is here because the failure this whole redesign keeps finding is a numerator
+ * with no denominator. Split across two tables, "every effect names its cause" is true by
+ * construction and means nothing; in one table the ratio is a single GROUP BY.
+ *
+ * WHAT THIS TABLE DOES NOT YET ANSWER, stated plainly so nobody reads more into the
+ * number than it holds: the "1,169 done, five receipts" comparison needs RUNS beside
+ * CHANGES, and runs still live in `operator_tasks`. `changeCoverage` answers "of the
+ * changes recorded, how many rest on evidence" - not "how many runs changed anything".
+ * The join that answers the second question needs the run id on both sides, and only one
+ * side carries it today.
+ *
+ * Recording the unattributed change rather than refusing the write follows the operating
+ * rule this system runs under: enforce only what is irreversible or externally visible,
+ * and make everything else loud. A task row is neither, so the ledger observes it.
+ *
+ * A CAUSE IS AN EVENT ID, and the schema checks the shape rather than trusting the helper
+ * to have filtered - `[""]`, `[null]`, `[0]` and a 200 KB string are all "non-empty
+ * arrays" and all lies. What the schema still cannot check is whether the id names an
+ * event that exists and is readable: the event index lives in a different database. A
+ * cited cause that resolves to nothing is a fabricated citation, and catching those is the
+ * next thing this needs.
  */
 import { createHash } from 'node:crypto';
 
@@ -37,13 +63,19 @@ export type EffectKind =
 /** What it happened to. */
 export type EffectTarget = 'task' | 'report_slot' | 'memory' | 'wiki_page';
 
-export interface EffectInput {
-  /** The model run that produced the change, so an effect is traceable to a transcript. */
-  runId: string;
+/** Whether the change could name what caused it. */
+export type CauseState = 'attributed' | 'unattributed';
+
+/** Fields every durable change carries, whether or not it can name a cause. */
+export interface ChangeInput {
+  /**
+   * The model run that produced the change, so it is traceable to a transcript.
+   * Null when no model run did - a host-internal write is not made more honest by
+   * inventing a run id for it.
+   */
+  runId?: string | null;
   /** Evidence channel this change concerns, when it concerns one. */
   channelId?: string | null;
-  /** Events that caused it. Must not be empty. */
-  sourceEventIds: readonly string[];
   kind: EffectKind;
   targetType: EffectTarget;
   targetId: string;
@@ -52,10 +84,16 @@ export interface EffectInput {
   atMs: number;
 }
 
+export interface EffectInput extends ChangeInput {
+  /** Events that caused it. Must not be empty. */
+  sourceEventIds: readonly string[];
+}
+
 export interface EffectRecord {
   id: number;
-  runId: string;
+  runId: string | null;
   channelId: string | null;
+  causeState: CauseState;
   sourceEventIds: string[];
   kind: EffectKind;
   targetType: EffectTarget;
@@ -75,21 +113,72 @@ const EFFECT_KINDS: readonly EffectKind[] = [
 
 const EFFECT_TARGETS: readonly EffectTarget[] = ['task', 'report_slot', 'memory', 'wiki_page'];
 
+/** Long enough for any upstream id, short enough that the column cannot carry content. */
+const MAX_EVENT_ID_LENGTH = 200;
+const PAYLOAD_HASH_LENGTH = 32;
+
+/**
+ * Whether a value can serve as a cause at all.
+ *
+ * Callers ask before writing rather than discovering it as a constraint violation,
+ * because the answer changes what they record, not whether they may proceed: a malformed
+ * cause makes a change unattributed, it does not make the change illegitimate. Legacy
+ * rows really do carry 400-character source identifiers, and refusing to let the operator
+ * update a work item because its upstream id is the wrong shape would be enforcement
+ * bought with the owner's work.
+ */
+export function isUsableCause(value: string | null | undefined): value is string {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= MAX_EVENT_ID_LENGTH;
+}
+
 const quoted = (values: readonly string[]): string => values.map((v) => `'${v}'`).join(', ');
 
 export const EVIDENCE_EFFECTS_DDL = `
   CREATE TABLE IF NOT EXISTS evidence_effects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    run_id TEXT NOT NULL,
+    run_id TEXT,
     channel_id TEXT,
+    cause_state TEXT NOT NULL CHECK (cause_state IN ('attributed', 'unattributed')),
     source_event_ids_json TEXT NOT NULL
-      CHECK (json_valid(source_event_ids_json) AND json_array_length(source_event_ids_json) >= 1),
+      CHECK (
+        json_valid(source_event_ids_json)
+        AND (
+          (cause_state = 'attributed' AND json_array_length(source_event_ids_json) >= 1)
+          OR (cause_state = 'unattributed' AND json_array_length(source_event_ids_json) = 0)
+        )
+      ),
     effect_kind TEXT NOT NULL CHECK (effect_kind IN (${quoted(EFFECT_KINDS)})),
     target_type TEXT NOT NULL CHECK (target_type IN (${quoted(EFFECT_TARGETS)})),
-    target_id TEXT NOT NULL,
-    payload_hash TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    target_id TEXT NOT NULL CHECK (length(trim(target_id)) > 0),
+    payload_hash TEXT NOT NULL CHECK (length(payload_hash) = ${PAYLOAD_HASH_LENGTH}),
+    created_at INTEGER NOT NULL CHECK (typeof(created_at) = 'integer' AND created_at >= 0)
   )
+`;
+
+/**
+ * Per-element shape of the cause list.
+ *
+ * A trigger rather than a CHECK because SQLite forbids subqueries in CHECK, and checking
+ * each element needs `json_each`. Without this the column enforces only "non-empty array",
+ * which `[""]` and `[null]` and `[0]` all satisfy while naming nothing.
+ *
+ * The length bound is not cosmetic: an unbounded cause id turns an audit ledger into a
+ * content channel, which is the one thing the payload is hashed to avoid.
+ */
+const EVIDENCE_EFFECTS_CAUSE_TRIGGER = `
+  CREATE TRIGGER IF NOT EXISTS evidence_effects_cause_shape
+  BEFORE INSERT ON evidence_effects
+  WHEN EXISTS (
+    SELECT 1 FROM json_each(NEW.source_event_ids_json)
+     WHERE json_each.type <> 'text'
+        OR trim(json_each.value) = ''
+        OR length(json_each.value) > ${MAX_EVENT_ID_LENGTH}
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'evidence_effects: a cause must be a non-empty event id');
+  END
 `;
 
 const INDEXES = [
@@ -99,6 +188,9 @@ const INDEXES = [
      ON evidence_effects(target_type, target_id, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_evidence_effects_channel
      ON evidence_effects(channel_id, created_at DESC)`,
+  // Coverage is meant to be cheap enough that nobody has an excuse not to look.
+  `CREATE INDEX IF NOT EXISTS idx_evidence_effects_coverage
+     ON evidence_effects(created_at DESC, cause_state)`,
 ];
 
 interface EffectAdapter {
@@ -110,6 +202,7 @@ interface EffectAdapter {
 
 export function ensureEffectLedger(adapter: EffectAdapter): void {
   adapter.prepare(EVIDENCE_EFFECTS_DDL).run();
+  adapter.prepare(EVIDENCE_EFFECTS_CAUSE_TRIGGER).run();
   for (const sql of INDEXES) {
     adapter.prepare(sql).run();
   }
@@ -129,7 +222,7 @@ export function payloadHash(payload: unknown): string {
   return createHash('sha256')
     .update(JSON.stringify(payload ?? null))
     .digest('hex')
-    .slice(0, 32);
+    .slice(0, PAYLOAD_HASH_LENGTH);
 }
 
 /**
@@ -141,19 +234,43 @@ export function payloadHash(payload: unknown): string {
  * receipts existed.
  */
 export function recordEffect(adapter: EffectAdapter, input: EffectInput): number {
-  const sourceEventIds = [...new Set(input.sourceEventIds.filter((id) => id.trim().length > 0))];
+  const sourceEventIds = [
+    ...new Set(input.sourceEventIds.filter(isUsableCause).map((id) => id.trim())),
+  ];
   if (sourceEventIds.length === 0) {
     throw new EffectWithoutCauseError(input.kind, input.targetId);
   }
+  return insertChange(adapter, input, 'attributed', sourceEventIds);
+}
+
+/**
+ * Record a durable change that could not name what caused it.
+ *
+ * Deliberately a separate function with an uncomfortable name. Every call is an admission
+ * that the system changed something it cannot explain, and the point is that the count of
+ * these is visible next to the count of real effects rather than absent from both.
+ */
+export function recordUnattributedChange(adapter: EffectAdapter, input: ChangeInput): number {
+  return insertChange(adapter, input, 'unattributed', []);
+}
+
+function insertChange(
+  adapter: EffectAdapter,
+  input: ChangeInput,
+  causeState: CauseState,
+  sourceEventIds: readonly string[]
+): number {
   const result = adapter
     .prepare(
       `INSERT INTO evidence_effects
-         (run_id, channel_id, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         (run_id, channel_id, cause_state, source_event_ids_json,
+          effect_kind, target_type, target_id, payload_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
-      input.runId,
+      input.runId ?? null,
       input.channelId ?? null,
+      causeState,
       JSON.stringify(sourceEventIds),
       input.kind,
       input.targetType,
@@ -168,6 +285,7 @@ export interface EffectQuery {
   runId?: string;
   targetType?: EffectTarget;
   targetId?: string;
+  causeState?: CauseState;
   sinceMs?: number;
   limit?: number;
 }
@@ -188,6 +306,10 @@ export function listEffects(adapter: EffectAdapter, query: EffectQuery = {}): Ef
     clauses.push('target_id = ?');
     params.push(query.targetId);
   }
+  if (query.causeState !== undefined) {
+    clauses.push('cause_state = ?');
+    params.push(query.causeState);
+  }
   if (query.sinceMs !== undefined) {
     clauses.push('created_at >= ?');
     params.push(query.sinceMs);
@@ -205,8 +327,9 @@ export function listEffects(adapter: EffectAdapter, query: EffectQuery = {}): Ef
 
   return rows.map((row) => ({
     id: Number(row.id),
-    runId: String(row.run_id),
+    runId: typeof row.run_id === 'string' ? row.run_id : null,
     channelId: typeof row.channel_id === 'string' ? row.channel_id : null,
+    causeState: String(row.cause_state) as CauseState,
     sourceEventIds: JSON.parse(String(row.source_event_ids_json)) as string[],
     kind: String(row.effect_kind) as EffectKind,
     targetType: String(row.target_type) as EffectTarget,
@@ -214,4 +337,33 @@ export function listEffects(adapter: EffectAdapter, query: EffectQuery = {}): Ef
     payloadHash: String(row.payload_hash),
     atMs: Number(row.created_at),
   }));
+}
+
+export interface ChangeCoverage {
+  /** Changes that named the events behind them. */
+  attributed: number;
+  /** Changes the system made and could not explain. */
+  unattributed: number;
+}
+
+/**
+ * How much of what the system changed rests on evidence.
+ *
+ * The single number this ledger exists to make answerable, and the one the previous shape
+ * of the system could not produce at all.
+ */
+export function changeCoverage(adapter: EffectAdapter, sinceMs?: number): ChangeCoverage {
+  const rows = adapter
+    .prepare(
+      `SELECT cause_state, COUNT(*) AS n FROM evidence_effects
+        ${sinceMs === undefined ? '' : 'WHERE created_at >= ?'}
+        GROUP BY cause_state`
+    )
+    .all(...(sinceMs === undefined ? [] : [sinceMs])) as Array<Record<string, unknown>>;
+  const coverage: ChangeCoverage = { attributed: 0, unattributed: 0 };
+  for (const row of rows) {
+    if (row.cause_state === 'attributed') coverage.attributed = Number(row.n);
+    if (row.cause_state === 'unattributed') coverage.unattributed = Number(row.n);
+  }
+  return coverage;
 }

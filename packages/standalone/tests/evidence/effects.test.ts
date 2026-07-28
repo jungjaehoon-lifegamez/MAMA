@@ -8,10 +8,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   EffectWithoutCauseError,
+  changeCoverage,
   ensureEffectLedger,
   listEffects,
   payloadHash,
   recordEffect,
+  recordUnattributedChange,
 } from '../../src/evidence/effects.js';
 
 let db: Database.Database;
@@ -66,17 +68,67 @@ describe('effect ledger', () => {
   });
 
   // Enforced by the schema, not by callers remembering. A future writer that bypasses
-  // recordEffect must still be unable to store a causeless row.
+  // recordEffect must still be unable to store a causeless row that claims a cause.
   it('is enforced by the database, not only by the helper', () => {
     const insert = () =>
       db
         .prepare(
           `INSERT INTO evidence_effects
-             (run_id, channel_id, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
-           VALUES ('mr_1', NULL, '[]', 'task_update', 'task', 't1', 'h', 1)`
+             (run_id, channel_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', NULL, 'attributed', '[]', 'task_update', 'task', 't1', 'h', 1)`
         )
         .run();
     expect(insert).toThrow();
+  });
+
+  // The other direction of the same rule: a row cannot be filed as unexplained while
+  // carrying an explanation, so the coverage count cannot be gamed downward either.
+  it('will not store an unattributed row that carries a cause', () => {
+    const insert = () =>
+      db
+        .prepare(
+          `INSERT INTO evidence_effects
+             (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', 'unattributed', '["evt_1"]', 'task_update', 'task', 't1', 'h', 1)`
+        )
+        .run();
+    expect(insert).toThrow();
+  });
+
+  // "Non-empty array" is not the same as "names an event". Each of these satisfies the
+  // length check and names nothing, and the helper's own filter is no defence against a
+  // writer that inserts directly - which is what "enforced by the database" has to mean.
+  it('rejects a cause list whose entries are not event ids', () => {
+    const insert = (json: string) =>
+      db
+        .prepare(
+          `INSERT INTO evidence_effects
+             (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', 'attributed', ?, 'task_update', 'task', 't1', ?, 1)`
+        )
+        .run(json, 'a'.repeat(32));
+    for (const json of ['[""]', '["   "]', '[null]', '[0]', '[{}]', '[[]]']) {
+      expect(() => insert(json), json).toThrow(/non-empty event id/);
+    }
+    // An unbounded id would turn the cause column into a content channel - the one thing
+    // hashing the payload was meant to prevent.
+    expect(() => insert(JSON.stringify(['e'.repeat(201)]))).toThrow(/non-empty event id/);
+    expect(() => insert('["evt_1"]')).not.toThrow();
+  });
+
+  it('rejects a receipt with no target or no payload hash', () => {
+    const insert = (targetId: string, hash: string, createdAt: unknown) =>
+      db
+        .prepare(
+          `INSERT INTO evidence_effects
+             (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', 'attributed', '["evt_1"]', 'task_update', 'task', ?, ?, ?)`
+        )
+        .run(targetId, hash, createdAt);
+    expect(() => insert('', 'a'.repeat(32), 1)).toThrow();
+    expect(() => insert('  ', 'a'.repeat(32), 1)).toThrow();
+    expect(() => insert('t1', '', 1)).toThrow();
+    expect(() => insert('t1', 'a'.repeat(32), 'not-a-number')).toThrow();
   });
 
   it('rejects a kind or target outside the closed set', () => {
@@ -84,20 +136,47 @@ describe('effect ledger', () => {
       db
         .prepare(
           `INSERT INTO evidence_effects
-             (run_id, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
-           VALUES ('mr_1', '["e1"]', 'invented_kind', 'task', 't1', 'h', 1)`
+             (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', 'attributed', '["e1"]', 'invented_kind', 'task', 't1', 'h', 1)`
         )
         .run();
     const badTarget = () =>
       db
         .prepare(
           `INSERT INTO evidence_effects
-             (run_id, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
-           VALUES ('mr_1', '["e1"]', 'task_update', 'invented_target', 't1', 'h', 1)`
+             (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+           VALUES ('mr_1', 'attributed', '["e1"]', 'task_update', 'invented_target', 't1', 'h', 1)`
         )
         .run();
     expect(badKind).toThrow();
     expect(badTarget).toThrow();
+  });
+
+  // The denominator. Two tables would have made "every effect names its cause" true by
+  // construction and unfalsifiable - which is how 1,169 `done` rows coexisted with five
+  // receipts and nobody noticed.
+  it('counts what it could not explain next to what it could', () => {
+    recordEffect(adapter as never, base);
+    recordUnattributedChange(adapter as never, {
+      runId: 'mr_1',
+      kind: 'task_update',
+      targetType: 'task',
+      targetId: 'task_10',
+      payload: { status: 'done' },
+      atMs: base.atMs + 1,
+    });
+    expect(changeCoverage(adapter as never)).toEqual({ attributed: 1, unattributed: 1 });
+    expect(listEffects(adapter as never, { causeState: 'unattributed' })).toHaveLength(1);
+    expect(listEffects(adapter as never, { causeState: 'attributed' })[0]?.sourceEventIds).toEqual([
+      'evt_1',
+      'evt_2',
+    ]);
+  });
+
+  // A host-internal write is not made more honest by inventing a run id for it.
+  it('accepts a change no model run produced', () => {
+    recordEffect(adapter as never, { ...base, runId: null });
+    expect(listEffects(adapter as never)[0]?.runId).toBeNull();
   });
 
   // The ledger proves a change happened; it is not a copy of what was written. Storing the
