@@ -259,6 +259,26 @@ export interface TurnProcessor {
   processTurn(message: NormalizedMessage, options?: ProcessOptions): Promise<ProcessingResult>;
 }
 
+/**
+ * Session ownership, decided rather than left implicit.
+ *
+ * The IMPLEMENTATION owns the session. Note that nothing about a session appears in this
+ * contract's input: a caller cannot pass one in, and the id it gets back is the one the
+ * processor chose. That is deliberate. Durable conversation state, the backend resume
+ * decision and the per-channel lock are all held together today by the router, keyed by
+ * source plus channel, and splitting any of them across the boundary would mean two
+ * owners of one lock.
+ *
+ * A gateway therefore neither selects nor persists the session for a turn. It may still
+ * read session data for its own display concerns - naming a channel, listing what is
+ * active - which is not turn ownership.
+ *
+ * Known and deliberate exception: scheduled operator reports do NOT pass through here.
+ * They run their own lane against a forced fresh session, so this system currently has
+ * two session models. Unifying them needs a coordinator and is out of scope for the
+ * boundary; what matters here is that the split is stated instead of discovered later.
+ */
+
 /** Fields every turn outcome carries, whatever happened. */
 interface TurnOutcomeBase {
   /** Response text from agent */
