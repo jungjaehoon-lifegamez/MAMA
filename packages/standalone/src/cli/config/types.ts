@@ -101,6 +101,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       allowedTools: [
         'mama_search',
         'mama_recall',
+        'mama_provenance',
         'context_compile',
         'mama_load_checkpoint',
         'Read',
@@ -121,6 +122,7 @@ export const DEFAULT_ROLES: RolesConfig = {
       allowedTools: [
         'mama_search',
         'mama_recall',
+        'mama_provenance',
         'context_compile',
         'kagemusha_overview',
         'kagemusha_entities',

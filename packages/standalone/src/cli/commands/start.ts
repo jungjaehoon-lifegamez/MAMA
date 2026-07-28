@@ -467,6 +467,7 @@ const OPERATOR_REPORT_TOOL_POLICY = {
     'kagemusha_messages',
     'kagemusha_overview',
     'kagemusha_tasks',
+    'mama_provenance',
     'mama_recall',
     'mama_save',
     'mama_search',

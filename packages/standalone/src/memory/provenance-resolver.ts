@@ -84,6 +84,12 @@ export interface IndexedEvent {
   channel: string | null;
   observedAt: string | null;
   content: string;
+  /**
+   * The scope recorded on the event, or null when it was indexed before scoped
+   * indexing existed. Carried on the event so visibility is a pure function of it -
+   * a caller cannot re-check what it was not given.
+   */
+  memoryScope?: { kind: string; id: string } | null;
 }
 
 export interface ProvenanceResolverDeps {

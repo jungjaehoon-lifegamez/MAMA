@@ -48,6 +48,21 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'memory',
   },
   {
+    name: 'mama_provenance',
+    description: 'Trace a stored memory back to the events it rests on, under current scope',
+    params: [
+      { name: 'memory_id', type: 'string', required: true },
+      {
+        name: 'scopes',
+        type: "Array<{ kind: 'global' | 'user' | 'channel' | 'project'; id: string }>",
+        required: false,
+      },
+    ],
+    returnType:
+      "{ memoryId: string; status: 'resolved' | 'partial' | 'unresolved'; modelRunId: string | null; contextPacketId: string | null; events: Array<{ connector: string; eventIndexId: string; sourceId: string; channel: string | null; observedAt: string | null; excerpt: string }>; unresolved: Array<{ eventIndexId: string | null; reason: string }>; reason?: string }",
+    category: 'memory',
+  },
+  {
     name: 'mama_recall',
     description: 'Recall a scoped memory bundle with profile, memories, and graph context',
     params: [
@@ -967,6 +982,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
 export const READ_ONLY_TOOLS = new Set([
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'mama_load_checkpoint',
   'board_read',
   'audit_findings_read',

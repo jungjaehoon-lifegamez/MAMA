@@ -432,6 +432,15 @@ export interface SearchInput {
   diagnostics?: boolean;
 }
 
+/**
+ * Ask what a stored claim rests on. Scopes are optional and default to the active
+ * boundary, exactly as recall does - a memory id is a handle, never an authorization.
+ */
+export interface ProvenanceInput {
+  memory_id: string;
+  scopes?: ScopeRef[];
+}
+
 export interface RecallInput {
   query: string;
   scopes?: ScopeRef[];
@@ -726,6 +735,7 @@ export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
   | 'mama_recall'
+  | 'mama_provenance'
   | 'context_compile'
   | 'mama_update'
   | 'mama_load_checkpoint'
