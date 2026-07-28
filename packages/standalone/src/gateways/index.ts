@@ -113,4 +113,5 @@ export type {
   SessionDirectory,
   TurnOutcomeBase,
   TurnProcessor,
+  TurnProvenance,
 } from './turn-contract.js';

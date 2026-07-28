@@ -42,7 +42,7 @@ export abstract class BaseGateway implements Gateway {
    * the boundary belongs here rather than to any one of them. Connectors are not turn
    * sources at all; they are data the agent reads, and they never pass through here.
    *
-   * Defaults to the router, so behaviour is unchanged until something is injected.
+   * Required: a surface that serves turns needs this and nothing else.
    */
   protected turnProcessor: TurnProcessor;
   protected eventHandlers: GatewayEventHandler[] = [];
