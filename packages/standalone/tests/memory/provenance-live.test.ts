@@ -204,6 +204,14 @@ describe('isMessageRefVisible', () => {
     expect(isMessageRefVisible('chat:c1:99', [{ kind: 'global', id: 'system' }])).toBe(false);
   });
 
+  // The limit of the prefix rule, pinned so it is a known property rather than a
+  // surprise: a channel whose id extends another's with a colon is matched by the
+  // shorter scope. The ref format cannot distinguish the two cases, and the live scope
+  // table has no such pair - so this records today's guarantee, not a structural one.
+  it('matches a colon-extended channel id, which the ref format cannot disambiguate', () => {
+    expect(isMessageRefVisible('chat:c1:sub:99', channel)).toBe(true);
+  });
+
   // A turn id can be `generated:<uuid>`, so splitting on the last colon would
   // mis-attribute the ref. The prefix comparison is what makes that safe.
   it('handles a turn id that itself contains a colon', () => {
