@@ -1181,6 +1181,9 @@ export interface TurnInfo {
 /**
  * Agent loop run result
  */
+/** Why a run produced no resolvable handle, when it did not. */
+export type ModelRunProvenance = 'available' | 'backend_no_run' | 'commit_failed';
+
 export interface AgentLoopResult {
   /** Final text response from Claude */
   response: string;
@@ -1197,6 +1200,12 @@ export interface AgentLoopResult {
   stopReason: StopReason;
   /** Active model run id when the loop owns or inherited one. */
   modelRunId?: string | null;
+  /**
+   * Why `modelRunId` is absent, when it is. Distinguishes a backend that produces no run
+   * identity - an ordinary capability state - from a run that was created and then failed
+   * to commit, which leaves an orphaned record and needs repair.
+   */
+  modelRunProvenance?: ModelRunProvenance;
 }
 
 // ============================================================================

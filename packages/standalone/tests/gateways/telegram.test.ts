@@ -88,7 +88,7 @@ const mockMessageRouter: TurnProcessor = {
     sessionId: 'test-session',
     injectedDecisions: [],
     duration: 100,
-    modelRunId: 'run_test',
+    provenance: { status: 'available' as const, modelRunId: 'run_test' },
     sourceTurnId: 'turn_test',
     sourceMessageRef: 'telegram:test:turn_test',
   }),
@@ -564,7 +564,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
           sessionId: 'injected-session',
           injectedDecisions: [],
           duration: 3,
-          modelRunId: 'run_injected',
+          provenance: { status: 'available' as const, modelRunId: 'run_injected' },
           sourceTurnId: 'turn_injected',
           sourceMessageRef: 'telegram:7777:turn_injected',
         };

@@ -43,18 +43,22 @@ export interface TurnOutcomeBase {
  * cannot tell "no id recorded" from "no run happened", and anything that later traces a
  * delivered claim back to its evidence rests on exactly that distinction.
  */
+/**
+ * Whether this turn left a resolvable trail, and if not, why.
+ *
+ * A bare nullable id collapsed two different facts into one value: a backend that simply
+ * produces no run identity is an expected capability state, while a run that was created
+ * and then failed to commit is a durability failure someone has to repair. Both leave a
+ * resolver with nothing, so they looked identical - and only one of them is a problem.
+ */
+export type TurnProvenance =
+  | { status: 'available'; modelRunId: string }
+  | { status: 'unavailable'; reason: 'backend_no_run' | 'commit_failed' };
+
 export interface CompletedTurn extends TurnOutcomeBase {
   outcome: 'completed';
-  /**
-   * Durable model-run handle, or null when this turn has none.
-   *
-   * Required and nullable rather than optional: absent and null would otherwise mean the
-   * same thing to a reader, and they are different questions - "was the field set" versus
-   * "does a resolvable run exist". Null is returned honestly when the backend reported no
-   * run, or when its record could not be committed; the answer still stands, the handle
-   * does not.
-   */
-  modelRunId: string | null;
+  /** Whether a resolvable run handle exists for this turn, and why not when it does not. */
+  provenance: TurnProvenance;
   /** Stable id for this inbound turn. */
   sourceTurnId: string;
   /** Canonical reference to the message that started it. */

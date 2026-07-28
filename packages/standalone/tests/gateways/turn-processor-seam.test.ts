@@ -38,7 +38,7 @@ function result(response: string): ProcessingResult {
     sessionId: 's1',
     injectedDecisions: [],
     duration: 1,
-    modelRunId: 'run_1',
+    provenance: { status: 'available' as const, modelRunId: 'run_1' },
     sourceTurnId: 'turn_1',
     sourceMessageRef: 'surface:chat-1:turn_1',
   };
@@ -105,7 +105,7 @@ describe('turn outcome is discriminated', () => {
       sessionId: 's1',
       injectedDecisions: [],
       duration: 12,
-      modelRunId: 'run_1',
+      provenance: { status: 'available' as const, modelRunId: 'run_1' },
       sourceTurnId: 'turn_1',
       sourceMessageRef: 'telegram:chat-1:turn_1',
     };
@@ -143,7 +143,7 @@ describe('turn outcome is discriminated', () => {
         sessionId: 's',
         injectedDecisions: [],
         duration: 1,
-        modelRunId: null,
+        provenance: { status: 'unavailable' as const, reason: 'backend_no_run' as const },
         sourceTurnId: 't',
         sourceMessageRef: 'r',
       },
@@ -256,29 +256,51 @@ describe('the first surface routed through the seam', () => {
 });
 
 /**
- * A completed turn may still have no durable run handle. The distinction the contract
- * has to preserve is between "the field was not set" and "no resolvable run exists" -
- * they read identically when the field is optional, and only the second is a fact about
- * the world. Null is the honest answer; absence is a shrug.
+ * A completed turn may still have no resolvable trail. Two different facts used to share
+ * one null: a backend that produces no run identity at all, which is an ordinary
+ * capability state, and a run that was created and then failed to commit, which is a
+ * durability failure someone has to repair. A resolver treats both as "nothing to
+ * follow", so they looked the same - and only one of them is a problem.
  */
 describe('run identity is stated, not implied', () => {
-  it('requires the field on a completed turn, even when there is no run', () => {
-    const withoutRun: ProcessingResult = {
+  it('says a handle exists and what it is', () => {
+    const withRun: ProcessingResult = {
       outcome: 'completed',
       response: 'answered',
       sessionId: 's1',
       injectedDecisions: [],
       duration: 5,
-      modelRunId: null,
+      provenance: { status: 'available', modelRunId: 'run_1' },
       sourceTurnId: 'turn_1',
       sourceMessageRef: 'surface:chat:turn_1',
     };
 
-    expect(withoutRun.outcome).toBe('completed');
-    if (withoutRun.outcome === 'completed') {
-      // Present and explicitly empty - a consumer can tell this apart from "not recorded".
-      expect('modelRunId' in withoutRun).toBe(true);
-      expect(withoutRun.modelRunId).toBeNull();
+    if (withRun.outcome === 'completed' && withRun.provenance.status === 'available') {
+      expect(withRun.provenance.modelRunId).toBe('run_1');
+    } else {
+      throw new Error('expected an available handle');
     }
+  });
+
+  it('distinguishes a backend with no run from a run that failed to commit', () => {
+    const reasons = (['backend_no_run', 'commit_failed'] as const).map((reason) => {
+      const turn: ProcessingResult = {
+        outcome: 'completed',
+        response: 'answered',
+        sessionId: 's1',
+        injectedDecisions: [],
+        duration: 5,
+        provenance: { status: 'unavailable', reason },
+        sourceTurnId: 'turn_1',
+        sourceMessageRef: 'surface:chat:turn_1',
+      };
+      return turn.outcome === 'completed' && turn.provenance.status === 'unavailable'
+        ? turn.provenance.reason
+        : null;
+    });
+
+    // The distinction the old nullable id could not carry: one is expected, the other
+    // means an orphaned record is sitting in the audit trail.
+    expect(reasons).toEqual(['backend_no_run', 'commit_failed']);
   });
 });
