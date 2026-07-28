@@ -80,7 +80,7 @@ register({
 register({
   name: 'mama_provenance',
   description:
-    'Trace a stored memory back to the events it rests on. Returns status resolved, partial or unresolved with a named reason (missing_ref, legacy_unscoped, event_deleted, outside_scope, unsupported_ref, unknown_memory), the model run and context packet behind it, and a bounded excerpt per supporting event. Use it to state what a claim is grounded in - or that it is grounded in nothing.',
+    'Trace a stored memory back to what it rests on. Returns status resolved, partial or unresolved with a named reason (no_event_refs, missing_ref, legacy_unscoped, event_deleted, outside_scope, unsupported_ref, unknown_memory), the model run and context packet behind it, a bounded excerpt per supporting event, and supports[] for provenance that is a memory/envelope/message rather than an observation. no_event_refs means the claim rests on other claims and nothing observed - today that is most memories. Use it to state what a claim is grounded in, or that it is grounded in nothing.',
   category: 'memory',
   params: 'memory_id, scopes?',
 });
