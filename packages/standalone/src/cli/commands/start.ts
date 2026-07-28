@@ -458,7 +458,11 @@ const WORKORDER_TOOL_POLICIES = {
 const OPERATOR_REPORT_TOOL_POLICY = {
   roleName: 'operator-report',
   allowedTools: [
-    'context_compile',
+    // context_compile is deliberately ABSENT. Envelope scope is connector-level, so
+    // granting the board connector for trello_kanban would otherwise also permit
+    // context_compile({connectors:['trello']}) - raw card bodies pulled into a tier-2
+    // lane that can write durable memory. The report needs the whole-board read, not
+    // raw compilation, and its gather instructions never ask for it.
     'kagemusha_entities',
     'kagemusha_messages',
     'kagemusha_overview',

@@ -84,7 +84,10 @@ import type {
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
 import { extractAttachmentText } from './attachment-text-extractor.js';
-import { wrapUntrustedContent } from '../utils/untrusted-content.js';
+import {
+  isUntrustedExternalEvidenceTool,
+  wrapUntrustedContent,
+} from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
 import {
@@ -4981,11 +4984,11 @@ export class GatewayToolExecutor {
         return;
       }
       hostToolsInvoked.push(toolName);
-      if (
-        (toolName.startsWith('drive_') && toolName !== 'drive_upload') ||
-        toolName === 'ocr_image' ||
-        toolName === 'translate_conti'
-      ) {
+      // Board/card text is written by people outside this system and now reaches the
+      // report lane, whose composed text is delivered to the owner verbatim by host
+      // code with no intervening model. Deriving this from the connector map keeps a
+      // newly registered reader from arriving unfenced.
+      if (isUntrustedExternalEvidenceTool(toolName)) {
         usedUntrustedExternalEvidence = true;
       }
     };
