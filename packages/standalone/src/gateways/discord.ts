@@ -142,7 +142,7 @@ export class DiscordGateway extends BaseGateway {
   }
 
   constructor(options: DiscordGatewayOptions) {
-    super({ messageRouter: options.messageRouter });
+    super({ turnProcessor: options.messageRouter, messageRouter: options.messageRouter });
     this.token = options.token;
     this.defaultChannelId = options.defaultChannelId;
     this.multiAgentRuntime = options.multiAgentRuntime;
@@ -943,8 +943,13 @@ export class DiscordGateway extends BaseGateway {
    */
   private backfillChannelNames(): void {
     try {
-      // Get all Discord sessions
-      const sessions = this.messageRouter.listSessions('discord');
+      // Display concern, not turn processing: this surface reads session data to name
+      // its channels, which is why it still holds the concrete router.
+      const router = this.messageRouter;
+      if (!router) {
+        return;
+      }
+      const sessions = router.listSessions('discord');
       let updated = 0;
 
       for (const session of sessions) {
@@ -970,7 +975,7 @@ export class DiscordGateway extends BaseGateway {
         }
 
         // Update session with channel name
-        if (this.messageRouter.updateChannelName('discord', session.channelId, channelName)) {
+        if (router.updateChannelName('discord', session.channelId, channelName)) {
           updated++;
         }
       }

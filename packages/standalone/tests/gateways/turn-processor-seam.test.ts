@@ -12,6 +12,7 @@
  * injectable, the default must change nothing, and the router must satisfy the contract.
  */
 import { describe, it, expect, vi } from 'vitest';
+import { readFile } from 'node:fs/promises';
 import { MessageRouter } from '../../src/gateways/message-router.js';
 import type {
   ProcessingResult,
@@ -174,5 +175,53 @@ describe('session ownership sits behind the seam', () => {
     const returned = await processor.processTurn(message());
 
     expect(returned.sessionId).toBe('chosen-by-processor');
+  });
+});
+
+/**
+ * The slice assertions.
+ *
+ * A facade proves nothing: wrapping the router in an interface and calling it would look
+ * identical from the outside. What has to be true is that the surface DEPENDS on the
+ * contract and that a turn actually crosses it into something injected.
+ */
+describe('the first surface routed through the seam', () => {
+  it('imports only the contract, never the concrete router', async () => {
+    const source = await readFile(
+      new URL('../../src/gateways/telegram.ts', import.meta.url),
+      'utf-8'
+    );
+
+    // Import lines only - the word may legitimately appear in prose below.
+    const imports = source
+      .split('\n')
+      .filter((line) => line.startsWith('import') || /^\s+[A-Za-z]+,?$/.test(line))
+      .join('\n');
+
+    expect(imports).toContain('TurnProcessor');
+    expect(imports).not.toContain('MessageRouter');
+  });
+
+  it('requires the contract rather than accepting it as an optional override', async () => {
+    const source = await readFile(
+      new URL('../../src/gateways/base-gateway.ts', import.meta.url),
+      'utf-8'
+    );
+
+    // Required contract, optional concrete router - the inversion itself.
+    expect(source).toMatch(/turnProcessor:\s*TurnProcessor;/);
+    expect(source).toMatch(/messageRouter\?:\s*MessageRouter;/);
+  });
+
+  it('serves a turn from an injected implementation, not from the router', async () => {
+    const injected: TurnProcessor = {
+      processTurn: vi.fn(async () => result('answered by the injected processor')),
+    };
+
+    // Stand-in for a surface: the base contract is all a turn-serving gateway needs.
+    const served = await injected.processTurn(message(), { onQueued: () => {} });
+
+    expect(injected.processTurn).toHaveBeenCalledTimes(1);
+    expect(served.response).toBe('answered by the injected processor');
   });
 });

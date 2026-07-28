@@ -16,16 +16,24 @@ import { MessageRouter } from './message-router.js';
 import type { ProcessingResult, ProcessOptions, TurnProcessor } from './message-router.js';
 
 export interface BaseGatewayOptions {
-  messageRouter: MessageRouter;
-  /** Optional override for the turn seam; defaults to the router. */
-  turnProcessor?: TurnProcessor;
+  /**
+   * How a turn is processed. Required, because this is what a user-facing surface
+   * actually needs; the concrete router is an extra capability, not the dependency.
+   */
+  turnProcessor: TurnProcessor;
+  /**
+   * Optional. Only surfaces that read session data for their own display concerns -
+   * naming a channel, listing what is active - need the concrete router. A surface that
+   * only serves turns must not reach past the contract.
+   */
+  messageRouter?: MessageRouter;
   config?: Partial<GatewayConfig>;
 }
 
 export abstract class BaseGateway implements Gateway {
   abstract readonly source: MessageSource;
 
-  protected messageRouter: MessageRouter;
+  protected messageRouter?: MessageRouter;
   /**
    * The turn seam, shared by every user-facing surface.
    *
@@ -41,19 +49,19 @@ export abstract class BaseGateway implements Gateway {
 
   constructor(options: BaseGatewayOptions) {
     this.messageRouter = options.messageRouter;
-    // Adapter, not a cast: any router satisfying the turn contract is used directly, and
-    // anything older is wrapped, so no existing caller has to change to cross the seam.
-    const router = options.messageRouter;
+    // Adapter, not a cast: anything already satisfying the turn contract is used as-is,
+    // and an older router is wrapped, so a caller holding one does not have to change.
+    const processor = options.turnProcessor as TurnProcessor & Partial<MessageRouter>;
     this.turnProcessor =
-      options.turnProcessor ??
-      (typeof (router as Partial<TurnProcessor>).processTurn === 'function'
-        ? (router as unknown as TurnProcessor)
+      typeof processor.processTurn === 'function'
+        ? processor
         : {
             processTurn: (
               message: Parameters<MessageRouter['process']>[0],
               processOptions?: ProcessOptions
-            ): Promise<ProcessingResult> => router.process(message, processOptions),
-          });
+            ): Promise<ProcessingResult> =>
+              (processor as unknown as MessageRouter).process(message, processOptions),
+          };
   }
 
   // === Abstract methods — platform-specific ===
