@@ -136,6 +136,14 @@ export type GatewayToolExecutionContext = {
   workorderAttemptId?: number;
   /** Host-built temporal authority; never accepted from tool input or fallback state. */
   temporalWorkContext?: TemporalWorkContext;
+  /**
+   * The delta batch this run was handed. Host-supplied; never accepted from tool input.
+   *
+   * The unit of bounded work: a reconcile run addresses ONE channel's new events, so every
+   * durable change it makes rests on them. Carried on the run rather than asked of the
+   * agent, which is the difference between a fact and a claim.
+   */
+  causeEventIds?: readonly string[];
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -1018,6 +1026,8 @@ export interface AgentLoopOptions {
   workorderAttemptId?: number;
   /** Host-built temporal authority for one claimed temporal workorder. */
   temporalWorkContext?: TemporalWorkContext;
+  /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
+  causeEventIds?: readonly string[];
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)

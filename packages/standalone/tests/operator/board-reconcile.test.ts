@@ -97,7 +97,7 @@ describe('ReconcileScheduler', () => {
     expect(run).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(2);
     expect(run).toHaveBeenCalledTimes(1);
-    expect(run).toHaveBeenCalledWith('slack:C1', ['a', 'b']);
+    expect(run).toHaveBeenCalledWith('slack:C1', ['a', 'b'], []);
     s.stop();
   });
 
@@ -128,7 +128,7 @@ describe('ReconcileScheduler', () => {
     // budget window passes -> retry timer picks the dirty channel up
     await vi.advanceTimersByTimeAsync(3_600_001);
     expect(run).toHaveBeenCalledTimes(2);
-    expect(run).toHaveBeenLastCalledWith('chatwork:9', ['b']);
+    expect(run).toHaveBeenLastCalledWith('chatwork:9', ['b'], []);
     s.stop();
   });
 
@@ -149,7 +149,7 @@ describe('ReconcileScheduler', () => {
     const s = make({ debounceMs: 10, maxPendingLines: 3 });
     s.enqueue('slack:C1', ['1', '2', '3', '4', '5']);
     await vi.advanceTimersByTimeAsync(20);
-    expect(run).toHaveBeenCalledWith('slack:C1', ['3', '4', '5']);
+    expect(run).toHaveBeenCalledWith('slack:C1', ['3', '4', '5'], []);
     s.stop();
   });
 

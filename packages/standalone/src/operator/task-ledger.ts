@@ -154,13 +154,14 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
-   * The event this write responds to, when the host knows it.
+   * The events this write responds to.
    *
-   * Not filled in for a plain `task_update` today, and that is the finding rather than an
-   * omission: the tool has never asked what made the agent change a work item, so those
-   * changes land in the ledger as unattributed and get counted.
+   * A SET, because a cause is one: a reconcile run is handed a channel's delta batch and
+   * everything it changes rests on that batch. The system knows the batch before the run
+   * starts, so it does not have to ask the agent to restate it - which is what a single
+   * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
    */
-  causeEventId?: string | null;
+  causeEventIds?: readonly string[];
 }
 
 export type TemporalGenerationDisposition =
@@ -793,7 +794,10 @@ export class TaskLedger implements TaskSource {
           },
           // A duplicate delivery of the same event: here the cause genuinely is known,
           // because it is the event the row is keyed on.
-          { ...origin, causeEventId: input.source_event_id ?? origin.causeEventId }
+          {
+            ...origin,
+            causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+          }
         );
       }
     }
@@ -833,7 +837,10 @@ export class TaskLedger implements TaskSource {
         // `?? origin.causeEventId`, not a plain spread: a caller-supplied field that is
         // absent must not erase what the host knows. Spreading `undefined` over the
         // trusted value silently disabled the only unforgeable attribution channel.
-        origin: { ...origin, causeEventId: input.source_event_id ?? origin.causeEventId },
+        origin: {
+          ...origin,
+          causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+        },
         channel: input.source_channel ?? null,
         // Everything the INSERT wrote. A hash over two of fifteen columns cannot tell two
         // materially different writes apart, which is most of what a receipt is for.
@@ -897,9 +904,9 @@ export class TaskLedger implements TaskSource {
     // change fail. Some live rows carry 400-character legacy source identifiers, and an
     // operator that cannot close a work item because its upstream id is malformed is a
     // worse system than one that admits it does not know why the item changed.
-    const cause = input.origin.causeEventId;
-    if (isUsableCause(cause)) {
-      recordEffect(this.db as never, { ...common, sourceEventIds: [cause] });
+    const causes = (input.origin.causeEventIds ?? []).filter(isUsableCause);
+    if (causes.length > 0) {
+      recordEffect(this.db as never, { ...common, sourceEventIds: causes });
       return;
     }
     recordUnattributedChange(this.db as never, common);

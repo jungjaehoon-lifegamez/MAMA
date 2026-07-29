@@ -266,6 +266,8 @@ type ActiveGatewayExecutionContext = {
   gatewayCallId?: string;
   workorderAttemptId?: number;
   temporalWorkContext?: TemporalWorkContext;
+  /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
+  causeEventIds?: readonly string[];
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -824,6 +826,7 @@ export class GatewayToolExecutor {
       gatewayCallId: executionContext?.gatewayCallId,
       workorderAttemptId: executionContext?.workorderAttemptId,
       temporalWorkContext: executionContext?.temporalWorkContext,
+      causeEventIds: executionContext?.causeEventIds,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -867,6 +870,7 @@ export class GatewayToolExecutor {
       workorderAttemptId: active.workorderAttemptId,
       // Never merged from fallback - temporal authority belongs to one claimed run only.
       temporalWorkContext: active.temporalWorkContext,
+      causeEventIds: active.causeEventIds,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -3342,6 +3346,7 @@ export class GatewayToolExecutor {
               // else's work with it.
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
+                causeEventIds: this.getExecutionState().causeEventIds,
               })
             ),
           };
@@ -3377,10 +3382,14 @@ export class GatewayToolExecutor {
           const beforeRevision = this.taskLedger.getById(id)?.revision ?? null;
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
-            // Only a citation that resolved, and that this caller could have read, becomes
-            // the recorded cause. Anything else leaves the change unattributed - truthful,
-            // and never a reason to refuse the update itself.
-            causeEventId: citation?.status === 'resolved' ? citation.eventIndexId : null,
+            // A resolved citation names the cause precisely. With none, the run's own
+            // batch is the cause: a reconcile run was handed one channel's delta and
+            // everything it changes rests on that delta, which the system knew before the
+            // run began. Asking the agent to restate it was the weaker half of this.
+            causeEventIds:
+              citation?.status === 'resolved'
+                ? [citation.eventIndexId]
+                : this.getExecutionState().causeEventIds,
           });
           // An update that moved nothing records nothing, so a citation attached to it was
           // attached to no change. Reporting `resolved` there tells the agent its

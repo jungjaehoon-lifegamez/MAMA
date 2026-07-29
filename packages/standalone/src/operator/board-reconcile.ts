@@ -27,6 +27,9 @@ export interface ReconcilePromptInput {
 /** The prompt MUST begin with this token so the persona's RECONCILE RUN mode engages. */
 export const RECONCILE_RUN_TOKEN = 'RECONCILE RUN';
 
+/** Generous: live batches run 1-30. A cap that truncates is logged, never silent. */
+const MAX_PENDING_EVENT_IDS = 500;
+
 export function buildReconcilePrompt(input: ReconcilePromptInput): string {
   const label = input.channelLabel ?? input.channelKey;
   const scope = `reconcile:${input.channelKey}`;
@@ -65,13 +68,22 @@ export interface ReconcileSchedulerOptions {
   globalMaxPerHour?: number;
   /** Bounded pending lines kept per channel while deferred. */
   maxPendingLines?: number;
-  run: (channelKey: string, deltaLines: string[]) => Promise<void>;
+  run: (channelKey: string, deltaLines: string[], eventIds: string[]) => Promise<void>;
   log: (line: string) => void;
   now?: () => number;
 }
 
 interface ChannelState {
   pendingLines: string[];
+  /**
+   * The batch, accumulated separately from the prompt lines.
+   *
+   * Not the same cardinality: the prompt shows a bounded tail while the cause is every
+   * event the run will have acted on. Truncating them with one cap would silently drop
+   * events from the record of why the run did what it did - and two parallel arrays with
+   * independent caps is how that drift starts.
+   */
+  pendingEventIds: string[];
   debounceTimer: ReturnType<typeof setTimeout> | null;
   firstEnqueuedAt: number | null;
 }
@@ -100,14 +112,24 @@ export class ReconcileScheduler {
     this.now = opts.now ?? Date.now;
   }
 
-  enqueue(channelKey: string, lines: string[]): void {
+  enqueue(channelKey: string, lines: string[], eventIds: readonly string[] = []): void {
     if (this.stopped) return;
     const state = this.channels.get(channelKey) ?? {
       pendingLines: [],
+      pendingEventIds: [],
       debounceTimer: null,
       firstEnqueuedAt: null,
     };
     state.pendingLines = [...state.pendingLines, ...lines].slice(-this.maxPendingLines);
+    const mergedIds = [...new Set([...state.pendingEventIds, ...eventIds])];
+    if (mergedIds.length > MAX_PENDING_EVENT_IDS) {
+      // Loud, because a truncated cause set understates what the run rested on and would
+      // otherwise look exactly like a smaller batch.
+      this.log(
+        `[reconcile] ${channelKey}: cause set exceeded ${MAX_PENDING_EVENT_IDS}; dropping the oldest ${mergedIds.length - MAX_PENDING_EVENT_IDS}`
+      );
+    }
+    state.pendingEventIds = mergedIds.slice(-MAX_PENDING_EVENT_IDS);
     if (state.firstEnqueuedAt === null) state.firstEnqueuedAt = this.now();
     this.channels.set(channelKey, state);
 
@@ -176,15 +198,22 @@ export class ReconcileScheduler {
     }
 
     const lines = state.pendingLines;
+    const eventIds = state.pendingEventIds;
     state.pendingLines = [];
+    state.pendingEventIds = [];
     state.firstEnqueuedAt = null;
     this.runTimestamps.push(this.now());
 
     try {
-      await this.run(channelKey, lines);
+      await this.run(channelKey, lines, eventIds);
     } catch (err) {
-      // Run failure keeps the channel dirty for retry; the scheduler survives.
+      // Run failure keeps the channel dirty for retry; the scheduler survives. The cause
+      // set is restored with the lines - a retry that kept the prompt but lost the batch
+      // would run on evidence it could no longer name.
       state.pendingLines = [...lines, ...state.pendingLines].slice(-this.maxPendingLines);
+      state.pendingEventIds = [...new Set([...eventIds, ...state.pendingEventIds])].slice(
+        -MAX_PENDING_EVENT_IDS
+      );
       if (state.firstEnqueuedAt === null) state.firstEnqueuedAt = this.now();
       this.log(
         `[reconcile] run failed for ${channelKey}: ${err instanceof Error ? err.message : String(err)}; kept dirty for retry`
