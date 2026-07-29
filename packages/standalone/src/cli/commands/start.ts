@@ -342,6 +342,35 @@ function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[]
  * it was to re-compose it in the test - which tests the copy, and a copy of a scope
  * construction is how this subsystem's authority drifts from what it claims.
  */
+/**
+ * What the scheduled full report is INSTRUCTED to gather with.
+ *
+ * Exported so a test can hold it against the lane's tool grant. Every defect this session
+ * found was a wiring defect - a tool granted and never instructed, a lane wired zero times,
+ * a binder that never bound - and all of them live in this file and its neighbour, the two
+ * directories the suite covers at a third. An instruction list that cannot be read by a
+ * test is one nobody can check against the grant it depends on.
+ */
+export function buildFullReportGatherLines({
+  lastSuccessIso,
+}: {
+  lastSuccessIso: string | null;
+}): string[] {
+  return [
+    'kagemusha_overview() for room/task/message counts',
+    'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
+    lastSuccessIso
+      ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
+      : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+    'mama_recall(query) for memory relevant to what you find',
+    'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
+    lastSuccessIso
+      ? `changes_read({ since: "${lastSuccessIso}" }) for what THIS system durably changed since the last report -- lead with it, and say what each change rested on`
+      : 'changes_read({ since: "7d" }) for what THIS system durably changed in the window -- lead with it, and say what each change rested on',
+    'On changes_read: cause_state "unattributed" means the system cannot explain that change, NOT that nothing happened -- report the coverage counts as they are rather than rounding them up. It is ONE PAGE: if returned is less than total, say so instead of describing the page as the whole. It covers work items only today, so the absence of report or memory changes there is not evidence they did not happen.',
+  ];
+}
+
 export function workOrderEnvelopeScope(input: {
   workKind: string;
   projectId: string;
@@ -457,7 +486,7 @@ interface WorkOrderToolPolicy {
 // Stage-2 workers are short-lived operator jobs, not standing multi-agent
 // personas. Their permissions must therefore be complete on a default install
 // and must not vary with optional legacy agent configuration.
-const WORKORDER_TOOL_POLICIES = {
+export const WORKORDER_TOOL_POLICIES = {
   board: {
     roleName: 'workorder-board',
     allowedTools: [
@@ -528,7 +557,7 @@ const WORKORDER_TOOL_POLICIES = {
  * envelope/tool-connector-scope.ts; without that mapping this entry alone would have granted
  * unscoped access.
  */
-const OPERATOR_REPORT_TOOL_POLICY = {
+export const OPERATOR_REPORT_TOOL_POLICY = {
   roleName: 'operator-report',
   allowedTools: [
     // context_compile is deliberately ABSENT. Envelope scope is connector-level, so
@@ -1867,19 +1896,7 @@ export async function runAgentLoop(
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
         // reports "quiet" whenever polling is between batches).
-        fullReportSelfGather: ({ lastSuccessIso }: { lastSuccessIso: string | null }) => [
-          'kagemusha_overview() for room/task/message counts',
-          'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-          lastSuccessIso
-            ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
-            : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
-          'mama_recall(query) for memory relevant to what you find',
-          'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
-          lastSuccessIso
-            ? `changes_read({ since: "${lastSuccessIso}" }) for what THIS system durably changed since the last report -- lead with it, and say what each change rested on`
-            : 'changes_read({ since: "7d" }) for what THIS system durably changed in the window -- lead with it, and say what each change rested on',
-          'On changes_read: cause_state "unattributed" means the system cannot explain that change, NOT that nothing happened -- report the coverage counts as they are rather than rounding them up. It is ONE PAGE: if returned is less than total, say so instead of describing the page as the whole. It covers work items only today, so the absence of report or memory changes there is not evidence they did not happen.',
-        ],
+        fullReportSelfGather: buildFullReportGatherLines,
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
