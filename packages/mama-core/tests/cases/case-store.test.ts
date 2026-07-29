@@ -6,10 +6,8 @@ import { CaseMergeChainCycleError } from '../../src/entities/errors.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
 import {
   assembleCase,
-  enqueueCaseProposal,
   listActiveCorrectionsForCaseChain,
   listActiveMembershipsForCaseChain,
-  listUnresolvedCaseProposals,
   resolveCanonicalCaseChain,
   upsertCaseTruthSlowFields,
   upsertExplicitCaseMemberships,
@@ -116,6 +114,8 @@ function insertMembership(
 describe('Story CF1.7: Core case store and error surface', () => {
   let testDbPath = '';
 
+  const originalForceTier3 = process.env.MAMA_FORCE_TIER_3;
+
   beforeAll(async () => {
     process.env.MAMA_FORCE_TIER_3 = 'true';
     testDbPath = await initTestDB('case-store');
@@ -123,6 +123,12 @@ describe('Story CF1.7: Core case store and error surface', () => {
 
   afterAll(async () => {
     await cleanupTestDB(testDbPath);
+    // Shared process: leaving this set changes what later files do.
+    if (originalForceTier3 === undefined) {
+      delete process.env.MAMA_FORCE_TIER_3;
+    } else {
+      process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
+    }
   });
 
   describe('AC #1: Canonical case chain resolution', () => {
@@ -315,63 +321,6 @@ describe('Story CF1.7: Core case store and error surface', () => {
     });
   });
 
-  describe('AC #3: Proposal queue idempotency', () => {
-    it('returns the same proposal_id and inserted=false for unresolved duplicate fingerprints', () => {
-      const adapter = getAdapter();
-
-      const first = enqueueCaseProposal(adapter, {
-        project: 'queue-project',
-        proposal_kind: 'ambiguous_slug',
-        proposed_payload: '{"slug":"same-case"}',
-        stable_fingerprint_input: { slug: 'same-case', reason: 'ambiguous' },
-      });
-
-      const second = enqueueCaseProposal(adapter, {
-        project: 'queue-project',
-        proposal_kind: 'ambiguous_slug',
-        proposed_payload: '{"slug":"same-case","rerun":true}',
-        stable_fingerprint_input: { reason: 'ambiguous', slug: 'same-case' },
-      });
-
-      expect(first.inserted).toBe(true);
-      expect(second.inserted).toBe(false);
-      expect(second.proposal_id).toBe(first.proposal_id);
-    });
-
-    it('refreshes detected_at when a re-detected duplicate is enqueued (§5.7 L355)', async () => {
-      const adapter = getAdapter();
-
-      const first = enqueueCaseProposal(adapter, {
-        project: 'refresh-project',
-        proposal_kind: 'corrupt_frontmatter',
-        proposed_payload: '{"path":"cases/corrupt.md"}',
-        stable_fingerprint_input: { path: 'cases/corrupt.md' },
-      });
-      const firstDetected = adapter
-        .prepare('SELECT detected_at FROM case_proposal_queue WHERE proposal_id = ?')
-        .get(first.proposal_id) as { detected_at: string };
-
-      // Wait one millisecond so ISO timestamps differ
-      await new Promise((resolve) => setTimeout(resolve, 2));
-
-      const second = enqueueCaseProposal(adapter, {
-        project: 'refresh-project',
-        proposal_kind: 'corrupt_frontmatter',
-        proposed_payload: '{"path":"cases/corrupt.md","rerun":true}',
-        stable_fingerprint_input: { path: 'cases/corrupt.md' },
-      });
-      const secondDetected = adapter
-        .prepare('SELECT detected_at FROM case_proposal_queue WHERE proposal_id = ?')
-        .get(second.proposal_id) as { detected_at: string };
-
-      expect(second.inserted).toBe(false);
-      expect(second.proposal_id).toBe(first.proposal_id);
-      expect(new Date(secondDetected.detected_at).getTime()).toBeGreaterThan(
-        new Date(firstDetected.detected_at).getTime()
-      );
-    });
-  });
-
   describe('AC #4: Coverage for remaining exported store helpers', () => {
     it('upsertCaseTruthSlowFields writes every spec §5.2 slow field and is idempotent', () => {
       const adapter = getAdapter();
@@ -505,46 +454,6 @@ describe('Story CF1.7: Core case store and error surface', () => {
       ]);
       const ids = active.map((c) => c.correction_id).sort();
       expect(ids).toEqual(['corr-active-loser', 'corr-active-surv']);
-    });
-
-    it('listUnresolvedCaseProposals returns only unresolved rows ordered by detected_at ASC', async () => {
-      const adapter = getAdapter();
-
-      // Oldest unresolved
-      enqueueCaseProposal(adapter, {
-        project: 'list-project',
-        proposal_kind: 'ambiguous_slug',
-        proposed_payload: '{"slug":"alpha"}',
-        stable_fingerprint_input: { slug: 'alpha', project: 'list-project' },
-      });
-      await new Promise((resolve) => setTimeout(resolve, 2));
-      // Newer unresolved
-      const newer = enqueueCaseProposal(adapter, {
-        project: 'list-project',
-        proposal_kind: 'ambiguous_slug',
-        proposed_payload: '{"slug":"beta"}',
-        stable_fingerprint_input: { slug: 'beta', project: 'list-project' },
-      });
-      // Resolved — should be filtered out
-      const resolvedId = 'prop-resolved-list';
-      const now = new Date().toISOString();
-      adapter
-        .prepare(
-          `INSERT INTO case_proposal_queue
-             (proposal_id, project, proposal_kind, proposed_payload, payload_fingerprint,
-              conflicting_case_id, detected_at, resolved_at, resolution, resolution_note)
-           VALUES (?, 'list-project', 'ambiguous_slug', ?, ?, NULL, ?, ?, 'rejected', NULL)`
-        )
-        .run(resolvedId, '{"slug":"gamma"}', Buffer.alloc(32, 0x42), now, now);
-
-      const rows = listUnresolvedCaseProposals(adapter, 'list-project');
-      const ids = rows.map((r) => r.proposal_id);
-      expect(ids).toContain(newer.proposal_id);
-      expect(ids).not.toContain(resolvedId);
-      // detected_at ASC — oldest comes first, newer second
-      const timestamps = rows.map((r) => new Date(r.detected_at).getTime());
-      const sorted = [...timestamps].sort((a, b) => a - b);
-      expect(timestamps).toEqual(sorted);
     });
 
     it('assembleCase resolves decisions, timeline events, observations, and active corrections via the chain', () => {

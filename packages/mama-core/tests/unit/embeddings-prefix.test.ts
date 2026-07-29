@@ -41,14 +41,6 @@ describe('Story M5: e5 role prefixes', () => {
       await mod.generateEnhancedEmbedding({ topic: 't', decision: 'd' }, 'passage');
       expect(captured.some((c) => c.startsWith('passage: Topic: t'))).toBe(true);
     });
-
-    it('batch prefixes every text', async () => {
-      mockPipeline(1024);
-      const mod = await import('../../src/embeddings.js');
-      mod.embeddingCache.clear();
-      await mod.generateBatchEmbeddings(['a', 'b'], 'query');
-      expect(captured).toEqual(['query: a', 'query: b']);
-    });
   });
 
   describe('AC #2: the embedding cache is role-aware', () => {

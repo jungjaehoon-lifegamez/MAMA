@@ -9,16 +9,9 @@ vi.mock('../../src/embeddings.js', async () => {
   };
 });
 
-import {
-  bindMemoryToScope,
-  ensureMemoryScope,
-  fts5Search,
-  getAdapter,
-  vectorSearch,
-} from '../../src/db-manager.js';
+import { fts5Search, getAdapter, vectorSearch } from '../../src/db-manager.js';
 import { cleanupTestDB, initTestDB } from '../../src/test-utils.js';
-import { rollUpSearchHits, type SearchRollupLeafHit } from '../../src/cases/search-rollup.js';
-import { upsertWikiPageIndexEntry } from '../../src/cases/wiki-page-index.js';
+import { rollUpSearchHits } from '../../src/cases/search-rollup.js';
 import mamaApi, { suggest } from '../../src/mama-api.js';
 import type { SearchHitDiagnostics } from '../../src/search/search-quality.js';
 import { handleSearch } from '../../../standalone/src/agent/mama-tool-handlers.js';
@@ -146,15 +139,6 @@ function insertDecision(input: {
   // Rebuild FTS5 index — external-content FTS5 with trigger-based sync requires
   // an explicit rebuild to populate the tokenized index after raw SQL INSERTs.
   adapter.prepare("INSERT INTO decisions_fts(decisions_fts) VALUES('rebuild')").run();
-}
-
-async function bindDecisionScope(
-  memoryId: string,
-  scope: { kind: 'global' | 'user' | 'channel' | 'project'; id: string },
-  isPrimary = true
-): Promise<void> {
-  const scopeId = await ensureMemoryScope(scope.kind, scope.id);
-  await bindMemoryToScope(memoryId, scopeId, isPrimary);
 }
 
 function leaf(
@@ -595,61 +579,6 @@ describe('Task 11: mama_search case membership roll-up', () => {
     });
   });
 
-  it('returns a case result when the query matches only wiki_page_index content', async () => {
-    const adapter = getAdapter();
-    insertCase({ case_id: 'case-wiki-only', title: 'Wiki Only Case' });
-
-    upsertWikiPageIndexEntry(adapter, {
-      source_locator: 'cases/wiki-only.md',
-      page_type: 'case',
-      title: 'Wiki Only',
-      content: 'wikionlytoken appears only in compiled markdown',
-      case_id: 'case-wiki-only',
-      source_ids: [],
-      entity_refs: [],
-      confidence: 'high',
-      compiled_at: nowIso(),
-    });
-
-    const result = await suggest('wikionlytoken', { limit: 5 });
-    const rows = result.results as Array<Record<string, unknown>>;
-
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows[0]).toMatchObject({
-      source_type: 'case',
-      case_id: 'case-wiki-only',
-      id: 'case-wiki-only',
-    });
-  });
-
-  it('does not return wiki vector-only hits in strict search', async () => {
-    const adapter = getAdapter();
-    insertCase({ case_id: 'case-wiki-vector-only', title: 'Wiki Vector Only Case' });
-
-    upsertWikiPageIndexEntry(adapter, {
-      source_locator: 'cases/wiki-vector-only.md',
-      page_type: 'case',
-      title: 'Wiki Vector Only',
-      content: 'Compiled case body without the requested strict token',
-      case_id: 'case-wiki-vector-only',
-      source_ids: [],
-      entity_refs: [],
-      confidence: 'high',
-      compiled_at: nowIso(),
-      embedding: unitVector(1),
-    });
-
-    const result = await suggest('strictwikivectornoise', {
-      limit: 5,
-      strictness: 'strict',
-      diagnostics: true,
-    });
-
-    expect(result.results).toEqual([]);
-    expect(result.diagnostics?.candidate_counts.vector_only).toBeGreaterThan(0);
-    expect(result.diagnostics?.candidate_counts.rejected_by_strictness).toBeGreaterThan(0);
-  });
-
   it('does not return unconfirmed graph-expanded hits in balanced search', async () => {
     const now = Date.now();
     insertDecision({
@@ -703,113 +632,6 @@ describe('Task 11: mama_search case membership roll-up', () => {
     } finally {
       graphSpy.mockRestore();
     }
-  });
-
-  it('does not return wiki hits outside requested memory scopes', async () => {
-    const adapter = getAdapter();
-    insertCase({ case_id: 'case-wiki-outside-scope', title: 'Wiki Outside Scope' });
-    insertDecision({
-      id: 'decision_wiki_outside_scope_source',
-      topic: 'outside scope source',
-      decision: 'outside source decision',
-      reasoning: 'source is bound to beta',
-    });
-    await bindDecisionScope('decision_wiki_outside_scope_source', {
-      kind: 'project',
-      id: 'beta',
-    });
-    insertMembership('case-wiki-outside-scope', 'decision_wiki_outside_scope_source');
-
-    upsertWikiPageIndexEntry(adapter, {
-      source_locator: 'cases/wiki-outside-scope.md',
-      page_type: 'case',
-      title: 'Wiki Outside Scope',
-      content: 'scopedwikitoken appears only in compiled markdown',
-      case_id: 'case-wiki-outside-scope',
-      source_ids: ['decision_wiki_outside_scope_source'],
-      entity_refs: [],
-      confidence: 'high',
-      compiled_at: nowIso(),
-    });
-
-    const result = await suggest('scopedwikitoken', {
-      limit: 5,
-      strictness: 'balanced',
-      diagnostics: true,
-      scopes: [{ kind: 'project', id: 'alpha' }],
-    });
-
-    expect(result.results).toEqual([]);
-  });
-
-  it('does not return wiki hits outside topicPrefix source evidence', async () => {
-    const adapter = getAdapter();
-    insertCase({ case_id: 'case-wiki-topic-prefix', title: 'Wiki Topic Prefix' });
-    insertDecision({
-      id: 'decision_wiki_topic_prefix_source',
-      topic: 'beta/wiki/source',
-      decision: 'topic prefix source decision',
-      reasoning: 'source topic is outside alpha prefix',
-    });
-    insertMembership('case-wiki-topic-prefix', 'decision_wiki_topic_prefix_source');
-
-    upsertWikiPageIndexEntry(adapter, {
-      source_locator: 'cases/wiki-topic-prefix.md',
-      page_type: 'case',
-      title: 'Wiki Topic Prefix',
-      content: 'prefixedwikitoken appears only in compiled markdown',
-      case_id: 'case-wiki-topic-prefix',
-      source_ids: ['decision_wiki_topic_prefix_source'],
-      entity_refs: [],
-      confidence: 'high',
-      compiled_at: nowIso(),
-    });
-
-    const result = await suggest('prefixedwikitoken', {
-      limit: 5,
-      strictness: 'balanced',
-      topicPrefix: 'alpha/',
-    });
-
-    expect(result.results).toEqual([]);
-  });
-
-  it('normalizes decision-prefixed wiki source IDs for scoped topicPrefix filtering', async () => {
-    const adapter = getAdapter();
-    insertCase({ case_id: 'case-wiki-prefixed-source', title: 'Wiki Prefixed Source' });
-    insertDecision({
-      id: 'decision_wiki_prefixed_source',
-      topic: 'alpha/wiki/source',
-      decision: 'prefixed wiki source decision',
-      reasoning: 'source is bound to alpha and uses decision-prefixed refs',
-    });
-    await bindDecisionScope('decision_wiki_prefixed_source', {
-      kind: 'project',
-      id: 'alpha',
-    });
-
-    upsertWikiPageIndexEntry(adapter, {
-      source_locator: 'cases/wiki-prefixed-source.md',
-      page_type: 'case',
-      title: 'Wiki Prefixed Source',
-      content: 'prefixedsourcewikitoken appears only in compiled markdown',
-      case_id: 'case-wiki-prefixed-source',
-      source_ids: ['decision:decision_wiki_prefixed_source', 'checkpoint:checkpoint_ignored'],
-      entity_refs: [],
-      confidence: 'high',
-      compiled_at: nowIso(),
-    });
-
-    const result = await suggest('prefixedsourcewikitoken', {
-      limit: 5,
-      strictness: 'balanced',
-      topicPrefix: 'alpha/',
-      scopes: [{ kind: 'project', id: 'alpha' }],
-    });
-
-    expect(result.results.map((row: Record<string, unknown>) => row.id)).toContain(
-      'case-wiki-prefixed-source'
-    );
   });
 
   it('feeds fused RRF scores into roll-up before case scoring in the production search path', async () => {

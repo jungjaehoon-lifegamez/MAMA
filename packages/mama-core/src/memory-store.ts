@@ -100,57 +100,6 @@ export const getDbPath = dbManager.getDbPath;
 // Legacy exports (for backward compatibility with old code)
 export const traverseDecisionChain = dbManager.queryDecisionGraph; // Alias
 
-/**
- * Get decisions for a specific session
- */
-export async function getSessionDecisions(sessionId: string): Promise<unknown[]> {
-  const adapter = dbManager.getAdapter() as DatabaseAdapter;
-  const stmt = adapter.prepare(`
-    SELECT * FROM decisions
-    WHERE session_id = ?
-    ORDER BY created_at DESC
-  `);
-  return stmt.all(sessionId);
-}
-
-/**
- * Increment usage success counter
- */
-export async function incrementUsageSuccess(decisionId: string, timeSaved = 0): Promise<void> {
-  const adapter = dbManager.getAdapter() as DatabaseAdapter;
-  const stmt = adapter.prepare(`
-    UPDATE decisions
-    SET usage_success = usage_success + 1,
-        time_saved = time_saved + ?,
-        updated_at = ?
-    WHERE id = ?
-  `);
-  stmt.run(timeSaved, Date.now(), decisionId);
-}
-
-/**
- * Increment usage failure counter
- */
-export async function incrementUsageFailure(decisionId: string): Promise<void> {
-  const adapter = dbManager.getAdapter() as DatabaseAdapter;
-  const stmt = adapter.prepare(`
-    UPDATE decisions
-    SET usage_failure = usage_failure + 1,
-        updated_at = ?
-    WHERE id = ?
-  `);
-  stmt.run(Date.now(), decisionId);
-}
-
-/**
- * Get decision by ID
- */
-export async function getDecisionById(decisionId: string): Promise<unknown> {
-  const adapter = dbManager.getAdapter() as DatabaseAdapter;
-  const stmt = adapter.prepare('SELECT * FROM decisions WHERE id = ?');
-  return stmt.get(decisionId);
-}
-
 // Path exports (labels for display/logging, not actual filesystem paths)
 // Note: Actual paths are managed by sqlite-adapter.ts (~/.claude/mama-memory.db)
 export const DB_PATH = process.env.MAMA_DATABASE_URL ? 'PostgreSQL' : 'SQLite';

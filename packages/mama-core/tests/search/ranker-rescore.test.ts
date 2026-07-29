@@ -1,12 +1,8 @@
-
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SEARCH_RANKER_FEATURE_SET_VERSION } from '../../src/search/ranker-features.js';
-import {
-  rescoreSearchResults,
-  type RankerRescoreAdapter,
-} from '../../src/search/ranker-rescore.js';
+import { rescoreSearchResults } from '../../src/search/ranker-rescore.js';
 
 import { applyMigrationsThrough } from '../../src/test-utils.js';
 function insertModel(

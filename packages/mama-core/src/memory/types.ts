@@ -421,22 +421,6 @@ export function createEmptyRecallBundle(query: string): RecallBundle {
   };
 }
 
-export function createEmptyMemoryAgentBootstrap(
-  input: Pick<MemoryAgentBootstrap, 'scope_context'> &
-    Partial<Omit<MemoryAgentBootstrap, 'scope_context'>>
-): MemoryAgentBootstrap {
-  return {
-    current_goal: input.current_goal,
-    scope_context: input.scope_context,
-    channel_summary_markdown: input.channel_summary_markdown,
-    truth_snapshot: input.truth_snapshot ?? [],
-    open_audit_findings: input.open_audit_findings ?? [],
-    recent_memory_events: input.recent_memory_events ?? [],
-    profile_snapshot: input.profile_snapshot,
-    main_agent_state: input.main_agent_state,
-  };
-}
-
 export function createMemoryAuditAck(
   input: Pick<MemoryAuditAck, 'status' | 'action' | 'event_ids'> & Partial<MemoryAuditAck>
 ): MemoryAuditAck {

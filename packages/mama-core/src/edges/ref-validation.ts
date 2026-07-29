@@ -36,10 +36,6 @@ function hasProjectRefs(
   return Array.isArray(projectRefs) && projectRefs.length > 0;
 }
 
-function visibilityFromScopes(scopes: readonly TwinScopeRef[] | undefined): TwinVisibility {
-  return { scopes: scopes ? [...scopes] : undefined };
-}
-
 function asOfMs(visibility: TwinVisibility): number | null {
   return typeof visibility.asOfMs === 'number' ? visibility.asOfMs : null;
 }
@@ -414,14 +410,6 @@ export function assertTwinRefsVisible(
       throw new Error(`Twin ref is not visible to requested visibility: ${ref.kind}:${ref.id}`);
     }
   }
-}
-
-export function assertTwinRefsVisibleToScopes(
-  adapter: TwinRefVisibilityAdapter,
-  refs: readonly TwinRef[],
-  scopes?: TwinScopeRef[]
-): void {
-  assertTwinRefsVisible(adapter, refs, visibilityFromScopes(scopes));
 }
 
 export function listVisibleTwinEdgesForRefs(

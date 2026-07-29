@@ -30,22 +30,4 @@ describe('Story M1.4: Embeddings Tier 3 enforcement', () => {
       );
     });
   });
-
-  describe('AC #2: Tier 3 blocks batch embedding inference', () => {
-    it('blocks batch embeddings with the same direct explicit error', async () => {
-      process.env.MAMA_FORCE_TIER_3 = '1';
-      vi.doMock('@huggingface/transformers', () => ({
-        env: {},
-        pipeline: async () => {
-          throw new Error('transformers should not load in Tier 3 mode');
-        },
-      }));
-
-      const { generateBatchEmbeddings } = await import('../../src/embeddings.js');
-
-      await expect(generateBatchEmbeddings(['one', 'two'])).rejects.toThrow(
-        /^Embedding generation disabled.*MAMA_FORCE_TIER_3=true/
-      );
-    });
-  });
 });

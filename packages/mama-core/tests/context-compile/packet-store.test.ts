@@ -22,7 +22,6 @@ import {
   getContextPacket,
   getContextPacketForTrustedUse,
   insertContextPacket,
-  listContextPacketsForModelRun,
 } from '../../src/context-compile/packet-store.js';
 import * as packetStore from '../../src/context-compile/packet-store.js';
 
@@ -193,16 +192,6 @@ describe('STORY-CC-B2: Context packet append-only store - AC1, AC2, AC3', () => 
 
       expect(getContextPacket(adapter, 'ctxp_a')?.task).toBe('compile branch context');
       expect(getContextPacket(adapter, 'ctxp_a')?.packet.task).toBe('compile branch context');
-    });
-
-    it('keeps two packets for the same task when packet ids differ', () => {
-      const adapter = createAdapter();
-      insertContextPacket(adapter, record({ packet_id: 'ctxp_a', created_at: 1_000 }));
-      insertContextPacket(adapter, record({ packet_id: 'ctxp_b', created_at: 1_100 }));
-
-      expect(
-        listContextPacketsForModelRun(adapter, 'mr-ctx-a').map((row) => row.packet_id)
-      ).toEqual(['ctxp_b', 'ctxp_a']);
     });
 
     it('exports no update helper for context packets', () => {

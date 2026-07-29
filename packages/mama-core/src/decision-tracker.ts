@@ -406,66 +406,6 @@ export async function createEdgesFromReasoning(
   return { created, failed };
 }
 
-/**
- * Get supersedes chain depth for a topic
- *
- * Story 2.2: Calculate how many times a topic has been superseded
- *
- * @param topic - Decision topic
- * @returns Chain depth and decision IDs
- */
-export async function getSupersededChainDepth(
-  topic: string
-): Promise<{ depth: number; chain: string[] }> {
-  const adapter = getAdapter() as unknown as DatabaseAdapter;
-  const chain: string[] = [];
-
-  try {
-    // Start from the latest decision (superseded_by IS NULL)
-    let stmt = adapter.prepare(`
-      SELECT id, supersedes FROM decisions
-      WHERE topic = ? AND superseded_by IS NULL
-      ORDER BY created_at DESC
-      LIMIT 1
-    `);
-
-    let current = stmt.get(topic) as { id: string; supersedes?: string } | undefined;
-
-    if (!current) {
-      return { depth: 0, chain: [] };
-    }
-
-    chain.push(current.id);
-
-    // Walk back through supersedes chain with cycle detection
-    const visited = new Set<string>([current.id]);
-    const MAX_CHAIN_DEPTH = 1000; // Safety limit
-
-    while (current && current.supersedes && chain.length < MAX_CHAIN_DEPTH) {
-      // Cycle detection: stop if we've seen this ID before
-      if (visited.has(current.supersedes)) {
-        break;
-      }
-
-      stmt = adapter.prepare('SELECT id, supersedes FROM decisions WHERE id = ?');
-      current = stmt.get(current.supersedes) as { id: string; supersedes?: string } | undefined;
-
-      if (current) {
-        visited.add(current.id);
-        chain.push(current.id);
-      }
-    }
-
-    return {
-      depth: chain.length - 1, // depth = number of supersedes edges
-      chain: chain.reverse(), // oldest to newest
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to get supersedes chain: ${message}`);
-  }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // NOTE: Auto-link functions REMOVED in v1.2.0
 //

@@ -8,7 +8,3 @@ export function sortScopesByPriority(scopes: MemoryScopeRef[]): MemoryScopeRef[]
       PRIORITY_SCOPE_ORDER.indexOf(left.kind) - PRIORITY_SCOPE_ORDER.indexOf(right.kind)
   );
 }
-
-export function getPrimaryScope(scopes: MemoryScopeRef[]): MemoryScopeRef | null {
-  return sortScopesByPriority(scopes)[0] ?? null;
-}
