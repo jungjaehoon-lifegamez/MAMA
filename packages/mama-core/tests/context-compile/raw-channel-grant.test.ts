@@ -28,7 +28,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter } from '../../src/db-manager.js';
-import { readRawCandidates } from '../../src/context-compile/source-readers.js';
+import {
+  readRawCandidates,
+  setContextSourceClockForTests,
+} from '../../src/context-compile/source-readers.js';
 import type { ContextSourceReadInput } from '../../src/context-compile/source-readers.js';
 
 const MIGRATIONS_DIR = join(__dirname, '..', '..', 'db', 'migrations');
@@ -275,6 +278,61 @@ describe('raw candidates within a channel grant', () => {
 
     expect(result.candidates.map((c) => c.title)).toEqual(['granted']);
     expect(result.hidden.by_reason.channel_not_granted).toBe(1);
+  });
+
+  // Found by running the reader against a snapshot of the live index. `event_datetime` is
+  // when an event OCCURS, and a calendar entry occurs in the future - 2,762 live rows are
+  // future-dated, one in 2056 - so ordering by it descending handed them the entire page.
+  // A report asking what happened last week received calendar entries and no messages.
+  it('does not let a future-dated event outrank what has happened', () => {
+    const adapter = createAdapter();
+    setContextSourceClockForTests(() => 2_000);
+    try {
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'chat',
+        source_type: 'message',
+        source_id: 'scheduled',
+        channel: 'C001',
+        title: 'a meeting in 2056',
+        content: 'x',
+        event_datetime: 9_000,
+        source_timestamp_ms: 1_200,
+      });
+      event(adapter, 'chat', 'C001', 'something that happened');
+
+      const result = readRawCandidates(adapter, input({ boundary: grantBoundary(['chat']) }));
+
+      expect(result.candidates.map((c) => c.title)).toEqual(['something that happened']);
+    } finally {
+      setContextSourceClockForTests(() => Date.now());
+    }
+  });
+
+  // A caller that genuinely wants the future still gets it by asking.
+  it('includes the future when the caller names an end past it', () => {
+    const adapter = createAdapter();
+    setContextSourceClockForTests(() => 2_000);
+    try {
+      upsertConnectorEventIndex(adapter, {
+        source_connector: 'chat',
+        source_type: 'message',
+        source_id: 'scheduled',
+        channel: 'C001',
+        title: 'a meeting in 2056',
+        content: 'x',
+        event_datetime: 9_000,
+        source_timestamp_ms: 1_200,
+      });
+
+      const result = readRawCandidates(
+        adapter,
+        input({ range: { end_ms: 10_000 }, boundary: grantBoundary(['chat']) })
+      );
+
+      expect(result.candidates.map((c) => c.title)).toEqual(['a meeting in 2056']);
+    } finally {
+      setContextSourceClockForTests(() => Date.now());
+    }
   });
 
   // Both fail-closed states must hold on this path too: skipping them would have turned a
