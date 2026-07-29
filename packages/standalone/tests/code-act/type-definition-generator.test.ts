@@ -112,8 +112,21 @@ describe('TypeDefinitionGenerator', () => {
       // Includes the owner workflow and scoped recall declarations added to
       // the canonical HostBridge surface while retaining a hard prompt cap.
       // Ceiling raised 10700->11100 for trello_kanban (deliberate: one bulk
-      // snapshot call replaces a per-card search fan-out in reports).
-      expect(dts.length).toBeLessThan(11100);
+      // snapshot call replaces a per-card search fan-out in reports), then
+      // 11100->11500 for task_external_correlation (deliberate: the provenance
+      // join is what keeps cross-store claims off title matching), then
+      // 11500->12000 for mama_provenance (deliberate: the return type spells out
+      // every nullable field, because a resolver that hid which supports were
+      // missing would defeat the tool), then 12000->12400 for changes_read
+      // (deliberate: without it the only way to answer "what changed since last
+      // time" is to re-read current state and infer the delta, which costs far
+      // more than these 90 tokens every run and is how a report ends up
+      // restating the board instead of naming the change), then 12400->12500 for
+      // task_update's caused_by and its cause outcome (deliberate: the union IS the
+      // feedback channel - a Code-Act agent reads the .d.ts and nothing else, so without
+      // it a citation that resolved to nothing passes silently and the agent goes on
+      // believing the change was accounted for).
+      expect(dts.length).toBeLessThan(12500);
     });
   });
 
@@ -121,7 +134,9 @@ describe('TypeDefinitionGenerator', () => {
     it('returns reasonable token estimate', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
-      expect(tokens).toBeLessThan(2800); // 2700->2800: trello_kanban (deliberate)
+      // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance,
+      // ->3100 changes_read, ->3130 task_update caused_by (all deliberate)
+      expect(tokens).toBeLessThan(3130);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {

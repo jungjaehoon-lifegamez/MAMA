@@ -30,7 +30,7 @@ import {
 import type { HealthCheckService } from '../../observability/health-check.js';
 import { formatSecurityAlert, setSecurityAlertSender } from '../../security/security-monitor.js';
 import { CronResultRouter } from '../../scheduler/index.js';
-import type { GraphHandlerOptions, DelegationHistoryEntry } from '../../api/graph-api-types.js';
+import type { GraphHandlerOptions } from '../../api/graph-api-types.js';
 import type { SQLiteDatabase } from '../../sqlite.js';
 import { parseSecurityAlertTargets } from './utilities.js';
 
@@ -75,8 +75,9 @@ export async function wireGateways(params: {
     config,
     messageRouter,
     healthCheckService,
-    graphHandlerOptions,
-    db,
+    // graphHandlerOptions and db were only read by the multi-agent hookups above.
+    graphHandlerOptions: _graphHandlerOptions,
+    db: _db,
     discordGateway,
     slackGateway,
     telegramGateway,
@@ -171,134 +172,9 @@ export async function wireGateways(params: {
     },
   });
 
-  // Populate graph handler options with runtime dependencies (F4)
-  if (discordGateway || slackGateway) {
-    const discordHandler = discordGateway?.getMultiAgentHandler();
-    const slackHandler = slackGateway?.getMultiAgentHandler();
-    const multiAgentHandler = discordHandler || slackHandler;
-
-    if (multiAgentHandler) {
-      // getAgentStates: merge real-time process states from ALL gateways
-      graphHandlerOptions.getAgentStates = () => {
-        try {
-          const merged = new Map<string, string>();
-          const priority: Record<string, number> = {
-            busy: 3,
-            starting: 2,
-            idle: 1,
-            online: 0,
-            dead: -1,
-          };
-
-          // Collect from Discord
-          if (discordHandler) {
-            for (const [id, state] of discordHandler.getProcessManager().getAgentStates()) {
-              const existing = merged.get(id);
-              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
-                merged.set(id, state);
-              }
-            }
-          }
-          // Collect from Slack
-          if (slackHandler) {
-            for (const [id, state] of slackHandler.getProcessManager().getAgentStates()) {
-              const existing = merged.get(id);
-              if (!existing || (priority[state] ?? 0) > (priority[existing] ?? 0)) {
-                merged.set(id, state);
-              }
-            }
-          }
-
-          return merged;
-        } catch (err) {
-          console.error('[GraphAPI] Failed to get agent states:', err);
-          return new Map();
-        }
-      };
-
-      // Share getAgentStates with health check service
-      healthCheckService.setGetAgentStates(graphHandlerOptions.getAgentStates);
-
-      // getSwarmTasks: recent delegations from swarm-db
-      graphHandlerOptions.getSwarmTasks = (limit = 20) => {
-        try {
-          // Query swarm_tasks table directly from mama-sessions.db
-          const stmt = db.prepare(`
-            SELECT
-              id, description, category, wave, status,
-              claimed_by, claimed_at, completed_at, result
-            FROM swarm_tasks
-            WHERE status IN ('completed', 'claimed')
-            ORDER BY completed_at DESC, claimed_at DESC
-            LIMIT ?
-          `);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          return stmt.all(limit) as Array<any>;
-        } catch (err) {
-          console.error('[GraphAPI] Failed to fetch swarm tasks:', err);
-          return [];
-        }
-      };
-
-      // getRecentDelegations: in-memory delegation history from DelegationManager
-      graphHandlerOptions.getRecentDelegations = (limit = 20): DelegationHistoryEntry[] => {
-        try {
-          const delegationManager = multiAgentHandler.getDelegationManager();
-          if (!delegationManager) {
-            const logger = new DebugLogger('GraphAPI');
-            logger.warn('[GraphAPI] DelegationManager not available');
-            return [];
-          }
-          return delegationManager.getRecentDelegations(limit);
-        } catch (err) {
-          const logger = new DebugLogger('GraphAPI');
-          logger.error('[GraphAPI] Failed to fetch recent delegations:', err);
-          throw new Error(
-            `Failed to fetch recent delegations: ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      };
-
-      // Wire delegation chain count into health check
-      healthCheckService.setGetActiveDelegationCount(() => {
-        try {
-          const dm = multiAgentHandler.getDelegationManager();
-          return dm ? dm.getActiveDelegationCount() : 0;
-        } catch {
-          return 0;
-        }
-      });
-
-      // Apply updated multi-agent config at runtime without full daemon restart.
-      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
-        // Type assertion to MultiAgentConfig (rawConfig comes from validated YAML)
-        const nextConfig =
-          rawConfig as unknown as import('../../cli/config/types.js').MultiAgentConfig;
-        if (discordGateway) {
-          await discordGateway.setMultiAgentConfig(nextConfig);
-        }
-        if (slackGateway) {
-          await slackGateway.setMultiAgentConfig(nextConfig);
-        }
-      };
-
-      // Restart a single agent runtime (rolling restart) after per-agent config updates.
-      graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
-        const discordHandler = discordGateway?.getMultiAgentHandler();
-        const slackHandler = slackGateway?.getMultiAgentHandler();
-        discordHandler?.getProcessManager().reloadPersona(agentId);
-        slackHandler?.getProcessManager().reloadPersona(agentId);
-      };
-
-      // Stop a single agent's processes without restart.
-      graphHandlerOptions.stopMultiAgentAgent = async (agentId: string) => {
-        const discordHandler = discordGateway?.getMultiAgentHandler();
-        const slackHandler = slackGateway?.getMultiAgentHandler();
-        discordHandler?.getProcessManager().stopAgentProcesses(agentId);
-        slackHandler?.getProcessManager().stopAgentProcesses(agentId);
-      };
-    }
-  }
+  // The graph handler's multi-agent runtime hookups were here: per-agent process states,
+  // runtime config apply, and per-agent restart/stop. All of them reached through the
+  // multi-bot handlers, which were never constructed on this install.
 
   // Initialize gateway plugin loader (for additional gateways like Chatwork)
   const pluginLoader = new PluginLoader({

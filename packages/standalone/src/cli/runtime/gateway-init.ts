@@ -71,22 +71,13 @@ export async function initGateways(
   messageRouter: MessageRouter,
   toolExecutor: GatewayToolExecutor,
   agentLoop: AgentLoop,
-  runtimeBackend: 'claude' | 'codex',
-  db: SQLiteDatabase
+  // Both were only read by the multi-agent handler hookup, which is gone. Kept in the
+  // signature so callers compile unchanged.
+  _runtimeBackend: 'claude' | 'codex',
+  _db: SQLiteDatabase
 ): Promise<GatewayInitResult> {
   // Track active gateways for cleanup
   const gateways: { stop: () => Promise<void> }[] = [];
-
-  const gatewayMultiAgentConfig = config.multi_agent;
-  const gatewayMultiAgentRuntime = {
-    backend: runtimeBackend,
-    model: config.agent.model,
-    effort: config.agent.effort,
-    requestTimeout: config.agent.timeout,
-    codexCommand: process.env.MAMA_CODEX_COMMAND || process.env.CODEX_COMMAND,
-    codexCwd: config.agent.codex_cwd,
-    codexSandbox: config.agent.codex_sandbox,
-  };
 
   // Initialize Discord gateway if enabled (before API server for reference)
   let discordGateway: DiscordGateway | null = null;
@@ -105,15 +96,16 @@ export async function initGateways(
 
       discordGateway = new DiscordGateway({
         token: config.discord.token,
-        messageRouter,
+        // The router satisfies both capabilities today; the surface asks for each by name
+        // so that either can be replaced without handing over the other.
+        turnProcessor: messageRouter,
+        sessionDirectory: messageRouter,
         defaultChannelId: config.discord.default_channel_id,
         config: normalizedGuilds
           ? {
               guilds: normalizedGuilds,
             }
           : undefined,
-        multiAgentConfig: gatewayMultiAgentConfig,
-        multiAgentRuntime: gatewayMultiAgentRuntime,
       });
 
       const gatewayInterface = {
@@ -131,16 +123,6 @@ export async function initGateways(
       agentLoop.setDiscordGateway(gatewayInterface);
 
       // Wire gateway tool executor to multi-agent handler
-      const multiAgentDiscord = discordGateway.getMultiAgentHandler();
-      if (multiAgentDiscord) {
-        multiAgentDiscord.setGatewayToolExecutor(toolExecutor);
-        // Wire delegate dependencies so code-act sandbox can call delegate()
-        toolExecutor.setAgentProcessManager(multiAgentDiscord.getProcessManager());
-        toolExecutor.setDelegationManager(multiAgentDiscord.getDelegationManager());
-        // Wire sessions DB to delegation manager for agent_activity logging
-        multiAgentDiscord.getDelegationManager().setSessionsDb(db);
-        console.log('[start] ✓ Gateway tool executor wired to multi-agent handler');
-      }
 
       await discordGateway.start();
       gateways.push(discordGateway);
@@ -161,9 +143,7 @@ export async function initGateways(
       slackGateway = new SlackGateway({
         botToken: config.slack.bot_token,
         appToken: config.slack.app_token,
-        messageRouter,
-        multiAgentConfig: gatewayMultiAgentConfig,
-        multiAgentRuntime: gatewayMultiAgentRuntime,
+        turnProcessor: messageRouter,
       });
 
       await slackGateway.start();
@@ -179,17 +159,6 @@ export async function initGateways(
           slackGateway!.sendFile(channelId, imagePath, caption),
       };
       toolExecutor.setSlackGateway(slackGatewayInterface);
-
-      const multiAgentSlack = slackGateway.getMultiAgentHandler();
-      if (multiAgentSlack) {
-        multiAgentSlack.setGatewayToolExecutor(toolExecutor);
-        // Wire delegate dependencies so code-act sandbox can call delegate()
-        toolExecutor.setAgentProcessManager(multiAgentSlack.getProcessManager());
-        toolExecutor.setDelegationManager(multiAgentSlack.getDelegationManager());
-        // Wire sessions DB to delegation manager for agent_activity logging
-        multiAgentSlack.getDelegationManager().setSessionsDb(db);
-        console.log('[start] ✓ Gateway tool executor wired to Slack multi-agent handler');
-      }
 
       console.log('✓ Slack connected');
     } catch (error) {
@@ -212,7 +181,8 @@ export async function initGateways(
     try {
       telegramGateway = new TelegramGateway({
         token: config.telegram.token,
-        messageRouter,
+        // The router satisfies the turn contract; this surface takes nothing more.
+        turnProcessor: messageRouter,
         config: {
           allowedChats: config.telegram.allowed_chats,
         },

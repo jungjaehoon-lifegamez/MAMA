@@ -17,9 +17,23 @@ import { wrapUntrustedContent } from '../utils/untrusted-content.js';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+/**
+ * Whether a delivered report can be traced back to the run that produced it.
+ *
+ * Discriminated rather than a nullable id, for the reason the turn contract uses the
+ * same shape: "no handle recorded" and "no run happened" are different facts, and a
+ * delivered artifact that cannot be traced should say which one it is. A report is the
+ * most consequential thing this system emits - it goes to a person and gets acted on -
+ * so it is the last place an absence should be silent.
+ */
+export type ArtifactProvenance =
+  | { status: 'available'; modelRunId: string }
+  | { status: 'unavailable'; reason: 'no_run_handle' | 'commit_failed' | 'legacy_record' };
+
 export interface LastFullReport {
   deliveredAt: string;
   text: string;
+  provenance: ArtifactProvenance;
 }
 
 const CARRY_SUMMARY_MAX_CHARS = 700;
@@ -32,6 +46,7 @@ export function defaultCarryPath(): string {
 export function persistLastFullReport(
   deliveredAtIso: string,
   text: string,
+  provenance: ArtifactProvenance,
   path: string = defaultCarryPath()
 ): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -39,12 +54,23 @@ export function persistLastFullReport(
   // 0600: the carried report is owner operational data.
   writeFileSync(
     tmp,
-    JSON.stringify({ deliveredAt: deliveredAtIso, text } satisfies LastFullReport),
+    JSON.stringify({ deliveredAt: deliveredAtIso, text, provenance } satisfies LastFullReport),
     {
       mode: 0o600,
     }
   );
   renameSync(tmp, path);
+}
+
+function isArtifactProvenance(value: unknown): value is ArtifactProvenance {
+  if (value === null || typeof value !== 'object') {
+    return false;
+  }
+  const record = value as { status?: unknown; modelRunId?: unknown; reason?: unknown };
+  if (record.status === 'available') {
+    return typeof record.modelRunId === 'string' && record.modelRunId.length > 0;
+  }
+  return record.status === 'unavailable' && typeof record.reason === 'string';
 }
 
 /** Load the last delivered full report; null when none exists or the file is unreadable. */
@@ -62,7 +88,16 @@ export function loadLastFullReport(path: string = defaultCarryPath()): LastFullR
       console.warn(`[report-carry] carry file has invalid shape, ignoring: ${path}`);
       return null;
     }
-    return { deliveredAt: parsed.deliveredAt, text: parsed.text };
+    return {
+      deliveredAt: parsed.deliveredAt,
+      text: parsed.text,
+      // A file written before provenance was carried is not the same as a report with no
+      // run behind it, and flattening the two would make every old record look like a
+      // failure. Named as its own reason instead.
+      provenance: isArtifactProvenance(parsed.provenance)
+        ? parsed.provenance
+        : { status: 'unavailable', reason: 'legacy_record' },
+    };
   } catch (error) {
     // Corrupt state must be LOUD (repo rule), then fall back to no-carry.
     console.warn(

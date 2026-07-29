@@ -21,6 +21,18 @@
 
 import { createHash } from 'node:crypto';
 import { applyOperatorTaskTemporalMigration } from '../db/migrations/operator-task-temporal.js';
+import {
+  changeCoverage,
+  ensureEffectLedger,
+  isUsableCause,
+  listEffects,
+  recordEffect,
+  recordUnattributedChange,
+  type ChangeCoverage,
+  type EffectQuery,
+  type EffectRecord,
+  type EffectTarget,
+} from '../evidence/effects.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { OperatorTask, TaskSource } from './operator-interfaces.js';
 import {
@@ -130,6 +142,28 @@ export interface TaskLedgerOptions {
   timeZone?: string;
 }
 
+/**
+ * Who is making a change, supplied by the host rather than by the caller's arguments.
+ *
+ * Kept out of CreateTaskInput/UpdateTaskInput on purpose: those are agent-authored, and an
+ * agent that can write its own run id into the effect ledger can attribute its work to
+ * someone else's run. Same reason the temporal path takes its identity from trusted runtime
+ * context instead of from the tool call.
+ */
+export interface ChangeOrigin {
+  /** The model run behind this write, or null when the host itself made it. */
+  runId?: string | null;
+  /**
+   * The events this write responds to.
+   *
+   * A SET, because a cause is one: a reconcile run is handed a channel's delta batch and
+   * everything it changes rests on that batch. The system knows the batch before the run
+   * starts, so it does not have to ask the agent to restate it - which is what a single
+   * agent-supplied id was, and why 375 of 381 unattributed changes were updates.
+   */
+  causeEventIds?: readonly string[];
+}
+
 export type TemporalGenerationDisposition =
   | 'active'
   | 'resolved'
@@ -212,6 +246,63 @@ export interface ListTasksFilter {
   limit?: number;
   /** 'deadline_priority' = deadline asc NULLS LAST, then high>normal>low, then id. */
   order?: 'deadline_priority' | 'updated';
+}
+
+export interface ListTasksPageFilter extends ListTasksFilter {
+  /** Opaque keyset cursor from a previous page's nextCursor. */
+  cursor?: string;
+}
+
+/**
+ * One page plus the numbers a caller needs to PROVE it read everything.
+ *
+ * `list()` alone cannot support a whole-situation claim: it clamps to 200 and
+ * defaults to 50, so a caller reading a 150-row board saw a third of it and could
+ * not tell. Accumulating pages until nextCursor is null, with the unique ids
+ * collected equal to total, is that proof.
+ */
+export interface ListTasksPage {
+  tasks: TaskRecord[];
+  /** Rows matching the filter, ignoring limit and cursor. */
+  total: number;
+  returned: number;
+  /** Cursor for the next page, or null when this page ends the set. */
+  nextCursor: string | null;
+}
+
+const PRIORITY_RANK: Record<string, number> = { high: 0, normal: 1, low: 2 };
+
+/** Keyset position of a row in the requested order; the trailing id makes it total. */
+type ListCursorPayload =
+  | { order: 'deadline_priority'; k: [number, string, number, number] }
+  | { order: 'updated'; k: [number, number] };
+
+function encodeListCursor(payload: ListCursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+}
+
+/** Loud on anything malformed or from a different ordering: a cursor silently
+ *  reinterpreted under another order would skip or repeat rows, which is exactly
+ *  the incompleteness this page contract exists to rule out. */
+function decodeListCursor(
+  cursor: string,
+  order: 'deadline_priority' | 'updated'
+): ListCursorPayload {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('[task-ledger] malformed list cursor');
+  }
+  const payload = parsed as ListCursorPayload;
+  if (!payload || payload.order !== order || !Array.isArray(payload.k)) {
+    throw new Error(`[task-ledger] list cursor does not belong to order '${order}'`);
+  }
+  const expected = order === 'deadline_priority' ? 4 : 2;
+  if (payload.k.length !== expected || payload.k.some((value) => value === null)) {
+    throw new Error('[task-ledger] malformed list cursor');
+  }
+  return payload;
 }
 
 interface TaskRow {
@@ -342,6 +433,9 @@ export class TaskLedger implements TaskSource {
       CREATE INDEX IF NOT EXISTS idx_operator_no_update_scope
         ON operator_no_update_notes(scope, id);
     `);
+    // Same database as the tasks, so a change and its cause commit or roll back together.
+    // A ledger that can disagree with the rows it describes is worse than no ledger.
+    ensureEffectLedger(this.db as never);
     this.upgradeSchema();
     const foreignKeyViolations = this.db.pragma('foreign_key_check') as unknown[];
     if (foreignKeyViolations.length > 0) {
@@ -488,8 +582,23 @@ export class TaskLedger implements TaskSource {
   }
 
   list(filter: ListTasksFilter = {}): TaskRecord[] {
-    // Owner surface only - system workorder rows never appear in board/REST/
-    // gateway listings (Stage-2 kind filter; workorders have dedicated readers).
+    const { where, params } = this.buildListPredicate(filter);
+    const rawLimit = Number(filter.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM operator_tasks
+         ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
+         ORDER BY ${TaskLedger.orderSql(filter.order)}
+         LIMIT ?`
+      )
+      .all(...params, limit) as TaskRow[];
+    return rows.map((row) => this.toRecord(row));
+  }
+
+  /** Shared filter predicate. Owner surface only - system workorder rows never appear in
+   *  board/REST/gateway listings (Stage-2 kind filter; workorders have dedicated readers). */
+  private buildListPredicate(filter: ListTasksFilter): { where: string[]; params: unknown[] } {
     const where: string[] = [`kind = 'owner'`];
     const params: unknown[] = [];
     if (filter.status) {
@@ -505,24 +614,90 @@ export class TaskLedger implements TaskSource {
       const like = `%${filter.search}%`;
       params.push(like, like, like);
     }
-    const order =
-      filter.order === 'updated'
-        ? 'updated_at DESC, id DESC'
-        : // deadline asc NULLS LAST, then priority high>normal>low, then id.
-          // LIMIT applies AFTER ordering so the true top-N is returned.
-          `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, deadline ASC,
-           CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, id ASC`;
+    return { where, params };
+  }
+
+  /** ORDER BY for both list() and listPage(); the trailing id makes it a TOTAL order,
+   *  which is what lets a keyset cursor resume without skipping or repeating a row.
+   *  LIMIT applies AFTER ordering, so a bounded read still returns the true top-N. */
+  private static orderSql(order: ListTasksFilter['order']): string {
+    return order === 'updated'
+      ? 'updated_at DESC, id DESC'
+      : // deadline asc NULLS LAST, then priority high>normal>low, then id.
+        `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, COALESCE(deadline, '') ASC,
+         CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END ASC, id ASC`;
+  }
+
+  private static cursorFor(
+    record: TaskRecord,
+    order: 'deadline_priority' | 'updated'
+  ): ListCursorPayload {
+    if (order === 'updated') {
+      return { order, k: [record.updatedAt, record.id] };
+    }
+    return {
+      order,
+      k: [
+        record.deadlineIso === null ? 1 : 0,
+        record.deadlineIso ?? '',
+        PRIORITY_RANK[record.priority] ?? 2,
+        record.id,
+      ],
+    };
+  }
+
+  /**
+   * One page of the same ordered set, with the totals that make completeness provable.
+   *
+   * Keyset, not OFFSET: an offset page silently skips or repeats rows when the set
+   * changes between pages, which would leave a "whole situation" claim resting on a
+   * read that quietly lost items.
+   */
+  listPage(filter: ListTasksPageFilter = {}): ListTasksPage {
+    const order = filter.order === 'updated' ? 'updated' : 'deadline_priority';
+    const { where, params } = this.buildListPredicate(filter);
     const rawLimit = Number(filter.limit);
     const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, Math.floor(rawLimit))) : 50;
+
+    const totalRow = this.db
+      .prepare(`SELECT COUNT(*) AS total FROM operator_tasks WHERE ${where.join(' AND ')}`)
+      .get(...params) as { total: number };
+
+    const pageWhere = [...where];
+    const pageParams = [...params];
+    if (filter.cursor) {
+      const { k } = decodeListCursor(filter.cursor, order);
+      if (order === 'updated') {
+        pageWhere.push('(updated_at, id) < (?, ?)');
+      } else {
+        pageWhere.push(
+          `(CASE WHEN deadline IS NULL THEN 1 ELSE 0 END, COALESCE(deadline, ''),
+            CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id) > (?, ?, ?, ?)`
+        );
+      }
+      pageParams.push(...k);
+    }
+
+    // limit + 1 probes for a next page instead of guessing from a full page, so the
+    // final page never hands out a cursor that resolves to nothing.
     const rows = this.db
       .prepare(
         `SELECT * FROM operator_tasks
-         ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-         ORDER BY ${order}
+         WHERE ${pageWhere.join(' AND ')}
+         ORDER BY ${TaskLedger.orderSql(filter.order)}
          LIMIT ?`
       )
-      .all(...params, limit) as TaskRow[];
-    return rows.map((row) => this.toRecord(row));
+      .all(...pageParams, limit + 1) as TaskRow[];
+
+    const hasMore = rows.length > limit;
+    const tasks = rows.slice(0, limit).map((row) => this.toRecord(row));
+    const last = tasks[tasks.length - 1];
+    return {
+      tasks,
+      total: totalRow.total,
+      returned: tasks.length,
+      nextCursor: hasMore && last ? encodeListCursor(TaskLedger.cursorFor(last, order)) : null,
+    };
   }
 
   /** Internal bounded page for temporal reconciliation; excludes rows that can never be candidates. */
@@ -566,7 +741,7 @@ export class TaskLedger implements TaskSource {
    * (source_channel, source_event_id) UPSERTS - the existing row gets the new
    * latest_event (and title stays) instead of a near-duplicate row appearing.
    */
-  create(input: CreateTaskInput): TaskRecord {
+  create(input: CreateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
     if (!input.title || input.title.trim() === '') {
       throw new Error('task title must be a non-empty string');
     }
@@ -606,49 +781,152 @@ export class TaskLedger implements TaskSource {
         // Duplicate source delivery uses the same mutation boundary, including
         // exact-time normalization and no-op detection. The original title stays
         // stable across retries for backward compatibility.
-        return this.update(existing.id, {
-          ...(input.status !== undefined ? { status: input.status } : {}),
-          ...(input.priority !== undefined ? { priority: input.priority } : {}),
-          ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
-          ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
-          ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
-          ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
-          ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
-        });
+        return this.update(
+          existing.id,
+          {
+            ...(input.status !== undefined ? { status: input.status } : {}),
+            ...(input.priority !== undefined ? { priority: input.priority } : {}),
+            ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+            ...(input.deadline !== undefined ? { deadline: input.deadline } : {}),
+            ...(input.due_at !== undefined ? { due_at: input.due_at } : {}),
+            ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
+            ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
+          },
+          // A duplicate delivery of the same event: here the cause genuinely is known,
+          // because it is the event the row is keyed on.
+          {
+            ...origin,
+            causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+          }
+        );
       }
     }
 
-    const result = this.db
-      .prepare(
-        `INSERT INTO operator_tasks
+    let createdId = 0;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT INTO operator_tasks
            (title, status, priority, assignee, deadline, due_at, deadline_offset_minutes,
             revision, temporal_epoch, source_channel, source_event_id, latest_event,
             auto_created, confirmed, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        input.title.trim(),
-        input.status ?? 'pending',
-        input.priority ?? 'normal',
-        input.assignee ?? null,
-        normalizedDeadline,
-        exactDue?.dueAt ?? null,
-        exactDue?.offsetMinutes ?? null,
-        initialTemporalEpoch,
-        input.source_channel ?? null,
-        input.source_event_id ?? null,
-        input.latest_event ?? null,
-        1,
-        input.confirmed ? 1 : 0,
-        now,
-        now
-      );
-    const created = this.getById(Number(result.lastInsertRowid));
+        )
+        .run(
+          input.title.trim(),
+          input.status ?? 'pending',
+          input.priority ?? 'normal',
+          input.assignee ?? null,
+          normalizedDeadline,
+          exactDue?.dueAt ?? null,
+          exactDue?.offsetMinutes ?? null,
+          initialTemporalEpoch,
+          input.source_channel ?? null,
+          input.source_event_id ?? null,
+          input.latest_event ?? null,
+          1,
+          input.confirmed ? 1 : 0,
+          now,
+          now
+        );
+      createdId = Number(result.lastInsertRowid);
+      this.recordTaskChange({
+        kind: 'task_create',
+        taskId: createdId,
+        // The HOST batch wins. `source_event_id` arrives on agent-authored task_create
+        // input, so letting it take precedence made the attribution the agent's to choose:
+        // any 1-200 character string passes the ledger's shape check, and the change was
+        // then stamped `attributed` on a cause nobody could resolve. The run id is already
+        // protected for exactly this reason; the cause was not. Found in review.
+        //
+        // The agent's field is still USED when the host handed the run no batch - a named
+        // source event is better evidence than none, and an unbounded run has nothing else.
+        // It is weaker evidence, not worthless.
+        //
+        // A plain spread would be wrong in the other direction: an absent caller field must
+        // not erase what the host knows.
+        origin: {
+          ...origin,
+          causeEventIds:
+            origin.causeEventIds && origin.causeEventIds.length > 0
+              ? origin.causeEventIds
+              : input.source_event_id
+                ? [input.source_event_id]
+                : origin.causeEventIds,
+        },
+        channel: input.source_channel ?? null,
+        // Everything the INSERT wrote. A hash over two of fifteen columns cannot tell two
+        // materially different writes apart, which is most of what a receipt is for.
+        payload: {
+          title: input.title.trim(),
+          status: input.status ?? 'pending',
+          priority: input.priority ?? 'normal',
+          assignee: input.assignee ?? null,
+          deadline: normalizedDeadline,
+          due_at: exactDue?.dueAt ?? null,
+          deadline_offset_minutes: exactDue?.offsetMinutes ?? null,
+          temporal_epoch: initialTemporalEpoch,
+          source_channel: input.source_channel ?? null,
+          source_event_id: input.source_event_id ?? null,
+          latest_event: input.latest_event ?? null,
+          confirmed: input.confirmed ? 1 : 0,
+        },
+        atMs: now,
+      });
+      this.db.exec('COMMIT');
+    } catch (error) {
+      this.db.exec('ROLLBACK');
+      throw error;
+    }
+    const created = this.getById(createdId);
     if (!created) throw new Error('task_create: inserted row could not be read back');
     return created;
   }
 
-  update(id: number, patch: UpdateTaskInput): TaskRecord {
+  /**
+   * Write the effect row for a task change.
+   *
+   * Called from inside the same transaction as the write it describes. The cause is the
+   * event the caller already recorded on the row - the tool has always accepted it, and
+   * 178 of the 179 owner tasks that carry one resolve to a real indexed event, so this is
+   * attribution that already exists rather than a new burden on the agent.
+   *
+   * When there is no cause the change is still recorded, marked unattributed. That is the
+   * honest reading of `task_update`, which has never had a cause field at all: the system
+   * has been changing owner work items without recording why, and the ledger's job is to
+   * show how often, not to pretend otherwise or to start refusing writes.
+   */
+  private recordTaskChange(input: {
+    kind: 'task_create' | 'task_update';
+    taskId: number;
+    origin: ChangeOrigin;
+    channel: string | null;
+    payload: unknown;
+    atMs: number;
+  }): void {
+    const common = {
+      runId: input.origin.runId ?? null,
+      channelId: input.channel,
+      kind: input.kind,
+      targetType: 'task' as const,
+      targetId: String(input.taskId),
+      payload: input.payload,
+      atMs: input.atMs,
+    };
+    // A cause the ledger cannot use makes the change unattributed - it never makes the
+    // change fail. Some live rows carry 400-character legacy source identifiers, and an
+    // operator that cannot close a work item because its upstream id is malformed is a
+    // worse system than one that admits it does not know why the item changed.
+    const causes = (input.origin.causeEventIds ?? []).filter(isUsableCause);
+    if (causes.length > 0) {
+      recordEffect(this.db as never, { ...common, sourceEventIds: causes });
+      return;
+    }
+    recordUnattributedChange(this.db as never, common);
+  }
+
+  update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
     if (patch.status === 'failed') {
       throw new Error(`task_update: 'failed' is a system-only status`);
     }
@@ -750,24 +1028,41 @@ export class TaskLedger implements TaskSource {
       ] as const;
       const changedColumns = persistedColumns.filter((column) => next[column] !== existing[column]);
       if (changedColumns.length === 0) {
+        // Nothing moved, so nothing is recorded. This is the whole point of the ledger:
+        // a call that ran is not a change, and the two must not be countable as one.
+        //
+        // The read-back happens after the catch, not here: a throw between COMMIT and
+        // return would send this into the catch and issue ROLLBACK with no open
+        // transaction, replacing the real error with a confusing one.
         this.db.exec('COMMIT');
-        return this.toRecord(existing);
+      } else {
+        const nextRevision = existing.revision + 1;
+        const sets = changedColumns.map((column) => `${column} = ?`);
+        const values = changedColumns.map((column) => next[column]);
+        const updatedAt = this.now();
+        sets.push('revision = ?', 'updated_at = ?');
+        values.push(nextRevision, updatedAt);
+        this.db
+          .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
+          .run(...values, id);
+        this.recordTaskChange({
+          kind: 'task_update',
+          taskId: id,
+          origin,
+          channel: existing.source_channel,
+          payload: {
+            revision: nextRevision,
+            changed: Object.fromEntries(changedColumns.map((column) => [column, next[column]])),
+          },
+          atMs: updatedAt,
+        });
+        if (temporalChanged || terminalToOpen) {
+          this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
+        } else if (openToTerminal) {
+          this.supersedeAllActiveTemporalGenerationsInTransaction(id);
+        }
+        this.db.exec('COMMIT');
       }
-
-      const nextRevision = existing.revision + 1;
-      const sets = changedColumns.map((column) => `${column} = ?`);
-      const values = changedColumns.map((column) => next[column]);
-      sets.push('revision = ?', 'updated_at = ?');
-      values.push(nextRevision, this.now());
-      this.db
-        .prepare(`UPDATE operator_tasks SET ${sets.join(', ')} WHERE id = ?`)
-        .run(...values, id);
-      if (temporalChanged || terminalToOpen) {
-        this.supersedeTemporalGenerationsInTransaction(id, Number(next.temporal_epoch));
-      } else if (openToTerminal) {
-        this.supersedeAllActiveTemporalGenerationsInTransaction(id);
-      }
-      this.db.exec('COMMIT');
     } catch (error) {
       this.db.exec('ROLLBACK');
       throw error;
@@ -1081,6 +1376,22 @@ export class TaskLedger implements TaskSource {
     return trustedContext;
   }
 
+  /**
+   * What this system changed, and what it changed it for.
+   *
+   * Reads live beside the writes because the effect ledger shares the tasks database on
+   * purpose. Exposed here rather than by handing out the connection: the ledger owns both
+   * halves, so a change and its account of itself cannot drift apart.
+   */
+  listChanges(query: EffectQuery = {}): EffectRecord[] {
+    return listEffects(this.db as never, query);
+  }
+
+  /** Of what this system changed, how much rests on evidence. */
+  changeCoverage(sinceMs?: number, targetType?: EffectTarget): ChangeCoverage {
+    return changeCoverage(this.db as never, sinceMs, targetType);
+  }
+
   getTemporalEffect(attemptId: number): TemporalEffectReceipt | null {
     const row = this.db
       .prepare(`SELECT * FROM operator_temporal_effects WHERE workorder_attempt_id = ?`)
@@ -1370,6 +1681,27 @@ export class TaskLedger implements TaskSource {
       if (ownerUpdate.changes !== 1) {
         throw new Error(`temporal effect lost owner task revision for task ${context.taskId}`);
       }
+      // The same ledger as every other owner-task change. This is the canonical case -
+      // a scheduled run closing a work item - and leaving it out would have meant the
+      // effect ledger could not see the one change type it was built to account for,
+      // with its receipt filed in a second table nobody joins against.
+      //
+      // Unattributed, and correctly so: a temporal check fires because a clock advanced,
+      // not because an event arrived. Its evidence is the context packet, which today
+      // carries recalled memories and zero connector events - measured, not assumed.
+      // Recording it as attributed would name a cause that does not exist.
+      this.recordTaskChange({
+        kind: 'task_update',
+        taskId: context.taskId,
+        origin: { runId: null },
+        channel: existing.source_channel,
+        payload: {
+          revision: afterRevision,
+          outcome: input.outcome,
+          changed: Object.fromEntries(changedFields.map((column) => [column, next[column]])),
+        },
+        atMs: now,
+      });
 
       if (rescheduled) {
         this.supersedeTemporalGenerationsInTransaction(

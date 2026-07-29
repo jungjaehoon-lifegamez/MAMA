@@ -117,35 +117,54 @@ In November 2025, we made a critical decision: **stop the rewrite, embrace migra
 
 ### Core Components
 
-**1. Core Logic (`mama-plugin/src/core/`)**
+**1. Core Logic (`packages/mama-core/src/`)**
 
-- **mama-api.js**: Main API (save, recall, suggest, list, updateOutcome)
-- **embeddings.js**: Transformers.js integration for semantic search
-- **db-manager.js**: SQLite database operations (WAL mode, migrations)
-- **relevance-scorer.js**: Hybrid scoring (semantic + recency + importance)
-- **decision-tracker.js**: Evolution graph & supersedes edges
-- **outcome-tracker.js**: Success/failure tracking
-- **decision-formatter.js**: Context formatting with token budgets
+All of it lives in mama-core, as TypeScript. The plugin has no core logic of its own.
 
-**2. MCP Tools (`mama-plugin/src/tools/`)**
+- **mama-api.ts**: Main API (save, recall, suggest, list, updateOutcome)
+- **embeddings.ts**: Transformers.js integration for semantic search
+- **db-manager.ts**: SQLite database operations (WAL mode, migrations)
+- **relevance-scorer.ts**: Hybrid scoring (semantic + recency + importance)
+- **decision-tracker.ts**: Evolution graph & supersedes edges
+- **outcome-tracker.ts**: Success/failure tracking
+- **decision-formatter.ts**: Context formatting with token budgets
 
-- **save-decision.js**: Save decisions/insights to memory
-- **recall-decision.js**: Retrieve decision history by topic
-- **suggest-decision.js**: Semantic search for relevant decisions
-- **list-decisions.js**: List recent decisions chronologically
-- **update-outcome.js**: Update decision outcomes (SUCCESS/FAILED/PARTIAL)
+**2. MCP Tools (`packages/mcp-server/src/tools/`)**
 
-**3. Commands (`mama-plugin/commands/`)**
+The single MCP tool surface. The plugin used to carry a duplicate set under
+`src/tools/`; it was deleted in v0.29.0 because no hook, command or manifest loaded it.
 
-- User-facing slash commands (.md files)
-- `/mama-save`, `/mama-recall`, `/mama-suggest`, `/mama-list`, `/mama-configure`
-- Auto-discovered by Claude Code plugin system
+Advertised tools: `save`, `search`, `update`, `search_decisions_and_contracts`,
+`case_timeline_range` (`load_checkpoint` remains as an unadvertised compatibility alias).
 
-**4. Hooks (`mama-plugin/scripts/`)**
+**2b. Plugin (`packages/claude-code-plugin/`)**
 
-- **userpromptsubmit-hook.js**: Context injection when user submits prompt
-- **pretooluse-hook.js**: Context injection before Read/Edit/Grep tools
-- **posttooluse-hook.js**: Auto-save decisions after Write/Edit tools
+What the plugin actually is, after v0.29.0:
+
+- **`scripts/`**: the four hook entry points named in `.claude-plugin/plugin.json`
+  (SessionStart, PreToolUse, PostToolUse, PreCompact) plus `session-state.js`,
+  `hook-file-filter.js` and `postinstall.js`
+- **`src/core/hook-features.js`**: the only surviving core module — loaded by all four hooks
+  through a computed `require(path.join(CORE_PATH, 'hook-features'))`
+- **`commands/*.md`**: the user-facing slash commands, self-contained markdown with no JS
+  backends
+- **`src/db/migrations/*.sql`**
+- **`.mcp.json`**: declares the MCP server the plugin talks to
+
+**3. Commands (`packages/claude-code-plugin/commands/`)**
+
+- User-facing slash commands (.md files), self-contained — no JS backends
+- `/mama:decision`, `/mama:search`, `/mama:checkpoint`, `/mama:resume`, `/mama:configure`
+- Auto-discovered by the Claude Code plugin system
+
+**4. Hooks (`packages/claude-code-plugin/scripts/`)**
+
+The four named in `.claude-plugin/plugin.json`. UserPromptSubmit is NOT wired.
+
+- **sessionstart-hook.js**: checkpoint + recent-decision bootstrap (15s timeout)
+- **pretooluse-hook.js**: context injection before Read (5s)
+- **posttooluse-hook.js**: auto-save after Write/Edit (5s)
+- **precompact-hook.js**: carry context across a compaction (10s)
 
 **5. Skills (`mama-plugin/skills/mama-context/`)**
 
@@ -279,58 +298,39 @@ npx vitest run --coverage
 ### Directory Structure
 
 ```
-mama-plugin/
+packages/claude-code-plugin/
 ├── .claude-plugin/
-│   └── plugin.json           # Unified manifest (skills+hooks)
+│   └── plugin.json           # Unified manifest (hooks + skills); version must match package.json
 │
-├── commands/                  # Slash commands (.md wrappers)
-│   ├── mama-save.md
-│   ├── mama-recall.md
-│   ├── mama-suggest.md
-│   ├── mama-list.md
-│   └── mama-configure.md
+├── .mcp.json                  # Declares the MCP server the plugin talks to
+│
+├── commands/                  # Slash commands — self-contained markdown, no JS backends
+│   ├── decision.md
+│   ├── search.md
+│   ├── checkpoint.md
+│   ├── resume.md
+│   └── configure.md
 │
 ├── src/
-│   ├── commands/              # Backend command implementations
-│   │   ├── mama-save.js
-│   │   ├── mama-recall.js
-│   │   ├── mama-suggest.js
-│   │   ├── mama-list.js
-│   │   └── mama-configure.js
+│   ├── core/
+│   │   └── hook-features.js       # The only surviving core module; all four hooks load it
 │   │
-│   ├── core/                  # Core business logic
-│   │   ├── mama-api.js            # Main API
-│   │   ├── embeddings.js          # Transformers.js integration
-│   │   ├── db-manager.js          # SQLite operations
-│   │   ├── relevance-scorer.js    # Hybrid scoring
-│   │   ├── decision-tracker.js    # Evolution graph
-│   │   ├── outcome-tracker.js     # Outcome tracking
-│   │   ├── decision-formatter.js  # Output formatting
-│   │   ├── config-loader.js       # Configuration management
-│   │   ├── time-formatter.js      # Time formatting
-│   │   ├── query-intent.js        # Query intent analysis
-│   │   └── debug-logger.js        # Structured logging
-│   │
-│   ├── db/
-│   │   └── migrations/            # SQLite migration scripts
-│   │       ├── 001-initial-schema.sql
-│   │       ├── 002-add-embeddings.sql
-│   │       ├── 003-add-audit.sql
-│   │       └── 004-add-outcome-tracking.sql
-│   │
-│   └── tools/                 # MCP tool handlers
-│       ├── save-decision.js
-│       ├── recall-decision.js
-│       ├── suggest-decision.js
-│       ├── list-decisions.js
-│       ├── update-outcome.js
-│       └── index.js               # Tool exports
+│   └── db/
+│       └── migrations/            # SQLite migration scripts
+│           ├── 001-initial-decision-graph.sql
+│           ├── 002-add-error-patterns.sql
+│           ├── 003-add-validation-fields.sql
+│           └── 004-add-trust-context.sql
 │
-├── scripts/                   # Hook executables
-│   ├── userpromptsubmit-hook.js
+├── scripts/                   # Hook executables (the four in plugin.json, plus support)
+│   ├── sessionstart-hook.js
 │   ├── pretooluse-hook.js
 │   ├── posttooluse-hook.js
+│   ├── precompact-hook.js
+│   ├── session-state.js           # Shared hook state
+│   ├── hook-file-filter.js        # Which files a hook acts on
 │   ├── postinstall.js             # Tier detection
+│   ├── check-compatibility.js
 │   └── validate-manifests.js      # Manifest validation
 │
 ├── skills/
@@ -1074,7 +1074,7 @@ npm test
 **Fix:**
 
 ```bash
-chmod +x scripts/userpromptsubmit-hook.js
+chmod +x scripts/sessionstart-hook.js
 chmod +x scripts/pretooluse-hook.js
 chmod +x scripts/posttooluse-hook.js
 ```

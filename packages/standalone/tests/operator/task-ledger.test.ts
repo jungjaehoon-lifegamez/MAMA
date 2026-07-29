@@ -541,3 +541,95 @@ describe('Story S2-T1: shadow rollback cleanup (N4)', () => {
     });
   });
 });
+
+/**
+ * listPage: the bounded-read hole. list() clamps to 200 and defaults to 50, so a
+ * caller reading a 150-row board saw a third of it with nothing in the result
+ * saying so - and a report then stated "the open items are..." from one page.
+ */
+describe('listPage completeness contract', () => {
+  let db: SQLiteDatabase;
+  let ledger: TaskLedger;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    ledger = new TaskLedger(db);
+  });
+
+  const seed = (count: number): void => {
+    for (let index = 0; index < count; index += 1) {
+      ledger.create({
+        title: `item ${index}`,
+        // Mixed deadlines exercise the NULLS-LAST group boundary the cursor crosses.
+        ...(index % 3 === 0
+          ? {}
+          : { deadline: `2026-08-${String((index % 27) + 1).padStart(2, '0')}` }),
+        priority: index % 2 === 0 ? 'high' : 'low',
+      });
+    }
+  };
+
+  it('reports total independently of the page size', () => {
+    seed(7);
+    const page = ledger.listPage({ limit: 2 });
+    expect(page.total).toBe(7);
+    expect(page.returned).toBe(2);
+    expect(page.nextCursor).not.toBeNull();
+  });
+
+  it('walks every row exactly once across pages, in the same order as list()', () => {
+    seed(25);
+    const whole = ledger.list({ limit: 200 }).map((task) => task.id);
+
+    const walked: number[] = [];
+    let cursor: string | undefined;
+    let guard = 0;
+    do {
+      const page = ledger.listPage({ limit: 4, cursor });
+      walked.push(...page.tasks.map((task) => task.id));
+      cursor = page.nextCursor ?? undefined;
+      guard += 1;
+    } while (cursor && guard < 50);
+
+    expect(walked).toEqual(whole);
+    expect(new Set(walked).size).toBe(25);
+    expect(walked.length).toBe(ledger.listPage({ limit: 1 }).total);
+  });
+
+  it('ends with a null cursor instead of handing out an empty page', () => {
+    seed(4);
+    const page = ledger.listPage({ limit: 4 });
+    expect(page.returned).toBe(4);
+    expect(page.nextCursor).toBeNull();
+  });
+
+  it('paginates the updated order too', () => {
+    seed(6);
+    const whole = ledger.list({ limit: 200, order: 'updated' }).map((task) => task.id);
+    const walked: number[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = ledger.listPage({ limit: 2, order: 'updated', cursor });
+      walked.push(...page.tasks.map((task) => task.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(walked).toEqual(whole);
+  });
+
+  it('honours filters in both total and page', () => {
+    seed(6);
+    ledger.create({ title: 'done one', status: 'done' });
+    const page = ledger.listPage({ status: 'done', limit: 10 });
+    expect(page.total).toBe(1);
+    expect(page.tasks[0]?.title).toBe('done one');
+  });
+
+  // A cursor reinterpreted under another ordering would skip or repeat rows - the exact
+  // silent incompleteness this contract exists to rule out, so it fails loudly.
+  it('rejects a cursor from a different order and a malformed cursor', () => {
+    seed(3);
+    const cursor = ledger.listPage({ limit: 1 }).nextCursor!;
+    expect(() => ledger.listPage({ limit: 1, order: 'updated', cursor })).toThrow(/order/);
+    expect(() => ledger.listPage({ limit: 1, cursor: 'not-a-cursor' })).toThrow(/cursor/);
+  });
+});

@@ -389,41 +389,6 @@ export async function ensureMemoryScope(kind: string, externalId: string): Promi
   return id;
 }
 
-export async function bindMemoryToScope(
-  memoryId: string,
-  scopeId: string,
-  isPrimary = false
-): Promise<void> {
-  const adapter = getAdapter();
-
-  adapter
-    .prepare(
-      `
-        INSERT OR REPLACE INTO memory_scope_bindings (memory_id, scope_id, is_primary)
-        VALUES (?, ?, ?)
-      `
-    )
-    .run(memoryId, scopeId, isPrimary ? 1 : 0);
-}
-
-export async function listScopesForMemory(
-  memoryId: string
-): Promise<Array<{ kind: string; id: string }>> {
-  const adapter = getAdapter();
-
-  return adapter
-    .prepare(
-      `
-        SELECT ms.kind, ms.external_id AS id
-        FROM memory_scope_bindings msb
-        JOIN memory_scopes ms ON ms.id = msb.scope_id
-        WHERE msb.memory_id = ?
-        ORDER BY msb.is_primary DESC, ms.created_at ASC
-      `
-    )
-    .all(memoryId) as Array<{ kind: string; id: string }>;
-}
-
 /**
  * Insert embedding into vector search table
  *
@@ -468,7 +433,12 @@ export async function vectorSearch(
 
   try {
     // Brute-force cosine similarity over all embeddings (with optional topic/status pre-filter)
-    const results = await adapter.vectorSearch(queryEmbedding, limit * 3, topicPrefix, excludeStatuses);
+    const results = await adapter.vectorSearch(
+      queryEmbedding,
+      limit * 3,
+      topicPrefix,
+      excludeStatuses
+    );
 
     if (!results || results.length === 0) {
       return []; // No keyword fallback - fast fail
@@ -1111,60 +1081,4 @@ export async function fts5Search(
     LIMIT ?
   `);
   return stmt.all(query, limit) as { id: string; rank: number }[];
-}
-
-/**
- * Re-generate all embeddings using the currently configured model.
- * Call this after changing the embedding model in config.json.
- *
- * @param onProgress - Optional callback with (completed, total) counts
- * @returns Number of embeddings regenerated
- */
-export async function reindexEmbeddings(
-  onProgress?: (completed: number, total: number) => void
-): Promise<number> {
-  const adapter = getAdapter();
-  const { generateEnhancedEmbedding } = await import('./embeddings.js');
-
-  const decisions = adapter
-    .prepare('SELECT rowid, topic, decision, reasoning, outcome, confidence FROM decisions')
-    .all() as Array<{
-    rowid: number;
-    topic: string;
-    decision: string;
-    reasoning: string | null;
-    outcome: string | null;
-    confidence: number | null;
-  }>;
-
-  if (typeof adapter.insertEmbedding !== 'function') {
-    throw new Error('Embedding insertion is not available on this adapter');
-  }
-
-  const total = decisions.length;
-  let completed = 0;
-
-  for (const row of decisions) {
-    try {
-      // e5 passage role (default) - stored vector
-      const embedding = await generateEnhancedEmbedding({
-        topic: row.topic,
-        decision: row.decision,
-        reasoning: row.reasoning || undefined,
-        outcome: row.outcome || undefined,
-        confidence: row.confidence ?? undefined,
-      });
-      adapter.insertEmbedding(row.rowid, embedding);
-      completed++;
-      if (onProgress && completed % 50 === 0) {
-        onProgress(completed, total);
-      }
-    } catch (e) {
-      logError(`[db-manager] Failed to reindex rowid ${row.rowid}: ${e}`);
-    }
-  }
-
-  onProgress?.(completed, total);
-  info(`[db-manager] Reindexed ${completed}/${total} embeddings`);
-  return completed;
 }

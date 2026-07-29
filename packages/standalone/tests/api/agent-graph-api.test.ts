@@ -109,11 +109,13 @@ function insertScopedRaw(input: {
   scopeId: string;
   projectId?: string;
   tenantId?: string;
+  channel?: string;
 }): string {
   return upsertConnectorEventIndex(getAdapter(), {
     source_connector: input.connector,
     source_type: 'message',
     source_id: input.sourceId,
+    channel: input.channel,
     content: `raw ${input.sourceId}`,
     event_datetime: 1_000,
     memory_scope_kind: input.scopeKind,
@@ -1028,6 +1030,110 @@ describe('Story M6.2: /api/agent graph and entity worker API', () => {
           .prepare('SELECT status, error_summary FROM model_runs ORDER BY created_at')
           .all()
       ).toEqual([{ status: 'failed', error_summary: 'graph commit store unavailable' }]);
+    });
+  });
+
+  describe('AC: raw refs reached through the graph obey the channel grant', () => {
+    // The graph was the way around the read path: it validated raw refs with no grant at
+    // all, so a ref the reader refuses could still surface here with its identifiers and
+    // title attached.
+    async function seedGrantFixtures(): Promise<void> {
+      await createEntityNode({
+        id: 'entity_grant',
+        kind: 'project',
+        preferred_label: 'Grant',
+        status: 'active',
+        scope_kind: 'project',
+        scope_id: 'alpha',
+        merged_into: null,
+      });
+      const granted = insertScopedRaw({
+        sourceId: 'raw-granted',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+        channel: 'C_GRANTED',
+      });
+      const refused = insertScopedRaw({
+        sourceId: 'raw-refused',
+        connector: 'slack',
+        scopeKind: 'project',
+        scopeId: 'alpha',
+        projectId: 'alpha',
+        tenantId: 'default',
+        channel: 'C_REFUSED',
+      });
+      insertEdge({
+        edgeId: 'edge_granted_raw',
+        edgeType: 'derived_from',
+        subjectKind: 'entity',
+        subjectId: 'entity_grant',
+        objectKind: 'raw',
+        objectId: granted,
+        createdAt: 1_000,
+      });
+      insertEdge({
+        edgeId: 'edge_refused_raw',
+        edgeType: 'derived_from',
+        subjectKind: 'entity',
+        subjectId: 'entity_grant',
+        objectKind: 'raw',
+        objectId: refused,
+        createdAt: 1_000,
+      });
+    }
+
+    it('hides a raw endpoint whose channel the grant refuses', async () => {
+      await seedGrantFixtures();
+      const { app } = makeServer({ channelGrant: () => ({ slack: ['C_GRANTED'] }) });
+
+      const response = await authed(
+        request(app)
+          .get('/api/agent/graph/neighborhood')
+          .query({ ref: 'entity:entity_grant', depth: 1, limit: 10 })
+      );
+
+      expect(response.status).toBe(200);
+      const edgeIds = (response.body.edges as Array<{ edge_id: string }>).map((e) => e.edge_id);
+      expect(edgeIds).toContain('edge_granted_raw');
+      expect(edgeIds).not.toContain('edge_refused_raw');
+    });
+
+    // A caller must not be able to widen its own grant by asking with fewer scopes. The
+    // narrowing is driven by the ENVELOPE's channel scope; narrowing by the request would
+    // mean omitting the channel scope hands back every channel of the connector.
+    it('narrows by the envelope scope, not the requested one', async () => {
+      await seedGrantFixtures();
+      validEnvelope = makeEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: 'alpha' }],
+          raw_connectors: ['slack'],
+          memory_scopes: [
+            { kind: 'project', id: 'alpha' },
+            { kind: 'channel', id: 'slack:C_GRANTED' },
+          ],
+          allowed_destinations: [{ kind: 'slack', id: 'slack:C1' }],
+        },
+      });
+      authority.persist(validEnvelope);
+      // The config grants both channels; the envelope is bound to one.
+      const { app } = makeServer({
+        channelGrant: () => ({ slack: ['C_GRANTED', 'C_REFUSED'] }),
+      });
+
+      const response = await authed(
+        request(app)
+          .get('/api/agent/graph/neighborhood')
+          // Asking with the project scope only - the channel scope is left out.
+          .query({ ref: 'entity:entity_grant', depth: 1, limit: 10, scope: 'project:alpha' })
+      );
+
+      expect(response.status).toBe(200);
+      const edgeIds = (response.body.edges as Array<{ edge_id: string }>).map((e) => e.edge_id);
+      expect(edgeIds).toContain('edge_granted_raw');
+      expect(edgeIds).not.toContain('edge_refused_raw');
     });
   });
 });

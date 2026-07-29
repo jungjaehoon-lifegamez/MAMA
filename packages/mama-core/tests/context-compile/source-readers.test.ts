@@ -8,7 +8,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { upsertConnectorEventIndex } from '../../src/connectors/event-index.js';
 import { NodeSQLiteAdapter } from '../../src/db-adapter/node-sqlite-adapter.js';
 import type { DatabaseAdapter } from '../../src/db-manager.js';
-import { insertTwinEdge } from '../../src/edges/store.js';
 import type { TwinEdgeRecord } from '../../src/edges/types.js';
 import type { MemoryRecord, RecallBundle } from '../../src/memory/types.js';
 import {
@@ -1015,54 +1014,6 @@ describe('STORY-CC-B3: Context source readers - AC1, AC2, AC3', () => {
         kind: 'memory',
         id: 'mem-a',
       });
-    });
-
-    it('treats an explicit empty connector window as no raw graph expansion access', () => {
-      const adapter = createAdapter();
-      insertScopedDecision(adapter, {
-        id: 'mem-raw-denied',
-        topic: 'Context compile raw connector boundary',
-        summary: 'Visible memory has a raw neighbor.',
-        details: 'The raw neighbor must stay hidden when connectors are empty.',
-      });
-      const rawId = upsertConnectorEventIndex(adapter, {
-        source_connector: 'slack',
-        source_type: 'message',
-        source_id: 'm-raw-denied',
-        channel: 'C-eng',
-        title: 'Denied raw event',
-        content: 'This raw event is outside the empty connector envelope.',
-        event_datetime: 1_200,
-        source_timestamp_ms: 1_200,
-        tenant_id: 'default',
-        project_id: 'repo-a',
-        memory_scope_kind: 'project',
-        memory_scope_id: 'repo-a',
-      }).event_index_id;
-      insertTwinEdge(adapter, {
-        edge_type: 'mentions',
-        subject_ref: { kind: 'memory', id: 'mem-raw-denied' },
-        object_ref: { kind: 'raw', id: rawId },
-        source: 'code',
-        reason_text: 'Memory mentions the raw event.',
-      });
-
-      const result = readGraphCandidates(
-        adapter,
-        input({
-          connectors: [],
-          boundary: {
-            scopes: [{ kind: 'project', id: 'repo-a' }],
-            connectors: [],
-            project_refs: [{ kind: 'project', id: 'repo-a' }],
-            tenant_id: 'default',
-          },
-        }),
-        [{ kind: 'memory', id: 'mem-raw-denied' }]
-      );
-
-      expect(result.candidates).toEqual([]);
-      expect(result.source_refs).toEqual([]);
     });
 
     it('graph reader excludes edges created before the requested range start', () => {

@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { MEMORY_SCOPE_KINDS, type MemoryScopeRef } from '../memory/types.js';
 import type { ContextBoundary, ContextProjectRef, ContextRef } from './types.js';
 import { normalizeContextRef, normalizeContextRefs } from './ref.js';
+import { isChannelGranted } from './channel-grant.js';
 
 const SCOPE_ORDER: Record<MemoryScopeRef['kind'], number> = {
   project: 0,
@@ -139,17 +140,44 @@ export function assertContextBoundaryAllowsInput(input: BoundaryCheckInput): voi
   }
 
   const seedRefs = normalizeContextRefs(input.seedRefs);
-  assertSeedRefsAllowed(seedRefs, boundaryConnectors, hasConnectorBoundary);
+  assertSeedRefsAllowed(
+    seedRefs,
+    boundaryConnectors,
+    hasConnectorBoundary,
+    input.boundary.channels
+  );
 }
 
+/**
+ * A seed ref must satisfy the same visibility rule as a row the reader would have returned.
+ *
+ * The connector check alone was never enough, and once raw visibility is decided by
+ * (connector, channel) it is plainly not: a caller could name the raw id of an event in an
+ * ungranted channel and have its identifiers - upstream source id and channel - come back
+ * in the packet's source_refs, which is then persisted. That is a citation path reaching
+ * past the reading path, the exact asymmetry this rebuild exists to remove.
+ *
+ * The channel is checked only when the boundary carries a grant. Without one there is no
+ * channel rule to enforce and the connector check stands, unchanged.
+ */
 function assertSeedRefsAllowed(
   seedRefs: readonly ContextRef[],
   boundaryConnectors: Set<string>,
-  hasConnectorBoundary: boolean
+  hasConnectorBoundary: boolean,
+  channelGrant: Record<string, readonly string[]> | undefined
 ): void {
   for (const ref of seedRefs) {
-    if (ref.kind === 'raw' && hasConnectorBoundary && !boundaryConnectors.has(ref.connector)) {
+    if (ref.kind !== 'raw') continue;
+    if (hasConnectorBoundary && !boundaryConnectors.has(ref.connector)) {
       throw new Error(`Seed raw ref connector is outside the context boundary: ${ref.connector}`);
+    }
+    if (!channelGrant) continue;
+    // Calls the shared rule rather than re-deriving membership. An inline re-derivation
+    // here already disagreed with it on the empty-channel case, which is how a fourth copy
+    // of a decision starts: not by being written as a copy, but by being written as
+    // "obviously the same check".
+    if (!isChannelGranted(ref.connector, ref.channel_id, channelGrant)) {
+      throw new Error(`Seed raw ref channel is outside the context boundary: ${ref.connector}`);
     }
   }
 }

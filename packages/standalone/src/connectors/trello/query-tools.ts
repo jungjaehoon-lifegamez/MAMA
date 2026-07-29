@@ -149,6 +149,10 @@ interface BoardSnapshot {
   boardName: string;
   lists: BoardScanList[];
   roster: Map<string, string>;
+  /** 'failed' means the card read itself failed - the board contributed NO data. */
+  status: 'ok' | 'failed';
+  /** Card data is intact but member names could not be resolved (optional enrichment). */
+  rosterDegraded: boolean;
 }
 
 /** Per-process snapshot cache. A full report asks about many cards in one
@@ -164,19 +168,28 @@ export function clearTrelloSnapshotCache(): void {
 }
 
 /** Fetch all boards' open cards + member rosters IN PARALLEL, cached briefly.
- *  A single unreadable board degrades to an empty snapshot for that board
- *  only, never sinking the whole read. */
+ *  A single unreadable board degrades to an empty snapshot for that board only,
+ *  never sinking the whole read - but it is now MARKED 'failed' instead of being
+ *  indistinguishable from a board that genuinely has no open cards. A caller that
+ *  reports "nothing there" from a failed read states a fact it never observed.
+ *
+ *  Roster resolution is optional enrichment (the poller treats it the same way):
+ *  losing member names degrades naming, never card coverage. */
 async function fetchBoardSnapshots(
   auth: TrelloAuth,
   fetchFn: typeof fetch
-): Promise<BoardSnapshot[]> {
+): Promise<{ at: number; boards: BoardSnapshot[] }> {
   if (snapshotCache && Date.now() - snapshotCache.at < SNAPSHOT_TTL_MS) {
-    return snapshotCache.boards;
+    // Cached snapshots keep their ORIGINAL observation time and per-board status:
+    // a degraded read must not re-serve as a fresh successful one for 45s.
+    return snapshotCache;
   }
   const boards = await Promise.all(
     [...auth.boardNames].map(async ([boardId, boardName]): Promise<BoardSnapshot> => {
       let lists: BoardScanList[] = [];
       let roster = new Map<string, string>();
+      const status: 'ok' | 'failed' = 'ok';
+      let rosterDegraded = false;
       try {
         lists = await trelloGet<BoardScanList[]>(
           `/boards/${boardId}/lists`,
@@ -184,7 +197,11 @@ async function fetchBoardSnapshots(
           auth,
           fetchFn
         );
-        if (lists.some((l) => l.cards.some((c) => (c.idMembers ?? []).length > 0))) {
+      } catch {
+        return { boardId, boardName, lists: [], roster, status: 'failed', rosterDegraded: false };
+      }
+      if (lists.some((l) => l.cards.some((c) => (c.idMembers ?? []).length > 0))) {
+        try {
           const members = await trelloGet<
             Array<{ id: string; fullName?: string; username?: string }>
           >(`/boards/${boardId}/members`, { fields: 'fullName,username' }, auth, fetchFn);
@@ -193,15 +210,15 @@ async function fetchBoardSnapshots(
               m.fullName || m.username ? [[m.id, m.fullName || m.username!]] : []
             )
           );
+        } catch {
+          rosterDegraded = true;
         }
-      } catch {
-        /* board-level degradation only */
       }
-      return { boardId, boardName, lists, roster };
+      return { boardId, boardName, lists, roster, status, rosterDegraded };
     })
   );
   snapshotCache = { at: Date.now(), boards };
-  return boards;
+  return snapshotCache;
 }
 
 function snapshotCard(
@@ -234,7 +251,7 @@ async function scanBoardsForCards(
 ): Promise<TrelloCardSummary[]> {
   const needle = query.toLowerCase();
   const matches: TrelloCardSummary[] = [];
-  for (const snap of await fetchBoardSnapshots(auth, fetchFn)) {
+  for (const snap of (await fetchBoardSnapshots(auth, fetchFn)).boards) {
     for (const list of snap.lists) {
       for (const card of list.cards) {
         if (matches.length >= limit) return matches;
@@ -250,36 +267,85 @@ async function scanBoardsForCards(
 export interface TrelloKanbanColumn {
   board: string;
   list: string;
+  /** Open cards in the list. */
   count: number;
+  /** Cards actually returned; `returned < count` means this column is truncated. */
+  returned: number;
   cards: TrelloCardSummary[];
 }
 
+export interface TrelloBoardCoverage {
+  boardId: string;
+  board: string;
+  /** 'failed' contributed NO cards - absence of cards is not evidence of an empty board. */
+  status: 'ok' | 'failed';
+  /** Card data intact, member names unresolved. */
+  rosterDegraded: boolean;
+}
+
+export interface TrelloKanbanSnapshot {
+  /** When the underlying read happened - NOT when this call was made. */
+  observedAt: string;
+  /** 0 for a fresh read; >0 means this is a reused snapshot of that age. */
+  cacheAgeMs: number;
+  /** Every configured board read successfully AND no column truncated. */
+  complete: boolean;
+  truncated: boolean;
+  boards: TrelloBoardCoverage[];
+  columns: TrelloKanbanColumn[];
+}
+
 /**
- * Full LIVE kanban snapshot across the configured boards - Kagemusha's
- * primary answer tool for whole-project status. ONE call replaces a search
- * per card: every open card with its list, labels (revision round / artist),
- * and assignee names, grouped by board+list.
+ * Full LIVE kanban snapshot across the configured boards - the primary answer tool
+ * for whole-project status. ONE call replaces a search per card: every open card
+ * with its list, labels (revision round / artist), and assignee names, grouped by
+ * board+list.
+ *
+ * The result carries its own coverage because both ways this read can be partial are
+ * invisible in the data itself: a board whose fetch failed yields no cards, and a
+ * column longer than maxCardsPerList is silently sliced. A caller that asserts a
+ * whole-situation claim must check `complete` first.
  */
 export async function getTrelloKanban(
   input: { maxCardsPerList?: number } = {},
   deps: TrelloQueryDeps = {}
-): Promise<TrelloKanbanColumn[]> {
+): Promise<TrelloKanbanSnapshot> {
   const maxCards = Math.max(1, Math.min(100, Math.floor(input.maxCardsPerList ?? 30)));
   const auth = resolveTrelloQueryAuth(deps);
   const fetchFn = deps.fetchFn ?? fetch;
+  const snapshot = await fetchBoardSnapshots(auth, fetchFn);
   const columns: TrelloKanbanColumn[] = [];
-  for (const snap of await fetchBoardSnapshots(auth, fetchFn)) {
+  const boards: TrelloBoardCoverage[] = [];
+  for (const snap of snapshot.boards) {
+    boards.push({
+      boardId: snap.boardId,
+      board: snap.boardName,
+      status: snap.status,
+      rosterDegraded: snap.rosterDegraded,
+    });
     for (const list of snap.lists) {
       if (list.cards.length === 0) continue;
+      const cards = list.cards
+        .slice(0, maxCards)
+        .map((card) => snapshotCard(snap, list.name, card));
       columns.push({
         board: snap.boardName,
         list: list.name,
         count: list.cards.length,
-        cards: list.cards.slice(0, maxCards).map((card) => snapshotCard(snap, list.name, card)),
+        returned: cards.length,
+        cards,
       });
     }
   }
-  return columns;
+  const truncated = columns.some((column) => column.returned < column.count);
+  return {
+    observedAt: new Date(snapshot.at).toISOString(),
+    cacheAgeMs: Math.max(0, Date.now() - snapshot.at),
+    complete: boards.every((board) => board.status === 'ok') && !truncated,
+    truncated,
+    boards,
+    columns,
+  };
 }
 
 /**

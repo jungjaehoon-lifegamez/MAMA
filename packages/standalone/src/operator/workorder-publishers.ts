@@ -76,6 +76,8 @@ export interface BoardPayload {
   force?: boolean;
   channelKey?: string;
   deltaLines?: string[];
+  /** The delta batch this reconcile rests on; becomes the cause of what it changes. */
+  eventIds?: string[];
 }
 
 export interface WikiPayload {
@@ -99,7 +101,7 @@ export interface TemporalPayload {
 }
 
 const PAYLOAD_KEYS: Record<WorkOrderKind, readonly string[]> = {
-  board: ['mode', 'force', 'channelKey', 'deltaLines'],
+  board: ['mode', 'force', 'channelKey', 'deltaLines', 'eventIds'],
   wiki: ['batchId', 'events'],
   'memory-curation': ['scheduledAt'],
   temporal: [
@@ -147,6 +149,17 @@ export function validateWorkOrderPayload(
       }
       if (!Array.isArray(payload.deltaLines) || payload.deltaLines.length === 0) {
         throw new Error(`workorder payload (board reconcile): non-empty deltaLines[] required`);
+      }
+      // Not required: a reconcile whose batch could not be determined still has to run.
+      // But a malformed one must not reach the ledger as a cause.
+      if (
+        payload.eventIds !== undefined &&
+        (!Array.isArray(payload.eventIds) ||
+          payload.eventIds.some((id) => typeof id !== 'string' || id.trim().length === 0))
+      ) {
+        throw new Error(
+          `workorder payload (board reconcile): eventIds[] must be non-empty strings`
+        );
       }
     } else if (payload.channelKey !== undefined || payload.deltaLines !== undefined) {
       // Reconcile-only fields on a full run signal a caller bug - loud.

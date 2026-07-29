@@ -14,7 +14,7 @@ MAMA provides hooks that integrate with Claude Code's hook system. Hooks use an 
 2. **PreToolUse** - MCP search + contract-only injection + Reasoning Summary
 3. **PostToolUse** - Contract extraction + save guidance with structured reasoning
 
-**FR Reference:** [FR19-24 (Hook Integration)](fr-mapping.md)
+**FR Reference:** [FR19-24 (Hook Integration)](../archive/fr-mapping-v1.0.md) (historical v1.0 artifact)
 
 ---
 

@@ -106,13 +106,6 @@ export function computeCrossLanguageRecallAtK(
   return { recall: numerator / denominator, numerator, denominator };
 }
 
-export function computeCrossLanguageRecallAt5(
-  goldPairs: AuditGoldPair[],
-  matches: AuditCandidateGoldLink[]
-): { recall: number; numerator: number; denominator: number } {
-  return computeCrossLanguageRecallAtK(goldPairs, matches, 5);
-}
-
 export function computeCrossLanguageRecallAt10(
   goldPairs: AuditGoldPair[],
   matches: AuditCandidateGoldLink[]

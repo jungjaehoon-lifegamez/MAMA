@@ -147,18 +147,6 @@ export function getLatestVersion(db: SQLiteDatabase, agentId: string): AgentVers
   );
 }
 
-export function getAgentVersion(
-  db: SQLiteDatabase,
-  agentId: string,
-  version: number
-): AgentVersionRow | null {
-  return (
-    (db
-      .prepare('SELECT * FROM agent_versions WHERE agent_id = ? AND version = ?')
-      .get(agentId, version) as AgentVersionRow | undefined) ?? null
-  );
-}
-
 export function listVersions(db: SQLiteDatabase, agentId: string): AgentVersionRow[] {
   return db
     .prepare('SELECT * FROM agent_versions WHERE agent_id = ? ORDER BY version DESC')
@@ -367,21 +355,6 @@ export function logActivity(db: DB, input: LogActivityInput): ActivityRow {
     .get(result.lastInsertRowid) as ActivityRow;
 }
 
-export function updateActivityScore(
-  db: DB,
-  activityId: number,
-  score: number,
-  details: Record<string, unknown>,
-  executionStatus?: string
-): ActivityRow {
-  db.prepare(
-    `UPDATE agent_activity
-     SET score = ?, details = ?, execution_status = COALESCE(?, execution_status)
-     WHERE id = ?`
-  ).run(score, JSON.stringify(details), executionStatus ?? null, activityId);
-  return db.prepare('SELECT * FROM agent_activity WHERE id = ?').get(activityId) as ActivityRow;
-}
-
 export function getActivity(
   db: DB,
   agentId: string,
@@ -398,66 +371,6 @@ export function getActivity(
        LIMIT ?`
     )
     .all(agentId, normalizedLimit) as ActivityRow[];
-}
-
-export function listGatewayToolCalls(db: DB, input: GatewayToolCallQuery = {}): ActivityRow[] {
-  const conditions = ["type = 'gateway_tool_call'"];
-  const params: Array<string | number> = [];
-
-  if (input.envelopeHash) {
-    conditions.push('envelope_hash = ?');
-    params.push(input.envelopeHash);
-  }
-  if (input.agentId) {
-    conditions.push('agent_id = ?');
-    params.push(input.agentId);
-  }
-  if (input.gatewayCallId) {
-    conditions.push('gateway_call_id = ?');
-    params.push(input.gatewayCallId);
-  }
-
-  params.push(normalizeActivityLimit(input.limit));
-  return db
-    .prepare(
-      `SELECT * FROM agent_activity
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY created_at DESC, id DESC
-       LIMIT ?`
-    )
-    .all(...params) as ActivityRow[];
-}
-
-export function listScopeMismatches(db: DB, input: ScopeMismatchQuery = {}): ActivityRow[] {
-  const conditions = ['scope_mismatch = 1'];
-  const params: Array<string | number> = [];
-
-  if (input.envelopeHash) {
-    conditions.push('envelope_hash = ?');
-    params.push(input.envelopeHash);
-  }
-  if (input.agentId) {
-    conditions.push('agent_id = ?');
-    params.push(input.agentId);
-  }
-  if (input.gatewayCallId) {
-    conditions.push('gateway_call_id = ?');
-    params.push(input.gatewayCallId);
-  }
-  if (input.since) {
-    conditions.push('created_at >= datetime(?)');
-    params.push(input.since);
-  }
-
-  params.push(normalizeActivityLimit(input.limit));
-  return db
-    .prepare(
-      `SELECT * FROM agent_activity
-       WHERE ${conditions.join(' AND ')}
-       ORDER BY created_at DESC, id DESC
-       LIMIT ?`
-    )
-    .all(...params) as ActivityRow[];
 }
 
 export function countScopeMismatches(db: DB, input: ScopeMismatchCountQuery = {}): number {

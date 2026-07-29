@@ -10,27 +10,29 @@
 
 MAMA operates in **two tiers** with full transparency about what's working and what's degraded.
 
-**FR Reference:** [FR25-29 (Transparency & Tier Awareness)](../reference/fr-mapping.md)
+**FR Reference:** [FR25-29 (Transparency & Tier Awareness)](../archive/fr-mapping-v1.0.md)
 
 ---
 
 ## Tier Comparison
 
-| Tier | Features | Accuracy | Requirements | Status |
-|------|----------|----------|--------------|--------|
-| **🟢 Tier 1** | Vector search + Graph + Recency | 80% | Transformers.js + SQLite | Optimal |
-| **🟡 Tier 2** | Exact match only | 40% | SQLite only | Fallback |
+| Tier          | Features                        | Accuracy | Requirements             | Status   |
+| ------------- | ------------------------------- | -------- | ------------------------ | -------- |
+| **🟢 Tier 1** | Vector search + Graph + Recency | 80%      | Transformers.js + SQLite | Optimal  |
+| **🟡 Tier 2** | Exact match only                | 40%      | SQLite only              | Fallback |
 
 ---
 
 ## Tier 1 (Full Features) - 🟢
 
 **Message you'll see:**
+
 ```
 🔍 System Status: 🟢 Tier 1 | Full Features Active | ✓ 89ms | 3 decisions
 ```
 
 **What this means:**
+
 - ✅ Vector search enabled (semantic similarity)
 - ✅ Decision graph traversal (supersedes/refines edges)
 - ✅ Recency weighting (recent decisions ranked higher)
@@ -43,11 +45,13 @@ MAMA operates in **two tiers** with full transparency about what's working and w
 ## Tier 2 (Fallback Mode) - 🟡
 
 **Message you'll see:**
+
 ```
 🔍 System Status: 🟡 Tier 2 | Embeddings unavailable | ✓ 12ms | 1 decision
 ```
 
 **What this means:**
+
 - ⚠️ Vector search DISABLED (exact match only)
 - ✅ Decision graph still works
 - ⚠️ Accuracy dropped to ~40%
@@ -60,6 +64,7 @@ MAMA operates in **two tiers** with full transparency about what's working and w
 ## Why Tier 2 Happens
 
 **Common causes:**
+
 1. **First install** - Transformers.js model not downloaded yet
 2. **Network issue** - Model download failed during first use
 3. **Disk space** - Insufficient space for model cache (~120MB)
@@ -87,10 +92,12 @@ Every context injection shows current tier status. You **always** know what's wo
 ## Performance Impact
 
 **Tier 1:**
+
 - First query: ~987ms (model load + inference)
 - Subsequent queries: ~89ms (cached)
 
 **Tier 2:**
+
 - All queries: ~12ms (exact match only)
 
 **Trade-off:** Tier 2 is faster but less accurate. Tier 1 is slower but finds 80% of relevant decisions.
@@ -106,6 +113,7 @@ Every context injection shows current tier status. You **always** know what's wo
 ---
 
 **Related:**
+
 - [Tier System Design](../explanation/tier-system.md)
 - [Tier 2 Remediation Guide](../guides/tier-2-remediation.md)
 - [Performance Characteristics](../explanation/performance.md)

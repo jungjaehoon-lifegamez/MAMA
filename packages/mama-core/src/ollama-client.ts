@@ -8,7 +8,6 @@
 
 import http from 'http';
 import { error as logError } from './debug-logger.js';
-import type { ToolExecution, SessionContext } from './decision-tracker.js';
 
 // Ollama configuration
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'localhost';
@@ -164,147 +163,11 @@ export interface DecisionAnalysisResult {
   confidence: number;
 }
 
-/**
- * Validate DecisionAnalysisResult shape at runtime
- */
-function isDecisionAnalysisResult(obj: unknown): obj is DecisionAnalysisResult {
-  if (typeof obj !== 'object' || obj === null) {
-    return false;
-  }
-  const o = obj as Record<string, unknown>;
-  return (
-    typeof o.is_decision === 'boolean' &&
-    (typeof o.topic === 'string' || o.topic === null) &&
-    (typeof o.decision === 'string' || o.decision === null) &&
-    typeof o.reasoning === 'string' &&
-    typeof o.confidence === 'number'
-  );
-}
-
-/**
- * Validate QueryIntentResult shape at runtime
- */
-function isQueryIntentResult(obj: unknown): obj is QueryIntentResult {
-  if (typeof obj !== 'object' || obj === null) {
-    return false;
-  }
-  const o = obj as Record<string, unknown>;
-  return (
-    typeof o.involves_decision === 'boolean' &&
-    (typeof o.topic === 'string' || o.topic === null) &&
-    (o.query_type === 'recall' || o.query_type === 'evolution' || o.query_type === 'none') &&
-    typeof o.reasoning === 'string'
-  );
-}
-
-/**
- * Analyze decision from tool execution
- */
-export async function analyzeDecision(
-  toolExecution: ToolExecution,
-  sessionContext: SessionContext
-): Promise<DecisionAnalysisResult> {
-  const prompt = `
-Analyze if this represents a DECISION (not just an action):
-
-Session Context:
-- Latest User Message: ${sessionContext.latest_user_message || 'N/A'}
-- Recent Exchange: ${sessionContext.recent_exchange || 'N/A'}
-
-Tool Execution:
-- Tool: ${toolExecution.tool_name ?? 'N/A'}
-- Input: ${JSON.stringify(toolExecution.tool_input ?? null)}
-- Result: ${toolExecution.exit_code !== undefined ? (toolExecution.exit_code === 0 ? 'SUCCESS' : 'FAILED') : 'UNKNOWN'}
-
-Decision Indicators:
-1. User explicitly chose between alternatives?
-   Example: "Let's use JWT" (not "Use JWT" - that's just action)
-
-2. User changed previous approach?
-   Example: "Complex → Simple approach"
-
-3. User expressed preference?
-   Example: "Let's do it this way from now", "This approach is better"
-
-4. Significant architectural choice?
-   Example: "Mesh structure: COMPLEX", "Authentication: JWT"
-
-Is this a DECISION? Return JSON with "topic" as a short snake_case identifier:
-{
-  "is_decision": boolean,
-  "topic": string or null (extract main technical topic in snake_case, e.g., "mesh_structure", "database_choice", "auth_strategy"),
-  "decision": string or null (the actual choice made, e.g., "COMPLEX", "PostgreSQL", "JWT"),
-  "reasoning": "Why this is/isn't a decision",
-  "confidence": 0.0-1.0
-}
-
-IMPORTANT: Generate "topic" freely based on context. Do NOT limit to predefined values.
-`;
-
-  try {
-    const response = await generate(prompt, {
-      format: 'json',
-      temperature: 0.3,
-      max_tokens: 300,
-    });
-
-    if (!isDecisionAnalysisResult(response)) {
-      throw new Error('Invalid LLM response shape for DecisionAnalysisResult');
-    }
-    return response;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logError(`[MAMA] Decision analysis FAILED: ${message}`);
-    throw new Error(`Decision analysis failed: ${message}`);
-  }
-}
-
 export interface QueryIntentResult {
   involves_decision: boolean;
   topic: string | null;
   query_type: 'recall' | 'evolution' | 'none';
   reasoning: string;
-}
-
-/**
- * Analyze query intent
- */
-export async function analyzeQueryIntent(userMessage: string): Promise<QueryIntentResult> {
-  const prompt = `
-Analyze this user message to determine if it involves past decisions:
-
-User Message: "${userMessage}"
-
-Questions to answer:
-1. Does this query reference past decisions or choices?
-2. Is the user asking about previous approaches?
-3. What topic is being discussed? (e.g., "mesh_structure", "authentication", "testing")
-
-Return JSON:
-{
-  "involves_decision": boolean,
-  "topic": "topic_name" | null,
-  "query_type": "recall" | "evolution" | "none",
-  "reasoning": "Why this involves/doesn't involve decisions"
-}
-`;
-
-  try {
-    const response = await generate(prompt, {
-      format: 'json',
-      temperature: 0.3,
-      max_tokens: 200,
-    });
-
-    if (!isQueryIntentResult(response)) {
-      throw new Error('Invalid LLM response shape for QueryIntentResult');
-    }
-    return response;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logError(`[MAMA] Query intent analysis FAILED: ${message}`);
-    throw new Error(`Query intent analysis failed: ${message}`);
-  }
 }
 
 /**

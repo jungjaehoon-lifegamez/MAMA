@@ -352,7 +352,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
         globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
         log: (line) => console.log(line),
-        run: (channelKey, deltaLines) => {
+        run: (channelKey, deltaLines, eventIds) => {
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
@@ -360,6 +360,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               mode: 'reconcile',
               channelKey,
               deltaLines,
+              // The batch, carried structurally. It was already inside deltaLines as
+              // `[id:evt_...]` text and could only be recovered by parsing prose.
+              eventIds,
             });
           } catch (err) {
             routesLogger.error(
@@ -375,7 +378,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
       eventBus.on('operator:channel-delta', (event) => {
         if (event.type === 'operator:channel-delta') {
-          reconcileScheduler.enqueue(event.channelKey, event.lines);
+          reconcileScheduler.enqueue(event.channelKey, event.lines, event.eventIds);
         }
       });
 
@@ -486,9 +489,27 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // Stage-2 wiki completion hook (plan E4): outcome reading only - the
     // wiki:compiled events flow through the wikiPublisher independently.
     if (workOrderConsumer) {
-      const { buildWikiAfterHook } = await import('../../operator/workorder-hooks.js');
+      const { buildWikiAfterHook, buildWorkerTraceQueries, LANE_OBLIGATED_TOOLS } =
+        await import('../../operator/workorder-hooks.js');
+      const wikiTraces = buildWorkerTraceQueries(
+        sessionsDb,
+        'worker:wiki',
+        LANE_OBLIGATED_TOOLS.wiki
+      );
       workOrderConsumer.registerHook('wiki', {
-        after: buildWikiAfterHook((line) => routesLogger.debug(line)),
+        // The trace rowid before the run is what makes the count run-bound; without it the
+        // hook would count any wiki_publish this process ever made.
+        before: () => wikiTraces.getTraceMaxId(),
+        after: buildWikiAfterHook((line) => routesLogger.info(line), {
+          traces: wikiTraces,
+          onUnverified: (note) =>
+            eventBus.emit({
+              type: 'agent:action',
+              agent: 'Wiki Agent',
+              action: 'unverified',
+              target: note,
+            }),
+        }),
       });
     }
 
@@ -568,14 +589,43 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // its event emissions are the wiki ingress chain's second link - losing
     // them in the workorder conversion would silently sever memory:promoted.
     if (workOrderConsumer) {
-      const { buildPromotionAfterHook } = await import('../../operator/workorder-hooks.js');
+      const {
+        buildPromotionAfterHook,
+        buildWorkerTraceQueries,
+        LANE_OBLIGATED_TOOLS,
+        LANE_WRITE_TOOLS,
+      } = await import('../../operator/workorder-hooks.js');
+      const promotionTraces = buildWorkerTraceQueries(
+        sessionsDb,
+        'worker:memory-curation',
+        LANE_OBLIGATED_TOOLS['memory-curation']
+      );
       workOrderConsumer.registerHook('memory-curation', {
-        after: buildPromotionAfterHook({
-          emitAgentAction: (action, target) =>
-            eventBus.emit({ type: 'agent:action', agent: 'Memory Agent', action, target }),
-          emitMemoryPromoted: (saved) => eventBus.emit({ type: 'memory:promoted', saved }),
-          log: (line) => console.log(line),
-        }),
+        before: () => promotionTraces.getTraceMaxId(),
+        after: buildPromotionAfterHook(
+          {
+            emitAgentAction: (action, target) =>
+              eventBus.emit({ type: 'agent:action', agent: 'Memory Agent', action, target }),
+            emitMemoryPromoted: (saved) => eventBus.emit({ type: 'memory:promoted', saved }),
+            log: (line) => console.log(line),
+          },
+          {
+            traces: promotionTraces,
+            writeTraces: buildWorkerTraceQueries(
+              sessionsDb,
+              'worker:memory-curation',
+              LANE_WRITE_TOOLS['memory-curation']
+            ),
+            log: (line) => console.log(line),
+            onUnverified: (note) =>
+              eventBus.emit({
+                type: 'agent:action',
+                agent: 'Memory Agent',
+                action: 'unverified',
+                target: note,
+              }),
+          }
+        ),
       });
     }
 

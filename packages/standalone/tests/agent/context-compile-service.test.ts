@@ -972,4 +972,133 @@ describe('STORY-B5: context compile shared service - AC1-AC6', () => {
     expect(result.packet.retrieval_diagnostics).toEqual({ safe: 'ok' });
     expect(result.packet.caveats).toEqual(['safe caveat']);
   });
+
+  // Raw visibility is decided by the (connector, channel) grant now, so the grant has to
+  // reach the compiler - and it has to arrive narrowed. The config lists every channel the
+  // owner configured; the envelope says which connectors THIS run may read, and the
+  // boundary must be the intersection, never the config as written.
+  it('AC: carries the channel grant, narrowed to the connectors the envelope granted', async () => {
+    const adapter = getAdapter();
+    const envelope = makeSignedEnvelope();
+    const compileContext = vi.fn(async (_input, deps: { packetId?: () => string }) =>
+      makePacket({ packet_id: deps.packetId?.() ?? 'ctxp_grant' })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      // The envelope fixture grants exactly one connector; the config names two.
+      channelGrant: () => ({ telegram: ['chat-1', 'chat-2'], board: ['b-1'] }),
+      childModelRunId: () => 'mr_context_grant',
+      packetId: () => 'ctxp_grant',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope,
+      input: { task: 'compile branch context' },
+    });
+
+    const boundary = (compileContext.mock.calls[0][1] as { boundary?: { channels?: unknown } })
+      .boundary;
+    expect(boundary?.channels).toEqual({ telegram: ['chat-1', 'chat-2'] });
+  });
+
+  // No grant means the boundary carries none, rather than an empty object that a reader
+  // could mistake for "granted, with nothing in it".
+  it('AC: omits the channel grant entirely when none is configured', async () => {
+    const adapter = getAdapter();
+    const compileContext = vi.fn(async (_input, deps: { packetId?: () => string }) =>
+      makePacket({ packet_id: deps.packetId?.() ?? 'ctxp_nogrant' })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      childModelRunId: () => 'mr_context_nogrant',
+      packetId: () => 'ctxp_nogrant',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope: makeSignedEnvelope(),
+      input: { task: 'compile branch context' },
+    });
+
+    const boundary = (compileContext.mock.calls[0][1] as { boundary?: { channels?: unknown } })
+      .boundary;
+    expect(boundary?.channels).toBeUndefined();
+  });
+
+  // The isolation that raw visibility used to get from the scope columns. Two reactive
+  // envelopes on the same connector carry identical raw_connectors and different channel
+  // scopes; narrowing by connector alone would let either compile excerpts out of the
+  // other's channel, which is strictly wider than what the system did before.
+  it('AC: narrows the grant to the channel the envelope is scoped to', async () => {
+    const adapter = getAdapter();
+    const compileContext = vi.fn(async (_input, deps: { packetId?: () => string }) =>
+      makePacket({ packet_id: deps.packetId?.() ?? 'ctxp_scoped' })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      channelGrant: () => ({ telegram: ['chat-1', 'chat-2', 'chat-3'] }),
+      childModelRunId: () => 'mr_context_scoped',
+      packetId: () => 'ctxp_scoped',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope: makeSignedEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+          raw_connectors: ['telegram'],
+          memory_scopes: [
+            { kind: 'project', id: '/workspace/project-a' },
+            { kind: 'channel', id: 'telegram:chat-2' },
+          ],
+          allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+        },
+      }),
+      input: { task: 'compile branch context' },
+    });
+
+    const boundary = (compileContext.mock.calls[0][1] as { boundary?: { channels?: unknown } })
+      .boundary;
+    expect(boundary?.channels).toEqual({ telegram: ['chat-2'] });
+  });
+
+  // A run bound to a channel this system was never told to look at reads nothing, rather
+  // than falling back to every channel of the connector.
+  it('AC: leaves an unconfigured channel scope with an empty grant', async () => {
+    const adapter = getAdapter();
+    const compileContext = vi.fn(async (_input, deps: { packetId?: () => string }) =>
+      makePacket({ packet_id: deps.packetId?.() ?? 'ctxp_unconfigured' })
+    );
+    const service = createContextCompileService({
+      memoryAdapter: adapter,
+      compileContext,
+      channelGrant: () => ({ telegram: ['chat-1'] }),
+      childModelRunId: () => 'mr_context_unconfigured',
+      packetId: () => 'ctxp_unconfigured',
+    });
+
+    await service.compileAndPersistContext({
+      caller: 'gateway',
+      envelope: makeSignedEnvelope({
+        scope: {
+          project_refs: [{ kind: 'project', id: '/workspace/project-a' }],
+          raw_connectors: ['telegram'],
+          memory_scopes: [
+            { kind: 'project', id: '/workspace/project-a' },
+            { kind: 'channel', id: 'telegram:never-configured' },
+          ],
+          allowed_destinations: [{ kind: 'telegram', id: 'tg:1' }],
+        },
+      }),
+      input: { task: 'compile branch context' },
+    });
+
+    const boundary = (compileContext.mock.calls[0][1] as { boundary?: { channels?: unknown } })
+      .boundary;
+    expect(boundary?.channels).toEqual({ telegram: [] });
+  });
 });

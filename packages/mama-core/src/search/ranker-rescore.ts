@@ -1,9 +1,5 @@
 import type { RunResult } from '../db-adapter/statement.js';
-import {
-  SEARCH_RANKER_FEATURE_SET_VERSION,
-  serializeFeatures,
-  extractFeatures,
-} from './ranker-features.js';
+import { SEARCH_RANKER_FEATURE_SET_VERSION } from './ranker-features.js';
 import { scoreWithRankerModel, type SearchRankerModel } from './ranker-trainer.js';
 import { classifyQuestionType } from './question-type.js';
 
@@ -142,22 +138,6 @@ function logSkipped(reason: SearchRankerSkippedReason, modelId: string | null): 
       feature_set_version: SEARCH_RANKER_FEATURE_SET_VERSION,
     })
   );
-}
-
-export function loadActiveSearchRankerModel(
-  adapter: RankerRescoreAdapter
-): SearchRankerModel | null {
-  const row = loadActiveRow(adapter);
-  if (!row) {
-    return null;
-  }
-
-  if (row.feature_set_version !== SEARCH_RANKER_FEATURE_SET_VERSION) {
-    logSkipped('feature_set_mismatch', row.model_id);
-    return null;
-  }
-
-  return modelFromRow(row);
 }
 
 export function isSearchRankerEnabled(adapter: RankerRescoreAdapter): boolean {
@@ -300,21 +280,4 @@ export function rescoreSearchResults<T extends Record<string, unknown>>(
     results: scored.map((entry) => entry.result),
     model_id: model.model_id,
   };
-}
-
-export function logisticScoreForRow(
-  model: SearchRankerModel,
-  row: Record<string, unknown>,
-  query: string
-): number {
-  const questionType = classifyQuestionType(query);
-  const features = serializeFeatures(extractFeatures(row, query, { question_type: questionType }));
-  const coefficients = model.question_type_weights[questionType] ?? model.coefficients;
-  let score = model.intercept;
-  for (let index = 0; index < Math.min(coefficients.length, features.length); index += 1) {
-    score += coefficients[index] * features[index];
-  }
-  if (score >= 35) return 1;
-  if (score <= -35) return 0;
-  return 1 / (1 + Math.exp(-score));
 }

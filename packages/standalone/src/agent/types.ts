@@ -136,6 +136,14 @@ export type GatewayToolExecutionContext = {
   workorderAttemptId?: number;
   /** Host-built temporal authority; never accepted from tool input or fallback state. */
   temporalWorkContext?: TemporalWorkContext;
+  /**
+   * The delta batch this run was handed. Host-supplied; never accepted from tool input.
+   *
+   * The unit of bounded work: a reconcile run addresses ONE channel's new events, so every
+   * durable change it makes rests on them. Carried on the run rather than asked of the
+   * agent, which is the difference between a fact and a claim.
+   */
+  causeEventIds?: readonly string[];
   /** Cancellation for the owning model turn. */
   signal?: AbortSignal;
   /** Parent gateway tool when execution is nested (for example inside code_act). */
@@ -432,6 +440,15 @@ export interface SearchInput {
   diagnostics?: boolean;
 }
 
+/**
+ * Ask what a stored claim rests on. Scopes are optional and default to the active
+ * boundary, exactly as recall does - a memory id is a handle, never an authorization.
+ */
+export interface ProvenanceInput {
+  memory_id: string;
+  scopes?: ScopeRef[];
+}
+
 export interface RecallInput {
   query: string;
   scopes?: ScopeRef[];
@@ -726,6 +743,7 @@ export type GatewayToolName =
   | 'mama_save'
   | 'mama_search'
   | 'mama_recall'
+  | 'mama_provenance'
   | 'context_compile'
   | 'mama_update'
   | 'mama_load_checkpoint'
@@ -796,6 +814,8 @@ export type GatewayToolName =
   | 'trello_kanban'
   // Native task ledger (M8: operator-owned work items)
   | 'task_list'
+  | 'task_external_correlation'
+  | 'changes_read'
   | 'task_create'
   | 'task_update'
   | 'task_temporal_reconcile'
@@ -1006,6 +1026,8 @@ export interface AgentLoopOptions {
   workorderAttemptId?: number;
   /** Host-built temporal authority for one claimed temporal workorder. */
   temporalWorkContext?: TemporalWorkContext;
+  /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
+  causeEventIds?: readonly string[];
   /**
    * Tool routing configuration for hybrid Gateway/MCP mode
    * If not specified, all tools use Gateway mode (default)
@@ -1180,6 +1202,9 @@ export interface TurnInfo {
 /**
  * Agent loop run result
  */
+/** Why a run produced no resolvable handle, when it did not. */
+export type ModelRunProvenance = 'available' | 'backend_no_run' | 'commit_failed';
+
 export interface AgentLoopResult {
   /** Final text response from Claude */
   response: string;
@@ -1196,6 +1221,12 @@ export interface AgentLoopResult {
   stopReason: StopReason;
   /** Active model run id when the loop owns or inherited one. */
   modelRunId?: string | null;
+  /**
+   * Why `modelRunId` is absent, when it is. Distinguishes a backend that produces no run
+   * identity - an ordinary capability state - from a run that was created and then failed
+   * to commit, which leaves an orphaned record and needs repair.
+   */
+  modelRunProvenance?: ModelRunProvenance;
 }
 
 // ============================================================================

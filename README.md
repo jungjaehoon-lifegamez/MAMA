@@ -257,10 +257,10 @@ open-source components.
 
 | Package                                          | Version | Description                                           |
 | ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.28.6  | Always-on runtime, envelopes, connectors, worker APIs |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.14.0  | MCP server for Claude Desktop/Code and any MCP client |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 1.9.0   | Core memory, provenance, raw refs, graph, embeddings  |
-| [mama plugin](packages/claude-code-plugin/)      | 1.10.0  | Claude Code plugin (marketplace)                      |
+| [@jungjaehoon/mama-os](packages/standalone/)     | 0.29.0  | Always-on runtime, envelopes, connectors, worker APIs |
+| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.15.0  | MCP server for Claude Desktop/Code and any MCP client |
+| [@jungjaehoon/mama-core](packages/mama-core/)    | 2.0.0   | Core memory, provenance, raw refs, graph, embeddings  |
+| [mama plugin](packages/claude-code-plugin/)      | 1.11.0  | Claude Code plugin (marketplace)                      |
 | [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
 
 ## Quick Start

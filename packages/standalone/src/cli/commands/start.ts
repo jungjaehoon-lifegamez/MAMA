@@ -21,6 +21,7 @@ import { killProcessesOnPorts, killAllMamaDaemons, killAllMamaWatchdogs } from '
 import { OAuthManager } from '../../auth/index.js';
 import { GatewayToolExecutor } from '../../agent/gateway-tool-executor.js';
 import { createContextCompileService } from '../../agent/context-compile-service.js';
+import { liveBoundaryChannels } from '../../evidence/read.js';
 import type { AgentContext, GatewayToolExecutionContext } from '../../agent/types.js';
 import { ToolRegistry } from '../../agent/tool-registry.js';
 import { projectCodeActToolPolicy, requireCodeActTier } from '../../agent/code-act/tool-policy.js';
@@ -274,16 +275,26 @@ export type DaemonRawConnectorPrincipal =
   | `workorder-${WorkOrderKind}`;
 
 /**
- * Trello contains owner-scoped project evidence. Among daemon-internal runs,
- * only host-issued board and temporal workorders may read it. Verified owner-console
- * chat receives its separate route-scoped envelope in envelope-bootstrap.
+ * Trello contains owner-scoped project evidence. Among daemon-internal runs, only host-issued
+ * board and temporal workorders and the scheduled operator report may read it. Verified
+ * owner-console chat receives its separate route-scoped envelope in envelope-bootstrap.
+ *
+ * The report is admitted because it must cross-check the native ledger against the live board
+ * before asserting item state; its envelope still grants NO destinations, so this widens what
+ * the report may READ, never what it may send. Read authority is enforced per tool through
+ * envelope/tool-connector-scope.ts - the api-code-act principal below stays filtered and its
+ * direct board reads are now denied rather than silently permitted by role membership.
  */
 export function scopeDaemonRawConnectors(
   enabledConnectorNames: readonly string[] | undefined,
   principal: DaemonRawConnectorPrincipal
 ): string[] {
   const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
-  if (principal === 'workorder-board' || principal === 'workorder-temporal') {
+  if (
+    principal === 'workorder-board' ||
+    principal === 'workorder-temporal' ||
+    principal === 'operator-report'
+  ) {
     return connectors;
   }
   return connectors.filter((connector) => connector !== 'trello');
@@ -312,6 +323,125 @@ function uniqueMemoryScopes(scopes: readonly MemoryScopeRef[]): MemoryScopeRef[]
     unique.push({ kind: scope.kind, id });
   }
   return unique;
+}
+
+/**
+ * The connector and channel a temporal task is bound to, as plain values.
+ *
+ * The workorder payload carries only HASHED source identifiers (they are compared, never
+ * read), so the binding has to come from the owner task row. Split on the FIRST colon:
+ * `source_channel` is `<connector>:<channelId>` and channel ids contain colons of their own.
+ *
+ * Returns null when the task names no channel - which is not a failure, it is a task whose
+ * reconcile may rest on no raw evidence at all.
+ */
+/**
+ * The scope a workorder envelope carries.
+ *
+ * Extracted so the binding can be asserted directly. Composed inline, the only way to test
+ * it was to re-compose it in the test - which tests the copy, and a copy of a scope
+ * construction is how this subsystem's authority drifts from what it claims.
+ */
+/**
+ * What the scheduled full report is INSTRUCTED to gather with.
+ *
+ * Exported so a test can hold it against the lane's tool grant. Every defect this session
+ * found was a wiring defect - a tool granted and never instructed, a lane wired zero times,
+ * a binder that never bound - and all of them live in this file and its neighbour, the two
+ * directories the suite covers at a third. An instruction list that cannot be read by a
+ * test is one nobody can check against the grant it depends on.
+ */
+export function buildFullReportGatherLines({
+  lastSuccessIso,
+}: {
+  lastSuccessIso: string | null;
+}): string[] {
+  return [
+    'kagemusha_overview() for room/task/message counts',
+    'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
+    lastSuccessIso
+      ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
+      : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+    'mama_recall(query) for memory relevant to what you find',
+    'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
+    lastSuccessIso
+      ? `changes_read({ since: "${lastSuccessIso}" }) for what THIS system durably changed since the last report -- lead with it, and say what each change rested on`
+      : 'changes_read({ since: "7d" }) for what THIS system durably changed in the window -- lead with it, and say what each change rested on',
+    'On changes_read: cause_state "unattributed" means the system cannot explain that change, NOT that nothing happened -- report the coverage counts as they are rather than rounding them up. It is ONE PAGE: if returned is less than total, say so instead of describing the page as the whole. It covers work items only today, so the absence of report or memory changes there is not evidence they did not happen.',
+  ];
+}
+
+/**
+ * The batch a work order carries, as the run's cause.
+ *
+ * Exported because it was an inline closure and therefore untestable, while being the ONE
+ * hop that carries this branch's whole claim: the system knew the batch before the run
+ * began, so the agent never has to restate it. Review pointed out that `causeEventIds`
+ * appeared in exactly two test files and both called the ledger directly - a rename or a
+ * payload-shape drift here would have returned attribution to 32% with the suite green.
+ *
+ * Only per-channel reconcile work orders carry `eventIds`; `board:full`, wiki and
+ * memory-curation do not, and get an empty batch rather than an invented one.
+ */
+export function causeEventIdsFromPayload(payload: unknown): string[] {
+  if (payload === null || typeof payload !== 'object') return [];
+  const batch = (payload as { eventIds?: unknown }).eventIds;
+  if (!Array.isArray(batch)) return [];
+  return batch.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+}
+
+export function workOrderEnvelopeScope(input: {
+  workKind: string;
+  projectId: string;
+  laneConnectors: string[];
+  temporalBinding: { connector: string; channel: string } | null;
+}): {
+  project_refs: Array<{ kind: 'project'; id: string }>;
+  raw_connectors: string[];
+  memory_scopes: MemoryScopeRef[];
+  allowed_destinations: never[];
+} {
+  const isTemporal = input.workKind === 'temporal';
+  return {
+    project_refs: [{ kind: 'project' as const, id: input.projectId }],
+    // A temporal run reads its task's connector or nothing. Every other lane keeps the
+    // connectors it was configured with.
+    raw_connectors: isTemporal
+      ? input.temporalBinding
+        ? [input.temporalBinding.connector]
+        : []
+      : input.laneConnectors,
+    memory_scopes: [
+      ...deriveMemoryScopes({
+        source: 'operator',
+        channelId: `worker:${input.workKind}`,
+        projectId: input.projectId,
+      }),
+      ...(input.temporalBinding
+        ? [
+            {
+              kind: 'channel' as const,
+              id: `${input.temporalBinding.connector}:${input.temporalBinding.channel}`,
+            },
+          ]
+        : []),
+    ],
+    allowed_destinations: [],
+  };
+}
+
+export function temporalTaskBinding(
+  ledger: { getById: (id: number) => { sourceChannel?: string | null } | null },
+  taskId: number
+): { connector: string; channel: string } | null {
+  const sourceChannel = ledger.getById(taskId)?.sourceChannel;
+  if (typeof sourceChannel !== 'string') return null;
+  const separator = sourceChannel.indexOf(':');
+  if (separator <= 0 || separator === sourceChannel.length - 1) return null;
+  return {
+    connector: sourceChannel.slice(0, separator),
+    channel: sourceChannel.slice(separator + 1),
+  };
 }
 
 export function resolveCodeActMemoryScopes(
@@ -375,11 +505,12 @@ interface WorkOrderToolPolicy {
 // Stage-2 workers are short-lived operator jobs, not standing multi-agent
 // personas. Their permissions must therefore be complete on a default install
 // and must not vary with optional legacy agent configuration.
-const WORKORDER_TOOL_POLICIES = {
+export const WORKORDER_TOOL_POLICIES = {
   board: {
     roleName: 'workorder-board',
     allowedTools: [
       'agent_notices',
+      'changes_read',
       'context_compile',
       'contract_no_update',
       'kagemusha_entities',
@@ -435,23 +566,41 @@ const WORKORDER_TOOL_POLICIES = {
  * decides whether a full report has task-board substance), the fullReportSelfGather lines,
  * the board_publish lines, and the single mama_save the report may make.
  *
- * Its envelope grants no destinations and filters trello out of the raw connectors
- * (scopeDaemonRawConnectors 'operator-report'), so no send or task-mutation tool belongs here.
+ * Its envelope grants no destinations, so no send tool belongs here, and no task-mutation
+ * tool either: the report observes, the board workorder maintains.
+ *
+ * trello_kanban is the ONE whole-board live read. Without it the report could only restate the
+ * native ledger, which is a derived store the board workorder is forbidden to sync from Trello -
+ * so a card that moved days ago still reported as "no completion signal" (live 2026-07-28).
+ * Reading it is scoped by the envelope now that direct connector readers are mapped in
+ * envelope/tool-connector-scope.ts; without that mapping this entry alone would have granted
+ * unscoped access.
  */
-const OPERATOR_REPORT_TOOL_POLICY = {
+export const OPERATOR_REPORT_TOOL_POLICY = {
   roleName: 'operator-report',
   allowedTools: [
-    'context_compile',
+    // context_compile is deliberately ABSENT. Envelope scope is connector-level, so
+    // granting the board connector for trello_kanban would otherwise also permit
+    // context_compile({connectors:['trello']}) - raw card bodies pulled into a tier-2
+    // lane that can write durable memory. The report needs the whole-board read, not
+    // raw compilation, and its gather instructions never ask for it.
+    // What the report is FOR: what moved since last time. Until now the only way to
+    // answer that was to re-read current state and infer the delta, which is how a
+    // report ends up restating the board instead of naming the change.
+    'changes_read',
     'kagemusha_entities',
     'kagemusha_messages',
     'kagemusha_overview',
     'kagemusha_tasks',
+    'mama_provenance',
     'mama_recall',
     'mama_save',
     'mama_search',
     'report_publish',
     'schedule_upcoming',
+    'task_external_correlation',
     'task_list',
+    'trello_kanban',
   ],
 } as const satisfies WorkOrderToolPolicy;
 
@@ -902,6 +1051,10 @@ export async function runAgentLoop(
   const { getAdapter } = require('@jungjaehoon/mama-core/db-manager');
   const contextCompileService = createContextCompileService({
     memoryAdapter: getAdapter(),
+    // Raw visibility comes from the owner's connector config, not from the derived scope
+    // columns. Without this the compile reads nothing: measured on the live index, the
+    // scope-based predicate returns 0 of 30,671 events for the input shape sent here.
+    channelGrant: liveBoundaryChannels,
   });
   toolExecutor.setContextCompileService(contextCompileService);
   agentLoop.setContextCompileService(contextCompileService);
@@ -1267,31 +1420,11 @@ export async function runAgentLoop(
     agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
     agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
-    if (fallbackMultiAgentConfig.enabled && !toolExecutor.hasDelegateSupport()) {
-      const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
-      const agentConfigs = Object.entries(fallbackMultiAgentConfig.agents || {}).map(
-        ([id, cfg]) => ({
-          id,
-          ...cfg,
-        })
-      );
-      const dm = new DelegationManager(agentConfigs);
-      dm.setSessionsDb(db);
-      toolExecutor.setDelegationManager(dm);
-      agentLoop.setDelegationManager(dm);
-      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
-        const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
-        pm.updateConfig(nextConfig);
-        dm.updateAgents(
-          Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg }))
-        );
-      };
-      toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-      agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-      console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
-    } else {
-      console.log('[start] ✓ System agent process manager wired');
-    }
+    // The delegate wiring was here. Over the full log history it was wired ZERO times and
+    // its only runtime trace was one call refused by role permission. The process manager
+    // above stays: that one IS wired on every boot (113 so far) and runs the dashboard and
+    // wiki agents.
+    console.log('[start] ✓ System agent process manager wired');
   }
 
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
@@ -1312,7 +1445,9 @@ export async function runAgentLoop(
   // M8: board-reconcile feed. The trigger loop is built BEFORE the event bus
   // exists (initApiServer), so it emits through this mutable sink (same
   // pattern as triggerLoopNudge above).
-  const channelDeltaSink: { current: ((channelKey: string, lines: string[]) => void) | null } = {
+  const channelDeltaSink: {
+    current: ((channelKey: string, lines: string[], eventIds: string[]) => void) | null;
+  } = {
     current: null,
   };
 
@@ -1430,8 +1565,32 @@ export async function runAgentLoop(
           },
           wo.id
         );
+        // A temporal run is bound to ONE task on ONE channel, and the packet check
+        // (temporalPacketRawSourcesWithinBoundSource) enforces exactly that: every raw ref
+        // must match the task's connector:channel or the reconcile is refused.
+        //
+        // While raw reads returned nothing that check was vacuous. Once the channel grant
+        // makes them return rows it stops being vacuous, and a lane-wide envelope hands
+        // the compile every configured channel of every granted connector - so every
+        // raw-backed temporal run would fail a check it cannot satisfy. The envelope has
+        // to say what the run is actually bound to.
+        //
+        // A task with no source channel gets no connector at all, which is the same answer
+        // from the other direction: the check requires zero raw refs for those, so the
+        // grant must be empty rather than merely narrow.
+        // A reconcile carries the channel's delta batch. Handing it to the run makes every
+        // durable change the run produces rest on it WITHOUT the agent restating anything -
+        // the system knew the batch before the run began. This is the whole difference
+        // between a bounded run and an unbounded one.
+        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
+        if (workOrderBatch.length > 0) {
+          runOptions.causeEventIds = workOrderBatch;
+        }
+        let temporalBinding: { connector: string; channel: string } | null = null;
         if (wo.workKind === 'temporal') {
-          runOptions.temporalWorkContext = buildTemporalWorkerContext(taskLedger, wo);
+          const temporalContext = buildTemporalWorkerContext(taskLedger, wo);
+          runOptions.temporalWorkContext = temporalContext;
+          temporalBinding = temporalTaskBinding(taskLedger, temporalContext.taskId);
         }
         // Per-run scoped envelope (live-gate finding, 2026-07-18): gateway
         // 'model_tool' executions are envelope-gated, and workerRun is a new
@@ -1453,22 +1612,21 @@ export async function runAgentLoop(
             source: 'watch',
             channel_id: `worker:${wo.workKind}`,
             trigger_context: { user_text: `<stage2 workorder ${wo.workKind}#${wo.id}>` },
-            scope: {
-              project_refs: [{ kind: 'project' as const, id: projectId }],
-              raw_connectors: scopeDaemonRawConnectors(
-                codeActRawConnectors,
-                `workorder-${wo.workKind}`
-              ),
-              memory_scopes: resolveCodeActMemoryScopes(
-                deriveMemoryScopes({
-                  source: 'operator',
-                  channelId: `worker:${wo.workKind}`,
-                  projectId,
-                }),
-                getAdapter()
-              ),
-              allowed_destinations: [],
-            },
+            scope: (() => {
+              const scope = workOrderEnvelopeScope({
+                workKind: wo.workKind,
+                projectId,
+                laneConnectors: scopeDaemonRawConnectors(
+                  codeActRawConnectors,
+                  `workorder-${wo.workKind}`
+                ),
+                temporalBinding,
+              });
+              return {
+                ...scope,
+                memory_scopes: resolveCodeActMemoryScopes(scope.memory_scopes, getAdapter()),
+              };
+            })(),
             tier: 2,
             budget: { wall_seconds: wallSeconds },
             expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
@@ -1588,6 +1746,15 @@ export async function runAgentLoop(
       const { ReportScheduler, FileReportScheduleStore, parseReportHours } =
         await import('../../operator/report-scheduler.js');
       const { persistLastFullReport } = await import('../../operator/report-carry.js');
+      type ArtifactProvenance = import('../../operator/report-carry.js').ArtifactProvenance;
+      // Set when a report is composed, read when that same report is delivered. Safe
+      // because ALL operator work serializes on the operator lane (SOURCE_GLOBAL_LANES),
+      // so compose and deliver cannot interleave with another report - stated here
+      // because the safety comes from the lane, not from this file.
+      let lastReportProvenance: ArtifactProvenance = {
+        status: 'unavailable',
+        reason: 'no_run_handle',
+      };
       const { createPersonaReportAsk } = await import('../../operator/report-run.js');
       const { OPERATOR_FULL_REPORT_TAG } = await import('../../operator/situation-report.js');
       const { buildBoardPublishLines } = await import('../../operator/board-slot-instructions.js');
@@ -1637,7 +1804,8 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
-        onChannelDelta: (channelKey, lines) => channelDeltaSink.current?.(channelKey, lines),
+        onChannelDelta: (channelKey, lines, eventIds) =>
+          channelDeltaSink.current?.(channelKey, lines, eventIds),
         askAgent: triggerAgentRuntime.askAuthor,
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
@@ -1676,11 +1844,11 @@ export async function runAgentLoop(
                     channel_id: 'report',
                     trigger_context: { user_text: '<operator scheduled report>' },
                     scope: {
-                      // Reads: enabled non-Trello raw connectors (kagemusha_* gathers) + memory scopes.
-                      // Trello is reserved for verified owner-console plus host-issued board and
-                      // temporal workorder envelopes.
-                      // covering mama_recall/mama_save. allowed_destinations stays [] - NO new
-                      // send surface (constraint 2).
+                      // Reads: enabled raw connectors (kagemusha_* gathers plus the live board
+                      // cross-check) + memory scopes covering mama_recall/mama_save.
+                      // allowed_destinations stays [] - NO send surface. That bounds SENDS only;
+                      // read authority is bounded per tool by envelope/tool-connector-scope.ts
+                      // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
                       raw_connectors: scopeDaemonRawConnectors(
                         codeActRawConnectors,
@@ -1720,10 +1888,23 @@ export async function runAgentLoop(
                 ...(envelope ? { envelope } : {}),
               }
             );
-            return { response: result.response, history: result.history };
+            return {
+              response: result.response,
+              history: result.history,
+              // Dropped here until now: the loop already resolves a run handle, and
+              // discarding it meant a delivered report could not be traced to the run
+              // that wrote it.
+              modelRunId: result.modelRunId,
+              ...(result.modelRunProvenance === undefined
+                ? {}
+                : { modelRunProvenance: result.modelRunProvenance }),
+            };
           },
           log: (line: string) => console.log(line),
           fullReportTag: OPERATOR_FULL_REPORT_TAG,
+          onRunProvenance: (provenance) => {
+            lastReportProvenance = provenance;
+          },
         }),
         review: (trigger, context) =>
           reviewTriggerCLI(trigger, context, triggerAgentRuntime.askReview),
@@ -1732,21 +1913,14 @@ export async function runAgentLoop(
         // M2.3: the scheduled full report self-gathers via the persona agent's gateway tools
         // (the Kagemusha lesson: a reporter with tools has substance; a window summary alone
         // reports "quiet" whenever polling is between batches).
-        fullReportSelfGather: ({ lastSuccessIso }: { lastSuccessIso: string | null }) => [
-          'kagemusha_overview() for room/task/message counts',
-          'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-          lastSuccessIso
-            ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
-            : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
-          'mama_recall(query) for memory relevant to what you find',
-          'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
-        ],
+        fullReportSelfGather: buildFullReportGatherLines,
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.
         fullReportBoardLines: buildBoardPublishLines(),
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) => persistLastFullReport(iso, text),
+        persistLastFullReport: (iso, text) =>
+          persistLastFullReport(iso, text, lastReportProvenance),
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)
@@ -1812,8 +1986,8 @@ export async function runAgentLoop(
     contextCompileService,
   });
 
-  channelDeltaSink.current = (channelKey, lines) =>
-    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines });
+  channelDeltaSink.current = (channelKey, lines, eventIds) =>
+    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines, eventIds });
 
   await registerApiRoutes({
     config,

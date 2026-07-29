@@ -23,6 +23,7 @@ import {
 } from '@jungjaehoon/mama-core';
 
 import type { EnvelopeAuthority } from '../envelope/authority.js';
+import { narrowGrantToEnvelope } from '../evidence/read.js';
 import {
   deriveWorkerEnvelopeVisibility,
   firstString,
@@ -43,6 +44,15 @@ const graphApiLogger = new DebugLogger('AgentGraphAPI');
 export interface AgentGraphRouterOptions {
   memoryAdapter: AgentGraphAdapter;
   envelopeAuthority?: EnvelopeAuthority;
+  /**
+   * Which channels of each connector the owner has configured.
+   *
+   * Injected, not read here, for the same reason the compile service injects it: reading
+   * the running machine's config inside a request handler makes every test depend on
+   * whatever that machine happens to have configured. Absent means no grant is carried and
+   * raw refs fall back to the pre-grant rule, which is what callers holding no grant get.
+   */
+  channelGrant?: () => Record<string, readonly string[]>;
 }
 
 const NUMERIC_QUERY_PATTERN = /^\d+$/;
@@ -70,6 +80,7 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         connectors: visibility.connectors,
         project_refs: visibility.projectRefs,
         tenant_id: visibility.tenantId,
+        channels: visibility.channels,
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
       });
     });
@@ -84,6 +95,7 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         connectors: visibility.connectors,
         project_refs: visibility.projectRefs,
         tenant_id: visibility.tenantId,
+        channels: visibility.channels,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
         limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
@@ -101,6 +113,7 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         connectors: visibility.connectors,
         project_refs: visibility.projectRefs,
         tenant_id: visibility.tenantId,
+        channels: visibility.channels,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         as_of_ms: parseAsOf(req, envelope.scope.as_of),
         limit: parseBoundedInteger(req.query.limit, 'limit', 1, MAX_GRAPH_LIMIT),
@@ -116,6 +129,7 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
         connectors: visibility.connectors,
         project_refs: visibility.projectRefs,
         tenant_id: visibility.tenantId,
+        channels: visibility.channels,
         edge_filters: { edge_types: parseEdgeTypes(req) },
         from_ms: parseOptionalIsoMs(req.query.from, 'from'),
         to_ms: parseOptionalIsoMs(req.query.to, 'to'),
@@ -132,12 +146,47 @@ export function createAgentGraphRouter(options: AgentGraphRouterOptions): Router
   return router;
 }
 
+/**
+ * The channel grant for this request, narrowed by the ENVELOPE's scopes.
+ *
+ * Not by the requested ones. `parseRequestedScopes` lets a caller ask with any subset the
+ * envelope allows, and the grant narrows per connector only when a channel scope is
+ * present - so narrowing by the request would let a caller widen its own grant by simply
+ * leaving the channel scope out. That is the same defect that was found in the citation
+ * path; this is the second place with the shape, which is why it is derived here once
+ * rather than at each route.
+ */
+type VisibilityWithGrant = ReturnType<typeof deriveWorkerEnvelopeVisibility> & {
+  channels?: Record<string, readonly string[]>;
+};
+
+function withChannelGrant(
+  visibility: ReturnType<typeof deriveWorkerEnvelopeVisibility>,
+  envelope: ReturnType<typeof loadWorkerEnvelope>,
+  channelGrant: AgentGraphRouterOptions['channelGrant']
+): VisibilityWithGrant {
+  const configured = channelGrant?.();
+  if (!configured) return visibility;
+  return {
+    ...visibility,
+    channels: narrowGrantToEnvelope(configured, {
+      // The ENVELOPE's connectors, not the request-narrowed ones. A request filter must
+      // not become a permission: `visibility.connectors` already applies the request's
+      // narrowing at the connector check, and folding it in here as well would make
+      // "you filtered it out" and "you may not see it" the same answer - the distinction
+      // the reader builds a whole counting query to preserve.
+      connectors: envelope.scope.raw_connectors ?? [],
+      scopes: envelope.scope.memory_scopes ?? [],
+    }),
+  };
+}
+
 async function handleGraphRequest(
   req: Request,
   res: Response,
   options: AgentGraphRouterOptions,
   handler: (
-    visibility: ReturnType<typeof deriveWorkerEnvelopeVisibility>,
+    visibility: VisibilityWithGrant,
     envelope: ReturnType<typeof loadWorkerEnvelope>
   ) => unknown
 ): Promise<void> {
@@ -147,7 +196,7 @@ async function handleGraphRequest(
       connectors: parseRequestedConnectors(req),
       scopes: parseRequestedScopes(req),
     });
-    res.json(handler(visibility, envelope));
+    res.json(handler(withChannelGrant(visibility, envelope, options.channelGrant), envelope));
   } catch (error) {
     sendGraphError(res, error);
   }
@@ -165,6 +214,7 @@ async function handleAliasWrite(
       connectors: parseRequestedConnectors(req),
       scopes: parseRequestedScopes(req),
     });
+    const aliasChannels = withChannelGrant(visibility, envelope, options.channelGrant).channels;
     const body = bodyObject(req.body);
     const entityId = paramString(req.params.entityId, 'entityId');
     const label = stringBody(body, 'label');
@@ -225,6 +275,9 @@ async function handleAliasWrite(
       connectors: visibility.connectors,
       project_refs: visibility.projectRefs,
       tenant_id: visibility.tenantId,
+      // source_refs are caller-supplied: without the grant, naming a raw id from an
+      // ungranted channel would bind it to an entity the caller can then read back.
+      channels: aliasChannels,
     });
 
     if (ownedModelRunId) {

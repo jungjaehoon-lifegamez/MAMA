@@ -18,13 +18,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { SessionStore } from './session-store.js';
 import { getChannelHistory } from './channel-history.js';
 import { ContextInjector, type InjectedContext, type MamaApiClient } from './context-injector.js';
-import type {
-  NormalizedMessage,
-  MessageRouterConfig,
-  Session,
-  RelatedDecision,
-  ContentBlock,
-} from './types.js';
+import type { NormalizedMessage, MessageRouterConfig, Session, ContentBlock } from './types.js';
 import { COMPLETE_AUTONOMOUS_PROMPT } from '../onboarding/complete-autonomous-prompt.js';
 import { getSessionPool, buildChannelKey } from '../agent/session-pool.js';
 import { loadComposedSystemPrompt, getGatewayToolsPrompt } from '../agent/agent-loop.js';
@@ -35,7 +29,8 @@ import { createAgentContext } from '../agent/context-prompt-builder.js';
 import { PromptEnhancer } from '../agent/prompt-enhancer.js';
 import type { EnhancedPromptContext } from '../agent/prompt-enhancer.js';
 import type { RuleContext } from '../agent/yaml-frontmatter.js';
-import type { AgentContext, AgentLoopOptions, StreamCallbacks } from '../agent/types.js';
+import type { AgentContext, AgentLoopOptions, ModelRunProvenance } from '../agent/types.js';
+import type { ProcessingResult, ProcessOptions, TurnProcessor } from './turn-contract.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
 import {
   AuditTaskQueue,
@@ -209,14 +204,22 @@ export interface AgentLoopClient {
   run(
     prompt: string,
     options?: AgentLoopOptions
-  ): Promise<{ response: string; modelRunId?: string | null }>;
+  ): Promise<{
+    response: string;
+    modelRunId?: string | null;
+    modelRunProvenance?: ModelRunProvenance;
+  }>;
   /**
    * Run the agent loop with multimodal content
    */
   runWithContent?(
     content: ContentBlock[],
     options?: AgentLoopOptions
-  ): Promise<{ response: string; modelRunId?: string | null }>;
+  ): Promise<{
+    response: string;
+    modelRunId?: string | null;
+    modelRunProvenance?: ModelRunProvenance;
+  }>;
 }
 
 export interface MemoryAgentProcessLike {
@@ -234,19 +237,19 @@ export interface GatewayRegistry {
   sendMessage(source: string, channelId: string, text: string): Promise<void>;
 }
 
-/**
- * Message processing result
- */
-export interface ProcessingResult {
-  /** Response text from agent */
-  response: string;
-  /** Session ID used */
-  sessionId: string;
-  /** Related decisions that were injected */
-  injectedDecisions: RelatedDecision[];
-  /** Processing duration in milliseconds */
-  duration: number;
-}
+// The turn contract lives in a router-neutral module (turn-contract.ts) so a surface can
+// depend on HOW a turn is served without depending on WHAT serves it. Re-exported here
+// for callers that already import these names from this module.
+export type {
+  BlockedTurn,
+  CompletedTurn,
+  ProcessingResult,
+  ProcessOptions,
+  SessionDirectory,
+  TurnOutcomeBase,
+  TurnProcessor,
+  TurnProvenance,
+} from './turn-contract.js';
 
 /**
  * Sensitive patterns that should only be configured via MAMA OS Viewer
@@ -363,7 +366,7 @@ function normalizeTranslationTargetLanguage(
  *
  * Central hub for processing messages from all messenger platforms.
  */
-export class MessageRouter {
+export class MessageRouter implements TurnProcessor {
   private sessionStore: SessionStore;
   private contextInjector: ContextInjector;
   private mamaApi: MamaApiClient;
@@ -708,12 +711,20 @@ export class MessageRouter {
    * @param processOptions - Optional callbacks for async notifications
    * @param processOptions.onQueued - Called immediately if session is busy (message queued)
    */
+  /**
+   * TurnProcessor entry point. Delegates exactly once to `process` - this is a boundary,
+   * not a behaviour change, and anything it did before it still does.
+   */
+  async processTurn(
+    message: NormalizedMessage,
+    options?: ProcessOptions
+  ): Promise<ProcessingResult> {
+    return this.process(message, options);
+  }
+
   async process(
     message: NormalizedMessage,
-    processOptions?: {
-      onQueued?: () => void;
-      onStream?: StreamCallbacks;
-    }
+    processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const channelKey = buildChannelKey(message.source, message.channelId);
     const previous = this.channelTails.get(channelKey);
@@ -743,10 +754,7 @@ export class MessageRouter {
 
   private async processInChannel(
     message: NormalizedMessage,
-    processOptions?: {
-      onQueued?: () => void;
-      onStream?: StreamCallbacks;
-    }
+    processOptions?: ProcessOptions
   ): Promise<ProcessingResult> {
     const startTime = Date.now();
 
@@ -801,6 +809,8 @@ Go to the **Settings** tab to configure:
 This protects your credentials from being exposed in chat logs.`;
 
       return {
+        outcome: 'blocked',
+        reason: 'security_block',
         response: securityResponse,
         sessionId: 'security-block',
         injectedDecisions: [],
@@ -823,6 +833,10 @@ This protects your credentials from being exposed in chat logs.`;
     let cliSessionId = initialSession.sessionId;
     let isNewCliSession = initialSession.isNew;
     const busy = initialSession.busy;
+    // Captured at turn scope so the completed result can carry it out; the inner
+    // assignment sits inside the agent-run block and is not visible at the return.
+    let completedModelRunId: string | null = null;
+    let completedProvenanceReason: 'backend_no_run' | 'commit_failed' = 'backend_no_run';
     const sourceTurnId =
       message.metadata?.messageId ?? `generated:${randomUUID().replace(/-/g, '')}`;
     const sourceMessageRef = [message.source, message.channelId, sourceTurnId]
@@ -1211,6 +1225,10 @@ This protects your credentials from being exposed in chat logs.`;
           const result = await this.agentLoop.runWithContent(contentBlocks, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
+          completedModelRunId = result.modelRunId ?? completedModelRunId;
+          if (result.modelRunProvenance === 'commit_failed') {
+            completedProvenanceReason = 'commit_failed';
+          }
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         } else {
           const pageCtx = this.getPageContextPrefix(message);
@@ -1219,6 +1237,10 @@ This protects your credentials from being exposed in chat logs.`;
           const result = await this.agentLoop.run(effectiveText, options);
           response = result.response;
           parentModelRunId = result.modelRunId ?? undefined;
+          completedModelRunId = result.modelRunId ?? completedModelRunId;
+          if (result.modelRunProvenance === 'commit_failed') {
+            completedProvenanceReason = 'commit_failed';
+          }
           this.logFrontdoorActivity(message, message.text, response, Date.now() - conductorStart);
         }
 
@@ -1348,12 +1370,20 @@ This protects your credentials from being exposed in chat logs.`;
       // Release session lock AFTER final persistence to prevent out-of-order turns
       releaseCliSessionLock();
 
-      // 6. Return result
+      // 6. Return result. Run identity rides out with it: the router already generated
+      // the turn id and message ref and already knew the model run, and kept all three
+      // to itself, so nothing downstream could refer to what a turn actually produced.
       return {
+        outcome: 'completed',
         response,
         sessionId: session.id,
         injectedDecisions: context.decisions,
         duration: Date.now() - startTime,
+        provenance: completedModelRunId
+          ? { status: 'available' as const, modelRunId: completedModelRunId }
+          : { status: 'unavailable' as const, reason: completedProvenanceReason },
+        sourceTurnId,
+        sourceMessageRef,
       };
     } finally {
       // Session persistence, media post-processing, and history writes can all

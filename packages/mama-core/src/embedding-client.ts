@@ -14,8 +14,6 @@
 
 import fs from 'fs';
 import path from 'path';
-import { info, warn } from './debug-logger.js';
-import type { EmbeddingRole } from './embeddings.js';
 
 function resolveConfiguredPort(): number {
   const rawPort = process.env.MAMA_EMBEDDING_PORT || process.env.MAMA_HTTP_PORT || '';
@@ -54,95 +52,4 @@ export function getServerPort(): number {
     // Ignore errors, use default
   }
   return DEFAULT_PORT;
-}
-
-/**
- * Check if embedding server is running
- */
-export async function isServerRunning(): Promise<boolean> {
-  const port = getServerPort();
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 200);
-
-    const response = await fetch(`http://${HOST}:${port}/health`, {
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Generate embedding via HTTP server
- *
- * @param text - Text to embed
- * @param role - e5 role: 'passage' (default, stored text) or 'query' (search)
- * @returns Embedding or null if failed
- */
-export async function getEmbeddingFromServer(
-  text: string,
-  role: EmbeddingRole = 'passage'
-): Promise<Float32Array | null> {
-  const port = getServerPort();
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
-
-    const response = await fetch(`http://${HOST}:${port}/embed`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, role }),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const error = (await response.json()) as { error?: string };
-      throw new Error(error.error || 'Server error');
-    }
-
-    const result = (await response.json()) as { embedding: number[]; latency: number };
-    info(`[EmbeddingClient] Got embedding in ${result.latency}ms from server`);
-    return new Float32Array(result.embedding);
-  } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      warn('[EmbeddingClient] Server timeout, will use fallback');
-      return null;
-    }
-    const message = error instanceof Error ? error.message : String(error);
-    warn(`[EmbeddingClient] Server error: ${message}`);
-    return null;
-  }
-}
-
-/**
- * Get server status
- */
-export async function getServerStatus(): Promise<ServerStatus | null> {
-  const port = getServerPort();
-
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 200);
-
-    const response = await fetch(`http://${HOST}:${port}/health`, {
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-
-    if (response.ok) {
-      return (await response.json()) as ServerStatus;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }

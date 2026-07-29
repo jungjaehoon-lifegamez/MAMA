@@ -108,11 +108,11 @@ function listFilteredEdges(
     limit?: number;
   }
 ): TwinEdgeRecord[] {
+  // Spread, not a field-by-field re-listing. Re-listing is how the channel grant was
+  // silently dropped here while every other path enforced it: a new field on the
+  // visibility type simply never arrived, and nothing failed to say so.
   return listVisibleTwinEdgesForRefs(adapter, refs, {
-    scopes: input.visibility.scopes,
-    connectors: input.visibility.connectors,
-    projectRefs: input.visibility.projectRefs,
-    tenantId: input.visibility.tenantId,
+    ...input.visibility,
     edgeTypes: input.edge_filters?.edge_types,
     asOfMs: input.as_of_ms,
     limit: input.limit,
@@ -137,12 +137,14 @@ function graphVisibility(input: {
   connectors?: TwinVisibility['connectors'];
   project_refs?: TwinVisibility['projectRefs'];
   tenant_id?: TwinVisibility['tenantId'];
+  channels?: TwinVisibility['channels'];
 }): TwinVisibility {
   return {
     scopes: input.scopes,
     connectors: input.connectors,
     projectRefs: input.project_refs,
     tenantId: input.tenant_id,
+    ...(input.channels ? { channels: input.channels } : {}),
   };
 }
 

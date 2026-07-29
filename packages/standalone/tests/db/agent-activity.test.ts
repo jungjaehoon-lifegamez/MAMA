@@ -6,22 +6,9 @@ import {
   initAgentTables,
   logActivity,
   getActivity,
-  updateActivityScore,
 } from '../../src/db/agent-store.js';
 import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import type { AgentContext, GatewayToolInput, MAMAApiInterface } from '../../src/agent/types.js';
-
-type AgentStoreWithTraceHelpers = typeof agentStore & {
-  listGatewayToolCalls?: (
-    db: Database,
-    input: { envelopeHash?: string; gatewayCallId?: string; limit?: number }
-  ) => agentStore.ActivityRow[];
-  listScopeMismatches?: (
-    db: Database,
-    input: { envelopeHash?: string; gatewayCallId?: string; limit?: number; since?: string }
-  ) => agentStore.ActivityRow[];
-  countScopeMismatches?: (db: Database, input: { since?: string }) => number;
-};
 
 function createMAMAApi(): MAMAApiInterface {
   return {
@@ -286,28 +273,6 @@ describe('Story V19.6 - Agent Activity Logging', () => {
       expect(row.duration_ms).toBe(0);
     });
 
-    it('AC #9: updates activity score and details', () => {
-      const row = logActivity(db, {
-        agent_id: 'test-agent',
-        agent_version: 1,
-        type: 'test_run',
-        input_summary: '3 items tested',
-      });
-      const updated = updateActivityScore(db, row.id, 85, {
-        total: 3,
-        passed: 2,
-        failed: 1,
-        items: [
-          { input: 'a', result: 'pass' },
-          { input: 'b', result: 'pass' },
-          { input: 'c', result: 'fail' },
-        ],
-      });
-      expect(updated.score).toBe(85);
-      expect(JSON.parse(updated.details!).passed).toBe(2);
-      expect(JSON.parse(updated.details!).items).toHaveLength(3);
-    });
-
     it('AC #9b: logs and retrieves envelope audit fields', () => {
       const row = logActivity(db, {
         agent_id: 'trace-agent',
@@ -431,96 +396,6 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         'gateway_tool_call',
         'task_complete',
       ]);
-    });
-
-    it('AC #12: exposes dedicated trace and mismatch query helpers', () => {
-      const helpers = agentStore as AgentStoreWithTraceHelpers;
-      expect(typeof helpers.listGatewayToolCalls).toBe('function');
-      expect(typeof helpers.listScopeMismatches).toBe('function');
-
-      logActivity(db, {
-        agent_id: 'trace-agent',
-        agent_version: 1,
-        type: 'gateway_tool_call',
-        input_summary: 'mama_save',
-        execution_status: 'completed',
-        envelopeHash: 'env_hash_1',
-        gatewayCallId: 'gw_trace_1',
-        scopeMismatch: 1,
-      } as Parameters<typeof logActivity>[1] & {
-        envelopeHash: string;
-        scopeMismatch: number;
-      });
-      logActivity(db, {
-        agent_id: 'trace-agent',
-        agent_version: 1,
-        type: 'gateway_tool_call',
-        input_summary: 'mama_search',
-        execution_status: 'completed',
-        envelopeHash: 'env_hash_2',
-        gatewayCallId: 'gw_trace_2',
-        scopeMismatch: 0,
-      } as Parameters<typeof logActivity>[1] & {
-        envelopeHash: string;
-        scopeMismatch: number;
-      });
-
-      expect(helpers.listGatewayToolCalls!(db, { envelopeHash: 'env_hash_1' })).toEqual([
-        expect.objectContaining({
-          input_summary: 'mama_save',
-          envelope_hash: 'env_hash_1',
-          gateway_call_id: 'gw_trace_1',
-        }),
-      ]);
-      expect(helpers.listGatewayToolCalls!(db, { gatewayCallId: 'gw_trace_2' })).toEqual([
-        expect.objectContaining({
-          input_summary: 'mama_search',
-          gateway_call_id: 'gw_trace_2',
-        }),
-      ]);
-      expect(helpers.listScopeMismatches!(db, { envelopeHash: 'env_hash_1' })).toEqual([
-        expect.objectContaining({
-          input_summary: 'mama_save',
-          scope_mismatch: 1,
-        }),
-      ]);
-      expect(helpers.listScopeMismatches!(db, { gatewayCallId: 'gw_trace_1' })).toEqual([
-        expect.objectContaining({
-          input_summary: 'mama_save',
-          gateway_call_id: 'gw_trace_1',
-          scope_mismatch: 1,
-        }),
-      ]);
-      expect(helpers.listScopeMismatches!(db, { gatewayCallId: 'gw_trace_2' })).toEqual([]);
-    });
-
-    it('AC #13: normalizes ISO since filters for scope mismatch queries', () => {
-      const helpers = agentStore as AgentStoreWithTraceHelpers;
-      expect(typeof helpers.listScopeMismatches).toBe('function');
-      expect(typeof helpers.countScopeMismatches).toBe('function');
-
-      logActivity(db, {
-        agent_id: 'trace-agent',
-        agent_version: 1,
-        type: 'gateway_tool_call',
-        input_summary: 'mama_save',
-        execution_status: 'completed',
-        envelopeHash: 'env_hash_recent',
-        scopeMismatch: 1,
-      } as Parameters<typeof logActivity>[1] & {
-        envelopeHash: string;
-        scopeMismatch: number;
-      });
-
-      const sinceIso = new Date(Date.now() - 60_000).toISOString();
-
-      expect(helpers.listScopeMismatches!(db, { since: sinceIso })).toEqual([
-        expect.objectContaining({
-          input_summary: 'mama_save',
-          scope_mismatch: 1,
-        }),
-      ]);
-      expect(helpers.countScopeMismatches!(db, { since: sinceIso })).toBe(1);
     });
   });
 });

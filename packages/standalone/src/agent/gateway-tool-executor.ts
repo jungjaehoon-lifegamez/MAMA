@@ -34,6 +34,8 @@ import {
 import { recordSecurityEvent } from '../security/security-monitor.js';
 import { scanMemoryWriteInput } from '../memory/secret-filter.js';
 import { deriveMemoryScopes } from '../memory/scope-context.js';
+import { resolveMemoryProvenanceLive } from '../memory/provenance-live.js';
+import { deriveEffectiveProjectRefs, deriveEffectiveTenantId } from '../api/worker-envelope.js';
 import type {
   GatewayToolName,
   GatewayToolInput,
@@ -42,6 +44,7 @@ import type {
   SaveDecisionInput,
   SearchInput,
   RecallInput,
+  ProvenanceInput,
   ContextCompileInput,
   CodeActInput,
   DriveBrowseInput,
@@ -84,7 +87,10 @@ import type {
 import { asUntrustedDriveEvidence, DriveToolService } from './drive-tools.js';
 import { ImageTranslationToolService } from './image-translation-tools.js';
 import { extractAttachmentText } from './attachment-text-extractor.js';
-import { wrapUntrustedContent } from '../utils/untrusted-content.js';
+import {
+  isUntrustedExternalEvidenceTool,
+  wrapUntrustedContent,
+} from '../utils/untrusted-content.js';
 import { AgentError } from './types.js';
 import SqliteDatabase from '../sqlite.js';
 import {
@@ -97,7 +103,6 @@ import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
-import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { UICommandQueue } from '../api/ui-command-handler.js';
@@ -118,12 +123,6 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
-import {
-  DelegationExecutor,
-  type AgentTestInput,
-  type DelegateInput,
-  type DelegationRoutingContext,
-} from './delegation-executor.js';
 import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
 import {
@@ -135,6 +134,8 @@ import type {
   TemporalEvidenceAttestation,
   TemporalWorkContext,
 } from '../operator/temporal-effect.js';
+import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
+import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -257,6 +258,8 @@ type ActiveGatewayExecutionContext = {
   gatewayCallId?: string;
   workorderAttemptId?: number;
   temporalWorkContext?: TemporalWorkContext;
+  /** The delta batch a bounded run was handed; becomes the cause of what it changes. */
+  causeEventIds?: readonly string[];
   signal?: AbortSignal;
   parentToolName?: string;
   backgroundTasks?: GatewayToolExecutionContext['backgroundTasks'];
@@ -278,6 +281,15 @@ type ScopeAuditFields = {
 };
 
 type SafeRecallMemory = {
+  /**
+   * Handle for the recalled record.
+   *
+   * Without this the agent receives prose it cannot point at: it can read a memory and
+   * then has no way to say WHICH memory a statement rests on, so a claim can never be
+   * traced back to its evidence and a correction has no address. The id is an opaque
+   * identifier, not content, so returning it discloses nothing the summary does not.
+   */
+  memoryId?: string;
   topic?: string;
   kind?: string;
   summary?: string;
@@ -339,6 +351,7 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
   'mama_update',
   'mama_add',
@@ -391,6 +404,7 @@ const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
 ]);
 const ENVELOPE_REQUIRED_SURFACES = new Set<GatewayExecutionSurface>([
@@ -446,6 +460,10 @@ function sanitizeRecallMemory(value: unknown): SafeRecallMemory | null {
   }
 
   const safe: SafeRecallMemory = {};
+  const memoryId = stringField(record, 'id');
+  if (memoryId) {
+    safe.memoryId = memoryId;
+  }
   const topic = sanitizeRecallText(stringField(record, 'topic'));
   const kind = sanitizeRecallText(stringField(record, 'kind'));
   const summary = sanitizeRecallText(stringField(record, 'summary'));
@@ -696,7 +714,6 @@ export class GatewayToolExecutor {
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
-  private delegationManagerRef: DelegationManager | null = null;
   private currentAgentId: string = '';
   private currentSource: string = '';
   private currentChannelId: string = '';
@@ -733,14 +750,11 @@ export class GatewayToolExecutor {
   private sessionsDb: SQLiteDatabase | null = null;
   setSessionsDb(db: SQLiteDatabase): void {
     this.sessionsDb = db;
-    this.refreshDelegationExecutor();
   }
-  private rawStore: import('../connectors/framework/raw-store.js').RawStore | null = null;
-  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
-    this.rawStore = store;
-    this.refreshDelegationExecutor();
-  }
-  private delegationExecutor: DelegationExecutor | null = null;
+  /** Accepted and discarded: the only reader was the delegation executor, which is gone.
+   *  The setter stays because its callers are live - delete both together when a second
+   *  reader appears or the callers do not. */
+  setRawStore(_store: import('../connectors/framework/raw-store.js').RawStore): void {}
   private uiCommandQueue: UICommandQueue | null = null;
   setUICommandQueue(queue: UICommandQueue): void {
     this.uiCommandQueue = queue;
@@ -753,25 +767,15 @@ export class GatewayToolExecutor {
   setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
     this.restartMultiAgentAgent = fn;
   }
-  private validationService:
-    | import('../validation/session-service.js').ValidationSessionService
-    | null = null;
+  /** Same as setRawStore: the only reader was the delegation executor. */
   setValidationService(
-    svc: import('../validation/session-service.js').ValidationSessionService
-  ): void {
-    this.validationService = svc;
-    this.refreshDelegationExecutor();
-  }
+    _svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {}
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
   }
   setAgentProcessManager(pm: AgentProcessManager): void {
     this.agentProcessManager = pm;
-    this.refreshDelegationExecutor();
-  }
-  setDelegationManager(dm: DelegationManager): void {
-    this.delegationManagerRef = dm;
-    this.refreshDelegationExecutor();
   }
   /** Get AgentProcessManager (for cron/event triggers that need direct process access) */
   getAgentProcessManager(): AgentProcessManager | null {
@@ -800,6 +804,7 @@ export class GatewayToolExecutor {
       gatewayCallId: executionContext?.gatewayCallId,
       workorderAttemptId: executionContext?.workorderAttemptId,
       temporalWorkContext: executionContext?.temporalWorkContext,
+      causeEventIds: executionContext?.causeEventIds,
       signal: executionContext?.signal,
       parentToolName: executionContext?.parentToolName,
       backgroundTasks: executionContext?.backgroundTasks,
@@ -843,6 +848,7 @@ export class GatewayToolExecutor {
       workorderAttemptId: active.workorderAttemptId,
       // Never merged from fallback - temporal authority belongs to one claimed run only.
       temporalWorkContext: active.temporalWorkContext,
+      causeEventIds: active.causeEventIds,
       signal: active.signal,
       parentToolName: active.parentToolName ?? fallback.parentToolName,
       backgroundTasks: active.backgroundTasks ?? fallback.backgroundTasks,
@@ -855,21 +861,13 @@ export class GatewayToolExecutor {
     return this.getExecutionState().agentContext;
   }
 
-  private getActiveRouting(): DelegationRoutingContext {
+  /** Who and where the active turn is. Was typed by the delegation executor; now local. */
+  private getActiveRouting(): { agentId: string; source: string; channelId: string } {
     const state = this.getExecutionState();
     return {
       agentId: state.agentId,
       source: state.source,
       channelId: state.channelId,
-    };
-  }
-
-  private getActiveDelegationRouting(): DelegationRoutingContext {
-    const routing = this.getActiveRouting();
-    return {
-      agentId: routing.agentId || 'conductor',
-      source: routing.source || 'viewer',
-      channelId: routing.channelId || 'default',
     };
   }
 
@@ -1050,36 +1048,6 @@ export class GatewayToolExecutor {
   }
 
   /** Check if delegate tool support is available (multi-agent wired). */
-  hasDelegateSupport(): boolean {
-    return this.agentProcessManager !== null && this.delegationManagerRef !== null;
-  }
-
-  /** Retry delay (ms) for delegate backoff. Initialized from config in constructor. */
-  private _retryDelayMs: number = 1000;
-
-  private createDelegationExecutor(): DelegationExecutor {
-    return new DelegationExecutor({
-      agentProcessManager: this.agentProcessManager,
-      delegationManagerRef: this.delegationManagerRef,
-      rawStore: this.rawStore,
-      sessionsDb: this.sessionsDb,
-      validationService: this.validationService,
-      retryDelayMs: this._retryDelayMs,
-      resolveManagedAgentId: (id) => this.resolveManagedAgentId(id),
-      checkViewerOnly: () => this.checkViewerOnly(),
-    });
-  }
-
-  private refreshDelegationExecutor(): void {
-    this.delegationExecutor = this.createDelegationExecutor();
-  }
-
-  private getDelegationExecutor(): DelegationExecutor {
-    if (!this.delegationExecutor) {
-      this.refreshDelegationExecutor();
-    }
-    return this.delegationExecutor!;
-  }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     const privateWorkspaceRoot = resolve(
@@ -1119,14 +1087,6 @@ export class GatewayToolExecutor {
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
     }
-
-    // Read retry delay from config (safe: falls back to 1000ms if config not yet initialized)
-    try {
-      this._retryDelayMs = getConfig().timeouts?.busy_retry_ms ?? 1000;
-    } catch {
-      // Config not initialized yet — keep default 1000ms
-    }
-    this.refreshDelegationExecutor();
   }
 
   async beginRuntimeModelRun(input: BeginModelRunInput): Promise<ModelRunRecord> {
@@ -1839,6 +1799,7 @@ export class GatewayToolExecutor {
     if (
       toolName === 'mama_search' ||
       toolName === 'mama_recall' ||
+      toolName === 'mama_provenance' ||
       toolName === 'context_compile'
     ) {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
@@ -1879,7 +1840,10 @@ export class GatewayToolExecutor {
     });
   }
 
-  private resolveMamaRecallScopes(input: RecallInput): {
+  private resolveMamaRecallScopes(
+    input: { scopes?: unknown },
+    toolName: 'mama_recall' | 'mama_provenance' = 'mama_recall'
+  ): {
     scopes: MemoryScope[];
     denial?: GatewayToolResult;
   } {
@@ -1896,7 +1860,7 @@ export class GatewayToolExecutor {
         denial: {
           success: false,
           code: 'memory_scope_invalid',
-          error: 'mama_recall scopes must be valid memory scope objects.',
+          error: `${toolName} scopes must be valid memory scope objects.`,
         } as GatewayToolResult,
       };
     }
@@ -1908,7 +1872,7 @@ export class GatewayToolExecutor {
           denial: {
             success: false,
             code: 'memory_scope_denied',
-            error: 'mama_recall requires an active session or envelope for caller-supplied scopes.',
+            error: `${toolName} requires an active session or envelope for caller-supplied scopes.`,
           } as GatewayToolResult,
         };
       }
@@ -1929,7 +1893,7 @@ export class GatewayToolExecutor {
         denial: {
           success: false,
           code: 'memory_scope_denied',
-          error: 'mama_recall requested scopes outside the active session or envelope.',
+          error: `${toolName} requested scopes outside the active session or envelope.`,
         } as GatewayToolResult,
       };
     }
@@ -2406,12 +2370,6 @@ export class GatewayToolExecutor {
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
           );
-        // Agent lifecycle tools
-        case 'agent_test':
-          return await this.getDelegationExecutor().runAgentTest(
-            input as AgentTestInput,
-            this.getActiveDelegationRouting()
-          );
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
           if (!this.sessionsDb) {
@@ -2646,12 +2604,6 @@ export class GatewayToolExecutor {
           this.uiCommandQueue.push({ type: 'notify', payload: args });
           return { success: true, notified: true };
         }
-        // Multi-Agent delegation
-        case 'delegate':
-          return await this.getDelegationExecutor().runDelegate(
-            input as DelegateInput,
-            this.getActiveDelegationRouting()
-          );
       }
 
       // Lazy MAMA API init — only for tools that need it
@@ -2747,6 +2699,8 @@ export class GatewayToolExecutor {
           return await handleSearch(await getApi(), input as SearchInput);
         case 'mama_recall':
           return await this.handleMamaRecall(input as RecallInput);
+        case 'mama_provenance':
+          return await this.handleMamaProvenance(input as ProvenanceInput);
         case 'context_compile':
           return await this.handleContextCompile(input as ContextCompileInput);
         case 'mama_update': {
@@ -3094,10 +3048,13 @@ export class GatewayToolExecutor {
           const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
           const kanbanInput = input as { maxCardsPerList?: number };
           try {
-            const columns = await getTrelloKanban({
+            // Coverage rides alongside the data: `complete`/`boards`/`truncated`/
+            // `observedAt` are what let a caller tell a truly empty board from one it
+            // failed to read, and a whole column from a sliced one.
+            const snapshot = await getTrelloKanban({
               maxCardsPerList: kanbanInput.maxCardsPerList,
             });
-            return { success: true, columns };
+            return { success: true, ...snapshot };
           } catch (err) {
             return {
               success: false,
@@ -3123,6 +3080,20 @@ export class GatewayToolExecutor {
             );
           }
           return { success: true, messages: queryMessages(msgInput) };
+        }
+        case 'changes_read': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          // Coverage and totals ride with the rows for the same reason task_list carries
+          // its own: "I changed 12 things" and "I can say why for 4 of them" are
+          // different claims, and a page of rows without the count it was drawn from
+          // states more than the ledger holds.
+          return readChanges(
+            this.taskLedger,
+            input as ChangesReadInput,
+            Date.now()
+          ) as GatewayToolResult;
         }
         case 'task_list': {
           if (!this.taskLedger) {
@@ -3150,19 +3121,94 @@ export class GatewayToolExecutor {
             search?: string;
             limit?: number;
             order?: string;
+            cursor?: string;
           };
+          // total/returned/nextCursor ride with the rows: a bounded read (default 50,
+          // max 200) is otherwise indistinguishable from the whole board, and a report
+          // that says "the open items are..." from one page states more than it read.
+          const page = this.taskLedger.listPage({
+            status: listInput.status as never,
+            channel: listInput.channel,
+            search: listInput.search,
+            limit: listInput.limit,
+            order: (listInput.order as never) ?? 'deadline_priority',
+            cursor: listInput.cursor,
+          });
           return {
             success: true,
-            tasks: this.taskLedger
-              .list({
-                status: listInput.status as never,
-                channel: listInput.channel,
-                search: listInput.search,
-                limit: listInput.limit,
-                order: (listInput.order as never) ?? 'deadline_priority',
-              })
-              .map(serializeTaskToolRecord),
+            tasks: page.tasks.map(serializeTaskToolRecord),
+            total: page.total,
+            returned: page.returned,
+            nextCursor: page.nextCursor,
           };
+        }
+        case 'task_external_correlation': {
+          if (!this.taskLedger) {
+            return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
+          }
+          const { correlateTasksWithExternalItems } =
+            await import('../operator/external-correlation.js');
+          const { buildProvenanceLookup } = await import('../operator/provenance-lookup.js');
+          const { getTrelloKanban } = await import('../connectors/trello/query-tools.js');
+          try {
+            // The whole open set is walked HERE, not by the model: a correlation over
+            // one page would answer "what did the caller happen to see" rather than
+            // "what is on the board", which is the substitution this tool exists to stop.
+            const ledger = this.taskLedger;
+            const open: Array<{
+              id: number;
+              sourceChannel: string | null;
+              sourceEventId: string | null;
+            }> = [];
+            let cursor: string | undefined;
+            do {
+              const page = ledger.listPage({ limit: 200, cursor });
+              for (const task of page.tasks) {
+                if (task.status !== 'done' && task.status !== 'cancelled') {
+                  open.push({
+                    id: task.id,
+                    sourceChannel: task.sourceChannel,
+                    sourceEventId: task.sourceEventId,
+                  });
+                }
+              }
+              cursor = page.nextCursor ?? undefined;
+            } while (cursor);
+
+            const snapshot = await getTrelloKanban({ maxCardsPerList: 100 });
+            const liveItems = snapshot.columns.flatMap((column) =>
+              column.cards.map((card) => ({
+                itemId: card.cardId,
+                board: column.board,
+                list: column.list,
+              }))
+            );
+            const result = correlateTasksWithExternalItems({
+              connector: 'trello',
+              rows: open,
+              lookupProvenance: await buildProvenanceLookup(),
+              liveItems,
+              liveSnapshotComplete: snapshot.complete,
+            });
+            return {
+              success: true,
+              correlations: result.correlations,
+              coverage: result.coverage,
+              snapshot: {
+                observedAt: snapshot.observedAt,
+                cacheAgeMs: snapshot.cacheAgeMs,
+                complete: snapshot.complete,
+                truncated: snapshot.truncated,
+                boards: snapshot.boards,
+              },
+            };
+          } catch (err) {
+            return {
+              success: false,
+              code: 'correlation_failed',
+              error: err instanceof Error ? err.message : String(err),
+            };
+          }
         }
         case 'task_create': {
           if (!this.taskLedger) {
@@ -3170,7 +3216,15 @@ export class GatewayToolExecutor {
           }
           return {
             success: true,
-            task: serializeTaskToolRecord(this.taskLedger.create(input as never)),
+            task: serializeTaskToolRecord(
+              // The run id comes from trusted execution state, never from the tool call:
+              // an agent that can name its own run in the effect ledger can sign someone
+              // else's work with it.
+              this.taskLedger.create(input as never, {
+                runId: this.getExecutionState().modelRunId ?? null,
+                causeEventIds: this.getExecutionState().causeEventIds,
+              })
+            ),
           };
         }
         case 'task_update': {
@@ -3188,10 +3242,14 @@ export class GatewayToolExecutor {
               false
             );
           }
-          return {
-            success: true,
-            task: serializeTaskToolRecord(this.taskLedger.update(id, patch as never)),
-          };
+          const updated = this.taskLedger.update(id, patch as never, {
+            runId: this.getExecutionState().modelRunId ?? null,
+            // The batch this run was handed. A bounded run's changes rest on the delta it
+            // was given, and the system knew that before the run began - so there is
+            // nothing to ask the agent for.
+            causeEventIds: this.getExecutionState().causeEventIds,
+          });
+          return { success: true, task: serializeTaskToolRecord(updated) };
         }
         case 'task_temporal_reconcile': {
           if (!this.taskLedger) {
@@ -4903,11 +4961,11 @@ export class GatewayToolExecutor {
         return;
       }
       hostToolsInvoked.push(toolName);
-      if (
-        (toolName.startsWith('drive_') && toolName !== 'drive_upload') ||
-        toolName === 'ocr_image' ||
-        toolName === 'translate_conti'
-      ) {
+      // Board/card text is written by people outside this system and now reaches the
+      // report lane, whose composed text is delivered to the owner verbatim by host
+      // code with no intervening model. Deriving this from the connector map keeps a
+      // newly registered reader from arriving unfenced.
+      if (isUntrustedExternalEvidenceTool(toolName)) {
         usedUntrustedExternalEvidence = true;
       }
     };
@@ -5058,6 +5116,109 @@ export class GatewayToolExecutor {
       return {
         success: false,
         error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}`,
+      } as GatewayToolResult;
+    }
+  }
+
+  /**
+   * Answer what a stored claim rests on.
+   *
+   * The counterpart to recall, and the reason recall now returns an id at all: an agent
+   * that can only read memories can assert them, while an agent that can resolve them can
+   * say which ones a statement stands on - or that a statement stands on nothing. That
+   * second answer is the one the original bad report could not produce.
+   *
+   * Scope is re-derived here rather than trusted from the caller, and the connector grant
+   * is read off the active envelope, so this path can never show an event that the normal
+   * raw read would refuse.
+   */
+  private async handleMamaProvenance(input: ProvenanceInput): Promise<GatewayToolResult> {
+    const memoryId = typeof input.memory_id === 'string' ? input.memory_id.trim() : '';
+    if (memoryId.length === 0) {
+      return {
+        success: false,
+        error: 'memory_id is required',
+      } as GatewayToolResult;
+    }
+
+    // Tier 3 is denied context_compile, its sanctioned path to raw connector data. A
+    // per-citation event reader would reopen exactly that, one event at a time, so the
+    // same denial applies here - fail closed on a Tier-3 designation from either source.
+    const tierContext = this.getExecutionState();
+    if (tierContext.agentContext?.tier === 3 || tierContext.envelope?.tier === 3) {
+      return {
+        success: false,
+        code: 'permission_denied_tier3',
+        error: 'mama_provenance is not allowed for Tier 3 agents.',
+      } as GatewayToolResult;
+    }
+
+    const scopeResolution = this.resolveMamaRecallScopes(input, 'mama_provenance');
+    if (scopeResolution.denial) {
+      return scopeResolution.denial;
+    }
+    if (scopeResolution.scopes.length === 0) {
+      return {
+        success: false,
+        error: 'mama_provenance requires scopes (provide via input or active agent context)',
+      } as GatewayToolResult;
+    }
+
+    const ctx = this.getExecutionState();
+    // No envelope means no connector grant, and no grant means NO raw events - never all
+    // of them. The raw reader fails closed on exactly this input and so does this call.
+    const connectors = ctx.envelope?.scope.raw_connectors ?? [];
+    // Derived exactly the way the compile path derives them, through the same functions.
+    // Taking `project_refs` off the envelope directly and skipping tenant entirely is what
+    // made an earlier version wider than the reader: the reader always resolves a tenant
+    // ('default' today), and an absent tenant on this side skipped the filter rather than
+    // narrowing it - so tenant-null and cross-tenant rows resolved that reading refuses.
+    const projectIds = ctx.envelope
+      ? deriveEffectiveProjectRefs(ctx.envelope).map((project) => project.id)
+      : [];
+    // deriveEffectiveTenantId() is a constant today and is load-bearing: the reader
+    // resolves the same value on every call, so passing anything else - or nothing -
+    // makes citation and reading disagree.
+    const tenantId = deriveEffectiveTenantId();
+    // Declared on the envelope and assigned nowhere yet. Threaded so the clamp holds for
+    // citation on the day it is, rather than becoming the next uncovered filter.
+    const asOfMs = ctx.envelope?.scope.as_of ? Date.parse(ctx.envelope.scope.as_of) : NaN;
+    const maxObservedMs = Number.isNaN(asOfMs) ? null : asOfMs;
+
+    try {
+      // The SAME grant the compile path reads under, derived by the same function. This is
+      // what makes citation and reading answer the same question: while these were separate
+      // rules, this tool refused excerpts for the very events context_compile was citing.
+      // Narrowed by the ENVELOPE's scopes, never by the caller's requested subset.
+      // scopeResolution.scopes is any subset the caller asked for that the envelope allows,
+      // so narrowing by it let a caller widen its own grant by simply omitting the channel
+      // scope: ask with global:system alone and the channel narrowing disappears, handing
+      // back excerpts from every other channel of the connector. Citation would then be
+      // strictly wider than reading, which is the one thing this path must never be.
+      const citationChannels = ctx.envelope
+        ? narrowGrantToEnvelope(liveBoundaryChannels(), {
+            connectors,
+            scopes: ctx.envelope.scope.memory_scopes ?? [],
+          })
+        : undefined;
+
+      const resolution = await resolveMemoryProvenanceLive(memoryId, {
+        scopes: scopeResolution.scopes,
+        connectors,
+        ...(citationChannels ? { channels: citationChannels } : {}),
+        projectIds,
+        tenantId,
+        maxObservedMs,
+        // The same scrubbing recall applies to memory text. Without it this surface would
+        // emit connector content that its sibling redacts, which is only invisible today
+        // because no event excerpt has ever been produced.
+        redact: (text: string) => sanitizeRecallText(text) ?? '',
+      });
+      return { success: true, data: resolution } as GatewayToolResult;
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to resolve provenance: ${error instanceof Error ? error.message : String(error)}`,
       } as GatewayToolResult;
     }
   }

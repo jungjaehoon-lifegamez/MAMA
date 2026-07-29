@@ -19,6 +19,12 @@ export interface ResolveEntityInput {
   scopes?: TwinScopeRef[];
   connectors?: string[];
   project_refs?: TwinProjectRef[];
+  /**
+   * Which channels of each connector may be read. Carried on every graph input for the
+   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
+   * must satisfy the same rule as a row the reader would have returned.
+   */
+  channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
   context_refs?: TwinRef[];
   limit?: number;
@@ -43,6 +49,12 @@ export interface GraphNeighborhoodInput {
   scopes?: TwinScopeRef[];
   connectors?: string[];
   project_refs?: TwinProjectRef[];
+  /**
+   * Which channels of each connector may be read. Carried on every graph input for the
+   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
+   * must satisfy the same rule as a row the reader would have returned.
+   */
+  channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
@@ -61,6 +73,12 @@ export interface GraphPathsInput {
   scopes?: TwinScopeRef[];
   connectors?: string[];
   project_refs?: TwinProjectRef[];
+  /**
+   * Which channels of each connector may be read. Carried on every graph input for the
+   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
+   * must satisfy the same rule as a row the reader would have returned.
+   */
+  channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   as_of_ms?: number | null;
@@ -81,6 +99,12 @@ export interface GraphTimelineInput {
   scopes?: TwinScopeRef[];
   connectors?: string[];
   project_refs?: TwinProjectRef[];
+  /**
+   * Which channels of each connector may be read. Carried on every graph input for the
+   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
+   * must satisfy the same rule as a row the reader would have returned.
+   */
+  channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
   edge_filters?: AgentGraphEdgeFilters;
   from_ms?: number;
@@ -175,6 +199,12 @@ export interface AttachEntityAliasWithEdgeInput {
   scopes?: TwinScopeRef[];
   connectors?: string[];
   project_refs?: TwinProjectRef[];
+  /**
+   * Which channels of each connector may be read. Carried on every graph input for the
+   * same reason it is carried on the reader's boundary: a raw ref reached through an edge
+   * must satisfy the same rule as a row the reader would have returned.
+   */
+  channels?: Record<string, readonly string[]>;
   tenant_id?: string | null;
 }
 
