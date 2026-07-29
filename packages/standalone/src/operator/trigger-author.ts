@@ -373,11 +373,15 @@ export function describeCliFailure(file: string, error: unknown): string {
   if (e.killed === true || e.signal) {
     parts.push(`killed (signal=${String(e.signal ?? 'unknown')}) - likely the timeout`);
   }
-  if (e.code !== undefined && e.code !== null) parts.push(`exit=${String(e.code)}`);
+  if (e.code !== undefined && e.code !== null) {
+    parts.push(`exit=${String(e.code)}`);
+  }
 
   const tail = (value: unknown, label: string): void => {
     const text = typeof value === 'string' ? value.trim() : '';
-    if (text) parts.push(`${label}=${text.slice(-400)}`);
+    if (text) {
+      parts.push(`${label}=${text.slice(-400)}`);
+    }
   };
   tail(e.stderr, 'stderr');
   // The CLI reports API errors on stdout, so an empty stderr is not an absent cause.
