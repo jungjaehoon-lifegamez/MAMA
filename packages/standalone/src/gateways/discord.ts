@@ -31,8 +31,6 @@ import { downloadFile, buildContentBlocks } from './attachment-utils.js';
 import type { ProcessingResult } from './turn-contract.js';
 import type { SessionDirectory, TurnProcessor } from './turn-contract.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
-import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
-import { MultiAgentDiscordHandler } from '../multi-agent/multi-agent-discord.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
 import type { PlatformAdapter } from './tool-status-tracker.js';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -64,7 +62,6 @@ export interface DiscordGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
-  multiAgentRuntime?: MultiAgentRuntimeOptions;
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -137,8 +134,6 @@ export class DiscordGateway extends BaseGateway {
   private editTimer: NodeJS.Timeout | null = null;
 
   // Multi-agent support
-  private multiAgentHandler: MultiAgentDiscordHandler | null = null;
-  private multiAgentRuntime?: MultiAgentRuntimeOptions;
 
   protected get mentionPattern(): RegExp | null {
     return null; // Discord uses custom cleanMessageContent with multiple patterns
@@ -151,7 +146,6 @@ export class DiscordGateway extends BaseGateway {
     });
     this.token = options.token;
     this.defaultChannelId = options.defaultChannelId;
-    this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
       token: options.token,
@@ -176,20 +170,8 @@ export class DiscordGateway extends BaseGateway {
       partials: [Partials.Channel], // Required for DM support
     });
 
-    // Initialize multi-agent handler if configured
-    if (options.multiAgentConfig?.enabled) {
-      // MAMA OS is a headless daemon — Claude CLI's interactive permission prompts cannot work.
-      // Security is enforced by MAMA's RoleManager (config.yaml roles), not Claude CLI prompts.
-      // DO NOT gate on env vars — MAMA manages permissions via its own config.yaml.
-      this.multiAgentHandler = new MultiAgentDiscordHandler(
-        options.multiAgentConfig,
-        {
-          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
-        },
-        options.multiAgentRuntime
-      );
-      discordLogger.info('[Discord] Multi-agent mode enabled');
-    }
+    // Multi-agent handler construction was here. Gated on `multi_agent.enabled`, which is
+    // false on this install, and the handler has zero traces in the entire log history.
 
     this.setupEventListeners();
   }
@@ -202,19 +184,6 @@ export class DiscordGateway extends BaseGateway {
     this.client.once(Events.ClientReady, (client) => {
       console.log(`Discord bot logged in as ${client.user.tag}`);
       this.connected = true;
-
-      // Set bot user ID and token for multi-agent handler, then initialize multi-bots
-      if (this.multiAgentHandler) {
-        this.multiAgentHandler.setBotUserId(client.user.id);
-        this.multiAgentHandler.setMainBotToken(this.token);
-        this.multiAgentHandler.setDiscordClient(client);
-        // Initialize agent-specific bots (async, don't block)
-        this.multiAgentHandler.initializeMultiBots().catch((err) => {
-          console.error('[Discord] Failed to initialize multi-bots:', err);
-          // Reset handler on failure to prevent isEnabled() returning true with broken state
-          this.multiAgentHandler = null;
-        });
-      }
 
       this.emitEvent({
         type: 'connected',
@@ -335,8 +304,8 @@ export class DiscordGateway extends BaseGateway {
       );
     }
 
-    // Build message history context for Claude (OpenClaw style)
     const channelHistory = getChannelHistory();
+    // Build message history context for Claude (OpenClaw style)
     const historyContext = channelHistory.formatForContext(message.channel.id, message.id);
     if (historyContext) {
       console.log(
@@ -400,82 +369,9 @@ export class DiscordGateway extends BaseGateway {
     handled: boolean;
     isBot: boolean;
   } | null> {
-    // Multi-agent mode: detect messages from our agent bots
-    if (message.author.bot && this.multiAgentHandler) {
-      const agentBotId = this.multiAgentHandler.getMultiBotManager().isFromAgentBot(message);
-      if (agentBotId && agentBotId !== 'main') {
-        // This is from one of our agent bots - record to shared context
-        const agentId =
-          this.multiAgentHandler.getOrchestrator().extractAgentIdFromMessage(message.content) ||
-          agentBotId;
-        const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentId);
-        if (agent) {
-          this.multiAgentHandler
-            .getSharedContext()
-            .recordAgentMessage(message.channel.id, agent, message.content, message.id);
-        }
-
-        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
-          if (this.client.user && message.mentions.has(this.client.user)) {
-            // Main bot (LEAD) isn't in MultiBotManager — route via delegation chain
-            const senderAgent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
-            if (senderAgent) {
-              await this.multiAgentHandler.routeResponseMentions(message, [
-                {
-                  agentId: agentBotId,
-                  agent: senderAgent,
-                  content: message.content,
-                  rawContent: message.content,
-                  duration: 0,
-                },
-              ]);
-            }
-          }
-          return null;
-        }
-
-        // Fallback: pass to multi-agent handler for cross-agent conversation
-        const cleanContent = this.cleanMessageContent(message.content);
-        const multiAgentResult = await this.multiAgentHandler.handleMessage(message, cleanContent);
-        if (multiAgentResult && multiAgentResult.responses.length > 0) {
-          await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
-          console.log(
-            `[Discord] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
-          );
-        }
-        return null;
-      }
-      // Message from main bot - record to shared context
-      if (agentBotId === 'main' || message.author.id === this.client.user?.id) {
-        const agentId = this.multiAgentHandler
-          .getOrchestrator()
-          .extractAgentIdFromMessage(message.content);
-        if (agentId) {
-          const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentId);
-          if (agent) {
-            this.multiAgentHandler
-              .getSharedContext()
-              .recordAgentMessage(message.channel.id, agent, message.content, message.id);
-          }
-          // When mention_delegation is enabled, routeResponseMentions already handles
-          // delegation from LEAD's responses — skip to avoid duplicate processing
-          if (!this.multiAgentHandler.isMentionDelegationEnabled()) {
-            const cleanContent = this.cleanMessageContent(message.content);
-            const multiAgentResult = await this.multiAgentHandler.handleMessage(
-              message,
-              cleanContent
-            );
-            if (multiAgentResult && multiAgentResult.responses.length > 0) {
-              await this.multiAgentHandler.sendAgentResponses(message, multiAgentResult.responses);
-              console.log(
-                `[Discord] Agent-to-agent (main): ${agentId} → ${multiAgentResult.selectedAgents.join(', ')}`
-              );
-            }
-          }
-        }
-        return null;
-      }
-    }
+    // Agent-bot message classification was here: it recorded cross-agent chatter into a
+    // shared context and routed mention-delegation between bots. Removed with the
+    // multi-bot handler, which never ran on this install.
 
     // Ignore other bot messages (not part of our multi-agent system)
     if (message.author.bot) return null;
@@ -594,8 +490,6 @@ export class DiscordGateway extends BaseGateway {
     normalizedMessage: NormalizedMessage,
     _attachmentInfo: { effectiveAttachments: MessageAttachment[] }
   ): Promise<void> {
-    const channelHistory = getChannelHistory();
-
     // Enrich content with file reference text blocks for multi-agent (text-only)
     let enrichedContent = cleanContent;
     const fileRefTexts = normalizedMessage.contentBlocks
@@ -616,64 +510,9 @@ export class DiscordGateway extends BaseGateway {
       }
     }
 
-    // Check if multi-agent mode should handle this message
-    if (this.multiAgentHandler?.isEnabled()) {
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(message, enrichedContent);
-
-      if (multiAgentResult && multiAgentResult.responses.length > 0) {
-        // Multi-agent handled the message
-        const sentMessages = await this.multiAgentHandler.sendAgentResponses(
-          message,
-          multiAgentResult.responses
-        );
-
-        // Record bot responses to history with correct agent attribution.
-        // sentMessages is a flat array of chunks; track offset per response.
-        let msgIndex = 0;
-        for (const agentResp of multiAgentResult.responses) {
-          const chunkCount = splitForDiscord(agentResp.content).length;
-          for (let c = 0; c < chunkCount && msgIndex < sentMessages.length; c++) {
-            const sentMsg = sentMessages[msgIndex++];
-            channelHistory.record(message.channel.id, {
-              messageId: sentMsg.id,
-              sender: agentResp.agent.display_name || this.client.user?.username || 'MAMA',
-              userId: agentResp.agentId || this.client.user?.id || '',
-              body: sentMsg.content,
-              timestamp: Date.now(),
-              isBot: true,
-            });
-          }
-        }
-
-        this.emitEvent({
-          type: 'message_sent',
-          source: 'discord',
-          timestamp: new Date(),
-          data: {
-            channelId: message.channel.id,
-            responseLength: multiAgentResult.responses.reduce(
-              (sum, r) => sum + r.content.length,
-              0
-            ),
-            multiAgent: true,
-            agents: multiAgentResult.selectedAgents,
-          },
-        });
-
-        // Route delegation mentions from agent responses
-        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
-          await this.multiAgentHandler.routeResponseMentions(message, multiAgentResult.responses);
-        }
-
-        console.log(
-          `[Discord] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
-        );
-      }
-      // Multi-agent mode owns routing — never fall through to message-router.
-      // If null, the message was either queued (busy), blocked, or had no match.
-      // Falling through would create duplicate responses from a second CLI process.
-      return;
-    }
+    // Multi-agent routing was here: it owned the message and never fell through to the
+    // message router. Removed with the handler - single-agent processing below is now
+    // the only path, which is what every message on this install has taken anyway.
 
     // Regular single-agent processing
     // Pass enriched content (images already analyzed above) to avoid double analysis
@@ -1014,16 +853,6 @@ export class DiscordGateway extends BaseGateway {
    * Stop the Discord gateway
    */
   async stop(): Promise<void> {
-    // Stop multi-agent processes (don't let failure block shutdown)
-    if (this.multiAgentHandler) {
-      try {
-        await this.multiAgentHandler.stopAll();
-      } catch (err) {
-        console.error('[Discord] Error stopping multi-agent handler:', err);
-        // Continue with shutdown anyway
-      }
-    }
-
     if (!this.connected) {
       return;
     }
@@ -1170,44 +999,5 @@ export class DiscordGateway extends BaseGateway {
    */
   async sendImage(channelId: string, imagePath: string, caption?: string): Promise<void> {
     return this.sendFile(channelId, imagePath, caption);
-  }
-
-  /**
-   * Get the multi-agent handler (if enabled)
-   */
-  getMultiAgentHandler(): MultiAgentDiscordHandler | null {
-    return this.multiAgentHandler;
-  }
-
-  /**
-   * Update multi-agent configuration
-   */
-  async setMultiAgentConfig(config: MultiAgentConfig): Promise<void> {
-    if (config.enabled) {
-      if (this.multiAgentHandler) {
-        this.multiAgentHandler.updateConfig(config);
-      } else {
-        // Headless daemon — permissions managed by MAMA's RoleManager, not Claude CLI prompts.
-        this.multiAgentHandler = new MultiAgentDiscordHandler(
-          config,
-          {
-            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
-          },
-          this.multiAgentRuntime
-        );
-        if (this.client.user) {
-          this.multiAgentHandler.setBotUserId(this.client.user.id);
-          this.multiAgentHandler.setMainBotToken(this.token);
-          await this.multiAgentHandler.initializeMultiBots();
-        }
-      }
-      console.log('[Discord] Multi-agent mode enabled/updated');
-    } else {
-      if (this.multiAgentHandler) {
-        await this.multiAgentHandler.stopAll();
-        this.multiAgentHandler = null;
-      }
-      console.log('[Discord] Multi-agent mode disabled');
-    }
   }
 }

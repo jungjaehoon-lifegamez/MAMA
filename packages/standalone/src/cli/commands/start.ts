@@ -1372,31 +1372,11 @@ export async function runAgentLoop(
     agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
     agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
-    if (fallbackMultiAgentConfig.enabled && !toolExecutor.hasDelegateSupport()) {
-      const { DelegationManager } = await import('../../multi-agent/delegation-manager.js');
-      const agentConfigs = Object.entries(fallbackMultiAgentConfig.agents || {}).map(
-        ([id, cfg]) => ({
-          id,
-          ...cfg,
-        })
-      );
-      const dm = new DelegationManager(agentConfigs);
-      dm.setSessionsDb(db);
-      toolExecutor.setDelegationManager(dm);
-      agentLoop.setDelegationManager(dm);
-      graphHandlerOptions.applyMultiAgentConfig = async (rawConfig: Record<string, unknown>) => {
-        const nextConfig = rawConfig as unknown as import('../config/types.js').MultiAgentConfig;
-        pm.updateConfig(nextConfig);
-        dm.updateAgents(
-          Object.entries(nextConfig.agents || {}).map(([id, cfg]) => ({ id, ...cfg }))
-        );
-      };
-      toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-      agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-      console.log('[start] ✓ Delegate tool wired (standalone — no Discord/Slack handler)');
-    } else {
-      console.log('[start] ✓ System agent process manager wired');
-    }
+    // The delegate wiring was here. Over the full log history it was wired ZERO times and
+    // its only runtime trace was one call refused by role permission. The process manager
+    // above stays: that one IS wired on every boot (113 so far) and runs the dashboard and
+    // wiki agents.
+    console.log('[start] ✓ System agent process manager wired');
   }
 
   // ── Phase 9: Heartbeat + Connectors ──────────────────────────────────────
