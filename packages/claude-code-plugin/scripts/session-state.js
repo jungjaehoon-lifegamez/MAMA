@@ -95,23 +95,6 @@ function markFileEdited(filePath) {
 }
 
 /**
- * Mark that contracts were shown for a file
- */
-function markContractsShown(filePath) {
-  const state = loadSessionState();
-  state.contractsShown[normalizePath(filePath)] = Date.now();
-  saveSessionState(state);
-}
-
-/**
- * Check if contracts were already shown for this file
- */
-function wereContractsShown(filePath) {
-  const state = loadSessionState();
-  return !!state.contractsShown[normalizePath(filePath)];
-}
-
-/**
  * Normalize file path for consistent comparison
  * Platform-aware: only lowercase on case-insensitive systems (macOS, Windows)
  */
@@ -123,48 +106,9 @@ function normalizePath(filePath) {
     : resolved.toLowerCase();
 }
 
-/**
- * Clean up old session files (call occasionally)
- */
-function cleanupOldSessions() {
-  try {
-    if (!fs.existsSync(SESSION_DIR)) {
-      return;
-    }
-
-    const files = fs.readdirSync(SESSION_DIR);
-    const now = Date.now();
-
-    for (const file of files) {
-      try {
-        const filePath = path.join(SESSION_DIR, file);
-        const stat = fs.statSync(filePath);
-
-        // Remove files older than expiry
-        if (now - stat.mtimeMs > SESSION_EXPIRY_MS) {
-          try {
-            fs.unlinkSync(filePath);
-          } catch (err) {
-            if (!(err && err.code === 'ENOENT')) {
-              console.error(`[session-state] Failed to remove old session file: ${filePath}`, err);
-            }
-          }
-        }
-      } catch {
-        // Ignore per-file errors and continue cleanup.
-      }
-    }
-  } catch {
-    // Silent fail
-  }
-}
-
 module.exports = {
   loadSessionState,
   saveSessionState,
   isFirstEdit,
   markFileEdited,
-  markContractsShown,
-  wereContractsShown,
-  cleanupOldSessions,
 };

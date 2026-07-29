@@ -36,13 +36,6 @@ const POSTTOOLUSE_HOOK = path.join(__dirname, '../../scripts/posttooluse-hook.js
 const RATE_LIMIT_FILE = path.join(__dirname, '../../.pretooluse-last-run');
 
 // Mock tool context
-const mockContext = {
-  logger: {
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-};
 
 /**
  * Execute hook script with mock environment
@@ -108,7 +101,7 @@ function execHook(scriptPath, env = {}, timeoutMs = 10000) {
 }
 
 // Variables for dynamic imports
-let initDB, closeDB, saveDecisionTool;
+let initDB, closeDB, mama;
 
 describe('Story M4.2: Hook Simulation - Regression Harness', () => {
   beforeAll(async () => {
@@ -123,22 +116,22 @@ describe('Story M4.2: Hook Simulation - Regression Harness', () => {
     initDB = dbManager.initDB;
     closeDB = dbManager.closeDB;
 
-    const saveDecision = await import('../../src/tools/save-decision.js');
-    saveDecisionTool = saveDecision.saveDecisionTool;
+    // Seed through mama-core directly. This used to go through the plugin's
+    // `saveDecisionTool`, which was a thin wrapper over `mama.save` that no hook, command, or
+    // manifest ever loaded - the seeding was the only thing keeping it reachable.
+    const mamaApi = await import('@jungjaehoon/mama-core/mama-api');
+    mama = mamaApi.default;
 
     await initDB();
 
     // Create some test decisions for hooks to find
     for (let i = 0; i < 5; i++) {
-      await saveDecisionTool.handler(
-        {
-          topic: `hook_test_${i}`,
-          decision: `Hook simulation test decision ${i}`,
-          reasoning: `Testing hook context injection for decision ${i}`,
-          confidence: 0.8,
-        },
-        mockContext
-      );
+      await mama.save({
+        topic: `hook_test_${i}`,
+        decision: `Hook simulation test decision ${i}`,
+        reasoning: `Testing hook context injection for decision ${i}`,
+        confidence: 0.8,
+      });
     }
   });
 
