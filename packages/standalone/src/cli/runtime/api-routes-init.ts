@@ -352,7 +352,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
         maxWaitMs: Number(process.env.MAMA_RECONCILE_MAX_WAIT_MS) || undefined,
         globalMaxPerHour: Number(process.env.MAMA_RECONCILE_MAX_PER_HOUR) || undefined,
         log: (line) => console.log(line),
-        run: (channelKey, deltaLines) => {
+        run: (channelKey, deltaLines, eventIds) => {
           // The reconcile leg is a board workorder; its bracket verification
           // runs in the consumer's completion hook (registered above).
           try {
@@ -360,6 +360,9 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
               mode: 'reconcile',
               channelKey,
               deltaLines,
+              // The batch, carried structurally. It was already inside deltaLines as
+              // `[id:evt_...]` text and could only be recovered by parsing prose.
+              eventIds,
             });
           } catch (err) {
             routesLogger.error(
@@ -375,7 +378,7 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
       });
       eventBus.on('operator:channel-delta', (event) => {
         if (event.type === 'operator:channel-delta') {
-          reconcileScheduler.enqueue(event.channelKey, event.lines);
+          reconcileScheduler.enqueue(event.channelKey, event.lines, event.eventIds);
         }
       });
 

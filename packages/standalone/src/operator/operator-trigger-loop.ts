@@ -98,7 +98,15 @@ export interface TriggerLoopDeps {
    * (each carrying the event id so reconcile task writes can pass
    * source_event_id). Absent -> no reconcile leg.
    */
-  onChannelDelta?: (channelKey: string, lines: string[]) => void;
+  /**
+   * `eventIds` is the batch itself, carried alongside the human-readable lines.
+   *
+   * The ids were already inside the lines as `[id:evt_...]` headers and were only ever
+   * read back by parsing prose - which meant the SYSTEM knew the batch, flattened it to
+   * text, and then asked the AGENT to restate it. Every change a bounded run makes rests
+   * on this batch; carrying it is the difference between a fact and a claim.
+   */
+  onChannelDelta?: (channelKey: string, lines: string[], eventIds: string[]) => void;
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
   /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
@@ -374,13 +382,17 @@ export class OperatorTriggerLoop {
         byChannel.set(key, bucket);
       }
       for (const [channelKey, channelEvents] of byChannel) {
-        const lines = channelEvents
-          .slice(-10)
-          .map(
-            (e) => `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content.trim().slice(0, 200)}`
-          );
+        // The prompt shows the last 10; the CAUSE is the whole batch. Truncating both
+        // would silently drop events the run acted on from the record of why it acted.
+        const shown = channelEvents.slice(-10);
+        const lines = shown.map(
+          (e) => `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content.trim().slice(0, 200)}`
+        );
+        const eventIds = channelEvents
+          .map((e) => e.eventIndexId)
+          .filter((id): id is string => typeof id === 'string' && id.length > 0);
         try {
-          this.deps.onChannelDelta(channelKey, lines);
+          this.deps.onChannelDelta(channelKey, lines, eventIds);
         } catch (err) {
           log(
             `[trigger-loop] onChannelDelta failed for ${channelKey}: ${err instanceof Error ? err.message : String(err)}`

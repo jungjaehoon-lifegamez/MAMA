@@ -70,7 +70,7 @@ describe('task ledger effect recording', () => {
   // means something if a change happened to attach it to.
   it('records a supplied cause on an update that actually changed', () => {
     const task = ledger.create({ title: 'follow up' });
-    ledger.update(task.id, { status: 'done' }, { runId: 'mr_8', causeEventId: 'evt_cited' });
+    ledger.update(task.id, { status: 'done' }, { runId: 'mr_8', causeEventIds: ['evt_cited'] });
 
     const updates = listEffects(adapter()).filter((e) => e.kind === 'task_update');
     expect(updates).toHaveLength(1);
@@ -140,7 +140,7 @@ describe('task ledger effect recording', () => {
   // A spread of an absent caller field once erased it, leaving only the forgeable path
   // working - the opposite of the intent.
   it('keeps a host-supplied cause the tool input does not carry', () => {
-    ledger.create({ title: 'host knows why' }, { runId: 'mr_host', causeEventId: 'evt_real' });
+    ledger.create({ title: 'host knows why' }, { runId: 'mr_host', causeEventIds: ['evt_real'] });
     expect(listEffects(adapter())[0]).toMatchObject({
       causeState: 'attributed',
       sourceEventIds: ['evt_real'],

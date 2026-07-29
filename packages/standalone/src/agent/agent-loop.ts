@@ -561,6 +561,9 @@ export function buildAgentToolExecutionContext(
   if (options.workorderAttemptId !== undefined) {
     context.workorderAttemptId = options.workorderAttemptId;
   }
+  if (options.causeEventIds !== undefined) {
+    context.causeEventIds = options.causeEventIds;
+  }
   if (options.temporalWorkContext !== undefined) {
     context.temporalWorkContext = options.temporalWorkContext;
   }

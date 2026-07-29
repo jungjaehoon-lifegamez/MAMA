@@ -1417,7 +1417,9 @@ export async function runAgentLoop(
   // M8: board-reconcile feed. The trigger loop is built BEFORE the event bus
   // exists (initApiServer), so it emits through this mutable sink (same
   // pattern as triggerLoopNudge above).
-  const channelDeltaSink: { current: ((channelKey: string, lines: string[]) => void) | null } = {
+  const channelDeltaSink: {
+    current: ((channelKey: string, lines: string[], eventIds: string[]) => void) | null;
+  } = {
     current: null,
   };
 
@@ -1548,6 +1550,16 @@ export async function runAgentLoop(
         // A task with no source channel gets no connector at all, which is the same answer
         // from the other direction: the check requires zero raw refs for those, so the
         // grant must be empty rather than merely narrow.
+        // A reconcile carries the channel's delta batch. Handing it to the run makes every
+        // durable change the run produces rest on it WITHOUT the agent restating anything -
+        // the system knew the batch before the run began. This is the whole difference
+        // between a bounded run and an unbounded one.
+        const boardBatch = wo.payload?.eventIds;
+        if (Array.isArray(boardBatch) && boardBatch.length > 0) {
+          runOptions.causeEventIds = boardBatch.filter(
+            (id): id is string => typeof id === 'string' && id.trim().length > 0
+          );
+        }
         let temporalBinding: { connector: string; channel: string } | null = null;
         if (wo.workKind === 'temporal') {
           const temporalContext = buildTemporalWorkerContext(taskLedger, wo);
@@ -1766,7 +1778,8 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
-        onChannelDelta: (channelKey, lines) => channelDeltaSink.current?.(channelKey, lines),
+        onChannelDelta: (channelKey, lines, eventIds) =>
+          channelDeltaSink.current?.(channelKey, lines, eventIds),
         askAgent: triggerAgentRuntime.askAuthor,
         // M2.2: reports go through the daemon's persona agent (system prompt, pinned model,
         // session lanes) instead of the bare CLI - report tone comes from generation inputs.
@@ -1959,8 +1972,8 @@ export async function runAgentLoop(
     contextCompileService,
   });
 
-  channelDeltaSink.current = (channelKey, lines) =>
-    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines });
+  channelDeltaSink.current = (channelKey, lines, eventIds) =>
+    eventBus.emit({ type: 'operator:channel-delta', channelKey, lines, eventIds });
 
   await registerApiRoutes({
     config,
