@@ -50,8 +50,28 @@ export const LANE_OBLIGATED_TOOLS = {
   // 07-04 is when the LEGACY system:wiki-agent path stopped; the Stage-2 worker replaced it
   // and moved to a different write path. `wiki_publish` stays obligated so the index route
   // counts if anything revives it.
+  //
+  // KNOWN LIMIT, stated rather than hidden: `obsidian` is one tool for search, read, create,
+  // append, move and delete, and the trace row records only the tool NAME - not the
+  // sub-command. So a wiki run that only READ the vault produces an obligated trace. This
+  // lane's verdict therefore means "the lane exercised the vault", which is strictly weaker
+  // than "the lane wrote", and the log wording says so. Closing the gap needs the
+  // sub-command on the trace row; until then do not read wiki `verified` as proof of a write.
   wiki: ['obsidian', 'wiki_publish', 'contract_no_update'],
   'memory-curation': ['mama_save', 'contract_no_update'],
+} as const satisfies Record<string, readonly string[]>;
+
+/**
+ * The subset that proves the lane WROTE, as opposed to merely acting.
+ *
+ * `contract_no_update` is obligated so an empty run has a way to say so - but counting it as
+ * a write is how the first version of this hook reported "promotion run: 1 saved" for a run
+ * that honestly saved nothing, and woke the wiki compiler on it. Found in review. Two
+ * questions, two counts: did the lane act, and did it write.
+ */
+export const LANE_WRITE_TOOLS = {
+  wiki: ['obsidian', 'wiki_publish'],
+  'memory-curation': ['mama_save'],
 } as const satisfies Record<string, readonly string[]>;
 
 function traceToolList(tools: readonly string[]): string {
@@ -92,9 +112,16 @@ export function buildWorkerTraceQueries(
       if (!sessionsDb) return 0;
       const row = sessionsDb
         .prepare(
+          // execution_status = 'completed' is load-bearing, not hygiene. The executor writes
+          // a trace row on its FAILURE paths too (gateway-tool-executor sets 'failed' when the
+          // call errored or returned success:false), so without this predicate a `mama_save`
+          // refused by the secret filter counted as proof the lane saved something - and the
+          // promotion hook would then emit memory:promoted on it and wake the wiki compiler.
+          // "Ran but changed nothing" is exactly the case this measurement exists to catch.
           `SELECT COUNT(*) AS n FROM agent_activity
            WHERE type = 'gateway_tool_call'
              AND json_extract(details, '$.channel_id') = ?
+             AND execution_status = 'completed'
              AND id > ? AND (normalized_tool_name IN (${TRACE_TOOL_LIST}) OR input_summary IN (${TRACE_TOOL_LIST}))`
         )
         .get(workerChannelId, maxId) as { n: number };
@@ -165,7 +192,13 @@ export function reconcileClaimAgainstTraces(
 }
 
 export interface LaneAfterHookDeps {
+  /** Counts the lane's obligated tools: proves the run ACTED. */
   traces: WorkerTraceQueries;
+  /**
+   * Counts only the lane's write tools: proves the run WROTE. Separate from `traces` because
+   * `contract_no_update` is honest evidence of acting and no evidence at all of writing.
+   */
+  writeTraces?: WorkerTraceQueries;
   log: (line: string) => void;
   /** Raised when the run cannot be shown to have done what it reported. */
   onUnverified?: (note: string) => void;
@@ -192,19 +225,25 @@ export function buildPromotionAfterHook(
       if (claim.claimed > 0) events.emitMemoryPromoted(claim.claimed);
       return;
     }
-    const traceCount = deps.traces.countObligatedTraceRowsSince(
-      typeof before === 'number' ? before : 0
-    );
+    const anchor = typeof before === 'number' ? before : 0;
+    const traceCount = deps.traces.countObligatedTraceRowsSince(anchor);
+    // The promoted count comes from the WRITE tools only. Using the obligated count here
+    // reported "1 saved" for a run whose only obligated call was contract_no_update, and
+    // that number is what wakes the wiki compiler.
+    const savedCount = deps.writeTraces
+      ? deps.writeTraces.countObligatedTraceRowsSince(anchor)
+      : traceCount;
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
     events.emitAgentAction(
-      traceCount > 0 ? 'promoted' : 'no_update',
-      `promotion run: ${traceCount} saved (${verdict.note})`
+      savedCount > 0 ? 'promoted' : 'no_update',
+      `promotion run: ${savedCount} saved, ${traceCount} obligated trace(s) (${verdict.note})`
     );
     deps.log(
       `[stage2] promotion worker: ${verdict.verified ? 'verified' : 'UNVERIFIED'} - ${verdict.note}`
     );
     if (!verdict.verified) deps.onUnverified?.(verdict.note);
-    if (traceCount > 0) events.emitMemoryPromoted(traceCount);
+    // Only a measured WRITE wakes the wiki compiler.
+    if (savedCount > 0) events.emitMemoryPromoted(savedCount);
   };
 }
 
@@ -222,7 +261,12 @@ export function buildWikiAfterHook(
       typeof before === 'number' ? before : 0
     );
     const verdict = reconcileClaimAgainstTraces(claim, traceCount);
-    log(`[stage2] wiki worker: ${verdict.verified ? 'verified' : 'UNVERIFIED'} - ${verdict.note}`);
+    // "vault exercised", not "verified": the obligated `obsidian` tool covers reads as well
+    // as writes and the trace records only its name, so this cannot claim a write happened.
+    // See the KNOWN LIMIT on LANE_OBLIGATED_TOOLS.wiki.
+    log(
+      `[stage2] wiki worker: ${verdict.verified ? 'vault exercised' : 'UNVERIFIED'} - ${verdict.note}`
+    );
     if (!verdict.verified) deps.onUnverified?.(verdict.note);
   };
 }

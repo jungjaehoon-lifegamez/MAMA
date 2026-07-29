@@ -62,6 +62,39 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(queries.countObligatedTraceRowsSince(after)).toBe(0);
     });
 
+    // Found in review. The executor writes a trace row on its failure paths too, so without
+    // an execution_status predicate a refused mama_save counted as proof the lane saved -
+    // and the promotion hook would emit memory:promoted on it.
+    it('does NOT count a tool call that failed', async () => {
+      const sessionsDb: SQLiteDatabase = new Database(':memory:');
+      initAgentTables(sessionsDb);
+      const opDb: SQLiteDatabase = new Database(':memory:');
+      const executor = new GatewayToolExecutor({});
+      executor.setSessionsDb(sessionsDb);
+      executor.setTaskLedger(new TaskLedger(opDb));
+
+      const queries = buildWorkerTraceQueries(sessionsDb, 'worker:board');
+      const before = queries.getTraceMaxId();
+
+      // A real refusal through the real executor: task_create with no title fails validation.
+      // It rejects rather than returning success:false, and the executor logs the attempt
+      // either way - which is the point. The row exists; it must not be counted.
+      await expect(
+        executor.execute(
+          'task_create',
+          {} as never,
+          {
+            executionSurface: 'model_tool',
+            source: 'operator',
+            channelId: 'worker:board',
+          } as never
+        )
+      ).rejects.toThrow(/task title/);
+
+      expect(queries.getTraceMaxId()).toBeGreaterThan(before);
+      expect(queries.countObligatedTraceRowsSince(before)).toBe(0);
+    });
+
     it('missing sessions db degrades to zeros (bracket reads as unverified, never throws)', () => {
       const queries = buildWorkerTraceQueries(undefined, 'worker:board');
       expect(queries.getTraceMaxId()).toBe(0);
@@ -123,6 +156,35 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(run.unverified[0]).toContain('claim unsupported');
     });
 
+    // Found in review, in the first version of this very hook. `contract_no_update` is
+    // obligated so an empty run can SAY it was empty - counting it as a save reported
+    // "promotion run: 1 saved" for a run that saved nothing, and that count is what wakes
+    // the wiki compiler. Acting and writing are two questions.
+    it('does not count an honest no-update as a save', () => {
+      const actions: Array<{ action: string; target: string }> = [];
+      const promoted: number[] = [];
+      const lines: string[] = [];
+      const hook = buildPromotionAfterHook(
+        {
+          emitAgentAction: (action, target) => actions.push({ action, target }),
+          emitMemoryPromoted: (saved) => promoted.push(saved),
+        },
+        {
+          // One obligated trace (the contract_no_update call), zero write traces.
+          traces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 1 },
+          writeTraces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => 0 },
+          log: (line) => lines.push(line),
+        }
+      );
+
+      hook(fakeWo, 'NO_UPDATE', 0);
+
+      expect(promoted).toEqual([]);
+      expect(actions[0].action).toBe('no_update');
+      // Still verified: the lane DID act, it just did not write.
+      expect(lines[0]).toContain('verified');
+    });
+
     it('promotes the MEASURED count, not the claimed one', () => {
       const run = collect(2);
       run.hook(fakeWo, 'PROMOTED 5', 0);
@@ -173,10 +235,14 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(run.unverified).toHaveLength(1);
     });
 
-    it('reports a compile backed by a wiki_publish trace as verified', () => {
+    // Deliberately NOT the word "verified": the obligated `obsidian` tool covers reads too
+    // and the trace carries only its name, so the strongest honest claim is that the lane
+    // exercised the vault.
+    it('reports a trace-backed run as vault exercised, never as a proven write', () => {
       const run = wikiRun(1);
       run.hook(fakeWo, 'compiled 2 pages', 0);
-      expect(run.lines[0]).toContain('verified');
+      expect(run.lines[0]).toContain('vault exercised');
+      expect(run.lines[0]).not.toContain('wrote');
       expect(run.unverified).toEqual([]);
     });
   });

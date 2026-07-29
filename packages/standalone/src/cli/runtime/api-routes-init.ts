@@ -589,8 +589,12 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     // its event emissions are the wiki ingress chain's second link - losing
     // them in the workorder conversion would silently sever memory:promoted.
     if (workOrderConsumer) {
-      const { buildPromotionAfterHook, buildWorkerTraceQueries, LANE_OBLIGATED_TOOLS } =
-        await import('../../operator/workorder-hooks.js');
+      const {
+        buildPromotionAfterHook,
+        buildWorkerTraceQueries,
+        LANE_OBLIGATED_TOOLS,
+        LANE_WRITE_TOOLS,
+      } = await import('../../operator/workorder-hooks.js');
       const promotionTraces = buildWorkerTraceQueries(
         sessionsDb,
         'worker:memory-curation',
@@ -607,6 +611,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
           },
           {
             traces: promotionTraces,
+            writeTraces: buildWorkerTraceQueries(
+              sessionsDb,
+              'worker:memory-curation',
+              LANE_WRITE_TOOLS['memory-curation']
+            ),
             log: (line) => console.log(line),
             onUnverified: (note) =>
               eventBus.emit({
