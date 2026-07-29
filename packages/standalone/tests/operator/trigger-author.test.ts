@@ -12,6 +12,7 @@ import {
   authorTriggers,
   createAskAgentCLI,
   createTriggerAgentRuntime,
+  describeCliFailure,
   parseTriggerSpecs,
   validateTriggerSpec,
 } from '../../src/operator/trigger-author.js';
@@ -141,6 +142,78 @@ describe('authorTriggers', () => {
     const prompt = buildAuthorPrompt([ev('x')], reg.listActive());
     expect(prompt).toContain('partial keyword overlap');
     expect(prompt).toContain('proposing NOTHING over proposing a variant');
+  });
+
+  // The list's job is dedup, and keywords decide that. Carrying the full recall instruction
+  // for every trigger made the prompt grow with every trigger the pass authored - a loop
+  // feeding itself. Measured live 2026-07-30: 162 active triggers, memoryQuery averaging
+  // 1,261 chars, 231 KB of prompt, $1.33 and 41s per call, every 30 minutes.
+  it('carries every existing trigger by keywords, and its recall query only as a gist', async () => {
+    const { buildAuthorPrompt } = await import('../../src/operator/trigger-author.js');
+    const long = 'x'.repeat(4000);
+    reg.create({
+      id: 'gist-probe',
+      kind: 'k',
+      memoryQuery: long,
+      match: { keywords: ['unmistakable-keyword'], keywordMode: 'any', minConfidence: 0.5 },
+      procedure: [{ action: 'a', description: 'd' }],
+      requiredEvidence: [],
+      authoredBy: 'agent',
+      provenance: { createdFrom: 'seed', note: '' },
+    });
+
+    const prompt = buildAuthorPrompt([ev('x')], reg.listActive());
+
+    // Dedup still possible: the keyword is intact.
+    expect(prompt).toContain('unmistakable-keyword');
+    // The instruction body is not.
+    expect(prompt).not.toContain(long);
+    expect(prompt).toContain('...');
+    // And the gist is bounded, not merely shorter.
+    const gist = /gist="([^"]*)"/.exec(prompt)?.[1] ?? '';
+    expect(gist.length).toBeLessThanOrEqual(200);
+  });
+
+  // 193 failures over the log's lifetime recorded nothing but the 240 KB command line that
+  // produced them, because the executor destructured `{ stdout }` and Node's own message
+  // embeds the whole argv. The tick that dies here takes the scheduled report with it.
+  describe('describeCliFailure', () => {
+    it('names a timeout kill rather than reporting a bare failure', () => {
+      const note = describeCliFailure('claude', {
+        killed: true,
+        signal: 'SIGTERM',
+        code: null,
+        stderr: '',
+        stdout: '',
+      });
+      expect(note).toContain('killed');
+      expect(note).toContain('SIGTERM');
+      expect(note).toContain('timeout');
+    });
+
+    it('reports the exit code and the tail of stderr', () => {
+      const note = describeCliFailure('claude', { code: 1, stderr: 'Error: overloaded_error' });
+      expect(note).toContain('exit=1');
+      expect(note).toContain('overloaded_error');
+    });
+
+    // The CLI puts API errors on stdout, so an empty stderr is not an absent cause.
+    it('falls back to stdout when stderr is empty', () => {
+      const note = describeCliFailure('claude', {
+        code: 1,
+        stderr: '',
+        stdout: '{"is_error":true,"result":"rate limit"}',
+      });
+      expect(note).toContain('rate limit');
+    });
+
+    // Never the argv: that is what made the log unreadable and told nobody anything.
+    it('leaves the command line out no matter how large it was', () => {
+      const argv = 'x'.repeat(240_000);
+      const note = describeCliFailure('claude', { message: `Command failed: claude -p ${argv}` });
+      expect(note.length).toBeLessThan(600);
+      expect(note).not.toContain('x'.repeat(400));
+    });
   });
 
   it('parseTriggerSpecs extracts the JSON array even with surrounding prose', () => {
