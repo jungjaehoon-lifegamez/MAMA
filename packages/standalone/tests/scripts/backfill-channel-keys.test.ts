@@ -15,8 +15,10 @@ import {
   buildPlan,
   carryDeltaCursors,
   runningDaemonPid,
+  writeCursorsAtomically,
+  rekeyWithCursorsFirst,
 } from '../../scripts/backfill-channel-keys.js';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -259,5 +261,88 @@ describe('runningDaemonPid: the live-daemon rail', () => {
     expect(runningDaemonPid()).toBeNull();
     writeFileSync(join(fakeHome, '.mama', 'mama.pid'), 'not a pid');
     expect(runningDaemonPid()).toBeNull();
+  });
+});
+
+// The write that must not leave a partial file behind. An unparseable cursor file is worse
+// than either inconsistent state the ordering guards against: `drainNew` starts from 0 for
+// an absent key, so a truncated file redelivers EVERY partition at once, not just one.
+describe('writeCursorsAtomically', () => {
+  it('replaces the file via rename, leaving no temp file behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cursor-atomic-'));
+    const path = join(dir, 'trigger-loop-cursors.json');
+    writeFileSync(path, JSON.stringify({ 'a:1': 10 }));
+
+    writeCursorsAtomically(path, { 'a:1': 10, 'b:2': 44 });
+
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'a:1': 10, 'b:2': 44 });
+    expect(existsSync(`${path}.tmp`)).toBe(false);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a file that did not exist yet', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cursor-atomic-'));
+    const path = join(dir, 'trigger-loop-cursors.json');
+
+    writeCursorsAtomically(path, { 'c:3': 7 });
+
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({ 'c:3': 7 });
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+// The ordering IS the fix, so it is asserted directly rather than left to the comment.
+// Rows and cursors live in different stores, so no transaction spans them and a crash can
+// land between. Carrying cursors AFTER the rekey leaves `drainNew` with no cursor for the
+// new key - it starts from 0 and redelivers the whole partition, and re-running does not
+// heal it because the plan finds no old keys left to carry.
+describe('rekeyWithCursorsFirst', () => {
+  let dir: string;
+  let cursorPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rekey-order-'));
+    cursorPath = join(dir, 'trigger-loop-cursors.json');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const plan = {
+    rekeys: [{ connector: 'chat', from: 'general', to: 'C001', events: 3 }],
+  } as unknown as Parameters<typeof rekeyWithCursorsFirst>[1];
+
+  /** Enough of a db for applyRekey to run; the rows are not what these tests assert. */
+  const okDb = () =>
+    ({
+      transaction: (fn: () => void) => fn,
+      prepare: () => ({ run: () => ({ changes: 0 }), get: () => undefined }),
+    }) as never;
+
+  it('leaves the cursors carried when the rekey commits', () => {
+    rekeyWithCursorsFirst(okDb(), plan, cursorPath, { 'chat\u0000general': 91 });
+
+    expect(JSON.parse(readFileSync(cursorPath, 'utf8'))).toEqual({ 'chat\u0000C001': 91 });
+  });
+
+  // The half that matters: a failed rekey must not leave cursors ahead of the rows, or the
+  // partition stalls with nothing to re-plan.
+  it('restores the pre-image when the rekey throws, and rethrows', () => {
+    const boom = new Error('constraint failed');
+    const db = {
+      transaction: () => () => {
+        throw boom;
+      },
+      prepare: () => ({ run: () => ({ changes: 0 }) }),
+    } as never;
+
+    expect(() => rekeyWithCursorsFirst(db, plan, cursorPath, { 'chat\u0000general': 91 })).toThrow(
+      boom
+    );
+
+    expect(JSON.parse(readFileSync(cursorPath, 'utf8'))).toEqual({ 'chat\u0000general': 91 });
+  });
+
+  it('writes no cursor file at all when there is nothing to carry', () => {
+    rekeyWithCursorsFirst(okDb(), plan, cursorPath, { 'slack\u0000unrelated': 5 });
+    expect(existsSync(cursorPath)).toBe(false);
   });
 });

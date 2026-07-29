@@ -41,7 +41,7 @@
  *     1..N sequences; the moved rows are renumbered above the target's high-water mark
  *     rather than left to abort the transaction on the unique index.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -356,6 +356,79 @@ export function runningDaemonPid(): number | null {
   }
 }
 
+/**
+ * Carry the delta cursors, then rekey the rows - in that order, and not the other one.
+ *
+ * Cursors are carried BEFORE the rekey commits, and the direction is not arbitrary.
+ *
+ * The two halves of this migration live in different stores - rows in SQLite, delta
+ * cursors in a JSON file - so no transaction spans them and a crash can land between.
+ * Both orders leave an inconsistent pair; they are not equally bad:
+ *
+ *   rekey first, then cursors  ->  rows under the new key, cursors still on the old one.
+ *                                  `drainNew` finds no cursor for the new key and starts
+ *                                  from 0, REDELIVERING every event in the partition -
+ *                                  the exact outcome the merge rules exist to prevent.
+ *                                  Re-running does not heal it: the plan finds no old
+ *                                  keys left to rekey, so the cursors are never carried.
+ *
+ *   cursors first, then rekey  ->  cursors on the new key, rows still under the old one.
+ *                                  The partition stalls, delivering nothing new until the
+ *                                  script is re-run - and a re-run DOES heal it, because
+ *                                  the rows are still there to be found and re-planned.
+ *
+ * A recoverable stall beats an unrecoverable flood, so cursors go first. If the rekey then
+ * fails, the file is restored from the pre-image rather than left ahead of the rows.
+ */
+export function rekeyWithCursorsFirst(
+  db: Db,
+  plan: Plan,
+  cursorPath: string,
+  cursors: Record<string, number>
+): Record<string, number> {
+  const carried = carryDeltaCursors(cursors, plan.rekeys);
+  const cursorsWritten = carried.carried > 0;
+  if (cursorsWritten) {
+    writeFileSync(`${cursorPath}.before-channel-rekey`, JSON.stringify(cursors, null, 2));
+    writeCursorsAtomically(cursorPath, carried.cursors);
+    console.log(`  delta cursors carried: ${carried.carried}`);
+  }
+
+  const moved: Record<string, number> = {};
+  try {
+    const run = db.transaction(() => {
+      for (const rekey of plan.rekeys) {
+        for (const [table, count] of Object.entries(applyRekey(db, rekey))) {
+          moved[table] = (moved[table] ?? 0) + count;
+        }
+      }
+    });
+    run();
+  } catch (error) {
+    if (cursorsWritten) {
+      writeCursorsAtomically(cursorPath, cursors);
+      console.error('  rekey failed; delta cursors restored to their pre-image');
+    }
+    throw error;
+  }
+  return moved;
+}
+
+/**
+ * Replace the cursor file in one step.
+ *
+ * A plain `writeFileSync` truncates before it writes, so a crash mid-write leaves a
+ * half-written JSON file - and an unparseable cursor file is worse than either
+ * inconsistent state the ordering above guards against, because every partition falls
+ * back to starting from 0 at once. Write beside it, then rename: on the same filesystem
+ * the rename is atomic, so a reader sees the old file or the new one, never a partial.
+ */
+export function writeCursorsAtomically(cursorPath: string, cursors: Record<string, number>): void {
+  const tmp = `${cursorPath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(cursors, null, 2));
+  renameSync(tmp, cursorPath);
+}
+
 function main(): void {
   const apply = process.argv.includes('--apply');
   const dbPath = process.env.MAMA_DB_PATH ?? join(homedir(), '.mama', 'mama-memory.db');
@@ -420,25 +493,10 @@ function main(): void {
   db.prepare('VACUUM INTO ?').run(backup);
   console.log(`\nbackup: ${backup}`);
 
-  const moved: Record<string, number> = {};
-  const run = db.transaction(() => {
-    for (const rekey of plan.rekeys) {
-      for (const [table, count] of Object.entries(applyRekey(db, rekey))) {
-        moved[table] = (moved[table] ?? 0) + count;
-      }
-    }
-  });
-  run();
+  const moved = rekeyWithCursorsFirst(db, plan, cursorPath, cursors);
 
   for (const [table, count] of Object.entries(moved)) {
     console.log(`  ${table}: ${count}`);
-  }
-
-  const carried = carryDeltaCursors(cursors, plan.rekeys);
-  if (carried.carried > 0) {
-    writeFileSync(`${cursorPath}.before-channel-rekey`, JSON.stringify(cursors, null, 2));
-    writeFileSync(cursorPath, JSON.stringify(carried.cursors, null, 2));
-    console.log(`  delta cursors carried: ${carried.carried}`);
   }
   db.close();
 }
