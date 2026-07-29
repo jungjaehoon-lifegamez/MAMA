@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.29.1] - 2026-07-30
+
+### Fixed
+
+- **The trigger author could not say why it failed.** 193 failures across the log recorded
+  nothing but the 240 KB command line that produced them: the executor destructured
+  `{ stdout }` and dropped Node's `stderr`, `code` and `signal`, while Node's own message
+  embeds the whole argv. Reproducing the exact failing prompt by hand succeeded on the first
+  try, so the cause is intermittent and was never captured. Now captured: exit code, the tail
+  of stderr AND of stdout (the CLI reports API errors on stdout, so an empty stderr is not an
+  absent cause), and whether the process was killed. The argv stays out.
+- **No timeout on that call, where a healthy one takes ~41s.** The author pass is step 3 of a
+  tick and the scheduled report is step 5, so a hung call there does not merely lose
+  authoring - it silently drops that tick's owner report. Bounded at 240s.
+
+### Changed
+
+- **The author prompt no longer feeds itself.** It embedded every active trigger's full
+  `memoryQuery` so the model could avoid proposing variants, but that job is decided by
+  keywords. Measured live: 162 active triggers, memoryQuery averaging 1,261 characters,
+  231 KB of prompt at $1.33 and 126,667 cache-creation tokens per call, every 30 minutes -
+  and growing with every trigger the pass authored. Existing triggers now carry keywords in
+  full and their query as a 160-character gist: **231 KB -> 57 KB**, dedup unaffected.
+
 ## mama-os [0.29.0] / mama-core [2.0.0] / mcp-server [1.15.0] / plugin [1.11.0] - 2026-07-29
 
 The release is one idea in two halves: **a run must be able to name what caused its durable
