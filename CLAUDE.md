@@ -142,6 +142,39 @@ pnpm vitest run tests/commands/
 - **Truth projection:** historical records preserved, only current truth surfaced in recall
 - **Temporal:** `event_date TEXT` column on decisions (ISO 8601) — stores when events occurred vs. when ingested. Threaded via `sessionDate` (ingestConversation) / `eventDate` (saveMemory) / `event_date` (DB/API)
 
+### Evidence & Effects (v0.29)
+
+Every durable change the system makes must be able to name what caused it, or say plainly
+that it cannot.
+
+- **Effect ledger** (`packages/standalone/src/evidence/effects.ts`): one table,
+  `evidence_effects`, in `~/.mama/operator/triggers.db`. A `cause_state` CHECK forbids both
+  "attributed with no cause" and "unattributed with a cause", and a BEFORE INSERT trigger
+  rejects unusable cause ids. The numerator and denominator of coverage cannot be separated.
+- **Bounded run:** a run defined by `{channel, delta batch}`. `causeEventIdsFromPayload`
+  (start.ts) lifts `eventIds` off a reconcile work order, and every change the run makes
+  inherits it — the agent never restates anything. The HOST batch wins over an
+  agent-supplied `source_event_id`, which is forgeable. `board:full` carries no batch and
+  its changes are honestly unattributed.
+- **`changes_read` tool** + `changes-projection.ts`: what this system durably changed since
+  a given point, with coverage counts. The full report leads with it.
+- **Provenance** (`memory/provenance-resolver.ts`, `provenance-live.ts`, `mama_provenance`):
+  resolves what a memory rests on. A citation must not out-read reading — the same channel
+  grant bounds both.
+- **Channel grant** (`packages/mama-core/src/context-compile/channel-grant.ts`): ONE rule
+  deciding which `(connector, channel)` pairs a run may read, compiled to a boolean and to a
+  SQL clause that are pinned against each other by a differential test.
+- **Lane verification** (`operator/workorder-hooks.ts`): a work order reaching `done` proves
+  only that the agent returned a response. Each lane's claim is reconciled against
+  `execution_status='completed'` traces of its obligated tools since a run-bound snapshot.
+  Observe, never block. Note the stated limit: the wiki lane's `obsidian` tool covers reads
+  as well as writes, so its verdict is "vault exercised", not "wrote".
+- **Channel identity:** channel keys are canonicalised at write time against the connector
+  config (`canonicalChannelKey`, polling-scheduler.ts). Display names reaching storage is what
+  made 30,671 indexed rows unreadable. `scripts/backfill-channel-keys.ts` repairs existing
+  rows — dry-run by default, refuses under a live daemon, `VACUUM INTO` backup, and it
+  carries the delta cursors with the re-key so nothing is redelivered as new.
+
 ### Embeddings
 
 - **Model:** Xenova/multilingual-e5-large (Transformers.js, quantized q8, ~560MB)
@@ -169,6 +202,17 @@ All tools follow standard MCP patterns:
 **Scope-aware:** save/search accept optional `scopes` (`[{kind: 'project'|'user'|'channel'|'global', id: string}]`) for memory isolation per project/channel.
 
 **Temporal tracking:** `save` accepts optional `event_date` (ISO 8601 YYYY-MM-DD) for recording when events occurred vs. when saved.
+
+**Gateway tools** are a separate surface from the MCP tools above — they are what the daemon's
+own agent lanes call. The authoritative catalog is
+`packages/standalone/src/agent/gateway-tools.md` plus `src/agent/tool-registry.ts`; read those
+before assuming a tool exists. Added in v0.29: `changes_read` (what the system durably
+changed), `mama_provenance` (what a memory rests on), `task_external_correlation`.
+
+**A tool being in the registry does not make it callable.** `delegate` is registered and is not
+dispatchable — its executor was deleted with the multi-agent delegation path. Grant lists are
+guarded by `tests/cli/lane-wiring.test.ts`, which pins that every lane's instructions, grants
+and run-audit classification agree.
 
 ## Release & Deployment
 

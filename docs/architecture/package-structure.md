@@ -256,10 +256,10 @@ pnpm clean
 
 Each package has independent versioning:
 
-- **mama-core:** 1.9.0 (stable API)
-- **mama-server:** 1.14.0 (follows MAMA version)
-- **claude-code-plugin:** 1.10.0 (follows MAMA version)
-- **mama-os:** 0.28.6 (standalone agent)
+- **mama-core:** 2.0.0 (stable API)
+- **mama-server:** 1.15.0 (follows MAMA version)
+- **claude-code-plugin:** 1.11.0 (follows MAMA version)
+- **mama-os:** 0.29.0 (standalone agent)
 
 ## Distribution Strategy
 

@@ -371,6 +371,25 @@ export function buildFullReportGatherLines({
   ];
 }
 
+/**
+ * The batch a work order carries, as the run's cause.
+ *
+ * Exported because it was an inline closure and therefore untestable, while being the ONE
+ * hop that carries this branch's whole claim: the system knew the batch before the run
+ * began, so the agent never has to restate it. Review pointed out that `causeEventIds`
+ * appeared in exactly two test files and both called the ledger directly - a rename or a
+ * payload-shape drift here would have returned attribution to 32% with the suite green.
+ *
+ * Only per-channel reconcile work orders carry `eventIds`; `board:full`, wiki and
+ * memory-curation do not, and get an empty batch rather than an invented one.
+ */
+export function causeEventIdsFromPayload(payload: unknown): string[] {
+  if (payload === null || typeof payload !== 'object') return [];
+  const batch = (payload as { eventIds?: unknown }).eventIds;
+  if (!Array.isArray(batch)) return [];
+  return batch.filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+}
+
 export function workOrderEnvelopeScope(input: {
   workKind: string;
   projectId: string;
@@ -1563,11 +1582,9 @@ export async function runAgentLoop(
         // durable change the run produces rest on it WITHOUT the agent restating anything -
         // the system knew the batch before the run began. This is the whole difference
         // between a bounded run and an unbounded one.
-        const boardBatch = wo.payload?.eventIds;
-        if (Array.isArray(boardBatch) && boardBatch.length > 0) {
-          runOptions.causeEventIds = boardBatch.filter(
-            (id): id is string => typeof id === 'string' && id.trim().length > 0
-          );
+        const workOrderBatch = causeEventIdsFromPayload(wo.payload);
+        if (workOrderBatch.length > 0) {
+          runOptions.causeEventIds = workOrderBatch;
         }
         let temporalBinding: { connector: string; channel: string } | null = null;
         if (wo.workKind === 'temporal') {

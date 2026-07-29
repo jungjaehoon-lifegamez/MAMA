@@ -784,7 +784,7 @@ mama start
 mama stop
 
 # Restart agent
-mama restart
+mama stop && mama start
 
 # Check status
 mama status
@@ -812,7 +812,7 @@ nano ~/.mama/config.yaml
 vim ~/.mama/config.yaml
 
 # After editing, restart agent
-mama restart
+mama stop && mama start
 ```
 
 ### Accessing MAMA OS Viewer
@@ -877,7 +877,7 @@ claude auth login
 claude auth login
 
 # Restart MAMA
-mama restart
+mama stop && mama start
 ```
 
 ### Port 3847 already in use
@@ -905,7 +905,7 @@ kill -9 <PID>
 
 1. Verify token in `config.yaml`
 2. Check bot permissions (Discord: MESSAGE CONTENT INTENT)
-3. Restart agent: `mama restart`
+3. Restart agent: `mama stop && mama start`
 4. Check logs: `tail -f ~/.mama/logs/mama.log`
 
 **See [Troubleshooting Guide](troubleshooting.md) for more issues.**

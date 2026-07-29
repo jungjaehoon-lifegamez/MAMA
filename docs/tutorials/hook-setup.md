@@ -35,7 +35,7 @@ MAMA provides **3 hooks**:
 | **PreToolUse**       | Before Read/Edit/Grep | Contract search + Reasoning Summary |
 | **PostToolUse**      | After Write/Edit      | Contract extraction + save guidance |
 
-**FR Reference:** [FR19-24 (Hook Integration)](../reference/fr-mapping.md)
+**FR Reference:** [FR19-24 (Hook Integration)](../archive/fr-mapping-v1.0.md)
 
 ---
 
@@ -156,7 +156,7 @@ export MAMA_SESSION_ID=SESSION123
 
 ## Privacy Guarantees
 
-**FR Reference:** [FR45-49 (Privacy & Security)](../reference/fr-mapping.md)
+**FR Reference:** [FR45-49 (Privacy & Security)](../archive/fr-mapping-v1.0.md)
 
 - ✅ 100% local processing (no network calls)
 - ✅ All data in `~/.claude/mama-memory.db`
