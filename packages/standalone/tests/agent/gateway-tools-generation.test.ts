@@ -73,4 +73,29 @@ describe('Gateway tools generation', () => {
       expect(fallback).toContain('browser');
     });
   });
+
+  // The catalog is generated from the registry and read verbatim by the agent, so a stray
+  // edit to the FILE silently changes what every run is told. That happened: prettier
+  // rewrote the Trello card prefixes `st_/ex_/ch_/bc_` into `st*/ex*/ch*/bc*` (markdown
+  // emphasis), and it survived from 2026-07-24 to 2026-07-30 because nothing compared the
+  // two. `.prettierignore` lists the file; this catches whatever gets past it next.
+  it('the checked-in catalog still matches what the registry generates', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { ToolRegistry } = await import('../../src/agent/tool-registry.js');
+
+    const checkedIn = readFileSync(join(__dirname, '../../src/agent/gateway-tools.md'), 'utf8');
+    const generated = ToolRegistry.generatePrompt();
+
+    // Tool entries only. The file also carries hand-written bullets in the same shape
+    // (`- **List jobs**` and friends, describing the cron surface), so match on the
+    // generated form: a bare identifier followed immediately by its parameter list.
+    const toolLines = (text: string): string[] =>
+      text
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => /^- \*\*[a-z][A-Za-z0-9_]*\*\*\(/.test(line));
+
+    expect(toolLines(checkedIn)).toEqual(toolLines(generated));
+  });
 });
