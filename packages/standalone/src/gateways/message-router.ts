@@ -83,9 +83,17 @@ export function causeFromOwnerMessage(
   sourceTurnId: string,
   sourceMessageRef: string
 ): { causeEventIds: readonly string[] } | null {
-  if (!sourceTurnId || sourceTurnId.startsWith('generated:')) return null;
+  // Trimmed first. A whitespace-only turn id is truthy and does not start with `generated:`,
+  // and the router prefixes source and channel onto it - so `'   '` produced
+  // `telegram:C1:   `, a non-empty ref naming no message at all. Found in review.
+  const turnId = sourceTurnId.trim();
+  if (!turnId || turnId.startsWith('generated:')) {
+    return null;
+  }
   const ref = sourceMessageRef.trim();
-  if (!ref) return null;
+  if (!ref) {
+    return null;
+  }
   return { causeEventIds: [ref] };
 }
 
