@@ -1098,10 +1098,6 @@ Update a specific agent's config.
 
 All fields optional. See [CLAUDE.md Multi-Agent API](../../CLAUDE.md#multi-agent-api) for details.
 
-#### GET /api/multi-agent/delegations
-
-Get recent task delegations / swarm tasks.
-
 ---
 
 ### Config API
