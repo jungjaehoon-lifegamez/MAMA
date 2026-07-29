@@ -139,16 +139,18 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('grants Trello only to host-issued board and temporal workorder principals', () => {
+    it('grants Trello to host-issued board/temporal workorders and the scheduled report', () => {
       const enabled = ['trello', 'kagemusha', 'telegram'];
 
       expect(scopeDaemonRawConnectors(enabled, 'workorder-board')).toEqual(enabled);
       expect(scopeDaemonRawConnectors(enabled, 'workorder-temporal')).toEqual(enabled);
+      // The report must cross-check the native ledger against the live board; its envelope
+      // still grants no destinations, so this is read authority only.
+      expect(scopeDaemonRawConnectors(enabled, 'operator-report')).toEqual(enabled);
       for (const principal of [
         'workorder-wiki',
         'workorder-memory-curation',
         'api-code-act',
-        'operator-report',
       ] as const) {
         expect(scopeDaemonRawConnectors(enabled, principal)).toEqual(['kagemusha', 'telegram']);
       }
@@ -186,6 +188,7 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         roleName: 'workorder-board',
         innerTools: [
           'agent_notices',
+          'changes_read',
           'context_compile',
           'contract_no_update',
           'kagemusha_entities',
@@ -314,25 +317,28 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         }).some((tool) => tool.name === CODE_ACT_MARKER)
       ).toBe(true);
       expect(projected.names).toEqual([
-        'context_compile',
+        'changes_read',
         'kagemusha_entities',
         'kagemusha_messages',
         'kagemusha_overview',
         'kagemusha_tasks',
+        'mama_provenance',
         'mama_recall',
         'mama_save',
         'mama_search',
         'report_publish',
         'schedule_upcoming',
+        'task_external_correlation',
         'task_list',
+        'trello_kanban',
       ]);
       // Prompt/permission coherence: advertise exactly what the executor will run.
       const advertised = [
         ...policy.gatewayToolsPrompt.matchAll(/^- \*\*([A-Za-z0-9_]+)\*\*/gm),
       ].map((match) => match[1]);
       expect(advertised.sort()).toEqual([...projected.names].sort());
-      // The report envelope grants no send surface and filters trello out of its raw
-      // connectors, so no destination or task-mutation tool may be advertised.
+      // The report envelope grants no send surface, and the report observes rather than
+      // maintains the board, so no destination or task-mutation tool may be advertised.
       for (const forbidden of ['task_create', 'task_update', 'send_message', 'Bash', 'Write']) {
         expect(projected.names).not.toContain(forbidden);
         expect(policy.gatewayToolsPrompt).not.toContain(`**${forbidden}**`);
@@ -345,19 +351,26 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
         tier: policy.agentContext.tier,
         role: policy.agentContext.role,
       });
-      // report-run.ts GATHER_TOOLS: a full report that executes none of these is WARNED
-      // as substance-unverified, so the role must be able to execute all of them.
+      // The report must be able to execute every tool its gather instructions name.
       for (const gather of [
         'kagemusha_overview',
         'kagemusha_entities',
         'kagemusha_tasks',
         'kagemusha_messages',
+        'mama_provenance',
         'mama_recall',
         'mama_search',
-        'context_compile',
+        'task_list',
+        'trello_kanban',
+        'task_external_correlation',
+        'schedule_upcoming',
       ]) {
         expect(projected.names).toContain(gather);
       }
+      // Deliberately absent: envelope scope is connector-level, so granting the board
+      // connector for the whole-board read would otherwise also permit raw card bodies
+      // to be compiled into this tier-2 lane, which can write durable memory.
+      expect(projected.names).not.toContain('context_compile');
     });
 
     it('passes the report role into the report lane run', () => {

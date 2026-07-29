@@ -132,6 +132,37 @@ describe('EnvelopeEnforcer', () => {
     ).not.toThrow();
   });
 
+  // Direct connector readers answer from a live connector API, so nothing in their
+  // arguments names the connector. Before tool-connector-scope.ts they mapped to no
+  // connector at all, which meant envelope.scope.raw_connectors never applied and role
+  // membership alone granted the read.
+  for (const toolName of ['trello_kanban', 'trello_search', 'trello_card'] as const) {
+    it(`rejects ${toolName} when its connector is outside raw_connectors`, () => {
+      const env = makeEnvelope();
+
+      let violation: EnvelopeViolation | null = null;
+      try {
+        enforcer.check(env, toolName, { query: 'x', cardId: 'c1' });
+      } catch (error) {
+        violation = error as EnvelopeViolation;
+      }
+
+      expect(violation).toBeInstanceOf(EnvelopeViolation);
+      expect(violation?.code).toBe('connector_out_of_scope');
+    });
+
+    it(`allows ${toolName} when its connector is inside raw_connectors`, () => {
+      const env = makeEnvelope({
+        scope: {
+          ...makeEnvelope().scope,
+          raw_connectors: ['telegram', 'trello'],
+        },
+      });
+
+      expect(() => enforcer.check(env, toolName, { query: 'x', cardId: 'c1' })).not.toThrow();
+    });
+  }
+
   it('requires Drive tools to stay inside the raw Drive connector scope', () => {
     const withoutDrive = makeEnvelope();
     const withDrive = makeEnvelope({

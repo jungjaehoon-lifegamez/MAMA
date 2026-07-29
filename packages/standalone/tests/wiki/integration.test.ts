@@ -4,68 +4,19 @@ import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ObsidianWriter } from '../../src/wiki/obsidian-writer.js';
-import { buildCompilationPrompt, parseCompilationResponse } from '../../src/wiki/wiki-compiler.js';
 import type { WikiPage } from '../../src/wiki/types.js';
 
 let tempDir: string;
 
-describe('Wiki compilation integration', () => {
+// The compilation half of this file tested `wiki-compiler`, which nothing in production
+// ever imported. What remains is the writer, which `api-routes-init` loads at runtime.
+describe('Wiki writer round-trip', () => {
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'wiki-integration-'));
   });
 
   afterEach(() => {
     rmSync(tempDir, { recursive: true, force: true });
-  });
-
-  it('full pipeline: prompt → parse → write → read', () => {
-    const decisions = [
-      {
-        id: 'd_1',
-        topic: 'testproj/feature',
-        decision: 'Chose React over Vue',
-        reasoning: 'Team familiarity',
-        status: 'active',
-        confidence: 0.95,
-        updated_at: '2026-04-08T10:00:00Z',
-      },
-    ];
-    const prompt = buildCompilationPrompt('TestProject', decisions);
-    expect(prompt).toContain('TestProject');
-
-    const llmResponse = JSON.stringify({
-      pages: [
-        {
-          path: 'projects/TestProject.md',
-          title: 'TestProject',
-          type: 'entity',
-          content: '## Overview\n\nA test project.\n\n## Timeline\n\n- 04/08: Chose React over Vue',
-          confidence: 'high',
-        },
-      ],
-    });
-
-    const result = parseCompilationResponse(llmResponse, ['d_1']);
-    expect(result.pages).toHaveLength(1);
-
-    const writer = new ObsidianWriter(tempDir, 'wiki');
-    writer.ensureDirectories();
-    for (const page of result.pages) {
-      writer.writePage(page);
-    }
-    writer.updateIndex(result.pages);
-    writer.appendLog('compile', result.logEntry);
-
-    const pageContent = readFileSync(join(tempDir, 'wiki', 'projects', 'TestProject.md'), 'utf8');
-    expect(pageContent).toContain('title: "TestProject"');
-    expect(pageContent).toContain('type: "entity"');
-    expect(pageContent).toContain('Chose React over Vue');
-
-    const index = readFileSync(join(tempDir, 'wiki', 'index.md'), 'utf8');
-    expect(index).toContain('TestProject');
-
-    const log = readFileSync(join(tempDir, 'wiki', 'log.md'), 'utf8');
-    expect(log).toContain('compile');
   });
 
   it('preserves human sections across recompilation', () => {

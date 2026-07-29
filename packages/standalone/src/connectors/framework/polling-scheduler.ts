@@ -56,63 +56,52 @@ function parsePollStateEntry(value: unknown): Date | null {
   return date;
 }
 
-function stringField(value: unknown): string | null {
-  if (typeof value !== 'string') {
+/**
+ * The canonical key for a channel: the key the connector config declares it under.
+ *
+ * Connectors emit `item.channel` in whatever shape their upstream hands them, and measured
+ * across the live index that is usually a DISPLAY NAME - Trello board names against a
+ * config keyed by 24-character board ids, Slack channel names against a config keyed by
+ * channel ids, and so on for six of seven connectors. `findChannelConfig` already absorbs
+ * that by falling back to a name match, which is why nothing ever appeared broken: the
+ * binding succeeded, and then the un-canonicalised name was written to the event index,
+ * where every downstream reader compared it against the config KEY and matched nothing.
+ * Zero of 30,671 rows were readable in production.
+ *
+ * So the accommodation moves to one place and produces one answer. Names are for people;
+ * identity is the upstream's stable id, and this is where a name becomes one.
+ *
+ * Returns null when the channel is not configured at all - the honest answer, and the one
+ * that keeps an unconfigured channel out of the index rather than inventing a key for it.
+ */
+export function canonicalChannelKey(
+  item: Pick<NormalizedItem, 'source' | 'channel'>,
+  channelConfigs: Record<string, Record<string, ChannelConfig>>
+): string | null {
+  const sourceConfigs = channelConfigs[item.source];
+  if (!sourceConfigs) {
     return null;
   }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  if (sourceConfigs[item.channel]) {
+    return item.channel;
+  }
+  const matched = Object.entries(sourceConfigs).find(([, cfg]) => cfg.name === item.channel);
+  return matched ? matched[0] : null;
 }
 
-function findChannelConfig(
-  item: NormalizedItem,
-  channelConfigs: Record<string, Record<string, ChannelConfig>>
-): (ChannelConfig & Record<string, unknown>) | undefined {
-  const sourceConfigs = channelConfigs[item.source];
-  const direct = sourceConfigs?.[item.channel];
-  if (direct) {
-    return direct as ChannelConfig & Record<string, unknown>;
-  }
-  if (!sourceConfigs) {
-    return undefined;
-  }
-  return Object.values(sourceConfigs).find((cfg) => cfg.name === item.channel) as
-    | (ChannelConfig & Record<string, unknown>)
-    | undefined;
-}
-
-function bindConfiguredScope(
-  item: NormalizedItem,
-  channelConfigs: Record<string, Record<string, ChannelConfig>>
-): NormalizedItem {
-  if (stringField(item.memoryScopeKind) && stringField(item.memoryScopeId)) {
-    return item;
-  }
-
-  const channelConfig = findChannelConfig(item, channelConfigs);
-  // channelConfig.project_entity_id is the authoritative configured mapping;
-  // fall back to metadata then item.projectId only when no config exists. The
-  // resolved id is then used for both projectId and memoryScopeId so the
-  // stored record carries one consistent tenant reference.
-  const canonicalProjectId =
-    stringField(channelConfig?.project_entity_id) ??
-    stringField(item.metadata?.project_entity_id) ??
-    stringField(item.projectId);
-  if (!canonicalProjectId) {
-    return item;
-  }
-
-  return {
-    ...item,
-    // context_compile envelopes default tenant_id to 'default' and raw reads
-    // filter on it; without an explicit tenant on the saved row, project-
-    // scoped connector evidence would be filtered out of context packets.
-    tenantId: stringField(item.tenantId) ?? 'default',
-    projectId: canonicalProjectId,
-    memoryScopeKind: 'project',
-    memoryScopeId: canonicalProjectId,
-  };
-}
+/**
+ * `bindConfiguredScope` was here, and it never bound anything.
+ *
+ * It required `project_entity_id` on a channel config and produced a `project` scope. Zero
+ * of the 39 configured channels on the live install declare that field, so it returned
+ * every item unchanged for its whole life. What made this invisible was a one-off backfill
+ * that had written `channel` scopes into the index: April is 100% scoped, the backfill
+ * stopped on 2026-05-20, and from 05-21 onward every single event is unscoped. The live
+ * write path had never bound a scope at all - the data only looked otherwise.
+ *
+ * Raw visibility is decided by the (connector, channel) grant now, which reads the key the
+ * row already carries instead of a parallel namespace that had to be populated.
+ */
 
 export class PollingScheduler {
   private readonly rawStore: RawStore;
@@ -194,7 +183,14 @@ export class PollingScheduler {
             `[connector:${name}] polled ${items.length} items (since: ${since.toISOString()})`
           );
           if (items.length > 0) {
-            const scopedItems = items.map((item) => bindConfiguredScope(item, channelConfigs));
+            const scopedItems = items.map((item) => {
+              // Canonicalise BEFORE anything durable is written. Storing the display name
+              // is what made the index unreadable; a name that reached storage was never
+              // going to be reconciled afterwards, because nothing downstream could tell
+              // it apart from an id.
+              const canonical = canonicalChannelKey(item, channelConfigs);
+              return canonical === null ? item : { ...item, channel: canonical };
+            });
             this.rawStore.save(name, scopedItems);
             if (this.rawIndexSink) {
               await this.rawIndexSink(name, scopedItems);

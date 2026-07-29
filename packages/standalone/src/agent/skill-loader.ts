@@ -8,8 +8,8 @@
  * are split at section boundaries and lowest-priority sections omitted.
  */
 
-import { readFileSync, existsSync, readdirSync, realpathSync } from 'fs';
-import { join, resolve, normalize } from 'path';
+import { readFileSync, existsSync, readdirSync } from 'fs';
+import { join } from 'path';
 import { homedir } from 'os';
 import { getConfig } from '../cli/config/config-manager.js';
 import { countTokens } from './token-estimator.js';
@@ -417,100 +417,6 @@ export function buildSkillCatalog(verbose = false): string[] {
   }
 
   return catalog;
-}
-
-/**
- * Load full skill content on-demand for per-message injection.
- *
- * @param skillId - Skill identifier like "mama/playground"
- * @returns SkillLoadResult with content and truncation metadata, or null if not found
- */
-export function loadSkillContent(skillId: string): SkillLoadResult | null {
-  const skillsBase = resolve(homedir(), '.mama', 'skills');
-
-  // Validate skillId segments: reject path traversal (.. / empty / absolute / special chars)
-  const skillIdParts = skillId.split('/');
-  for (const segment of skillIdParts) {
-    if (!segment || segment === '.' || segment === '..' || /[/\\:]/.test(segment)) {
-      skillLogger.warn(`Rejected invalid skillId segment: "${segment}" in "${skillId}"`);
-      return null;
-    }
-  }
-
-  // Try plugin sub-skill: "cowork/marketing/brand-voice" → skills/cowork/marketing/skills/brand-voice/
-  if (skillIdParts.length >= 3) {
-    const subSkillDir = resolve(
-      skillsBase,
-      skillIdParts[0],
-      skillIdParts[1],
-      'skills',
-      skillIdParts.slice(2).join('/')
-    );
-    // Ensure resolved real path stays within skillsBase (symlink-safe)
-    if (existsSync(subSkillDir)) {
-      try {
-        const realSub = realpathSync(subSkillDir);
-        const realBase = realpathSync(skillsBase);
-        if (!normalize(realSub).startsWith(normalize(realBase))) {
-          skillLogger.warn(`Path traversal blocked: "${realSub}" escapes "${realBase}"`);
-          return null;
-        }
-      } catch {
-        skillLogger.warn(`Path validation failed for "${subSkillDir}"`);
-        return null;
-      }
-      const mdFiles = collectMarkdownFiles(subSkillDir);
-      if (mdFiles.length > 0) {
-        const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
-        const truncated = mdFiles.some((f) => f.truncated);
-        const omittedSections = mdFiles.flatMap((f) => f.omittedSections);
-        const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
-        const content = `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
-        return { content, truncated, omittedSections, originalChars };
-      }
-    }
-  }
-
-  // Try directory skill first
-  const skillDir = resolve(skillsBase, skillId);
-  if (existsSync(skillDir)) {
-    try {
-      const realDir = realpathSync(skillDir);
-      const realBase = realpathSync(skillsBase);
-      if (!normalize(realDir).startsWith(normalize(realBase))) {
-        skillLogger.warn(`Path traversal blocked: "${realDir}" escapes "${realBase}"`);
-        return null;
-      }
-    } catch {
-      skillLogger.warn(`Path validation failed for "${skillDir}"`);
-      return null;
-    }
-    const mdFiles = collectMarkdownFiles(skillDir);
-    if (mdFiles.length > 0) {
-      const originalChars = mdFiles.reduce((sum, f) => sum + f.content.length, 0);
-      const truncated = mdFiles.some((f) => f.truncated);
-      const omittedSections = mdFiles.flatMap((f) => f.omittedSections);
-      const parts = mdFiles.map((f) => `## ${f.path}\n\n${f.content}`);
-      const content = `# [Skill: ${skillId}]\n\n${parts.join('\n\n---\n\n')}`;
-      return { content, truncated, omittedSections, originalChars };
-    }
-  }
-
-  // Try flat .md file: "mama/playground" → skills/playground.md
-  const idParts = skillId.split('/');
-  if (idParts.length >= 2) {
-    const flatPath = join(skillsBase, `${idParts[idParts.length - 1]}.md`);
-    if (existsSync(flatPath)) {
-      try {
-        const raw = readFileSync(flatPath, 'utf-8');
-        return truncateSkillBySections(raw);
-      } catch {
-        /* skip */
-      }
-    }
-  }
-
-  return null;
 }
 
 /**

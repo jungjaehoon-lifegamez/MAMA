@@ -124,7 +124,22 @@ memory-twin worker scope and must not gain memory mutation scope.
 
 M1R deliberately uses a hybrid posture:
 
-- Fail closed for destination, `raw_connector`, and tier violations because a
+- Fail closed for destination, `raw_connector`, and tier violations
+
+### Connector Channel Grant
+
+The raw-read boundary is per CHANNEL within a connector, not per connector.
+`packages/mama-core/src/context-compile/channel-grant.ts` is the single definition, compiled
+to a boolean (`isChannelGranted`) and to a SQL clause (`channelGrantClause`) so the two forms
+cannot drift — three divergent copies of this rule previously existed, and the differential
+test guarding them never exercised the production branch.
+
+- A connector absent from the grant is denied.
+- A connector present with an EMPTY channel list is also denied; an empty list is never read
+  as a wildcard.
+- The grant derives from `~/.mama/connectors.json` via `grantFromConnectorConfig` /
+  `liveBoundaryChannels` (`packages/standalone/src/evidence/read.ts`), and is narrowed further
+  to the issuing envelope's own scopes for a per-run read. because a
   wrong send or cross-boundary raw read cannot be unsent.
 - Log and alarm for memory-scope mismatch because memory writes are recoverable,
   and hard denial can amplify hallucinated scope retries. The evidence is kept

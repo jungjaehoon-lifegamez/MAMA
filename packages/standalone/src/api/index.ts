@@ -4,7 +4,7 @@
  * Provides HTTP API for cron job management and heartbeat functionality.
  */
 
-import express, { type Express, type Router } from 'express';
+import express, { type Express } from 'express';
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import type { SQLiteDatabase } from '../sqlite.js';
@@ -40,6 +40,7 @@ import {
   type AgentContextRouterOptions,
 } from './agent-context-handler.js';
 import { createAgentGraphRouter, type AgentGraphRouterOptions } from './agent-graph-handler.js';
+import { liveBoundaryChannels } from '../evidence/read.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
@@ -284,6 +285,9 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
       createAgentGraphRouter({
         memoryAdapter,
         envelopeAuthority,
+        // Raw refs reached through the graph satisfy the same grant as rows the reader
+        // returns. Without this the graph is the way around the read path.
+        channelGrant: liveBoundaryChannels,
       })
     );
   }
@@ -604,31 +608,5 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         });
       });
     },
-  };
-}
-
-/**
- * Create API routers without starting a server
- * Useful for integrating into an existing Express app
- */
-export function createApiRouters(options: ApiServerOptions): {
-  cronRouter: Router;
-  heartbeatRouter: Router;
-} {
-  const {
-    scheduler,
-    logStore = new InMemoryLogStore(),
-    heartbeatTracker = new InMemoryHeartbeatTracker(),
-    onHeartbeat,
-  } = options;
-
-  return {
-    cronRouter: createCronRouter(scheduler, logStore),
-    heartbeatRouter: createHeartbeatRouter({
-      scheduler,
-      logStore,
-      tracker: heartbeatTracker,
-      onHeartbeat,
-    }),
   };
 }

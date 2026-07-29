@@ -81,10 +81,6 @@ function fullQueryHashBuffer(query: string): Buffer {
   return Buffer.from(fullQueryHashHex(query), 'hex');
 }
 
-export function hashQuery(query: string): string {
-  return fullQueryHashHex(query).slice(0, 16);
-}
-
 function assertNonEmpty(value: string, field: string): void {
   if (!value || value.trim().length === 0) {
     throw new Error(`${field} is required`);

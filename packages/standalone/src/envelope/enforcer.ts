@@ -1,5 +1,6 @@
 import type { Envelope, MemoryScope } from './types.js';
 import { parseEnvelopeExpiresAt } from './expiry.js';
+import { directConnectorReadForTool } from './tool-connector-scope.js';
 
 export class EnvelopeViolation extends Error {
   constructor(
@@ -55,6 +56,7 @@ const MEMORY_SCOPED_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
   'mama_recall',
+  'mama_provenance',
   'context_compile',
 ]);
 
@@ -192,6 +194,14 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
     return ['drive'];
   }
 
+  // Direct connector readers answer from a live connector API, so nothing in
+  // their arguments names the connector. Without this, envelope.scope.raw_connectors
+  // never applied to them (tool-connector-scope.ts).
+  const directConnector = directConnectorReadForTool(toolName);
+  if (directConnector !== null) {
+    return [directConnector];
+  }
+
   if (toolName === 'context_compile') {
     return uniqueStrings([
       ...(getStringArrayArg(args, 'connectors') ?? []),
@@ -221,7 +231,11 @@ function requestedRawConnectorsForTool(toolName: string, args: unknown): string[
 }
 
 function requestedMemoryScopesForTool(toolName: string, args: unknown): MemoryScope[] {
-  if (!['mama_save', 'mama_search', 'mama_recall', 'context_compile'].includes(toolName)) {
+  if (
+    !['mama_save', 'mama_search', 'mama_recall', 'mama_provenance', 'context_compile'].includes(
+      toolName
+    )
+  ) {
     return [];
   }
   if (!isRecord(args) || args.scopes === undefined) {

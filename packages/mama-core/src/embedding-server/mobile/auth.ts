@@ -15,7 +15,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { IncomingMessage, ServerResponse } from 'http';
+import type { IncomingMessage } from 'http';
 
 // WebSocket type for authentication
 interface WebSocketLike {
@@ -167,28 +167,4 @@ export function authenticateWebSocket(req: IncomingMessage, ws: WebSocketLike): 
     return false;
   }
   return true;
-}
-
-/**
- * Middleware function type
- */
-type MiddlewareNext = () => void;
-
-/**
- * Create authentication middleware for HTTP routes
- * @returns Middleware function
- */
-export function createAuthMiddleware(): (
-  req: IncomingMessage,
-  res: ServerResponse,
-  next: MiddlewareNext
-) => void {
-  return (req: IncomingMessage, res: ServerResponse, next: MiddlewareNext) => {
-    if (!authenticate(req)) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
-      return;
-    }
-    next();
-  };
 }

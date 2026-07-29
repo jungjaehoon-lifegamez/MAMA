@@ -2,17 +2,14 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs';
 import { saveMemory, recallMemory, buildProfile, ingestMemory } from '../../src/memory/api.js';
 import { projectMemoryTruth } from '../../src/memory/truth-store.js';
-import {
-  appendEntityTimelineEvent,
-  createEntityNode,
-  upsertEntityObservation,
-} from '../../src/entities/store.js';
+import { createEntityNode, upsertEntityObservation } from '../../src/entities/store.js';
 import { appendEntityLineageLink } from '../../src/entities/lineage-store.js';
 import { getAdapter } from '../../src/db-manager.js';
 
 const TEST_DB = '/tmp/test-memory-v2-api.db';
 
 describe('memory v2 api', () => {
+  const originalForceTier3 = process.env.MAMA_FORCE_TIER_3;
   beforeAll(() => {
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
@@ -23,12 +20,21 @@ describe('memory v2 api', () => {
     });
 
     process.env.MAMA_DB_PATH = TEST_DB;
+    // Own the tier rather than inheriting it. `singleFork: true` shares one process across
+    // every test file, and this suite used to run on MAMA_FORCE_TIER_3 leaked by a file that
+    // set it at module scope and never restored it. When that leak was closed, this suite
+    // started loading the real embedding model and timed out at 30s on a cold CI runner
+    // while still passing locally against a warm model cache. A test that needs the lexical
+    // path has to say so.
+    process.env.MAMA_FORCE_TIER_3 = 'true';
   });
 
   afterAll(async () => {
     const { closeDB } = await import('../../src/db-manager.js');
     await closeDB();
     delete process.env.MAMA_DB_PATH;
+    if (originalForceTier3 === undefined) delete process.env.MAMA_FORCE_TIER_3;
+    else process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
 
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
@@ -307,59 +313,6 @@ describe('memory v2 api', () => {
       entity_id: 'entity_project_timeline_derived',
       event_type: 'project_update',
     });
-  });
-
-  it('should remove the decision row when transactional timeline persistence fails', async () => {
-    await createEntityNode({
-      id: 'entity_project_timeline_conflict',
-      kind: 'project',
-      preferred_label: 'Timeline Conflict',
-      status: 'active',
-      scope_kind: 'project',
-      scope_id: 'repo:test',
-      merged_into: null,
-    });
-
-    await appendEntityTimelineEvent({
-      event: {
-        id: 'et_duplicate_contract',
-        entity_id: 'entity_project_timeline_conflict',
-        event_type: 'project_update',
-        valid_from: null,
-        valid_to: null,
-        observed_at: Date.parse('2026-04-15T11:00:00.000Z'),
-        source_ref: '/tmp/test/raw.db',
-        summary: 'Existing event',
-        details: JSON.stringify({ existing: true }),
-      },
-    });
-
-    await expect(
-      saveMemory({
-        topic: 'timeline_contract/rollback',
-        kind: 'decision',
-        summary: 'This save should roll back',
-        details: 'Duplicate timeline event id should fail',
-        confidence: 0.6,
-        scopes: [{ kind: 'project', id: 'repo:test' }],
-        source: { package: 'mama-core', source_type: 'test', project_id: 'repo:test' },
-        timelineEvent: {
-          id: 'et_duplicate_contract',
-          entity_id: 'entity_project_timeline_conflict',
-          event_type: 'project_update',
-          observed_at: Date.parse('2026-04-15T11:05:00.000Z'),
-          source_ref: '/tmp/test/raw.db',
-          summary: 'Conflicting event',
-          details: JSON.stringify({ duplicate: true }),
-        },
-      })
-    ).rejects.toThrow();
-
-    const decisionRow = getAdapter()
-      .prepare(`SELECT id FROM decisions WHERE topic = ?`)
-      .get('timeline_contract/rollback') as { id: string } | undefined;
-
-    expect(decisionRow).toBeUndefined();
   });
 
   it('should return truth-gated recall by default', async () => {

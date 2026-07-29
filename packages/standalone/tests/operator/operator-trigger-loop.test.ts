@@ -176,9 +176,13 @@ describe('OperatorTriggerLoop', () => {
     }).tick();
 
     expect(onChannelDelta).toHaveBeenCalledOnce();
+    // The batch rides alongside the prompt lines now: the ids were always inside the
+    // lines as `[id:evt_...]` text, and carrying them structurally is what lets a bounded
+    // run attribute what it changes without asking the agent to restate anything.
     expect(onChannelDelta).toHaveBeenCalledWith(
       'slack:owner',
-      expect.arrayContaining([expect.stringContaining('board delta that must survive restart')])
+      expect.arrayContaining([expect.stringContaining('board delta that must survive restart')]),
+      expect.any(Array)
     );
     expect(pending?.digest.windowTotal).toBe(1);
   });

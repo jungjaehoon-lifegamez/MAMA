@@ -21,6 +21,7 @@ import type { DatabaseAdapter } from '@jungjaehoon/mama-core/db-manager';
 
 import type { Envelope } from '../envelope/types.js';
 import { deriveWorkerEnvelopeVisibility, WorkerEnvelopeError } from '../api/worker-envelope.js';
+import { narrowGrantToEnvelope } from '../evidence/read.js';
 
 type CoreAdapter = Pick<DatabaseAdapter, 'prepare'>;
 
@@ -65,6 +66,15 @@ export interface ContextCompileService {
 export interface ContextCompileServiceOptions {
   memoryAdapter: ContextCompileServiceAdapter;
   compileContext?: typeof defaultCompileContext;
+  /**
+   * Which channels of each connector the owner has configured.
+   *
+   * Injected rather than read here so a test can state the grant instead of depending on
+   * whatever is in the running machine's config. Absent means no grant is carried and raw
+   * visibility falls back to the scope columns - which, measured on the live index, means
+   * the compile reads nothing at all.
+   */
+  channelGrant?: () => Record<string, readonly string[]>;
   now?: () => number;
   childModelRunId?: (request: CompileAndPersistContextRequest) => string;
   packetId?: (request: CompileAndPersistContextRequest) => string;
@@ -579,12 +589,18 @@ export function createContextCompileService(
         allowed: envelopeVisibility.tenantId,
       });
 
+      const configuredChannels = options.channelGrant?.() ?? null;
+      const grantedChannels = configuredChannels
+        ? narrowGrantToEnvelope(configuredChannels, envelopeVisibility)
+        : undefined;
+
       const boundary: ContextBoundary = {
         scopes: envelopeVisibility.scopes,
         connectors: envelopeVisibility.connectors,
         project_refs: envelopeVisibility.projectRefs,
         tenant_id: envelopeVisibility.tenantId,
         as_of: request.envelope.scope.as_of ?? null,
+        ...(grantedChannels ? { channels: grantedChannels } : {}),
       };
       const compileInput = coerceCompileInput(request, boundary);
       const packetId = options.packetId?.(request) ?? generatedId('ctxp');

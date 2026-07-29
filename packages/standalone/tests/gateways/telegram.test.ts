@@ -39,9 +39,15 @@ const mockApi = {
   getStickerSet: vi.fn().mockResolvedValue({ stickers: [] }),
 };
 
+// Handlers the gateway registers with the bot, kept so a test can drive the REAL
+// registered callback instead of reaching past it into a private method.
+const registeredHandlers = new Map<string, (ctx: unknown) => Promise<void> | void>();
+
 vi.mock('grammy', () => ({
   Bot: vi.fn().mockImplementation(() => ({
-    on: vi.fn(),
+    on: vi.fn((event: string, handler: (ctx: unknown) => Promise<void> | void) => {
+      registeredHandlers.set(event, handler);
+    }),
     catch: vi.fn(),
     init: vi.fn().mockResolvedValue(undefined),
     start: vi.fn(),
@@ -68,17 +74,25 @@ vi.mock('../../src/gateways/tool-status-tracker.js', () => ({
 }));
 
 import { TelegramGateway } from '../../src/gateways/telegram.js';
-import { MessageRouter } from '../../src/gateways/message-router.js';
+import type { TurnProcessor } from '../../src/gateways/turn-contract.js';
 import { TelegramMessageLedger } from '../../src/gateways/telegram-message-ledger.js';
 import { splitTelegramMessage } from '../../src/gateways/telegram-response-presenter.js';
 
-// Mock MessageRouter
-const mockMessageRouter = {
-  process: vi.fn().mockResolvedValue({
+// A real TurnProcessor, not a router shaped like one. A double that implements only the
+// router's old method would force the base to adapt at runtime, and that adaptation is
+// exactly the escape hatch this seam exists to remove.
+const mockMessageRouter: TurnProcessor = {
+  processTurn: vi.fn().mockResolvedValue({
+    outcome: 'completed',
     response: 'test',
+    sessionId: 'test-session',
+    injectedDecisions: [],
     duration: 100,
+    provenance: { status: 'available' as const, modelRunId: 'run_test' },
+    sourceTurnId: 'turn_test',
+    sourceMessageRef: 'telegram:test:turn_test',
   }),
-} as unknown as MessageRouter;
+};
 
 describe('TelegramGateway basics', () => {
   let gateway: TelegramGateway;
@@ -87,7 +101,7 @@ describe('TelegramGateway basics', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -192,7 +206,7 @@ describe('TelegramGateway - message splitting', () => {
     );
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -226,7 +240,7 @@ describe('TelegramGateway - message splitting', () => {
     );
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
@@ -254,7 +268,7 @@ describe('TelegramGateway - bot info stored after start()', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -285,7 +299,7 @@ describe('TelegramGateway - sticker send fallback', () => {
     vi.clearAllMocks();
     gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
     await gateway.start();
   });
@@ -328,7 +342,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('does not emit message_received and warns', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -349,7 +363,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('warns once per chat within the cap window, per-chat independently', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -371,12 +385,12 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('wraps forwarded text and leaves direct text unwrapped', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
       const routed: string[] = [];
-      (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockImplementation(
+      (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockImplementation(
         async (msg: { text: string }) => {
           routed.push(msg.text);
           return { response: 'ok', sessionId: 's', injectedDecisions: [], duration: 1 };
@@ -404,7 +418,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
     it('emits message_received', async () => {
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777'] },
       });
       await gateway.start();
@@ -423,7 +437,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
       });
       await gateway.start();
       expect(warnSpy.mock.calls.flat().join('\n')).toContain('SECURITY WARNING');
@@ -438,7 +452,7 @@ describe('Story SEC-1: telegram inbound allowlist', () => {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const gateway = new TelegramGateway({
         token: 'test-bot-token',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: { allowedChats: ['7777', '8888'] },
       });
       await gateway.start();
@@ -471,7 +485,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-gateway-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl,
@@ -485,7 +499,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     mockApi.sendMessage.mockReset().mockResolvedValue({ message_id: 1 });
     mockApi.editMessageText.mockReset().mockResolvedValue(undefined);
     mockApi.getFile.mockResolvedValue({ file_path: 'photos/file.jpg', file_size: 4 });
-    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       response: '||⏱️ 1 turns||\ntest',
       duration: 100,
     });
@@ -497,10 +511,12 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       text: string;
       contentBlocks?: Array<{ type: string; text?: string; localPath?: string }>;
     }> = [];
-    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockImplementation(async (message) => {
-      routed.push(message);
-      return { response: 'ok', duration: 1 };
-    });
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (message) => {
+        routed.push(message);
+        return { response: 'ok', duration: 1 };
+      }
+    );
 
     await privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 101),
@@ -523,6 +539,78 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await gateway.stop();
   });
 
+  /**
+   * The seam, driven end to end.
+   *
+   * Every other proof of this boundary so far has been structural - an import rule, a
+   * type, an object literal called directly. Those pass on a facade. This one builds a
+   * real surface, injects a processor that is NOT the router and never was, pushes an
+   * inbound message through the registered handler, and checks both directions: the
+   * normalized message reached the injected implementation, and the response it returned
+   * came back out through delivery.
+   */
+  it('carries a real inbound message across the seam to a non-router processor and back', async () => {
+    const seen: Array<{ text?: string; source?: string; channelId?: string }> = [];
+    const injected: TurnProcessor = {
+      processTurn: vi.fn(async (incoming) => {
+        seen.push({
+          text: incoming.text,
+          source: incoming.source,
+          channelId: incoming.channelId,
+        });
+        return {
+          outcome: 'completed' as const,
+          response: 'served by the injected processor',
+          sessionId: 'injected-session',
+          injectedDecisions: [],
+          duration: 3,
+          provenance: { status: 'available' as const, modelRunId: 'run_injected' },
+          sourceTurnId: 'turn_injected',
+          sourceMessageRef: 'telegram:7777:turn_injected',
+        };
+      }),
+    };
+
+    const gateway = new TelegramGateway({
+      token: 'test-bot-token',
+      turnProcessor: injected,
+      config: { allowedChats: ['7777'] },
+      mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-seam-')),
+      fetchImpl: vi.fn(async () => jpegResponse()),
+    });
+    await gateway.start();
+
+    // Drive the callback the gateway actually REGISTERED. Reaching past it into the
+    // private handler would leave registration itself untested: it could be rerouted or
+    // dropped entirely and this test would stay green.
+    const onMessage = registeredHandlers.get('message');
+    expect(onMessage).toBeTypeOf('function');
+    await onMessage!({
+      message: {
+        ...makeBaseMessage(7777, 42, 900),
+        text: 'what is open right now',
+      },
+    });
+
+    // Inbound: the surface normalized it and handed it across, not to the router.
+    expect(injected.processTurn).toHaveBeenCalledTimes(1);
+    expect(seen[0]?.text).toBe('what is open right now');
+    expect(seen[0]?.source).toBe('telegram');
+    expect(seen[0]?.channelId).toBe('7777');
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
+
+    // Outbound: what the injected processor returned is what the owner receives.
+    // The surface streams into a placeholder and finalizes by editing it, so delivery
+    // is where the answer lands - not the first send.
+    const delivered = [
+      ...mockApi.sendMessage.mock.calls.map((call) => String(call[1])),
+      ...mockApi.editMessageText.mock.calls.map((call) => String(call[2])),
+    ].join('\n');
+    expect(delivered).toContain('served by the injected processor');
+
+    await gateway.stop();
+  });
+
   it('preserves a photo caption as the routed message text', async () => {
     const gateway = await makeGateway();
 
@@ -532,7 +620,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(routed.text).toBe('Read this image');
     await gateway.stop();
   });
@@ -540,7 +628,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
   it('accepts and strips a group mention from caption_entities', async () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['-7777'] },
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-group-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -555,7 +643,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(routed.text).toBe('read this image');
     await gateway.stop();
   });
@@ -564,11 +652,13 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const gateway = await makeGateway(vi.fn(async () => new Response(new Uint8Array([1, 2]))));
     mockApi.getFile.mockResolvedValue({ file_path: 'documents/file.pdf', file_size: 2 });
     let readableDuringRoute = false;
-    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockImplementation(async (message) => {
-      const localPath = message.metadata.attachments[0].localPath;
-      readableDuringRoute = typeof localPath === 'string' && existsSync(localPath);
-      return { response: 'ok', duration: 1 };
-    });
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockImplementation(
+      async (message) => {
+        const localPath = message.metadata.attachments[0].localPath;
+        readableDuringRoute = typeof localPath === 'string' && existsSync(localPath);
+        return { response: 'ok', duration: 1 };
+      }
+    );
 
     await privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 104),
@@ -581,7 +671,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       },
     });
 
-    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(routed.text).toBe('[File: brief.pdf]');
     expect(JSON.stringify(routed.contentBlocks)).toContain('brief.pdf');
     expect(JSON.stringify(routed.contentBlocks)).not.toContain('.mama/');
@@ -608,7 +698,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       },
     });
 
-    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(routed.text).toBe('Read this uploaded image');
     expect(routed.contentBlocks?.some((block: { type: string }) => block.type === 'image')).toBe(
       true
@@ -623,7 +713,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-denied-')),
       fetchImpl,
@@ -646,7 +736,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const fetchImpl = vi.fn(async () => jpegResponse());
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {},
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-')),
       fetchImpl,
@@ -660,14 +750,14 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
     expect(mockApi.getFile).not.toHaveBeenCalled();
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
     await gateway.stop();
   });
 
   it('rate-caps dropped-media warnings when no inbound allowlist is configured', async () => {
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {},
       mediaRoot: await mkdtemp(join(tmpdir(), 'mama-telegram-open-media-warn-')),
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -696,7 +786,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-cleanup-'));
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -720,7 +810,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await privateHandler(gateway).handleMessage(first);
     await privateHandler(gateway).handleMessage(second);
 
-    expect(mockMessageRouter.process).toHaveBeenCalledTimes(2);
+    expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(2);
     await gateway.stop();
   });
 
@@ -730,7 +820,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       releaseFirst = resolve;
     });
     const order: string[] = [];
-    mockMessageRouter.process.mockImplementation(async (message: { text: string }) => {
+    mockMessageRouter.processTurn.mockImplementation(async (message: { text: string }) => {
       order.push(`process:${message.text}`);
       if (message.text === 'first') await firstBlocked;
       return { response: `response:${message.text}`, duration: 1 };
@@ -741,14 +831,14 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       ...makeBaseMessage(7777, 42, 130),
       text: 'first',
     });
-    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
     const second = privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 131),
       text: 'second',
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1);
     releaseFirst();
     await Promise.all([first, second]);
 
@@ -761,7 +851,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const blocked = new Promise<void>((resolve) => {
       releaseTurn = resolve;
     });
-    mockMessageRouter.process.mockImplementationOnce(async () => {
+    mockMessageRouter.processTurn.mockImplementationOnce(async () => {
       await blocked;
       return { response: 'turn answer', duration: 1 };
     });
@@ -770,7 +860,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       ...makeBaseMessage(7777, 42, 132),
       text: 'first',
     });
-    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
     mockApi.sendMessage.mockClear();
 
     const report = gateway.sendMessage('7777', 'scheduled report');
@@ -794,7 +884,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     });
     let detachedReport: Promise<void> | undefined;
     const gateway = await makeGateway();
-    mockMessageRouter.process.mockImplementation(async (message: { text: string }) => {
+    mockMessageRouter.processTurn.mockImplementation(async (message: { text: string }) => {
       if (message.text === 'first') {
         detachedReport = (async () => {
           await reportReady;
@@ -814,7 +904,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       ...makeBaseMessage(7777, 42, 134),
       text: 'second',
     });
-    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(2));
     mockApi.sendMessage.mockClear();
 
     releaseReport();
@@ -829,7 +919,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
   it('allows an explicit in-turn Telegram tool send without deadlocking its own chat queue', async () => {
     const gateway = await makeGateway();
-    mockMessageRouter.process.mockImplementationOnce(async () => {
+    mockMessageRouter.processTurn.mockImplementationOnce(async () => {
       await gateway.sendMessageFromActiveTurn('7777', 'tool side effect');
       return { response: 'turn answer', duration: 1 };
     });
@@ -850,7 +940,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const blocked = new Promise<void>((resolve) => {
       releaseTurn = resolve;
     });
-    mockMessageRouter.process.mockImplementationOnce(async () => {
+    mockMessageRouter.processTurn.mockImplementationOnce(async () => {
       await blocked;
       return { response: 'completed normally', duration: 1 };
     });
@@ -859,7 +949,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       ...makeBaseMessage(7777, 42, 136),
       text: 'long turn',
     });
-    await vi.waitFor(() => expect(mockMessageRouter.process).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1));
     const recovery = (
       gateway as unknown as { recoverPendingInboundDeliveries(): Promise<void> }
     ).recoverPendingInboundDeliveries();
@@ -877,7 +967,10 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       releaseEdit = resolve;
     });
     mockApi.editMessageText.mockImplementationOnce(async () => editBlocked);
-    mockMessageRouter.process.mockResolvedValueOnce({ response: 'ready race answer', duration: 1 });
+    mockMessageRouter.processTurn.mockResolvedValueOnce({
+      response: 'ready race answer',
+      duration: 1,
+    });
     const gateway = await makeGateway();
     const turn = privateHandler(gateway).handleMessage({
       ...makeBaseMessage(7777, 42, 138),
@@ -901,13 +994,13 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const ledgerPath = join(mediaRoot, 'ledger.json');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,
     });
     const response = 'a'.repeat(4096) + 'b'.repeat(4096) + 'c'.repeat(300);
-    mockMessageRouter.process.mockResolvedValueOnce({ response, duration: 1 });
+    mockMessageRouter.processTurn.mockResolvedValueOnce({ response, duration: 1 });
     mockApi.sendMessage
       .mockResolvedValueOnce({ message_id: 1 })
       .mockResolvedValueOnce({ message_id: 2 })
@@ -945,7 +1038,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await privateHandler(gateway).handleMessage(message);
     await privateHandler(gateway).handleMessage(message);
 
-    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1);
     await gateway.stop();
   });
 
@@ -953,7 +1046,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     const mediaRoot = await mkdtemp(join(tmpdir(), 'mama-telegram-restart-dedup-'));
     const options = {
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       fetchImpl: vi.fn(async () => jpegResponse()),
@@ -968,7 +1061,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     await second.start();
     await privateHandler(second).handleMessage(message);
 
-    expect(mockMessageRouter.process).toHaveBeenCalledTimes(1);
+    expect(mockMessageRouter.processTurn).toHaveBeenCalledTimes(1);
     await second.stop();
   });
 
@@ -980,14 +1073,14 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     ledger.markReady('7777:124', 'response recovered from outbox');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
 
-    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
     expect(mockApi.sendMessage).toHaveBeenCalledWith(7777, 'response recovered from outbox');
     expect(new TelegramMessageLedger(ledgerPath).get('7777:124')).toMatchObject({
       state: 'delivered',
@@ -1001,14 +1094,14 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
     new TelegramMessageLedger(ledgerPath).claim('7777:125');
     const gateway = new TelegramGateway({
       token: 'test-bot-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: { allowedChats: ['7777'] },
       mediaRoot,
       messageLedgerPath: ledgerPath,
     });
     await gateway.start();
 
-    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
     expect(String(mockApi.sendMessage.mock.calls.at(-1)?.[1])).toContain('interrupted');
     expect(new TelegramMessageLedger(ledgerPath).get('7777:125')).toMatchObject({
       state: 'delivered',
@@ -1026,7 +1119,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    const routed = (mockMessageRouter.process as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const routed = (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(routed.text).toContain('<<<UNTRUSTED-CONTENT source=telegram-forward>>>');
     expect(routed.text).toContain('external instruction');
     await gateway.stop();
@@ -1041,7 +1134,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
     expect(mockApi.editMessageText).toHaveBeenCalledWith(
       7777,
       1,
@@ -1058,7 +1151,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
       photo: [{ file_id: 'photo', file_unique_id: 'photo-u', width: 10, height: 10 }],
     });
 
-    expect(mockMessageRouter.process).not.toHaveBeenCalled();
+    expect(mockMessageRouter.processTurn).not.toHaveBeenCalled();
     expect(mockApi.editMessageText).toHaveBeenCalledWith(
       7777,
       1,
@@ -1069,7 +1162,7 @@ describe('Story TG-PARITY: Kagemusha-equivalent Telegram conversation', () => {
 
   it('finalizes one plain-text placeholder without the internal reasoning header', async () => {
     const gateway = await makeGateway();
-    (mockMessageRouter.process as ReturnType<typeof vi.fn>).mockResolvedValue({
+    (mockMessageRouter.processTurn as ReturnType<typeof vi.fn>).mockResolvedValue({
       response: '||🔧 code_act | ⏱️ 1 turns||\nCompleted.',
       duration: 1,
     });

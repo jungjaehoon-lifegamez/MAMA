@@ -386,14 +386,6 @@ export function resolveModel(alias: string): ModelConfig {
   return getModelConfig(alias)
 }
 
-export function getModelId(alias: string): string {
-  return getModelConfig(alias).id
-}
-
-export function getModelProvider(alias: string): "openai" | "anthropic" | "google" {
-  return getModelConfig(alias).provider
-}
-
 export function listAvailableModels(): string[] {
   return Object.keys(MODEL_CONFIGS)
 }

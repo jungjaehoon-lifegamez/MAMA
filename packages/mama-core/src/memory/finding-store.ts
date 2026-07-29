@@ -78,21 +78,3 @@ export async function listOpenAuditFindings(): Promise<AuditFindingRecord[]> {
 
   return rows.map(deserializeFinding);
 }
-
-export async function resolveAuditFinding(
-  findingId: string,
-  status: 'resolved' | 'dismissed'
-): Promise<void> {
-  await initDB();
-  const adapter = getAdapter();
-
-  adapter
-    .prepare(
-      `
-        UPDATE audit_findings
-        SET status = ?, resolved_at = ?
-        WHERE finding_id = ?
-      `
-    )
-    .run(status, Date.now(), findingId);
-}

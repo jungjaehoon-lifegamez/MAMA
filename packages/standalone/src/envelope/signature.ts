@@ -66,15 +66,6 @@ export function verifyEnvelope(envelope: Envelope, lookupKey: EnvelopeKeyLookup)
   return timingSafeEqual(actual, expected);
 }
 
-export function assertEnvelopeSignature(envelope: Envelope, lookupKey: EnvelopeKeyLookup): void {
-  if (!verifyEnvelope(envelope, lookupKey)) {
-    throw new Error(
-      `[envelope-signature] Envelope signature verification failed for ` +
-        `${envelope.instance_id} (${envelope.envelope_hash || 'missing hash'})`
-    );
-  }
-}
-
 function validateSigningKey(signingKey: EnvelopeSigningKey): void {
   if (!signingKey.key_id) {
     throw new Error('[envelope-signature] key_id is required');

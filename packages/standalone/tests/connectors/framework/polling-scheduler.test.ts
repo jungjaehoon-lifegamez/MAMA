@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +7,6 @@ import { ConnectorRegistry } from '../../../src/connectors/framework/connector-r
 import { PollingScheduler } from '../../../src/connectors/framework/polling-scheduler.js';
 import { RawStore } from '../../../src/connectors/framework/raw-store.js';
 import type { IConnector, NormalizedItem } from '../../../src/connectors/framework/types.js';
-import { loadConnectorConfig } from '../../../src/connectors/config-loader.js';
 
 function makeItem(sourceId: string, timestamp: Date): NormalizedItem {
   return {
@@ -131,59 +130,11 @@ describe('PollingScheduler', () => {
       expect(notionItems[0]?.sourceId).toBe('notion-stored');
     });
 
-    it('binds configured project scope before saving raw rows and raw index inputs', async () => {
-      const rawIndexSink = vi.fn().mockResolvedValue(undefined);
-      const scheduler = new PollingScheduler(rawStore, tmpDir, { rawIndexSink });
-      const registry = new ConnectorRegistry();
-      const item = makeItem('scoped-raw', new Date('2026-04-07T10:00:00Z'));
-      item.source = 'slack';
-      item.channel = 'general';
-      registry.register('slack', makeMockConnector('slack', [item]));
-
-      const configPath = join(tmpDir, 'connectors.json');
-      writeFileSync(
-        configPath,
-        JSON.stringify({
-          slack: {
-            enabled: true,
-            pollIntervalMinutes: 5,
-            channels: {
-              general: {
-                role: 'hub',
-                project_entity_id: 'project_tinklestar',
-              },
-            },
-            auth: { type: 'token', tokenName: 'SLACK_BOT_TOKEN' },
-          },
-        })
-      );
-      const loaded = loadConnectorConfig(configPath);
-      expect(loaded.ok).toBe(true);
-      const channelConfigs = { slack: loaded.config.slack!.channels };
-
-      await scheduler.pollAll(registry, channelConfigs, vi.fn());
-
-      const stored = rawStore.query('slack', new Date(0));
-      expect(stored[0]).toMatchObject({
-        sourceId: 'scoped-raw',
-        projectId: 'project_tinklestar',
-        memoryScopeKind: 'project',
-        memoryScopeId: 'project_tinklestar',
-        tenantId: 'default',
-      });
-      expect(rawIndexSink).toHaveBeenCalledWith(
-        'slack',
-        expect.arrayContaining([
-          expect.objectContaining({
-            sourceId: 'scoped-raw',
-            projectId: 'project_tinklestar',
-            memoryScopeKind: 'project',
-            memoryScopeId: 'project_tinklestar',
-            tenantId: 'default',
-          }),
-        ])
-      );
-    });
+    // The scope-binding test was removed with the function it tested. It passed on a
+    // synthetic config carrying `project_entity_id`; zero of the 39 channels on the live
+    // install declare that field, so the binder returned every item unchanged for its
+    // whole life. A backfill had written `channel` scopes into the index until 2026-05-20,
+    // which is the only reason the data ever looked otherwise.
 
     it('startBatch fires initial poll and sets interval', async () => {
       const onBatchExtract = vi.fn().mockResolvedValue(undefined);

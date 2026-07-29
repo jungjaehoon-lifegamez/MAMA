@@ -11,10 +11,10 @@ MAMA is a pnpm workspace-based monorepo with four release targets (plus the inte
 
 | Package            | Location                       | Deployment Target  | npm Name                   | Version |
 | ------------------ | ------------------------------ | ------------------ | -------------------------- | ------- |
-| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.28.6  |
-| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.14.0  |
-| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 1.9.0   |
-| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.10.0  |
+| MAMA OS            | `packages/standalone/`         | npm registry       | `@jungjaehoon/mama-os`     | 0.29.0  |
+| MCP Server         | `packages/mcp-server/`         | npm registry       | `@jungjaehoon/mama-server` | 1.15.0  |
+| MAMA Core          | `packages/mama-core/`          | npm registry       | `@jungjaehoon/mama-core`   | 2.0.0   |
+| Claude Code Plugin | `packages/claude-code-plugin/` | Claude Marketplace | `mama`                     | 1.11.0  |
 
 ---
 
@@ -61,11 +61,11 @@ Synchronize versions across these files before deployment:
 
 | File                                                     | Field     | Current Version |
 | -------------------------------------------------------- | --------- | --------------- |
-| `packages/standalone/package.json`                       | `version` | 0.28.6          |
-| `packages/mcp-server/package.json`                       | `version` | 1.14.0          |
-| `packages/mama-core/package.json`                        | `version` | 1.9.0           |
-| `packages/claude-code-plugin/package.json`               | `version` | 1.10.0          |
-| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.10.0          |
+| `packages/standalone/package.json`                       | `version` | 0.29.0          |
+| `packages/mcp-server/package.json`                       | `version` | 1.15.0          |
+| `packages/mama-core/package.json`                        | `version` | 2.0.0           |
+| `packages/claude-code-plugin/package.json`               | `version` | 1.11.0          |
+| `packages/claude-code-plugin/.claude-plugin/plugin.json` | `version` | 1.11.0          |
 
 ### Version Update Example
 
@@ -382,7 +382,7 @@ npm publish --registry https://registry.npmjs.org
 ```bash
 # Run individual tests to identify cause
 cd packages/mcp-server
-pnpm vitest run tests/tools/save-decision.test.js
+pnpm vitest run tests/tools/save-decision-v2.test.js
 
 cd packages/claude-code-plugin
 pnpm vitest run tests/hooks/pretooluse-hook.test.js

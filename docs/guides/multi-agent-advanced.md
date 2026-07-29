@@ -1,229 +1,32 @@
-# Multi-Agent Advanced Features Guide
+# Multi-Agent Personas Guide
 
 **Category:** Guide (Task-Oriented)
-**Audience:** Users who want to leverage advanced features of the Multi-Agent swarm
+**Audience:** Users configuring the daemon's agent personas and tool tiers
 
 ---
 
-> Current frontdoor note: in the viewer and webchat, `os-agent` is the user-facing main agent. `conductor` remains available for audit/background orchestration and advanced multi-agent flows.
+> In the viewer and webchat, `os-agent` is the user-facing main agent. `conductor` remains
+> available for audit and background orchestration.
 
-## Council Engine
+## What this guide no longer covers
 
-A structured multi-agent discussion system. When the lead orchestration agent generates a `council_plan` block, the designated agents engage in round-by-round sequential discussions.
+Four subsystems this guide used to document were removed in v0.29.0 because nothing ran
+them. They are gone from the runtime, not merely disabled:
 
-### Configuration
+| Removed                                                  | What replaced it                                                                                   |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Council Engine (`council_plan` blocks)                   | nothing — no parser or executor exists                                                             |
+| Dynamic Workflow DAG (`workflow_plan`, ephemeral agents) | nothing — only the type declarations survive                                                       |
+| Swarm DB & Wave Engine (`swarm_tasks`)                   | the Stage-2 work order pipeline (`workorder-board`, `workorder-wiki`, `workorder-memory-curation`) |
+| UltraWork autonomous sessions                            | nothing                                                                                            |
 
-```yaml
-multi_agent:
-  council:
-    enabled: true
-    max_rounds: 5 # Maximum number of discussion rounds
-    max_duration_ms: 600000 # Overall timeout (10 minutes)
-```
+`multi_agent.council`, `multi_agent.workflow` and `ultrawork` may still parse in
+`~/.mama/config.json`; they are inert. `delegate` is still listed in the tool registry and is
+NOT dispatchable — calling it throws `Unknown tool: delegate`, and the `DELEGATE::` message
+prefix is no longer executed by anything.
 
-### Trigger
-
-Automatically executed when the lead orchestration agent includes a `council_plan` JSON block in its response:
-
-```json
-{
-  "name": "Database Selection Discussion",
-  "topic": "PostgreSQL vs MongoDB: Which DB is suitable for microservices?",
-  "agents": ["developer", "reviewer"],
-  "rounds": 2,
-  "synthesis": true
-}
-```
-
-### Execution Flow
-
-1. Lead agent generates `council_plan` -> System validates agent existence
-2. For each round:
-   - All participating agents speak in order
-   - The full conversation from previous rounds is passed as context
-   - 3-minute timeout per agent
-3. A summary of the entire discussion is generated
-
-### Constraints
-
-- Maximum 5 rounds (configurable)
-- Overall 10-minute timeout (configurable, can also be specified via `timeout_ms` in the plan)
-- If one agent fails, the remaining agents continue
-
----
-
-## Dynamic Workflow DAG
-
-When the lead orchestration agent defines tasks as a DAG (Directed Acyclic Graph), ephemeral (temporary) agents are created and executed in parallel/sequential order based on dependencies.
-
-### Configuration
-
-```yaml
-multi_agent:
-  workflow:
-    enabled: true
-    max_ephemeral_agents: 20 # Maximum number of ephemeral agents
-    max_duration_ms: 600000 # Overall timeout (10 minutes)
-    max_concurrent_steps: 3 # Number of concurrent steps
-    backend_balancing: true # Claude <-> Codex round-robin
-```
-
-### Lead Agent Output Example
-
-```json
-{
-  "name": "Code Review Workflow",
-  "steps": [
-    {
-      "id": "analyze",
-      "agent": {
-        "id": "analyzer-1",
-        "display_name": "Code Analyzer",
-        "backend": "claude",
-        "model": "claude-opus-4-6",
-        "system_prompt": "An expert in analyzing code structure."
-      },
-      "prompt": "Analyze the file structure"
-    },
-    {
-      "id": "implement",
-      "agent": {
-        "id": "coder-1",
-        "display_name": "Developer",
-        "backend": "codex",
-        "model": "gpt-5.4",
-        "system_prompt": "Implements code changes."
-      },
-      "prompt": "Implement based on analysis results: {{analyze.result}}",
-      "depends_on": ["analyze"]
-    }
-  ],
-  "synthesis": {
-    "prompt_template": "Synthesize all results: {{analyze.result}}, {{implement.result}}"
-  }
-}
-```
-
-### Key Concepts
-
-- **Ephemeral Agent**: A temporary agent that exists only during workflow execution. Uses an inline `system_prompt`
-- **Result Interpolation**: Inject previous step results into the next step's prompt using `{{step_id.result}}`
-- **Level-Based Parallel Execution**: Steps at the same dependency level run concurrently
-- **Optional Steps**: Setting `"optional": true` allows the next step to proceed even if the current one fails
-
-### Constraints
-
-- Maximum 5 steps per workflow
-- Step timeout: 5 minutes (default, changeable via `timeout_ms`)
-- Cyclic dependencies are not allowed (DAG validation)
-
----
-
-## Swarm DB & Wave Engine
-
-A SQLite-based persistent task queue that supports sequential-parallel execution in Wave units.
-
-### Wave Execution Model
-
-```text
-Wave 1: [Task A, Task B, Task C]  <- Parallel execution
-         | After all complete
-Wave 2: [Task D, Task E]          <- Parallel execution
-         | After all complete
-Wave 3: [Task F]                  <- Solo execution
-```
-
-- Tasks within a Wave are executed in parallel
-- Waves are executed sequentially
-- Failed tasks do not block the next Wave (fail-forward)
-
-### Task States
-
-```text
-pending -> claimed -> completed
-                   -> failed -> (retry) -> pending
-```
-
-### Key Features
-
-- **Atomic Task Claiming**: Prevents duplicate execution via SQLite transactions
-- **Stale Lease Expiration**: Automatically released after 15 minutes if an agent crashes
-- **File Ownership Tracking**: Detects file conflicts between concurrent tasks
-- **Dependency Resolution**: Propagates to dependent tasks of failed tasks
-- **Retry**: Resets failed tasks to pending
-
-### Database Schema
-
-```sql
-CREATE TABLE swarm_tasks (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL,
-  description TEXT NOT NULL,
-  category TEXT NOT NULL,
-  priority INTEGER DEFAULT 0,
-  wave INTEGER NOT NULL,
-  status TEXT DEFAULT 'pending',
-  claimed_by TEXT,
-  files_owned TEXT,    -- JSON array
-  depends_on TEXT,     -- JSON array
-  retry_count INTEGER DEFAULT 0
-);
-```
-
----
-
-## UltraWork Autonomous Sessions
-
-Performs autonomous multi-step tasks using a 3-phase Ralph Loop.
-
-### Trigger
-
-```yaml
-ultrawork:
-  enabled: true
-  trigger_keywords: [ultrawork, deep work, autonomous, 울트라워크]
-  max_steps: 20
-  max_duration: 1800000 # 30 minutes
-```
-
-Automatically executed when a user message contains a trigger keyword:
-
-```text
-ULTRAWORK: Implement OAuth2 authentication module
-```
-
-### 3-Phase Execution
-
-**Phase 1: PLANNING**
-
-- Lead agent analyzes the task and generates a plan
-- Multi-perspective review via Council discussion (optional)
-- Output: `~/.mama/workspace/ultrawork/{session_id}/plan.md`
-
-**Phase 2: BUILDING**
-
-- Lead agent delegates plan tasks using the `delegate()` gateway tool
-- Records each step's result in `progress.json`
-- Continues until `BUILD_COMPLETE` marker or max_steps is reached
-
-**Phase 3: RETROSPECTIVE**
-
-- Reviews completed work against the original plan
-- Quality evaluation via Council discussion
-- `RETRO_COMPLETE` -> Session ends
-- `RETRO_INCOMPLETE` -> Re-enters Phase 2 (maximum 1 time)
-
-### State Persistence
-
-```text
-~/.mama/workspace/ultrawork/{session_id}/
-├── session.json       # Metadata, current phase
-├── plan.md            # Phase 1 plan
-├── progress.json      # Per-step result array
-└── retrospective.md   # Phase 3 retrospective
-```
-
-On process crash, when the next session is created, stale sessions are detected and can be recovered from the last checkpoint.
+What survives is the part that was always doing the work: named personas, a three-tier tool
+permission model, and hot-reload.
 
 ---
 
@@ -309,10 +112,8 @@ When `updateConfig()` is called, it restarts the process pools to apply new conf
 
 - Agent definitions (personas, tiers, permissions)
 - Model assignments
-- Delegation rules
 - Tool permissions
 - Channel overrides
-- UltraWork/task-continuation settings
 
 ### Items That Are NOT Reloaded (Require Server Restart)
 
@@ -331,13 +132,21 @@ curl -X PUT 'http://localhost:3847/api/multi-agent/agents/developer' \
 
 ---
 
+---
+
 ## Reference Files
 
-- Multi-Agent overall: `packages/standalone/src/multi-agent/`
-- Council Engine: `packages/standalone/src/multi-agent/council-engine.ts`
-- Workflow Engine: `packages/standalone/src/multi-agent/workflow-engine.ts`
-- Swarm DB: `packages/standalone/src/multi-agent/swarm/swarm-db.ts`
-- Wave Engine: `packages/standalone/src/multi-agent/swarm/wave-engine.ts`
-- UltraWork: `packages/standalone/src/multi-agent/ultrawork.ts`
-- Persona examples: `packages/standalone/templates/personas/`
-- Internal reference: `packages/standalone/src/multi-agent/AGENTS.md`
+Surviving modules in `packages/standalone/src/multi-agent/`:
+
+| File                                                                             | Role                                   |
+| -------------------------------------------------------------------------------- | -------------------------------------- |
+| `agent-process-manager.ts`                                                       | owns the managed agent processes       |
+| `agent-event-bus.ts`                                                             | the event bus personas publish onto    |
+| `tool-permission-manager.ts`                                                     | the three-tier tool permission model   |
+| `conductor-persona.ts`                                                           | the conductor's system prompt sections |
+| `dashboard-agent-persona.ts`, `wiki-agent-persona.ts`, `memory-agent-persona.ts` | optional legacy persona configs        |
+| `runtime-process.ts`, `types.ts`, `workflow-types.ts`, `bmad-templates.ts`       | supporting types and process plumbing  |
+
+The work orders that actually run scheduled system work live elsewhere:
+`packages/standalone/src/operator/` (`workorder-consumer.ts`, `workorder-hooks.ts`,
+`worker-run.ts`) with briefs in `~/.mama/briefs/`.

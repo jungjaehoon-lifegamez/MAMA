@@ -17,9 +17,5 @@ export function createJudge(name: JudgeName): Judge {
   return new JudgeClass()
 }
 
-export function getAvailableJudges(): JudgeName[] {
-  return Object.keys(judges) as JudgeName[]
-}
-
 export { OpenAIJudge, AnthropicJudge, GoogleJudge }
 export { buildJudgePrompt, parseJudgeResponse, getJudgePrompt } from "./base"

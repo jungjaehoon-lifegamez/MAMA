@@ -1,11 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  appendEntityTimelineEvent,
   attachEntityAlias,
   createEntityNode,
   getEntityNode,
   listEntityAliases,
-  listEntityNodes,
   parseObservationRow,
   upsertEntityObservation,
   upsertEntityObservations,
@@ -135,9 +133,6 @@ describe('Story E1.3: Canonical entity persistence', () => {
       const loaded = getEntityNode(created.id);
 
       expect(loaded?.preferred_label).toBe('Project Alpha');
-      expect(listEntityNodes()).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: 'entity_project_alpha' })])
-      );
     });
 
     it('should attach aliases and list them for the entity', async () => {
@@ -283,61 +278,6 @@ describe('Story E1.3: Canonical entity persistence', () => {
       ]);
 
       expect(saved).toEqual([{ id: 'obs_batch_single', created: true }]);
-    });
-
-    it('should append timeline events with observed provenance details', async () => {
-      await createEntityNode({
-        id: 'entity_project_beta',
-        kind: 'project',
-        preferred_label: 'Project Beta',
-        status: 'active',
-        scope_kind: 'project',
-        scope_id: 'scope-project-beta',
-        merged_into: null,
-      });
-
-      const event = await appendEntityTimelineEvent({
-        event: {
-          entity_id: 'entity_project_beta',
-          event_type: 'status_update',
-          role: 'affected',
-          valid_from: null,
-          valid_to: null,
-          observed_at: 1710000001234,
-          source_ref: '~/.mama/connectors/slack/raw.db',
-          summary: 'Project Beta moved to blocked.',
-          details: JSON.stringify({ from_status: 'in_progress', to_status: 'blocked' }),
-        },
-      });
-
-      const row = getAdapter()
-        .prepare(
-          `
-            SELECT entity_id, event_type, role, observed_at, source_ref, summary, details
-            FROM entity_timeline_events
-            WHERE id = ?
-          `
-        )
-        .get(event.id) as {
-        entity_id: string;
-        event_type: string;
-        role: string | null;
-        observed_at: number;
-        source_ref: string | null;
-        summary: string;
-        details: string | null;
-      };
-
-      expect(event.role).toBe('affected');
-      expect(row).toEqual({
-        entity_id: 'entity_project_beta',
-        event_type: 'status_update',
-        role: 'affected',
-        observed_at: 1710000001234,
-        source_ref: '~/.mama/connectors/slack/raw.db',
-        summary: 'Project Beta moved to blocked.',
-        details: JSON.stringify({ from_status: 'in_progress', to_status: 'blocked' }),
-      });
     });
 
     it('should upsert observations when the source identity index includes context keys', async () => {

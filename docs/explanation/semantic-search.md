@@ -1,6 +1,6 @@
 # Semantic Search - How It Works
 
-**FR Reference:** [FR8-12 (Semantic Search)](../reference/fr-mapping.md)
+**FR Reference:** [FR8-12 (Semantic Search)](../archive/fr-mapping-v1.0.md)
 
 This document explains how MAMA's semantic search works under the hood, including embeddings, similarity scoring, and ranking algorithms.
 
@@ -344,4 +344,4 @@ For each decision:
 - [Decision Graph](decision-graph.md) - Graph expansion for supersedes relationships
 - [Configuration Guide](../guides/configuration.md) - Change embedding model
 - [Performance Tuning](../guides/performance-tuning.md) - Optimize for your use case
-- [FR8-12 (Semantic Search)](../reference/fr-mapping.md) - Functional requirements
+- [FR8-12 (Semantic Search)](../archive/fr-mapping-v1.0.md) - Functional requirements

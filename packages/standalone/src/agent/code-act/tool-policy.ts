@@ -1,5 +1,6 @@
 import { minimatch } from 'minimatch';
 import { HostBridge, isToolAvailableAtTier, type ToolMeta } from './host-bridge.js';
+import { directConnectorReadAllowed } from '../../envelope/tool-connector-scope.js';
 
 export type CodeActTier = 1 | 2 | 3;
 
@@ -94,6 +95,10 @@ export function projectCodeActToolPolicy(input: CodeActToolPolicyInput): CodeAct
         envelopeDestinationKinds,
         input.roleName === 'owner_console'
       ) &&
+      // Direct connector readers are gated on the SAME connector scope the
+      // envelope enforcer applies, so a sandbox is never offered a tool whose
+      // execution the enforcer would deny (tool-connector-scope.ts).
+      directConnectorReadAllowed(tool.name, envelopeRawConnectors) &&
       (roleAllowedTools === null || matchesAny(tool.name, roleAllowedTools)) &&
       !matchesAny(tool.name, roleBlockedTools) &&
       !matchesAny(tool.name, runtimeDisallowedTools) &&

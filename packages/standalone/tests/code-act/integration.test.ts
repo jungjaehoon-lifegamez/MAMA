@@ -188,7 +188,16 @@ describe('Code-Act Integration', () => {
     // The first-turn-only declaration budget includes the complete owner
     // query, Drive, image translation, and delivery surface.
     // 12700->13100: trello_kanban declaration (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(13100);
+    // 13100->13500: task_external_correlation, the provenance join that keeps
+    // cross-store claims off title matching (deliberate ceiling bump).
+    // 13500->14000: mama_provenance, which is what lets a claim be traced back to
+    // the events behind it instead of asserted (deliberate ceiling bump).
+    // 14000->14400: changes_read, which is what lets the system say what IT changed
+    // and on what evidence, instead of inferring a delta from current state
+    // (deliberate ceiling bump).
+    // 14400->14500: task_update's caused_by and its cause outcome, which is the only way a
+    // Code-Act agent learns that its citation named nothing (deliberate ceiling bump).
+    expect(fullPrompt.length).toBeLessThan(14500);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

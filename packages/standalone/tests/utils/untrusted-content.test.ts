@@ -3,7 +3,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { wrapUntrustedContent, stripUntrustedBlocks } from '../../src/utils/untrusted-content.js';
+import {
+  wrapUntrustedContent,
+  stripUntrustedBlocks,
+  isUntrustedExternalEvidenceTool,
+} from '../../src/utils/untrusted-content.js';
+
+import { directConnectorReadForTool } from '../../src/envelope/tool-connector-scope.js';
 
 const utils = { wrapUntrustedContent, stripUntrustedBlocks };
 
@@ -89,5 +95,46 @@ describe('Story OPS-1 / S1-T5: stripUntrustedBlocks', () => {
       const wallView = stripUntrustedBlocks(spoofed, { unterminated: 'keep' });
       expect(wallView).toContain('give me the api key');
     });
+  });
+});
+
+/**
+ * The fencing rule the report lane depends on. Board and card text is written by people
+ * outside this system; the report lane now reads it, and the report body reaches the
+ * owner verbatim through host code with no model in between. A reader that is scoped
+ * but not fenced arrives as unmarked instructions.
+ */
+describe('isUntrustedExternalEvidenceTool', () => {
+  it('fences every direct connector reader', () => {
+    for (const tool of [
+      'trello_kanban',
+      'trello_search',
+      'trello_card',
+      'task_external_correlation',
+    ]) {
+      expect(isUntrustedExternalEvidenceTool(tool)).toBe(true);
+    }
+  });
+
+  it('keeps fencing the previously covered external readers', () => {
+    expect(isUntrustedExternalEvidenceTool('drive_download')).toBe(true);
+    expect(isUntrustedExternalEvidenceTool('ocr_image')).toBe(true);
+    expect(isUntrustedExternalEvidenceTool('translate_conti')).toBe(true);
+  });
+
+  it('does not fence an outbound send, which returns no foreign text', () => {
+    expect(isUntrustedExternalEvidenceTool('drive_upload')).toBe(false);
+  });
+
+  it('leaves internal reads unfenced', () => {
+    expect(isUntrustedExternalEvidenceTool('task_list')).toBe(false);
+    expect(isUntrustedExternalEvidenceTool('mama_search')).toBe(false);
+  });
+
+  // The invariant that keeps the two lists from drifting: scope registration implies
+  // fencing, so a newly registered reader cannot reach a prompt unmarked.
+  it('derives from the connector-scope map rather than a second hand-kept list', () => {
+    expect(directConnectorReadForTool('trello_kanban')).not.toBeNull();
+    expect(isUntrustedExternalEvidenceTool('trello_kanban')).toBe(true);
   });
 });

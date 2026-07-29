@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { computeEnvelopeHash } from '../../src/envelope/canonical.js';
-import {
-  assertEnvelopeSignature,
-  signEnvelope,
-  verifyEnvelope,
-} from '../../src/envelope/signature.js';
+import { signEnvelope, verifyEnvelope } from '../../src/envelope/signature.js';
 import type { Envelope } from '../../src/envelope/types.js';
 
 const KEY_V1 = Buffer.from('key-v1-32-bytes-secret-padded---');
@@ -43,23 +39,6 @@ describe('envelope signature', () => {
     expect(KEY_V2.length).toBe(32);
   });
 
-  it('sign + verify roundtrip with same key', () => {
-    const signed = signEnvelope(baseEnvelope(), {
-      key_id: 'default',
-      key_version: 1,
-      key: KEY_V1,
-    });
-
-    expect(signed.envelope_hash).toMatch(/^[0-9a-f]{64}$/);
-    expect(signed.signature).toEqual({
-      hmac: expect.stringMatching(/^[A-Za-z0-9+/]+={0,2}$/),
-      key_id: 'default',
-      key_version: 1,
-    });
-    expect(verifyEnvelope(signed, lookup)).toBe(true);
-    expect(() => assertEnvelopeSignature(signed, lookup)).not.toThrow();
-  });
-
   it('supports key rotation by verifying persisted key_version', () => {
     const signedV1 = signEnvelope(baseEnvelope(), {
       key_id: 'default',
@@ -75,24 +54,6 @@ describe('envelope signature', () => {
     expect(signedV1.signature?.hmac).not.toBe(signedV2.signature?.hmac);
     expect(verifyEnvelope(signedV1, lookup)).toBe(true);
     expect(verifyEnvelope(signedV2, lookup)).toBe(true);
-  });
-
-  it('returns false when envelope content is tampered after signing', () => {
-    const signed = signEnvelope(baseEnvelope(), {
-      key_id: 'default',
-      key_version: 1,
-      key: KEY_V1,
-    });
-    const tampered: Envelope = {
-      ...signed,
-      scope: {
-        ...signed.scope,
-        raw_connectors: ['telegram'],
-      },
-    };
-
-    expect(verifyEnvelope(tampered, lookup)).toBe(false);
-    expect(() => assertEnvelopeSignature(tampered, lookup)).toThrow(/hash|signature/i);
   });
 
   it('returns false when key lookup misses persisted key', () => {

@@ -4,35 +4,10 @@ import type { DatabaseAdapter } from '../db-manager.js';
 import type { EntityIngestRun, EntityLineageLink } from './types.js';
 import type { EntityStoreAdapter } from './store.js';
 
-type CreateEntityIngestRunInput = Omit<
-  EntityIngestRun,
-  | 'status'
-  | 'raw_count'
-  | 'observation_count'
-  | 'candidate_count'
-  | 'reviewable_count'
-  | 'audit_run_id'
-  | 'audit_classification'
-  | 'error_reason'
-  | 'created_at'
-  | 'completed_at'
-> & {
-  id?: string;
-};
-
 type AppendEntityLineageLinkInput = Omit<
   EntityLineageLink,
   'id' | 'status' | 'created_at' | 'superseded_at'
 >;
-
-interface CompleteEntityIngestRunInput {
-  raw_count: number;
-  observation_count: number;
-  candidate_count: number;
-  reviewable_count: number;
-  audit_run_id?: string | null;
-  audit_classification?: EntityIngestRun['audit_classification'];
-}
 
 interface AdoptLineageAfterMergeInput {
   adapter?: LineageMutationAdapter;
@@ -100,116 +75,6 @@ function parseEntityLineageLinkRow(row: Record<string, unknown>): EntityLineageL
     created_at: Number(row.created_at),
     superseded_at: typeof row.superseded_at === 'number' ? row.superseded_at : null,
   };
-}
-
-export async function createEntityIngestRun(
-  input: CreateEntityIngestRunInput
-): Promise<EntityIngestRun> {
-  await initDB();
-  const adapter = getAdapter();
-  const createdAt = now();
-  const id = input.id || `eir_${randomUUID()}`;
-
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_ingest_runs (
-          id, connector, run_kind, status, scope_key, source_window_start, source_window_end,
-          raw_count, observation_count, candidate_count, reviewable_count, audit_run_id,
-          audit_classification, error_reason, created_at, completed_at
-        ) VALUES (?, ?, ?, 'running', ?, ?, ?, 0, 0, 0, 0, NULL, NULL, NULL, ?, NULL)
-      `
-    )
-    .run(
-      id,
-      input.connector,
-      input.run_kind,
-      input.scope_key,
-      input.source_window_start,
-      input.source_window_end,
-      createdAt
-    );
-
-  const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(id) as Record<
-    string,
-    unknown
-  >;
-  return parseEntityIngestRunRow(row);
-}
-
-export async function completeEntityIngestRun(
-  id: string,
-  input: CompleteEntityIngestRunInput
-): Promise<EntityIngestRun> {
-  await initDB();
-  const adapter = getAdapter();
-  const completedAt = now();
-
-  const completion = adapter
-    .prepare(
-      `
-        UPDATE entity_ingest_runs
-        SET status = 'complete',
-            raw_count = ?,
-            observation_count = ?,
-            candidate_count = ?,
-            reviewable_count = ?,
-            audit_run_id = ?,
-            audit_classification = ?,
-            error_reason = NULL,
-            completed_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(
-      input.raw_count,
-      input.observation_count,
-      input.candidate_count,
-      input.reviewable_count,
-      input.audit_run_id ?? null,
-      input.audit_classification ?? null,
-      completedAt,
-      id
-    );
-  if (completion.changes !== 1) {
-    throw new Error(`Entity ingest run not found: ${id}`);
-  }
-
-  const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(id) as Record<
-    string,
-    unknown
-  >;
-  return parseEntityIngestRunRow(row);
-}
-
-export async function failEntityIngestRun(
-  id: string,
-  errorReason: string
-): Promise<EntityIngestRun> {
-  await initDB();
-  const adapter = getAdapter();
-  const completedAt = now();
-
-  const completion = adapter
-    .prepare(
-      `
-        UPDATE entity_ingest_runs
-        SET status = 'failed',
-            error_reason = ?,
-            completed_at = ?
-        WHERE id = ?
-      `
-    )
-    .run(errorReason, completedAt, id);
-  if (completion.changes !== 1) {
-    throw new Error(`Entity ingest run not found: ${id}`);
-  }
-
-  const row = adapter.prepare(`SELECT * FROM entity_ingest_runs WHERE id = ?`).get(id) as Record<
-    string,
-    unknown
-  >;
-  return parseEntityIngestRunRow(row);
 }
 
 export async function appendEntityLineageLink(
@@ -280,48 +145,6 @@ export async function appendEntityLineageLink(
   };
 }
 
-export async function supersedeEntityLineageForEntity(
-  entityId: string
-): Promise<number> {
-  await initDB();
-  const adapter = getAdapter();
-  const supersededAt = now();
-  const result = adapter
-    .prepare(
-      `
-        UPDATE entity_lineage_links
-        SET status = 'superseded',
-            superseded_at = ?
-        WHERE canonical_entity_id = ?
-          AND status = 'active'
-      `
-    )
-    .run(supersededAt, entityId);
-
-  return Number(result.changes ?? 0);
-}
-
-export async function seedLineageForEntityMaterialization(input: {
-  canonical_entity_id: string;
-  entity_observation_id: string;
-  run_id?: string | null;
-  confidence?: number;
-  capture_mode?: EntityLineageLink['capture_mode'];
-}): Promise<EntityLineageLink> {
-  const result = await appendEntityLineageLink({
-    canonical_entity_id: input.canonical_entity_id,
-    entity_observation_id: input.entity_observation_id,
-    source_entity_id: null,
-    contribution_kind: 'seed',
-    run_id: input.run_id ?? null,
-    candidate_id: null,
-    review_action_id: null,
-    capture_mode: input.capture_mode ?? 'direct',
-    confidence: input.confidence ?? 1,
-  });
-  return result.link;
-}
-
 function runLineageTransaction<T>(adapter: LineageMutationAdapter, fn: () => T): T {
   const savepoint = `adopt_lineage_${randomUUID().replace(/-/g, '')}`;
   adapter.prepare(`SAVEPOINT ${savepoint}`).run();
@@ -342,18 +165,6 @@ function runLineageTransaction<T>(adapter: LineageMutationAdapter, fn: () => T):
     }
     throw error;
   }
-}
-
-export async function adoptLineageAfterMerge(
-  input: AdoptLineageAfterMergeInput
-): Promise<EntityLineageLink[]> {
-  if (!input.adapter) {
-    await initDB();
-    const adapter = getAdapter();
-    return adoptLineageAfterMergeSync({ ...input, adapter });
-  }
-
-  return adoptLineageAfterMergeSync(input as AdoptLineageAfterMergeSyncInput);
 }
 
 export function adoptLineageAfterMergeSync(

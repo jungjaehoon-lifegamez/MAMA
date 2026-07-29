@@ -1,6 +1,6 @@
 # Performance Characteristics
 
-**FR Reference:** [FR36-40 (Performance Requirements)](../reference/fr-mapping.md)
+**FR Reference:** [FR36-40 (Performance Requirements)](../archive/fr-mapping-v1.0.md)
 
 This document explains MAMA's performance characteristics, design choices, and how to optimize for your use case.
 
@@ -19,10 +19,10 @@ MAMA is designed to be **non-blocking** and **fast**. All operations complete wi
 
 **FR References:**
 
-- [FR36](../reference/fr-mapping.md) - Hook latency
-- [FR37](../reference/fr-mapping.md) - Embedding speed
-- [FR38](../reference/fr-mapping.md) - Search speed
-- [FR39](../reference/fr-mapping.md) - Save speed
+- [FR36](../archive/fr-mapping-v1.0.md) - Hook latency
+- [FR37](../archive/fr-mapping-v1.0.md) - Embedding speed
+- [FR38](../archive/fr-mapping-v1.0.md) - Search speed
+- [FR39](../archive/fr-mapping-v1.0.md) - Save speed
 
 ---
 

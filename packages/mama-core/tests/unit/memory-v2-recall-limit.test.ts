@@ -15,6 +15,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const tmpDir = mkdtempSync(join(tmpdir(), 'recall-limit-'));
+// Captured before the override so afterAll can put them back. `singleFork: true` means every
+// test file shares one process, so a module-level env write outlives this file and decides
+// how unrelated files behave - which is exactly what happened: embeddings-prefix started
+// failing when a deletion elsewhere changed the file ORDER, not because anything it tests
+// had changed.
+const ORIGINAL_DB_PATH = process.env.MAMA_DB_PATH;
+const ORIGINAL_FORCE_TIER_3 = process.env.MAMA_FORCE_TIER_3;
 process.env.MAMA_DB_PATH = join(tmpDir, 'test-memory.db');
 process.env.MAMA_FORCE_TIER_3 = 'true';
 
@@ -39,6 +46,13 @@ describe('recallMemory limit', () => {
   afterAll(async () => {
     await closeDB();
     rmSync(tmpDir, { recursive: true, force: true });
+    for (const [key, original] of [
+      ['MAMA_DB_PATH', ORIGINAL_DB_PATH],
+      ['MAMA_FORCE_TIER_3', ORIGINAL_FORCE_TIER_3],
+    ] as const) {
+      if (original === undefined) delete process.env[key];
+      else process.env[key] = original;
+    }
   });
 
   it('returns at most options.limit memories', async () => {

@@ -12,22 +12,47 @@ import type {
   GatewayConfig,
   MessageSource,
 } from './types.js';
-import { MessageRouter } from './message-router.js';
+// Contract only. Importing the concrete router here - even as a type - is what let the
+// inversion be true of one gateway and false of the class every gateway inherits from.
+import type { SessionDirectory, TurnProcessor } from './turn-contract.js';
 
 export interface BaseGatewayOptions {
-  messageRouter: MessageRouter;
+  /**
+   * How a turn is processed. Required, because this is what a user-facing surface
+   * actually needs; the concrete router is an extra capability, not the dependency.
+   */
+  turnProcessor: TurnProcessor;
+  /**
+   * Optional, and narrow. Only surfaces that read session data for their own display
+   * concerns - naming a channel, listing what is active - ask for this. It is not a
+   * router: a surface that serves turns cannot reach past the contract through it.
+   */
+  sessionDirectory?: SessionDirectory;
   config?: Partial<GatewayConfig>;
 }
 
 export abstract class BaseGateway implements Gateway {
   abstract readonly source: MessageSource;
 
-  protected messageRouter: MessageRouter;
+  protected sessionDirectory?: SessionDirectory;
+  /**
+   * The turn seam, shared by every user-facing surface.
+   *
+   * Telegram, Discord and Slack are ONE role - the place a person reaches the agent - so
+   * the boundary belongs here rather than to any one of them. Connectors are not turn
+   * sources at all; they are data the agent reads, and they never pass through here.
+   *
+   * Required: a surface that serves turns needs this and nothing else.
+   */
+  protected turnProcessor: TurnProcessor;
   protected eventHandlers: GatewayEventHandler[] = [];
   protected connected = false;
 
   constructor(options: BaseGatewayOptions) {
-    this.messageRouter = options.messageRouter;
+    this.sessionDirectory = options.sessionDirectory;
+    // No adaptation, no cast: the contract is the dependency, so a caller that does not
+    // satisfy it is a compile error rather than something quietly wrapped at runtime.
+    this.turnProcessor = options.turnProcessor;
   }
 
   // === Abstract methods — platform-specific ===

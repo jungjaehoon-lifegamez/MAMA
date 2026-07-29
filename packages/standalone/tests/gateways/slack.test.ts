@@ -35,13 +35,24 @@ vi.mock('@slack/web-api', () => {
   };
 });
 
-// Mock MessageRouter
+// Implements the turn contract, and the router methods this surface reads for display.
+// A double with only the old router method would have forced the base to adapt at
+// runtime - the escape hatch the seam exists to remove.
+const turnResult = {
+  outcome: 'completed' as const,
+  response: 'Test response',
+  duration: 100,
+  sessionId: 'session-123',
+  injectedDecisions: [],
+  provenance: { status: 'available' as const, modelRunId: 'run_test' },
+  sourceTurnId: 'turn_test',
+  sourceMessageRef: 'slack:test:turn_test',
+};
 const mockMessageRouter = {
-  process: vi.fn().mockResolvedValue({
-    response: 'Test response',
-    duration: 100,
-    sessionId: 'session-123',
-  }),
+  processTurn: vi.fn().mockResolvedValue(turnResult),
+  process: vi.fn().mockResolvedValue(turnResult),
+  listSessions: vi.fn().mockReturnValue([]),
+  updateChannelName: vi.fn().mockReturnValue(false),
 } as unknown as MessageRouter;
 
 describe('SlackGateway', () => {
@@ -52,7 +63,7 @@ describe('SlackGateway', () => {
     gateway = new SlackGateway({
       botToken: 'xoxb-test-token',
       appToken: 'xapp-test-token',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
   });
 
@@ -74,7 +85,7 @@ describe('SlackGateway', () => {
       const gatewayWithConfig = new SlackGateway({
         botToken: 'xoxb-test',
         appToken: 'xapp-test',
-        messageRouter: mockMessageRouter,
+        turnProcessor: mockMessageRouter,
         config: {
           channels: {
             C123: { requireMention: false },
@@ -203,7 +214,7 @@ describe('SlackGateway Configuration', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
       config: {
         channels: {
           general: { requireMention: true },
@@ -225,7 +236,7 @@ describe('SlackGateway Message Handling', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
 
     expect(gateway.source).toBe('slack');
@@ -238,7 +249,7 @@ describe('SlackGateway Message Handling', () => {
     const gateway = new SlackGateway({
       botToken: 'xoxb-test',
       appToken: 'xapp-test',
-      messageRouter: mockMessageRouter,
+      turnProcessor: mockMessageRouter,
     });
 
     // Thread response behavior tested through integration

@@ -7,7 +7,6 @@ import {
   type EntityAlias,
   type EntityNode,
   type EntityObservation,
-  type EntityTimelineEvent,
 } from './types.js';
 
 export interface EntityStoreAdapter {
@@ -42,13 +41,6 @@ type AttachEntityAliasInput = Omit<EntityAlias, 'created_at'>;
 type ObservationContextKeyColumn = (typeof OBSERVATION_CONTEXT_KEY_COLUMNS)[number];
 type UpsertEntityObservationInput = Omit<EntityObservation, 'created_at'> &
   Partial<Record<ObservationContextKeyColumn, string | null>>;
-type AppendEntityTimelineEventInput = {
-  event: Omit<EntityTimelineEvent, 'id' | 'created_at'> & {
-    id?: string;
-    created_at?: number;
-  };
-  adapter?: EntityStoreAdapter;
-};
 
 export interface UpsertEntityObservationResult {
   id: string;
@@ -309,26 +301,6 @@ export function getEntityNode(
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
-}
-
-export function listEntityNodes(): EntityNode[] {
-  const adapter = getAdapter();
-  const rows = adapter
-    .prepare('SELECT * FROM entity_nodes ORDER BY created_at DESC')
-    .all() as Array<Record<string, unknown>>;
-
-  return rows.map((row) => ({
-    id: String(row.id),
-    kind: row.kind as EntityNode['kind'],
-    preferred_label: String(row.preferred_label),
-    status: row.status as EntityNode['status'],
-    scope_kind:
-      typeof row.scope_kind === 'string' ? (row.scope_kind as EntityNode['scope_kind']) : null,
-    scope_id: typeof row.scope_id === 'string' ? row.scope_id : null,
-    merged_into: typeof row.merged_into === 'string' ? row.merged_into : null,
-    created_at: Number(row.created_at),
-    updated_at: Number(row.updated_at),
-  }));
 }
 
 export async function attachEntityAlias(input: AttachEntityAliasInput): Promise<EntityAlias> {
@@ -628,55 +600,6 @@ export async function upsertEntityObservations(
     upsertOne(input);
   }
   return observations;
-}
-
-export async function appendEntityTimelineEvent(
-  input: AppendEntityTimelineEventInput
-): Promise<EntityTimelineEvent> {
-  if (!input.adapter) {
-    await initDB();
-  }
-  const adapter = input.adapter ?? getAdapter();
-  const eventId = input.event.id ?? `et_${randomUUID()}`;
-  const createdAt = input.event.created_at ?? now();
-
-  adapter
-    .prepare(
-      `
-        INSERT INTO entity_timeline_events (
-          id, entity_id, event_type, role, valid_from, valid_to, observed_at,
-          source_ref, summary, details, created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
-    )
-    .run(
-      eventId,
-      input.event.entity_id,
-      input.event.event_type,
-      input.event.role ?? null,
-      input.event.valid_from ?? null,
-      input.event.valid_to ?? null,
-      input.event.observed_at ?? null,
-      input.event.source_ref ?? null,
-      input.event.summary,
-      input.event.details ?? null,
-      createdAt
-    );
-
-  return {
-    id: eventId,
-    entity_id: input.event.entity_id,
-    event_type: input.event.event_type,
-    role: input.event.role ?? null,
-    valid_from: input.event.valid_from ?? null,
-    valid_to: input.event.valid_to ?? null,
-    observed_at: input.event.observed_at ?? null,
-    source_ref: input.event.source_ref ?? null,
-    summary: input.event.summary,
-    details: input.event.details ?? null,
-    created_at: createdAt,
-  };
 }
 
 /**

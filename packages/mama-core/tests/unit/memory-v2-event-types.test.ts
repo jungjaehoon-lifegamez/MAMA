@@ -13,16 +13,6 @@ describe('Memory auditor truth-first contracts', () => {
     expect(actions).toContain('mark_stale');
   });
 
-  it('should build a bootstrap payload shape', async () => {
-    const types = await import('../../src/memory/types.js');
-    const packet = types.createEmptyMemoryAgentBootstrap({
-      scope_context: [{ kind: 'project', id: '/repo' }],
-    });
-
-    expect(packet.scope_context[0]?.kind).toBe('project');
-    expect(packet.truth_snapshot).toEqual([]);
-  });
-
   it('should expose consult intents and ack statuses', async () => {
     const types = await import('../../src/memory/types.js');
     const ack = types.createMemoryAuditAck({ status: 'applied', action: 'save', event_ids: [] });

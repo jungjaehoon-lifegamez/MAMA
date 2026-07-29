@@ -78,37 +78,6 @@ export async function projectMemoryTruth(row: MemoryTruthRow): Promise<void> {
     );
 }
 
-export async function queryTruthByTopic(
-  topic: string,
-  options: { includeHistory?: boolean } = {}
-): Promise<MemoryTruthRow[]> {
-  await initDB();
-  const adapter = getAdapter();
-  const rows = adapter
-    .prepare(
-      `
-        SELECT mt.memory_id, mt.topic, mt.truth_status, mt.effective_summary, mt.effective_details, mt.trust_score,
-               mt.scope_refs, mt.supporting_event_ids, mt.superseded_by, mt.contradicted_by, mt.created_at, mt.updated_at,
-               d.kind
-        FROM memory_truth mt
-        LEFT JOIN decisions d ON d.id = mt.memory_id
-        WHERE mt.topic = ?
-        ORDER BY mt.updated_at DESC
-      `
-    )
-    .all(topic) as Record<string, unknown>[];
-
-  return rows
-    .map(deserializeTruthRow)
-    .filter(
-      (row) =>
-        options.includeHistory === true ||
-        (row.truth_status !== 'quarantined' &&
-          row.truth_status !== 'superseded' &&
-          row.truth_status !== 'contradicted')
-    );
-}
-
 export async function queryRelevantTruth(params: {
   query: string;
   scopes: MemoryScopeRef[];

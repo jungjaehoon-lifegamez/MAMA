@@ -2,16 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyAuditRun,
   computeAuditMetrics,
-  computeCrossLanguageRecallAt5,
   computeCrossLanguageRecallAt10,
   computeCrossLanguageRecallAtK,
   computeFalseMergeRate,
   computeOntologyViolationCount,
   computeProjectionFragmentationRate,
   FALSE_MERGE_HARD_CEILING,
-  type AuditCandidateSnapshot,
-  type AuditGoldPair,
-  type AuditMetricSummary,
 } from '../../src/entities/audit-metrics.js';
 
 function candidate(overrides: Partial<AuditCandidateSnapshot> = {}): AuditCandidateSnapshot {
@@ -81,16 +77,6 @@ describe('entity audit metrics', () => {
       expect(result.denominator).toBe(2);
       expect(result.numerator).toBe(2);
       expect(result.recall).toBe(1);
-    });
-
-    it('exposes a @5 convenience wrapper without changing the @10 result', () => {
-      const gold: AuditGoldPair[] = [
-        { canonical_id: 'gold_a', left_obs_id: 'o1', right_obs_id: 'o2' },
-      ];
-      const matches = [{ candidate_id: 'c1', matched_pair_key: 'gold_a:o1:o2', score_total: 0.42 }];
-
-      expect(computeCrossLanguageRecallAt5(gold, matches).recall).toBe(1);
-      expect(computeCrossLanguageRecallAt10(gold, matches).recall).toBe(1);
     });
   });
 

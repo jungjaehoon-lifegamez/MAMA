@@ -5,59 +5,15 @@ import type { DatabaseAdapter } from '../db-manager.js';
 import type {
   ConnectorEventIndexCursorRecord,
   ConnectorEventIndexRecord,
-  ConnectorEventSearchHit,
-  ConnectorEventStalenessStatus,
-  UpsertConnectorEventIndexCursorInput,
   UpsertConnectorEventIndexInput,
 } from './types.js';
 
 type ConnectorEventIndexAdapter = Pick<DatabaseAdapter, 'prepare' | 'transaction'>;
 
-interface ListConnectorEventsByDatetimeRangeInput {
-  fromMs: number;
-  toMs: number;
-  limit?: number;
-  connectors?: string[];
-  order?: 'asc' | 'desc';
-}
-
-interface SearchConnectorEventsOptions {
-  limit?: number;
-  connectors?: string[];
-}
-
 interface DeleteExpiredConnectorEventsInput {
   nowMs: number;
   retentionMs: number;
   connectorName?: string;
-}
-
-interface StalenessOptions {
-  nowMs: number;
-  staleAfterMs?: number;
-  stalenessWarnAfterMs?: number;
-  unhealthyAfterMs?: number;
-}
-
-const DEFAULT_RANGE_LIMIT = 100;
-const DEFAULT_SEARCH_LIMIT = 25;
-const MAX_RANGE_LIMIT = 500;
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
-const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
-const SIXTY_MINUTES_MS = 60 * 60 * 1000;
-
-function placeholders(values: readonly unknown[]): string {
-  if (values.length === 0) {
-    throw new Error('Cannot build SQL placeholders for an empty list.');
-  }
-  return values.map(() => '?').join(', ');
-}
-
-function positiveLimit(value: number | undefined, fallback: number, max = MAX_RANGE_LIMIT): number {
-  if (value === undefined) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(0, Math.floor(value)));
 }
 
 function nowIso(): string {
@@ -158,18 +114,6 @@ function mapConnectorCursorRow(row: Record<string, unknown>): ConnectorEventInde
     last_error_at: row.last_error_at === null ? null : String(row.last_error_at),
     indexed_count: Number(row.indexed_count),
   };
-}
-
-function connectorFilterSql(connectors: readonly string[] | undefined, alias = ''): string {
-  if (!connectors || connectors.length === 0) {
-    return '';
-  }
-  const prefix = alias.length > 0 ? `${alias}.` : '';
-  return ` AND ${prefix}source_connector IN (${placeholders(connectors)})`;
-}
-
-function hasOwn(input: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(input, key);
 }
 
 export function connectorEventIndexId(sourceConnector: string, sourceId: string): string {
@@ -312,79 +256,6 @@ export function getConnectorEventIndexRecord(
   return row ? mapConnectorEventIndexRow(row) : null;
 }
 
-export function listConnectorEventsByDatetimeRange(
-  adapter: ConnectorEventIndexAdapter,
-  input: ListConnectorEventsByDatetimeRangeInput
-): ConnectorEventIndexRecord[] {
-  const limit = positiveLimit(input.limit, DEFAULT_RANGE_LIMIT);
-  if (limit === 0) {
-    return [];
-  }
-
-  const order = input.order === 'desc' ? 'DESC' : 'ASC';
-  const connectors = input.connectors?.filter(Boolean) ?? [];
-  const params: unknown[] = [input.fromMs, input.toMs, ...connectors, limit];
-
-  const rows = adapter
-    .prepare(
-      `
-        SELECT *
-        FROM connector_event_index
-        WHERE event_datetime >= ?
-          AND event_datetime <= ?
-          ${connectorFilterSql(connectors)}
-        ORDER BY event_datetime ${order}, event_index_id ASC
-        LIMIT ?
-      `
-    )
-    .all(...params) as Array<Record<string, unknown>>;
-
-  return rows.map(mapConnectorEventIndexRow);
-}
-
-export function searchConnectorEventsByFTS(
-  adapter: ConnectorEventIndexAdapter,
-  query: string,
-  options: SearchConnectorEventsOptions = {}
-): ConnectorEventSearchHit[] {
-  const normalizedQuery = query.trim();
-  if (normalizedQuery.length === 0) {
-    return [];
-  }
-
-  const limit = positiveLimit(options.limit, DEFAULT_SEARCH_LIMIT, 100);
-  if (limit === 0) {
-    return [];
-  }
-
-  const connectors = options.connectors?.filter(Boolean) ?? [];
-  const params: unknown[] = [normalizedQuery, ...connectors, limit];
-
-  const rows = adapter
-    .prepare(
-      `
-        SELECT e.*, bm25(connector_event_index_fts) AS rank
-        FROM connector_event_index_fts
-        JOIN connector_event_index e
-          ON e.event_index_id = connector_event_index_fts.event_index_id
-        WHERE connector_event_index_fts MATCH ?
-          ${connectorFilterSql(connectors, 'e')}
-        ORDER BY rank ASC, e.event_datetime DESC, e.event_index_id ASC
-        LIMIT ?
-      `
-    )
-    .all(...params) as Array<Record<string, unknown> & { rank: number }>;
-
-  return rows.map((row) => {
-    const rank = Number(row.rank);
-    return {
-      ...mapConnectorEventIndexRow(row),
-      rank,
-      score: Number.isFinite(rank) ? 1 / (1 + Math.exp(rank)) : 0,
-    };
-  });
-}
-
 export function readConnectorCursor(
   adapter: ConnectorEventIndexAdapter,
   connectorName: string
@@ -401,66 +272,6 @@ export function readConnectorCursor(
     .get(connectorName) as Record<string, unknown> | undefined;
 
   return row ? mapConnectorCursorRow(row) : null;
-}
-
-export function upsertConnectorCursor(
-  adapter: ConnectorEventIndexAdapter,
-  input: UpsertConnectorEventIndexCursorInput
-): ConnectorEventIndexCursorRecord {
-  const current = readConnectorCursor(adapter, input.connector_name);
-  const merged: ConnectorEventIndexCursorRecord = {
-    connector_name: input.connector_name,
-    last_seen_timestamp_ms: input.last_seen_timestamp_ms ?? current?.last_seen_timestamp_ms ?? 0,
-    last_seen_source_id: input.last_seen_source_id ?? current?.last_seen_source_id ?? '',
-    last_sweep_at: hasOwn(input, 'last_sweep_at')
-      ? (input.last_sweep_at ?? null)
-      : (current?.last_sweep_at ?? null),
-    last_success_at: hasOwn(input, 'last_success_at')
-      ? (input.last_success_at ?? null)
-      : (current?.last_success_at ?? null),
-    last_error: hasOwn(input, 'last_error')
-      ? (input.last_error ?? null)
-      : (current?.last_error ?? null),
-    last_error_at: hasOwn(input, 'last_error_at')
-      ? (input.last_error_at ?? null)
-      : (current?.last_error_at ?? null),
-    indexed_count: input.indexed_count ?? current?.indexed_count ?? 0,
-  };
-
-  adapter
-    .prepare(
-      `
-        INSERT INTO connector_event_index_cursors (
-          connector_name, last_seen_timestamp_ms, last_seen_source_id, last_sweep_at,
-          last_success_at, last_error, last_error_at, indexed_count
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(connector_name) DO UPDATE SET
-          last_seen_timestamp_ms = excluded.last_seen_timestamp_ms,
-          last_seen_source_id = excluded.last_seen_source_id,
-          last_sweep_at = excluded.last_sweep_at,
-          last_success_at = excluded.last_success_at,
-          last_error = excluded.last_error,
-          last_error_at = excluded.last_error_at,
-          indexed_count = excluded.indexed_count
-      `
-    )
-    .run(
-      merged.connector_name,
-      merged.last_seen_timestamp_ms,
-      merged.last_seen_source_id,
-      merged.last_sweep_at,
-      merged.last_success_at,
-      merged.last_error,
-      merged.last_error_at,
-      merged.indexed_count
-    );
-
-  const saved = readConnectorCursor(adapter, input.connector_name);
-  if (!saved) {
-    throw new Error(`Failed to read connector cursor after upsert: ${input.connector_name}`);
-  }
-  return saved;
 }
 
 export function deleteExpiredConnectorEvents(
@@ -501,44 +312,6 @@ export function deleteExpiredConnectorEvents(
         .run(cutoffMs);
 
   return { rows_deleted: result.changes };
-}
-
-export function computeStalenessStatus(
-  cursor: ConnectorEventIndexCursorRecord | null,
-  options: StalenessOptions
-): ConnectorEventStalenessStatus {
-  if (!cursor) {
-    return 'never_swept';
-  }
-
-  if (cursor.last_error !== null) {
-    return 'unhealthy';
-  }
-
-  if (cursor.last_success_at === null) {
-    return 'never_swept';
-  }
-
-  const lastSuccessMs = Date.parse(cursor.last_success_at);
-  if (!Number.isFinite(lastSuccessMs)) {
-    return 'unhealthy';
-  }
-
-  const elapsedMs = options.nowMs - lastSuccessMs;
-  const staleAfterMs = options.staleAfterMs ?? FIVE_MINUTES_MS;
-  const warnAfterMs = options.stalenessWarnAfterMs ?? FIFTEEN_MINUTES_MS;
-  const unhealthyAfterMs = options.unhealthyAfterMs ?? SIXTY_MINUTES_MS;
-
-  if (elapsedMs > unhealthyAfterMs) {
-    return 'unhealthy';
-  }
-  if (elapsedMs > warnAfterMs) {
-    return 'warn';
-  }
-  if (elapsedMs > staleAfterMs) {
-    return 'stale-but-warming';
-  }
-  return 'healthy';
 }
 
 export type {

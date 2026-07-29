@@ -2,7 +2,7 @@
  * Type definitions for Heartbeat API
  */
 
-import type { CronJob, JobResult } from '../scheduler/types.js';
+import type { CronJob } from '../scheduler/types.js';
 
 // ============================================================================
 // Cron API Types
@@ -215,19 +215,5 @@ export function toApiCronJob(job: CronJob): ApiCronJob {
     last_run: job.lastRun ? job.lastRun.getTime() : null,
     next_run: job.nextRun ? job.nextRun.getTime() : null,
     channel: job.channel,
-  };
-}
-
-/**
- * Convert JobResult to ExecutionLog format
- */
-export function toExecutionLog(id: string, result: JobResult): ExecutionLog {
-  return {
-    id,
-    started_at: result.startedAt.getTime(),
-    finished_at: result.completedAt.getTime(),
-    status: result.success ? 'success' : 'failed',
-    output: result.response || null,
-    error: result.error || null,
   };
 }

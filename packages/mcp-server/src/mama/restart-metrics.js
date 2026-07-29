@@ -86,45 +86,6 @@ async function logRestartMetric(entry) {
 }
 
 /**
- * Calculate success rate from recent restarts
- *
- * @param {number} windowSize - Number of recent samples to include (default: 100)
- * @returns {number} Success rate as percentage (0-100)
- */
-function calculateSuccessRate(windowSize = 100) {
-  if (metrics.restarts.length === 0) {
-    return 0;
-  }
-
-  const recentRestarts = metrics.restarts.slice(-windowSize);
-  const successCount = recentRestarts.filter((r) => r.success).length;
-  const successRate = (successCount / recentRestarts.length) * 100;
-
-  return Math.round(successRate * 100) / 100; // Round to 2 decimal places
-}
-
-/**
- * Calculate p95 latency from recent restarts
- *
- * @param {number} windowSize - Number of recent samples to include (default: 100)
- * @returns {number} p95 latency in milliseconds
- */
-function calculateP95Latency(windowSize = 100) {
-  if (metrics.restarts.length === 0) {
-    return 0;
-  }
-
-  const recentRestarts = metrics.restarts.slice(-windowSize);
-  const latencies = recentRestarts.map((r) => r.latency_ms).sort((a, b) => a - b);
-
-  // Calculate 95th percentile index
-  const p95Index = Math.ceil(latencies.length * 0.95) - 1;
-  const p95Latency = latencies[p95Index] || 0;
-
-  return Math.round(p95Latency);
-}
-
-/**
  * Get restart metrics summary
  *
  * @param {number} windowSize - Number of recent samples to include (default: 100)
@@ -168,15 +129,6 @@ function getRestartMetrics(windowSize = 100) {
 }
 
 /**
- * Get all restart samples (for testing/debugging)
- *
- * @returns {Array<Object>} All restart samples
- */
-function getAllRestarts() {
-  return [...metrics.restarts];
-}
-
-/**
  * Clear all restart metrics (for testing)
  *
  * @returns {void}
@@ -187,9 +139,6 @@ function clearRestartMetrics() {
 
 module.exports = {
   logRestartMetric,
-  calculateSuccessRate,
-  calculateP95Latency,
   getRestartMetrics,
-  getAllRestarts,
   clearRestartMetrics,
 };

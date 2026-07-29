@@ -264,6 +264,37 @@ describe('Story M2.2: AgentLoop Model Run Context', () => {
         expect(result.response).toBe('Done');
         expect(api.commitModelRun).toHaveBeenCalledWith('mr_agent_loop', 'agent_loop completed');
         expect(api.failModelRun).not.toHaveBeenCalled();
+        // The answer stands; the handle does not. A caller must be able to tell this
+        // apart from a backend that simply produces no run - one is a durability failure
+        // to repair, the other is an ordinary capability state.
+        expect(result.modelRunId).toBeNull();
+        expect(result.modelRunProvenance).toBe('commit_failed');
+      });
+
+      it('reports an available run when the commit succeeds', async () => {
+        promptSpy.mockResolvedValueOnce({
+          response: 'Done',
+          usage: { input_tokens: 3, output_tokens: 2 },
+        });
+
+        const api = createApi();
+        const agentLoop = new AgentLoop(
+          createMockOAuthManager(),
+          {},
+          {},
+          { mamaApi: api, envelopeIssuanceMode: 'off' }
+        );
+
+        const result = await agentLoop.run('respond once', {
+          source: 'discord',
+          channelId: 'channel-1',
+          agentContext: createAgentContext(),
+          cliSessionId: 'cli-session-1',
+          resumeSession: true,
+        });
+
+        expect(result.modelRunId).toBe('mr_agent_loop');
+        expect(result.modelRunProvenance).toBe('available');
       });
     });
   });
