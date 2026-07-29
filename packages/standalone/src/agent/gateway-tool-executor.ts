@@ -143,6 +143,7 @@ import type {
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
 import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
+import { resolveCitation, type CitationOutcome } from '../evidence/cite.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -1997,6 +1998,46 @@ export class GatewayToolExecutor {
     };
   }
 
+  /**
+   * Resolve an event the agent cited, under this run's own grant.
+   *
+   * Read through the memory adapter because the event index and the task ledger live in
+   * different databases - the same reason the ledger cannot do this itself.
+   */
+  private async resolveCitedEvent(citation: string): Promise<CitationOutcome | null> {
+    try {
+      const ctx = this.getExecutionState();
+      const grant = ctx.envelope
+        ? narrowGrantToEnvelope(liveBoundaryChannels(), {
+            connectors: ctx.envelope.scope.raw_connectors ?? [],
+            scopes: ctx.envelope.scope.memory_scopes ?? [],
+          })
+        : {};
+      const { getAdapter, initDB } = (await import('@jungjaehoon/mama-core/db-manager')) as {
+        getAdapter: () => unknown;
+        initDB?: () => Promise<unknown>;
+      };
+      let adapter: unknown;
+      try {
+        adapter = getAdapter();
+      } catch {
+        if (typeof initDB !== 'function') return null;
+        await initDB();
+        adapter = getAdapter();
+      }
+      return resolveCitation(adapter as never, citation, grant);
+    } catch (error) {
+      // A citation that cannot be checked is not a citation. Failing the update over it
+      // would refuse a legitimate change because its footnote could not be verified.
+      console.error(
+        `[Citation] could not resolve '${citation}': ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return { status: 'unresolved' };
+    }
+  }
+
   private async buildTrustedMemoryWriteOptions(
     toolName: string,
     gatewayCallId: string,
@@ -3305,7 +3346,11 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
-          const { id: rawId, ...patch } = input as { id: unknown } & Record<string, unknown>;
+          const {
+            id: rawId,
+            caused_by: rawCause,
+            ...patch
+          } = input as { id: unknown; caused_by?: unknown } & Record<string, unknown>;
           // Agents routinely pass "12"; coerce, reject non-numeric with a typed error.
           const id = typeof rawId === 'string' ? Number(rawId.trim()) : (rawId as number);
           if (!Number.isInteger(id) || id <= 0) {
@@ -3316,13 +3361,23 @@ export class GatewayToolExecutor {
               false
             );
           }
+          const citation =
+            typeof rawCause === 'string' && rawCause.trim().length > 0
+              ? await this.resolveCitedEvent(rawCause)
+              : null;
+          const updated = this.taskLedger.update(id, patch as never, {
+            runId: this.getExecutionState().modelRunId ?? null,
+            // Only a citation that resolved, and that this caller could have read, becomes
+            // the recorded cause. Anything else leaves the change unattributed - truthful,
+            // and never a reason to refuse the update itself.
+            causeEventId: citation?.status === 'resolved' ? citation.eventIndexId : null,
+          });
           return {
             success: true,
-            task: serializeTaskToolRecord(
-              this.taskLedger.update(id, patch as never, {
-                runId: this.getExecutionState().modelRunId ?? null,
-              })
-            ),
+            task: serializeTaskToolRecord(updated),
+            // Told back so the agent can correct itself. A citation that silently failed
+            // would leave it believing the change was accounted for.
+            ...(citation ? { cause: citation.status } : {}),
           };
         }
         case 'task_temporal_reconcile': {
