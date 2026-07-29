@@ -13,6 +13,7 @@ import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
 import { TaskLedger } from '../../src/operator/task-ledger.js';
 import {
   buildWorkerTraceQueries,
+  LANE_OBLIGATED_TOOLS,
   buildPromotionAfterHook,
   buildTemporalWorkOrderHook,
   buildWikiAfterHook,
@@ -66,43 +67,117 @@ describe('Story S2-T3: extracted workorder hooks', () => {
       expect(queries.getTraceMaxId()).toBe(0);
       expect(queries.countObligatedTraceRowsSince(0)).toBe(0);
     });
+
+    // The obligated names are interpolated into SQL rather than bound, because they are a
+    // fixed list. Nothing outside this module supplies them today; this keeps that true.
+    it('refuses an obligated tool name that is not a bare identifier', () => {
+      expect(() =>
+        buildWorkerTraceQueries(undefined, 'worker:wiki', ["x'; DROP TABLE t--"])
+      ).toThrow(/invalid obligated tool name/);
+    });
+
+    it('accepts the per-lane lists the lanes actually use', () => {
+      for (const tools of Object.values(LANE_OBLIGATED_TOOLS)) {
+        expect(() => buildWorkerTraceQueries(undefined, 'worker:probe', tools)).not.toThrow();
+      }
+    });
   });
 
-  describe('AC #2 (R7): promotion hook keeps the memory:promoted chain alive', () => {
-    function collect() {
+  // What the run SAID against what it DID.
+  //
+  // The first version of this comment claimed the wiki lane wrote nothing for 25 days, on
+  // the strength of wiki_page_index being frozen since 2026-07-04. That was the wrong
+  // measurement point: the lane writes through the `obsidian` tool into the vault the owner
+  // has open, and it took writes minutes before this was written. What is true is narrower
+  // and is what these tests hold - the hook never checked either way.
+  describe('AC #2: a lane claim is reconciled against obligated-tool traces', () => {
+    function tracesReturning(n: number) {
+      return { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => n };
+    }
+    function collect(traceCount: number | null) {
       const actions: Array<{ action: string; target: string }> = [];
       const promoted: number[] = [];
-      const hook = buildPromotionAfterHook({
-        emitAgentAction: (action, target) => actions.push({ action, target }),
-        emitMemoryPromoted: (saved) => promoted.push(saved),
-      });
-      return { actions, promoted, hook };
+      const lines: string[] = [];
+      const unverified: string[] = [];
+      const events = {
+        emitAgentAction: (action: string, target: string) => actions.push({ action, target }),
+        emitMemoryPromoted: (saved: number) => promoted.push(saved),
+      };
+      const hook =
+        traceCount === null
+          ? buildPromotionAfterHook(events)
+          : buildPromotionAfterHook(events, {
+              traces: tracesReturning(traceCount),
+              log: (line) => lines.push(line),
+              onUnverified: (note) => unverified.push(note),
+            });
+      return { actions, promoted, lines, unverified, hook };
     }
 
-    it('PROMOTED <n> emits memory:promoted with the count', () => {
-      const { actions, promoted, hook } = collect();
-      hook(fakeWo, 'analysis complete.\nPROMOTED 3');
-      expect(promoted).toEqual([3]);
-      expect(actions).toEqual([{ action: 'promoted', target: 'promotion run: 3 saved' }]);
+    // The defect this exists to stop: a run that saved nothing, said it saved three, and
+    // woke the wiki compiler on the strength of the sentence.
+    it('does not promote on a claim no tool trace supports', () => {
+      const run = collect(0);
+      run.hook(fakeWo, 'analysis complete.\nPROMOTED 3', 0);
+      expect(run.promoted).toEqual([]);
+      expect(run.unverified[0]).toContain('claim unsupported');
     });
 
-    it('NO_UPDATE (and PROMOTED 0) emit NO memory:promoted', () => {
-      const { actions, promoted, hook } = collect();
-      hook(fakeWo, 'NO_UPDATE');
-      hook(fakeWo, 'PROMOTED 0');
-      expect(promoted).toEqual([]);
-      expect(actions.every((a) => a.action === 'no_update')).toBe(true);
+    it('promotes the MEASURED count, not the claimed one', () => {
+      const run = collect(2);
+      run.hook(fakeWo, 'PROMOTED 5', 0);
+      expect(run.promoted).toEqual([2]);
+      expect(run.lines[0]).toContain('CLAIM EXCEEDS TRACES');
+    });
+
+    it('a claim matched by traces is verified and promotes that count', () => {
+      const run = collect(3);
+      run.hook(fakeWo, 'PROMOTED 3', 0);
+      expect(run.promoted).toEqual([3]);
+      expect(run.lines[0]).toContain('verified');
+      expect(run.unverified).toEqual([]);
+    });
+
+    // "Nothing to do" and "did nothing" have to stay distinguishable, and only a tool call
+    // can tell them apart - hence contract_no_update being obligated.
+    it('flags NO_UPDATE that was never recorded through a tool', () => {
+      const run = collect(0);
+      run.hook(fakeWo, 'NO_UPDATE', 0);
+      expect(run.unverified[0]).toContain('without recording it');
+      expect(run.promoted).toEqual([]);
+    });
+
+    it('says so when no trace source is wired rather than reporting a claim as measured', () => {
+      const run = collect(null);
+      run.hook(fakeWo, 'PROMOTED 3');
+      expect(run.actions[0].target).toContain('unverified');
+      expect(run.promoted).toEqual([3]);
     });
   });
 
-  describe('AC #3: wiki hook reads the outcome', () => {
-    it('distinguishes NO_UPDATE from a completed compile', () => {
+  describe('AC #3: the wiki hook measures instead of reading prose', () => {
+    function wikiRun(traceCount: number) {
       const lines: string[] = [];
-      const hook = buildWikiAfterHook((line) => lines.push(line));
-      hook(fakeWo, 'NO_UPDATE');
-      hook(fakeWo, 'compiled 2 pages');
-      expect(lines[0]).toContain('no changes');
-      expect(lines[1]).toContain('complete');
+      const unverified: string[] = [];
+      const hook = buildWikiAfterHook((line) => lines.push(line), {
+        traces: { getTraceMaxId: () => 0, countObligatedTraceRowsSince: () => traceCount },
+        onUnverified: (note) => unverified.push(note),
+      });
+      return { lines, unverified, hook };
+    }
+
+    it('reports a compile nothing wrote as UNVERIFIED', () => {
+      const run = wikiRun(0);
+      run.hook(fakeWo, 'compiled 2 pages', 0);
+      expect(run.lines[0]).toContain('UNVERIFIED');
+      expect(run.unverified).toHaveLength(1);
+    });
+
+    it('reports a compile backed by a wiki_publish trace as verified', () => {
+      const run = wikiRun(1);
+      run.hook(fakeWo, 'compiled 2 pages', 0);
+      expect(run.lines[0]).toContain('verified');
+      expect(run.unverified).toEqual([]);
     });
   });
 
