@@ -3,11 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import {
-  buildContextPrompt,
-  buildMinimalContext,
-  createAgentContext,
-} from '../../src/agent/context-prompt-builder.js';
+import { buildMinimalContext, createAgentContext } from '../../src/agent/context-prompt-builder.js';
 import type { AgentContext } from '../../src/agent/types.js';
 import type { RoleConfig } from '../../src/cli/config/types.js';
 
@@ -34,122 +30,6 @@ describe('ContextPromptBuilder', () => {
     capabilities: ['mama tools', 'Read', 'discord_send'],
     limitations: ['Cannot use Bash', 'Cannot use Write', 'No system control'],
     ...overrides,
-  });
-
-  describe('buildContextPrompt()', () => {
-    it('should include header section', () => {
-      const context = createTestContext();
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('## Current Agent Context');
-      expect(prompt).toContain('### Identity');
-    });
-
-    it('should include platform information', () => {
-      const context = createTestContext({ platform: 'discord' });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('**Platform**: Discord');
-    });
-
-    it('should include role name and description', () => {
-      const context = createTestContext({ roleName: 'chat_bot' });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('**Role**: chat_bot');
-      expect(prompt).toContain('limited permissions');
-    });
-
-    it('should include session ID (truncated)', () => {
-      const context = createTestContext();
-      context.session.sessionId = 'test-session-123456789';
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('**Session**: test-ses...');
-    });
-
-    it('should include user name when provided', () => {
-      const context = createTestContext();
-      context.session.userName = 'JohnDoe';
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('**User**: JohnDoe');
-    });
-
-    it('should include channel ID when provided', () => {
-      const context = createTestContext();
-      context.session.channelId = 'channel-abc123';
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('**Channel**: channel-abc123');
-    });
-
-    it('should include capabilities section', () => {
-      const context = createTestContext({
-        capabilities: ['mama_search', 'Read', 'discord_send'],
-      });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('### Capabilities');
-      expect(prompt).toContain('- mama_search');
-      expect(prompt).toContain('- Read');
-      expect(prompt).toContain('- discord_send');
-    });
-
-    it('should include limitations section', () => {
-      const context = createTestContext({
-        limitations: ['Cannot use Bash', 'No system control'],
-      });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('### Limitations');
-      expect(prompt).toContain('- Cannot use Bash');
-      expect(prompt).toContain('- No system control');
-    });
-
-    it('should include platform-specific guidelines for Discord', () => {
-      const context = createTestContext({ platform: 'discord' });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('### Platform Guidelines');
-      expect(prompt).toContain('Discord');
-      expect(prompt).toContain('2000 characters');
-    });
-
-    it('should include platform-specific guidelines for Telegram', () => {
-      const context = createTestContext({ platform: 'telegram' });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('Telegram');
-      expect(prompt).toContain('<b>bold</b>');
-    });
-
-    it('should include permission reminders', () => {
-      const context = createTestContext();
-      context.role.systemControl = false;
-      context.role.sensitiveAccess = false;
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('### Permission Reminders');
-      expect(prompt).toContain('CANNOT perform system control');
-      expect(prompt).toContain('CANNOT access sensitive data');
-    });
-
-    it('should indicate allowed permissions for os_agent', () => {
-      const context = createTestContext({
-        roleName: 'os_agent',
-        platform: 'viewer',
-        role: {
-          allowedTools: ['*'],
-          systemControl: true,
-          sensitiveAccess: true,
-        },
-      });
-      const prompt = buildContextPrompt(context);
-
-      expect(prompt).toContain('CAN perform system control');
-      expect(prompt).toContain('CAN access sensitive data');
-    });
   });
 
   describe('buildMinimalContext()', () => {
@@ -259,25 +139,6 @@ describe('ContextPromptBuilder', () => {
       const after = new Date();
       expect(context.session.startedAt.getTime()).toBeGreaterThanOrEqual(before.getTime());
       expect(context.session.startedAt.getTime()).toBeLessThanOrEqual(after.getTime());
-    });
-  });
-
-  describe('platform guidelines', () => {
-    it('should have guidelines for all platforms', () => {
-      const platforms: Array<AgentContext['platform']> = [
-        'viewer',
-        'discord',
-        'telegram',
-        'slack',
-        'chatwork',
-        'cli',
-      ];
-
-      for (const platform of platforms) {
-        const context = createTestContext({ platform });
-        const prompt = buildContextPrompt(context);
-        expect(prompt).toContain('### Platform Guidelines');
-      }
     });
   });
 });

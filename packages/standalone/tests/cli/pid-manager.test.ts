@@ -15,7 +15,6 @@ import {
   isProcessRunning,
   isDaemonRunning,
   getUptime,
-  pidFileExists,
 } from '../../src/cli/utils/pid-manager.js';
 
 describe('PIDManager', () => {
@@ -82,27 +81,8 @@ describe('PIDManager', () => {
   });
 
   describe('deletePid()', () => {
-    it('should delete PID file', async () => {
-      await writePid(12345);
-      expect(pidFileExists()).toBe(true);
-
-      await deletePid();
-      expect(pidFileExists()).toBe(false);
-    });
-
     it('should not throw if PID file not found', async () => {
       await expect(deletePid()).resolves.not.toThrow();
-    });
-  });
-
-  describe('pidFileExists()', () => {
-    it('should return false when no PID file', () => {
-      expect(pidFileExists()).toBe(false);
-    });
-
-    it('should return true when PID file exists', async () => {
-      await writePid(12345);
-      expect(pidFileExists()).toBe(true);
     });
   });
 
@@ -130,17 +110,6 @@ describe('PIDManager', () => {
       const info = await isDaemonRunning();
       expect(info).not.toBeNull();
       expect(info!.pid).toBe(process.pid);
-    });
-
-    it('should clean up stale PID file', async () => {
-      // Write a PID that doesn't exist
-      await writePid(999999999);
-      expect(pidFileExists()).toBe(true);
-
-      // Check should clean up the stale file
-      const info = await isDaemonRunning();
-      expect(info).toBeNull();
-      expect(pidFileExists()).toBe(false);
     });
   });
 

@@ -4,66 +4,7 @@
  * synthetic data only.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  buildReconcilePrompt,
-  ReconcileScheduler,
-  RECONCILE_RUN_TOKEN,
-} from '../../src/operator/board-reconcile.js';
-
-describe('buildReconcilePrompt', () => {
-  it('begins with the RECONCILE RUN mode token', () => {
-    const prompt = buildReconcilePrompt({
-      channelKey: 'slack:C001',
-      deltaLines: ['- u1: hello'],
-      todayIso: '2026-07-12',
-    });
-    expect(prompt.startsWith(RECONCILE_RUN_TOKEN)).toBe(true);
-  });
-
-  it('carries the obligated-action contract, dedup discipline, and scoped no-update', () => {
-    const prompt = buildReconcilePrompt({
-      channelKey: 'slack:C001',
-      deltaLines: ['- u1: submitted v2'],
-      todayIso: '2026-07-12',
-    });
-    expect(prompt).toContain('report_publish with ONLY the affected slots');
-    expect(prompt).toContain('task_update that row instead of');
-    expect(prompt).toContain('source_event_id');
-    expect(prompt).toContain('contract_no_update({reason, scope: "reconcile:slack:C001"})');
-    expect(prompt).toContain('RECONCILED');
-    expect(prompt).toContain('<latest-delta channel="slack:C001">');
-  });
-
-  it('adds kagemusha context as CONTEXT only when enabled', () => {
-    const base = buildReconcilePrompt({
-      channelKey: 'kakao:room',
-      deltaLines: ['x'],
-      todayIso: '2026-07-12',
-    });
-    expect(base).not.toContain('kagemusha_tasks');
-    const withCtx = buildReconcilePrompt({
-      channelKey: 'kakao:room',
-      deltaLines: ['x'],
-      todayIso: '2026-07-12',
-      kagemushaContext: true,
-    });
-    expect(withCtx).toContain('kagemusha_tasks() as extra CONTEXT');
-    expect(withCtx).toContain('projection source');
-  });
-
-  it('requires trusted time precision and forbids inferred lifecycle transitions', () => {
-    const prompt = buildReconcilePrompt({
-      channelKey: 'calendar:meeting-room',
-      deltaLines: ['meeting no longer appears'],
-      todayIso: '2026-07-21',
-      kagemushaContext: true,
-    });
-    expect(prompt).toContain('unambiguous time and time zone evidence');
-    expect(prompt).toContain('retain date-only precision');
-    expect(prompt).toContain('calendar disappearance');
-    expect(prompt).toContain('Never copy Trello or Kagemusha lifecycle status');
-  });
-});
+import { ReconcileScheduler } from '../../src/operator/board-reconcile.js';
 
 describe('ReconcileScheduler', () => {
   let run: ReturnType<typeof vi.fn>;

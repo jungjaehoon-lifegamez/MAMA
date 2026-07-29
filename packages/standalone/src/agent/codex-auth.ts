@@ -15,7 +15,3 @@ export function extractCodexAuthFailure(text: string): string | null {
 
   return null;
 }
-
-export function isCodexAuthFailure(text: string): boolean {
-  return extractCodexAuthFailure(text) !== null;
-}

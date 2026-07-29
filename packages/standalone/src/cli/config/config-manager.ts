@@ -40,35 +40,6 @@ export function getConfig(): MAMAConfig {
 }
 
 /**
- * Override config values at runtime (shallow merge into cache).
- * Does NOT persist to disk — use saveConfig() for that.
- */
-export function overrideConfig(overrides: Partial<MAMAConfig>): MAMAConfig {
-  const base = getConfig();
-  _cachedConfig = {
-    ...base,
-    ...overrides,
-    prompt: overrides.prompt ? { ...base.prompt!, ...overrides.prompt } : base.prompt,
-    timeouts: overrides.timeouts ? { ...base.timeouts!, ...overrides.timeouts } : base.timeouts,
-    gateway_tuning: overrides.gateway_tuning
-      ? { ...base.gateway_tuning!, ...overrides.gateway_tuning }
-      : base.gateway_tuning,
-    io: overrides.io ? { ...base.io!, ...overrides.io } : base.io,
-    metrics: overrides.metrics ? { ...base.metrics!, ...overrides.metrics } : base.metrics,
-    token_budget: overrides.token_budget
-      ? { ...base.token_budget!, ...overrides.token_budget }
-      : base.token_budget,
-    memory_policy: overrides.memory_policy
-      ? { ...base.memory_policy!, ...overrides.memory_policy }
-      : base.memory_policy,
-    agent: overrides.agent ? { ...base.agent, ...overrides.agent } : base.agent,
-    database: overrides.database ? { ...base.database, ...overrides.database } : base.database,
-    logging: overrides.logging ? { ...base.logging, ...overrides.logging } : base.logging,
-  };
-  return _cachedConfig;
-}
-
-/**
  * Reset cached config (for testing).
  * @param useDefaults - If true, set cache to DEFAULT_CONFIG instead of null.
  */

@@ -1,12 +1,5 @@
-import { join } from 'path';
-import { existsSync, readFileSync } from 'fs';
+import { readFileSync } from 'fs';
 import { createHash } from 'node:crypto';
-
-type McpServerConfig = {
-  command?: unknown;
-  args?: unknown;
-  env?: unknown;
-};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -392,72 +385,11 @@ function tomlStringArray(values: string[]): string {
   return `[${values.map(tomlString).join(', ')}]`;
 }
 
-function tomlInlineStringTable(values: Record<string, string>): string {
-  const entries = Object.entries(values).map(([key, value]) => {
-    validateTomlString(key, 'TOML table key');
-    return `${key} = ${tomlString(value)}`;
-  });
-  return `{ ${entries.join(', ')} }`;
-}
-
 function tomlInlineQuotedStringTable(values: Record<string, string>): string {
   const entries = Object.entries(values).map(
     ([key, value]) => `${tomlString(key)} = ${tomlString(value)}`
   );
   return `{ ${entries.join(', ')} }`;
-}
-
-function mcpServersToml(mcpConfigPath: string | undefined): string[] {
-  if (!mcpConfigPath || !existsSync(mcpConfigPath)) {
-    return [];
-  }
-
-  const parsed = JSON.parse(readFileSync(mcpConfigPath, 'utf-8')) as {
-    mcpServers?: Record<string, McpServerConfig>;
-  };
-  const servers = parsed.mcpServers ?? {};
-  const lines: string[] = [];
-  for (const [name, server] of Object.entries(servers)) {
-    if (name === 'mama') {
-      continue;
-    }
-    if (typeof server.command !== 'string') {
-      continue;
-    }
-    const args = Array.isArray(server.args)
-      ? server.args.filter((arg): arg is string => typeof arg === 'string')
-      : [];
-    const env: Record<string, string> = Object.create(null) as Record<string, string>;
-    if (server.env && typeof server.env === 'object' && !Array.isArray(server.env)) {
-      for (const [name, value] of Object.entries(server.env as Record<string, unknown>)) {
-        if (typeof value === 'string') {
-          env[name] = value;
-        }
-      }
-    }
-
-    lines.push('', `[mcp_servers.${tomlString(name)}]`, `command = ${tomlString(server.command)}`);
-    if (args.length > 0) {
-      lines.push(`args = ${tomlStringArray(args)}`);
-    }
-    if (Object.keys(env).length > 0) {
-      lines.push(`env = ${tomlInlineStringTable(env)}`);
-    }
-  }
-  return lines;
-}
-
-export function buildMAMACodexConfig(mcpConfigPath?: string): string {
-  return [
-    'approval_policy = "never"',
-    'model_reasoning_effort = "high"',
-    'skip_git_repo_check = true',
-    '',
-    '# MAMA standalone uses GatewayToolExecutor/code_act for mama_* tools.',
-    '# Intentionally do not expose a direct mama MCP server here, otherwise Codex',
-    '# can bypass the agent loop and call server=mama tools directly.',
-    ...mcpServersToml(mcpConfigPath),
-  ].join('\n');
 }
 
 export function buildMAMACodexAppServerConfig(): string {
@@ -819,13 +751,4 @@ export function buildCodexAppServerLaunchConfig(
     fingerprint: fingerprintPolicy(normalizedServers),
     secretFingerprint: fingerprintPolicy(secretBindings),
   };
-}
-
-export function getLocalMCPServerEntry(): string {
-  try {
-    return require.resolve('@jungjaehoon/mama-server');
-  } catch {
-    // Fallback to monorepo-relative path for local development
-    return join(__dirname, '../../../mcp-server/src/server.js');
-  }
 }

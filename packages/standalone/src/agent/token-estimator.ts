@@ -61,20 +61,6 @@ export function countTokens(text: string): number {
 }
 
 /**
- * Check if text exceeds a token limit.
- */
-export function exceedsLimit(text: string, limit: number): boolean {
-  return countTokens(text) > limit;
-}
-
-/**
- * Check whether the real encoder is active (vs fallback).
- */
-export function isEncoderActive(): boolean {
-  return getEncoder() !== null;
-}
-
-/**
  * Reset singleton state (for testing).
  */
 export function resetTokenEstimator(): void {

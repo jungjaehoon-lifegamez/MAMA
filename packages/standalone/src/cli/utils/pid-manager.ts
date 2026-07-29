@@ -4,7 +4,7 @@
  * Manages PID file for daemon process tracking
  */
 
-import { readFile, writeFile, unlink, stat, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, unlink, mkdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 
@@ -26,13 +26,6 @@ export interface ProcessInfo {
  */
 export function getPidPath(): string {
   return expandPath(MAMA_PATHS.PID);
-}
-
-/**
- * Check if PID file exists
- */
-export function pidFileExists(): boolean {
-  return existsSync(getPidPath());
 }
 
 /**
@@ -160,26 +153,6 @@ export function getUptime(startedAt: number): string {
     return `${minutes}m ${seconds % 60}s`;
   }
   return `${seconds}s`;
-}
-
-/**
- * Get PID file modification time (for last activity tracking)
- *
- * @returns Modification timestamp or null
- */
-export async function getPidFileModTime(): Promise<number | null> {
-  const pidPath = getPidPath();
-
-  if (!existsSync(pidPath)) {
-    return null;
-  }
-
-  try {
-    const stats = await stat(pidPath);
-    return stats.mtimeMs;
-  } catch {
-    return null;
-  }
 }
 
 // Re-export expandPath for convenience
