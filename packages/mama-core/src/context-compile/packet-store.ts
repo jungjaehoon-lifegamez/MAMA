@@ -301,28 +301,6 @@ export function getContextPacket(
   return row ? mapPacketRow(row) : null;
 }
 
-export function listContextPacketsForModelRun(
-  adapter: ContextPacketAdapter,
-  modelRunId: string,
-  limit = 50
-): ContextPacketRecord[] {
-  if (!Number.isFinite(limit) || limit <= 0) {
-    return [];
-  }
-  const rows = adapter
-    .prepare(
-      `
-        SELECT *
-        FROM context_packets
-        WHERE model_run_id = ?
-        ORDER BY created_at DESC, packet_id DESC
-        LIMIT ?
-      `
-    )
-    .all(modelRunId, Math.floor(limit)) as Array<Record<string, unknown>>;
-  return rows.map((row) => mapPacketRow(row));
-}
-
 export function getContextPacketForTrustedUse(
   adapter: ContextPacketAdapter,
   input: TrustedContextPacketLookupInput

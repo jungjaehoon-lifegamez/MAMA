@@ -75,19 +75,6 @@ export class OntologyViolationError extends EntityError {
   }
 }
 
-export class MergeTargetStaleError extends EntityError {
-  readonly code = 'entity.merge_target_stale';
-  readonly doc_section = '#merge-target-stale';
-
-  constructor(context: Record<string, unknown> = {}) {
-    super({
-      message: 'Merge target is stale.',
-      context,
-      hint: 'Reload the target entity state and retry the merge against the latest version.',
-    });
-  }
-}
-
 export class EntityLabelMissingError extends EntityError {
   readonly code = 'entity.label_missing';
   readonly doc_section = '#label-missing';
@@ -97,19 +84,6 @@ export class EntityLabelMissingError extends EntityError {
       message: 'Canonical entity label is missing.',
       context,
       hint: 'Set a preferred label before projecting or displaying the entity.',
-    });
-  }
-}
-
-export class CandidateStaleError extends EntityError {
-  readonly code = 'entity.candidate_stale';
-  readonly doc_section = '#candidate-stale';
-
-  constructor(context: Record<string, unknown> = {}) {
-    super({
-      message: 'Resolution candidate is stale.',
-      context,
-      hint: 'Refresh the candidate list and review the latest evidence before acting.',
     });
   }
 }

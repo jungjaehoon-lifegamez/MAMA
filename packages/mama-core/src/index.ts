@@ -11,7 +11,6 @@
 export {
   generateEmbedding,
   generateEnhancedEmbedding,
-  generateBatchEmbeddings,
   cosineSimilarity,
   embeddingCache,
   EMBEDDING_DIM,
@@ -23,9 +22,6 @@ export {
 export { EmbeddingCache } from './embedding-cache.js';
 
 export {
-  getEmbeddingFromServer,
-  getServerStatus,
-  isServerRunning,
   getServerPort,
   DEFAULT_PORT,
   HOST,
@@ -48,7 +44,6 @@ export {
   getPreparedStmt,
   getDbPath,
   fts5Search,
-  reindexEmbeddings,
   type DatabaseAdapter as DBManagerAdapter,
   type PreparedStatement,
   type DecisionRecord,
@@ -70,10 +65,6 @@ export {
 } from './db-adapter/index.js';
 
 export {
-  getSessionDecisions,
-  incrementUsageSuccess,
-  incrementUsageFailure,
-  getDecisionById,
   traverseDecisionChain,
   DB_PATH,
   DB_DIR,
@@ -149,8 +140,6 @@ export {
   listMemoriesByModelRunId,
 } from './memory/provenance-query.js';
 export {
-  backfillLegacyMemoryProvenance,
-  backfillConnectorEventScopeMetadata,
   type BackfillResult,
   type ConnectorEventScopeBackfillInput,
 } from './memory/scope-backfill.js';
@@ -192,16 +181,8 @@ export {
   type TwinRefKind,
   type TwinScopeRef,
 } from './edges/types.js';
-export {
-  getTwinEdge,
-  insertTwinEdge,
-  listTwinEdgesForRefs,
-  mapTwinEdgeRow,
-} from './edges/store.js';
-export {
-  assertTwinRefsVisibleToScopes,
-  listVisibleTwinEdgesForRefs,
-} from './edges/ref-validation.js';
+export { getTwinEdge, listTwinEdgesForRefs, mapTwinEdgeRow } from './edges/store.js';
+export { listVisibleTwinEdgesForRefs } from './edges/ref-validation.js';
 export * from './context-compile/index.js';
 export * from './provenance/source-ref.js';
 export * from './agent-situation/index.js';
@@ -216,12 +197,9 @@ export * from './entities/read-identity.js';
 export * from './entities/audit-metrics.js';
 export * from './entities/provenance-query.js';
 export * from './entities/lineage-store.js';
-export * from './entities/lineage-backfill.js';
-export * from './entities/exact-merge-backfill.js';
 export * from './entities/entity-search.js';
 export * from './entities/entity-list.js';
 export * from './entities/entity-orphan-list.js';
-export * from './entities/entity-impact.js';
 export * from './entities/rollback-preview.js';
 export * from './entities/source-locator.js';
 export * from './entities/policy-types.js';
@@ -249,7 +227,6 @@ export {
   calculateRelevance,
   selectTopDecisions,
   formatTopNContext,
-  testRelevanceScoring,
   type DecisionWithEmbedding,
   type QueryContext,
   type FormattedContext,
@@ -267,7 +244,6 @@ export {
   detectRefinement,
   parseReasoningForRelationships,
   createEdgesFromReasoning,
-  getSupersededChainDepth,
   updateConfidence,
   VALID_EDGE_TYPES,
   type EdgeType,
@@ -280,13 +256,11 @@ export {
 } from './decision-tracker.js';
 
 export {
-  validateTier,
   checkNodeVersion,
   checkSQLite,
   checkEmbeddings,
   checkDatabase,
   getTierDescription,
-  getTierBanner,
   type TierValidation,
   type CheckResult,
   type NamedCheckResult,
@@ -297,7 +271,6 @@ export {
   logComplete,
   logFailed,
   logError,
-  logInfo,
   logLoading,
   logSearching,
 } from './progress-indicator.js';
@@ -330,8 +303,6 @@ export {
   formatLegacyContext,
   formatRecall,
   formatList,
-  formatTeaser,
-  formatInstantAnswer,
   formatTrustContext,
   ensureTokenBudget,
   estimateTokens,
@@ -353,7 +324,6 @@ export {
   calculateDurationDays,
   getEvidenceImpact,
   markOutcome,
-  onUserPromptSubmit,
   FAILURE_INDICATORS,
   SUCCESS_INDICATORS,
   PARTIAL_INDICATORS,
@@ -362,19 +332,10 @@ export {
   type OutcomeType,
 } from './outcome-tracker.js';
 
-export { injectDecisionContext } from './memory-inject.js';
-
-export {
-  analyzeIntent,
-  extractTopicKeywords,
-  type IntentResult,
-  type AnalyzeOptions,
-} from './query-intent.js';
+export { analyzeIntent, type IntentResult, type AnalyzeOptions } from './query-intent.js';
 
 export {
   generate,
-  analyzeDecision,
-  analyzeQueryIntent,
   isAvailable,
   listModels,
   DEFAULT_MODEL,
@@ -388,21 +349,9 @@ export { notifyInsight } from './notification-manager.js';
 
 export * from './cases/types.js';
 export * from './cases/store.js';
-export * from './cases/role-inference.js';
-export * from './cases/target-ref.js';
-export * from './cases/corrections.js';
-export * from './cases/sqlite-transaction.js';
-export * from './cases/live-state.js';
-export * from './cases/tombstone-sweeper.js';
-export * from './cases/merge-split.js';
-export * from './cases/membership-matcher.js';
 export * from './cases/search-rollup.js';
 export * from './cases/timeline-range.js';
 export * from './cases/wiki-page-index.js';
-export * from './cases/case-links.js';
-export * from './cases/composition-overrides.js';
-export * from './cases/freshness.js';
-export * from './cases/membership-explain.js';
 export * from './connectors/event-index.js';
 export * from './connectors/raw-query.js';
 export * from './connectors/types.js';

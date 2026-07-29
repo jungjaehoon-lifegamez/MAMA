@@ -66,25 +66,6 @@ export function insertMemoryEventInTransaction(
   return eventId;
 }
 
-export async function listMemoryEventsForTopic(topic: string): Promise<MemoryEventRecord[]> {
-  await initDB();
-  const adapter = getAdapter();
-
-  const rows = adapter
-    .prepare(
-      `
-        SELECT event_id, event_type, actor, source_turn_id, memory_id, topic,
-               scope_refs, evidence_refs, reason, created_at
-        FROM memory_events
-        WHERE topic = ?
-        ORDER BY created_at DESC, rowid DESC
-      `
-    )
-    .all(topic) as Record<string, unknown>[];
-
-  return rows.map(deserializeEvent);
-}
-
 export async function listMemoryEventsForMemory(memoryId: string): Promise<MemoryEventRecord[]> {
   await initDB();
   const adapter = getAdapter();

@@ -10,7 +10,7 @@
  * @date 2025-11-14
  */
 
-import { info, error as logError } from './debug-logger.js';
+import { info } from './debug-logger.js';
 import { getDB, updateDecisionOutcome } from './memory-store.js';
 import { updateConfidence, type EvidenceItem } from './decision-tracker.js';
 
@@ -324,56 +324,5 @@ export async function markOutcome(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to mark outcome: ${message}`);
-  }
-}
-
-/**
- * UserPromptSubmit Handler
- *
- * Task 4.4: On UserPromptSubmit, analyze user message for indicators
- * Task 4.5: If matches + recent decision (< 1 hour), mark outcome
- * Task 4.6: Extract failure_reason from user message
- * Task 4.7: Calculate duration_days
- * Task 4.8: Update decision row
- *
- * AC #3: Failure tracking (user feedback → outcome marked)
- *
- * @param hookContext - Hook context from Claude Code
- */
-export async function onUserPromptSubmit(hookContext: HookContext): Promise<void> {
-  try {
-    const userMessage = hookContext.user_message || '';
-    const sessionId = hookContext.session_id || '';
-
-    // Task 4.4: Analyze user message for outcome
-    const outcome = analyzeOutcome(userMessage);
-
-    if (!outcome) {
-      // No clear outcome detected
-      return;
-    }
-
-    // Task 4.5: Find recent decision (< 1 hour)
-    const recentDecision = getRecentDecision(sessionId);
-
-    if (!recentDecision) {
-      // No recent decision to mark
-      return;
-    }
-
-    // Task 4.6: Extract failure reason
-    const failureReason = extractFailureReason(userMessage, outcome);
-
-    // Task 4.7: Calculate duration
-    const durationDays = calculateDurationDays(recentDecision.created_at);
-
-    // Task 4.8: Mark outcome
-    await markOutcome(recentDecision.id, outcome, failureReason, durationDays);
-
-    info(`[MAMA] Outcome marked: ${recentDecision.id} → ${outcome} (${durationDays} days)`);
-  } catch (error) {
-    // Log error but don't crash hook
-    const message = error instanceof Error ? error.message : String(error);
-    logError(`[MAMA] Outcome tracking failed: ${message}`);
   }
 }

@@ -164,42 +164,6 @@ export function checkDatabase(): CheckResult {
 }
 
 /**
- * Validates MAMA tier status
- *
- * Performs all system checks and determines tier:
- * - Tier 1: All checks pass (full features)
- * - Tier 2: One or more checks fail (degraded mode)
- */
-export async function validateTier(): Promise<TierValidation> {
-  const checks: NamedCheckResult[] = [
-    {
-      name: 'Node.js',
-      ...checkNodeVersion(),
-    },
-    {
-      name: 'SQLite',
-      ...checkSQLite(),
-    },
-    {
-      name: 'Embeddings',
-      ...checkEmbeddings(),
-    },
-    {
-      name: 'Database',
-      ...checkDatabase(),
-    },
-  ];
-
-  // Determine tier: all pass = tier 1, any fail = tier 2
-  const tier = checks.every((c) => c.status === 'pass') ? 1 : 2;
-
-  return {
-    tier,
-    checks,
-  };
-}
-
-/**
  * Get user-friendly tier description
  */
 export function getTierDescription(tier: number): string {
@@ -209,29 +173,4 @@ export function getTierDescription(tier: number): string {
   };
 
   return descriptions[tier] || 'Unknown Tier';
-}
-
-/**
- * Get tier status banner
- */
-export function getTierBanner(validation: TierValidation): string {
-  const { tier, checks } = validation;
-  const failedChecks = checks.filter((c) => c.status === 'fail');
-
-  let banner = `\n┌─────────────────────────────────────────┐\n`;
-  banner += `│ MAMA Tier ${tier}: ${getTierDescription(tier).split(' - ')[0]}\n`;
-
-  if (failedChecks.length > 0) {
-    banner += `│\n`;
-    banner += `│ ⚠️  Issues detected:\n`;
-    failedChecks.forEach((check) => {
-      banner += `│ • ${check.name}: ${check.details}\n`;
-    });
-  } else {
-    banner += `│ ✅ All systems operational\n`;
-  }
-
-  banner += `└─────────────────────────────────────────┘\n`;
-
-  return banner;
 }

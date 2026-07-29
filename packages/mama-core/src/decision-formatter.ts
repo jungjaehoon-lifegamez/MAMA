@@ -504,58 +504,6 @@ function getOutcomeEmoji(outcome: string | null): string {
 }
 
 /**
- * Format context in Claude-friendly Instant Answer format
- *
- * Story 014.7.10: Claude-Friendly Context Formatting
- * AC #1: Instant Answer format with trust components
- */
-export function formatInstantAnswer(
-  decision: DecisionForFormat | null,
-  options: FormatOptions = {}
-): string | null {
-  const { maxTokens = 500 } = options;
-
-  if (!decision) {
-    return null;
-  }
-
-  // Extract quick answer (first line of decision)
-  const quickAnswer = extractQuickAnswer(decision);
-
-  if (!quickAnswer) {
-    return null;
-  }
-
-  // Extract code example (from reasoning)
-  const codeExample = extractCodeExample(decision);
-
-  // Format trust context
-  const trustSection = formatTrustContext(
-    typeof decision.trust_context === 'string'
-      ? parseTrustContext(decision.trust_context)
-      : decision.trust_context
-  );
-
-  // Build output
-  let output = `⚡ INSTANT ANSWER\n\n${quickAnswer}`;
-
-  if (codeExample) {
-    output += `\n\n${codeExample}`;
-  }
-
-  if (trustSection) {
-    output += `\n\n${trustSection}`;
-  }
-
-  // Token budget check
-  if (estimateTokens(output) > maxTokens) {
-    output = truncateToFit(output, maxTokens);
-  }
-
-  return output;
-}
-
-/**
  * Extract quick answer from decision
  */
 export function extractQuickAnswer(decision: DecisionForFormat): string | null {
@@ -684,57 +632,6 @@ export function formatTrustContext(trustCtx: TrustContext | null | undefined): s
 }
 
 /**
- * Truncate output to fit token budget
- */
-function truncateToFit(output: string, maxTokens: number): string {
-  const sections = output.split('\n\n');
-  const quickAnswer = sections[0];
-
-  let result = quickAnswer;
-  let remainingTokens = maxTokens - estimateTokens(result);
-
-  // Try to add code example
-  const codeIndex = sections.findIndex((s) => s.startsWith('```'));
-  if (codeIndex > 0) {
-    const codeSection = sections[codeIndex];
-    const codeTokens = estimateTokens(codeSection);
-
-    if (codeTokens <= remainingTokens) {
-      result += '\n\n' + codeSection;
-      remainingTokens -= codeTokens;
-    }
-  }
-
-  // Try to add trust section (trimmed if needed)
-  const trustIndex = sections.findIndex((s) => s.startsWith('━'));
-  if (trustIndex > 0 && remainingTokens > 50) {
-    const trustSection = sections[trustIndex];
-    const trustTokens = estimateTokens(trustSection);
-
-    if (trustTokens <= remainingTokens) {
-      result += '\n\n' + trustSection;
-    } else {
-      const trustLines = trustSection.split('\n');
-      let trimmed = trustLines[0] + '\n' + trustLines[1] + '\n';
-
-      for (let i = 2; i < trustLines.length - 1; i++) {
-        const line = trustLines[i] + '\n';
-        if (estimateTokens(trimmed + line) <= remainingTokens - 10) {
-          trimmed += line;
-        } else {
-          break;
-        }
-      }
-
-      trimmed += trustLines[trustLines.length - 1];
-      result += '\n\n' + trimmed;
-    }
-  }
-
-  return result;
-}
-
-/**
  * Format multiple decisions as Google-style search results
  */
 function formatTeaserList(decisions: DecisionForFormat[], topN = 3): string | null {
@@ -777,53 +674,6 @@ function formatTeaserList(decisions: DecisionForFormat[], topN = 3): string | nu
   }
 
   return output;
-}
-
-/**
- * Format decision as curiosity-inducing teaser
- */
-export function formatTeaser(decision: DecisionForFormat | null): string | null {
-  if (!decision) {
-    return null;
-  }
-
-  const timeAgo = calculateDuration(getDecisionTimestamp(decision));
-
-  // Extract preview (first 60 chars)
-  const preview =
-    decision.decision.length > 60 ? decision.decision.substring(0, 60) + '...' : decision.decision;
-
-  // Extract files from trust_context or show generic
-  let files = 'Multiple files';
-  const trustCtx =
-    typeof decision.trust_context === 'string'
-      ? parseTrustContext(decision.trust_context)
-      : decision.trust_context;
-  if (trustCtx?.source?.file) {
-    const fileStr = trustCtx.source.file;
-    const fileList = fileStr.split(',').map((f) => f.trim());
-
-    if (fileList.length === 1) {
-      files = fileList[0];
-    } else if (fileList.length === 2) {
-      files = fileList.join(', ');
-    } else {
-      files = `${fileList[0]}, ${fileList[1]} (+${fileList.length - 2})`;
-    }
-  }
-
-  const teaser = `
-💡 MAMA has related info
-
-📚 Topic: ${decision.topic}
-📖 Preview: "${preview}"
-📁 Files: ${files}
-⏰ Updated: ${timeAgo}
-
-🔍 Read more: mama.recall('${decision.topic}')
-  `.trim();
-
-  return teaser;
 }
 
 /**

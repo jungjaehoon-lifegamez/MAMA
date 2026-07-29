@@ -56,13 +56,6 @@ export function logFailed(message: string): void {
 export const logError = logFailed;
 
 /**
- * Log info message
- */
-export function logInfo(message: string): void {
-  logProgress(message, 'ℹ️');
-}
-
-/**
  * Log loading message
  */
 export function logLoading(message: string): void {

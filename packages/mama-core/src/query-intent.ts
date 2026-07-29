@@ -151,35 +151,3 @@ async function generateWithFallback(
   // Unreachable: loop always returns or throws
   throw new Error('Unexpected: all LLM tiers exhausted without result');
 }
-
-/**
- * Extract topic keywords from user message (fallback method)
- */
-export function extractTopicKeywords(userMessage: string): IntentResult {
-  const topicPatterns: Record<string, RegExp> = {
-    workflow_storage: /workflow|save|persist/i,
-    mesh_structure: /mesh|structure/i,
-    authentication: /auth|jwt|oauth|login/i,
-    testing: /test|jest|spec/i,
-    architecture: /architecture|design/i,
-    coding_style: /style|format|coding/i,
-  };
-
-  for (const [topic, pattern] of Object.entries(topicPatterns)) {
-    if (pattern.test(userMessage)) {
-      return {
-        involves_decision: true,
-        topic,
-        confidence: 0.5, // Lower confidence for keyword matching
-        reasoning: 'Keyword-based detection (LLM fallback)',
-      };
-    }
-  }
-
-  return {
-    involves_decision: false,
-    topic: null,
-    confidence: 0.0,
-    reasoning: 'No topic keywords found',
-  };
-}

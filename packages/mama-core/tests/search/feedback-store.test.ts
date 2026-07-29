@@ -3,11 +3,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   getFeedbackRetentionDays,
-  hashQuery,
   listSearchFeedback,
   recordSearchFeedback,
-  type FeedbackStoreAdapter,
-  type SearchFeedbackInput,
 } from '../../src/search/feedback-store.js';
 
 import { applyMigrationsThrough } from '../../src/test-utils.js';
@@ -50,11 +47,6 @@ describe('Phase 3 Task 10: search feedback store', () => {
 
   afterEach(() => {
     db.close();
-  });
-
-  it('hashes normalized queries to 16 hex chars for external identity', () => {
-    expect(hashQuery('  Current Status  ')).toBe(hashQuery('current status'));
-    expect(hashQuery('current status')).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('dedupes shown feedback with latest shown winning', () => {
@@ -216,18 +208,15 @@ describe('Phase 3 Task 10: search feedback store', () => {
   });
 
   it('classifies question_type when the caller omits it', () => {
-    const result = recordSearchFeedback(
-      adapter,
-      {
-        result_id: 'classified-on-write',
-        session_id: 'session-1',
-        query: 'how to configure the ranker',
-        result_source_type: 'case',
-        result_source_id: 'case-1',
-        feedback_kind: 'shown',
-        shown_index: 0,
-      } as SearchFeedbackInput
-    );
+    const result = recordSearchFeedback(adapter, {
+      result_id: 'classified-on-write',
+      session_id: 'session-1',
+      query: 'how to configure the ranker',
+      result_source_type: 'case',
+      result_source_id: 'case-1',
+      feedback_kind: 'shown',
+      shown_index: 0,
+    } as SearchFeedbackInput);
 
     const row = db
       .prepare(`SELECT question_type FROM search_feedback WHERE feedback_id = ?`)

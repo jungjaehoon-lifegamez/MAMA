@@ -1,6 +1,4 @@
-import crypto from 'node:crypto';
-
-import { MODEL_NAME, cosineSimilarity } from '../embeddings.js';
+import { cosineSimilarity } from '../embeddings.js';
 import type { DatabaseAdapter as DBManagerAdapter } from '../db-manager.js';
 
 export type AdapterLike = Pick<DBManagerAdapter, 'prepare' | 'transaction'>;
@@ -103,20 +101,11 @@ function readSchema(adapter: AdapterLike): WikiPageIndexSchema {
   };
 }
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
-
 function normalizeLimit(limit: number): number {
   if (!Number.isFinite(limit)) {
     return 10;
   }
   return Math.max(0, Math.floor(limit));
-}
-
-function pageIdForSourceLocator(sourceLocator: string): string {
-  const digest = crypto.createHash('sha256').update(sourceLocator).digest('hex').slice(0, 24);
-  return `wiki_page_${digest}`;
 }
 
 function parseJsonArray(value: unknown): string[] {
@@ -169,19 +158,6 @@ function rowToRecord(row: WikiPageIndexRow): WikiPageIndexRecord {
   };
 }
 
-function selectByLocator(
-  adapter: AdapterLike,
-  schema: WikiPageIndexSchema,
-  sourceLocator: string
-): WikiPageIndexRecord | null {
-  const sql = schema.hasIdColumn
-    ? 'SELECT * FROM wiki_page_index WHERE source_locator = ?'
-    : 'SELECT rowid AS id, * FROM wiki_page_index WHERE source_locator = ?';
-
-  const row = adapter.prepare(sql).get(sourceLocator) as WikiPageIndexRow | undefined;
-  return row ? rowToRecord(row) : null;
-}
-
 function selectByFtsPageId(
   adapter: AdapterLike,
   schema: WikiPageIndexSchema,
@@ -196,10 +172,6 @@ function selectByFtsPageId(
   return row ? rowToRecord(row) : null;
 }
 
-function vectorToBuffer(embedding: Float32Array): Buffer {
-  return Buffer.from(embedding.buffer, embedding.byteOffset, embedding.byteLength);
-}
-
 function blobToVector(value: unknown): Float32Array | null {
   if (!(value instanceof Uint8Array)) {
     return null;
@@ -212,48 +184,6 @@ function blobToVector(value: unknown): Float32Array | null {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value);
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
   return new Float32Array(arrayBuffer);
-}
-
-function upsertEmbedding(
-  adapter: AdapterLike,
-  schema: WikiPageIndexSchema,
-  record: WikiPageIndexRecord,
-  input: UpsertWikiPageIndexInput
-): void {
-  if (!input.embedding) {
-    return;
-  }
-
-  const vector = vectorToBuffer(input.embedding);
-  const model = input.embedding_model ?? MODEL_NAME;
-  const dim = input.embedding.length;
-
-  if (schema.embeddingUsesWikiPageId && schema.embeddingUsesVector) {
-    adapter
-      .prepare(
-        `
-          INSERT INTO wiki_page_embeddings(wiki_page_id, vector, model, dim, created_at)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(wiki_page_id) DO UPDATE SET
-            vector = excluded.vector,
-            model = excluded.model,
-            dim = excluded.dim
-        `
-      )
-      .run(record.id, vector, model, dim, nowIso());
-    return;
-  }
-
-  adapter
-    .prepare(
-      `
-        INSERT INTO wiki_page_embeddings(page_id, embedding)
-        VALUES (?, ?)
-        ON CONFLICT(page_id) DO UPDATE SET
-          embedding = excluded.embedding
-      `
-    )
-    .run(pageIdForSourceLocator(record.source_locator), vector);
 }
 
 function buildFtsQuery(query: string): string {
@@ -287,139 +217,6 @@ function searchTableExists(adapter: AdapterLike, tableName: string): boolean {
     .prepare("SELECT name FROM sqlite_master WHERE name = ? AND type IN ('table','virtual table')")
     .get(tableName) as { name: string } | undefined;
   return row !== undefined;
-}
-
-export function upsertWikiPageIndexEntry(
-  adapter: AdapterLike,
-  input: UpsertWikiPageIndexInput
-): { id: number; created: boolean } {
-  const schema = readSchema(adapter);
-  const existing = selectByLocator(adapter, schema, input.source_locator);
-  const updatedAt = nowIso();
-
-  return adapter.transaction(() => {
-    if (schema.hasIdColumn) {
-      adapter
-        .prepare(
-          `
-            INSERT INTO wiki_page_index (
-              source_locator, page_type, title, content, case_id, source_ids,
-              confidence, entity_refs, compiled_at, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_locator) DO UPDATE SET
-              page_type = excluded.page_type,
-              title = excluded.title,
-              content = excluded.content,
-              case_id = excluded.case_id,
-              source_ids = excluded.source_ids,
-              confidence = excluded.confidence,
-              entity_refs = excluded.entity_refs,
-              compiled_at = excluded.compiled_at,
-              updated_at = excluded.updated_at
-          `
-        )
-        .run(
-          input.source_locator,
-          input.page_type,
-          input.title,
-          input.content,
-          input.case_id ?? null,
-          JSON.stringify(input.source_ids),
-          input.confidence,
-          JSON.stringify(input.entity_refs),
-          input.compiled_at,
-          updatedAt,
-          updatedAt
-        );
-    } else if (schema.hasSourceIdsColumn && schema.hasEntityRefsColumn) {
-      adapter
-        .prepare(
-          `
-            INSERT INTO wiki_page_index (
-              page_id, source_type, source_locator, case_id, title, page_type,
-              content, confidence, source_ids, entity_refs, compiled_at, updated_at
-            )
-            VALUES (?, 'wiki_page', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_locator) DO UPDATE SET
-              case_id = excluded.case_id,
-              title = excluded.title,
-              page_type = excluded.page_type,
-              content = excluded.content,
-              confidence = excluded.confidence,
-              source_ids = excluded.source_ids,
-              entity_refs = excluded.entity_refs,
-              compiled_at = excluded.compiled_at,
-              updated_at = excluded.updated_at
-          `
-        )
-        .run(
-          pageIdForSourceLocator(input.source_locator),
-          input.source_locator,
-          input.case_id ?? null,
-          input.title,
-          input.page_type,
-          input.content,
-          input.confidence,
-          JSON.stringify(input.source_ids),
-          JSON.stringify(input.entity_refs),
-          input.compiled_at,
-          updatedAt
-        );
-    } else {
-      adapter
-        .prepare(
-          `
-            INSERT INTO wiki_page_index (
-              page_id, source_type, source_locator, case_id, title, page_type,
-              content, confidence, compiled_at, updated_at
-            )
-            VALUES (?, 'wiki_page', ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source_type, source_locator) DO UPDATE SET
-              case_id = excluded.case_id,
-              title = excluded.title,
-              page_type = excluded.page_type,
-              content = excluded.content,
-              confidence = excluded.confidence,
-              compiled_at = excluded.compiled_at,
-              updated_at = excluded.updated_at
-          `
-        )
-        .run(
-          pageIdForSourceLocator(input.source_locator),
-          input.source_locator,
-          input.case_id ?? null,
-          input.title,
-          input.page_type,
-          input.content,
-          input.confidence,
-          input.compiled_at,
-          updatedAt
-        );
-    }
-
-    const saved = selectByLocator(adapter, schema, input.source_locator);
-    if (!saved) {
-      throw new Error(`Failed to load wiki_page_index row for ${input.source_locator}.`);
-    }
-
-    upsertEmbedding(adapter, schema, saved, input);
-
-    return {
-      id: saved.id,
-      created: existing === null,
-    };
-  });
-}
-
-export function deleteWikiPageIndexEntry(
-  adapter: AdapterLike,
-  source_locator: string
-): { deleted: boolean } {
-  const result = adapter
-    .prepare('DELETE FROM wiki_page_index WHERE source_locator = ?')
-    .run(source_locator);
-  return { deleted: result.changes > 0 };
 }
 
 export function ftsSearchWikiPages(
@@ -525,29 +322,4 @@ export function vectorSearchWikiPages(
       rank,
       raw_score: entry.score,
     }));
-}
-
-export function searchWikiPages(input: {
-  adapter: AdapterLike;
-  query: string;
-  queryEmbedding?: Float32Array | null;
-  limit: number;
-}): WikiPageSearchHit[] {
-  const ftsHits = ftsSearchWikiPages(input.adapter, input.query, input.limit);
-  const vectorHits = input.queryEmbedding
-    ? vectorSearchWikiPages(input.adapter, input.queryEmbedding, input.limit)
-    : [];
-
-  const merged = new Map<number, WikiPageSearchHit>();
-  for (const hit of [...ftsHits, ...vectorHits]) {
-    const existing = merged.get(hit.record.id);
-    if (!existing || hit.raw_score > existing.raw_score) {
-      merged.set(hit.record.id, hit);
-    }
-  }
-
-  return Array.from(merged.values())
-    .sort((left, right) => right.raw_score - left.raw_score)
-    .slice(0, normalizeLimit(input.limit))
-    .map((hit, rank) => ({ ...hit, rank }));
 }
