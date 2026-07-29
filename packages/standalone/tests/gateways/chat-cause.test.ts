@@ -34,6 +34,20 @@ describe('causeFromOwnerMessage', () => {
     expect(causeFromOwnerMessage('msg_1', '   ')).toBeNull();
   });
 
+  // Found in review. A whitespace-only turn id is truthy and is not `generated:`, and the
+  // router prefixes source and channel onto it - so the ref came out non-empty
+  // (`telegram:C1:   `) and named no message at all.
+  it('refuses a whitespace-only turn id, which the ref would otherwise hide', () => {
+    expect(causeFromOwnerMessage('   ', 'telegram:C1:   ')).toBeNull();
+    expect(causeFromOwnerMessage('\t\n', 'discord:C1:\t\n')).toBeNull();
+  });
+
+  it('still accepts a turn id that merely has padding around a real id', () => {
+    expect(causeFromOwnerMessage(' msg_9182 ', 'telegram:C1:msg_9182')).toEqual({
+      causeEventIds: ['telegram:C1:msg_9182'],
+    });
+  });
+
   // Spread into the run options, so "no honest cause" leaves the field absent rather than
   // present-and-empty - the ledger treats those differently, and an empty array would claim
   // the run had a batch and it was blank.
