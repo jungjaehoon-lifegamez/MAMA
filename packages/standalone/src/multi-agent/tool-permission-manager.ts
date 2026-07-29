@@ -136,55 +136,6 @@ export class ToolPermissionManager {
   }
 
   /**
-   * Build delegation prompt for Tier 1 agents that can delegate.
-   * Lists available agents they can delegate to.
-   */
-  buildDelegationPrompt(agent: AgentPersonaConfig, allAgents: AgentPersonaConfig[]): string {
-    if (!this.canDelegate(agent)) {
-      return '';
-    }
-
-    const delegatableAgents = allAgents.filter((a) => a.id !== agent.id && a.enabled !== false);
-
-    if (delegatableAgents.length === 0) {
-      return '';
-    }
-
-    const lines: string[] = [];
-    lines.push('## Delegation');
-    lines.push('');
-    lines.push('You can delegate tasks to other agents using two modes:');
-    lines.push('');
-    lines.push('**Synchronous (wait for result):**');
-    lines.push('`DELEGATE::{agent_id}::{task description}`');
-    lines.push('');
-    lines.push('**Background (fire and forget — result notified in chat):**');
-    lines.push('`DELEGATE_BG::{agent_id}::{task description}`');
-    lines.push('Use DELEGATE_BG when you want to continue your work without waiting.');
-    lines.push('');
-    lines.push('Available agents for delegation:');
-
-    for (const a of delegatableAgents) {
-      const tier = a.tier ?? 1;
-      lines.push(`- **${a.display_name}** (ID: ${a.id}, Tier ${tier}): ${a.name}`);
-    }
-
-    lines.push('');
-    lines.push('**Rules:**');
-    lines.push("- Only delegate when the task matches another agent's expertise");
-    lines.push('- Delegation depth is limited to 1 (no re-delegation)');
-    lines.push('- Use DELEGATE_BG for independent tasks that do not block your current work');
-    lines.push(
-      '- **CRITICAL: Never invent file paths.** Always verify paths exist (via Read/Glob/Bash) ' +
-        'before including them in delegation tasks. Use exact paths from tool output ' +
-        '(pr_review_threads, gh api, etc.).'
-    );
-    lines.push('');
-
-    return lines.join('\n');
-  }
-
-  /**
    * Build mention-based delegation prompt for agents.
    * Uses <@USER_ID> format so agents delegate via Discord @mentions.
    */

@@ -1332,7 +1332,7 @@ describe('Story: Codex app-server process', () => {
       source: 'telegram',
       channelId: 'multi-agent-channel',
       tier: 1 as const,
-      allowedTools: ['mama_search', 'delegate'],
+      allowedTools: ['mama_search', 'discord_send'],
     },
   ])(
     'routes managed Codex Code-Act for $agentId through the boot-shared executor with context',

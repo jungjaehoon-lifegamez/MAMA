@@ -686,41 +686,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ threads?: ReviewThread[]; summary?: string }',
     category: 'os',
   },
-  // Delegation — Tier 1 only (Conductor can delegate tasks to other agents)
-  {
-    name: 'delegate',
-    description:
-      'Delegate a task to another agent with its own persona, tools, and persistent session. Returns the agent response.',
-    params: [
-      {
-        name: 'agentId',
-        type: 'string',
-        required: true,
-        description: 'Target agent ID (e.g., "developer", "reviewer")',
-      },
-      {
-        name: 'task',
-        type: 'string',
-        required: true,
-        description: 'Task description for the target agent',
-      },
-      {
-        name: 'background',
-        type: 'boolean',
-        required: false,
-        description: 'If true, fire-and-forget. Default: false',
-      },
-      {
-        name: 'skill',
-        type: 'string',
-        required: false,
-        description: 'Skill name to inject from ~/.mama/skills/{skill}.md',
-      },
-    ],
-    returnType:
-      '{ data: { agentId: string; response?: string; duration_ms?: number; message?: string } }',
-    category: 'os',
-  },
   // System — agent activity notices
   {
     name: 'agent_notices',
