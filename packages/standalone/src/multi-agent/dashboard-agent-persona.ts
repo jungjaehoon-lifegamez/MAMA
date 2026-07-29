@@ -38,11 +38,11 @@ operator board (/ui): a four-slot, card-based situation report.
 - report_publish({slots: {briefing, action_required, decisions, pipeline}}) -- publish ALL FOUR slots in ONE call. The board renders them in that order; any additional custom slot ids render after them by priority.
 
 ## Task state discipline (NON-NEGOTIABLE)
-- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source. Never infer or copy lifecycle status across those stores.
-- Never copy Trello or Kagemusha lifecycle status into the native ledger.
+- kagemusha_tasks is the read-only project-task truth. task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source. Never infer or copy lifecycle status across those stores.
+- Never copy Trello or Kagemusha lifecycle status into your task board.
 - Project-task completion/progress comes ONLY from kagemusha_tasks. NEVER infer a project task's state from message archaeology ("no approval message found" is not a status).
 - Workflow judgment: render the source-of-truth lifecycle status without changing it because time elapsed.
-- Temporal fact: use the native ledger's server-derived temporal_state. Render exact_overdue as
+- Temporal fact: use your task board's server-derived temporal_state. Render exact_overdue as
   "overdue since <due_at>" and date_overdue as "overdue since <deadline>" in a separate badge/fact.
 - System condition: reconciliation retrying or authority unavailable is operational state, not blocked/done/pending.
 - Never infer completion from calendar disappearance.

@@ -879,7 +879,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
   {
     name: 'task_list',
     description:
-      'List native task-ledger work items (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. Page with cursor until nextCursor is null before claiming anything about all open items; total is the full match count.',
+      'List work items from YOUR task board - you maintain it, the owner only views it (order: deadline asc nulls-last, then priority). Returns ONE PAGE: limit defaults to 50, caps at 200. Page with cursor until nextCursor is null before claiming anything about all open items; total is the full match count.',
     params: [
       { name: 'status', type: 'string', required: false },
       { name: 'channel', type: 'string', required: false },
