@@ -490,7 +490,7 @@ register({
 register({
   name: 'task_update',
   description:
-    'Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved. Pass caused_by naming the event that prompted the change -- without it the change is recorded as one the system cannot explain. The result carries cause: "resolved" | "unresolved" | "outside_grant", so a citation that named nothing tells you rather than passing silently.',
+    'Update a work item in the native task ledger by id. System workorder rows are host-managed and cannot be updated here; status "failed" is likewise reserved. Pass caused_by naming the event that prompted the change -- without it the change is recorded as one the system cannot explain. The result carries cause: "resolved" | "unresolved" (named nothing) | "outside_grant" (real, but not yours to read) | "not_checked" (this run holds no grant, or the index was unreachable - says nothing about your id) | "invalid" | "no_change" (the update moved nothing, so there was no change to attribute). NOTE: connectors whose events are indexed under a display name rather than the configured key cannot be cited yet; that is the same repair the channel backfill is for.',
   category: 'os_monitoring',
   params:
     'id (required), title?, status?, priority?, assignee?, deadline? (YYYY-MM-DD or null to clear), due_at? (RFC 3339 with explicit offset or null), latest_event?, confirmed?, caused_by? (what prompted this change: an evt_ id from a context packet, or "<connector>:<sourceId>" as the message tools return it -- e.g. kagemusha_messages gives channelId and id, so "kagemusha:<channelId>:<id>")',

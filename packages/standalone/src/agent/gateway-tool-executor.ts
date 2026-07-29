@@ -2004,7 +2004,7 @@ export class GatewayToolExecutor {
    * Read through the memory adapter because the event index and the task ledger live in
    * different databases - the same reason the ledger cannot do this itself.
    */
-  private async resolveCitedEvent(citation: string): Promise<CitationOutcome | null> {
+  private async resolveCitedEvent(citation: string): Promise<CitationOutcome> {
     try {
       const ctx = this.getExecutionState();
       const grant = ctx.envelope
@@ -2021,20 +2021,24 @@ export class GatewayToolExecutor {
       try {
         adapter = getAdapter();
       } catch {
-        if (typeof initDB !== 'function') return null;
+        if (typeof initDB !== 'function') {
+          return { status: 'not_checked', reason: 'index_unavailable' };
+        }
         await initDB();
         adapter = getAdapter();
       }
       return resolveCitation(adapter as never, citation, grant);
     } catch (error) {
-      // A citation that cannot be checked is not a citation. Failing the update over it
-      // would refuse a legitimate change because its footnote could not be verified.
+      // Failing the update over an uncheckable citation would refuse a legitimate change
+      // because its footnote could not be verified. But this is NOT `unresolved`: that
+      // status tells the agent it invented an id, and the id may have been perfectly good
+      // while the index was unreachable. The distinction is the point of having statuses.
       console.error(
-        `[Citation] could not resolve '${citation}': ${
+        `[Citation] could not check '${citation}': ${
           error instanceof Error ? error.message : String(error)
         }`
       );
-      return { status: 'unresolved' };
+      return { status: 'not_checked', reason: 'index_unavailable' };
     }
   }
 
@@ -3361,10 +3365,16 @@ export class GatewayToolExecutor {
               false
             );
           }
+          // An argument that is not a string is not a citation, and saying nothing about it
+          // leaves the agent believing it cited. Every caused_by that was supplied gets an
+          // answer, including the malformed ones.
           const citation =
-            typeof rawCause === 'string' && rawCause.trim().length > 0
-              ? await this.resolveCitedEvent(rawCause)
-              : null;
+            rawCause === undefined
+              ? null
+              : typeof rawCause === 'string' && rawCause.trim().length > 0
+                ? await this.resolveCitedEvent(rawCause)
+                : ({ status: 'invalid' } as CitationOutcome);
+          const beforeRevision = this.taskLedger.getById(id)?.revision ?? null;
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
             // Only a citation that resolved, and that this caller could have read, becomes
@@ -3372,12 +3382,15 @@ export class GatewayToolExecutor {
             // and never a reason to refuse the update itself.
             causeEventId: citation?.status === 'resolved' ? citation.eventIndexId : null,
           });
+          // An update that moved nothing records nothing, so a citation attached to it was
+          // attached to no change. Reporting `resolved` there tells the agent its
+          // attribution landed when the ledger holds no row at all - the exact silent
+          // failure this feedback channel exists to prevent.
+          const changed = beforeRevision === null || updated.revision !== beforeRevision;
           return {
             success: true,
             task: serializeTaskToolRecord(updated),
-            // Told back so the agent can correct itself. A citation that silently failed
-            // would leave it believing the change was accounted for.
-            ...(citation ? { cause: citation.status } : {}),
+            ...(citation ? { cause: changed ? citation.status : ('no_change' as const) } : {}),
           };
         }
         case 'task_temporal_reconcile': {

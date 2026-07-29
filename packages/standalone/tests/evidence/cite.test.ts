@@ -17,6 +17,9 @@ import { resolveCitation } from '../../src/evidence/cite.js';
 let db: Database.Database;
 const adapter = () => ({ prepare: (sql: string) => db.prepare(sql) }) as never;
 
+// Deliberately NOT a namespace where config keys and index channels agree by construction:
+// that is the shape the live index does NOT have for most connectors, and a fixture that
+// assumes it is why the 54%-refused defect had no failing test.
 const GRANT = { chat: ['C001'], board: ['b-1'] };
 
 beforeEach(() => {
@@ -82,14 +85,40 @@ describe('resolveCitation', () => {
     });
   });
 
-  it('treats an empty or shapeless citation as naming nothing', () => {
-    for (const value of ['', '   ', 'no-colon-and-no-evt', ':leading', 'trailing:']) {
+  it('treats a shapeless citation as naming nothing', () => {
+    for (const value of ['no-colon-and-no-evt', ':leading', 'trailing:']) {
       expect(resolveCitation(adapter(), value, GRANT), value).toEqual({ status: 'unresolved' });
     }
   });
 
-  // An empty grant reads nothing, so it can cite nothing.
-  it('resolves nothing under an empty grant', () => {
-    expect(resolveCitation(adapter(), 'evt_granted', {})).toEqual({ status: 'outside_grant' });
+  // An empty grant is not a narrow grant. Answering `outside_grant` there makes a claim
+  // about the EVENT ("you may not see that") when the truth is about the RUN ("this run
+  // holds no grant"). An earlier version pinned the wrong answer as correct.
+  it('does not judge a citation when the run holds no grant', () => {
+    expect(resolveCitation(adapter(), 'evt_granted', {})).toEqual({
+      status: 'not_checked',
+      reason: 'no_grant',
+    });
+  });
+
+  // Wrong type or empty is not "you invented an id" - the agent supplied no id at all.
+  it('separates a malformed argument from an invented id', () => {
+    expect(resolveCitation(adapter(), '', GRANT)).toEqual({ status: 'invalid' });
+    expect(resolveCitation(adapter(), '   ', GRANT)).toEqual({ status: 'invalid' });
+    expect(resolveCitation(adapter(), 'evt_does_not_exist', GRANT)).toEqual({
+      status: 'unresolved',
+    });
+  });
+
+  // "Resolved" with an id the ledger will then reject is a third way of saying nothing.
+  it('does not resolve to an empty id', () => {
+    db.prepare('INSERT INTO connector_event_index VALUES (NULL, ?, ?, ?)').run(
+      'chat',
+      'C001:nullid',
+      'C001'
+    );
+    expect(resolveCitation(adapter(), 'chat:C001:nullid', GRANT)).toEqual({
+      status: 'unresolved',
+    });
   });
 });

@@ -12,6 +12,17 @@
  * one event. So the citation is resolvable - through a join, not by string equality with
  * `event_index_id`.
  *
+ * THAT MEASUREMENT GENERALISED FROM THE ONE CONNECTOR THAT WORKS. A review re-ran it
+ * across the whole live index: 54% of events cannot be cited at all, because the grant
+ * holds config KEYS while the index's `channel` column holds display NAMES - trello 0 of
+ * 7,110, slack 0 of 732, drive 0 of 6,796. Kagemusha and calendar happen to align, and
+ * those are the ones the first measurement sampled. On the live task ledger, two thirds of
+ * tasks cannot cite an event from their own channel.
+ *
+ * This is the SAME namespace split the channel backfill exists to close, reaching the
+ * citation path. Citation is therefore gated on that repair exactly as reading is; it is
+ * not a separate defect and not separately fixable here.
+ *
  * TWO RULES, and the second is the one that matters:
  *
  *   1. A citation resolves or it does not. There is no partial credit and no fuzzy match:
@@ -30,7 +41,16 @@ export type CitationOutcome =
   /** Names nothing this system has indexed. */
   | { status: 'unresolved' }
   /** Names a real event the caller may not read. Deliberately distinct from unresolved. */
-  | { status: 'outside_grant' };
+  | { status: 'outside_grant' }
+  /**
+   * Not a verdict about the citation: this run holds no grant, or the index could not be
+   * reached. Reporting either as `unresolved` tells the agent it invented an id, and
+   * reporting them as `outside_grant` tells it the event is forbidden. Both are answers to
+   * a question that was never asked.
+   */
+  | { status: 'not_checked'; reason: 'no_grant' | 'index_unavailable' }
+  /** The argument was not a citation at all - wrong type, or empty. */
+  | { status: 'invalid' };
 
 interface CiteAdapter {
   prepare(sql: string): { get(...params: unknown[]): unknown };
@@ -58,7 +78,13 @@ export function resolveCitation(
   grant: ChannelGrant
 ): CitationOutcome {
   const trimmed = citation.trim();
-  if (trimmed.length === 0) return { status: 'unresolved' };
+  if (trimmed.length === 0) return { status: 'invalid' };
+  // An empty grant is not a narrow grant. Treating it as one makes every citation in a
+  // run that holds no grant come back as "you may not see that", which is a claim about
+  // the event rather than about the run.
+  if (Object.keys(grant).length === 0) {
+    return { status: 'not_checked', reason: 'no_grant' };
+  }
 
   const row = lookupById(adapter, trimmed) ?? lookupBySource(adapter, trimmed);
   if (!row) return { status: 'unresolved' };
@@ -68,12 +94,10 @@ export function resolveCitation(
   if (!isChannelGranted(connector, channel, grant)) {
     return { status: 'outside_grant' };
   }
-  return {
-    status: 'resolved',
-    eventIndexId: String(row.event_index_id ?? ''),
-    connector,
-    channel: channel ?? '',
-  };
+  const eventIndexId = typeof row.event_index_id === 'string' ? row.event_index_id.trim() : '';
+  // "Resolved" with an id the ledger will then reject is a third way of saying nothing.
+  if (eventIndexId.length === 0) return { status: 'unresolved' };
+  return { status: 'resolved', eventIndexId, connector, channel: channel ?? '' };
 }
 
 function lookupById(adapter: CiteAdapter, citation: string): EventRow | null {

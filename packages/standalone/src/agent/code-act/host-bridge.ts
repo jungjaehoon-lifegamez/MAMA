@@ -978,7 +978,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
     ],
     returnType:
-      "{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown }; cause?: 'resolved' | 'unresolved' | 'outside_grant' }",
+      "{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown }; cause?: 'resolved' | 'unresolved' | 'outside_grant' | 'not_checked' | 'invalid' | 'no_change' }",
     category: 'memory',
   },
   {
