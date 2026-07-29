@@ -379,7 +379,6 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'slack_send',
   'telegram_send',
   'webchat_send',
-  'delegate',
   'os_add_bot',
   'os_set_permissions',
   'os_set_model',
@@ -2159,7 +2158,7 @@ export class GatewayToolExecutor {
     if (activeDisallowed?.includes(toolName) || this.disallowedGatewayTools.has(toolName)) {
       return {
         success: false,
-        error: `Tool "${toolName}" is not available. Use delegate() to assign this work to the appropriate sub-agent.`,
+        error: `Tool "${toolName}" is not available to this run.`,
       } as GatewayToolResult;
     }
 
