@@ -171,23 +171,6 @@ export function buildPipelineFallback(projects: ProjectSummary[]): PipelineProje
     }));
 }
 
-/**
- * Build connector activity list, keeping only the latest item per connector,
- * sorted by timestamp descending.
- */
-export function buildConnectorActivity(items: ConnectorActivityItem[]): ConnectorActivityItem[] {
-  const latest = new Map<string, ConnectorActivityItem>();
-  for (const item of items) {
-    const existing = latest.get(item.connector);
-    if (!existing || new Date(item.timestamp).getTime() > new Date(existing.timestamp).getTime()) {
-      latest.set(item.connector, item);
-    }
-  }
-  return Array.from(latest.values()).sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  );
-}
-
 function parseSqliteTimestamp(value: string): number {
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)
     ? `${value.replace(' ', 'T')}Z`

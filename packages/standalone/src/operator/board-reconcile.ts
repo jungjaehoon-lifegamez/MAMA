@@ -30,35 +30,6 @@ export const RECONCILE_RUN_TOKEN = 'RECONCILE RUN';
 /** Generous: live batches run 1-30. A cap that truncates is logged, never silent. */
 const MAX_PENDING_EVENT_IDS = 500;
 
-export function buildReconcilePrompt(input: ReconcilePromptInput): string {
-  const label = input.channelLabel ?? input.channelKey;
-  const scope = `reconcile:${input.channelKey}`;
-  return [
-    `${RECONCILE_RUN_TOKEN} for channel ${label} (${input.channelKey}). Today is ${input.todayIso}.`,
-    'New messages arrived in this channel. Reconcile the operator board and the task ledger',
-    'against them. Plan (execute in order):',
-    '1. Read the delta lines below.',
-    `2. task_list() for existing work items${input.kagemushaContext ? ' and kagemusha_tasks() as extra CONTEXT (the native ledger stays the projection source)' : ''}.`,
-    '3. Judge which slots are affected (briefing / action_required / decisions / pipeline).',
-    '4. You MUST call at least ONE of: report_publish with ONLY the affected slots,',
-    '   task_create, or task_update -- when the delta concerns work that ALREADY has a',
-    '   task row (match by title or source in step 2), task_update that row instead of',
-    '   creating a near-duplicate, and pass source_channel plus source_event_id from the',
-    '   delta header so retries upsert. If NOTHING on the board or ledger is affected,',
-    `   you MUST call contract_no_update({reason, scope: "${scope}"}) instead.`,
-    '5. Finish with exactly one line: RECONCILED <comma-separated slots or none>.',
-    '',
-    'Constraints: do not rewrite unaffected slots; no mama_save; no follow-up questions.',
-    '- Set due_at only from trusted, unambiguous time and time zone evidence; otherwise retain date-only precision.',
-    '- Never infer completion from calendar disappearance.',
-    '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
-    '',
-    `<latest-delta channel="${input.channelKey}">`,
-    ...input.deltaLines,
-    '</latest-delta>',
-  ].join('\n');
-}
-
 export interface ReconcileSchedulerOptions {
   /** Trailing-edge debounce per channel. */
   debounceMs?: number;

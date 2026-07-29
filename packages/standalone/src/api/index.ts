@@ -4,7 +4,7 @@
  * Provides HTTP API for cron job management and heartbeat functionality.
  */
 
-import express, { type Express, type Router } from 'express';
+import express, { type Express } from 'express';
 import { createServer, type Server as HttpServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import type { SQLiteDatabase } from '../sqlite.js';
@@ -608,31 +608,5 @@ export function createApiServer(options: ApiServerOptions): ApiServer {
         });
       });
     },
-  };
-}
-
-/**
- * Create API routers without starting a server
- * Useful for integrating into an existing Express app
- */
-export function createApiRouters(options: ApiServerOptions): {
-  cronRouter: Router;
-  heartbeatRouter: Router;
-} {
-  const {
-    scheduler,
-    logStore = new InMemoryLogStore(),
-    heartbeatTracker = new InMemoryHeartbeatTracker(),
-    onHeartbeat,
-  } = options;
-
-  return {
-    cronRouter: createCronRouter(scheduler, logStore),
-    heartbeatRouter: createHeartbeatRouter({
-      scheduler,
-      logStore,
-      tracker: heartbeatTracker,
-      onHeartbeat,
-    }),
   };
 }

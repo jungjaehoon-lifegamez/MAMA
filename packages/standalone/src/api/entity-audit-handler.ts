@@ -1,10 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { URL } from 'node:url';
-import {
-  AuditRunInProgressError,
-  EntityAuditRunQueue,
-  type EntityAuditQueueAdapter,
-} from './entity-audit-queue.js';
+import { AuditRunInProgressError, EntityAuditRunQueue } from './entity-audit-queue.js';
 
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -127,11 +123,4 @@ export function createEntityAuditHandler(deps: EntityAuditHandlerDeps) {
       json(res, 200, { ...run, metrics });
     },
   };
-}
-
-export function buildDefaultAuditHandlerDeps(
-  adapter: EntityAuditQueueAdapter
-): EntityAuditHandlerDeps {
-  const queue = new EntityAuditRunQueue({ adapter });
-  return { queue };
 }

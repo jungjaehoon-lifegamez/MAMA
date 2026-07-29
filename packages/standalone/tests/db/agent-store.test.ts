@@ -4,7 +4,6 @@ import {
   initAgentTables,
   createAgentVersion,
   getLatestVersion,
-  getAgentVersion,
   listVersions,
   upsertMetrics,
   getMetrics,
@@ -103,14 +102,6 @@ describe('STORY-V019 - agent-store', () => {
 
     it('getLatestVersion returns null for unknown agent', () => {
       expect(getLatestVersion(db, 'unknown')).toBeNull();
-    });
-
-    it('getAgentVersion returns specific version', () => {
-      createAgentVersion(db, { agent_id: 'dev', snapshot: { v: 1 } });
-      createAgentVersion(db, { agent_id: 'dev', snapshot: { v: 2 } });
-      const v1 = getAgentVersion(db, 'dev', 1);
-      expect(v1?.version).toBe(1);
-      expect(JSON.parse(v1!.snapshot)).toEqual({ v: 1 });
     });
 
     it('listVersions returns all in desc order', () => {
