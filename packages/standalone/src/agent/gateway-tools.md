@@ -110,10 +110,6 @@ Call tools via JSON block:
 
 - **code_act**(code, allowedTools?, blockedTools?) — Execute JavaScript in sandboxed QuickJS
 
-## Multi-Agent Delegation
-
-- **delegate**(agentId, task, background?, skill?) — Delegate a task to another agent. The target agent has its own persona, tools, and persistent session. Use this to assign specialized work (coding, review, research) to the right agent. Optional `skill` loads `~/.mama/skills/{skill}.md` and prepends it to the delegation prompt. Returns the agent's response.
-
 ## System
 
 - **agent_notices**(limit?) — Get recent agent activity notices (dashboard reports, wiki compilations, delegations). Use to check what other agents have done recently.

@@ -317,11 +317,11 @@ describe('Code-Act canonical tool policy', () => {
     const policyInput: CodeActToolPolicyInput = {
       tier: 2,
       role: {
-        allowedTools: ['mama_search', 'mama_update', 'mama_save', 'Read', 'delegate'],
+        allowedTools: ['mama_search', 'mama_update', 'mama_save', 'Read', 'discord_send'],
         blockedTools: ['mama_update'],
       },
       disallowedTools: ['Read'],
-      requestedAllowedTools: ['mama_search', 'mama_update', 'mama_save', 'Read', 'delegate'],
+      requestedAllowedTools: ['mama_search', 'mama_update', 'mama_save', 'Read', 'discord_send'],
       requestedBlockedTools: ['mama_save'],
     };
     const policy = projectCodeActToolPolicy(policyInput);
@@ -346,8 +346,11 @@ describe('Code-Act canonical tool policy', () => {
     expect(withoutRoleBlock.names).toContain('mama_update');
     expect(policy.names).not.toContain('Read');
     expect(withoutRuntimeDisallow.names).toContain('Read');
-    expect(policy.names).not.toContain('delegate');
-    expect(withoutTierFilter.names).toContain('delegate');
+    // A Tier-1-only tool: neither read-only nor a memory write, so tier 2 filters it out.
+    // This assertion used `delegate` until that tool was removed for being registered and
+    // not dispatchable.
+    expect(policy.names).not.toContain('discord_send');
+    expect(withoutTierFilter.names).toContain('discord_send');
     expect(policy.names).not.toContain('mama_save');
     expect(withoutRequestedBlock.names).toContain('mama_save');
 
