@@ -113,6 +113,28 @@ export async function authorTriggers(
   return created;
 }
 
+/**
+ * How much of a trigger's memoryQuery the author pass needs to see.
+ *
+ * The list exists for ONE job, stated in the prompt itself: do not propose a variant of a
+ * trigger that already exists. Keywords decide that; the full recall instruction does not.
+ *
+ * Measured on the live registry 2026-07-30: 162 active triggers, memoryQuery averaging 1,261
+ * characters, 204 KB of the 240 KB prompt - and growing with every trigger the pass authors,
+ * which is a loop that feeds itself. One call cost $1.33 at 126,667 cache-creation tokens and
+ * took 41 seconds, every 30 minutes.
+ */
+const EXISTING_TRIGGER_QUERY_CHARS = 160;
+
+function summarizeExistingTrigger(t: TriggerRecord): string {
+  const query = t.memoryQuery ?? '';
+  const gist =
+    query.length > EXISTING_TRIGGER_QUERY_CHARS
+      ? `${query.slice(0, EXISTING_TRIGGER_QUERY_CHARS).trimEnd()}...`
+      : query;
+  return `- ${t.id}: keywords=[${t.match.keywords.join(', ')}] gist="${gist}"`;
+}
+
 export function buildAuthorPrompt(
   events: OperatorChannelEvent[],
   existing: TriggerRecord[]
@@ -120,14 +142,7 @@ export function buildAuthorPrompt(
   // English default. Personal phrasing overrides load from ~/.mama/operator/*.json (later refinement).
   const window = events.map((e) => `- [${e.channelId}] ${e.content}`).join('\n');
   const existingList =
-    existing.length === 0
-      ? '(none yet)'
-      : existing
-          .map(
-            (t) =>
-              `- ${t.id}: keywords=[${t.match.keywords.join(', ')}] memoryQuery="${t.memoryQuery}"`
-          )
-          .join('\n');
+    existing.length === 0 ? '(none yet)' : existing.map(summarizeExistingTrigger).join('\n');
   return [
     "You maintain a personal operator's library of TRIGGERS. A trigger fires on future messages",
     'that match its keywords and then recalls a memory to help the operator intervene proactively.',
@@ -305,13 +320,78 @@ export function createTriggerAgentRuntime(
   };
 }
 
+/**
+ * A run that outlives this has stopped being a 30-minute background pass.
+ *
+ * Measured: a healthy call takes ~41s. Without a bound, a hung CLI holds the tick open
+ * forever, and the report leg runs AFTER the author pass in the same tick.
+ */
+const CLAUDE_CLI_TIMEOUT_MS = 240_000;
+
+/**
+ * Run the CLI and, when it fails, say WHY.
+ *
+ * The previous version destructured `{ stdout }` and let everything else go. Node puts the
+ * cause on the rejection - `stderr`, `code`, `signal` - and none of it was read, so 193
+ * failures over the log's lifetime recorded nothing but the 240 KB command line that
+ * produced them. The tick that dies here takes the scheduled report with it (author runs at
+ * step 3, the report at step 5), so an undiagnosable failure here is a silently missing
+ * owner report.
+ */
 async function executeClaudeCLI(
   file: string,
   args: string[],
   options: { maxBuffer: number }
 ): Promise<{ stdout: string }> {
-  const { stdout } = await execFileAsync(file, args, options);
-  return { stdout: String(stdout) };
+  try {
+    const { stdout } = await execFileAsync(file, args, {
+      ...options,
+      timeout: CLAUDE_CLI_TIMEOUT_MS,
+    });
+    return { stdout: String(stdout) };
+  } catch (error) {
+    throw new Error(describeCliFailure(file, error));
+  }
+}
+
+/**
+ * One line naming the failure, with the command line left OUT.
+ *
+ * Node's own message embeds the whole argv, which here is the 240 KB prompt - that is what
+ * made every past failure unreadable in the log without telling anyone anything.
+ */
+export function describeCliFailure(file: string, error: unknown): string {
+  const e = (error ?? {}) as {
+    code?: unknown;
+    signal?: unknown;
+    killed?: boolean;
+    stderr?: unknown;
+    stdout?: unknown;
+    message?: unknown;
+  };
+  const parts: string[] = [`${file} failed`];
+  if (e.killed === true || e.signal) {
+    parts.push(`killed (signal=${String(e.signal ?? 'unknown')}) - likely the timeout`);
+  }
+  if (e.code !== undefined && e.code !== null) {
+    parts.push(`exit=${String(e.code)}`);
+  }
+
+  const tail = (value: unknown, label: string): void => {
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (text) {
+      parts.push(`${label}=${text.slice(-400)}`);
+    }
+  };
+  tail(e.stderr, 'stderr');
+  // The CLI reports API errors on stdout, so an empty stderr is not an absent cause.
+  tail(e.stdout, 'stdout');
+
+  if (parts.length === 1 && typeof e.message === 'string') {
+    // Last resort. Strip the embedded argv so the log stays readable.
+    parts.push(e.message.split('\n')[0].slice(0, 300));
+  }
+  return parts.join(' | ');
 }
 
 // ---- helpers ----
