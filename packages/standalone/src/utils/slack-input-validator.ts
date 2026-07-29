@@ -3,7 +3,23 @@
  * Prevents injection attacks and validates event structure
  */
 
-import type { SlackMentionEvent } from '../multi-agent/slack-multi-bot-manager.js';
+/**
+ * The Slack event shape this validator normalises to.
+ *
+ * Was imported from the multi-bot manager, which is gone: multi-bot never activated on
+ * this install (`multi_agent.enabled` false, zero handler traces in the whole log
+ * history). The shape belongs to Slack, not to that manager.
+ */
+export interface SlackMentionEvent {
+  type: string;
+  channel: string;
+  user: string;
+  text: string;
+  ts: string;
+  thread_ts?: string;
+  bot_id?: string;
+  channel_type?: string;
+}
 
 export interface SlackEventValidationError extends Error {
   name: 'SlackEventValidationError';

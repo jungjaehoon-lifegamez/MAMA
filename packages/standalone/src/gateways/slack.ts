@@ -19,8 +19,6 @@ import type {
 import { downloadFile, buildContentBlocks } from './attachment-utils.js';
 import type { TurnProcessor } from './turn-contract.js';
 import type { MultiAgentConfig } from '../cli/config/types.js';
-import type { MultiAgentRuntimeOptions } from '../multi-agent/types.js';
-import { MultiAgentSlackHandler } from '../multi-agent/multi-agent-slack.js';
 import { getChannelHistory } from './channel-history.js';
 import { createSafeLogger } from '../utils/log-sanitizer.js';
 import { ToolStatusTracker } from './tool-status-tracker.js';
@@ -65,7 +63,6 @@ export interface SlackGatewayOptions {
   /** Multi-agent configuration (optional) */
   multiAgentConfig?: MultiAgentConfig;
   /** Multi-agent runtime backend options (optional) */
-  multiAgentRuntime?: MultiAgentRuntimeOptions;
 }
 
 /**
@@ -82,8 +79,6 @@ export class SlackGateway extends BaseGateway {
   private config: SlackGatewayConfig;
 
   // Multi-agent support
-  private multiAgentHandler: MultiAgentSlackHandler | null = null;
-  private multiAgentRuntime?: MultiAgentRuntimeOptions;
   private botToken: string;
 
   // Dedup: prevent double processing from app_mention + message events
@@ -102,7 +97,6 @@ export class SlackGateway extends BaseGateway {
   constructor(options: SlackGatewayOptions) {
     super({ turnProcessor: options.turnProcessor });
     this.botToken = options.botToken;
-    this.multiAgentRuntime = options.multiAgentRuntime;
     this.config = {
       enabled: true,
       botToken: options.botToken,
@@ -120,17 +114,8 @@ export class SlackGateway extends BaseGateway {
     // Create Web client for API calls
     this.webClient = new WebClient(options.botToken);
 
-    // Initialize multi-agent handler if configured
-    if (options.multiAgentConfig?.enabled) {
-      this.multiAgentHandler = new MultiAgentSlackHandler(
-        options.multiAgentConfig,
-        {
-          dangerouslySkipPermissions: options.multiAgentConfig.dangerouslySkipPermissions ?? true,
-        },
-        options.multiAgentRuntime
-      );
-      this.logger.log('Multi-agent mode enabled');
-    }
+    // Multi-agent handler construction was here. Gated on `multi_agent.enabled`, false on
+    // this install, with zero handler traces in the entire log history.
 
     this.setupEventListeners();
   }
@@ -143,25 +128,6 @@ export class SlackGateway extends BaseGateway {
     this.socketClient.on('connected', async () => {
       this.logger.log('Gateway connected via Socket Mode');
       this.connected = true;
-
-      // Get bot identity and initialize multi-agent bots
-      if (this.multiAgentHandler) {
-        try {
-          const authResult = await this.webClient.auth.test();
-          const userId = authResult.user_id as string;
-          const botId = authResult.bot_id as string;
-          this.multiAgentHandler.setBotUserId(userId);
-          this.multiAgentHandler.setMainBotId(botId);
-          this.multiAgentHandler.setMainBotToken(this.botToken);
-          this.multiAgentHandler.setMainWebClient(this.webClient);
-          // Initialize agent-specific bots (async, don't block)
-          this.multiAgentHandler.initializeMultiBots().catch((err) => {
-            this.logger.error('Failed to initialize multi-bots:', err);
-          });
-        } catch (err) {
-          this.logger.error('auth.test failed:', err);
-        }
-      }
 
       this.emitEvent({
         type: 'connected',
@@ -262,80 +228,8 @@ export class SlackGateway extends BaseGateway {
       isBot: !!event.bot_id,
     });
 
-    // Multi-agent mode: detect messages from our bots (main or agent)
-    if (event.bot_id && this.multiAgentHandler) {
-      const multiBotManager = this.multiAgentHandler.getMultiBotManager();
-      const agentBotId = multiBotManager.isFromAgentBot(event.bot_id);
-
-      if (agentBotId) {
-        // Message from one of our bots (main or agent)
-
-        // Update history entry with agent display name
-        const agentForHistory = this.multiAgentHandler
-          .getOrchestrator()
-          .getAgent(
-            agentBotId === 'main' ? (multiBotManager.getMainBotAgentId() ?? agentBotId) : agentBotId
-          );
-        if (agentForHistory) {
-          channelHistory.updateSender(event.channel, event.ts, agentForHistory.display_name);
-        }
-
-        // Record to shared context (non-main agent bots)
-        if (agentBotId !== 'main') {
-          const agent = this.multiAgentHandler.getOrchestrator().getAgent(agentBotId);
-          if (agent) {
-            this.multiAgentHandler
-              .getSharedContext()
-              .recordAgentMessage(event.channel, agent, event.text, event.ts);
-          }
-        }
-
-        // Route bot→agent @mentions directly from the gateway.
-        // Slack's app_mention event does NOT fire for bot-posted messages,
-        // so the gateway must detect <@AGENT_USER_ID> in bot messages and
-        // invoke the target agent's response directly.
-        // When mention_delegation is enabled, MultiBotManager's onMention handles
-        // agent-to-agent routing directly — skip fallback to avoid dual processing.
-        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
-          const mentionedAgentIds = this.multiAgentHandler.extractMentionedAgentIds(event.text);
-          if (mentionedAgentIds.length > 0) {
-            this.logger.log(
-              `[Slack] Bot→Agent mention routing: ${agentBotId} → ${mentionedAgentIds.join(', ')}`
-            );
-            // Route to all mentioned agents in parallel
-            await Promise.all(
-              mentionedAgentIds.map((targetAgentId) =>
-                this.multiAgentHandler!.handleBotToAgentMention(
-                  targetAgentId,
-                  event,
-                  this.webClient
-                )
-              )
-            );
-          }
-          return;
-        }
-
-        // Non-delegation fallback for non-main agent bots
-        if (agentBotId !== 'main') {
-          const cleanContent = this.cleanMessageContent(event.text);
-          const multiAgentResult = await this.multiAgentHandler.handleMessage(event, cleanContent);
-          if (multiAgentResult && multiAgentResult.responses.length > 0) {
-            const threadTs = event.thread_ts || event.ts;
-            await this.multiAgentHandler.sendAgentResponses(
-              event.channel,
-              threadTs,
-              multiAgentResult.responses,
-              this.webClient
-            );
-            this.logger.log(
-              `[Slack] Agent-to-agent: ${agentBotId} → ${multiAgentResult.selectedAgents.join(', ')}`
-            );
-          }
-        }
-        return;
-      }
-    }
+    // Agent-bot message handling was here: shared-context recording and mention
+    // delegation between bots. Removed with the multi-bot handler, which never ran.
 
     // Ignore other bot messages (not part of our multi-agent system)
     if (event.bot_id) return;
@@ -392,108 +286,6 @@ export class SlackGateway extends BaseGateway {
     }
 
     // Check if multi-agent mode should handle this message
-    if (this.multiAgentHandler?.isEnabled()) {
-      // Acknowledge receipt with emoji reaction
-      try {
-        await this.webClient.reactions.add({
-          channel: event.channel,
-          timestamp: event.ts,
-          name: 'eyes',
-        });
-      } catch (err) {
-        const errDetail = err instanceof Error ? err.message : String(err);
-        this.logger.warn(`[Slack] Failed to add reaction: ${errDetail}`);
-      }
-
-      const multiAgentResult = await this.multiAgentHandler.handleMessage(event, enrichedContent);
-
-      if (multiAgentResult && multiAgentResult.responses.length > 0) {
-        // Replace eyes with checkmark on completion
-        try {
-          await this.webClient.reactions.remove({
-            channel: event.channel,
-            timestamp: event.ts,
-            name: 'eyes',
-          });
-          await this.webClient.reactions.add({
-            channel: event.channel,
-            timestamp: event.ts,
-            name: 'white_check_mark',
-          });
-        } catch {
-          /* ignore reaction errors */
-        }
-
-        const threadTs = event.thread_ts || event.ts;
-        await this.multiAgentHandler.sendAgentResponses(
-          event.channel,
-          threadTs,
-          multiAgentResult.responses,
-          this.webClient
-        );
-
-        // Record agent responses to channel history (after send so messageId is populated)
-        for (const resp of multiAgentResult.responses) {
-          channelHistory.record(event.channel, {
-            messageId: resp.messageId || event.ts,
-            sender: resp.agent.display_name,
-            userId: resp.agentId,
-            body: resp.rawContent.substring(0, 500),
-            timestamp: Date.now(),
-            isBot: true,
-          });
-        }
-
-        // Route any @agent mentions in the responses.
-        // Slack doesn't deliver a bot's own messages back to itself,
-        // so we must route mentions immediately after sending.
-        if (this.multiAgentHandler.isMentionDelegationEnabled()) {
-          await this.multiAgentHandler.routeResponseMentions(
-            event.channel,
-            threadTs,
-            multiAgentResult.responses,
-            this.webClient
-          );
-        }
-
-        this.emitEvent({
-          type: 'message_sent',
-          source: 'slack',
-          timestamp: new Date(),
-          data: {
-            channelId: event.channel,
-            responseLength: multiAgentResult.responses.reduce(
-              (sum, r) => sum + r.content.length,
-              0
-            ),
-            multiAgent: true,
-            agents: multiAgentResult.selectedAgents,
-          },
-        });
-
-        this.logger.log(
-          `[Slack] Multi-agent responded: ${multiAgentResult.selectedAgents.join(', ')}`
-        );
-
-        // Start heartbeat polling for this channel (reports only when agents are busy)
-        this.multiAgentHandler.startHeartbeat(event.channel);
-
-        return; // Multi-agent handled it
-      }
-      // Multi-agent mode is enabled but no response (blocked, no match, or error).
-      // Do NOT fall through to single-agent — that creates duplicate conductor processes.
-      // Just remove the eyes reaction and return silently.
-      try {
-        await this.webClient.reactions.remove({
-          channel: event.channel,
-          timestamp: event.ts,
-          name: 'eyes',
-        });
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
 
     // Normalize message for router
     // Use enriched content (with image analysis) for text-only routing
@@ -559,22 +351,6 @@ export class SlackGateway extends BaseGateway {
     await this.sendResponse(event, result.response);
 
     // Replace eyes with checkmark after response sent (only in multi-agent mode)
-    if (this.multiAgentHandler?.isEnabled()) {
-      try {
-        await this.webClient.reactions.remove({
-          channel: event.channel,
-          timestamp: event.ts,
-          name: 'eyes',
-        });
-        await this.webClient.reactions.add({
-          channel: event.channel,
-          timestamp: event.ts,
-          name: 'white_check_mark',
-        });
-      } catch {
-        /* ignore reaction errors */
-      }
-    }
 
     // Emit message sent event
     this.emitEvent({
@@ -700,15 +476,6 @@ export class SlackGateway extends BaseGateway {
    */
   async stop(): Promise<void> {
     // Stop multi-agent processes (don't block disconnect on failure)
-    if (this.multiAgentHandler) {
-      try {
-        await this.multiAgentHandler.stopAll();
-      } catch (error) {
-        console.warn(
-          `[SlackGateway] Failed to stop multi-agent handler: ${error instanceof Error ? error.message : String(error)}`
-        );
-      }
-    }
 
     if (!this.connected) {
       return;
@@ -802,47 +569,12 @@ export class SlackGateway extends BaseGateway {
   // ============================================================================
 
   /**
-   * Get the multi-agent handler (if enabled)
-   */
-  getMultiAgentHandler(): MultiAgentSlackHandler | null {
-    return this.multiAgentHandler;
-  }
-
-  /**
    * Update multi-agent configuration
    */
   async setMultiAgentConfig(config: MultiAgentConfig): Promise<void> {
     if (config.enabled) {
-      if (this.multiAgentHandler) {
-        this.multiAgentHandler.updateConfig(config);
-      } else {
-        this.multiAgentHandler = new MultiAgentSlackHandler(
-          config,
-          {
-            dangerouslySkipPermissions: config.dangerouslySkipPermissions ?? true,
-          },
-          this.multiAgentRuntime
-        );
-        // If already connected, initialize multi-bots
-        if (this.connected) {
-          try {
-            const authResult = await this.webClient.auth.test();
-            this.multiAgentHandler.setBotUserId(authResult.user_id as string);
-            this.multiAgentHandler.setMainBotId(authResult.bot_id as string);
-            this.multiAgentHandler.setMainBotToken(this.botToken);
-            this.multiAgentHandler.setMainWebClient(this.webClient);
-            await this.multiAgentHandler.initializeMultiBots();
-          } catch (err) {
-            this.logger.error('[Slack] Failed to initialize multi-agent:', err);
-          }
-        }
-      }
       this.logger.log('[Slack] Multi-agent mode enabled/updated');
     } else {
-      if (this.multiAgentHandler) {
-        await this.multiAgentHandler.stopAll();
-        this.multiAgentHandler = null;
-      }
       this.logger.log('[Slack] Multi-agent mode disabled');
     }
   }

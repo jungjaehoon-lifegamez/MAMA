@@ -1076,13 +1076,6 @@ export class AgentLoop {
   }
 
   /**
-   * Set DelegationManager for delegate tool (permission checks)
-   */
-  setDelegationManager(dm: import('../multi-agent/delegation-manager.js').DelegationManager): void {
-    this.mcpExecutor.setDelegationManager(dm);
-  }
-
-  /**
    * Set runtime multi-agent config applier for agent management tools.
    */
   setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {

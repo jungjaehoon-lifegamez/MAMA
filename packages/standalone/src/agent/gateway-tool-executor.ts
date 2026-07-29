@@ -103,7 +103,6 @@ import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
 import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
-import type { DelegationManager } from '../multi-agent/delegation-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
 import type { UICommandQueue } from '../api/ui-command-handler.js';
@@ -124,12 +123,6 @@ import {
   validateManagedAgentCreateInput,
   validateManagedAgentChanges,
 } from './managed-agent-validation.js';
-import {
-  DelegationExecutor,
-  type AgentTestInput,
-  type DelegateInput,
-  type DelegationRoutingContext,
-} from './delegation-executor.js';
 import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
 import {
@@ -721,7 +714,6 @@ export class GatewayToolExecutor {
   private currentContext: AgentContext | null = null;
   private memoryAgentProcessManager: AgentProcessManager | null = null;
   private agentProcessManager: AgentProcessManager | null = null;
-  private delegationManagerRef: DelegationManager | null = null;
   private currentAgentId: string = '';
   private currentSource: string = '';
   private currentChannelId: string = '';
@@ -758,14 +750,11 @@ export class GatewayToolExecutor {
   private sessionsDb: SQLiteDatabase | null = null;
   setSessionsDb(db: SQLiteDatabase): void {
     this.sessionsDb = db;
-    this.refreshDelegationExecutor();
   }
-  private rawStore: import('../connectors/framework/raw-store.js').RawStore | null = null;
-  setRawStore(store: import('../connectors/framework/raw-store.js').RawStore): void {
-    this.rawStore = store;
-    this.refreshDelegationExecutor();
-  }
-  private delegationExecutor: DelegationExecutor | null = null;
+  /** Accepted and discarded: the only reader was the delegation executor, which is gone.
+   *  The setter stays because its callers are live - delete both together when a second
+   *  reader appears or the callers do not. */
+  setRawStore(_store: import('../connectors/framework/raw-store.js').RawStore): void {}
   private uiCommandQueue: UICommandQueue | null = null;
   setUICommandQueue(queue: UICommandQueue): void {
     this.uiCommandQueue = queue;
@@ -778,25 +767,15 @@ export class GatewayToolExecutor {
   setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
     this.restartMultiAgentAgent = fn;
   }
-  private validationService:
-    | import('../validation/session-service.js').ValidationSessionService
-    | null = null;
+  /** Same as setRawStore: the only reader was the delegation executor. */
   setValidationService(
-    svc: import('../validation/session-service.js').ValidationSessionService
-  ): void {
-    this.validationService = svc;
-    this.refreshDelegationExecutor();
-  }
+    _svc: import('../validation/session-service.js').ValidationSessionService
+  ): void {}
   setMemoryAgent(processManager: AgentProcessManager): void {
     this.memoryAgentProcessManager = processManager;
   }
   setAgentProcessManager(pm: AgentProcessManager): void {
     this.agentProcessManager = pm;
-    this.refreshDelegationExecutor();
-  }
-  setDelegationManager(dm: DelegationManager): void {
-    this.delegationManagerRef = dm;
-    this.refreshDelegationExecutor();
   }
   /** Get AgentProcessManager (for cron/event triggers that need direct process access) */
   getAgentProcessManager(): AgentProcessManager | null {
@@ -882,21 +861,13 @@ export class GatewayToolExecutor {
     return this.getExecutionState().agentContext;
   }
 
-  private getActiveRouting(): DelegationRoutingContext {
+  /** Who and where the active turn is. Was typed by the delegation executor; now local. */
+  private getActiveRouting(): { agentId: string; source: string; channelId: string } {
     const state = this.getExecutionState();
     return {
       agentId: state.agentId,
       source: state.source,
       channelId: state.channelId,
-    };
-  }
-
-  private getActiveDelegationRouting(): DelegationRoutingContext {
-    const routing = this.getActiveRouting();
-    return {
-      agentId: routing.agentId || 'conductor',
-      source: routing.source || 'viewer',
-      channelId: routing.channelId || 'default',
     };
   }
 
@@ -1077,36 +1048,6 @@ export class GatewayToolExecutor {
   }
 
   /** Check if delegate tool support is available (multi-agent wired). */
-  hasDelegateSupport(): boolean {
-    return this.agentProcessManager !== null && this.delegationManagerRef !== null;
-  }
-
-  /** Retry delay (ms) for delegate backoff. Initialized from config in constructor. */
-  private _retryDelayMs: number = 1000;
-
-  private createDelegationExecutor(): DelegationExecutor {
-    return new DelegationExecutor({
-      agentProcessManager: this.agentProcessManager,
-      delegationManagerRef: this.delegationManagerRef,
-      rawStore: this.rawStore,
-      sessionsDb: this.sessionsDb,
-      validationService: this.validationService,
-      retryDelayMs: this._retryDelayMs,
-      resolveManagedAgentId: (id) => this.resolveManagedAgentId(id),
-      checkViewerOnly: () => this.checkViewerOnly(),
-    });
-  }
-
-  private refreshDelegationExecutor(): void {
-    this.delegationExecutor = this.createDelegationExecutor();
-  }
-
-  private getDelegationExecutor(): DelegationExecutor {
-    if (!this.delegationExecutor) {
-      this.refreshDelegationExecutor();
-    }
-    return this.delegationExecutor!;
-  }
 
   constructor(options: GatewayToolExecutorOptions = {}) {
     const privateWorkspaceRoot = resolve(
@@ -1146,14 +1087,6 @@ export class GatewayToolExecutor {
     if (options.mamaApi) {
       this.mamaApi = options.mamaApi;
     }
-
-    // Read retry delay from config (safe: falls back to 1000ms if config not yet initialized)
-    try {
-      this._retryDelayMs = getConfig().timeouts?.busy_retry_ms ?? 1000;
-    } catch {
-      // Config not initialized yet — keep default 1000ms
-    }
-    this.refreshDelegationExecutor();
   }
 
   async beginRuntimeModelRun(input: BeginModelRunInput): Promise<ModelRunRecord> {
@@ -2437,12 +2370,6 @@ export class GatewayToolExecutor {
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
           );
-        // Agent lifecycle tools
-        case 'agent_test':
-          return await this.getDelegationExecutor().runAgentTest(
-            input as AgentTestInput,
-            this.getActiveDelegationRouting()
-          );
         // Agent management tools (Managed Agents pattern)
         case 'agent_get': {
           if (!this.sessionsDb) {
@@ -2677,12 +2604,6 @@ export class GatewayToolExecutor {
           this.uiCommandQueue.push({ type: 'notify', payload: args });
           return { success: true, notified: true };
         }
-        // Multi-Agent delegation
-        case 'delegate':
-          return await this.getDelegationExecutor().runDelegate(
-            input as DelegateInput,
-            this.getActiveDelegationRouting()
-          );
       }
 
       // Lazy MAMA API init — only for tools that need it
