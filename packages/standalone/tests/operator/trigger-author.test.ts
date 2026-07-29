@@ -177,6 +177,26 @@ describe('authorTriggers', () => {
   // 193 failures over the log's lifetime recorded nothing but the 240 KB command line that
   // produced them, because the executor destructured `{ stdout }` and Node's own message
   // embeds the whole argv. The tick that dies here takes the scheduled report with it.
+  // The bug the 0.29.1 diagnostics found on their first live failure. The call inherited
+  // `effortLevel: xhigh` from the user's settings, the daemon exports MAX_THINKING_TOKENS=0,
+  // and the pair is a hard API 400. Measured: 46 failures against 8 successes on 2026-07-28,
+  // then 34 against ZERO on 07-29 - the lane had been dead for two days.
+  it('names its own effort instead of inheriting one the daemon cannot satisfy', async () => {
+    const calls: string[][] = [];
+    const ask = createAskAgentCLI(async (_file, args) => {
+      calls.push(args);
+      return { stdout: JSON.stringify({ type: 'result', result: '[]' }) };
+    });
+
+    await ask('anything');
+
+    const args = calls[0];
+    const i = args.indexOf('--effort');
+    expect(i, 'the call must name an effort').toBeGreaterThan(-1);
+    // Anything above 'high' is rejected when thinking is disabled.
+    expect(['high', 'medium', 'low']).toContain(args[i + 1]);
+  });
+
   describe('describeCliFailure', () => {
     it('names a timeout kill rather than reporting a bare failure', () => {
       const note = describeCliFailure('claude', {
@@ -255,7 +275,7 @@ describe('trigger agent provider boundary', () => {
     await expect(askAgent('author prompt')).resolves.toBe('[{"kind":"k"}]');
     expect(execute).toHaveBeenCalledWith(
       'claude',
-      ['-p', 'author prompt', '--output-format', 'json'],
+      ['-p', 'author prompt', '--output-format', 'json', '--effort', 'high'],
       { maxBuffer: 16 * 1024 * 1024 }
     );
   });
