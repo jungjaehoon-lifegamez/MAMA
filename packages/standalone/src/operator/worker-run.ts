@@ -142,7 +142,7 @@ export function buildWorkerSystemPrompt(
           'Board data boundaries (non-negotiable):',
           "- Trello is external connector evidence and is available only through context_compile. When intentionally isolating Trello, use context_compile({ task: '...', connectors: ['trello'] }); never treat kagemusha_* as Trello.",
           '- kagemusha_* is the read-only project-task truth.',
-          '- task_list/task_create/task_update is the native owner-task ledger and the pipeline projection source.',
+          '- task_list/task_create/task_update is YOUR task board (you maintain its data) and the pipeline projection source.',
           '- Never infer or copy lifecycle status across those stores.',
           '- Never copy Trello or Kagemusha lifecycle status into the native ledger.',
           '- Temporal fact: use task_list.temporal_state as the canonical time category and render it separately.',
