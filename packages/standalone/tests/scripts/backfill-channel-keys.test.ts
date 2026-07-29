@@ -97,17 +97,22 @@ describe('channel re-key plan', () => {
 
     expect(plan.rekeys).toEqual([]);
     expect(plan.ambiguous).toEqual([{ connector: 'board', name: 'Production', candidates: 2 }]);
-    expect(plan.unconfigured).toBe(1);
+    expect(plan.unmatchedChannel).toBe(1);
   });
 
-  it('leaves a channel the config never mentions exactly as it is', () => {
-    event('e1', 'chat', 'never-configured');
+  // Two different facts that the first version printed as one. A channel of a DECLARED
+  // connector that matches nothing was renamed or removed - the owner can act on that. A
+  // connector the config never mentions is a different situation entirely, and reporting
+  // both as "never given" hides the actionable one.
+  it('separates an unknown connector from a channel that matches nothing', () => {
+    event('e1', 'chat', 'renamed-or-removed');
     event('e2', 'other', 'anything');
 
     const plan = buildPlan(db, CONFIG);
 
     expect(plan.rekeys).toEqual([]);
-    expect(plan.unconfigured).toBe(2);
+    expect(plan.unmatchedChannel).toBe(1);
+    expect(plan.unknownConnector).toBe(1);
   });
 
   it('skips a disabled connector rather than re-keying its history', () => {
