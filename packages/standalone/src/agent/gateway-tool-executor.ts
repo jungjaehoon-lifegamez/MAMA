@@ -143,7 +143,6 @@ import type {
 } from '../operator/temporal-effect.js';
 import { readChanges, type ChangesReadInput } from '../operator/changes-projection.js';
 import { liveBoundaryChannels, narrowGrantToEnvelope } from '../evidence/read.js';
-import { resolveCitation, type CitationOutcome } from '../evidence/cite.js';
 
 function serializeTaskToolRecord(
   task: import('../operator/task-ledger.js').TaskRecord
@@ -2002,50 +2001,6 @@ export class GatewayToolExecutor {
     };
   }
 
-  /**
-   * Resolve an event the agent cited, under this run's own grant.
-   *
-   * Read through the memory adapter because the event index and the task ledger live in
-   * different databases - the same reason the ledger cannot do this itself.
-   */
-  private async resolveCitedEvent(citation: string): Promise<CitationOutcome> {
-    try {
-      const ctx = this.getExecutionState();
-      const grant = ctx.envelope
-        ? narrowGrantToEnvelope(liveBoundaryChannels(), {
-            connectors: ctx.envelope.scope.raw_connectors ?? [],
-            scopes: ctx.envelope.scope.memory_scopes ?? [],
-          })
-        : {};
-      const { getAdapter, initDB } = (await import('@jungjaehoon/mama-core/db-manager')) as {
-        getAdapter: () => unknown;
-        initDB?: () => Promise<unknown>;
-      };
-      let adapter: unknown;
-      try {
-        adapter = getAdapter();
-      } catch {
-        if (typeof initDB !== 'function') {
-          return { status: 'not_checked', reason: 'index_unavailable' };
-        }
-        await initDB();
-        adapter = getAdapter();
-      }
-      return resolveCitation(adapter as never, citation, grant);
-    } catch (error) {
-      // Failing the update over an uncheckable citation would refuse a legitimate change
-      // because its footnote could not be verified. But this is NOT `unresolved`: that
-      // status tells the agent it invented an id, and the id may have been perfectly good
-      // while the index was unreachable. The distinction is the point of having statuses.
-      console.error(
-        `[Citation] could not check '${citation}': ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      return { status: 'not_checked', reason: 'index_unavailable' };
-    }
-  }
-
   private async buildTrustedMemoryWriteOptions(
     toolName: string,
     gatewayCallId: string,
@@ -3355,11 +3310,7 @@ export class GatewayToolExecutor {
           if (!this.taskLedger) {
             return { success: false, error: 'Task ledger not configured' } as GatewayToolResult;
           }
-          const {
-            id: rawId,
-            caused_by: rawCause,
-            ...patch
-          } = input as { id: unknown; caused_by?: unknown } & Record<string, unknown>;
+          const { id: rawId, ...patch } = input as { id: unknown } & Record<string, unknown>;
           // Agents routinely pass "12"; coerce, reject non-numeric with a typed error.
           const id = typeof rawId === 'string' ? Number(rawId.trim()) : (rawId as number);
           if (!Number.isInteger(id) || id <= 0) {
@@ -3370,37 +3321,14 @@ export class GatewayToolExecutor {
               false
             );
           }
-          // An argument that is not a string is not a citation, and saying nothing about it
-          // leaves the agent believing it cited. Every caused_by that was supplied gets an
-          // answer, including the malformed ones.
-          const citation =
-            rawCause === undefined
-              ? null
-              : typeof rawCause === 'string' && rawCause.trim().length > 0
-                ? await this.resolveCitedEvent(rawCause)
-                : ({ status: 'invalid' } as CitationOutcome);
-          const beforeRevision = this.taskLedger.getById(id)?.revision ?? null;
           const updated = this.taskLedger.update(id, patch as never, {
             runId: this.getExecutionState().modelRunId ?? null,
-            // A resolved citation names the cause precisely. With none, the run's own
-            // batch is the cause: a reconcile run was handed one channel's delta and
-            // everything it changes rests on that delta, which the system knew before the
-            // run began. Asking the agent to restate it was the weaker half of this.
-            causeEventIds:
-              citation?.status === 'resolved'
-                ? [citation.eventIndexId]
-                : this.getExecutionState().causeEventIds,
+            // The batch this run was handed. A bounded run's changes rest on the delta it
+            // was given, and the system knew that before the run began - so there is
+            // nothing to ask the agent for.
+            causeEventIds: this.getExecutionState().causeEventIds,
           });
-          // An update that moved nothing records nothing, so a citation attached to it was
-          // attached to no change. Reporting `resolved` there tells the agent its
-          // attribution landed when the ledger holds no row at all - the exact silent
-          // failure this feedback channel exists to prevent.
-          const changed = beforeRevision === null || updated.revision !== beforeRevision;
-          return {
-            success: true,
-            task: serializeTaskToolRecord(updated),
-            ...(citation ? { cause: changed ? citation.status : ('no_change' as const) } : {}),
-          };
+          return { success: true, task: serializeTaskToolRecord(updated) };
         }
         case 'task_temporal_reconcile': {
           if (!this.taskLedger) {
