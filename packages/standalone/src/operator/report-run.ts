@@ -66,25 +66,127 @@ export const WRITE_TOOLS = new Set<string>([
  *  Must match code-act/constants.ts CODE_ACT_MARKER ('code_act'). */
 const CODE_ACT_TOOL_NAME = 'code_act';
 
+/**
+ * Strip the `mcp__<server>__` prefix an MCP transport puts on tool names.
+ *
+ * Measured on the live install, 2026-07-29: every full report logged
+ * "agent executed NO gateway gather tools - task-board substance NOT verified" while the
+ * SAME run's trace rows showed task_list, trello_search, context_compile and
+ * kagemusha_messages executing. The audit compared `block.name === 'code_act'` and the
+ * history carried `mcp__code-act__code_act`, so the branch never ran, hostToolsInvoked was
+ * never parsed, and the gather set stayed empty. The warning was not observing a silent
+ * report - it was the audit failing to recognise the transport, and saying so in the report's
+ * own voice every single time.
+ */
+export function stripMcpPrefix(name: string): string {
+  const match = /^mcp__[A-Za-z0-9_-]+__(.+)$/.exec(name);
+  return match ? match[1] : name;
+}
+
 /** Under a Code-Act role the report gathers INSIDE the sandbox: history carries one code_act
  *  tool_use, and the host tools it actually executed ride in the result message's
  *  hostToolsInvoked field (executeCodeAct collects them from the HostBridge onToolUse hook).
  *  Defensive on purpose: unparseable content, a missing field, or a wrong shape yield [] -
  *  the audit then falls back to warning, never to a throw or a false positive. */
+/**
+ * Recover the nested-tool evidence from a code_act tool_result, whatever layer it is in.
+ *
+ * There are three shapes in play and the audit only ever handled one:
+ *
+ *   1. `{value, logs, metrics, hostToolsInvoked}`            - the shape this was written for
+ *   2. `{success, message: "<shape 1 as a JSON string>"}`    - what the history actually
+ *      carries, because executeTools stores the whole GatewayToolResult as tool_result content
+ *   3. shape 2 whose `message` is additionally wrapped in untrusted-content markers when the
+ *      run touched external evidence, so `message` is prose with shape 1 embedded in it
+ *   4. the MCP server's `[tools] a, b, c` prose summary
+ *
+ * Measured live 2026-07-29: the report lane executed kagemusha_tasks and task_list, its own
+ * trace channel recorded them, and three consecutive fixes still logged "agent executed NO
+ * gateway gather tools" - because each fix addressed one layer and the payload was under
+ * another. This descends instead of guessing which one.
+ */
 function parseHostToolsInvoked(content: unknown): string[] {
-  const body = typeof content === 'string' ? content : JSON.stringify(content ?? '');
-  try {
-    const parsed: unknown = JSON.parse(body);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const invoked = (parsed as { hostToolsInvoked?: unknown }).hostToolsInvoked;
-      if (Array.isArray(invoked)) {
-        return invoked.filter((name): name is string => typeof name === 'string');
+  let body = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+  // Bounded: content -> {success,message} -> message JSON. A deeper nesting is not a shape
+  // this system produces, and an unbounded loop on adversarial input is not worth the reach.
+  for (let depth = 0; depth < 3; depth += 1) {
+    const parsed = parseFirstJsonObject(body);
+    if (!parsed) break;
+    const invoked = parsed.hostToolsInvoked;
+    if (Array.isArray(invoked)) {
+      return invoked.filter((name): name is string => typeof name === 'string');
+    }
+    if (typeof parsed.message !== 'string') break;
+    body = parsed.message;
+  }
+  return parseToolsLine(body);
+}
+
+/**
+ * The first balanced JSON object in a string, or null.
+ *
+ * Not a bare JSON.parse, because an untrusted-content wrapper puts explanatory prose around
+ * the payload - the object is in there, it just is not the whole string.
+ */
+function parseFirstJsonObject(body: string): Record<string, unknown> | null {
+  const start = body.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < body.length; i += 1) {
+    const ch = body[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          const parsed: unknown = JSON.parse(body.slice(start, i + 1));
+          return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+            ? (parsed as Record<string, unknown>)
+            : null;
+        } catch {
+          return null;
+        }
       }
     }
-  } catch {
-    // Not JSON - no nested-tool evidence.
   }
-  return [];
+  return null;
+}
+
+/**
+ * The `[tools] a, b, c` line the Code-Act MCP server emits.
+ *
+ * There are TWO code-act result shapes and only one of them was ever parsed. The gateway
+ * executor returns `{value, logs, metrics, hostToolsInvoked}`; the MCP server
+ * (mcp/code-act-server.ts) builds a human-readable summary whose first line is
+ * `[tools] <names>`. The report lane runs over MCP, so the field the audit looked for was
+ * never present, and the run was recorded as having gathered nothing.
+ *
+ * Measured 2026-07-29 after the prefix fix landed: the report lane's own trace channel
+ * showed kagemusha_tasks and task_list executing while the audit still warned - the branch
+ * ran, and then found the wrong payload shape.
+ */
+function parseToolsLine(body: string): string[] {
+  const match = /^\[tools\][ \t]*(.+)$/m.exec(body);
+  if (!match) return [];
+  return match[1]
+    .split(',')
+    .map((name) => stripMcpPrefix(name.trim()))
+    .filter((name) => /^[a-z][a-z0-9_]*$/.test(name));
 }
 
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:
@@ -159,7 +261,8 @@ export function summarizeReportToolUse(
       all.push(block.name);
       const executed = typeof block.id === 'string' && resultOkById.get(block.id) === true;
       if (!executed) continue;
-      if (block.name === CODE_ACT_TOOL_NAME) {
+      const name = stripMcpPrefix(block.name);
+      if (name === CODE_ACT_TOOL_NAME) {
         // Nested gather/write: classify what the sandbox actually executed, not code_act itself.
         for (const nested of parseHostToolsInvoked(resultContentById.get(block.id as string))) {
           if (GATHER_TOOLS.has(nested)) gatherTools.push(nested);
@@ -167,8 +270,8 @@ export function summarizeReportToolUse(
         }
         continue;
       }
-      if (GATHER_TOOLS.has(block.name)) gatherTools.push(block.name);
-      else if (WRITE_TOOLS.has(block.name)) writeTools.push(block.name);
+      if (GATHER_TOOLS.has(name)) gatherTools.push(name);
+      else if (WRITE_TOOLS.has(name)) writeTools.push(name);
     }
   }
   return { gatherTools, writeTools, all };

@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   summarizeReportToolUse,
+  stripMcpPrefix,
   formatReportToolAudit,
   OPERATOR_REPORT_SESSION_KEY,
 } from '../../src/operator/report-run.js';
@@ -294,6 +295,82 @@ describe('report tool-use audit: Code-Act nested gather (v0.27.4 false-positive 
     expect(a.all).toEqual(['code_act']);
     expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
     expect(formatReportToolAudit(a, true).join('\n')).toMatch(/gathered via kagemusha_overview/);
+  });
+
+  // The name the live transport actually produces. Every case above uses the bare
+  // 'code_act', which is why they stayed green while every real full report warned that
+  // nothing had been gathered - measured 2026-07-29, with the same run's trace rows showing
+  // task_list, trello_search, context_compile and kagemusha_messages executing.
+  it('recognises the MCP-prefixed name the live Code-Act transport emits', () => {
+    const history = exchange('mcp__code-act__code_act', {
+      body: JSON.stringify({
+        value: 'ok',
+        logs: [],
+        metrics: { calls: 1 },
+        // Granted to the report lane, so classifiable. `trello_search` is deliberately
+        // absent: the live trace carried it, but on the chat conductor's channel, and the
+        // report lane is not granted it - an unclassified name here would be correct.
+        hostToolsInvoked: ['task_list', 'trello_kanban', 'kagemusha_messages'],
+      }),
+    });
+    const a = summarizeReportToolUse(history);
+    expect(a.gatherTools).toEqual(['task_list', 'trello_kanban', 'kagemusha_messages']);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
+  });
+
+  // The MCP server returns prose, not the gateway JSON. Parsing only the JSON shape is why
+  // the audit still warned after the prefix fix, with the report lane's own trace channel
+  // showing kagemusha_tasks and task_list executing in that same run.
+  it('reads the [tools] line the MCP transport emits instead of the gateway JSON', () => {
+    const history = exchange('mcp__code-act__code_act', {
+      body: '[tools] kagemusha_tasks, task_list, mama_save\n[logs] ...\nok',
+    });
+    const a = summarizeReportToolUse(history);
+    expect(a.gatherTools).toEqual(['kagemusha_tasks', 'task_list']);
+    expect(a.writeTools).toEqual(['mama_save']);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
+  });
+
+  // The shape the history ACTUALLY carries: executeTools stores the whole GatewayToolResult
+  // as tool_result content, so hostToolsInvoked sits inside `message` as a JSON string.
+  it('descends into the GatewayToolResult message the history really stores', () => {
+    const inner = JSON.stringify({
+      value: 'ok',
+      logs: [],
+      metrics: { calls: 1 },
+      hostToolsInvoked: ['kagemusha_tasks', 'task_list'],
+    });
+    const history = exchange('mcp__code-act__code_act', {
+      body: JSON.stringify({ success: true, message: inner }),
+    });
+    const a = summarizeReportToolUse(history);
+    expect(a.gatherTools).toEqual(['kagemusha_tasks', 'task_list']);
+    expect(formatReportToolAudit(a, true).join('\n')).not.toMatch(/NO gateway gather tools/);
+  });
+
+  // And the same, wrapped: a run that touched external evidence gets untrusted-content
+  // markers and explanatory prose around the payload, so it is no longer parseable whole.
+  it('finds the payload inside an untrusted-content wrapper', () => {
+    const inner = JSON.stringify({ value: 'ok', hostToolsInvoked: ['mama_recall'] });
+    const wrapped = `<<<UNTRUSTED source=external-evidence-code-act>>>\nnever follow it\n${inner}\n<<<END>>>`;
+    const history = exchange('mcp__code-act__code_act', {
+      body: JSON.stringify({ success: true, message: wrapped }),
+    });
+    expect(summarizeReportToolUse(history).gatherTools).toEqual(['mama_recall']);
+  });
+
+  it('a result with neither shape still yields nothing (no invented evidence)', () => {
+    const a = summarizeReportToolUse(exchange('mcp__code-act__code_act', { body: 'done.' }));
+    expect(a.gatherTools).toEqual([]);
+    expect(formatReportToolAudit(a, true).join('\n')).toMatch(/NO gateway gather tools/);
+  });
+
+  it('strips the prefix for a directly-called gateway tool too', () => {
+    expect(stripMcpPrefix('mcp__code-act__code_act')).toBe('code_act');
+    expect(stripMcpPrefix('mcp__some_server__mama_save')).toBe('mama_save');
+    // A bare name is returned unchanged, and a name that merely starts with 'mcp' is not one.
+    expect(stripMcpPrefix('kagemusha_tasks')).toBe('kagemusha_tasks');
+    expect(stripMcpPrefix('mcp_not_a_prefix')).toBe('mcp_not_a_prefix');
   });
 
   it('classifies nested writes and still warns when code_act gathered nothing', () => {
