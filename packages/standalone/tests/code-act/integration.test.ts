@@ -195,7 +195,9 @@ describe('Code-Act Integration', () => {
     // 14000->14400: changes_read, which is what lets the system say what IT changed
     // and on what evidence, instead of inferring a delta from current state
     // (deliberate ceiling bump).
-    expect(fullPrompt.length).toBeLessThan(14400);
+    // 14400->14500: task_update's caused_by and its cause outcome, which is the only way a
+    // Code-Act agent learns that its citation named nothing (deliberate ceiling bump).
+    expect(fullPrompt.length).toBeLessThan(14500);
   });
 
   it('Tier 2 sandbox blocks write tools', async () => {

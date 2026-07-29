@@ -970,9 +970,15 @@ const TOOL_REGISTRY: ToolMeta[] = [
       },
       { name: 'latest_event', type: 'string', required: false },
       { name: 'confirmed', type: 'boolean', required: false },
+      {
+        name: 'caused_by',
+        type: 'string',
+        required: false,
+        description: 'evt_ id, or "<connector>:<sourceId>"; without it the change is unexplained',
+      },
     ],
     returnType:
-      '{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown } }',
+      "{ task: { due_at: string | null; temporal_state: string; revision: number; temporal_epoch: number; [key: string]: unknown }; cause?: 'resolved' | 'unresolved' | 'outside_grant' }",
     category: 'memory',
   },
   {

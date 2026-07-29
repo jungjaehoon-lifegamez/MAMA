@@ -121,8 +121,12 @@ describe('TypeDefinitionGenerator', () => {
       // (deliberate: without it the only way to answer "what changed since last
       // time" is to re-read current state and infer the delta, which costs far
       // more than these 90 tokens every run and is how a report ends up
-      // restating the board instead of naming the change).
-      expect(dts.length).toBeLessThan(12400);
+      // restating the board instead of naming the change), then 12400->12500 for
+      // task_update's caused_by and its cause outcome (deliberate: the union IS the
+      // feedback channel - a Code-Act agent reads the .d.ts and nothing else, so without
+      // it a citation that resolved to nothing passes silently and the agent goes on
+      // believing the change was accounted for).
+      expect(dts.length).toBeLessThan(12500);
     });
   });
 
@@ -131,8 +135,8 @@ describe('TypeDefinitionGenerator', () => {
       const tokens = TypeDefinitionGenerator.estimateTokens(policy(1));
       expect(tokens).toBeGreaterThan(100);
       // 2700->2800 trello_kanban, ->2900 correlation, ->3000 mama_provenance,
-      // ->3100 changes_read (all deliberate)
-      expect(tokens).toBeLessThan(3100);
+      // ->3100 changes_read, ->3130 task_update caused_by (all deliberate)
+      expect(tokens).toBeLessThan(3130);
     });
 
     it('Tier 2 uses fewer tokens than Tier 1', () => {
