@@ -1882,6 +1882,10 @@ export async function runAgentLoop(
             : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
           'mama_recall(query) for memory relevant to what you find',
           'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
+          lastSuccessIso
+            ? `changes_read({ since: "${lastSuccessIso}" }) for what THIS system durably changed since the last report -- lead with it, and say what each change rested on`
+            : 'changes_read({ since: "7d" }) for what THIS system durably changed in the window -- lead with it, and say what each change rested on',
+          'On changes_read: cause_state "unattributed" means the system cannot explain that change, NOT that nothing happened -- report the coverage counts as they are rather than rounding them up. It is ONE PAGE: if returned is less than total, say so instead of describing the page as the whole. It covers work items only today, so the absence of report or memory changes there is not evidence they did not happen.',
         ],
         // Kagemusha dual output: the same scheduled run updates the /ui operator board
         // slots via report_publish, then writes the plain-text owner report.

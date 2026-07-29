@@ -34,6 +34,11 @@ const GATHER_TOOLS = new Set<string>([
   'mama_provenance',
   'mama_search',
   'context_compile',
+  // What the system itself changed since the last report. Granted to this lane and then
+  // never instructed, which is the same as not having it: a tool the report is never told
+  // to call is a tool the report does not call, and the audit counted the run as having
+  // gathered nothing from it because it never appeared.
+  'changes_read',
 ]);
 
 /** Gateway WRITE tools. mama_save is the M3 hand; the rest are classified only for honest
