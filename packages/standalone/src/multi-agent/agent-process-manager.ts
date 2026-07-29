@@ -776,9 +776,11 @@ export class AgentProcessManager extends EventEmitter {
           allAgents,
           this.botUserIdMap
         );
-      } else {
-        delegationPrompt = this.permissionManager.buildDelegationPrompt(agent, allAgents);
       }
+      // No else. The fallback used to teach `DELEGATE::{agent}::{task}`, and nothing has
+      // parsed or executed that since the delegation executor was removed - so a delegating
+      // agent in a non-mention configuration was being handed a syntax that does nothing.
+      // Teaching no delegation is the honest state of that configuration.
     } else if (this.mentionDelegationEnabled && this.botUserIdMap.size > 0) {
       // Tier 2/3 agents get report-back instructions
       reportBackPrompt = this.permissionManager.buildReportBackPrompt(
