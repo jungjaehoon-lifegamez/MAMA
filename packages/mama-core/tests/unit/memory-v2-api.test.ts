@@ -9,6 +9,7 @@ import { getAdapter } from '../../src/db-manager.js';
 const TEST_DB = '/tmp/test-memory-v2-api.db';
 
 describe('memory v2 api', () => {
+  const originalForceTier3 = process.env.MAMA_FORCE_TIER_3;
   beforeAll(() => {
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
@@ -19,12 +20,21 @@ describe('memory v2 api', () => {
     });
 
     process.env.MAMA_DB_PATH = TEST_DB;
+    // Own the tier rather than inheriting it. `singleFork: true` shares one process across
+    // every test file, and this suite used to run on MAMA_FORCE_TIER_3 leaked by a file that
+    // set it at module scope and never restored it. When that leak was closed, this suite
+    // started loading the real embedding model and timed out at 30s on a cold CI runner
+    // while still passing locally against a warm model cache. A test that needs the lexical
+    // path has to say so.
+    process.env.MAMA_FORCE_TIER_3 = 'true';
   });
 
   afterAll(async () => {
     const { closeDB } = await import('../../src/db-manager.js');
     await closeDB();
     delete process.env.MAMA_DB_PATH;
+    if (originalForceTier3 === undefined) delete process.env.MAMA_FORCE_TIER_3;
+    else process.env.MAMA_FORCE_TIER_3 = originalForceTier3;
 
     [TEST_DB, `${TEST_DB}-journal`, `${TEST_DB}-wal`, `${TEST_DB}-shm`].forEach((file) => {
       try {
