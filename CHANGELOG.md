@@ -4,6 +4,103 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.29.0] / mama-core [2.0.0] / mcp-server [1.15.0] / plugin [1.11.0] - 2026-07-29
+
+The release is one idea in two halves: **a run must be able to name what caused its durable
+effects, and the system must measure what a run DID rather than believe what it SAID.**
+Everything that could not be shown to run was deleted.
+
+### BREAKING — mama-core 2.0.0
+
+Nine subpaths were removed from the exports map, along with the modules behind them:
+`./memory-inject`, `./cases/corrections`, `./cases/live-state`, `./cases/membership-matcher`,
+`./cases/merge-split`, `./cases/role-inference`, `./cases/sqlite-transaction`,
+`./cases/target-ref`, `./cases/tombstone-sweeper`.
+
+`cases/` was a 9,226-line "case-first substrate" written over two days in April and never
+called since. Transitive closure from its four live entry points — `caseTimelineRange`, which
+backs the advertised `case_timeline_range` MCP tool, and three wiki-page search functions —
+reached 5 of its 17 files. The other 12 are gone, along with 91 further exports across
+`entities/`, `search/`, `memory/` and `provenance/` that no file in any package referenced.
+
+**Migrations stay.** A table already created on a live install cannot be un-created by
+deleting the code that read it, so the schema and its tests are untouched. If you imported
+any subpath above, that code was calling something nothing else in this repo called; there is
+no drop-in replacement.
+
+### Added
+
+- **Effect ledger** (`evidence/effects.ts`) — one table, `evidence_effects`. A `cause_state`
+  CHECK forbids "attributed with no cause" AND "unattributed with a cause", so coverage
+  cannot be computed from a numerator and denominator that disagree.
+- **Bounded runs** — a per-channel reconcile work order carries its delta batch, and every
+  durable change the run makes inherits it without the agent restating anything. Replayed
+  over 617 live batches, attribution went from 0% to 100%. `board:full` carries no batch and
+  its changes stay honestly unattributed.
+- **`changes_read`** — what this system durably changed since a given point, with coverage
+  counts and an explicit `returned`/`total` so one page cannot be described as the whole. The
+  full report now leads with it.
+- **`mama_provenance`** + provenance resolver — what a memory rests on. A citation must not
+  out-read reading: the same channel grant bounds both, pinned by a differential test.
+- **`task_external_correlation`** — correlate a work item against external sources.
+- **Channel grant** (`mama-core/context-compile/channel-grant.ts`) — ONE rule deciding which
+  `(connector, channel)` pairs a run may read, compiled to a boolean and to a SQL clause that
+  are held equal by a differential test.
+- **Per-lane run verification** — a work order reaching `done` proves only that the agent
+  returned a response. Each lane's claim is now reconciled against completed traces of its
+  obligated tools since a run-bound snapshot. Observe, never block.
+- **`scripts/backfill-channel-keys.ts`** — repairs channel keys stored as display names.
+  Dry-run by default, refuses under a live daemon, `VACUUM INTO` backup, and it carries the
+  delta cursors with the re-key so nothing is redelivered as news.
+
+### Fixed
+
+- **Channel identity.** Six of seven connectors wrote a display NAME where the config carried
+  an ID, and every downstream reader compared against the config KEY — so 0 of 30,671 indexed
+  rows were readable. Keys are now canonicalised at write time, before anything durable.
+- **The report audit told the owner a falsehood every run.** Every full report logged "agent
+  executed NO gateway gather tools — task-board substance NOT verified" while the same run's
+  traces showed `kagemusha_tasks` and `task_list` executing. Four layers: four granted reads
+  missing from the classification; a name compared as `code_act` when the transport emits
+  `mcp__code-act__code_act`; a prose result shape; and the payload sitting one level down
+  inside the tool result. Live after the fix: nine gather tools and two writes, named.
+- **Lanes believed their own prose.** The wiki hook chose between two log lines by testing
+  whether the agent's text contained `NO_UPDATE`; the promotion hook took its saved count from
+  a regex over the agent's own sentence and woke the wiki compiler on it.
+- **Evidence is what has already happened.** The raw reader's window now ends at now unless
+  the caller names a later end — 2,762 live rows are future-dated, one in 2056, and they were
+  owning the top of the page.
+- **Scope binding had never bound anything.** `bindConfiguredScope` required a config field
+  that 0 of 39 channels declare. What made it invisible was a one-off backfill that stopped
+  on 2026-05-20; every event after that date is unscoped. Raw visibility is decided by the
+  grant now, which reads the key the row already carries.
+
+### Removed
+
+Roughly 72,000 lines across four packages, each verified by deletion plus a full test run
+rather than by reading:
+
+- `src/multi-agent/` swarm, council, delegation and task-continuation — the delegate path was
+  wired zero times across the whole log history, while sitting at 100% statement coverage.
+- 11 `src/onboarding/` phase modules; `delegation-executor`; `mcp-executor`.
+- mcp-server: `link-tools` (mentioned once in the repo, under "Additional tools (legacy)"),
+  `hook-metrics`, `transparency-banner`.
+- claude-code-plugin: all of `src/commands/` and `src/tools/`, and all of `src/core/` except
+  `hook-features.js` — the markdown commands never shelled out to any of it. 150 of its 328
+  tests covered code no hook reaches.
+- 25 exported functions in standalone and 7 in memorybench with no caller anywhere.
+
+`delegate` remains in the tool registry and is NOT dispatchable; `tests/cli/lane-wiring.test.ts`
+now pins that every lane's instructions, grants and audit classification agree.
+
+### Notes
+
+The deletion measurements were wrong three times before they were right — a computed
+`import(\`./${name}/index.js\`)` made every connector look dead, an ESM miscount made 21 used
+symbols look dead, and a test utility was classified as dead for being used only by tests.
+Each was caught by deleting and running, never by reading. The same is true of the review that
+preceded this release: every critical finding was in code added on this branch.
+
 ## [0.28.6] / mama-core [1.9.0] / mama-os [0.28.6] - 2026-07-27
 
 ### Fixed — claude-backend chat and report resilience

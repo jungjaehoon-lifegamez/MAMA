@@ -1,6 +1,6 @@
 # Configuration Guide
 
-**FR Reference:** [FR50-55 (Configuration)](../reference/fr-mapping.md)
+**FR Reference:** [FR50-55 (Configuration)](../archive/fr-mapping-v1.0.md)
 
 This guide covers all configuration options for MAMA plugin, including hooks, embedding models, performance tuning, and privacy settings.
 
@@ -41,7 +41,7 @@ MAMA uses a JSON configuration file at:
 
 ## Disable Hooks (Privacy Mode)
 
-**FR Reference:** [FR45-49 (Privacy & Security)](../reference/fr-mapping.md)
+**FR Reference:** [FR45-49 (Privacy & Security)](../archive/fr-mapping-v1.0.md)
 
 ### Option 1: Environment Variable
 
@@ -69,7 +69,7 @@ export MAMA_DISABLE_HOOKS=true
 
 ## Change Embedding Model
 
-**FR Reference:** [FR8-12 (Semantic Search)](../reference/fr-mapping.md)
+**FR Reference:** [FR8-12 (Semantic Search)](../archive/fr-mapping-v1.0.md)
 
 ### Via Command
 
@@ -168,7 +168,7 @@ Control how many results are returned:
 
 ### Recency Tuning
 
-**FR Reference:** [FR13-18 (Decision Evolution)](../reference/fr-mapping.md)
+**FR Reference:** [FR13-18 (Decision Evolution)](../archive/fr-mapping-v1.0.md)
 
 Configure recency scoring behavior:
 
@@ -248,7 +248,7 @@ The PreToolUse hook auto-injects context when you read/edit files.
 
 ## Privacy Settings
 
-**FR Reference:** [FR45-49 (Privacy & Security)](../reference/fr-mapping.md)
+**FR Reference:** [FR45-49 (Privacy & Security)](../archive/fr-mapping-v1.0.md)
 
 ### Opt-out of Context Injection
 

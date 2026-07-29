@@ -631,44 +631,16 @@ gateways:
 
 **Solution:** Configure `requireMention` per channel/guild.
 
-#### Multi-Agent Delegation Note
+#### Multi-Agent Delegation Note (retired)
 
-If you rely on `DELEGATE::agent::task` messages (multi-agent swarm), remember:
+`DELEGATE::` / `DELEGATE_BG::` message prefixes are no longer executed. The delegation
+executor was removed in v0.29.0 after the logs showed it had been wired zero times, and the
+`delegate` gateway tool is registered but not dispatchable — calling it throws
+`Unknown tool: delegate`.
 
-- Delegation is parsed only if the gateway processes the message.
-- With `requireMention: true`, normal messages without an @mention are ignored.
-- Delegation commands are treated as explicit triggers: if any line starts with `DELEGATE::` / `DELEGATE_BG::`, it will still be processed (even without an @mention).
-- Recommended: use a dedicated swarm/bot channel with `requireMention: false` so delegation can run without @mentions.
-- In mention-required channels, including the bot mention is still OK and makes intent obvious:
-
-```text
-<@BOT_ID> DELEGATE::critic::WebMCP 문서 검증
-```
-
-Additional notes:
-
-- Use the internal `agent_id` (e.g. `developer`, `reviewer`, `pm`) in `DELEGATE::{agent_id}::...` and treat it as **case-sensitive**.
-- If you are running multiple bots (one token per agent) and want agents to @mention-delegate each other, enable multi-agent mention delegation:
-
-```yaml
-multi_agent:
-  mention_delegation: true
-  max_mention_depth: 3
-```
-
-**Behavior matrix:**
-
-| Context                 | requireMention: false | requireMention: true | Not configured |
-| ----------------------- | --------------------- | -------------------- | -------------- |
-| DM                      | Responds              | Responds             | Responds       |
-| Channel (mentioned)     | Responds              | Responds             | Responds       |
-| Channel (not mentioned) | Responds              | Ignores              | Ignores        |
-
-**Use cases:**
-
-- **Private bot channel**: `requireMention: false` - Treat like DM
-- **Public channel**: `requireMention: true` - Avoid spam
-- **Testing channel**: `requireMention: false` - Easy testing
+A message beginning with `DELEGATE::` is still a shouldRespond trigger on Discord, so the bot
+will READ it; it will then answer as ordinary chat. Scheduled system work runs through the
+Stage-2 work order pipeline instead (see `docs/explanation/mama-os.md`).
 
 ### Message Splitting
 

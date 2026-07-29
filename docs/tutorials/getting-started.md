@@ -181,7 +181,7 @@ Expected: Before Claude responds, you'll see:
 **How it works:**
 
 - UserPromptSubmit hook → Semantic search → Gentle hints (not walls of text)
-- Privacy guarantee: 100% local, no network calls ([FR45-49](../reference/fr-mapping.md))
+- Privacy guarantee: 100% local, no network calls ([FR45-49](../archive/fr-mapping-v1.0.md))
 
 **Learn more:** [Hook Setup Tutorial](hook-setup.md)
 

@@ -2,7 +2,7 @@
 
 **MAMA's privacy-first design**
 
-**FR Reference:** [FR45-49 (Privacy & Security)](../reference/fr-mapping.md)
+**FR Reference:** [FR45-49 (Privacy & Security)](../archive/fr-mapping-v1.0.md)
 
 ---
 

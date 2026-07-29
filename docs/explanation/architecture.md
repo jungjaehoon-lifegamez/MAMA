@@ -177,6 +177,57 @@ WorkOrderConsumer ──► workerRun(brief + payload) on 'operator' lane
 board / wiki / memory artifacts
 ```
 
+### Effect Ledger and Change Attribution (v0.29)
+
+A work order reaching `done` proves that the agent returned a response. It does not prove
+anything changed. Two mechanisms separate the two.
+
+**The effect ledger** (`packages/standalone/src/evidence/effects.ts`) is one table,
+`evidence_effects`, living in `~/.mama/operator/triggers.db`. Every durable change the system
+makes is recorded there, and each row either names the events that caused it or is explicitly
+marked `unattributed`. A `cause_state` CHECK forbids both halves of the obvious lie —
+"attributed with no cause" and "unattributed with a cause" — so the numerator and denominator
+of coverage cannot drift apart. Writes go in the same transaction as the change itself.
+
+**The cause is derived, not claimed.** A per-channel reconcile work order carries its delta
+batch in `payload.eventIds`; `causeEventIdsFromPayload` lifts it onto the run, and every
+change the run makes inherits it without the agent restating anything. Where the agent does
+supply a `source_event_id`, the host batch wins — the agent-authored field is a fallback for
+runs that were handed no batch, because it is forgeable. `board:full` carries no batch and
+its changes are honestly unattributed rather than given an invented cause.
+
+**The read side** is `changes-projection.ts`, exposed as the `changes_read` gateway tool:
+what this system durably changed since a given point, with coverage counts and an explicit
+`returned`/`total` so one page cannot be described as the whole. The scheduled full report
+leads with it.
+
+**Lane verification** (`operator/workorder-hooks.ts`) closes the same gap for the work orders
+themselves. Each lane declares the tools that prove it acted, and separately the tools that
+prove it wrote; a run's claim is reconciled against `execution_status='completed'` traces of
+those tools since a run-bound snapshot. Observe, never block — an overstating run has still
+done whatever it did, and failing it would retry work that may have partly landed. One stated
+limit: the wiki lane's obligated `obsidian` tool covers reads as well as writes and the trace
+records only the tool name, so that lane's verdict is "vault exercised", not "wrote".
+
+### Provenance and the Channel Grant (v0.29)
+
+**`mama_provenance`** (`memory/provenance-resolver.ts`, `provenance-live.ts`) answers what a
+memory rests on. Its governing rule is that a citation must not out-read reading: the same
+grant that bounds the raw reader bounds the citation path, held equal by a differential test.
+
+**The channel grant** (`packages/mama-core/src/context-compile/channel-grant.ts`) is the one
+rule deciding which `(connector, channel)` pairs a run may read. It is compiled to two forms —
+a boolean `isChannelGranted` and a SQL `channelGrantClause` — from a single definition,
+because three divergent copies of this rule previously existed and the test guarding them
+never exercised the production branch. A connector absent from the grant is denied; a
+connector present with an empty channel list is also denied, never read as a wildcard. The
+grant derives from `~/.mama/connectors.json` through `evidence/read.ts`.
+
+**Channel identity** underpins both. Connectors emit whatever their upstream hands them,
+which for six of seven is a display NAME while the config is keyed by ID — so every
+downstream reader compared against the config key and matched nothing. Keys are now
+canonicalised at write time, before anything durable is stored.
+
 ### Hooks (Claude Code plugin)
 
 - **SessionStart:** checkpoint + recent-decision bootstrap into the session

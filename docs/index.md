@@ -53,8 +53,8 @@ _Step-by-step instructions for specific tasks_
 - [Tier 2 Remediation](guides/tier-2-remediation.md) - Fix degraded tier issues
 - [Configuration](guides/configuration.md) - Configuration options and setup
 - [Performance Tuning](guides/performance-tuning.md) - Optimize MAMA performance
-- [Codex Backend](guides/codex-backend.md) - Codex app-server setup and mixed swarm
-- [Multi-Agent Advanced](guides/multi-agent-advanced.md) - Council, Workflow DAG, Swarm, UltraWork
+- [Codex Backend](guides/codex-backend.md) - Codex app-server setup and per-agent backend selection
+- [Multi-Agent Personas](guides/multi-agent-advanced.md) - Personas, tool tiers, hot-reload
 - [Code-Act Sandbox](guides/code-act-sandbox.md) - QuickJS/WASM isolated code execution
 
 ### 📖 [Reference](reference/) - Information-Oriented
@@ -66,7 +66,6 @@ _Technical specifications and API documentation_
 - [Skills API](reference/skills-api.md) - Standalone skills system
 - [Hooks Reference](reference/hooks.md) - Hook configuration
 - [Configuration Options](reference/configuration-options.md) - All config settings
-- [FR Mapping](reference/fr-mapping.md) - Functional requirements traceability
 
 ### 💡 [Explanation](explanation/) - Understanding-Oriented
 
@@ -130,11 +129,19 @@ _Contributing, testing, and development guidelines_
 3. Configure [Gateway Integrations](guides/gateway-config.md)
 4. Troubleshoot with [Standalone Troubleshooting](guides/standalone-troubleshooting.md)
 
-### 🧪 I Want to Use Advanced Multi-Agent Features
+### 🧪 I Want to Configure Agents and Scheduled Work
 
-1. Read [Multi-Agent Advanced Guide](guides/multi-agent-advanced.md) - Council, Workflow, Swarm
-2. Set up [Codex Backend](guides/codex-backend.md) for mixed Claude + Codex swarms
+1. Read [Multi-Agent Personas](guides/multi-agent-advanced.md) - personas, tool tiers, hot-reload
+2. Set up [Codex Backend](guides/codex-backend.md) to pick a backend per agent
 3. Learn about [Code-Act Sandbox](guides/code-act-sandbox.md) for efficient code execution
+4. Understand the work order pipeline in [MAMA OS](explanation/mama-os.md) - it is what runs
+   scheduled board, wiki and memory work
+
+### 🛠️ I Need to Operate a Live Install
+
+- [Entity Substrate Runbook](operations/entity-substrate-runbook.md)
+- [Channel Key Backfill](operations/channel-key-backfill.md) - repairing channels stored under
+  a display name instead of their upstream id
 
 ### 📖 I Need API/Command Reference
 
@@ -153,6 +160,6 @@ _Contributing, testing, and development guidelines_
 
 ---
 
-**Status:** MAMA OS v0.27 — verified composable owner workflows, durable Telegram delivery,
-restart-safe reports, Codex session continuity, and attachment privacy boundaries
-**Last Updated:** 2026-07-22
+**Status:** MAMA OS v0.29.0 — every durable change names its cause or says it cannot;
+lane outcomes are measured against tool traces rather than read from the agent's prose
+**Last Updated:** 2026-07-29
