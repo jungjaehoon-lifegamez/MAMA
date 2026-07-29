@@ -319,11 +319,34 @@ function readCursorFile(path: string): Record<string, number> {
   }
 }
 
-/** The daemon's pid if it is up. A stale pid file is not a running daemon. */
-function runningDaemonPid(): number | null {
+/**
+ * The daemon's pid if it is up. A stale pid file is not a running daemon.
+ *
+ * The pid file is JSON - `{"pid":59974,"startedAt":...}`, written by pid-manager and by the
+ * watchdog. Reading it as a bare integer yields NaN, which made this return null on EVERY
+ * call: the "refuse to --apply under a live daemon" rail that the module docstring calls
+ * mandatory never fired once. Found in review, verified against the live file.
+ *
+ * The legacy bare-integer form is still accepted, because an old pid file outliving an
+ * upgrade must not silently disable the rail a second time.
+ */
+export function runningDaemonPid(): number | null {
   const pidPath = join(homedir(), '.mama', 'mama.pid');
   if (!existsSync(pidPath)) return null;
-  const pid = Number(readFileSync(pidPath, 'utf8').trim());
+  const raw = readFileSync(pidPath, 'utf8').trim();
+  let pid = Number.NaN;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed === 'number') {
+      // A bare integer is valid JSON, so it lands here rather than in the catch.
+      pid = parsed;
+    } else if (parsed !== null && typeof parsed === 'object') {
+      const value = (parsed as { pid?: unknown }).pid;
+      if (typeof value === 'number') pid = value;
+    }
+  } catch {
+    pid = Number(raw);
+  }
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     process.kill(pid, 0);

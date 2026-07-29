@@ -49,14 +49,31 @@ describe('a bounded run attributes what it changes to its batch', () => {
     });
   });
 
-  // A named source event is more precise than the batch it came in, so it wins.
-  it('prefers the event a create is keyed on over the whole batch', () => {
+  // The precedence was the other way around at first: a named source event is more PRECISE
+  // than the batch, so it won. Review pointed out what precision costs here - source_event_id
+  // arrives on agent-authored task_create input, so preferring it handed the agent the power
+  // to choose its own attribution, and any 1-200 character string passes the shape check.
+  // The host batch is the unforgeable channel, so the host batch wins.
+  it('prefers the host batch over the agent-supplied source event', () => {
     ledger.create(
-      { title: 'from one message', source_channel: 'chat:C001', source_event_id: 'evt_b' },
+      { title: 'from one message', source_channel: 'chat:C001', source_event_id: 'evt_forged' },
       { runId: 'mr_1', causeEventIds: BATCH }
     );
 
-    expect(listEffects(adapter())[0]).toMatchObject({ sourceEventIds: ['evt_b'] });
+    expect(listEffects(adapter())[0]).toMatchObject({ sourceEventIds: BATCH });
+  });
+
+  // Weaker evidence is not worthless: an unbounded run has nothing else to offer.
+  it('falls back to the source event when the run was handed no batch', () => {
+    ledger.create(
+      { title: 'from one message', source_channel: 'chat:C001', source_event_id: 'evt_b' },
+      { runId: 'mr_1' }
+    );
+
+    expect(listEffects(adapter())[0]).toMatchObject({
+      causeState: 'attributed',
+      sourceEventIds: ['evt_b'],
+    });
   });
 
   // A run that was handed no batch is still honest about it rather than inventing one.

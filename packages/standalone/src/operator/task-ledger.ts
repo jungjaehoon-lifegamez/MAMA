@@ -834,12 +834,26 @@ export class TaskLedger implements TaskSource {
       this.recordTaskChange({
         kind: 'task_create',
         taskId: createdId,
-        // `?? origin.causeEventId`, not a plain spread: a caller-supplied field that is
-        // absent must not erase what the host knows. Spreading `undefined` over the
-        // trusted value silently disabled the only unforgeable attribution channel.
+        // The HOST batch wins. `source_event_id` arrives on agent-authored task_create
+        // input, so letting it take precedence made the attribution the agent's to choose:
+        // any 1-200 character string passes the ledger's shape check, and the change was
+        // then stamped `attributed` on a cause nobody could resolve. The run id is already
+        // protected for exactly this reason; the cause was not. Found in review.
+        //
+        // The agent's field is still USED when the host handed the run no batch - a named
+        // source event is better evidence than none, and an unbounded run has nothing else.
+        // It is weaker evidence, not worthless.
+        //
+        // A plain spread would be wrong in the other direction: an absent caller field must
+        // not erase what the host knows.
         origin: {
           ...origin,
-          causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+          causeEventIds:
+            origin.causeEventIds && origin.causeEventIds.length > 0
+              ? origin.causeEventIds
+              : input.source_event_id
+                ? [input.source_event_id]
+                : origin.causeEventIds,
         },
         channel: input.source_channel ?? null,
         // Everything the INSERT wrote. A hash over two of fifteen columns cannot tell two

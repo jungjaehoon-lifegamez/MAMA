@@ -97,9 +97,7 @@ export function stripMcpPrefix(name: string): string {
  *   2. `{success, message: "<shape 1 as a JSON string>"}`    - what the history actually
  *      carries, because executeTools stores the whole GatewayToolResult as tool_result content
  *   3. shape 2 whose `message` is additionally wrapped in untrusted-content markers when the
- *      run touched external evidence, so `message` is prose with shape 1 embedded in it
- *   4. the MCP server's `[tools] a, b, c` prose summary
- *
+ *      run touched external evidence, so `message` is prose with shape 1 embedded in it *
  * Measured live 2026-07-29: the report lane executed kagemusha_tasks and task_list, its own
  * trace channel recorded them, and three consecutive fixes still logged "agent executed NO
  * gateway gather tools" - because each fix addressed one layer and the payload was under
@@ -119,7 +117,15 @@ function parseHostToolsInvoked(content: unknown): string[] {
     if (typeof parsed.message !== 'string') break;
     body = parsed.message;
   }
-  return parseToolsLine(body);
+  // Deliberately no prose fallback. An earlier version also read the Code-Act MCP server's
+  // `[tools] a, b, c` summary line, and that line shares one text blob with `[logs]` (the
+  // sandbox's console output) and the model's own return value - so a single
+  // `console.log('[tools] mama_save')` forged the audit, precisely in the zero-tools case
+  // the audit exists to catch. Found in review. Losing that route can only produce a FALSE
+  // WARNING on a run that did gather, which is the safe direction; the forgery silenced the
+  // only "substance NOT verified" signal the owner gets. The executor-side shape above is
+  // what the live report lane actually carries.
+  return [];
 }
 
 /**
@@ -140,15 +146,19 @@ function parseFirstJsonObject(body: string): Record<string, unknown> | null {
       escaped = false;
       continue;
     }
-    if (ch === '\\') {
-      escaped = true;
+    // The escape only means anything INSIDE a string. Checking it first made a stray
+    // backslash in surrounding prose swallow the next character, and a `\}` could then eat
+    // the closing brace and run the scan to EOF - a false "gathered nothing" against a run
+    // that gathered. Found in review.
+    if (inString) {
+      if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
       continue;
     }
     if (ch === '"') {
-      inString = !inString;
+      inString = true;
       continue;
     }
-    if (inString) continue;
     if (ch === '{') depth += 1;
     else if (ch === '}') {
       depth -= 1;
@@ -165,28 +175,6 @@ function parseFirstJsonObject(body: string): Record<string, unknown> | null {
     }
   }
   return null;
-}
-
-/**
- * The `[tools] a, b, c` line the Code-Act MCP server emits.
- *
- * There are TWO code-act result shapes and only one of them was ever parsed. The gateway
- * executor returns `{value, logs, metrics, hostToolsInvoked}`; the MCP server
- * (mcp/code-act-server.ts) builds a human-readable summary whose first line is
- * `[tools] <names>`. The report lane runs over MCP, so the field the audit looked for was
- * never present, and the run was recorded as having gathered nothing.
- *
- * Measured 2026-07-29 after the prefix fix landed: the report lane's own trace channel
- * showed kagemusha_tasks and task_list executing while the audit still warned - the branch
- * ran, and then found the wrong payload shape.
- */
-function parseToolsLine(body: string): string[] {
-  const match = /^\[tools\][ \t]*(.+)$/m.exec(body);
-  if (!match) return [];
-  return match[1]
-    .split(',')
-    .map((name) => stripMcpPrefix(name.trim()))
-    .filter((name) => /^[a-z][a-z0-9_]*$/.test(name));
 }
 
 /** Minimal structural view of AgentLoopResult.history (types.ts:1105). Structural on purpose:

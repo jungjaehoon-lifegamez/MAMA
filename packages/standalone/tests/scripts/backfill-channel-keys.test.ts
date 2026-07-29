@@ -8,9 +8,17 @@
  *
  * Synthetic data only; in-memory sqlite.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
-import { applyRekey, buildPlan, carryDeltaCursors } from '../../scripts/backfill-channel-keys.js';
+import {
+  applyRekey,
+  buildPlan,
+  carryDeltaCursors,
+  runningDaemonPid,
+} from '../../scripts/backfill-channel-keys.js';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir, homedir } from 'node:os';
+import { join } from 'node:path';
 
 type Db = InstanceType<typeof Database>;
 
@@ -207,5 +215,49 @@ describe('delta cursors, which are a file rather than a table', () => {
     expect(carryDeltaCursors({ 'mail\u0000inbox': 7 }, rekeys).cursors).toEqual({
       'mail\u0000inbox': 7,
     });
+  });
+});
+
+// The rail that never fired. `--apply` refuses to run under a live daemon; the pid file is
+// JSON, the check parsed it as a bare integer, so it read NaN and returned null on every
+// call. Found in review, verified against the live file before this test was written.
+describe('runningDaemonPid: the live-daemon rail', () => {
+  const realHome = homedir();
+  let fakeHome = '';
+
+  beforeEach(() => {
+    fakeHome = mkdtempSync(join(tmpdir(), 'pidhome-'));
+    mkdirSync(join(fakeHome, '.mama'), { recursive: true });
+    process.env.HOME = fakeHome;
+  });
+
+  afterEach(() => {
+    process.env.HOME = realHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+  });
+
+  it('detects a live daemon from the JSON pid file the daemon actually writes', () => {
+    writeFileSync(
+      join(fakeHome, '.mama', 'mama.pid'),
+      JSON.stringify({ pid: process.pid, startedAt: 1 }, null, 2)
+    );
+    expect(runningDaemonPid()).toBe(process.pid);
+  });
+
+  it('still accepts the legacy bare-integer file so an old one cannot disable the rail', () => {
+    writeFileSync(join(fakeHome, '.mama', 'mama.pid'), String(process.pid));
+    expect(runningDaemonPid()).toBe(process.pid);
+  });
+
+  it('treats a stale pid as no daemon', () => {
+    // 2^22 is above the default pid_max on both macOS and Linux, so it cannot be live.
+    writeFileSync(join(fakeHome, '.mama', 'mama.pid'), JSON.stringify({ pid: 4194304 }));
+    expect(runningDaemonPid()).toBeNull();
+  });
+
+  it('treats a missing or unparseable file as no daemon rather than throwing', () => {
+    expect(runningDaemonPid()).toBeNull();
+    writeFileSync(join(fakeHome, '.mama', 'mama.pid'), 'not a pid');
+    expect(runningDaemonPid()).toBeNull();
   });
 });
