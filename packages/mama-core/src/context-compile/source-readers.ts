@@ -828,15 +828,26 @@ function readRawCandidatesWithinGrant(
   const params: unknown[] = [...granted.params];
 
   const min = minVisibleTimeMs(effectiveInput);
-  const max = maxVisibleTimeMs(effectiveInput);
   if (min !== null) {
     clauses.push('COALESCE(event_datetime, source_timestamp_ms) >= ?');
     params.push(min);
   }
-  if (max !== null) {
-    clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
-    params.push(max);
-  }
+  // EVIDENCE IS WHAT HAS ALREADY HAPPENED, so the window ends now unless the caller named
+  // a later end explicitly.
+  //
+  // Found by running this reader against a snapshot of the live index rather than against
+  // fixtures. `event_datetime` is when the event OCCURS, and a calendar entry occurs in
+  // the future: 2,762 live rows are future-dated, one of them in 2056. Ordering by that
+  // column descending gave them the entire top-100 - a report asking what happened in the
+  // last seven days received one hundred calendar entries and zero messages. Excluding
+  // them, the same query returns 99 messages and one calendar entry.
+  //
+  // Nothing caught this before because the predicate this replaces returned no rows at
+  // all, so its ordering never mattered. A caller that genuinely wants the future still
+  // gets it by setting range.end_ms or as_of past now.
+  const max = maxVisibleTimeMs(effectiveInput) ?? nowMs();
+  clauses.push('COALESCE(event_datetime, source_timestamp_ms) <= ?');
+  params.push(max);
   params.push(normalizeLimit(effectiveInput.limit));
 
   const rows = adapter
@@ -903,6 +914,13 @@ function countRefusedByGrant(
     .prepare(`SELECT COUNT(*) AS n FROM connector_event_index WHERE ${clauses.join(' AND ')}`)
     .get(...params) as { n?: unknown } | undefined;
   return Number(row?.n ?? 0);
+}
+
+/** Injectable only so a test can pin the boundary; production reads the clock. */
+let nowMs: () => number = () => Date.now();
+
+export function setContextSourceClockForTests(clock: () => number): void {
+  nowMs = clock;
 }
 
 function refusedAggregate(refused: number): HiddenCandidateAggregate {
