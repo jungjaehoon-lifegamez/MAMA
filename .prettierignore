@@ -3,3 +3,9 @@ dist/
 *.min.js
 pnpm-lock.yaml
 package-lock.json
+
+# Generated from tool-registry.ts by scripts/generate-gateway-tools.ts and read verbatim by
+# the text-gateway persona as its parameter list. Prettier rewrites markdown emphasis, which
+# turns `due_at?` into `due*at?` and `evt_` into `evt*` - identifiers the agent then emits
+# wrong. A generated contract must not be reformatted by anything.
+packages/standalone/src/agent/gateway-tools.md

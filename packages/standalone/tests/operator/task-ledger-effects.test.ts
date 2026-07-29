@@ -46,10 +46,11 @@ describe('task ledger effect recording', () => {
     });
   });
 
-  // The finding, not an omission: task_update has never asked what prompted it, so these
-  // changes are counted as unexplained rather than quietly attributed to the event the row
-  // was originally created from - which would claim a causal link nobody established.
-  it('records an update as unattributed while the tool has no cause field', () => {
+  // task_update now takes `caused_by`, so this is the shape of an update that supplies
+  // none - still the common case, and still counted as unexplained rather than quietly
+  // attributed to the event the row was created from, which would claim a causal link
+  // nobody established.
+  it('records an update with no supplied cause as unattributed', () => {
     const task = ledger.create({
       title: 'follow up',
       source_channel: 'chat:C001',
@@ -63,6 +64,20 @@ describe('task ledger effect recording', () => {
     expect(updates).toHaveLength(1);
     expect(updates[0]).toMatchObject({ causeState: 'unattributed', sourceEventIds: [] });
     expect(changeCoverage(adapter())).toEqual({ attributed: 1, unattributed: 1 });
+  });
+
+  // The other half of the same rule, now that a cause can be supplied: a citation only
+  // means something if a change happened to attach it to.
+  it('records a supplied cause on an update that actually changed', () => {
+    const task = ledger.create({ title: 'follow up' });
+    ledger.update(task.id, { status: 'done' }, { runId: 'mr_8', causeEventId: 'evt_cited' });
+
+    const updates = listEffects(adapter()).filter((e) => e.kind === 'task_update');
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      causeState: 'attributed',
+      sourceEventIds: ['evt_cited'],
+    });
   });
 
   // `done` must mean "changed". A call that sets a field to what it already held is not a
