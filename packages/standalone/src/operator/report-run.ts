@@ -25,7 +25,7 @@ import type { ArtifactProvenance } from './report-carry.js';
 export const OPERATOR_REPORT_SESSION_KEY = 'operator:report';
 
 /** Gateway READ tools the full report is instructed to gather with (gateway-tools.md:12,14,22-25). */
-const GATHER_TOOLS = new Set<string>([
+export const GATHER_TOOLS = new Set<string>([
   'kagemusha_overview',
   'kagemusha_entities',
   'kagemusha_tasks',
@@ -39,12 +39,21 @@ const GATHER_TOOLS = new Set<string>([
   // to call is a tool the report does not call, and the audit counted the run as having
   // gathered nothing from it because it never appeared.
   'changes_read',
+  // Granted reads that were missing here, so a run that gathered through them was audited
+  // as having gathered through nothing. The consequence is not a silent undercount: an
+  // empty `gatherTools` fires the full-report WARNING claiming task-board substance was
+  // NOT verified - a report that read the board via `trello_kanban` and `task_list` would
+  // be accused of not having read it.
+  'schedule_upcoming',
+  'task_external_correlation',
+  'task_list',
+  'trello_kanban',
 ]);
 
 /** Gateway WRITE tools. mama_save is the M3 hand; the rest are classified only for honest
  *  observability if they ever appear (report_publish/wiki_publish are NOT instructed in M3 -
  *  see plan finding F6). (gateway-tools.md:11,17,18,65,66) */
-const WRITE_TOOLS = new Set<string>([
+export const WRITE_TOOLS = new Set<string>([
   'mama_save',
   'mama_add',
   'mama_ingest',
