@@ -12,6 +12,7 @@ import {
   WORKORDER_MAX_ATTEMPTS,
   type WorkOrderConsumerDeps,
   type WorkOrderConsumerEvent,
+  classifyTemporalFailure,
 } from '../../src/operator/workorder-consumer.js';
 
 function makeDeps(overrides: Partial<WorkOrderConsumerDeps> = {}): {
@@ -853,5 +854,41 @@ describe('Story S2-T3: graceful stop under skipped firings (N1)', () => {
       expect(ctx.events.some((event) => event.type === 'failed')).toBe(false);
       expect(ctx.events.some((event) => event.type === 'exhausted')).toBe(false);
     });
+  });
+});
+
+// The operator could not tell an upstream outage from a bug in this code: five consecutive
+// live failures reported `temporal-worker-failure;sha256=...;length=31` and nothing else.
+// The label comes from a closed table, so it adds a cause without quoting the error - which
+// is what keeps it inside the privacy contract asserted above.
+describe('classifyTemporalFailure', () => {
+  it('names the shapes the live failures actually take', () => {
+    expect(classifyTemporalFailure('API Error: 529 Overloaded.')).toBe('upstream-5xx');
+    expect(classifyTemporalFailure('API Error: 500 Internal error')).toBe('upstream-5xx');
+    expect(classifyTemporalFailure('request timed out after 240000ms')).toBe('timeout');
+    expect(classifyTemporalFailure('API Error: 429 rate limit')).toBe('rate-limited');
+    expect(classifyTemporalFailure('connect ECONNREFUSED 127.0.0.1:443')).toBe('network');
+    expect(classifyTemporalFailure('API Error: 400 invalid_request')).toBe('request-rejected');
+  });
+
+  // Honest about its own limits: an unmatched failure says so rather than guessing, and the
+  // caller then reports exactly what it reported before - the digest.
+  it('returns null rather than guessing at an unknown failure', () => {
+    expect(classifyTemporalFailure('Claude CLI exited with code 1')).toBeNull();
+    expect(classifyTemporalFailure('')).toBeNull();
+  });
+
+  // The whole point of the closed table: a label is chosen, never extracted. A reason that
+  // matches a shape AND carries a token must still yield only the label.
+  it('never returns any text taken from the reason', () => {
+    const secret = 'connector-token-9f3a2b';
+    for (const reason of [
+      `API Error: 500 ${secret}`,
+      `timed out while sending ${secret}`,
+      `ECONNREFUSED talking to ${secret}`,
+      secret,
+    ]) {
+      expect(classifyTemporalFailure(reason) ?? '').not.toContain(secret);
+    }
   });
 });
