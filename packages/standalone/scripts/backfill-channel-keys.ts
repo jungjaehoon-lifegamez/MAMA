@@ -9,14 +9,18 @@
  * The rows already indexed stay unreadable until they are moved, and on the live index
  * that is 15,279 events belonging to channels the owner did configure.
  *
- * WHY IT IS NOT JUST ONE UPDATE. The channel value is a join key in six places, and the
- * one that matters is not a table. A seam review found this version carefully merging
+ * WHY IT IS NOT JUST ONE UPDATE. The channel value is a join key in several places, and
+ * the one that matters is not a table. A seam review found this version carefully merging
  * cursors in three tables that have no reader or writer anywhere in the repo, while
  * missing the live one: ConnectorDeltaRepo keys its partitions `connector\0channel` in
  * ~/.mama/operator/trigger-loop-cursors.json, and `drainNew` starts from 0 when a key is
  * absent. All 22 re-keyed partitions have a live cursor there. Applying the earlier
  * version would have redelivered 15,279 months-old events as new and composed owner
  * reports out of them - precisely the failure this comment claimed to prevent.
+ *
+ * Those three tables are now gone from this script entirely: they have no reader and no
+ * writer anywhere in the repository. Carefully merging cursors nothing consults was work
+ * that looked like rigour and was decoration.
  *
  * `memory_scope_id` is the sixth carrier: on all 11,277 channel-scoped rows it is exactly
  * equal to `channel`. Moving one without the other leaves a row holding two names for its
@@ -76,17 +80,6 @@ const CHANNEL_TABLES: Array<{ table: string; connectorColumn: string; channelCol
     connectorColumn: 'source_connector',
     channelColumn: 'channel',
   },
-  {
-    table: 'connector_consumer_cursors',
-    connectorColumn: 'connector',
-    channelColumn: 'channel_id',
-  },
-  {
-    table: 'connector_delta_deliveries',
-    connectorColumn: 'connector',
-    channelColumn: 'channel_id',
-  },
-  { table: 'connector_source_cursors', connectorColumn: 'connector', channelColumn: 'channel_id' },
 ];
 
 type Db = InstanceType<typeof Database>;
@@ -172,10 +165,6 @@ export function applyRekey(db: Db, rekey: Rekey): Record<string, number> {
     if (!tableExists(db, table)) continue;
     if (table === 'connector_event_index_operator_seq_cursors') {
       moved[table] = mergeSeqCursor(db, rekey);
-      continue;
-    }
-    if (table === 'connector_consumer_cursors') {
-      moved[table] = mergeConsumerCursors(db, rekey);
       continue;
     }
     const result = db
@@ -279,61 +268,6 @@ function mergeSeqCursor(db: Db, rekey: Rekey): number {
   return 1;
 }
 
-function mergeConsumerCursors(db: Db, rekey: Rekey): number {
-  const sources = db
-    .prepare(
-      `SELECT consumer, last_event_index_id, last_event_version, updated_at
-         FROM connector_consumer_cursors WHERE connector = ? AND channel_id = ?`
-    )
-    .all(rekey.connector, rekey.from) as Array<{
-    consumer: string;
-    last_event_index_id: string;
-    last_event_version: number;
-    updated_at: number;
-  }>;
-
-  let moved = 0;
-  for (const source of sources) {
-    const target = db
-      .prepare(
-        `SELECT updated_at FROM connector_consumer_cursors
-          WHERE consumer = ? AND connector = ? AND channel_id = ?`
-      )
-      .get(source.consumer, rekey.connector, rekey.to) as { updated_at?: number } | undefined;
-
-    if (target === undefined) {
-      db.prepare(
-        `UPDATE connector_consumer_cursors SET channel_id = ?
-          WHERE consumer = ? AND connector = ? AND channel_id = ?`
-      ).run(rekey.to, source.consumer, rekey.connector, rekey.from);
-      moved += 1;
-      continue;
-    }
-    // Keep whichever cursor has seen more. Moving a consumer backwards redelivers events
-    // the owner has already been told about, which is the one outcome worse than silence.
-    if (source.updated_at > (target.updated_at ?? 0)) {
-      db.prepare(
-        `UPDATE connector_consumer_cursors
-            SET last_event_index_id = ?, last_event_version = ?, updated_at = ?
-          WHERE consumer = ? AND connector = ? AND channel_id = ?`
-      ).run(
-        source.last_event_index_id,
-        source.last_event_version,
-        source.updated_at,
-        source.consumer,
-        rekey.connector,
-        rekey.to
-      );
-      moved += 1;
-    }
-    db.prepare(
-      `DELETE FROM connector_consumer_cursors
-        WHERE consumer = ? AND connector = ? AND channel_id = ?`
-    ).run(source.consumer, rekey.connector, rekey.from);
-  }
-  return moved;
-}
-
 /**
  * Carry the live delta cursors, which are a JSON file rather than a table.
  *
@@ -343,7 +277,11 @@ function mergeConsumerCursors(db: Db, rekey: Rekey): number {
  * behind them sit 15,279 events that would have been drained as new and turned into owner
  * reports about months-old messages.
  *
- * Where both keys exist the LATER cursor wins, for the same reason as the table merge:
+ * THIS is the cursor that matters. The three cursor TABLES this script used to merge have
+ * no reader and no writer anywhere in the repository; they were deleted, and this was very
+ * nearly deleted with them.
+ *
+ * Where both keys exist the LATER cursor wins, for the same reason as any merge here:
  * moving a consumer backwards is redelivery by another route.
  */
 export function carryDeltaCursors(

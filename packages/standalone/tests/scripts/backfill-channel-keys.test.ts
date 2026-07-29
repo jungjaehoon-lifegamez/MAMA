@@ -46,17 +46,6 @@ beforeEach(() => {
       source_connector TEXT NOT NULL, channel TEXT NOT NULL DEFAULT '',
       next_seq INTEGER NOT NULL, PRIMARY KEY (source_connector, channel)
     );
-    CREATE TABLE connector_consumer_cursors (
-      consumer TEXT NOT NULL, connector TEXT NOT NULL, channel_id TEXT NOT NULL,
-      last_event_index_id TEXT NOT NULL, last_event_version INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL, PRIMARY KEY (consumer, connector, channel_id)
-    );
-    CREATE TABLE connector_delta_deliveries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT, connector TEXT NOT NULL, channel_id TEXT NOT NULL
-    );
-    CREATE TABLE connector_source_cursors (
-      connector TEXT NOT NULL, channel_id TEXT NOT NULL, PRIMARY KEY (connector, channel_id)
-    );
   `);
 });
 
@@ -126,93 +115,6 @@ describe('channel re-key plan', () => {
 
 describe('channel re-key application', () => {
   const rekey = { connector: 'chat', from: 'general', to: 'C001', events: 1 };
-
-  it('moves every table that joins on the value', () => {
-    event('e1', 'chat', 'general');
-    db.prepare('INSERT INTO connector_delta_deliveries (connector, channel_id) VALUES (?, ?)').run(
-      'chat',
-      'general'
-    );
-    db.prepare('INSERT INTO connector_source_cursors (connector, channel_id) VALUES (?, ?)').run(
-      'chat',
-      'general'
-    );
-
-    applyRekey(db, rekey);
-
-    expect(
-      db.prepare('SELECT channel FROM connector_event_index WHERE event_index_id = ?').get('e1')
-    ).toEqual({ channel: 'C001' });
-    expect(db.prepare('SELECT channel_id FROM connector_delta_deliveries').get()).toEqual({
-      channel_id: 'C001',
-    });
-    expect(db.prepare('SELECT channel_id FROM connector_source_cursors').get()).toEqual({
-      channel_id: 'C001',
-    });
-  });
-
-  // The failure this repair must not cause: a consumer whose cursor vanished starts over
-  // and redelivers everything it has already reported.
-  it('carries a consumer cursor across instead of stranding it', () => {
-    event('e1', 'chat', 'general');
-    db.prepare(
-      `INSERT INTO connector_consumer_cursors
-         (consumer, connector, channel_id, last_event_index_id, last_event_version, updated_at)
-       VALUES ('awareness', 'chat', 'general', 'e1', 1, 100)`
-    ).run();
-
-    applyRekey(db, rekey);
-
-    expect(db.prepare('SELECT * FROM connector_consumer_cursors').all()).toEqual([
-      {
-        consumer: 'awareness',
-        connector: 'chat',
-        channel_id: 'C001',
-        last_event_index_id: 'e1',
-        last_event_version: 1,
-        updated_at: 100,
-      },
-    ]);
-  });
-
-  // When both cursors exist, only the further-along one may survive: adopting the older
-  // one would move the consumer backwards, which is redelivery by another route.
-  it('keeps the further-along cursor when two collide', () => {
-    db.prepare(
-      `INSERT INTO connector_consumer_cursors
-         (consumer, connector, channel_id, last_event_index_id, last_event_version, updated_at)
-       VALUES ('awareness', 'chat', 'general', 'e_new', 1, 500),
-              ('awareness', 'chat', 'C001', 'e_old', 1, 100)`
-    ).run();
-
-    applyRekey(db, rekey);
-
-    expect(db.prepare('SELECT * FROM connector_consumer_cursors').all()).toEqual([
-      {
-        consumer: 'awareness',
-        connector: 'chat',
-        channel_id: 'C001',
-        last_event_index_id: 'e_new',
-        last_event_version: 1,
-        updated_at: 500,
-      },
-    ]);
-  });
-
-  it('does not move a consumer backwards when the target is already ahead', () => {
-    db.prepare(
-      `INSERT INTO connector_consumer_cursors
-         (consumer, connector, channel_id, last_event_index_id, last_event_version, updated_at)
-       VALUES ('awareness', 'chat', 'general', 'e_old', 1, 100),
-              ('awareness', 'chat', 'C001', 'e_new', 1, 500)`
-    ).run();
-
-    applyRekey(db, rekey);
-
-    expect(db.prepare('SELECT last_event_index_id FROM connector_consumer_cursors').get()).toEqual({
-      last_event_index_id: 'e_new',
-    });
-  });
 
   // Two sequence streams becoming one must not hand out a number twice.
   it('merges sequence cursors to the higher watermark', () => {
