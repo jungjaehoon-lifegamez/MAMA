@@ -10,7 +10,7 @@
  *   3. Security alert sender wiring (parseSecurityAlertTargets → healthCheckService.securityAlertSender)
  *   4. CronResultRouter — routes cron results to Discord/Slack/Telegram gateways
  *   5. Graph handler runtime wiring — populates graphHandlerOptions with:
- *      - getAgentStates(), getSwarmTasks(), getRecentDelegations()
+ *      - getAgentStates()
  *      - applyMultiAgentConfig(), restartMultiAgentAgent(), stopMultiAgentAgent()
  *      - delegation count and agent states wired into healthCheckService
  *   6. Plugin gateway loader — PluginLoader for additional gateways (e.g. Chatwork)
