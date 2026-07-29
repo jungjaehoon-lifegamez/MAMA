@@ -244,7 +244,22 @@ function isCaseVisible(
   return false;
 }
 
-/** The time bound, shared by both branches so a grant cannot skip it. */
+/**
+ * The time bound, shared by both branches so a grant cannot skip it.
+ *
+ * DELIBERATELY STRICTER THAN THE READER, and a review flagged the difference as a
+ * divergence between two delegates of one rule. It is not. A row with no usable timestamp
+ * is refused here even when no bound is set, while the reader - whose clause is on
+ * `COALESCE(event_datetime, source_timestamp_ms)` - leaves such a row alone when there is
+ * no bound to apply.
+ *
+ * The direction is what makes it correct: this gate guards refs reached INDIRECTLY, through
+ * a seed the caller named or an edge the graph walked. Refusing what cannot be shown to sit
+ * inside any window keeps the indirect path no wider than the direct one, which is the
+ * invariant the whole design rests on. Relaxing it to match the reader would have made
+ * citation reach further than reading for exactly the rows whose position in time is
+ * unknown. `fails closed for raw endpoints with blank timestamps` states the intent.
+ */
 function isRawWithinTime(row: Record<string, unknown>, visibility: TwinVisibility): boolean {
   const rawTs = row.event_datetime ?? row.source_timestamp_ms;
   if (rawTs === null || rawTs === undefined || (typeof rawTs === 'string' && rawTs.trim() === '')) {

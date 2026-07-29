@@ -54,7 +54,18 @@ interface Plan {
   rekeys: Rekey[];
   ambiguous: Array<{ connector: string; name: string; candidates: number }>;
   alreadyCanonical: number;
-  unconfigured: number;
+  /** Events of a connector the config does not declare at all. */
+  unknownConnector: number;
+  /**
+   * Events of a DECLARED connector whose channel matches no configured key or name.
+   *
+   * Reported apart from unknownConnector because the two mean different things and the
+   * earlier version printed both as "channels this system was never given". 860 of the
+   * 1,312 belong to declared connectors - a channel that was removed from config, or
+   * renamed after the rows were written. Those stay permanently invisible, and calling
+   * them never-configured hides the one class an owner could actually act on.
+   */
+  unmatchedChannel: number;
 }
 
 /** Tables whose channel column is the same join key, and must move with the index. */
@@ -107,12 +118,18 @@ export function buildPlan(db: Db, config: Record<string, unknown>): Plan {
     )
     .all() as Array<{ connector: string; channel: string | null; n: number }>;
 
-  const plan: Plan = { rekeys: [], ambiguous: [], alreadyCanonical: 0, unconfigured: 0 };
+  const plan: Plan = {
+    rekeys: [],
+    ambiguous: [],
+    alreadyCanonical: 0,
+    unknownConnector: 0,
+    unmatchedChannel: 0,
+  };
   for (const row of rows) {
     const channel = row.channel ?? '';
     const keys = canonical.get(row.connector);
     if (!keys) {
-      plan.unconfigured += row.n;
+      plan.unknownConnector += row.n;
       continue;
     }
     if (keys.has(channel)) {
@@ -135,7 +152,7 @@ export function buildPlan(db: Db, config: Record<string, unknown>): Plan {
           candidates: candidates.length,
         });
       }
-      plan.unconfigured += row.n;
+      plan.unmatchedChannel += row.n;
     }
   }
   return plan;
@@ -397,7 +414,14 @@ function main(): void {
 
   console.log(`already canonical : ${plan.alreadyCanonical}`);
   console.log(`to re-key         : ${total} events across ${plan.rekeys.length} channels`);
-  console.log(`left alone        : ${plan.unconfigured} (channels this system was never given)`);
+  console.log(
+    `unknown connector : ${plan.unknownConnector} (the config does not declare it at all)`
+  );
+  console.log(
+    `unmatched channel : ${plan.unmatchedChannel} (declared connector, channel matches no ` +
+      'configured key or name - removed or renamed since the rows were written, and ' +
+      'permanently invisible until the config names them again)'
+  );
   if (plan.ambiguous.length > 0) {
     console.log(
       `AMBIGUOUS (skipped): ${plan.ambiguous.length} display names map to more than one channel`
