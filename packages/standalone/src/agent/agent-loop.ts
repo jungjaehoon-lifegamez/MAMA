@@ -96,7 +96,10 @@ const DEFAULT_TOOLS_CONFIG = {
   mcp_config: '~/.mama/mama-mcp-config.json',
 };
 
-const SOURCE_GLOBAL_LANES: Record<string, string> = {
+// Exported so the conductor test can PIN that 'conductor' is absent: the
+// conductor must run on its own session:operator:conductor lane, never the
+// global operator lane where Stage-2 workers serialize (deadlock topology).
+export const SOURCE_GLOBAL_LANES: Record<string, string> = {
   viewer: 'viewer',
   system: 'system',
   // Operator work (scheduled reports, briefed worker runs) serializes among
