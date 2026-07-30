@@ -1274,8 +1274,9 @@
             <p>
               A run is bounded by the delta batch it was handed, and that batch becomes the cause of
               everything the run changes — the agent never restates it, and a host batch beats an
-              agent-supplied id, which is forgeable. A run given no batch produces changes marked
-              honestly unattributed rather than plausibly attributed.
+              agent-supplied id, which is forgeable. With no batch, a named source event is still
+              used: weaker evidence, not worthless. Only when there is neither is a change marked
+              unattributed — the honest answer rather than a plausible-looking one.
             </p>
             <pre class="cc-code">
 {channel, delta batch} → run → change

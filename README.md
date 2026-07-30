@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-4900%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Local operating memory that lets AI agents read the board, cite the evidence, and stay inside
 > explicit boundaries.
@@ -56,8 +56,9 @@ coverage kept inseparable.
   shape in which a change can quietly lose its provenance.
 - **Bounded runs** — a run is `{channel, delta batch}`. The batch the host handed the run becomes the
   cause of everything that run changes; the agent never restates it, and a host batch always beats an
-  agent-supplied source id, which is forgeable. A run given no batch produces changes that are
-  honestly marked unattributed rather than plausibly attributed.
+  agent-supplied source id, which is forgeable. When the host handed the run no batch, a named source
+  event is still used — weaker evidence, not worthless. Only when there is neither is the change
+  marked unattributed, which is the honest answer rather than a plausible-looking one.
 - **`changes_read`** — what this system durably changed since a given point, with coverage counts.
   The full report leads with it.
 - **`mama_provenance`** — what a memory rests on. A citation must not out-read reading: the same
