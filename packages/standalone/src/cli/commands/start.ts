@@ -100,6 +100,7 @@ import {
   type TemporalRuntime,
 } from '../../operator/temporal-runtime.js';
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
+import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -1511,8 +1512,7 @@ export async function runAgentLoop(
   // the owner-alert targets registered in gateway wiring. Alarm, never
   // enforcement; quiet hours honored inside check().
   const legCadence = initLegCadence(operatorDb);
-  legCadence.declare('trigger-loop', 60_000);
-  legCadence.declare('workorder-consumer', 60_000);
+  legCadence.declare('workorder-consumer', WORKORDER_CONSUMER_TICK_MS);
   const legWatchdog = setInterval(() => {
     try {
       const { pages, recoveries } = legCadence.check();
@@ -1745,12 +1745,15 @@ export async function runAgentLoop(
         let payload: Record<string, unknown>;
         if (kind === 'board') {
           if (causeEventIds && causeEventIds.length > 0) {
-            // Conductor delegation: batch-deterministic key so a redelivered
-            // judgment dedups instead of double-ordering, and the batch rides
-            // as the workorder's cause (causeEventIdsFromPayload lifts it -
-            // the worker's changes are then born attributed).
+            // Batch-carrying delegation: FULL mode (reconcile requires
+            // channelKey+deltaLines the requester does not have - proven by
+            // review running the validator) with the batch riding as
+            // eventIds, which the validator allows on full and
+            // causeEventIdsFromPayload lifts as the worker's cause. The
+            // batch-deterministic key dedups a redelivered judgment while
+            // the first order is still open.
             idempotencyKey = boardBatchKey(causeEventIds);
-            payload = { mode: 'reconcile', eventIds: [...causeEventIds] };
+            payload = { mode: 'full', force: true, eventIds: [...causeEventIds] };
           } else {
             idempotencyKey = boardManualKey(now);
             payload = { mode: 'full', force: true };
@@ -2011,11 +2014,10 @@ export async function runAgentLoop(
         fullReportBoardLines: buildBoardPublishLines(),
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) => (
-          getLegCadence()?.declare('full-report', 24 * 60 * 60 * 1000),
-          getLegCadence()?.beat('full-report'),
-          persistLastFullReport(iso, text, lastReportProvenance)
-        ),
+        persistLastFullReport: (iso, text) => {
+          getLegCadence()?.beat('full-report');
+          return persistLastFullReport(iso, text, lastReportProvenance);
+        },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)
@@ -2038,6 +2040,19 @@ export async function runAgentLoop(
         console.log(
           `✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`
         );
+      }
+      // Watched only when actually started, at its REAL tick (review: an
+      // unconditional 60s declare pages forever when the loop is opted out
+      // or the env raises the tick). Cadence covers a long full-report tick
+      // (the re-entrancy guard skips beats while one runs).
+      getLegCadence()?.declare(
+        'trigger-loop',
+        Math.max(Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000), 15 * 60_000)
+      );
+      if (fullReportHours.length > 0) {
+        // Declared at BOOT, not on first success - a report leg that never
+        // fires is exactly what this watches. 26h covers the daily schedule.
+        getLegCadence()?.declare('full-report', 26 * 60 * 60 * 1000);
       }
       const stopTriggerLoop = triggerLoop.start();
       // M2.4: point the connector sink's forwarder at this loop now that it exists.

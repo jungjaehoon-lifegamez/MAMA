@@ -1504,11 +1504,20 @@ export class GatewayToolExecutor {
     result: GatewayToolResult | undefined,
     error?: unknown
   ): string | null {
-    if (error instanceof AgentError && typeof error.code === 'string' && error.code.length > 0) {
-      return error.code;
+    const candidate =
+      error instanceof AgentError && typeof error.code === 'string'
+        ? error.code
+        : (result as Record<string, unknown> | undefined)?.code;
+    if (typeof candidate !== 'string') {
+      return null;
     }
-    const code = (result as Record<string, unknown> | undefined)?.code;
-    return typeof code === 'string' && code.length > 0 ? code : null;
+    // Carried, never invented - and never diluted: TOOL_ERROR is transport,
+    // not a cause (review: it would over-report as if it named something),
+    // and only code-shaped values (bounded, identifier charset) may land.
+    if (candidate === 'TOOL_ERROR' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(candidate)) {
+      return null;
+    }
+    return candidate;
   }
 
   private summarizeToolTraceOutput(result: GatewayToolResult | undefined, error?: unknown): string {
@@ -2723,6 +2732,7 @@ export class GatewayToolExecutor {
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.
             causeEventIds: this.getExecutionState().causeEventIds,
+            causeKind: this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
           });
           return { success: true, task: serializeTaskToolRecord(updated) };
         }
@@ -2742,7 +2752,7 @@ export class GatewayToolExecutor {
           const contextPacketId = (input as { context_packet_id?: unknown }).context_packet_id;
           if (typeof contextPacketId !== 'string' || contextPacketId.trim().length === 0) {
             throw new AgentError(
-              'task_temporal_reconcile requires a fresh context_packet_id',
+              'task_temporal_reconcile requires a context_packet_id',
               'TOOL_ERROR',
               undefined,
               false
@@ -2778,7 +2788,9 @@ export class GatewayToolExecutor {
             ? packet.created_at
             : null;
           if (packetCreatedAt === null || packetCreatedAt < attempt.workOrder.updatedAt) {
-            securityLogger.warn('[temporal] context packet predates the active attempt', {
+            // console.error, not securityLogger.warn: the default log level
+            // hides warns, and a silent staleness signal is no signal.
+            console.error('[temporal] context packet predates the active attempt', {
               attemptId: context.attemptId,
               packetCreatedAt,
               attemptUpdatedAt: attempt.workOrder.updatedAt,
@@ -2790,7 +2802,7 @@ export class GatewayToolExecutor {
             (!Array.isArray(packet.source_refs) || packet.source_refs.length === 0)
           ) {
             throw new AgentError(
-              'task_temporal_reconcile requires source-backed fresh evidence',
+              'task_temporal_reconcile requires source-backed evidence',
               'TOOL_ERROR',
               undefined,
               false
@@ -3920,13 +3932,25 @@ export class GatewayToolExecutor {
         const boundTask = this.taskLedger.getById(temporalContext.taskId);
         const rawChannel = boundTask?.sourceChannel ?? null;
         const rawEventId = boundTask?.sourceEventId ?? null;
-        if (rawChannel && rawEventId) {
-          const sep = rawChannel.indexOf(':');
+        const sep = rawChannel ? rawChannel.indexOf(':') : -1;
+        const seedConnector = rawChannel && sep > 0 ? rawChannel.slice(0, sep) : null;
+        const seedChannelId = rawChannel && sep > 0 ? rawChannel.slice(sep + 1) : null;
+        // STRICTLY ADDITIVE (review: an out-of-boundary host seed turned a
+        // weak-but-succeeding compile into a permanent failure the agent
+        // cannot remove). Inject only a well-formed channel whose connector
+        // the run's envelope actually grants - otherwise compile proceeds
+        // exactly as before.
+        const envelopeGrantsSeed =
+          seedConnector !== null &&
+          seedChannelId !== null &&
+          seedChannelId.length > 0 &&
+          (ctx.envelope?.scope.raw_connectors ?? []).includes(seedConnector);
+        if (rawChannel && rawEventId && envelopeGrantsSeed) {
           const boundSeed = {
             kind: 'raw' as const,
             raw_id: rawEventId,
-            connector: sep > 0 ? rawChannel.slice(0, sep) : rawChannel,
-            channel_id: sep > 0 ? rawChannel.slice(sep + 1) : null,
+            connector: seedConnector,
+            channel_id: seedChannelId,
           };
           const existingSeeds = Array.isArray(effectiveInput.seed_refs)
             ? effectiveInput.seed_refs

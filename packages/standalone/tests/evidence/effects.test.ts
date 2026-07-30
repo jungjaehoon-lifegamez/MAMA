@@ -284,4 +284,40 @@ describe('cause_kind - the closed set (S2)', () => {
     ]);
     old.close();
   });
+
+  it('backfill without a temporal table: run-less rows are owner_message', () => {
+    // A DB that never ran the temporal feature has no join table - the
+    // discriminator's temporal branch must not fire, not crash.
+    const old = new Database(':memory:');
+    old.exec(`
+      CREATE TABLE evidence_effects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT, channel_id TEXT,
+        cause_state TEXT NOT NULL,
+        source_event_ids_json TEXT NOT NULL,
+        effect_kind TEXT NOT NULL, target_type TEXT NOT NULL, target_id TEXT NOT NULL,
+        payload_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+    `);
+    const seed = old.prepare(
+      `INSERT INTO evidence_effects
+         (run_id, cause_state, source_event_ids_json, effect_kind, target_type, target_id, payload_hash, created_at)
+       VALUES (?, ?, ?, 'task_update', 'task', ?, '${'a'.repeat(32)}', 1)`
+    );
+    seed.run('mr_1', 'attributed', '["evt_1"]', '1');
+    seed.run('mr_2', 'unattributed', '[]', '2');
+    seed.run(null, 'unattributed', '[]', '3');
+
+    ensureEffectLedger({ prepare: (sql: string) => old.prepare(sql) } as never);
+
+    const kinds = old
+      .prepare(`SELECT target_id, cause_kind FROM evidence_effects ORDER BY id`)
+      .all() as Array<{ target_id: string; cause_kind: string }>;
+    expect(kinds).toEqual([
+      { target_id: '1', cause_kind: 'event' },
+      { target_id: '2', cause_kind: 'clock' },
+      { target_id: '3', cause_kind: 'owner_message' },
+    ]);
+    old.close();
+  });
 });
