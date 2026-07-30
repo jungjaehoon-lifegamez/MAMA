@@ -154,6 +154,13 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
+   * WHY an id-less change happened (S2 closed set). Ignored when
+   * causeEventIds carry - ids always mean 'event'. Callers state it;
+   * the ledger's only fallback is 'owner_message' (the human-adjacent
+   * bucket - a wrong 'clock' fabricates a schedule that never fired).
+   */
+  causeKind?: 'owner_message' | 'clock' | 'card_transition';
+  /**
    * The events this write responds to.
    *
    * A SET, because a cause is one: a reconcile run is handed a channel's delta batch and
@@ -923,7 +930,7 @@ export class TaskLedger implements TaskSource {
       recordEffect(this.db as never, { ...common, sourceEventIds: causes });
       return;
     }
-    recordUnattributedChange(this.db as never, common);
+    recordUnattributedChange(this.db as never, common, input.origin.causeKind ?? 'owner_message');
   }
 
   update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
@@ -1693,7 +1700,7 @@ export class TaskLedger implements TaskSource {
       this.recordTaskChange({
         kind: 'task_update',
         taskId: context.taskId,
-        origin: { runId: null },
+        origin: { runId: null, causeKind: 'clock' },
         channel: existing.source_channel,
         payload: {
           revision: afterRevision,

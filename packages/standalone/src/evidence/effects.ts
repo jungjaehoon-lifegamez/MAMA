@@ -51,7 +51,13 @@
  */
 import { createHash } from 'node:crypto';
 
-/** What kind of durable change happened. Closed on purpose - see the module note. */
+/**
+ * What kind of durable change happened. Closed on purpose - see the module
+ * note. HONESTY (S2 review #5): only the task kinds have live writers today
+ * (task-ledger). report_update/report_publish/memory_write/wiki_write are
+ * declared surface with zero recorders - coverage claims are therefore
+ * scoped to task effects; widening the ledger is named deferred work.
+ */
 export type EffectKind =
   | 'task_create'
   | 'task_update'
@@ -65,6 +71,17 @@ export type EffectTarget = 'task' | 'report_slot' | 'memory' | 'wiki_page';
 
 /** Whether the change could name what caused it. */
 export type CauseState = 'attributed' | 'unattributed';
+
+/**
+ * WHY the change happened - the closed set (S2). `event` is the only kind that
+ * carries source event ids; the others are honestly id-less: a clock advanced,
+ * the owner asked in chat, or a card transition cascaded. Writers pass their
+ * kind explicitly - the ledger never infers.
+ */
+export type CauseKind = 'event' | 'owner_message' | 'clock' | 'card_transition';
+
+/** Kinds an unattributed (id-less) change may claim. */
+export type UnattributedCauseKind = Exclude<CauseKind, 'event'>;
 
 /** Fields every durable change carries, whether or not it can name a cause. */
 export interface ChangeInput {
@@ -94,6 +111,7 @@ export interface EffectRecord {
   runId: string | null;
   channelId: string | null;
   causeState: CauseState;
+  causeKind: CauseKind;
   sourceEventIds: string[];
   kind: EffectKind;
   targetType: EffectTarget;
@@ -141,6 +159,8 @@ export const EVIDENCE_EFFECTS_DDL = `
     run_id TEXT,
     channel_id TEXT,
     cause_state TEXT NOT NULL CHECK (cause_state IN ('attributed', 'unattributed')),
+    cause_kind TEXT NOT NULL DEFAULT 'clock'
+      CHECK (cause_kind IN ('event', 'owner_message', 'clock', 'card_transition')),
     source_event_ids_json TEXT NOT NULL
       CHECK (
         json_valid(source_event_ids_json)
@@ -181,6 +201,22 @@ const EVIDENCE_EFFECTS_CAUSE_TRIGGER = `
   END
 `;
 
+/**
+ * kind <-> ids cross-shape. A trigger (not a table CHECK) so it applies
+ * identically to fresh tables and ALTERed old ones: `event` must carry ids,
+ * the id-less kinds must not - a clock that names events or an event that
+ * names none is a fabricated cause either way.
+ */
+const EVIDENCE_EFFECTS_KIND_TRIGGER = `
+  CREATE TRIGGER IF NOT EXISTS evidence_effects_kind_shape
+  BEFORE INSERT ON evidence_effects
+  WHEN (NEW.cause_kind = 'event' AND json_array_length(NEW.source_event_ids_json) = 0)
+    OR (NEW.cause_kind <> 'event' AND json_array_length(NEW.source_event_ids_json) > 0)
+  BEGIN
+    SELECT RAISE(ABORT, 'evidence_effects: cause_kind and source_event_ids disagree');
+  END
+`;
+
 const INDEXES = [
   `CREATE INDEX IF NOT EXISTS idx_evidence_effects_run
      ON evidence_effects(run_id, created_at DESC)`,
@@ -202,9 +238,80 @@ interface EffectAdapter {
 
 export function ensureEffectLedger(adapter: EffectAdapter): void {
   adapter.prepare(EVIDENCE_EFFECTS_DDL).run();
+  migrateCauseKind(adapter);
   adapter.prepare(EVIDENCE_EFFECTS_CAUSE_TRIGGER).run();
+  adapter.prepare(EVIDENCE_EFFECTS_KIND_TRIGGER).run();
   for (const sql of INDEXES) {
     adapter.prepare(sql).run();
+  }
+}
+
+/**
+ * S2 migration: add cause_kind to pre-existing ledgers and backfill by
+ * DISCRIMINATOR, never blanket (review #3 - "104 -> clock" would stamp owner-
+ * and API-driven changes with a fabricated clock cause):
+ *   attributed                          -> event  (ids >= 1, DB-checked)
+ *   unattributed + temporal-effect join -> clock  (a temporal check fired)
+ *   unattributed + run_id present       -> clock  (scheduled board:full run)
+ *   remaining unattributed              -> owner_message (console/API writes
+ *                                          carry no run and no batch)
+ * ALTER ADD COLUMN with CHECK is legal SQLite (verified 2026-07-31; the
+ * prohibition covers PK/UNIQUE) - no table rebuild.
+ */
+function migrateCauseKind(adapter: EffectAdapter): void {
+  const columns = adapter.prepare(`PRAGMA table_info(evidence_effects)`).all() as Array<{
+    name?: unknown;
+  }>;
+  if (columns.some((column) => column.name === 'cause_kind')) {
+    return;
+  }
+  adapter
+    .prepare(
+      `ALTER TABLE evidence_effects ADD COLUMN cause_kind TEXT NOT NULL DEFAULT 'clock'
+         CHECK (cause_kind IN ('event', 'owner_message', 'clock', 'card_transition'))`
+    )
+    .run();
+  adapter
+    .prepare(`UPDATE evidence_effects SET cause_kind = 'event' WHERE cause_state = 'attributed'`)
+    .run();
+  const hasTemporalTable =
+    (adapter
+      .prepare(
+        `SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='operator_temporal_effects'`
+      )
+      .all().length ?? 0) > 0;
+  if (hasTemporalTable) {
+    adapter
+      .prepare(
+        `UPDATE evidence_effects SET cause_kind = 'clock'
+          WHERE cause_state = 'unattributed'
+            AND EXISTS (SELECT 1 FROM operator_temporal_effects t
+                         WHERE CAST(t.task_id AS TEXT) = evidence_effects.target_id)`
+      )
+      .run();
+  }
+  adapter
+    .prepare(
+      `UPDATE evidence_effects SET cause_kind = 'clock'
+        WHERE cause_state = 'unattributed' AND cause_kind <> 'clock' AND run_id IS NOT NULL`
+    )
+    .run();
+  adapter
+    .prepare(
+      `UPDATE evidence_effects SET cause_kind = 'owner_message'
+        WHERE cause_state = 'unattributed' AND run_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='operator_temporal_effects')`
+    )
+    .run();
+  if (hasTemporalTable) {
+    adapter
+      .prepare(
+        `UPDATE evidence_effects SET cause_kind = 'owner_message'
+          WHERE cause_state = 'unattributed' AND run_id IS NULL
+            AND NOT EXISTS (SELECT 1 FROM operator_temporal_effects t
+                             WHERE CAST(t.task_id AS TEXT) = evidence_effects.target_id)`
+      )
+      .run();
   }
 }
 
@@ -240,7 +347,7 @@ export function recordEffect(adapter: EffectAdapter, input: EffectInput): number
   if (sourceEventIds.length === 0) {
     throw new EffectWithoutCauseError(input.kind, input.targetId);
   }
-  return insertChange(adapter, input, 'attributed', sourceEventIds);
+  return insertChange(adapter, input, 'event', sourceEventIds);
 }
 
 /**
@@ -250,27 +357,32 @@ export function recordEffect(adapter: EffectAdapter, input: EffectInput): number
  * that the system changed something it cannot explain, and the point is that the count of
  * these is visible next to the count of real effects rather than absent from both.
  */
-export function recordUnattributedChange(adapter: EffectAdapter, input: ChangeInput): number {
-  return insertChange(adapter, input, 'unattributed', []);
+export function recordUnattributedChange(
+  adapter: EffectAdapter,
+  input: ChangeInput,
+  causeKind: UnattributedCauseKind
+): number {
+  return insertChange(adapter, input, causeKind, []);
 }
 
 function insertChange(
   adapter: EffectAdapter,
   input: ChangeInput,
-  causeState: CauseState,
+  causeKind: CauseKind,
   sourceEventIds: readonly string[]
 ): number {
   const result = adapter
     .prepare(
       `INSERT INTO evidence_effects
-         (run_id, channel_id, cause_state, source_event_ids_json,
+         (run_id, channel_id, cause_state, cause_kind, source_event_ids_json,
           effect_kind, target_type, target_id, payload_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       input.runId ?? null,
       input.channelId ?? null,
-      causeState,
+      causeKind === 'event' ? 'attributed' : 'unattributed',
+      causeKind,
       JSON.stringify(sourceEventIds),
       input.kind,
       input.targetType,
@@ -330,6 +442,7 @@ export function listEffects(adapter: EffectAdapter, query: EffectQuery = {}): Ef
     runId: typeof row.run_id === 'string' ? row.run_id : null,
     channelId: typeof row.channel_id === 'string' ? row.channel_id : null,
     causeState: String(row.cause_state) as CauseState,
+    causeKind: String(row.cause_kind) as CauseKind,
     sourceEventIds: JSON.parse(String(row.source_event_ids_json)) as string[],
     kind: String(row.effect_kind) as EffectKind,
     targetType: String(row.target_type) as EffectTarget,

@@ -2684,6 +2684,8 @@ export class GatewayToolExecutor {
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
                 causeEventIds: this.getExecutionState().causeEventIds,
+                causeKind:
+                  this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
               })
             ),
           };
