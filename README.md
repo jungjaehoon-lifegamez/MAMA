@@ -9,7 +9,7 @@
 > MAMA reads them instead, and sends you the few things that need you.
 > Every claim links to its source.
 
-![The briefing MAMA sends: three items with source links, one action, one recorded decision](docs/website/assets/mama-briefing-hero.svg)
+![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: Briefing 08:00, Client A sent the files, deadline moved to Wed, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)
 
 ## The product is a message that arrives
 
