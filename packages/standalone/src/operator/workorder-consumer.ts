@@ -40,6 +40,7 @@ import {
   type TemporalWorkFailureResult,
 } from './task-ledger.js';
 import { workerRun, type WorkerRunner } from './worker-run.js';
+import { getLegCadence } from './leg-cadence.js';
 
 export interface WorkOrderLedgerPort {
   claimNextWorkOrder(): WorkOrderRecord | null;
@@ -216,6 +217,7 @@ export class WorkOrderConsumer {
    * plan G4) - long runs span multiple tick firings.
    */
   async tick(): Promise<'drained' | 'skipped'> {
+    getLegCadence()?.beat('workorder-consumer');
     if (this.consuming || this.stopping) return 'skipped';
     this.consuming = true;
     try {
