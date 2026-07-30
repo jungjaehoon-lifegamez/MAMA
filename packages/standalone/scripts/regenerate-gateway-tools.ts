@@ -7,9 +7,11 @@
  * 2026-07-24 prettier corruption survived six days partly because "regenerate"
  * had no command. Run: npx tsx scripts/regenerate-gateway-tools.ts
  *
- * The file may carry hand-written sections BELOW the generated catalog (cron
- * surface bullets and similar). Everything from the start of the file through
- * the last generated tool line is replaced; anything after is preserved.
+ * The file carries hand-written sections around the generated catalog: a HEAD
+ * above the first category heading (the tool_call JSON invocation preamble -
+ * without it the persona does not know how to call anything) and a TAIL below
+ * the last generated tool line (cron surface bullets and similar). Only the
+ * span between them is replaced.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -24,16 +26,27 @@ const current = readFileSync(target, 'utf8');
 
 const isToolLine = (line: string) => /^- \*\*[a-z][A-Za-z0-9_]*\*\*\(/.test(line.trim());
 
-// Find the last generated-form tool line in the current file; everything after
-// it is hand-written tail and survives the regeneration.
+// Head: everything above the first category heading (title + hand-written
+// invocation preamble). Tail: everything below the last generated tool line.
 const lines = current.split('\n');
+const firstCategoryIdx = lines.findIndex((l) => /^## /.test(l));
 let lastToolIdx = -1;
 lines.forEach((l, i) => {
   if (isToolLine(l)) lastToolIdx = i;
 });
+const head = firstCategoryIdx > 0 ? lines.slice(0, firstCategoryIdx).join('\n') + '\n' : '';
 const tail = lastToolIdx >= 0 ? lines.slice(lastToolIdx + 1).join('\n') : '';
 
-writeFileSync(target, generated + (tail ? '\n' + tail : '\n'));
+// generated starts with its own '# Gateway Tools' title; the preserved head
+// (when present) already carries it, so drop the generated title line.
+const generatedBody = head
+  ? generated
+      .split('\n')
+      .slice(generated.startsWith('# ') ? 2 : 0, undefined)
+      .join('\n')
+  : generated;
+
+writeFileSync(target, head + generatedBody + (tail ? '\n' + tail : '\n'));
 
 const count = generated.split('\n').filter(isToolLine).length;
 console.log(`regenerated: ${count} tool lines, tail preserved: ${tail.trim().length > 0}`);

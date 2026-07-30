@@ -1,5 +1,11 @@
 # Gateway Tools
 
+Call tools via JSON block:
+
+```tool_call
+{"name": "tool_name", "input": {"param1": "value1"}}
+```
+
 ## MAMA Memory
 
 - **mama_save**(type, topic?, decision?, reasoning?, confidence?, context_packet_id?, summary?, next_steps?) — Save decision (topic, decision, reasoning) or checkpoint (summary, next_steps?). context_packet_id is trusted provenance and is only honored when supplied from active runtime context.
