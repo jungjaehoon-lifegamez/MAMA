@@ -285,17 +285,6 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
 
   it.each([
     {
-      name: 'predates the active attempt',
-      packetId: 'ctxp_temporal_stale',
-      packet: {
-        packet_id: 'ctxp_temporal_stale',
-        task: 'untrusted caller task',
-        packet_json: JSON.stringify({ packet_id: 'ctxp_temporal_stale' }),
-        source_refs: [boundRawRef()],
-        created_at: now - 1,
-      },
-    },
-    {
       name: 'has a different host-returned identity',
       packetId: 'ctxp_temporal_requested',
       packet: {
@@ -565,6 +554,100 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
   });
 
+  it('the HOST seeds the compile with the bound source - the agent never restates it (S2)', async () => {
+    // Measured: 94% of live reconcile rejections were packets carrying only
+    // recalled memories. The task row holds the bound source raw; the compile
+    // input gets it as a seed ref by construction.
+    const compileAndPersistContext = vi.fn(
+      async ({ input }: { input: Record<string, unknown> }) => ({
+        packet: { packet_id: 'ctxp_seeded', source_refs: input.seed_refs ?? [] },
+        modelRunId: 'mr_seeded',
+        parentModelRunId: null,
+      })
+    );
+    executor.setContextCompileService({ compileAndPersistContext } as never);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const envelope = makeSignedEnvelope({
+      agent_id: 'workorder-temporal',
+      instance_id: 'temporal-seed-injection',
+    });
+    await executor.execute('context_compile', { task: 'reconcile the bound card' } as never, {
+      ...executionContext,
+      envelope,
+      modelRunId: 'mr_seed_input',
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: [...executionContext.agentContext!.role.allowedTools, 'context_compile'],
+        },
+        capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+      },
+    });
+
+    const compileInput = compileAndPersistContext.mock.calls[0]?.[0]?.input as {
+      task: string;
+      seed_refs?: unknown[];
+    };
+    expect(compileInput.task.startsWith('temporal:')).toBe(true); // binding prefix (existing)
+    expect(compileInput.seed_refs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'raw',
+          raw_id: 'synthetic-card',
+          connector: 'trello',
+          channel_id: 'synthetic-board',
+        }),
+      ])
+    );
+  });
+
+  it('a STALE but source-backed packet COMMITS - freshness is a receipt, not a gate (S2)', async () => {
+    // Measured before the disposition: the freshness gate had fired ZERO
+    // times live. Staleness is evidence quality; the receipt records it
+    // (packetCreatedAt) and the log is loud - the write proceeds.
+    const packetId = 'ctxp_temporal_stale_receipt';
+    const envelope = makeSignedEnvelope({
+      agent_id: 'workorder-temporal',
+      instance_id: 'temporal-stale-receipt-attempt',
+    });
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [boundRawRef()],
+        created_at: now - 1, // predates the attempt
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    const result = await executor.execute(
+      'task_temporal_reconcile',
+      {
+        context_packet_id: packetId,
+        expected_revision: context.revision,
+        outcome: 'resolved',
+        status: 'done',
+        reason: 'Stale packet still carries the bound evidence',
+      } as never,
+      { ...executionContext, envelope, modelRunId: 'mr_temporal_stale_receipt' }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      receipt: { packetCreatedAt: now - 1 },
+    });
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'done' });
+  });
+
   it('accepts the connector-native source_id when raw_id is an event-index identifier', async () => {
     const packetId = 'ctxp_temporal_native_source';
     executor = new GatewayToolExecutor({
@@ -608,6 +691,100 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
 
     expect(result).toMatchObject({ success: true });
     expect(ledger.getById(taskId)).toMatchObject({ status: 'done', revision: 2 });
+  });
+
+  it('the HOST seeds the compile with the bound source - the agent never restates it (S2)', async () => {
+    // Measured: 94% of live reconcile rejections were packets carrying only
+    // recalled memories. The task row holds the bound source raw; the compile
+    // input gets it as a seed ref by construction.
+    const compileAndPersistContext = vi.fn(
+      async ({ input }: { input: Record<string, unknown> }) => ({
+        packet: { packet_id: 'ctxp_seeded', source_refs: input.seed_refs ?? [] },
+        modelRunId: 'mr_seeded',
+        parentModelRunId: null,
+      })
+    );
+    executor.setContextCompileService({ compileAndPersistContext } as never);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+    const envelope = makeSignedEnvelope({
+      agent_id: 'workorder-temporal',
+      instance_id: 'temporal-seed-injection',
+    });
+    await executor.execute('context_compile', { task: 'reconcile the bound card' } as never, {
+      ...executionContext,
+      envelope,
+      modelRunId: 'mr_seed_input',
+      agentContext: {
+        ...executionContext.agentContext!,
+        role: {
+          ...executionContext.agentContext!.role,
+          allowedTools: [...executionContext.agentContext!.role.allowedTools, 'context_compile'],
+        },
+        capabilities: [...executionContext.agentContext!.capabilities, 'context_compile'],
+      },
+    });
+
+    const compileInput = compileAndPersistContext.mock.calls[0]?.[0]?.input as {
+      task: string;
+      seed_refs?: unknown[];
+    };
+    expect(compileInput.task.startsWith('temporal:')).toBe(true); // binding prefix (existing)
+    expect(compileInput.seed_refs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'raw',
+          raw_id: 'synthetic-card',
+          connector: 'trello',
+          channel_id: 'synthetic-board',
+        }),
+      ])
+    );
+  });
+
+  it('a STALE but source-backed packet COMMITS - freshness is a receipt, not a gate (S2)', async () => {
+    // Measured before the disposition: the freshness gate had fired ZERO
+    // times live. Staleness is evidence quality; the receipt records it
+    // (packetCreatedAt) and the log is loud - the write proceeds.
+    const packetId = 'ctxp_temporal_stale_receipt';
+    const envelope = makeSignedEnvelope({
+      agent_id: 'workorder-temporal',
+      instance_id: 'temporal-stale-receipt-attempt',
+    });
+    executor = new GatewayToolExecutor({
+      temporalContextPacketLookup: async () => ({
+        packet_id: packetId,
+        task: boundPacketTask(context),
+        packet_json: JSON.stringify({ packet_id: packetId }),
+        source_refs: [boundRawRef()],
+        created_at: now - 1, // predates the attempt
+      }),
+    } as never);
+    executor.setTaskLedger(ledger);
+    executor.setMamaApi({
+      listDecisions: async () => [],
+      appendToolTrace: async () => ({}) as never,
+    } as unknown as MAMAApiSetInput);
+
+    const result = await executor.execute(
+      'task_temporal_reconcile',
+      {
+        context_packet_id: packetId,
+        expected_revision: context.revision,
+        outcome: 'resolved',
+        status: 'done',
+        reason: 'Stale packet still carries the bound evidence',
+      } as never,
+      { ...executionContext, envelope, modelRunId: 'mr_temporal_stale_receipt' }
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      receipt: { packetCreatedAt: now - 1 },
+    });
+    expect(ledger.getById(taskId)).toMatchObject({ status: 'done' });
   });
 
   it('allows a source-empty deferred packet while keeping final outcomes source-backed', async () => {

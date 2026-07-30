@@ -2759,16 +2759,18 @@ export class GatewayToolExecutor {
             );
           }
           const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
-          if (
-            !Number.isSafeInteger(packet.created_at) ||
-            packet.created_at < attempt.workOrder.updatedAt
-          ) {
-            throw new AgentError(
-              'task_temporal_reconcile context packet predates the active attempt',
-              'TOOL_ERROR',
-              undefined,
-              false
-            );
+          // (a) freshness: a RECEIPT, not a gate (S2 disposition - measured
+          // ZERO live rejections; staleness is evidence quality, not
+          // authorization). Recorded on the receipt, loud when stale.
+          const packetCreatedAt = Number.isSafeInteger(packet.created_at)
+            ? packet.created_at
+            : null;
+          if (packetCreatedAt === null || packetCreatedAt < attempt.workOrder.updatedAt) {
+            securityLogger.warn('[temporal] context packet predates the active attempt', {
+              attemptId: context.attemptId,
+              packetCreatedAt,
+              attemptUpdatedAt: attempt.workOrder.updatedAt,
+            });
           }
           const effectInput = input as TemporalReconcileToolInput;
           if (
@@ -2800,6 +2802,7 @@ export class GatewayToolExecutor {
           const evidence: TemporalEvidenceAttestation = {
             contextPacketId,
             contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+            packetCreatedAt,
           };
           const { context_packet_id: _contextPacketId, ...trustedEffectInput } = effectInput;
           return {
@@ -3893,9 +3896,41 @@ export class GatewayToolExecutor {
 
     try {
       const temporalContext = ctx.temporalWorkContext;
-      const effectiveInput = temporalContext
+      let effectiveInput = temporalContext
         ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
         : input;
+      // (d)-by-construction (S2 measurement: 94% of reconcile rejections were
+      // packets carrying only recalled memories). The HOST knows the bound
+      // source - the task row holds it raw; the context carries only hashes -
+      // so the host seeds the compile with it. Same doctrine as the binding
+      // prefix and causeEventIds: the agent never restates what the host knows.
+      if (temporalContext && this.taskLedger) {
+        const boundTask = this.taskLedger.getById(temporalContext.taskId);
+        const rawChannel = boundTask?.sourceChannel ?? null;
+        const rawEventId = boundTask?.sourceEventId ?? null;
+        if (rawChannel && rawEventId) {
+          const sep = rawChannel.indexOf(':');
+          const boundSeed = {
+            kind: 'raw' as const,
+            raw_id: rawEventId,
+            connector: sep > 0 ? rawChannel.slice(0, sep) : rawChannel,
+            channel_id: sep > 0 ? rawChannel.slice(sep + 1) : null,
+          };
+          const existingSeeds = Array.isArray(effectiveInput.seed_refs)
+            ? effectiveInput.seed_refs
+            : [];
+          const alreadySeeded = existingSeeds.some(
+            (ref) =>
+              typeof ref === 'object' &&
+              ref !== null &&
+              (ref as Record<string, unknown>).kind === 'raw' &&
+              (ref as Record<string, unknown>).raw_id === rawEventId
+          );
+          if (!alreadySeeded) {
+            effectiveInput = { ...effectiveInput, seed_refs: [...existingSeeds, boundSeed] };
+          }
+        }
+      }
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
         envelope: ctx.envelope,
