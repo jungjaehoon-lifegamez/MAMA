@@ -1,47 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import Database from '../../src/sqlite.js';
 import * as agentStore from '../../src/db/agent-store.js';
-import {
-  createAgentVersion,
-  initAgentTables,
-  logActivity,
-  getActivity,
-} from '../../src/db/agent-store.js';
-import { GatewayToolExecutor } from '../../src/agent/gateway-tool-executor.js';
-import type { AgentContext, GatewayToolInput, MAMAApiInterface } from '../../src/agent/types.js';
-
-function createMAMAApi(): MAMAApiInterface {
-  return {
-    save: async () => ({ success: true, id: 'decision_1', type: 'decision' }),
-    saveCheckpoint: async () => ({ success: true, id: 'checkpoint_1', type: 'checkpoint' }),
-    listDecisions: async () => [],
-    suggest: async () => ({ success: true, results: [], count: 0 }),
-    updateOutcome: async () => ({ success: true, message: 'updated' }),
-    loadCheckpoint: async () => ({ success: true }),
-  };
-}
-
-function createViewerContext(): AgentContext {
-  return {
-    source: 'viewer',
-    platform: 'viewer',
-    roleName: 'os_agent',
-    role: {
-      allowedTools: ['*'],
-      systemControl: true,
-      sensitiveAccess: true,
-    },
-    session: {
-      sessionId: 'viewer-session',
-      channelId: 'viewer-main',
-      startedAt: new Date(),
-    },
-    capabilities: ['*'],
-    limitations: [],
-    tier: 1,
-    backend: 'claude',
-  };
-}
+import { initAgentTables, logActivity, getActivity } from '../../src/db/agent-store.js';
 
 describe('Story V19.6 - Agent Activity Logging', () => {
   let db: InstanceType<typeof Database>;
@@ -348,54 +308,6 @@ describe('Story V19.6 - Agent Activity Logging', () => {
         ) => agentStore.ActivityRow[]
       )(db, 'trace-agent', 10, { includeTrace: true });
       expect(rowsWithTrace.map((row) => row.type)).toEqual(['gateway_tool_call', 'task_complete']);
-    });
-
-    it('AC #11: agent_activity tool hides trace rows by default and returns them with include_trace', async () => {
-      createAgentVersion(db, {
-        agent_id: 'trace-agent',
-        snapshot: { name: 'Trace Agent', tier: 2 },
-      });
-      logActivity(db, {
-        agent_id: 'trace-agent',
-        agent_version: 1,
-        type: 'task_complete',
-        input_summary: 'Visible activity',
-      });
-      logActivity(db, {
-        agent_id: 'trace-agent',
-        agent_version: 1,
-        type: 'gateway_tool_call',
-        input_summary: 'mama_search',
-        execution_status: 'completed',
-      });
-      const executor = new GatewayToolExecutor({
-        mamaApi: createMAMAApi(),
-        envelopeIssuanceMode: 'off',
-      });
-      executor.setSessionsDb(db);
-      executor.setAgentContext(createViewerContext());
-
-      const defaultResult = (await executor.execute('agent_activity', {
-        agent_id: 'trace-agent',
-        limit: 10,
-      } as unknown as GatewayToolInput)) as {
-        success: boolean;
-        activity: Array<{ type: string }>;
-      };
-      expect(defaultResult.activity.map((row) => row.type)).toEqual(['task_complete']);
-
-      const traceResult = (await executor.execute('agent_activity', {
-        agent_id: 'trace-agent',
-        limit: 10,
-        include_trace: true,
-      } as unknown as GatewayToolInput)) as {
-        success: boolean;
-        activity: Array<{ type: string }>;
-      };
-      expect(traceResult.activity.map((row) => row.type)).toEqual([
-        'gateway_tool_call',
-        'task_complete',
-      ]);
     });
   });
 });

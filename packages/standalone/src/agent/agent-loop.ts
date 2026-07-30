@@ -1017,13 +1017,6 @@ export class AgentLoop {
   }
 
   /**
-   * Set UI command queue for viewer_state / viewer_navigate tools.
-   */
-  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
-    this.mcpExecutor.setUICommandQueue(queue);
-  }
-
-  /**
    * Set validation service for agent_test / delegate validation flows.
    */
   setValidationService(
@@ -1073,20 +1066,6 @@ export class AgentLoop {
   ): void {
     pm.setGatewayToolExecutor(this.mcpExecutor);
     this.mcpExecutor.setAgentProcessManager(pm);
-  }
-
-  /**
-   * Set runtime multi-agent config applier for agent management tools.
-   */
-  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
-    this.mcpExecutor.setApplyMultiAgentConfig(fn);
-  }
-
-  /**
-   * Set per-agent runtime restarter for agent management tools.
-   */
-  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
-    this.mcpExecutor.setRestartMultiAgentAgent(fn);
   }
 
   /**

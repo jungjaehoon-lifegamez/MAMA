@@ -747,8 +747,6 @@ export type GatewayToolName =
   | 'context_compile'
   | 'mama_update'
   | 'mama_load_checkpoint'
-  | 'mama_add'
-  | 'mama_ingest'
   | 'Read'
   | 'Write'
   | 'Bash'
@@ -765,27 +763,10 @@ export type GatewayToolName =
   | 'drive_download'
   | 'drive_upload'
   | 'save_integration_token'
-  | 'browser_navigate'
-  | 'browser_screenshot'
-  | 'browser_click'
-  | 'browser_type'
-  | 'browser_get_text'
-  | 'browser_scroll'
-  | 'browser_wait_for'
-  | 'browser_evaluate'
-  | 'browser_pdf'
-  | 'browser_close'
   // OS Management tools (viewer-only)
-  | 'os_add_bot'
-  | 'os_set_permissions'
   | 'os_get_config'
-  | 'os_set_model'
   // OS Monitoring tools (viewer-only)
-  | 'os_list_bots'
-  | 'os_restart_bot'
-  | 'os_stop_bot'
   // PR Review tools
-  | 'pr_review_threads'
   // Webchat tools
   | 'webchat_send'
   // Code-Act sandbox
@@ -822,19 +803,10 @@ export type GatewayToolName =
   | 'contract_no_update'
   | 'schedule_upcoming'
   // System tools
-  | 'agent_notices'
-  // Agent management tools (Managed Agents pattern)
-  | 'agent_get'
-  | 'agent_activity'
-  | 'agent_update'
-  | 'agent_create'
-  | 'agent_compare'
-  // Agent lifecycle tools
-  | 'agent_test'
-  // Viewer control tools (SmartStore pattern)
-  | 'viewer_state'
-  | 'viewer_navigate'
-  | 'viewer_notify';
+  | 'agent_notices';
+// Agent management tools (Managed Agents pattern)
+// Agent lifecycle tools
+// Viewer control tools (SmartStore pattern);
 
 // ============================================================================
 // MCP Tool Output Types
