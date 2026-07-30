@@ -14,7 +14,7 @@ stays running around the clock — like Home Assistant or Plex, but its job is y
 channels. `mama start` brings it up. Its dashboard lives at `localhost:3847`. Its
 reports arrive in your chat app.
 
-![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: Briefing 08:00, Client A sent the files, deadline moved to Wed, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)
+![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: deadline slipped Fri to Wed, B waiting 9h on your quote, invoice paid $1,200 in, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)
 
 ## The product is a message that arrives
 
@@ -22,9 +22,9 @@ You pick the hours. At those hours, in Telegram, Slack, or Discord:
 
 ```text
 ■ Briefing — Wed 08:00
-1. Client A sent the revised files overnight                  → source
-2. The #alpha deadline moved from Friday to Wednesday         → source
-3. B's question about invoice terms is 14 hours unanswered    → source
+1. The #alpha deadline slipped: Friday → Wednesday            → source
+2. B has waited 9 hours for your quote                        → source
+3. Client A paid the invoice — $1,200 came in                 → source
 
 ■ Needs your action
 - Approve the revised scope before the 11:00 call             → thread
