@@ -26,6 +26,7 @@ type RunOptions = {
   freshSession?: boolean;
   agentContext?: AgentContext;
   envelope?: Envelope;
+  causeEventIds?: readonly string[];
 };
 
 describe('Conductor', () => {
@@ -181,6 +182,20 @@ describe('Conductor', () => {
     expect(logs.some((l) => l.includes('parked DEAD'))).toBe(true);
   });
 
+  it('hands the batch identity to the run - causes are wired, not restated', async () => {
+    // S2 review #1: the host holds the batch; without this field every
+    // judgment-borne board change is born unattributed.
+    inbox.enqueue({ channelKey: 'c C1', eventIds: ['evi_1', 'evi_2'], lines: ['x', 'y'] });
+    const c = new Conductor({
+      inbox,
+      session: new ConductorSession(fakePool()),
+      runner: runner(),
+      reground: () => '',
+    });
+    await c.tick();
+    expect(calls[0].options?.causeEventIds).toEqual(['evi_1', 'evi_2']);
+  });
+
   it('threads the agent policy and a per-run envelope into every run', async () => {
     inbox.enqueue({ channelKey: 'c C1', eventIds: ['e1'], lines: ['x'] });
     const agentContext = { roleName: 'conductor' } as unknown as AgentContext;
@@ -196,5 +211,16 @@ describe('Conductor', () => {
     await c.tick();
     expect(calls[0].options?.agentContext).toBe(agentContext);
     expect(calls[0].options?.envelope).toBe(envelope);
+  });
+});
+
+describe('S2 Task 4: delegation receipts groundwork', () => {
+  it('boardBatchKey is batch-deterministic - a redelivered judgment dedups, never double-orders', async () => {
+    const { boardBatchKey } = await import('../../src/operator/workorder-publishers.js');
+    const a = boardBatchKey(['evi_2', 'evi_1']);
+    const b = boardBatchKey(['evi_1', 'evi_2']); // order-insensitive
+    expect(a).toBe(b);
+    expect(a).toMatch(/^board:batch:[a-f0-9]{16}$/);
+    expect(boardBatchKey(['evi_3'])).not.toBe(a);
   });
 });

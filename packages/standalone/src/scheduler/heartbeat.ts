@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
+import { getLegCadence } from '../operator/leg-cadence.js';
 
 export interface HeartbeatConfig {
   /** Interval in milliseconds (default: 30 minutes) */
@@ -47,6 +48,17 @@ export class HeartbeatScheduler {
   /**
    * Start the heartbeat scheduler
    */
+  /**
+   * The cadence the watchdog should hold this leg to, or null when the
+   * heartbeat is off. Boot declares the leg AFTER initLegCadence runs -
+   * declaring from start() hit a null singleton and was silently unwatched
+   * (review: a watchdog believed to be watching but isn't is the failure
+   * mode this feature exists to prevent).
+   */
+  declaredCadence(): number | null {
+    return this.running ? this.config.interval : null;
+  }
+
   start(): void {
     if (this.running) {
       console.log('[Heartbeat] Already running');
@@ -99,6 +111,7 @@ export class HeartbeatScheduler {
    * Execute a heartbeat tick
    */
   private async tick(): Promise<void> {
+    getLegCadence()?.beat('heartbeat');
     // Skip during quiet hours
     if (this.isQuietHours()) {
       console.log('[Heartbeat] Quiet hours - skipping');

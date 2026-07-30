@@ -219,5 +219,42 @@ describe('Story M2.2: Tool Trace Ledger', () => {
         );
       });
     });
+
+    describe('AC #3: failure_code carries the thrower cause (S2 Task 0)', () => {
+      // The thrower already emits a closed code (envelope_missing,
+      // context_compile_scope_denied, ...) and the sanitizer preserves it -
+      // the trace was the one place that dropped it, leaving only a digest.
+      it('migration adds a nullable failure_code column', () => {
+        const db = new Database(':memory:');
+        db.pragma('foreign_keys = ON');
+        applyAll(db);
+        expect(columnNames(db, 'tool_traces')).toContain('failure_code');
+        db.close();
+      });
+
+      it('round-trips failure_code through append and list', async () => {
+        const run = await beginModelRun({ agent_id: 'test', source: 'watch' });
+        const appended = await appendToolTrace({
+          model_run_id: run.model_run_id,
+          tool_name: 'context_compile',
+          execution_status: 'failed',
+          output_summary: 'gateway_tool_failed;sha256=abc;length=10',
+          failure_code: 'envelope_missing',
+        });
+        expect(appended.failure_code).toBe('envelope_missing');
+        const [listed] = await listToolTracesForRun(run.model_run_id);
+        expect(listed.failure_code).toBe('envelope_missing');
+      });
+
+      it('a failure without a code stays NULL - no invented labels', async () => {
+        const run = await beginModelRun({ agent_id: 'test', source: 'watch' });
+        const appended = await appendToolTrace({
+          model_run_id: run.model_run_id,
+          tool_name: 'mama_search',
+          execution_status: 'failed',
+        });
+        expect(appended.failure_code).toBeNull();
+      });
+    });
   });
 });

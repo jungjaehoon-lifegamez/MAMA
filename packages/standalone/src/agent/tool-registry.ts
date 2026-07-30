@@ -376,7 +376,7 @@ register({
 register({
   name: 'task_temporal_reconcile',
   description:
-    'Resolve, finalize without a lifecycle change, or defer the host-issued temporal work item using a fresh, same-run context packet. Task, generation, occurrence, check, and attempt identity come only from trusted runtime context.',
+    'Resolve, finalize without a lifecycle change, or defer the host-issued temporal work item using a same-run context packet (staleness is receipted, not gated). Task, generation, occurrence, check, and attempt identity come only from trusted runtime context.',
   category: 'os_monitoring',
   params:
     'context_packet_id (required), expected_revision (required), outcome (resolved|final_no_update|deferred), reason (required), status? or due_at? for resolved, evidence_summary for final_no_update, next_temporal_check_at for deferred',

@@ -154,6 +154,13 @@ export interface ChangeOrigin {
   /** The model run behind this write, or null when the host itself made it. */
   runId?: string | null;
   /**
+   * WHY an id-less change happened (S2 closed set). Ignored when
+   * causeEventIds carry - ids always mean 'event'. Callers state it;
+   * the ledger's only fallback is 'owner_message' (the human-adjacent
+   * bucket - a wrong 'clock' fabricates a schedule that never fired).
+   */
+  causeKind?: import('../evidence/effects.js').UnattributedCauseKind;
+  /**
    * The events this write responds to.
    *
    * A SET, because a cause is one: a reconcile run is handed a channel's delta batch and
@@ -792,11 +799,18 @@ export class TaskLedger implements TaskSource {
             ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
             ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
           },
-          // A duplicate delivery of the same event: here the cause genuinely is known,
-          // because it is the event the row is keyed on.
+          // A duplicate delivery of the same event. The HOST batch still wins
+          // (review: the agent-supplied source_event_id was overriding it here,
+          // letting a model forge an attributed cause on every judgment-borne
+          // create); the keyed event is only the fallback when the host
+          // carried nothing.
           {
             ...origin,
-            causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+            causeEventIds: origin.causeEventIds?.length
+              ? origin.causeEventIds
+              : input.source_event_id
+                ? [input.source_event_id]
+                : origin.causeEventIds,
           }
         );
       }
@@ -923,7 +937,7 @@ export class TaskLedger implements TaskSource {
       recordEffect(this.db as never, { ...common, sourceEventIds: causes });
       return;
     }
-    recordUnattributedChange(this.db as never, common);
+    recordUnattributedChange(this.db as never, common, input.origin.causeKind ?? 'owner_message');
   }
 
   update(id: number, patch: UpdateTaskInput, origin: ChangeOrigin = {}): TaskRecord {
@@ -1409,6 +1423,7 @@ export class TaskLedger implements TaskSource {
           attestation_version: number;
           context_packet_id: string | null;
           context_packet_sha256: string | null;
+          packet_created_at: number | null;
           next_temporal_check_at: number | null;
           created_at: number;
         }
@@ -1437,6 +1452,7 @@ export class TaskLedger implements TaskSource {
       attestationVersion: row.attestation_version === 1 ? 1 : 0,
       contextPacketId: row.context_packet_id ?? '',
       contextPacketSha256: row.context_packet_sha256 ?? '',
+      packetCreatedAt: row.packet_created_at ?? null,
       nextTemporalCheckAt: row.next_temporal_check_at,
       createdAt: row.created_at,
     };
@@ -1693,7 +1709,7 @@ export class TaskLedger implements TaskSource {
       this.recordTaskChange({
         kind: 'task_update',
         taskId: context.taskId,
-        origin: { runId: null },
+        origin: { runId: null, causeKind: 'clock' },
         channel: existing.source_channel,
         payload: {
           revision: afterRevision,
@@ -1736,8 +1752,8 @@ export class TaskLedger implements TaskSource {
              (workorder_attempt_id, task_id, generation_key, occurrence_key, outcome,
               before_revision, after_revision, changed_fields, reason,
               attestation_version, context_packet_id, context_packet_sha256,
-              next_temporal_check_at, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`
+              packet_created_at, next_temporal_check_at, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`
         )
         .run(
           context.attemptId,
@@ -1751,6 +1767,7 @@ export class TaskLedger implements TaskSource {
           receiptReason,
           evidence.contextPacketId,
           evidence.contextPacketSha256,
+          evidence.packetCreatedAt,
           nextCheck,
           now
         );
