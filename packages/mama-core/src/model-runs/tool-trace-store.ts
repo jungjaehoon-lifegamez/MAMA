@@ -67,6 +67,7 @@ function mapToolTraceRow(row: Record<string, unknown>): ToolTraceRecord {
     execution_status: nullableString(row.execution_status),
     duration_ms: requiredNonNegativeInteger(row.duration_ms, 'duration_ms'),
     envelope_hash: nullableString(row.envelope_hash),
+    failure_code: nullableString(row.failure_code),
     created_at: requiredInteger(row.created_at, 'created_at'),
   };
 }
@@ -82,7 +83,8 @@ function selectToolTrace(adapter: ToolTraceAdapter, id: string): ToolTraceRecord
       `
         SELECT
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
-          output_summary, execution_status, duration_ms, envelope_hash, created_at
+          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
+          created_at
         FROM tool_traces
         WHERE trace_id = ?
       `
@@ -105,9 +107,10 @@ export async function appendToolTrace(input: AppendToolTraceInput): Promise<Tool
       `
         INSERT INTO tool_traces (
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
-          output_summary, execution_status, duration_ms, envelope_hash, created_at
+          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
+          created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `
     )
     .run(
@@ -120,6 +123,7 @@ export async function appendToolTrace(input: AppendToolTraceInput): Promise<Tool
       nullableString(input.execution_status),
       normalizeDuration(input.duration_ms),
       nullableString(input.envelope_hash),
+      nullableString(input.failure_code),
       normalizeTimestamp(input.created_at)
     );
 
@@ -134,7 +138,8 @@ export async function listToolTracesForRun(modelRunId: string): Promise<ToolTrac
       `
         SELECT
           trace_id, model_run_id, gateway_call_id, tool_name, input_summary,
-          output_summary, execution_status, duration_ms, envelope_hash, created_at
+          output_summary, execution_status, duration_ms, envelope_hash, failure_code,
+          created_at
         FROM tool_traces
         WHERE model_run_id = ?
         ORDER BY created_at DESC, rowid DESC

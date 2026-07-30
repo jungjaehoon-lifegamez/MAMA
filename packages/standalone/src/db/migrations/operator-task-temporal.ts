@@ -60,6 +60,7 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
       attestation_version INTEGER NOT NULL DEFAULT 0 CHECK (attestation_version IN (0, 1)),
       context_packet_id TEXT NOT NULL,
       context_packet_sha256 TEXT NOT NULL,
+      packet_created_at INTEGER,
       next_temporal_check_at INTEGER,
       created_at INTEGER NOT NULL
     );
@@ -206,6 +207,10 @@ export function applyOperatorTaskTemporalMigration(db: SQLiteDatabase): void {
   );
   if (!effectColumns.has('context_packet_id')) {
     db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN context_packet_id TEXT`);
+  }
+  if (!effectColumns.has('packet_created_at')) {
+    // S2: freshness became a receipt field - nullable on BOTH schema shapes.
+    db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN packet_created_at INTEGER`);
   }
   if (!effectColumns.has('context_packet_sha256')) {
     db.exec(`ALTER TABLE operator_temporal_effects ADD COLUMN context_packet_sha256 TEXT`);

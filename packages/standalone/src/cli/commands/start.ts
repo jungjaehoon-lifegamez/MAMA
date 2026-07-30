@@ -91,6 +91,7 @@ import { ConductorInbox } from '../../operator/conductor-inbox.js';
 import { ConductorSession } from '../../operator/conductor-session.js';
 import { Conductor } from '../../operator/conductor.js';
 import { buildBoardReground } from '../../operator/board-reground.js';
+import { initLegCadence, getLegCadence, getLegPageNotifier } from '../../operator/leg-cadence.js';
 import { getSessionPool } from '../../agent/session-pool.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
@@ -99,6 +100,7 @@ import {
   type TemporalRuntime,
 } from '../../operator/temporal-runtime.js';
 import { assembleDaemonTemporalRuntime } from '../runtime/temporal-init.js';
+import { DEFAULT_TICK_MS as WORKORDER_CONSUMER_TICK_MS } from '../../operator/workorder-consumer.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -1504,6 +1506,39 @@ export async function runAgentLoop(
   // disabled (that accumulation IS the shadow-mode data; retention inside
   // ConductorInbox keeps it bounded).
   const conductorInbox = new ConductorInbox(operatorDb);
+  // S2: leg cadence watchdog - its OWN timer, deliberately outside the
+  // trigger loop (a watchdog inside the thing it watches dies with it).
+  // Legs declare+beat at their own tick sites via the singleton; pages ride
+  // the owner-alert targets registered in gateway wiring. Alarm, never
+  // enforcement; quiet hours honored inside check().
+  const legCadence = initLegCadence(operatorDb);
+  legCadence.declare('workorder-consumer', WORKORDER_CONSUMER_TICK_MS);
+  // Declared HERE, not in HeartbeatScheduler.start(): the heartbeat starts
+  // 47 lines before this singleton exists, so a declare there hit null and
+  // the leg was silently unwatched (review, blocking). The scheduler owns
+  // the number; boot owns the ordering.
+  const heartbeatCadenceMs = heartbeatScheduler.declaredCadence();
+  if (heartbeatCadenceMs !== null) {
+    legCadence.declare('heartbeat', heartbeatCadenceMs);
+  }
+  const legWatchdog = setInterval(() => {
+    try {
+      const { pages, recoveries } = legCadence.check();
+      for (const page of pages) {
+        const minutes = Math.round(page.silentForMs / 60_000);
+        const message = `[leg-watchdog] '${page.name}' has been silent ${minutes}min (declared ${Math.round(page.declaredCadenceMs / 60_000)}min cadence)`;
+        console.error(message);
+        void getLegPageNotifier()?.(message).catch(() => {});
+      }
+      for (const name of recoveries) {
+        const message = `[leg-watchdog] '${name}' recovered`;
+        console.log(message);
+        void getLegPageNotifier()?.(message).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[leg-watchdog] check failed:', err);
+    }
+  }, 60_000);
   const conductorConfig = resolveConductorConfig(config);
   if (conductorConfig.enabled && runtimeBackend !== 'claude') {
     // S1 pins the claude backend: codex sessions do not reset on token usage
@@ -1530,6 +1565,7 @@ export async function runAgentLoop(
 
   gateways.push({
     stop: async () => {
+      clearInterval(legWatchdog);
       // Consumer stop BEFORE db close (same gateway = ordered; parallel
       // gateways would race an in-flight tick into "database is not open").
       await closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
@@ -1549,8 +1585,13 @@ export async function runAgentLoop(
     ensureBriefs();
     ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
-    const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
-      await import('../../operator/workorder-publishers.js');
+    const {
+      validateWorkOrderPayload,
+      boardManualKey,
+      boardBatchKey,
+      wikiBatchKey,
+      promotionManualKey,
+    } = await import('../../operator/workorder-publishers.js');
 
     // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
     // block - the consumer runs with the loop off, so its terminal alarms
@@ -1705,14 +1746,26 @@ export async function runAgentLoop(
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
-    toolExecutor.setWorkOrderRequestHandler((kind) => {
+    toolExecutor.setWorkOrderRequestHandler((kind, causeEventIds) => {
       try {
         const now = Date.now();
         let idempotencyKey: string;
         let payload: Record<string, unknown>;
         if (kind === 'board') {
-          idempotencyKey = boardManualKey(now);
-          payload = { mode: 'full', force: true };
+          if (causeEventIds && causeEventIds.length > 0) {
+            // Batch-carrying delegation: FULL mode (reconcile requires
+            // channelKey+deltaLines the requester does not have - proven by
+            // review running the validator) with the batch riding as
+            // eventIds, which the validator allows on full and
+            // causeEventIdsFromPayload lifts as the worker's cause. The
+            // batch-deterministic key dedups a redelivered judgment while
+            // the first order is still open.
+            idempotencyKey = boardBatchKey(causeEventIds);
+            payload = { mode: 'full', force: true, eventIds: [...causeEventIds] };
+          } else {
+            idempotencyKey = boardManualKey(now);
+            payload = { mode: 'full', force: true };
+          }
         } else if (kind === 'wiki') {
           idempotencyKey = wikiBatchKey('manual', now);
           payload = { batchId: `${now}-manual`, events: ['manual'] };
@@ -1969,8 +2022,10 @@ export async function runAgentLoop(
         fullReportBoardLines: buildBoardPublishLines(),
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) =>
-          persistLastFullReport(iso, text, lastReportProvenance),
+        persistLastFullReport: (iso, text) => {
+          getLegCadence()?.beat('full-report');
+          return persistLastFullReport(iso, text, lastReportProvenance);
+        },
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)
@@ -1993,6 +2048,26 @@ export async function runAgentLoop(
         console.log(
           `✓ Trigger loop scheduled full-report leg enabled (local hours: ${fullReportHours.join(', ')})`
         );
+      }
+      // Watched only when actually started, at its REAL tick (review: an
+      // unconditional 60s declare pages forever when the loop is opted out
+      // or the env raises the tick). Cadence covers a long full-report tick
+      // (the re-entrancy guard skips beats while one runs).
+      // A non-numeric env value yields NaN, and silentFor > NaN*2 is always
+      // false - the watchdog would silently disable itself, which is the one
+      // thing a watchdog must not do. Unparseable falls back to the default.
+      const trigTickRaw = Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000);
+      getLegCadence()?.declare(
+        'trigger-loop',
+        Math.max(Number.isFinite(trigTickRaw) ? trigTickRaw : 60_000, 15 * 60_000)
+      );
+      if (reportScheduler && fullReportHours.length > 0) {
+        // Hours alone are not a leg: without the report sink the scheduler
+        // is undefined, the leg could never beat, and the only outcome is a
+        // false page 52 hours in.
+        // Declared at BOOT, not on first success - a report leg that never
+        // fires is exactly what this watches. 26h covers the daily schedule.
+        getLegCadence()?.declare('full-report', 26 * 60 * 60 * 1000);
       }
       const stopTriggerLoop = triggerLoop.start();
       // M2.4: point the connector sink's forwarder at this loop now that it exists.

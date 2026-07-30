@@ -608,7 +608,10 @@ export class GatewayToolExecutor {
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
   private workOrderRequestHandler:
-    | ((kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string })
+    | ((
+        kind: 'board' | 'wiki' | 'memory-curation',
+        causeEventIds?: readonly string[]
+      ) => { accepted: boolean; reason?: string })
     | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
@@ -813,7 +816,10 @@ export class GatewayToolExecutor {
   }
   /** Forwarder hook for owner-issued workorders (Stage-2 S2-T4; enqueue+ack only). */
   setWorkOrderRequestHandler(
-    fn: (kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string }
+    fn: (
+      kind: 'board' | 'wiki' | 'memory-curation',
+      causeEventIds?: readonly string[]
+    ) => { accepted: boolean; reason?: string }
   ): void {
     this.workOrderRequestHandler = fn;
   }
@@ -1487,7 +1493,31 @@ export class GatewayToolExecutor {
       execution_status: error || result?.success === false ? 'failed' : 'completed',
       duration_ms: durationMs,
       envelope_hash: ctx.envelope?.envelope_hash ?? null,
+      // The thrower's closed cause survives sanitization (the sanitizer
+      // preserves `code`); the trace was the one place that dropped it,
+      // leaving only sha256 digests. Carried, never invented: no code = NULL.
+      failure_code: this.extractFailureCode(result, error),
     });
+  }
+
+  private extractFailureCode(
+    result: GatewayToolResult | undefined,
+    error?: unknown
+  ): string | null {
+    const candidate =
+      error instanceof AgentError && typeof error.code === 'string'
+        ? error.code
+        : (result as Record<string, unknown> | undefined)?.code;
+    if (typeof candidate !== 'string') {
+      return null;
+    }
+    // Carried, never invented - and never diluted: TOOL_ERROR is transport,
+    // not a cause (review: it would over-report as if it named something),
+    // and only code-shaped values (bounded, identifier charset) may land.
+    if (candidate === 'TOOL_ERROR' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(candidate)) {
+      return null;
+    }
+    return candidate;
   }
 
   private summarizeToolTraceOutput(result: GatewayToolResult | undefined, error?: unknown): string {
@@ -2296,7 +2326,13 @@ export class GatewayToolExecutor {
                 'The workorder request handler is not wired on this deployment (boot-order fault).',
             };
           }
-          const enqueued = this.workOrderRequestHandler(requestedKind);
+          // The batch rides from HOST execution state, never from tool input -
+          // an agent-supplied cause is forgeable (S2 review #14). Conductor
+          // runs carry their inbox batch here; chat runs carry nothing.
+          const enqueued = this.workOrderRequestHandler(
+            requestedKind,
+            this.getExecutionState().causeEventIds
+          );
           if (!enqueued.accepted) {
             return {
               success: false,
@@ -2669,6 +2705,8 @@ export class GatewayToolExecutor {
               this.taskLedger.create(input as never, {
                 runId: this.getExecutionState().modelRunId ?? null,
                 causeEventIds: this.getExecutionState().causeEventIds,
+                causeKind:
+                  this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
               })
             ),
           };
@@ -2694,6 +2732,7 @@ export class GatewayToolExecutor {
             // was given, and the system knew that before the run began - so there is
             // nothing to ask the agent for.
             causeEventIds: this.getExecutionState().causeEventIds,
+            causeKind: this.getExecutionState().source === 'operator' ? 'clock' : 'owner_message',
           });
           return { success: true, task: serializeTaskToolRecord(updated) };
         }
@@ -2713,7 +2752,7 @@ export class GatewayToolExecutor {
           const contextPacketId = (input as { context_packet_id?: unknown }).context_packet_id;
           if (typeof contextPacketId !== 'string' || contextPacketId.trim().length === 0) {
             throw new AgentError(
-              'task_temporal_reconcile requires a fresh context_packet_id',
+              'task_temporal_reconcile requires a context_packet_id',
               'TOOL_ERROR',
               undefined,
               false
@@ -2742,16 +2781,20 @@ export class GatewayToolExecutor {
             );
           }
           const attempt = this.taskLedger.inspectTemporalAttempt(context.attemptId);
-          if (
-            !Number.isSafeInteger(packet.created_at) ||
-            packet.created_at < attempt.workOrder.updatedAt
-          ) {
-            throw new AgentError(
-              'task_temporal_reconcile context packet predates the active attempt',
-              'TOOL_ERROR',
-              undefined,
-              false
-            );
+          // (a) freshness: a RECEIPT, not a gate (S2 disposition - measured
+          // ZERO live rejections; staleness is evidence quality, not
+          // authorization). Recorded on the receipt, loud when stale.
+          const packetCreatedAt = Number.isSafeInteger(packet.created_at)
+            ? packet.created_at
+            : null;
+          if (packetCreatedAt === null || packetCreatedAt < attempt.workOrder.updatedAt) {
+            // console.error, not securityLogger.warn: the default log level
+            // hides warns, and a silent staleness signal is no signal.
+            console.error('[temporal] context packet predates the active attempt', {
+              attemptId: context.attemptId,
+              packetCreatedAt,
+              attemptUpdatedAt: attempt.workOrder.updatedAt,
+            });
           }
           const effectInput = input as TemporalReconcileToolInput;
           if (
@@ -2759,7 +2802,7 @@ export class GatewayToolExecutor {
             (!Array.isArray(packet.source_refs) || packet.source_refs.length === 0)
           ) {
             throw new AgentError(
-              'task_temporal_reconcile requires source-backed fresh evidence',
+              'task_temporal_reconcile requires source-backed evidence',
               'TOOL_ERROR',
               undefined,
               false
@@ -2783,6 +2826,7 @@ export class GatewayToolExecutor {
           const evidence: TemporalEvidenceAttestation = {
             contextPacketId,
             contextPacketSha256: createHash('sha256').update(packet.packet_json).digest('hex'),
+            packetCreatedAt,
           };
           const { context_packet_id: _contextPacketId, ...trustedEffectInput } = effectInput;
           return {
@@ -3876,9 +3920,56 @@ export class GatewayToolExecutor {
 
     try {
       const temporalContext = ctx.temporalWorkContext;
-      const effectiveInput = temporalContext
+      let effectiveInput = temporalContext
         ? { ...input, task: bindTemporalContextPacketTask(temporalContext, input.task) }
         : input;
+      // (d)-by-construction (S2 measurement: 94% of reconcile rejections were
+      // packets carrying only recalled memories). The HOST knows the bound
+      // source - the task row holds it raw; the context carries only hashes -
+      // so the host seeds the compile with it. Same doctrine as the binding
+      // prefix and causeEventIds: the agent never restates what the host knows.
+      if (temporalContext && this.taskLedger) {
+        const boundTask = this.taskLedger.getById(temporalContext.taskId);
+        const rawChannel = boundTask?.sourceChannel ?? null;
+        // Trimmed: a whitespace-only event id is truthy but fails ref
+        // normalization downstream - which would fail the WHOLE compile,
+        // exactly what "strictly additive" forbids.
+        const rawEventId = boundTask?.sourceEventId?.trim() || null;
+        const sep = rawChannel ? rawChannel.indexOf(':') : -1;
+        const seedConnector = rawChannel && sep > 0 ? rawChannel.slice(0, sep) : null;
+        const seedChannelId = rawChannel && sep > 0 ? rawChannel.slice(sep + 1) : null;
+        // STRICTLY ADDITIVE (review: an out-of-boundary host seed turned a
+        // weak-but-succeeding compile into a permanent failure the agent
+        // cannot remove). Inject only a well-formed channel whose connector
+        // the run's envelope actually grants - otherwise compile proceeds
+        // exactly as before.
+        const envelopeGrantsSeed =
+          seedConnector !== null &&
+          seedChannelId !== null &&
+          seedChannelId.length > 0 &&
+          (ctx.envelope?.scope.raw_connectors ?? []).includes(seedConnector);
+        if (rawChannel && rawEventId && envelopeGrantsSeed) {
+          const boundSeed = {
+            kind: 'raw' as const,
+            raw_id: rawEventId,
+            connector: seedConnector,
+            channel_id: seedChannelId,
+          };
+          const existingSeeds = Array.isArray(effectiveInput.seed_refs)
+            ? effectiveInput.seed_refs
+            : [];
+          const alreadySeeded = existingSeeds.some(
+            (ref) =>
+              typeof ref === 'object' &&
+              ref !== null &&
+              (ref as Record<string, unknown>).kind === 'raw' &&
+              (ref as Record<string, unknown>).raw_id === rawEventId
+          );
+          if (!alreadySeeded) {
+            effectiveInput = { ...effectiveInput, seed_refs: [...existingSeeds, boundSeed] };
+          }
+        }
+      }
       const result = await this.contextCompileService.compileAndPersistContext({
         caller: 'gateway',
         envelope: ctx.envelope,

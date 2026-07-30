@@ -61,6 +61,8 @@ export interface ChangesReadResult {
     target_type: string;
     target_id: string;
     cause_state: string;
+    /** What KIND of cause moved this - the rubric's cause-citation item reads it. */
+    cause_kind: string;
     source_event_ids: string[];
     channel: string | null;
     run_id: string | null;
@@ -173,6 +175,7 @@ export function readChanges(
       target_type: change.targetType,
       target_id: change.targetId,
       cause_state: change.causeState,
+      cause_kind: change.causeKind,
       source_event_ids: change.sourceEventIds,
       channel: change.channelId,
       run_id: change.runId,

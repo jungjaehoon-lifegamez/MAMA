@@ -35,6 +35,7 @@ import type { SQLiteDatabase } from '../../sqlite.js';
 import { parseSecurityAlertTargets } from './utilities.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { setLegPageNotifier } from '../../operator/leg-cadence.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -116,6 +117,21 @@ export async function wireGateways(params: {
     return !!slackGateway;
   });
   if (securityAlertTargets.length > 0) {
+    // Leg watchdog pages ride the same owner-alert targets - an alarm surface,
+    // not a security event, so it gets its own plain-text notifier.
+    setLegPageNotifier(async (message) => {
+      await Promise.allSettled(
+        securityAlertTargets.map(async (target) => {
+          if (target.gateway === 'discord' && discordGateway) {
+            await discordGateway.sendMessage(target.channelId, message);
+          } else if (target.gateway === 'telegram' && telegramGateway) {
+            await telegramGateway.sendMessage(target.channelId, message);
+          } else if (target.gateway === 'slack' && slackGateway) {
+            await slackGateway.sendMessage(target.channelId, message);
+          }
+        })
+      );
+    });
     setSecurityAlertSender(async (event) => {
       const message = formatSecurityAlert(event);
       const results = await Promise.allSettled(
@@ -156,6 +172,7 @@ export async function wireGateways(params: {
     });
   } else {
     setSecurityAlertSender(null);
+    setLegPageNotifier(null);
     wiringLogger.warn(
       '[SECURITY] No active security alert target configured. Set MAMA_SECURITY_ALERT_CHANNELS or configure an active Discord/Slack default channel.'
     );
