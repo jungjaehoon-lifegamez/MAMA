@@ -1513,6 +1513,14 @@ export async function runAgentLoop(
   // enforcement; quiet hours honored inside check().
   const legCadence = initLegCadence(operatorDb);
   legCadence.declare('workorder-consumer', WORKORDER_CONSUMER_TICK_MS);
+  // Declared HERE, not in HeartbeatScheduler.start(): the heartbeat starts
+  // 47 lines before this singleton exists, so a declare there hit null and
+  // the leg was silently unwatched (review, blocking). The scheduler owns
+  // the number; boot owns the ordering.
+  const heartbeatCadenceMs = heartbeatScheduler.declaredCadence();
+  if (heartbeatCadenceMs !== null) {
+    legCadence.declare('heartbeat', heartbeatCadenceMs);
+  }
   const legWatchdog = setInterval(() => {
     try {
       const { pages, recoveries } = legCadence.check();
@@ -2045,11 +2053,18 @@ export async function runAgentLoop(
       // unconditional 60s declare pages forever when the loop is opted out
       // or the env raises the tick). Cadence covers a long full-report tick
       // (the re-entrancy guard skips beats while one runs).
+      // A non-numeric env value yields NaN, and silentFor > NaN*2 is always
+      // false - the watchdog would silently disable itself, which is the one
+      // thing a watchdog must not do. Unparseable falls back to the default.
+      const trigTickRaw = Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000);
       getLegCadence()?.declare(
         'trigger-loop',
-        Math.max(Number(process.env.MAMA_TRIGGER_LOOP_TICK_MS || 60_000), 15 * 60_000)
+        Math.max(Number.isFinite(trigTickRaw) ? trigTickRaw : 60_000, 15 * 60_000)
       );
-      if (fullReportHours.length > 0) {
+      if (reportScheduler && fullReportHours.length > 0) {
+        // Hours alone are not a leg: without the report sink the scheduler
+        // is undefined, the leg could never beat, and the only outcome is a
+        // false page 52 hours in.
         // Declared at BOOT, not on first success - a report leg that never
         // fires is exactly what this watches. 26h covers the daily schedule.
         getLegCadence()?.declare('full-report', 26 * 60 * 60 * 1000);

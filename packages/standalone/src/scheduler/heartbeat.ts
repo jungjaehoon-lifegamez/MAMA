@@ -48,6 +48,17 @@ export class HeartbeatScheduler {
   /**
    * Start the heartbeat scheduler
    */
+  /**
+   * The cadence the watchdog should hold this leg to, or null when the
+   * heartbeat is off. Boot declares the leg AFTER initLegCadence runs -
+   * declaring from start() hit a null singleton and was silently unwatched
+   * (review: a watchdog believed to be watching but isn't is the failure
+   * mode this feature exists to prevent).
+   */
+  declaredCadence(): number | null {
+    return this.running ? this.config.interval : null;
+  }
+
   start(): void {
     if (this.running) {
       console.log('[Heartbeat] Already running');
@@ -64,7 +75,6 @@ export class HeartbeatScheduler {
     }, 5000);
 
     // Schedule regular heartbeats
-    getLegCadence()?.declare('heartbeat', this.config.interval);
     this.timer = setInterval(() => this.tick(), this.config.interval);
   }
 
