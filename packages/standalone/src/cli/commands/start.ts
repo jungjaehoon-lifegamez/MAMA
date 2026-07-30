@@ -1577,8 +1577,13 @@ export async function runAgentLoop(
     ensureBriefs();
     ensureConsoleBrief();
     const { logActivity: logWorkOrderActivity } = await import('../../db/agent-store.js');
-    const { validateWorkOrderPayload, boardManualKey, wikiBatchKey, promotionManualKey } =
-      await import('../../operator/workorder-publishers.js');
+    const {
+      validateWorkOrderPayload,
+      boardManualKey,
+      boardBatchKey,
+      wikiBatchKey,
+      promotionManualKey,
+    } = await import('../../operator/workorder-publishers.js');
 
     // Ops alarm sink (plan D4/E1/G8): constructed OUTSIDE any trigger-loop
     // block - the consumer runs with the loop off, so its terminal alarms
@@ -1733,14 +1738,23 @@ export async function runAgentLoop(
 
     // Owner-issued workorders (workorder_request tool): enqueue+ack only.
     // Wired here - NOT inside any trigger-loop block (plan C11 class).
-    toolExecutor.setWorkOrderRequestHandler((kind) => {
+    toolExecutor.setWorkOrderRequestHandler((kind, causeEventIds) => {
       try {
         const now = Date.now();
         let idempotencyKey: string;
         let payload: Record<string, unknown>;
         if (kind === 'board') {
-          idempotencyKey = boardManualKey(now);
-          payload = { mode: 'full', force: true };
+          if (causeEventIds && causeEventIds.length > 0) {
+            // Conductor delegation: batch-deterministic key so a redelivered
+            // judgment dedups instead of double-ordering, and the batch rides
+            // as the workorder's cause (causeEventIdsFromPayload lifts it -
+            // the worker's changes are then born attributed).
+            idempotencyKey = boardBatchKey(causeEventIds);
+            payload = { mode: 'reconcile', eventIds: [...causeEventIds] };
+          } else {
+            idempotencyKey = boardManualKey(now);
+            payload = { mode: 'full', force: true };
+          }
         } else if (kind === 'wiki') {
           idempotencyKey = wikiBatchKey('manual', now);
           payload = { batchId: `${now}-manual`, events: ['manual'] };

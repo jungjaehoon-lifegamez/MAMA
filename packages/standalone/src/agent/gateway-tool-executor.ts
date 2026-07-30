@@ -608,7 +608,10 @@ export class GatewayToolExecutor {
   private reportPublisher: ((slots: Record<string, string>) => void) | null = null;
   private reportRequestHandler: (() => { accepted: boolean; reason?: string }) | null = null;
   private workOrderRequestHandler:
-    | ((kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string })
+    | ((
+        kind: 'board' | 'wiki' | 'memory-curation',
+        causeEventIds?: readonly string[]
+      ) => { accepted: boolean; reason?: string })
     | null = null;
   private reportReader: (() => Record<string, { html: string; updatedAt?: string | null }>) | null =
     null;
@@ -813,7 +816,10 @@ export class GatewayToolExecutor {
   }
   /** Forwarder hook for owner-issued workorders (Stage-2 S2-T4; enqueue+ack only). */
   setWorkOrderRequestHandler(
-    fn: (kind: 'board' | 'wiki' | 'memory-curation') => { accepted: boolean; reason?: string }
+    fn: (
+      kind: 'board' | 'wiki' | 'memory-curation',
+      causeEventIds?: readonly string[]
+    ) => { accepted: boolean; reason?: string }
   ): void {
     this.workOrderRequestHandler = fn;
   }
@@ -2311,7 +2317,13 @@ export class GatewayToolExecutor {
                 'The workorder request handler is not wired on this deployment (boot-order fault).',
             };
           }
-          const enqueued = this.workOrderRequestHandler(requestedKind);
+          // The batch rides from HOST execution state, never from tool input -
+          // an agent-supplied cause is forgeable (S2 review #14). Conductor
+          // runs carry their inbox batch here; chat runs carry nothing.
+          const enqueued = this.workOrderRequestHandler(
+            requestedKind,
+            this.getExecutionState().causeEventIds
+          );
           if (!enqueued.accepted) {
             return {
               success: false,

@@ -213,3 +213,14 @@ describe('Conductor', () => {
     expect(calls[0].options?.envelope).toBe(envelope);
   });
 });
+
+describe('S2 Task 4: delegation receipts groundwork', () => {
+  it('boardBatchKey is batch-deterministic - a redelivered judgment dedups, never double-orders', async () => {
+    const { boardBatchKey } = await import('../../src/operator/workorder-publishers.js');
+    const a = boardBatchKey(['evi_2', 'evi_1']);
+    const b = boardBatchKey(['evi_1', 'evi_2']); // order-insensitive
+    expect(a).toBe(b);
+    expect(a).toMatch(/^board:batch:[a-f0-9]{16}$/);
+    expect(boardBatchKey(['evi_3'])).not.toBe(a);
+  });
+});
