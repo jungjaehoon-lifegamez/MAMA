@@ -277,36 +277,18 @@ export function resolveCodeActRawConnectors(
   return [...new Set((enabledConnectorNames ?? []).map((name) => name.trim()).filter(Boolean))];
 }
 
-export type DaemonRawConnectorPrincipal =
-  | 'api-code-act'
-  | 'operator-report'
-  | `workorder-${WorkOrderKind}`;
-
 /**
- * Trello contains owner-scoped project evidence. Among daemon-internal runs, only host-issued
- * board and temporal workorders and the scheduled operator report may read it. Verified
- * owner-console chat receives its separate route-scoped envelope in envelope-bootstrap.
- *
- * The report is admitted because it must cross-check the native ledger against the live board
- * before asserting item state; its envelope still grants NO destinations, so this widens what
- * the report may READ, never what it may send. Read authority is enforced per tool through
- * envelope/tool-connector-scope.ts - the api-code-act principal below stays filtered and its
- * direct board reads are now denied rather than silently permitted by role membership.
+ * READS ARE NOT GATED (2026-07-30, owner rules "observability over
+ * restriction" + "answers read direct, gates guard writes only"). The
+ * per-principal trello filter this replaced (#199) collided with the 07-28
+ * code-act transport switch: owner chat's tool calls moved onto the
+ * api-code-act envelope and its board questions died 100%
+ * connector_out_of_scope, while the board drifted 3 weeks undetected
+ * (7 delivered items shown overdue - operator lesson 07-30). Kagemusha's
+ * model - reads free, actions receipted, sends confirmed - is the standard.
+ * Every daemon envelope still grants allowed_destinations: [] (the real,
+ * irreversible-side-effect gate) and every read lands in tool traces.
  */
-export function scopeDaemonRawConnectors(
-  enabledConnectorNames: readonly string[] | undefined,
-  principal: DaemonRawConnectorPrincipal
-): string[] {
-  const connectors = resolveCodeActRawConnectors(enabledConnectorNames);
-  if (
-    principal === 'workorder-board' ||
-    principal === 'workorder-temporal' ||
-    principal === 'operator-report'
-  ) {
-    return connectors;
-  }
-  return connectors.filter((connector) => connector !== 'trello');
-}
 
 const CODE_ACT_RAW_MEMORY_SCOPE_LIMIT = 500;
 const MEMORY_SCOPE_KINDS = new Set(['global', 'user', 'channel', 'project']);
@@ -1218,7 +1200,7 @@ export async function runAgentLoop(
         trigger_context: { user_text: '<api-code-act invocation>' },
         scope: {
           project_refs: [projectRef],
-          raw_connectors: scopeDaemonRawConnectors(codeActRawConnectors, 'api-code-act'),
+          raw_connectors: codeActRawConnectors,
           memory_scopes: memoryScopes,
           allowed_destinations: [],
         },
@@ -1681,10 +1663,7 @@ export async function runAgentLoop(
               const scope = workOrderEnvelopeScope({
                 workKind: wo.workKind,
                 projectId,
-                laneConnectors: scopeDaemonRawConnectors(
-                  codeActRawConnectors,
-                  `workorder-${wo.workKind}`
-                ),
+                laneConnectors: codeActRawConnectors,
                 temporalBinding,
               });
               return {
@@ -1924,10 +1903,7 @@ export async function runAgentLoop(
                       // read authority is bounded per tool by envelope/tool-connector-scope.ts
                       // against the connectors granted here.
                       project_refs: [{ kind: 'project' as const, id: projectId }],
-                      raw_connectors: scopeDaemonRawConnectors(
-                        codeActRawConnectors,
-                        'operator-report'
-                      ),
+                      raw_connectors: codeActRawConnectors,
                       memory_scopes: resolveCodeActMemoryScopes(
                         deriveMemoryScopes({ source: 'operator', channelId: 'report', projectId }),
                         getAdapter()

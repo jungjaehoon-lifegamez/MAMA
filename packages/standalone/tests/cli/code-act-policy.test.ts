@@ -9,7 +9,6 @@ import {
   deriveCodeActToolPolicy,
   resolveCodeActMemoryScopes,
   resolveCodeActRawConnectors,
-  scopeDaemonRawConnectors,
   resolveCodeActAgentPolicy,
 } from '../../src/cli/commands/start.js';
 import { projectCodeActToolPolicy } from '../../src/agent/code-act/tool-policy.js';
@@ -139,21 +138,15 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
       expect(resolveCodeActRawConnectors(['kagemusha', 'kagemusha', ''])).toEqual(['kagemusha']);
     });
 
-    it('grants Trello to host-issued board/temporal workorders and the scheduled report', () => {
+    it('never filters a connector out of read visibility - reads are not gated', () => {
+      // 2026-07-30 owner rule: enforcement only for irreversible side effects
+      // (sends, gated by allowed_destinations: []); reads are traced, never
+      // denied. The per-principal trello filter this replaces killed 100% of
+      // owner-chat board questions when the 07-28 code-act transport switch
+      // moved chat onto the api-code-act envelope, and the board drifted 3
+      // weeks undetected. If a read filter reappears, it must fail here.
       const enabled = ['trello', 'kagemusha', 'telegram'];
-
-      expect(scopeDaemonRawConnectors(enabled, 'workorder-board')).toEqual(enabled);
-      expect(scopeDaemonRawConnectors(enabled, 'workorder-temporal')).toEqual(enabled);
-      // The report must cross-check the native ledger against the live board; its envelope
-      // still grants no destinations, so this is read authority only.
-      expect(scopeDaemonRawConnectors(enabled, 'operator-report')).toEqual(enabled);
-      for (const principal of [
-        'workorder-wiki',
-        'workorder-memory-curation',
-        'api-code-act',
-      ] as const) {
-        expect(scopeDaemonRawConnectors(enabled, principal)).toEqual(['kagemusha', 'telegram']);
-      }
+      expect(resolveCodeActRawConnectors(enabled)).toEqual(enabled);
     });
   });
 
