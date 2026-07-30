@@ -8,7 +8,8 @@ All notable changes to this project will be documented in this file.
 
 S2 Evidence Transposition (PR #216) - the system can now say what caused each
 change, why each failure failed, and which scheduled leg went silent.
-Requires @jungjaehoon/mama-core 2.1.0 (tool-trace `failure_code`, migration 043).
+Requires @jungjaehoon/mama-core 2.1.1 (tool-trace `failure_code`, migration 061 -
+renumbered past the retired-chain ledger ceiling; 2.1.0's 043 never applied live).
 
 ### Added
 

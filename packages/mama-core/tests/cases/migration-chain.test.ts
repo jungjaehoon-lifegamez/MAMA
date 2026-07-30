@@ -49,9 +49,23 @@ function columnExists(db: Database.Database, table: string, column: string): boo
 }
 
 describe('Case-First Memory Substrate (migration 030, consolidated Phase 1+2+3)', () => {
-  it('keeps migration filenames contiguous with no version gaps', () => {
+  it('keeps migration filenames contiguous - except the retired-chain dead zone', () => {
+    // Live DBs carry schema_version rows 44-60 from a retired 2026-05/06
+    // chain that shared the ledger table; the runner skips any file numbered
+    // at or below MAX(version), so 043-060 is a DEAD ZONE where a migration
+    // ships but never applies (043-add-tool-trace-failure-code proved it in
+    // production). Numbering resumes at 061. Contiguity is still pinned on
+    // both sides of the jump so a typo cannot open an accidental gap.
+    const RETIRED_CHAIN_CEILING = 60;
     const versions = migrationFiles().map(migrationVersion);
-    expect(versions).toEqual(Array.from({ length: versions.length }, (_, index) => index + 1));
+    const belowDeadZone = versions.filter((v) => v <= 42);
+    const aboveDeadZone = versions.filter((v) => v > 42);
+    expect(belowDeadZone).toEqual(
+      Array.from({ length: belowDeadZone.length }, (_, index) => index + 1)
+    );
+    expect(aboveDeadZone).toEqual(
+      Array.from({ length: aboveDeadZone.length }, (_, index) => RETIRED_CHAIN_CEILING + 1 + index)
+    );
   });
 
   it('creates every Phase 1 table/index/trigger on a fresh DB', () => {
