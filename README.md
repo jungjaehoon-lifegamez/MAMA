@@ -5,8 +5,11 @@
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> You read your channels so nothing slips. MAMA reads them instead, and messages
-> you the three things that actually need you — each one linked to its source.
+> Right now, you read every channel yourself so nothing slips past you.
+> MAMA reads them instead, and messages you the few things that need you.
+> Every claim links to its source.
+
+![The operator board: live report slots with linked evidence](docs/website/assets/mama-os-hero-evidence-board.png)
 
 ## The product is a message that arrives
 
@@ -25,61 +28,63 @@ You pick the hours. At those hours, in Telegram, Slack, or Discord:
 - Decision: rotate the staging API keys weekly                → source
 ```
 
-The example is synthetic; the shape is what the daemon actually sends.
+The names are made up. The format is exactly what it sends.
 
-Nobody asked for that message. Overnight, a daemon on your machine polled 14
-sources — Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, more —
-decided what needed you, and wrote it down with links. Behind the message it
-already did the small work: the task board updated itself from those same
-conversations, durable judgments were filed into memory, and the wiki wrote
-its daily page.
+Nobody asked for that message. Overnight, a daemon on your machine read 14
+sources: Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, and more.
+It decided what needed you, and wrote it down with links.
+
+It also did the small work already. The task board updated itself from those
+same conversations. Lasting decisions were saved to memory. The wiki wrote its
+daily page.
 
 ## What that replaces
 
 - The morning scan across channels that mostly did not change.
-- The archaeology of "when did that deadline move, and who said so?"
-- The handoff note you write — or wish someone had written — before stepping away.
+- Scrolling back to find out when that deadline moved, and who said so.
+- The handoff note you have to write before you step away.
 
-Three things it is **not**: a chatbot with good memory (it runs while nobody is
-talking to it), a memory database (storage is the input; the report is the
-product), or a hosted service (no account, no cloud, no upload).
+And three things it is **not**:
+
+- Not a chatbot with good memory. It runs while nobody is talking to it.
+- Not a memory database. Storage is the input; the report is the product.
+- Not a hosted service. No account, no cloud, no upload.
 
 ## Why not a task agent, or your chat app's AI?
 
-Both exist, both are good — and both answer a different question.
+Both exist and both are good. They just answer a different question.
 
 - **A task coworker finishes work you already know about.** You still have to notice that
-  the deadline moved before you can delegate it. MAMA's job is the noticing.
-- **A chat integration reads Slack when you ask.** Your clients are on Chatwork, iMessage,
-  Telegram DMs, a Trello board, an Obsidian vault. MAMA reads fourteen sources — the messy
-  ones where the money actually talks.
-- **Both start from zero every time.** MAMA's answers are lookups in a record it has been
-  keeping on your disk, with the source message linked — not a fresh search that dies with
-  the session.
-- **Neither can say "third day unanswered."** That sentence needs state: what changed since
-  the last report, what is still open, what got worse. MAMA keeps that state. A scheduled
-  summary re-reads the world and has nothing to compare it to.
+  the deadline moved before you can delegate it. MAMA's job is to notice for you.
+- **A chat integration reads Slack when you ask.** But your clients are on Chatwork,
+  iMessage, and Telegram DMs. MAMA reads fourteen sources, including the messy ones where
+  the money actually talks.
+- **Both start from zero every time.** MAMA keeps a record on your disk and answers from
+  it, with the source message linked. It does not run a new search that forgets everything
+  afterwards.
+- **Neither can say "still unanswered after three days."** To say that, you must remember
+  yesterday. MAMA remembers. A scheduled summary starts fresh every time and has nothing to
+  compare against.
 
 ## Built to be checked, not believed
 
-A system that acts on its own is tolerable only if you can audit it afterwards.
+A system that acts on its own must be easy to check afterwards.
 
-- **No source, no claim.** Every durable change is stored together with the
-  events that caused it — or explicitly marked _unattributed_. A database
-  constraint makes the third option, a plausible-looking invented cause,
-  unstorable.
+- **No source, no claim.** Every change MAMA makes is saved together with the events
+  that caused it. If it cannot name a cause, the change is saved as _unattributed_.
+  The database rejects any row that fakes a cause.
 - **It drafts; you send.** An agent can write the customer reply from the
   evidence, but sending requires an explicit permission for that destination.
   Memory writes refuse anything shaped like a secret.
-- **Nothing leaves your machine.** Local SQLite, local embeddings (100+
-  languages). The only network traffic is the `claude` or `codex` CLI you
-  already logged into, spawned as an official subprocess — no API keys, no
-  token extraction, nothing that violates provider terms.
-- **Search shows its work.** Strict mode drops a semantic match with no
-  lexical or entity evidence behind it: a plausible wrong answer is rejected,
+- **Nothing leaves your machine.** Local SQLite, local embeddings, 100+ languages.
+  The only network traffic is the `claude` or `codex` CLI you already logged into,
+  run as an official subprocess. No API keys, no token tricks, no terms-of-service
+  violations.
+- **Search shows its work.** Strict mode drops a semantic match that has no text or
+  entity evidence behind it. A wrong answer that merely sounds right gets rejected,
   not displayed.
 
-Depth lives in the docs: [Architecture](docs/explanation/architecture.md) ·
+More detail: [Architecture](docs/explanation/architecture.md) ·
 [Security guide](docs/guides/security.md)
 
 ## Quick start
@@ -123,18 +128,18 @@ Slack, Telegram. Requires Node >= 22 and an authenticated
 
 Dependency direction is one-way: nothing depends on the daemon.
 
-## Numbers we publish against ourselves
+## Our numbers, including the bad ones
 
 - **93.0%** on a 100-question LongMemEval tool-use sample (Sonnet 4.6, fully
   local) — above SuperMemory (81.6%), below Mastra (94.87%).
   [Reproduce it](packages/memorybench/).
-- **84% of trigger-authoring passes create nothing** — a duplicate gate rejects
-  near-variants of triggers that already exist. Correct, but a self-evolving
-  loop idle five times out of six has room to propose better.
-- **Cache reuse is 15.9x** per built context, measured against 144.8x for a
-  comparable operator on the same machine. The largest cost lever we know of.
-- **3 of 18 recent changes carried a cause.** Honest — most runs are
-  autonomous, with no owner message to cite — but a floor, not a resting place.
+- **84% of trigger-authoring passes create nothing.** A duplicate gate rejects
+  near-copies of triggers that already exist. That is correct, but a loop this idle
+  should at least say why it declined.
+- **Cache reuse is 15.9x** per built context, against 144.8x for a comparable system
+  on the same machine. This is our biggest known cost problem.
+- **3 of 18 recent changes carried a cause.** Honest, but low. Most runs are
+  autonomous and have no owner message to cite. We plan to raise it, not excuse it.
 
 ## Roadmap
 
@@ -145,14 +150,14 @@ Dependency direction is one-way: nothing depends on the daemon.
 | Next               | Eight concrete items, unpacked below.                                                                                                                     |
 | v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                             |
 
-"Next", unpacked — each item traceable to a measurement, or to a competitor doing it better:
+Each "Next" item comes from a measurement, or from a competitor doing it better:
 
 - **Stable prompt prefixes for the autonomous lanes.** Cache reuse is 15.9x against a
-  neighbouring operator's 144.8x on the same machine. The 231 KB → 57 KB prompt cut already
-  halved per-call cost; the same discipline applies to the report and board lanes.
-- **A health surface that makes the daemon's own silence loud.** The authoring step once
-  died for three days unnoticed. A scheduled leg that misses N consecutive ticks should page
-  the owner, and every subprocess death should record its exit code, stderr, and stdout.
+  comparable system's 144.8x. One prompt cut (231 KB → 57 KB) already halved per-call
+  cost. The same discipline applies to the report and board lanes.
+- **Alarms for the daemon's own silence.** The authoring step once died for three days
+  before anyone noticed. A scheduled job that misses its slot repeatedly should page the
+  owner, and every subprocess death should record its exit code and output.
 - **Causes for the autonomous lanes.** Most changes are made by runs nobody prompted. A
   board run should receive its event window as the cause of what it changes, the way work
   orders already do.
@@ -162,15 +167,14 @@ Dependency direction is one-way: nothing depends on the daemon.
 - **A surface that can only answer "nothing" fails the build.** Two shipped APIs turned out
   to be permanently empty. The drift guard that now covers the tool catalog generalizes to
   every advertised surface.
-- **An approval inbox.** Taken from OpenWorker: unattended operation queues decisions for
-  the owner — it never raises its own autonomy.
-- **Permission language you can say in one breath.** Also from OpenWorker: describe every
-  action as read / write-local / external-send, and put the standing invariant — _external
-  sends never happen without an explicit envelope, by design_ — on the surface instead of
-  in a document.
+- **An approval inbox.** Taken from OpenWorker: when the owner is away, the system queues
+  the decision instead of raising its own authority.
+- **Permissions you can explain in one sentence.** Also from OpenWorker: label every
+  action as read, write-local, or external-send. And state the standing rule up front:
+  _external sends never happen without explicit permission, by design._
 - **A first briefing in the first five minutes.** Taken from Claude's Slack integration:
-  one connector, first poll, first report — the product proves itself before the reader has
-  to believe anything.
+  one connector, first poll, first report. The product should prove itself before anyone
+  has to believe anything.
 
 ## Development
 
