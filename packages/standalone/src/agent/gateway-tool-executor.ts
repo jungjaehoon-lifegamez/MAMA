@@ -1487,7 +1487,22 @@ export class GatewayToolExecutor {
       execution_status: error || result?.success === false ? 'failed' : 'completed',
       duration_ms: durationMs,
       envelope_hash: ctx.envelope?.envelope_hash ?? null,
+      // The thrower's closed cause survives sanitization (the sanitizer
+      // preserves `code`); the trace was the one place that dropped it,
+      // leaving only sha256 digests. Carried, never invented: no code = NULL.
+      failure_code: this.extractFailureCode(result, error),
     });
+  }
+
+  private extractFailureCode(
+    result: GatewayToolResult | undefined,
+    error?: unknown
+  ): string | null {
+    if (error instanceof AgentError && typeof error.code === 'string' && error.code.length > 0) {
+      return error.code;
+    }
+    const code = (result as Record<string, unknown> | undefined)?.code;
+    return typeof code === 'string' && code.length > 0 ? code : null;
   }
 
   private summarizeToolTraceOutput(result: GatewayToolResult | undefined, error?: unknown): string {
