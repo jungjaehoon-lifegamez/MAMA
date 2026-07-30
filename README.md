@@ -9,6 +9,11 @@
 > MAMA reads them instead, and sends you the few things that need you.
 > Every claim links to its source.
 
+**MAMA OS is an always-on agent server.** You install it on your own machine, and it
+stays running around the clock — like Home Assistant or Plex, but its job is your work
+channels. `mama start` brings it up. Its dashboard lives at `localhost:3847`. Its
+reports arrive in your chat app.
+
 ![An illustrated morning desk: channel cards (chat, mail, kanban, calendar, notes) send glowing threads into a small box labeled MAMA, which delivers a briefing to the phone: Briefing 08:00, Client A sent the files, deadline moved to Wed, while you slept 14 sources read.](docs/website/assets/mama-os-hero-briefing.png)
 
 ## The product is a message that arrives
@@ -30,7 +35,7 @@ You pick the hours. At those hours, in Telegram, Slack, or Discord:
 
 The names are made up. The format is exactly what it sends.
 
-Nobody asked for that message. Overnight, a daemon on your machine read 14
+Nobody asked for that message. Overnight, the MAMA server on your machine read 14
 sources: Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, and more.
 It decided what needed you, and wrote it down with links.
 
@@ -46,7 +51,7 @@ daily page.
 
 And three things it is **not**:
 
-- Not a chatbot with good memory. It runs while nobody is talking to it.
+- Not a chatbot with good memory. It is a server that runs while nobody is talking to it.
 - Not a memory database. Storage is the input; the report is the product.
 - Not a hosted service. There is no MAMA account and no MAMA server. It runs on
   the logins you already have.
@@ -91,7 +96,7 @@ More detail: [Architecture](docs/explanation/architecture.md) ·
 
 ## Quick start
 
-**The daemon** — the full product:
+**The server** — the full product. Install once; it keeps running until you stop it:
 
 ```bash
 claude auth login            # or: codex login — your existing CLI auth is reused
@@ -124,7 +129,7 @@ running, and skips quietly when it is not:
 
 | Package                                       | What it is                                                                                                     | You run it?          |
 | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
-| [mama-os](packages/standalone/) 0.29.2        | The daemon: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.               | `mama start`         |
+| [mama-os](packages/standalone/) 0.29.2        | The always-on server: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.     | `mama start`         |
 | [mama-core](packages/mama-core/) 2.0.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
 | [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
 | [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
