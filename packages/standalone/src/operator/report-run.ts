@@ -53,13 +53,7 @@ export const GATHER_TOOLS = new Set<string>([
 /** Gateway WRITE tools. mama_save is the M3 hand; the rest are classified only for honest
  *  observability if they ever appear (report_publish/wiki_publish are NOT instructed in M3 -
  *  see plan finding F6). (gateway-tools.md:11,17,18,65,66) */
-export const WRITE_TOOLS = new Set<string>([
-  'mama_save',
-  'mama_add',
-  'mama_ingest',
-  'report_publish',
-  'wiki_publish',
-]);
+export const WRITE_TOOLS = new Set<string>(['mama_save', 'report_publish', 'wiki_publish']);
 
 /** Local literal, deliberately NOT an import of code-act CODE_ACT_MARKER: this module keeps
  *  zero agent-internal imports so the audit stays unit-testable with plain synthetic objects.

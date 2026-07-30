@@ -128,8 +128,6 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
   'context_compile',
   'mama_update',
-  'mama_add',
-  'mama_ingest',
   'report_publish',
   'wiki_publish',
   'task_create',
@@ -1079,11 +1077,9 @@ export async function runAgentLoop(
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
 
-  // Wire sessionsDb and uiCommandQueue into gateway tool executor
+  // Wire sessionsDb into gateway tool executor
   toolExecutor.setSessionsDb(db);
-  toolExecutor.setUICommandQueue(uiCommandQueue);
   agentLoop.setSessionsDb(db);
-  agentLoop.setUICommandQueue(uiCommandQueue);
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
@@ -1351,15 +1347,6 @@ export async function runAgentLoop(
     cronEmitter,
   });
 
-  if (graphHandlerOptions.applyMultiAgentConfig) {
-    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-  }
-  if (graphHandlerOptions.restartMultiAgentAgent) {
-    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-  }
-
   // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
@@ -1393,10 +1380,6 @@ export async function runAgentLoop(
     graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
       pm.reloadPersona(agentId);
     };
-    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
     // The delegate wiring was here. Over the full log history it was wired ZERO times and
     // its only runtime trace was one call refused by role permission. The process manager

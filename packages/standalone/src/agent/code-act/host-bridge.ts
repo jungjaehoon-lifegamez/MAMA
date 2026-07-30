@@ -432,127 +432,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     category: 'communication',
   },
   // Browser
-  {
-    name: 'browser_navigate',
-    description: 'Navigate browser to URL',
-    params: [{ name: 'url', type: 'string', required: true }],
-    returnType: '{ title: string }',
-    category: 'browser',
-  },
-  {
-    name: 'browser_screenshot',
-    description: 'Take browser screenshot',
-    params: [
-      { name: 'selector', type: 'string', required: false },
-      { name: 'full_page', type: 'boolean', required: false },
-    ],
-    returnType: '{ path: string }',
-    category: 'browser',
-  },
-  {
-    name: 'browser_click',
-    description: 'Click element in browser',
-    params: [{ name: 'selector', type: 'string', required: true }],
-    returnType: 'true',
-    category: 'browser',
-  },
-  {
-    name: 'browser_type',
-    description: 'Type text into browser element',
-    params: [
-      { name: 'selector', type: 'string', required: true },
-      { name: 'text', type: 'string', required: true },
-    ],
-    returnType: 'true',
-    category: 'browser',
-  },
-  {
-    name: 'browser_get_text',
-    description: 'Get page text content',
-    params: [],
-    returnType: '{ text: string }',
-    category: 'browser',
-  },
-  {
-    name: 'browser_scroll',
-    description: 'Scroll browser page',
-    params: [{ name: 'direction', type: "'up' | 'down'", required: true }],
-    returnType: 'true',
-    category: 'browser',
-  },
-  {
-    name: 'browser_wait_for',
-    description: 'Wait for element/condition',
-    params: [
-      { name: 'selector', type: 'string', required: false },
-      { name: 'timeout', type: 'number', required: false },
-    ],
-    returnType: 'true',
-    category: 'browser',
-  },
-  {
-    name: 'browser_evaluate',
-    description: 'Execute JavaScript in browser',
-    params: [{ name: 'script', type: 'string', required: true }],
-    returnType: 'unknown',
-    category: 'browser',
-  },
-  {
-    name: 'browser_pdf',
-    description: 'Save page as PDF',
-    params: [{ name: 'path', type: 'string', required: false }],
-    returnType: '{ path: string }',
-    category: 'browser',
-  },
-  {
-    name: 'browser_close',
-    description: 'Close browser',
-    params: [],
-    returnType: 'true',
-    category: 'browser',
-  },
   // OS Management
-  {
-    name: 'os_add_bot',
-    description: 'Add a new bot platform',
-    params: [
-      { name: 'platform', type: "'discord' | 'slack' | 'telegram'", required: true },
-      { name: 'token', type: 'string', required: true },
-    ],
-    returnType: 'true',
-    category: 'os',
-  },
-  {
-    name: 'os_list_bots',
-    description: 'List configured bots',
-    params: [],
-    returnType: '{ bots?: BotStatus[] }',
-    category: 'os',
-  },
-  {
-    name: 'os_restart_bot',
-    description: 'Restart a bot',
-    params: [{ name: 'platform', type: 'string', required: true }],
-    returnType: 'true',
-    category: 'os',
-  },
-  {
-    name: 'os_stop_bot',
-    description: 'Stop a bot',
-    params: [{ name: 'platform', type: 'string', required: true }],
-    returnType: 'true',
-    category: 'os',
-  },
-  {
-    name: 'os_set_permissions',
-    description: 'Set role permissions',
-    params: [
-      { name: 'role', type: 'string', required: true },
-      { name: 'permissions', type: 'object', required: true },
-    ],
-    returnType: 'true',
-    category: 'os',
-  },
   {
     name: 'os_get_config',
     description: 'Get MAMA configuration',
@@ -560,132 +440,7 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: 'object',
     category: 'os',
   },
-  {
-    name: 'os_set_model',
-    description: 'Set model for agent',
-    params: [
-      { name: 'agent_id', type: 'string', required: true },
-      { name: 'model', type: 'string', required: true },
-    ],
-    returnType: 'true',
-    category: 'os',
-  },
-  {
-    name: 'agent_get',
-    description:
-      'Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail.',
-    params: [{ name: 'agent_id', type: 'string', required: true }],
-    returnType:
-      '{ agent_id: string; version: number; config: Record<string, unknown>; system?: string | null; change_note?: string | null; created_at?: string }',
-    category: 'os',
-  },
-  {
-    name: 'agent_activity',
-    description: 'Get recent agent activity rows and sync the viewer to that agent activity tab.',
-    params: [
-      { name: 'agent_id', type: 'string', required: true },
-      { name: 'limit', type: 'number', required: false },
-    ],
-    returnType:
-      '{ agent_id: string; activity: Array<{ id: number; type: string; input_summary?: string | null; output_summary?: string | null; execution_status?: string | null; created_at: string }> }',
-    category: 'os',
-  },
-  {
-    name: 'agent_update',
-    description: 'Update agent config with optimistic concurrency version check',
-    params: [
-      { name: 'agent_id', type: 'string', required: true },
-      { name: 'version', type: 'number', required: true },
-      { name: 'changes', type: 'Record<string, unknown>', required: true },
-      { name: 'change_note', type: 'string', required: false },
-    ],
-    returnType: '{ new_version?: number; runtime_reloaded?: boolean; error?: string }',
-    category: 'os',
-  },
-  {
-    name: 'agent_create',
-    description: 'Create new agent with initial config and persona',
-    params: [
-      { name: 'id', type: 'string', required: true },
-      { name: 'name', type: 'string', required: true },
-      { name: 'model', type: 'string', required: true },
-      { name: 'tier', type: 'number', required: true },
-      { name: 'system', type: 'string', required: false },
-      { name: 'backend', type: "'claude' | 'codex'", required: false },
-    ],
-    returnType: '{ id: string; version: number; runtime_reloaded?: boolean; error?: string }',
-    category: 'os',
-  },
-  {
-    name: 'agent_compare',
-    description: 'Compare metrics between two agent versions',
-    params: [
-      { name: 'agent_id', type: 'string', required: true },
-      { name: 'version_a', type: 'number', required: true },
-      { name: 'version_b', type: 'number', required: true },
-    ],
-    returnType: 'Record<string, unknown>',
-    category: 'os',
-  },
-  {
-    name: 'agent_test',
-    description: 'Test agent with connector data or provided samples',
-    params: [
-      { name: 'agent_id', type: 'string', required: true },
-      { name: 'sample_count', type: 'number', required: false },
-      {
-        name: 'test_data',
-        type: 'Array<{ input: string; expected?: string }>',
-        required: false,
-      },
-    ],
-    returnType:
-      '{ data: { test_run_id?: number | null; agent_id: string; results: Array<Record<string, unknown>>; auto_score: number; duration_ms: number; validation_session_id?: string | null; warning?: string | null } }',
-    category: 'os',
-  },
-  {
-    name: 'viewer_state',
-    description: 'Get current viewer route, selected item, and page context',
-    params: [],
-    returnType:
-      '{ context: { currentRoute?: string; selectedItem?: { type?: string; id?: string }; pageData?: unknown } }',
-    category: 'os',
-  },
-  {
-    name: 'viewer_navigate',
-    description:
-      'Navigate viewer to a route. To open agent detail, pass route="agents" with params {id, tab}. To open a wiki document, pass route="wiki" with params {path}.',
-    params: [
-      { name: 'route', type: 'string', required: true },
-      { name: 'params', type: 'Record<string, string>', required: false },
-    ],
-    returnType: '{ navigated: string }',
-    category: 'os',
-  },
-  {
-    name: 'viewer_notify',
-    description: 'Show a toast or suggestion in the viewer',
-    params: [
-      { name: 'type', type: "'info' | 'warning' | 'suggest'", required: true },
-      { name: 'message', type: 'string', required: true },
-      { name: 'action', type: 'Record<string, unknown>', required: false },
-    ],
-    returnType: '{ notified: boolean }',
-    category: 'os',
-  },
   // PR Review
-  {
-    name: 'pr_review_threads',
-    description: 'Get PR review threads from GitHub',
-    params: [
-      { name: 'owner', type: 'string', required: true },
-      { name: 'repo', type: 'string', required: true },
-      { name: 'pr', type: 'number', required: true },
-      { name: 'filter', type: "'unresolved' | 'resolved' | 'all'", required: false },
-    ],
-    returnType: '{ threads?: ReviewThread[]; summary?: string }',
-    category: 'os',
-  },
   // System — agent activity notices
   {
     name: 'agent_notices',
@@ -971,13 +726,8 @@ export const READ_ONLY_TOOLS = new Set([
   'board_read',
   'audit_findings_read',
   'workorder_status',
-  'viewer_state',
   'Read',
-  'browser_get_text',
-  'browser_screenshot',
-  'os_list_bots',
   'os_get_config',
-  'pr_review_threads',
   'agent_notices',
   // Kagemusha bridge queries: pure reads of the business-data db. Without these
   // the tier-2 dashboard agent cannot see real task lifecycle state and falls
@@ -1006,15 +756,13 @@ export const READ_ONLY_TOOLS = new Set([
 ]);
 
 /** Read-shaped calls that still create a local artifact and therefore need write settlement. */
-const LOCAL_ARTIFACT_TOOLS = new Set(['browser_screenshot', 'drive_download']);
+const LOCAL_ARTIFACT_TOOLS = new Set(['drive_download']);
 
 /** Memory-write tools additionally allowed for Tier 2 */
 export const MEMORY_WRITE_TOOLS = new Set([
   'mama_save',
   'context_compile',
   'mama_update',
-  'mama_add',
-  'mama_ingest',
   'report_publish',
   'report_request',
   'workorder_request',
@@ -1086,15 +834,6 @@ export class HostBridge {
         desc.name,
         async (hostContext, ...args: unknown[]) => {
           const input = this._buildInput(desc, args);
-
-          if (desc.name === 'browser_wait_for') {
-            const remainingMs = Math.max(1, hostContext.deadlineMs - Date.now());
-            const requestedTimeout = Number(input.timeout);
-            input.timeout =
-              Number.isFinite(requestedTimeout) && requestedTimeout > 0
-                ? Math.min(requestedTimeout, remainingMs)
-                : Math.min(10_000, remainingMs);
-          }
 
           // Validate required params before execution
           const missing = desc.params

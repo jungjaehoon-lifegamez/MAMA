@@ -140,7 +140,6 @@ const persistentSetSystemPromptMock = vi.fn();
 const gatewayExecutorSetAgentContextMock = vi.fn();
 const gatewayExecutorSetCurrentAgentContextMock = vi.fn();
 const gatewayExecutorClearCurrentAgentContextMock = vi.fn();
-const gatewayExecutorSetUICommandQueueMock = vi.fn();
 const gatewayExecutorSetSessionsDbMock = vi.fn();
 const gatewayExecutorSetValidationServiceMock = vi.fn();
 const gatewayExecutorSetRawStoreMock = vi.fn();
@@ -233,7 +232,6 @@ vi.mock('../../src/agent/gateway-tool-executor.js', () => {
       setAgentContext: gatewayExecutorSetAgentContextMock,
       setCurrentAgentContext: gatewayExecutorSetCurrentAgentContextMock,
       clearCurrentAgentContext: gatewayExecutorClearCurrentAgentContextMock,
-      setUICommandQueue: gatewayExecutorSetUICommandQueueMock,
       setSessionsDb: gatewayExecutorSetSessionsDbMock,
       setValidationService: gatewayExecutorSetValidationServiceMock,
       setRawStore: gatewayExecutorSetRawStoreMock,
@@ -338,7 +336,6 @@ describe('AgentLoop', () => {
     gatewayExecutorSetAgentContextMock.mockClear();
     gatewayExecutorSetCurrentAgentContextMock.mockClear();
     gatewayExecutorClearCurrentAgentContextMock.mockClear();
-    gatewayExecutorSetUICommandQueueMock.mockClear();
     gatewayExecutorSetSessionsDbMock.mockClear();
     gatewayExecutorSetValidationServiceMock.mockClear();
     gatewayExecutorSetRawStoreMock.mockClear();
@@ -2216,21 +2213,17 @@ Skills provide additional tools.
   });
 
   describe('runtime dependency proxies', () => {
-    it('should forward ui command queue, sessions db, validation service, and raw store to the internal executor', () => {
+    it('should forward sessions db, validation service, and raw store to the internal executor', () => {
       const agentLoop = new AgentLoop(
         createMockOAuthManager(),
         {},
         {},
         { mamaApi: createMockApi() }
       );
-      const uiCommandQueue = { getPageContext: vi.fn() };
       const sessionsDb = { prepare: vi.fn(), exec: vi.fn() };
       const validationService = { startSession: vi.fn(), finalizeSession: vi.fn() };
       const rawStore = { getRecent: vi.fn(), hasConnector: vi.fn() };
 
-      agentLoop.setUICommandQueue?.(
-        uiCommandQueue as unknown as import('../../src/api/ui-command-handler.js').UICommandQueue
-      );
       agentLoop.setSessionsDb?.(sessionsDb as unknown as import('../../src/sqlite.js').default);
       agentLoop.setValidationService?.(
         validationService as unknown as import('../../src/validation/session-service.js').ValidationSessionService
@@ -2239,7 +2232,6 @@ Skills provide additional tools.
         rawStore as unknown as import('../../src/connectors/framework/raw-store.js').RawStore
       );
 
-      expect(gatewayExecutorSetUICommandQueueMock).toHaveBeenCalledWith(uiCommandQueue);
       expect(gatewayExecutorSetSessionsDbMock).toHaveBeenCalledWith(sessionsDb);
       expect(gatewayExecutorSetValidationServiceMock).toHaveBeenCalledWith(validationService);
       expect(gatewayExecutorSetRawStoreMock).toHaveBeenCalledWith(rawStore);
