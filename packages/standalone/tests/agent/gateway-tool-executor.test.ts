@@ -583,6 +583,25 @@ describe('STORY-V019 - GatewayToolExecutor', () => {
       });
     });
 
+    describe('viewerOnly enforcement through execute()', () => {
+      // The cull deleted the os_* permission blocks wholesale, but
+      // os_get_config SURVIVES as a live viewerOnly tool - registry metadata
+      // alone does not exercise checkToolPermission (review).
+      it('denies os_get_config from a non-viewer source', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createDiscordContext());
+        const result = await executor.execute('os_get_config', {});
+        expect(result).toMatchObject({ success: false });
+      });
+
+      it('allows os_get_config from the viewer source', async () => {
+        const executor = new GatewayToolExecutor({ mamaApi: createMockApi() });
+        executor.setAgentContext(createViewerContext());
+        const result = (await executor.execute('os_get_config', {})) as { success: boolean };
+        expect(result.success).toBe(true);
+      });
+    });
+
     describe('static methods', () => {
       it('should return valid tools', () => {
         const tools = GatewayToolExecutor.getValidTools();

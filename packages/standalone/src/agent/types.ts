@@ -454,15 +454,6 @@ export interface RecallInput {
   scopes?: ScopeRef[];
 }
 
-export interface AddInput {
-  content: string;
-}
-
-export interface IngestInput {
-  content: string;
-  scopes?: unknown;
-}
-
 /**
  * Input for update tool
  */
@@ -480,75 +471,27 @@ export type LoadCheckpointInput = Record<string, never>;
 /**
  * Browser navigate input
  */
-export interface BrowserNavigateInput {
-  /** URL to navigate to */
-  url: string;
-}
-
 /**
  * Browser screenshot input
  */
-export interface BrowserScreenshotInput {
-  /** Optional filename (auto-generated if not provided) */
-  filename?: string;
-  /** Take full page screenshot */
-  full_page?: boolean;
-}
-
 /**
  * Browser click input
  */
-export interface BrowserClickInput {
-  /** CSS selector to click */
-  selector: string;
-}
-
 /**
  * Browser type input
  */
-export interface BrowserTypeInput {
-  /** CSS selector of input element */
-  selector: string;
-  /** Text to type */
-  text: string;
-}
-
 /**
  * Browser scroll input
  */
-export interface BrowserScrollInput {
-  /** Scroll direction */
-  direction: 'up' | 'down' | 'top' | 'bottom';
-  /** Scroll amount in pixels (default: 500) */
-  amount?: number;
-}
-
 /**
  * Browser wait for input
  */
-export interface BrowserWaitForInput {
-  /** CSS selector to wait for */
-  selector: string;
-  /** Timeout in milliseconds (default: 10000) */
-  timeout?: number;
-}
-
 /**
  * Browser evaluate input
  */
-export interface BrowserEvaluateInput {
-  /** JavaScript code to evaluate */
-  script: string;
-}
-
 /**
  * Browser PDF input
  */
-export interface BrowserPdfInput {
-  /** Optional filename */
-  filename?: string;
-}
-
 // ============================================================================
 // OS Management Tool Input Types (viewer-only)
 // ============================================================================
@@ -561,57 +504,12 @@ export type BotPlatform = 'discord' | 'telegram' | 'slack' | 'chatwork';
 /**
  * Input for os_add_bot tool
  */
-export interface AddBotInput {
-  /** Platform to add bot for */
-  platform: BotPlatform;
-  /** Bot token (Discord, Telegram) or API token (Chatwork) */
-  token?: string;
-  /** Slack bot token */
-  bot_token?: string;
-  /** Slack app token (for socket mode) */
-  app_token?: string;
-  /** Default channel ID for notifications (optional) */
-  default_channel_id?: string;
-  /** Allowed chat IDs for Telegram (optional, empty = allow all) */
-  allowed_chats?: string[];
-  /** Room IDs for Chatwork (optional) */
-  room_ids?: string[];
-}
-
 /**
  * Input for os_set_permissions tool
  */
-export interface SetPermissionsInput {
-  /** Role name to modify */
-  role: string;
-  /** Tools to allow (supports wildcards) */
-  allowedTools?: string[];
-  /** Tools to block (takes precedence) */
-  blockedTools?: string[];
-  /** Paths to allow (glob patterns) */
-  allowedPaths?: string[];
-  /** Enable system control */
-  systemControl?: boolean;
-  /** Enable access to sensitive data (e.g., tokens) */
-  sensitiveAccess?: boolean;
-  /** Map a source (e.g., 'discord', 'telegram') to this role */
-  mapSource?: string;
-}
-
 /**
  * Input for os_set_model tool
  */
-export interface SetModelInput {
-  /** Role to update (e.g., 'os_agent', 'chat_bot'). If not specified, updates global agent model */
-  role?: string;
-  /** Model name to use (e.g., 'claude-opus-4-6', 'claude-sonnet-4-6') */
-  model: string;
-  /** Optional max turns for this role */
-  maxTurns?: number;
-  /** Optional timeout in milliseconds */
-  timeout?: number;
-}
-
 /**
  * Input for os_get_config tool
  */
@@ -633,38 +531,15 @@ export interface GetConfigInput {
 /**
  * Input for os_list_bots tool
  */
-export interface ListBotsInput {
-  /** Filter by platform (optional) */
-  platform?: BotPlatform;
-}
-
 /**
  * Bot status information
  */
-export interface BotStatus {
-  platform: BotPlatform;
-  enabled: boolean;
-  configured: boolean;
-  status: 'running' | 'stopped' | 'error' | 'not_configured';
-  error?: string;
-}
-
 /**
  * Input for os_restart_bot tool
  */
-export interface RestartBotInput {
-  /** Platform to restart */
-  platform: BotPlatform;
-}
-
 /**
  * Input for os_stop_bot tool
  */
-export interface StopBotInput {
-  /** Platform to stop */
-  platform: BotPlatform;
-}
-
 /**
  * Input for code_act sandbox execution
  */
@@ -708,27 +583,11 @@ export type GatewayToolInput =
   | SearchInput
   | RecallInput
   | CoreContextCompileInput
-  | AddInput
-  | IngestInput
   | UpdateInput
   | LoadCheckpointInput
-  | BrowserNavigateInput
-  | BrowserScreenshotInput
-  | BrowserClickInput
-  | BrowserTypeInput
-  | BrowserScrollInput
-  | BrowserWaitForInput
-  | BrowserEvaluateInput
-  | BrowserPdfInput
   // OS Management tools
-  | AddBotInput
-  | SetPermissionsInput
   | GetConfigInput
-  | SetModelInput
   // OS Monitoring tools
-  | ListBotsInput
-  | RestartBotInput
-  | StopBotInput
   | CodeActInput
   | DriveBrowseInput
   | DriveFindFolderInput
@@ -804,9 +663,6 @@ export type GatewayToolName =
   | 'schedule_upcoming'
   // System tools
   | 'agent_notices';
-// Agent management tools (Managed Agents pattern)
-// Agent lifecycle tools
-// Viewer control tools (SmartStore pattern);
 
 // ============================================================================
 // MCP Tool Output Types
@@ -1367,6 +1223,8 @@ export interface MAMAApiInterface {
     query: string,
     options?: { scopes?: ScopeRef[]; includeProfile?: boolean }
   ): Promise<unknown>;
+  // mama-core surface used by the context-injector ingestion path (NOT by
+  // gateway tools - mama_add/mama_ingest were culled 2026-07-30).
   ingestMemory?(input: Record<string, unknown>): Promise<unknown>;
   ingestWithTrustedProvenance?(
     input: Record<string, unknown>,

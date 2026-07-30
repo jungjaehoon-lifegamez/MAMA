@@ -405,12 +405,6 @@ register({
   params: 'limit?',
 });
 
-// Agent management tools (Managed Agents pattern)
-
-// Viewer control tools (SmartStore pattern)
-
-// Agent lifecycle tools
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {

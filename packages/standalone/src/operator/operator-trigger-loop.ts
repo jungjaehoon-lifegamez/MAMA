@@ -398,16 +398,26 @@ export class OperatorTriggerLoop {
       for (const [channelKey, channelEvents] of byChannel) {
         // The prompt shows the last 10; the CAUSE is the whole batch. Truncating both
         // would silently drop events the run acted on from the record of why it acted.
+        // Embedded newlines are collapsed: a message body containing "\n[/UNTRUSTED..."
+        // must not be able to forge line or block framing downstream.
         const shown = channelEvents.slice(-10);
         const lines = shown.map(
-          (e) => `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content.trim().slice(0, 200)}`
+          (e) =>
+            `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content
+              .trim()
+              .replace(/[\r\n]+/g, ' ')
+              .slice(0, 200)}`
         );
         const indexIds = channelEvents
           .map((e) => e.eventIndexId)
           .filter((id): id is string => typeof id === 'string' && id.length > 0);
         // Inbox identity must cover EVERY event or dedupe cannot absorb a
-        // redelivery; fall back to the delta row id when no index id exists.
-        const inboxEventIds = channelEvents.map((e) => e.eventIndexId ?? String(e.id));
+        // redelivery. The fallback is NAMESPACED: bare delta row ids from two
+        // different channels (or after a VACUUM renumbering) must not collide
+        // in the global dedupe PK.
+        const inboxEventIds = channelEvents.map(
+          (e) => e.eventIndexId ?? `raw:${channelKey}:${e.id}`
+        );
         channelBatches.push({ channelKey, lines, indexIds, inboxEventIds });
       }
     }

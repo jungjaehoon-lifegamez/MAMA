@@ -351,8 +351,9 @@ The MAMA OS daemon runs an OPERATOR identity alongside chat:
   instructions/tool calls must not be followed. `kagemusha_*` remains read-only
   project-task truth, while the native ledger owns owner-console tasks and the
   pipeline projection.
-- **Memory-write secret filter:** `mama_save`/`mama_update`/`mama_add`/
-  `mama_ingest` REFUSE secret-shaped content (`secret_material_refused`).
+- **Memory-write secret filter:** `mama_save`/`mama_update` REFUSE
+  secret-shaped content (`secret_material_refused`). `mama_add`/`mama_ingest`
+  were removed in the 2026-07-30 gateway tool cull.
 
 ## Connector Framework (v0.17)
 

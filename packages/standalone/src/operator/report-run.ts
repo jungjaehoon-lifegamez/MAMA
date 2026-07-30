@@ -24,7 +24,13 @@ import type { ArtifactProvenance } from './report-carry.js';
  *  chat. runWithContent honors options.sessionKey (agent-loop.ts:879). */
 export const OPERATOR_REPORT_SESSION_KEY = 'operator:report';
 
-/** Gateway READ tools the full report is instructed to gather with (gateway-tools.md:12,14,22-25). */
+/**
+ * Gateway READ tools classified as gathers for the run audit. This is the
+ * classification SUPERSET, not the instruction list: since the 2026-07-30
+ * native-board flip the gather instructs `task_list` and the four
+ * `kagemusha_*` tools are granted-but-silent (owner's personal deployment
+ * only - the lane-wiring test pins that split).
+ */
 export const GATHER_TOOLS = new Set<string>([
   'kagemusha_overview',
   'kagemusha_entities',
@@ -52,7 +58,7 @@ export const GATHER_TOOLS = new Set<string>([
 
 /** Gateway WRITE tools. mama_save is the M3 hand; the rest are classified only for honest
  *  observability if they ever appear (report_publish/wiki_publish are NOT instructed in M3 -
- *  see plan finding F6). (gateway-tools.md:11,17,18,65,66) */
+ *  see plan finding F6). */
 export const WRITE_TOOLS = new Set<string>(['mama_save', 'report_publish', 'wiki_publish']);
 
 /** Local literal, deliberately NOT an import of code-act CODE_ACT_MARKER: this module keeps

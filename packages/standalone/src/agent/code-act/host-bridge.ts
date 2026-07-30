@@ -431,7 +431,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: '{ message?: string }',
     category: 'communication',
   },
-  // Browser
   // OS Management
   {
     name: 'os_get_config',
@@ -440,7 +439,6 @@ const TOOL_REGISTRY: ToolMeta[] = [
     returnType: 'object',
     category: 'os',
   },
-  // PR Review
   // System — agent activity notices
   {
     name: 'agent_notices',

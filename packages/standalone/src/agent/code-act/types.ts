@@ -58,7 +58,7 @@ export interface FunctionDescriptor {
   params: ParamDescriptor[];
   returnType: string;
   description: string;
-  category: 'memory' | 'file' | 'communication' | 'browser' | 'os' | 'cron' | 'mcp' | 'system';
+  category: 'memory' | 'file' | 'communication' | 'os' | 'cron' | 'mcp' | 'system';
 }
 
 export interface ParamDescriptor {
