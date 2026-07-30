@@ -69,7 +69,12 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
-import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_ROLES,
+  type AgentPersonaConfig,
+  type RoleConfig,
+} from '../config/types.js';
 import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -82,6 +87,11 @@ import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
+import { ConductorInbox } from '../../operator/conductor-inbox.js';
+import { ConductorSession } from '../../operator/conductor-session.js';
+import { Conductor } from '../../operator/conductor.js';
+import { buildBoardReground } from '../../operator/board-reground.js';
+import { getSessionPool } from '../../agent/session-pool.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
@@ -128,8 +138,6 @@ const CODE_ACT_MUTATION_TOOLS = new Set([
   'mama_save',
   'context_compile',
   'mama_update',
-  'mama_add',
-  'mama_ingest',
   'report_publish',
   'wiki_publish',
   'task_create',
@@ -356,12 +364,11 @@ export function buildFullReportGatherLines({
 }: {
   lastSuccessIso: string | null;
 }): string[] {
+  // Product premise (S1): MAMA presupposes no Kagemusha. The report gathers
+  // the NATIVE board; message evidence is the SituationReporter's accumulated
+  // window, never a re-fetch through a personal system.
   return [
-    'kagemusha_overview() for room/task/message counts',
-    'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-    lastSuccessIso
-      ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
-      : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+    'task_list({}) for the open native task board, plus task_list({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
     'mama_recall(query) for memory relevant to what you find',
     'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
     lastSuccessIso
@@ -607,6 +614,87 @@ export const OPERATOR_REPORT_TOOL_POLICY = {
 export interface WorkOrderAgentPolicy {
   agentContext: AgentContext;
   gatewayToolsPrompt: string;
+}
+
+/**
+ * The conductor's grant (S1). Reads and judgment surfaces plus the ONE write
+ * family the spec's center names: committing work orders and board cards. No
+ * sends, no memory writes, no compile - the untrusted-input lane stays the
+ * most restricted lane, not the least (review F2/security).
+ */
+export const CONDUCTOR_TOOL_POLICY = {
+  roleName: 'conductor',
+  allowedTools: [
+    'board_read',
+    'changes_read',
+    'mama_recall',
+    'mama_search',
+    'task_create',
+    'task_list',
+    'task_update',
+    'workorder_request',
+    'workorder_status',
+  ],
+} as const satisfies WorkOrderToolPolicy;
+
+/** Mirrors buildOperatorReportAgentPolicy - same shape, conductor grant. */
+export function buildConductorAgentPolicy(
+  model: string,
+  backend: RuntimeBackend
+): WorkOrderAgentPolicy {
+  const blockedTools: string[] = [];
+  const innerTools = uniqueToolList(CONDUCTOR_TOOL_POLICY.allowedTools);
+  const allowedTools = uniqueToolList([...innerTools]);
+  const agentContext: AgentContext = {
+    source: 'conductor',
+    platform: 'cli',
+    roleName: CONDUCTOR_TOOL_POLICY.roleName,
+    role: {
+      allowedTools,
+      blockedTools,
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+      model,
+    },
+    session: {
+      sessionId: 'conductor:main',
+      channelId: 'conductor',
+      startedAt: new Date(),
+    },
+    capabilities: allowedTools,
+    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+    // Write tier: board cards and work orders only - matches the envelope.
+    tier: 2,
+    backend,
+  };
+  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+}
+
+/**
+ * Merge + validate the conductor config at boot. No-fallback: a malformed
+ * value must crash loudly, not silently clamp (review F10: tickMs 0 spins
+ * the event loop with a DB write per iteration).
+ */
+export function resolveConductorConfig(
+  config: Pick<import('../config/types.js').MAMAConfig, 'conductor'>
+): import('../config/types.js').ConductorConfig {
+  const resolved = {
+    ...DEFAULT_CONFIG.conductor!,
+    ...(config.conductor ?? {}),
+  };
+  const positive: Array<[string, number, number]> = [
+    ['tickMs', resolved.tickMs, 1_000],
+    ['maxAgeMs', resolved.maxAgeMs, 60_000],
+    ['maxTurns', resolved.maxTurns, 1],
+    ['maxTokens', resolved.maxTokens, 1_000],
+  ];
+  for (const [name, value, min] of positive) {
+    if (!Number.isFinite(value) || value < min) {
+      throw new Error(`conductor.${name} must be a number >= ${min}, got ${String(value)}`);
+    }
+  }
+  return resolved;
 }
 
 /**
@@ -1079,11 +1167,9 @@ export async function runAgentLoop(
   // Wire uiCommandQueue into messageRouter for page context awareness
   messageRouter.setUICommandQueue(uiCommandQueue);
 
-  // Wire sessionsDb and uiCommandQueue into gateway tool executor
+  // Wire sessionsDb into gateway tool executor
   toolExecutor.setSessionsDb(db);
-  toolExecutor.setUICommandQueue(uiCommandQueue);
   agentLoop.setSessionsDb(db);
-  agentLoop.setUICommandQueue(uiCommandQueue);
 
   // Wire up Code-Act executor for POST /api/code-act endpoint
   // Always register: Dashboard/Wiki agents use code-act via MCP → HTTP proxy
@@ -1351,15 +1437,6 @@ export async function runAgentLoop(
     cronEmitter,
   });
 
-  if (graphHandlerOptions.applyMultiAgentConfig) {
-    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-  }
-  if (graphHandlerOptions.restartMultiAgentAgent) {
-    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-  }
-
   // ── Phase 8.5: Delegate tool fallback wiring ─────────────────────────────
   // If no Discord/Slack handler wired the delegate tool, create standalone
   // DelegationManager + AgentProcessManager so delegate() works from any path
@@ -1393,10 +1470,6 @@ export async function runAgentLoop(
     graphHandlerOptions.restartMultiAgentAgent = async (agentId: string) => {
       pm.reloadPersona(agentId);
     };
-    toolExecutor.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    toolExecutor.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
-    agentLoop.setApplyMultiAgentConfig(graphHandlerOptions.applyMultiAgentConfig);
-    agentLoop.setRestartMultiAgentAgent(graphHandlerOptions.restartMultiAgentAgent);
 
     // The delegate wiring was here. Over the full log history it was wired ZERO times and
     // its only runtime trace was one call refused by role permission. The process manager
@@ -1443,6 +1516,20 @@ export async function runAgentLoop(
     // Fail loud, but do not leak the handle on a failed boot.
     operatorDb.close();
     throw err;
+  }
+  // S1: durable conductor inbox - constructed UNCONDITIONALLY so drained
+  // batches persist before the cursor commits even while the conductor is
+  // disabled (that accumulation IS the shadow-mode data; retention inside
+  // ConductorInbox keeps it bounded).
+  const conductorInbox = new ConductorInbox(operatorDb);
+  const conductorConfig = resolveConductorConfig(config);
+  if (conductorConfig.enabled && runtimeBackend !== 'claude') {
+    // S1 pins the claude backend: codex sessions do not reset on token usage
+    // (session-pool.ts), so the lifecycle contract cannot hold there yet.
+    operatorDb.close();
+    throw new Error(
+      'conductor.enabled requires the claude backend in S1 - codex session lifecycle lands in S2'
+    );
   }
   // ── Stage-2 workorder consumer (plan S2-T3): the only system run path.
   // Constructed before production runtime assembly registers per-kind
@@ -1708,6 +1795,14 @@ export async function runAgentLoop(
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
   const { isOperatorTriggerLoopEnabled, resolveOperatorReportChatId } =
     await import('../../operator/runtime-config.js');
+  if (!isOperatorTriggerLoopEnabled(process.env) && conductorConfig.enabled) {
+    // The conductor lives inside the trigger-loop branch (its inbox is fed by
+    // the loop's drain). enabled=true with the loop off would otherwise boot
+    // silently into a conductor that never runs (review).
+    console.error(
+      '[conductor] conductor.enabled=true but the trigger loop is disabled - the conductor will NOT run. Enable the trigger loop or disable the conductor.'
+    );
+  }
   if (isOperatorTriggerLoopEnabled(process.env)) {
     let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
@@ -1782,6 +1877,7 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
+        conductorInbox,
         onChannelDelta: (channelKey, lines, eventIds) =>
           channelDeltaSink.current?.(channelKey, lines, eventIds),
         askAgent: triggerAgentRuntime.askAuthor,
@@ -1928,9 +2024,90 @@ export async function runAgentLoop(
       // S1-T3: owner-intent forwarder - report_request routes to the SAME
       // report machinery (fresh session, delta anchor, consume semantics).
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
+
+      // S1: the stateful conductor consumes the durable inbox on its own
+      // session:conductor:main lane. Default-off; the inbox records
+      // either way (shadow-mode data).
+      let conductorTimer: NodeJS.Timeout | null = null;
+      let conductorTickPromise: Promise<unknown> | null = null;
+      if (conductorConfig.enabled) {
+        const conductorSession = new ConductorSession(getSessionPool(), {
+          maxAgeMs: conductorConfig.maxAgeMs,
+          maxTurns: conductorConfig.maxTurns,
+          maxTokens: conductorConfig.maxTokens,
+        });
+        const conductorPolicy = buildConductorAgentPolicy(config.agent.model, runtimeBackend);
+        // Per-run envelope, mirroring the report lane: without it every
+        // model_tool call dies 'envelope_missing' while the run resolves and
+        // acks the batch - zero work, green ledger (review F2).
+        const conductorIssueEnvelope =
+          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
+            ? async () => {
+                const projectId = resolveReactiveProjectRoot(config, process.env);
+                const wallSeconds = 300; // one judgment turn, not a gather run
+                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
+                  agent_id: 'conductor',
+                  instance_id: randomUUID(),
+                  source: 'watch',
+                  channel_id: 'conductor',
+                  trigger_context: { user_text: '<conductor batch judgment>' },
+                  scope: {
+                    project_refs: [{ kind: 'project' as const, id: projectId }],
+                    // The conductor reads channel text from its own durable
+                    // inbox, never from connectors - no raw read authority.
+                    raw_connectors: [],
+                    memory_scopes: resolveCodeActMemoryScopes(
+                      deriveMemoryScopes({
+                        source: 'conductor',
+                        channelId: 'conductor',
+                        projectId,
+                      }),
+                      getAdapter()
+                    ),
+                    allowed_destinations: [], // NO send surface
+                  },
+                  tier: 2,
+                  budget: { wall_seconds: wallSeconds },
+                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+                });
+              }
+            : undefined;
+        const conductor = new Conductor({
+          inbox: conductorInbox,
+          session: conductorSession,
+          runner: agentLoop,
+          reground: () => buildBoardReground(taskLedger),
+          agentContext: conductorPolicy.agentContext,
+          issueEnvelope: conductorIssueEnvelope,
+          log: (line) => console.log(line),
+        });
+        conductorTimer = setInterval(() => {
+          if (conductorTickPromise) return; // never overlap ticks
+          conductorTickPromise = conductor
+            .tick()
+            .catch((err) =>
+              console.error(
+                `[conductor] tick failed: ${err instanceof Error ? err.message : String(err)}`
+              )
+            )
+            .finally(() => {
+              conductorTickPromise = null;
+            });
+        }, conductorConfig.tickMs);
+        console.log(`✓ Conductor enabled (tick ${conductorConfig.tickMs}ms)`);
+      } else {
+        console.log('Conductor inbox recording (conductor disabled)');
+      }
+
       gateways.push({
         stop: async () => {
           triggerLoopNudge.current = null;
+          if (conductorTimer) clearInterval(conductorTimer);
+          // Let an in-flight tick finish BEFORE the operator DB closes: a
+          // SIGTERM mid-ack otherwise throws on a closed handle, the row
+          // stays 'claimed', and every launchd restart replays the batch
+          // (review F7).
+          if (conductorTickPromise) await conductorTickPromise;
           stopTriggerLoop();
           await triggerAgentRuntime.stop();
           // The shared operator DB handle is closed by the unconditional stop

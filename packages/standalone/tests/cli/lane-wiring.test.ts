@@ -19,6 +19,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  CONDUCTOR_TOOL_POLICY,
   OPERATOR_REPORT_TOOL_POLICY,
   WORKORDER_TOOL_POLICIES,
   buildFullReportGatherLines,
@@ -73,15 +74,32 @@ describe('report lane: instructions against the grant', () => {
   it('pins the granted-but-never-instructed set', () => {
     const silent = [...REPORT_GRANT].filter((t) => !instructed.has(t)).sort();
     expect(silent).toEqual([
+      // S1: the gather instructs the NATIVE board (task_list). The kagemusha
+      // grants stay for the owner's personal deployment, deliberately silent -
+      // MAMA presupposes no Kagemusha.
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_overview',
+      'kagemusha_tasks',
       // Read on demand while writing, not part of the gather sequence.
       'mama_provenance',
       'mama_save',
       'mama_search',
       'report_publish',
       'task_external_correlation',
-      'task_list',
       'trello_kanban',
     ]);
+  });
+
+  // Product premise (S1 spec): MAMA presupposes no Kagemusha. An instruction
+  // line reaching for kagemusha_* would rebuild the dependency this pin ended.
+  it('never instructs a kagemusha tool', () => {
+    for (const lines of [
+      buildFullReportGatherLines({ lastSuccessIso: '2026-07-28T00:00:00Z' }),
+      buildFullReportGatherLines({ lastSuccessIso: null }),
+    ]) {
+      expect(lines.join('\n')).not.toContain('kagemusha_');
+    }
   });
 
   it('instructs the delta tool with the last successful report as its window', () => {
@@ -112,6 +130,31 @@ describe('workorder lanes: every granted tool is a real tool', () => {
       (t: string) => !known.has(t)
     );
     expect(unknownReport, 'report lane grants unknown tools').toEqual([]);
+    const unknownConductor = CONDUCTOR_TOOL_POLICY.allowedTools.filter(
+      (t: string) => !known.has(t)
+    );
+    expect(unknownConductor, 'conductor lane grants unknown tools').toEqual([]);
+  });
+
+  // The conductor ingests untrusted channel text into a long-lived session -
+  // it must stay the MOST restricted lane: no sends, no memory writes, no
+  // compile, no raw connector reads.
+  it('keeps sends, memory writes, and compile out of the conductor lane', () => {
+    for (const forbidden of [
+      'telegram_send',
+      'discord_send',
+      'slack_send',
+      'webchat_send',
+      'mama_save',
+      'mama_update',
+      'context_compile',
+      'wiki_publish',
+      'report_publish',
+      'Bash',
+      'Write',
+    ]) {
+      expect(CONDUCTOR_TOOL_POLICY.allowedTools).not.toContain(forbidden);
+    }
   });
 
   // A temporal run is bound to one task on one channel; granting it a task-mutation tool

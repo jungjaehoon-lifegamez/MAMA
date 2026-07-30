@@ -16,8 +16,16 @@ describe('Gateway tools generation', () => {
       expect(names).toContain('Read');
       expect(names).toContain('Write');
       expect(names).toContain('Bash');
-      expect(names).toContain('browser_navigate');
+      // The owner composition contract (TG-03/04) pins the send surface even at
+      // zero trace calls - the 2026-07-30 cull kept these on that evidence.
+      expect(names).toContain('telegram_send');
+      expect(names).toContain('create_fb_overlay');
       expect(names).toContain('code_act');
+      // The 2026-07-30 cull removed the legacy families; a reappearance means
+      // someone re-registered a surface with no consumer.
+      expect(names).not.toContain('browser_navigate');
+      expect(names).not.toContain('agent_create');
+      expect(names).not.toContain('viewer_state');
     });
 
     it('should have at least 30 tools', () => {
@@ -29,7 +37,6 @@ describe('Gateway tools generation', () => {
     it('should include parameter hints', () => {
       const prompt = ToolRegistry.generatePrompt();
       expect(prompt).toContain('(path)');
-      expect(prompt).toContain('(url)');
       expect(prompt).toContain('strictness?');
       expect(prompt).toContain('diagnostics?');
       expect(prompt).toContain('scopes?');
@@ -61,8 +68,41 @@ describe('Gateway tools generation', () => {
 
     it('should show empty parens for tools without params', () => {
       const prompt = ToolRegistry.generatePrompt();
-      expect(prompt).toMatch(/\*\*browser_close\*\*\(\) —/);
+      expect(prompt).toMatch(/\*\*mama_load_checkpoint\*\*\(\) —/);
     });
+  });
+
+  // The 2026-07-30 cull left the hand-written Code-Act instructions
+  // advertising five tools that no longer dispatch - a lying prompt invites
+  // hallucinated calls. Pin every gateway-shaped name in the instruction text
+  // against the registry so the next cull fails HERE instead of shipping.
+  it('code-act instructions never advertise a tool the registry does not register', async () => {
+    const { getCodeActInstructions } = await import('../../src/agent/code-act/constants.js');
+    for (const backend of ['codex', 'claude'] as const) {
+      const text = getCodeActInstructions(backend);
+      // Codex-NATIVE function names appear in the instructions as things the
+      // agent must NOT reach for - they are not gateway advertisements.
+      const codexNative = new Set([
+        'exec_command',
+        'apply_patch',
+        'request_user_input',
+        'update_plan',
+      ]);
+      // (?<![\w-]) guards against slicing fragments out of mcp__*-namespaced
+      // examples; '__' names and 'tool_use' are protocol prose, not tools.
+      const names = [...text.matchAll(/(?<![\w-])([a-z][a-z0-9]*_[a-z0-9]+)(?![\w-])/g)].map(
+        (m) => m[1]
+      );
+      const unknown = [...new Set(names)].filter(
+        (n) =>
+          !ToolRegistry.isRegistered(n) &&
+          !n.includes('__') &&
+          n !== 'code_act' &&
+          n !== 'tool_use' &&
+          !codexNative.has(n)
+      );
+      expect(unknown, `backend=${backend}`).toEqual([]);
+    }
   });
 
   describe('generateFallbackPrompt()', () => {
@@ -70,7 +110,6 @@ describe('Gateway tools generation', () => {
       const fallback = ToolRegistry.generateFallbackPrompt();
       expect(fallback).toContain('memory');
       expect(fallback).toContain('utility');
-      expect(fallback).toContain('browser');
     });
   });
 

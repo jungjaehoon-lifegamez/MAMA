@@ -131,43 +131,6 @@ describe('Story M2.1: Gateway Memory Provenance Context', () => {
     db.close();
   });
 
-  it('threads trusted context into mama_ingest without trusting input provenance', async () => {
-    const db = new Database(':memory:');
-    initAgentTables(db);
-    const api = createApi();
-    const executor = new GatewayToolExecutor({ mamaApi: api });
-    executor.setSessionsDb(db);
-    const envelope = createEnvelope();
-
-    const result = await executor.execute(
-      'mama_ingest',
-      {
-        content: 'User prefers compact provenance.',
-        scopes: [{ kind: 'channel', id: 'telegram:abc' }],
-        provenance: { gateway_call_id: 'attacker_gw' },
-      },
-      {
-        agentContext: createContext(),
-        agentId: 'chat_bot',
-        source: 'telegram',
-        channelId: 'abc',
-        envelope,
-        executionSurface: 'model_tool',
-        sourceTurnId: 'turn-2',
-        sourceMessageRef: 'telegram:abc:turn-2',
-      }
-    );
-
-    expect(result).toMatchObject({ success: true, saved: 1 });
-    expect(api.ingestMemory).not.toHaveBeenCalled();
-    expect(api.ingestWithTrustedProvenance).toHaveBeenCalledOnce();
-    const [, options] = api.ingestWithTrustedProvenance.mock.calls[0];
-    expect(options.provenance.gateway_call_id).toMatch(/^gw_/);
-    expect(options.provenance.gateway_call_id).not.toBe('attacker_gw');
-    expect(options.provenance.envelope_hash).toBe(envelope.envelope_hash);
-    db.close();
-  });
-
   it('merges fallback agent context and model run id into trusted provenance', async () => {
     const db = new Database(':memory:');
     initAgentTables(db);

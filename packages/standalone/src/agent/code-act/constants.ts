@@ -29,8 +29,7 @@ ${allowedSummary}`
 - File ops: Read, Write, Edit, Bash
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
-- Browser: browser_navigate, browser_click, browser_screenshot
-- System: os_list_bots, os_get_config, os_set_model
+- System: os_get_config
 - Dashboard: report_publish
 - Wiki: wiki_publish`
     : hasExplicitGatewayAllowlist
@@ -39,8 +38,7 @@ ${allowedSummary}`
       : `**USE code_act for these gateway tools** (NOT available as direct tools):
 - Memory: mama_search, mama_save, mama_update
 - Communication: discord_send, slack_send, telegram_send, webchat_send
-- Browser: browser_navigate, browser_click, browser_screenshot
-- System: os_list_bots, os_get_config, os_set_model
+- System: os_get_config
 - Dashboard: report_publish
 - Wiki: wiki_publish
 

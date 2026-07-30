@@ -15,8 +15,6 @@ Call tools via JSON block:
 - **context_compile**(task, scopes?, connectors?, seed_refs?, range?, as_of?, limit?, max_tool_calls?, max_ms?, max_tokens?, strictness?) — Compile and persist an append-only scoped context packet from visible memory, raw, graph, and case evidence. strictness is recall, balanced, or strict. Unavailable to Tier 3/read-only agents.
 - **mama_update**(id, outcome, reason?) — Update outcome
 - **mama_load_checkpoint**() — Resume session. No params.
-- **mama_add**(content) — Auto-extract and save facts from conversation content via Haiku
-- **mama_ingest**(content, scopes?, source?) — Ingest raw content into memory v2
 
 ## Business Data (progressive exploration: overview -> entities -> tasks -> messages)
 
@@ -46,32 +44,9 @@ Call tools via JSON block:
 - **translate_conti**(imagePath, ocrResults?, translations?, outputPath?) — Run the two-step OCR and translated-overlay workflow for a storyboard image
 - **drive_translate_conti**(drivePath) — Return optional guidance for composing the Drive image translation tools
 
-## Browser (Playwright)
-
-- **browser_navigate**(url) — Open URL in headless browser
-- **browser_screenshot**(filename?, fullPage?) — Take screenshot
-- **browser_click**(selector) — Click element by CSS selector
-- **browser_type**(selector, text) — Type text into input
-- **browser_get_text**() — Get all text from page
-- **browser_scroll**(direction, amount?) — Scroll page
-- **browser_wait_for**(selector, timeout?) — Wait for element
-- **browser_evaluate**(script) — Run JavaScript in page
-- **browser_pdf**(filename?) — Save page as PDF
-- **browser_close**() — Close browser
-
 ## OS Management (viewer-only)
 
-- **os_add_bot**() — Add a bot platform (Discord/Telegram/Slack/Chatwork)
-- **os_set_permissions**() — Set tool/path permissions for a role
 - **os_get_config**() — Get current configuration
-- **os_set_model**() — Set AI model for a role
-- **agent_get**(agent_id) — Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail so you and the user stay on the same page.
-- **agent_update**(agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?) — Update agent config. Requires current version for optimistic concurrency. Bumps version on change.
-- **agent_create**(id, name, model, tier, system?, backend?) — Create new agent with initial config and persona
-- **viewer_state**() — Get current viewer state (current route, selected item, pageData). Call after navigation to verify which item and tab are actually open.
-- **viewer_navigate**(route, params?: {id?, tab?, compareV1?, compareV2?, path?}) — Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.
-- **viewer_notify**(type: info|warning|suggest, message, action?: {label, navigate}) — Show toast or alert card in viewer
-- **agent_test**(agent_id, sample_count?, test_data?) — Test agent with connector data. Auto-scores pass/fail ratio.
 
 ## OS Monitoring & Operator Console
 
@@ -84,9 +59,6 @@ Call tools via JSON block:
 - **audit_findings_read**(no params) — Read the latest deterministic system-audit findings and pass items (state file projection).
 - **wiki_publish**(pages: [{path, title, type, content, confidence?, sourceIds?, sourceRefs?}]) — Publish compiled wiki pages to Obsidian vault. Each page becomes a markdown file with YAML frontmatter.
 - **obsidian**(command, args?) — Execute Obsidian CLI command on the wiki vault. Search, read, create, append, move, delete pages, manage tags and backlinks.
-- **os_list_bots**() — List configured bot platforms and status
-- **os_restart_bot**() — Restart a bot platform
-- **os_stop_bot**() — Stop a bot platform
 - **task_list**(status? (pending|in_progress|review|blocked|done|cancelled), channel?, search?, limit?, order? ('deadline_priority'|'updated'), cursor? (nextCursor from the previous page)) — List work items from YOUR task board - the working tracker you maintain for the owner, who only views it (the kagemusha bridge is the separate read-only project-task truth). Returns server-derived temporal_state and normalized due_at. Canonical board order: deadline asc (nulls last), then priority high>normal>low. One call is a PAGE, not the board: it returns total (rows matching the filter), returned, and nextCursor - limit defaults to 50 and caps at 200, so before any claim about all open items, keep passing cursor until nextCursor is null and check that the ids you collected number total.
 - **task_external_correlation**((none)) — Resolve every OPEN native task-ledger row against the live Trello board and return, per row, matched | unmatched | ambiguous | historical_only | not_applicable with a reason code, plus coverage counts and the snapshot health. The join runs on recorded provenance (source_event_id -> connector event index -> board/card id), never on titles: only a "matched" row may carry a factual cross-store statement, and "historical_only" means the item is not in the live OPEN set - archived, deleted, moved, or unread - and is NEVER evidence that the work is finished. Call this before stating any item status that mixes the two stores.
 - **changes_read**(since? (ISO date-time or "Nd"/"Nh"/"Nm", default 24h), target_type? (task|report_slot|memory|wiki_page), cause_state? (attributed|unattributed), limit? (default 50, max 200)) — Durable changes THIS system made in a window, and what each rested on. Every change carries cause_state: "attributed" names the source events behind it, "unattributed" means the system changed something it cannot explain; coverage counts both over the same population the rows came from. ONE PAGE: total is the full match count and returned is what you got, so a page of unattributed rows is never evidence that nothing was explainable - check total. A task list shows current state; this shows what MOVED and on whose evidence. Runs that changed nothing appear nowhere, which is the point. SCOPE TODAY: work-item changes only. Report, memory and wiki writes are not yet recorded here, so their absence is not evidence they did not happen.
@@ -95,12 +67,6 @@ Call tools via JSON block:
 - **task_temporal_reconcile**(context_packet_id (required), expected_revision (required), outcome (resolved|final_no_update|deferred), reason (required), status? or due_at? for resolved, evidence_summary for final_no_update, next_temporal_check_at for deferred) — Resolve, finalize without a lifecycle change, or defer the host-issued temporal work item using a fresh, same-run context packet. Task, generation, occurrence, check, and attempt identity come only from trusted runtime context.
 - **schedule_upcoming**(days? (default 14, max 60)) — Upcoming schedule from the calendar connector raw store: events within the next N days plus a one-line-per-event text digest. v1 limits: no recurrence expansion, no cancellation tracking; all-day events surface by date.
 - **contract_no_update**(reason (required), scope (required, e.g. "reconcile:slack:C001")) — Record that a reconcile run judged NOTHING on the board or ledger affected. Silence becomes a verifiable judgment.
-- **agent_activity**(agent_id, limit?) — Get recent agent activity rows and sync the viewer to that agent activity tab so you and the user inspect the same logs.
-- **agent_compare**(agent_id, version_a, version_b) — Compare metrics between two versions of an agent (Before/After)
-
-## PR Review
-
-- **pr_review_threads**(pr_url) — Fetch unresolved review threads from GitHub PR
 
 ## Webchat
 

@@ -30,10 +30,8 @@ describe('HostBridge', () => {
       expect(names).toContain('Bash');
       expect(names).toContain('mama_search');
       expect(names).toContain('discord_send');
-      expect(names).toContain('browser_navigate');
-      expect(names).toContain('agent_create');
-      expect(names).toContain('agent_test');
-      expect(names).toContain('viewer_navigate');
+      expect(names).toContain('telegram_send');
+      expect(names).toContain('task_create');
     });
 
     it('returns only read-only tools for Tier 2', () => {
@@ -43,9 +41,6 @@ describe('HostBridge', () => {
       expect(names).toContain('mama_search');
       expect(names).toContain('Read');
       expect(names).toContain('mama_load_checkpoint');
-      expect(names).toContain('viewer_state');
-      expect(names).not.toContain('agent_get');
-      expect(names).not.toContain('agent_activity');
       expect(names).not.toContain('Write');
       expect(names).not.toContain('Bash');
       expect(names).not.toContain('discord_send');
@@ -147,8 +142,8 @@ describe('HostBridge', () => {
       expect(registered).toContain('Read');
       expect(registered).toContain('Bash');
       expect(registered).toContain('mama_search');
-      expect(registered).toContain('agent_create');
-      expect(registered).toContain('agent_test');
+      expect(registered).toContain('task_create');
+      expect(registered).toContain('telegram_send');
     });
 
     it('injects only read-only functions for Tier 2', () => {
@@ -238,7 +233,7 @@ describe('HostBridge', () => {
       expect(executeFn.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
     });
 
-    it('propagates the sandbox deadline and bounds browser waits to the remaining time', async () => {
+    it('propagates the sandbox deadline and aborts the active host call', async () => {
       let observedAbort = false;
       const executeFn = vi
         .fn()
@@ -268,14 +263,11 @@ describe('HostBridge', () => {
       const sandbox = new CodeActSandbox({ timeoutMs: 1_000 });
       bridge.injectInto(sandbox, 1);
 
-      const result = await sandbox.execute('browser_wait_for("#late", 999999)');
+      const result = await sandbox.execute('mama_search("late query")');
 
       expect(result.success).toBe(false);
       expect(observedAbort).toBe(true);
-      expect(executeFn.mock.calls[0]?.[1]).toMatchObject({ selector: '#late' });
-      const boundedTimeout = Number(executeFn.mock.calls[0]?.[1]?.timeout);
-      expect(boundedTimeout).toBeGreaterThan(0);
-      expect(boundedTimeout).toBeLessThanOrEqual(1_000);
+      expect(executeFn.mock.calls[0]?.[1]).toMatchObject({ query: 'late query' });
     });
 
     it('does not report a timed-out mutation before an abort-ignoring send settles', async () => {
@@ -415,35 +407,26 @@ describe('HostBridge', () => {
       expect(result.value).toEqual({ count: 2, first: 'auth' });
     });
 
-    it('passes agent management tool calls through to the executor', async () => {
+    it('passes object-argument tool calls through to the executor', async () => {
       const executeFn = vi.fn().mockResolvedValue({
         success: true,
-        id: 'qa-monitor-e2e',
-        version: 1,
+        id: 'task-e2e',
       });
       const bridge = new HostBridge(makeExecutor({ execute: executeFn }));
       const sandbox = new CodeActSandbox();
       bridge.injectInto(sandbox, 1);
 
       const result = await sandbox.execute(`
-        agent_create({
-          id: "qa-monitor-e2e",
-          name: "QA Monitor E2E",
-          model: "claude-sonnet-4-6",
-          tier: 2,
-          system: "QA",
-          backend: "claude"
+        task_create({
+          title: "QA follow-up",
+          status: "todo"
         })
       `);
 
       expect(result.success).toBe(true);
-      expect(executeFn).toHaveBeenCalledWith('agent_create', {
-        id: 'qa-monitor-e2e',
-        name: 'QA Monitor E2E',
-        model: 'claude-sonnet-4-6',
-        tier: 2,
-        system: 'QA',
-        backend: 'claude',
+      expect(executeFn).toHaveBeenCalledWith('task_create', {
+        title: 'QA follow-up',
+        status: 'todo',
       });
     });
   });
