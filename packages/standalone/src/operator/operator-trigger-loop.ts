@@ -107,6 +107,15 @@ export interface TriggerLoopDeps {
    * on this batch; carrying it is the difference between a fact and a claim.
    */
   onChannelDelta?: (channelKey: string, lines: string[], eventIds: string[]) => void;
+  /**
+   * S1: durable conductor feed. Each per-channel batch is enqueued BEFORE
+   * `delta.commit()` - a crash between the two redelivers the events and the
+   * inbox's per-event dedupe absorbs the duplicate. Structural type, no import
+   * cycle. Absent -> no conductor leg.
+   */
+  conductorInbox?: {
+    enqueue(batch: { channelKey: string; eventIds: string[]; lines: string[] }): number | null;
+  };
   /** Kagemusha dual output: FULL report also publishes the operator board slots. */
   fullReportBoardLines?: string[];
   /** Context carry (plan v6 S1-T4): persist the delivered FULL report text. */
@@ -364,11 +373,16 @@ export class OperatorTriggerLoop {
       this.recentEvents = [...this.recentEvents, ...reportEvents].slice(-config.authorWindowSize);
       this.persistPendingReports();
     }
-    delta.commit(events);
-
-    // M8: feed the board-reconcile leg AFTER commit (the loop's cursor is
-    // authoritative; reconcile is a freshness layer repaired by the 30-min cron).
-    if (this.deps.onChannelDelta && events.length > 0) {
+    // Group per channel ONCE, before the cursor moves: the conductor inbox
+    // persists each group pre-commit, and the same groups feed the post-commit
+    // reconcile callback.
+    const channelBatches: Array<{
+      channelKey: string;
+      lines: string[];
+      indexIds: string[];
+      inboxEventIds: string[];
+    }> = [];
+    if (events.length > 0 && (this.deps.conductorInbox || this.deps.onChannelDelta)) {
       const byChannel = new Map<string, OperatorChannelEvent[]>();
       // Report dedupe and board reconciliation have different durability
       // boundaries. A report snapshot may already contain a replayed event,
@@ -388,14 +402,40 @@ export class OperatorTriggerLoop {
         const lines = shown.map(
           (e) => `- [id:${e.eventIndexId ?? e.id}] ${e.userId}: ${e.content.trim().slice(0, 200)}`
         );
-        const eventIds = channelEvents
+        const indexIds = channelEvents
           .map((e) => e.eventIndexId)
           .filter((id): id is string => typeof id === 'string' && id.length > 0);
+        // Inbox identity must cover EVERY event or dedupe cannot absorb a
+        // redelivery; fall back to the delta row id when no index id exists.
+        const inboxEventIds = channelEvents.map((e) => e.eventIndexId ?? String(e.id));
+        channelBatches.push({ channelKey, lines, indexIds, inboxEventIds });
+      }
+    }
+
+    // S1: durable BEFORE the cursor advances. Deliberately NOT wrapped in
+    // try/catch - an inbox write failure must fail the tick before commit so
+    // the batch redelivers next drain. Fail loud, lose nothing.
+    if (this.deps.conductorInbox) {
+      for (const b of channelBatches) {
+        this.deps.conductorInbox.enqueue({
+          channelKey: b.channelKey,
+          eventIds: b.inboxEventIds,
+          lines: b.lines,
+        });
+      }
+    }
+
+    delta.commit(events);
+
+    // M8: feed the board-reconcile leg AFTER commit (the loop's cursor is
+    // authoritative; reconcile is a freshness layer repaired by the 30-min cron).
+    if (this.deps.onChannelDelta) {
+      for (const b of channelBatches) {
         try {
-          this.deps.onChannelDelta(channelKey, lines, eventIds);
+          this.deps.onChannelDelta(b.channelKey, b.lines, b.indexIds);
         } catch (err) {
           log(
-            `[trigger-loop] onChannelDelta failed for ${channelKey}: ${err instanceof Error ? err.message : String(err)}`
+            `[trigger-loop] onChannelDelta failed for ${b.channelKey}: ${err instanceof Error ? err.message : String(err)}`
           );
         }
       }
