@@ -1,402 +1,194 @@
-# MAMA OS - Local Operating Memory for AI Agents
+# MAMA OS
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
 [![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
-> Local operating memory that lets AI agents read the board, cite the evidence, and stay inside
-> explicit boundaries.
+> Right now, you read every channel yourself so nothing slips past you.
+> MAMA reads them instead, and sends you the few things that need you.
+> Every claim links to its source.
 
-MAMA OS connects chats, docs, decisions, and work logs into a local memory substrate. Agents can use
-it to search raw evidence, follow relationships, inspect timelines, and produce better briefings
-instead of guessing from a short prompt.
+![The operator board: live report slots with linked evidence](docs/website/assets/mama-os-hero-evidence-board.png)
 
-This release ships the foundation: raw search/window APIs, graph/entity/timeline APIs, situation
-packets, trusted provenance, model/tool traces, strict search diagnostics, runtime envelopes, and
-Context Compile V0. `context_compile` turns those pieces into one selected/rejected/missing
-evidence packet for a task, and `mama_save` can attach that packet through trusted
-`context_packet_id` provenance.
+## The product is a message that arrives
 
-## The Operator Runtime
-
-The living center of MAMA OS is the **trigger loop**: an agent that authors its own triggers from
-recurring situations in your channels, fires them on future messages to recall the right memory,
-and folds everything into owner situation reports. The loop evolves itself — a review pass retires
-noisy triggers, and delivered reports that cite a fired trigger feed a success signal back into
-that trigger's stats.
-
-What runs continuously today:
-
-- **Trigger loop** — agent-authored triggers (keywords + memory query + procedure), deterministic
-  fire → recall → report, near-duplicate authoring gate, citation-based success circuit.
-- **Operator board at `/ui`** — a React viewer with four agent-published slots (briefing, action
-  required, decisions, pipeline) rendered live over SSE, a Triggers tab showing the loop's own
-  library, and a native Tasks surface backed by the task ledger. Tasks display workflow status and
-  temporal state separately, so an overdue item is never silently treated as blocked or complete.
-- **Memory promotion** — every 6 hours a curation pass promotes durable judgments (pricing rules,
-  standing client preferences, process rules) from recent channel data into decisions. Task states
-  never become memories; the board owns those.
-- **Wiki compilation** — promoted decisions chain into an Obsidian wiki organized as an
-  append-only daily journal (`daily/YYYY-MM-DD.md`) plus lesson pages
-  (`lessons/clients|process|system`) that strengthen with evidence and get superseded, never
-  deleted.
-- **Hourly self-audit** — a conductor pass checks process health, databases, config, and security
-  posture, deduplicating alerts against a state file so the owner hears about a finding once, not
-  every hour.
-
-## Evidence and Effects
-
-A system that changes things on your behalf should be able to say what caused each change — or say
-plainly that it cannot. MAMA OS records that in one place, with the numerator and denominator of
-coverage kept inseparable.
-
-- **Effect ledger** — one table, `evidence_effects`. A database CHECK forbids both "attributed with
-  no cause" and "unattributed with a cause", and a trigger rejects unusable cause ids. There is no
-  shape in which a change can quietly lose its provenance.
-- **Bounded runs** — a run is `{channel, delta batch}`. The batch the host handed the run becomes the
-  cause of everything that run changes; the agent never restates it, and a host batch always beats an
-  agent-supplied source id, which is forgeable. When the host handed the run no batch, a named source
-  event is still used — weaker evidence, not worthless. Only when there is neither is the change
-  marked unattributed, which is the honest answer rather than a plausible-looking one.
-- **`changes_read`** — what this system durably changed since a given point, with coverage counts.
-  The full report leads with it.
-- **`mama_provenance`** — what a memory rests on. A citation must not out-read reading: the same
-  channel grant bounds both.
-- **Channel grant** — one rule decides which `(connector, channel)` pairs a run may read, compiled
-  both to a boolean and to a SQL clause that a differential test pins against each other.
-- **Lane verification** — a work order reaching `done` proves only that the agent replied. Each
-  lane's claim is reconciled against completed tool traces since a run-bound snapshot. It observes
-  and reports; it never blocks. Where a tool cannot distinguish a read from a write, the verdict says
-  so rather than claiming more than it knows.
-
-## Target Workflow
-
-MAMA is being built toward a local memory twin that agents can inspect, cite, and act on inside
-explicit permission boundaries.
-
-Ask:
-
-> "Is Project A at risk right now?"
-
-A search tool finds messages containing "Project A." A MAMA-backed agent reads the board:
-
-1. The customer said the schedule was fine in email.
-2. The internal owner changed twice in Slack.
-3. The core PR is still waiting for review.
-4. The QA checklist is not closed.
-5. The same customer changed demo scope at the last minute last month.
-
-A mature MAMA-backed agent should be able to report:
-
-- **Judgment:** schedule risk is high.
-- **Evidence:** demo request, review-blocked PR, owner changes, unfinished QA, prior scope-change
-  pattern.
-- **Inference:** the customer has not complained yet, but delivery risk is accumulating before the
-  demo.
-- **Missing context:** demo scope is not confirmed.
-- **Risk forecast:** if review and demo scope do not close today, Friday may turn into a
-  renegotiation.
-- **Next move:** assign a PR reviewer, confirm demo scope with the customer, shrink QA to the
-  release-critical path.
-- **Permission boundary:** external sending is not allowed, so the agent drafts the message and
-  records the report instead of contacting the customer.
-
-That is the product direction: not another search box, but the substrate for an extra
-analyst-operator that can read the company record, separate evidence from inference, forecast the
-next risk, and only act inside the scope it was given.
-
-## Why This Matters
-
-Agents are useful when they can simulate. AlphaGo read the board before choosing the next move. Work
-agents need the same thing: enough context to reconstruct what happened, infer what may matter, and
-compare possible next actions.
-
-Most agents never see that board. They see a prompt, a few files, or one search result. MAMA's job is
-to make the board visible.
-
-## North Star
-
-MAMA OS is moving toward a company memory twin: an append-only substrate of raw records, memories,
-entities, cases, reports, edges, and provenance that strong agents can inspect, simulate, and cite.
-
-That North Star has three parts:
-
-- **Twin substrate** — preserve raw evidence, time, scope, provenance, and edges so future
-  models can reinterpret the same company history.
-- **Agent ergonomics** — give workers bounded tools, runtime envelopes, fan-out search,
-  situation packets, and query-conditioned context compilation.
-- **Reports as deliverables** — turn evidence into cited reports and briefings for humans;
-  memory rows are infrastructure, not the final product.
-
-This release is the runtime foundation for that direction. It ships envelope, provenance,
-worker-context, strict-search, and Context Compile building blocks, including append-only
-context packets and downstream `context_packet_id` save provenance.
-
-## What MAMA OS Does
-
-MAMA OS is a local daemon that connects to your apps, reads continuously, and turns scattered records
-into scoped, auditable operating memory for agents and humans.
-
-The **operator board at `/ui`** is the primary live surface: four agent-published report slots
-(briefing, action required, decisions, pipeline) updating over SSE, plus the trigger library. The
-legacy viewer at `/viewer` remains available with `Dashboard`, `Memory`, `Feed`, `Wiki`, `Agents`,
-`Logs`, and `Settings` tabs and a global chat shell.
-
-**Current building blocks and direction:**
-
-- **Read connected sources** — 14 connectors poll Slack, Gmail, Trello, Obsidian, and more
-- **Reconstruct timelines** — Show raw, memory, case, entity, and edge events in order
-- **Build the relationship graph** — Link people, projects, customers, channels, documents, PRs, and decisions across sources
-- **Surface risk signals** — Highlight stale coverage, blocked cases, low-confidence memories, open questions, and conflicting evidence candidates
-- **Track decision evolution** — Not just what was decided, but what it replaced, what it builds on, and what it contradicts
-- **Operate inside envelopes** — Gateway and worker calls carry a signed envelope hash, scope boundaries, and destination limits enforced before each tool call
-- **Preserve provenance** — Memory writes can point back to source refs, model runs, tool traces, and envelope hashes
-- **Search with evidence** — Strict and balanced modes reject vector-only noise unless lexical/entity/raw/seed evidence confirms the result
-- **Organize actionable knowledge** — Raw conversations become structured wiki pages and situation summaries with priorities, gaps, and next steps
-- **Prepare briefings** — Dashboard, wiki, and situation agents can summarize visible context for humans and workers
+You pick the hours. At those hours, in Telegram, Slack, or Discord:
 
 ```text
-Without MAMA:  The agent sees fragments. You still reconstruct the board.
+■ Briefing — Wed 08:00
+1. Client A sent the revised files overnight                  → source
+2. The #alpha deadline moved from Friday to Wednesday         → source
+3. B's question about invoice terms is 14 hours unanswered    → source
 
-With MAMA:     The agent gets bounded evidence surfaces. You get the
-               raw material for cited briefings and safer next actions.
+■ Needs your action
+- Approve the revised scope before the 11:00 call             → thread
+
+■ Recorded yesterday
+- Decision: rotate the staging API keys weekly                → source
 ```
 
-This is the direction for local AI agents: read connected evidence continuously, then explain which
-sources they used, what may still be missing, and which permission boundary they were inside.
+The names are made up. The format is exactly what it sends.
 
-## How It Runs
+Nobody asked for that message. Overnight, a daemon on your machine read 14
+sources: Slack, Telegram, Gmail, Trello, Sheets, an Obsidian vault, and more.
+It decided what needed you, and wrote it down with links.
 
-MAMA OS executes AI agents as **official CLI subprocesses** — spawning `claude` or `codex` the same way you would in your terminal.
+It also did the small work already. The task board updated itself from those
+same conversations. Lasting decisions were saved to memory. The wiki wrote its
+daily page.
 
-```
-MAMA OS daemon
-  └─ spawns: claude … / codex …   (your official agent CLI)
-       └─ Claude Code or Codex CLI (your existing OAuth session)
-            └─ Provider API (standard authenticated request)
-```
+## What that replaces
 
-This is the provider-sanctioned execution method. No API keys to manage, no token extraction, no header spoofing. Your existing CLI authentication is reused directly.
+- The morning scan across channels that mostly did not change.
+- Scrolling back to find out when that deadline moved, and who said so.
+- The handoff note you have to write before you step away.
 
-**Why this matters:** Some third-party agent frameworks reach these providers via unofficial methods — extracting OAuth tokens, spoofing API headers, or bypassing rate limits. Those approaches violate provider Terms of Service (e.g. [Anthropic's](https://www.anthropic.com/policies/terms) or [OpenAI's](https://openai.com/policies/terms-of-use)) and risk account suspension. MAMA OS doesn't do any of that. If `claude` or `codex` works in your terminal, MAMA OS works.
+And three things it is **not**:
+
+- Not a chatbot with good memory. It runs while nobody is talking to it.
+- Not a memory database. Storage is the input; the report is the product.
+- Not a hosted service. There is no MAMA account and no MAMA server. It runs on
+  the logins you already have.
+
+## Why not a task agent, or your chat app's AI?
+
+Both exist and both are good. They just answer a different question.
+
+- **A task coworker finishes work you already know about.** You still have to notice that
+  the deadline moved before you can delegate it. MAMA's job is to notice for you.
+- **A chat integration reads Slack when you ask.** But your clients are on Chatwork,
+  iMessage, and Telegram DMs. MAMA reads fourteen sources, including the messy ones where
+  the money actually talks.
+- **Both start from zero every time.** MAMA keeps a record on your disk and answers from
+  it, with the source message linked. It does not run a new search that forgets everything
+  afterwards.
+- **Neither can say "still unanswered after three days."** To say that, you must remember
+  yesterday. MAMA remembers. A scheduled summary starts fresh every time and has nothing to
+  compare against.
+
+## Built to be checked, not believed
+
+A system that acts on its own must be easy to check afterwards.
+
+- **No source, no claim.** Every change MAMA makes is saved together with the events
+  that caused it. If it cannot name a cause, the change is saved as _unattributed_.
+  The database rejects any row that fakes a cause.
+- **It drafts; you send.** An agent can write the customer reply from the
+  evidence, but sending requires an explicit permission for that destination.
+  Memory writes refuse anything shaped like a secret.
+- **Your record stays on your machine.** The databases are local SQLite and the
+  embeddings are computed locally. Network traffic goes to two places only: the
+  services you connected (Slack, Gmail, and so on) and your AI provider, through
+  the official `claude` or `codex` CLI you already logged into. Nothing is ever
+  uploaded to a MAMA server, because there is none.
+- **Search shows its work.** Strict mode drops a semantic match that has no text or
+  entity evidence behind it. A wrong answer that merely sounds right gets rejected,
+  not displayed.
+
+More detail: [Architecture](docs/explanation/architecture.md) ·
+[Security guide](docs/guides/security.md)
+
+## Quick start
+
+**The daemon** — the full product:
 
 ```bash
-# Already have Claude Code or Codex?
-claude auth status   # or: codex login — if authenticated, you're ready
-mama start           # MAMA reuses your existing CLI authentication
+claude auth login            # or: codex login — your existing CLI auth is reused
+npx @jungjaehoon/mama-os init
+mama start                   # daemon at localhost:3847
 ```
 
-## Knowledge Graph
+Operator board at `http://localhost:3847/ui`: live report slots, the trigger
+library, and a task board fed from your channels. Chat surfaces: Discord,
+Slack, Telegram. Requires Node >= 22 and an authenticated
+[Claude Code](https://claude.ai/claude-code) or
+[Codex](https://www.npmjs.com/package/@openai/codex) CLI.
 
-MAMA doesn't just store facts. It tracks how knowledge evolves:
-
-```
-"Use JWT" (decision, confidence: 0.8)
-    │
-    ├── superseded by → "Use JWT with refresh tokens"
-    │     reason: "Users complained about frequent logouts"
-    │
-    ├── builds_on → "Add token rotation for security"
-    │
-    └── debates → "Consider session-based auth for web app"
-          reason: "Simpler for server-rendered pages"
-```
-
-Edge types: `supersedes` (replaced), `builds_on` (extended), `debates` (alternative view), `synthesizes` (unified from multiple).
-
-MAMA answers "why did we switch?" — not just "what do we use?"
-
-## Architecture
-
-```
-Connectors (14)              Gateways (3)
-Slack, Gmail, Sheets...      Discord, Slack, Telegram
-       |                            |
-       v                            v
- 3-Pass Extraction          Reactive Runtime Envelopes
- (Truth -> Hub -> Spoke)    scope, expiry, signature, audit
-       |                            |
-       +------------+---------------+
-                    |
-             MAMA Core (mama-memory.db)
-             SQLite + 1024-dim embeddings
-             memory, raw refs, model runs,
-             tool traces, twin edges,
-             worker packets, context packets
-                    |
-             Effect ledger (operator/triggers.db)
-             every durable change, with the delta
-             batch that caused it - or an explicit
-             "unattributed"
-                    |
-             +------+------+
-             |             |
-        Viewer UI     Claude Code Plugin / MCP
-```
-
-**Local-first.** All data stays on your device. No cloud. AI provider independent — works with Claude, Codex, or any future backend.
-
-## Security
-
-MAMA OS has full system access via the backend CLI — so security is foundational, not optional.
-
-- **Local-only by default** — Binds to localhost. External access requires explicit tunnel + authentication.
-- **Signed runtime envelopes** — Gateway and worker tool calls carry verifiable scope, expiry, and
-  actor context before irreversible side effects are allowed.
-- **Destination limits** — An agent can draft a customer message from evidence, but cannot send it
-  unless the active envelope explicitly allows that destination.
-- **Provenance ledger** — Memory writes, raw refs, model runs, and tool traces can be audited after
-  the fact without exposing prompt bodies or hidden connector payloads.
-- **Evidence before action** — Agent outputs can carry raw source refs, model/tool traces, and
-  missing-context caveats before a human or downstream worker acts on them.
-- **5-layer prompt injection defense** — Output sanitization, channel trust boundaries, silent mode, bulk extraction limits. Built from a [real incident](docs/guides/security.md), not theory.
-- **Intrusion detection & response** — Honeypot traps → immediate IP ban (15min). Auth failures → auto-ban after 5 attempts. Tarpit delays for suspicious IPs.
-- **Agent permission tiers** — Tier 1 gets full runtime tools, Tier 2 can write scoped
-  memory, and Tier 3 stays strictly read-only. Each agent gets only the tools it needs.
-- **Owner-console trust model (v0.22+)** — Telegram media and owner access require an explicit
-  `allowed_chats` allowlist (text-only open mode warns loudly at boot); the `owner_console` role is
-  granted only in an allowlisted chat's 1:1 DM. That verified owner may compose Drive operations
-  against the folder selected in the active request. Non-owner Drive operations remain limited to
-  role-permitted tools and configured connector/envelope scope; they cannot select arbitrary roots.
-  Supplied destination capabilities remain validated, and uploads can read only private MAMA
-  workspace files. Memory writes refuse secret-shaped content, and Telegram forwarded messages,
-  forwarded-image analysis, and Drive-derived Code-Act output are wrapped as untrusted at their
-  model boundaries.
-- **Fail-safe shutdown** — When an intrusion cannot be contained, MAMA shuts down gracefully rather than operating compromised.
-
-See the full [Security Guide](docs/guides/security.md) for Cloudflare Zero Trust setup, token authentication, threat scenarios, and Code-Act sandbox isolation.
-
-## Benchmark: LongMemEval
-
-Benchmark context: [LongMemEval](https://xiaowu0162.github.io/long-mem-eval/) has 500 questions
-across 6 types, with ~115K tokens of conversation history per question. The current MAMA result is
-a 100-question tool-use sample.
-
-| System      | Score     | Model      | Notes                        |
-| ----------- | --------- | ---------- | ---------------------------- |
-| Mastra      | 94.87%    | GPT-5-mini |                              |
-| **MAMA OS** | **93.0%** | Sonnet 4.6 | Tool-use answer, 100Q sample |
-| SuperMemory | 81.6%     | GPT-4o     |                              |
-| Zep         | 71.2%     | GPT-4o     |                              |
-
-On that sampled run, MAMA lands above SuperMemory while running **entirely locally** with
-open-source components.
-
-## Packages
-
-| Package                                          | Version | Description                                           |
-| ------------------------------------------------ | ------- | ----------------------------------------------------- |
-| [@jungjaehoon/mama-os](packages/standalone/)     | 0.29.2  | Always-on runtime, envelopes, connectors, worker APIs |
-| [@jungjaehoon/mama-server](packages/mcp-server/) | 1.15.0  | MCP server for Claude Desktop/Code and any MCP client |
-| [@jungjaehoon/mama-core](packages/mama-core/)    | 2.0.0   | Core memory, provenance, raw refs, graph, embeddings  |
-| [mama plugin](packages/claude-code-plugin/)      | 1.11.0  | Claude Code plugin (marketplace)                      |
-| [memorybench](packages/memorybench/)             | 1.0.0   | Memory retrieval benchmarking framework               |
-
-## Quick Start
-
-### Claude Code Plugin (simplest)
+**Claude Code plugin** — decision memory for coding sessions. It works without the
+daemon; one hook (conversation ingestion at compaction) uses the daemon when it is
+running, and skips quietly when it is not:
 
 ```bash
 /plugin install mama
-
-# Decisions are saved automatically via hooks
-# Search manually when needed:
 /mama:search "authentication strategy"
 ```
 
-### MAMA OS (full runtime)
-
-```bash
-claude auth login   # or: codex login
-npx @jungjaehoon/mama-os init
-mama start   # starts daemon at localhost:3847
-```
-
-Operator board at `http://localhost:3847/ui` (agent-published report slots + trigger library);
-legacy viewer at `http://localhost:3847/viewer` with `Dashboard`, `Memory`, `Feed`, `Wiki`,
-`Agents`, `Logs`, and `Settings` tabs. Connects to Discord, Slack, Telegram.
-
-> **Requires:** [Claude Code CLI](https://claude.ai/claude-code) or [Codex CLI](https://www.npmjs.com/package/@openai/codex) installed and authenticated. Node.js >= 22.13.0.
-
-### MCP Server (Claude Desktop / any MCP client)
+**MCP server** — Claude Desktop or any MCP client:
 
 ```json
-{
-  "mcpServers": {
-    "mama": {
-      "command": "npx",
-      "args": ["@jungjaehoon/mama-server"]
-    }
-  }
-}
+{ "mcpServers": { "mama": { "command": "npx", "args": ["@jungjaehoon/mama-server"] } } }
 ```
 
-## Technical Details
+## The pieces
 
-- **Database:** SQLite via better-sqlite3 (FTS5 full-text search + vector embeddings)
-- **Embeddings:** Xenova/multilingual-e5-large (1024-dim, quantized q8, 100+ languages)
-- **Search:** Hybrid retrieval — FTS5 BM25 (lexical) + cosine similarity (semantic) + RRF fusion, with strict modes and diagnostics for vector-noise debugging
-- **Runtime boundary:** Signed reactive envelopes (HMAC over scope, expiry, actor) checked by an enforcer that rejects out-of-scope destinations, connectors, or tier mismatches
-- **Provenance:** Compact source refs, model runs, tool traces, twin edges, worker situation
-  packets, and context packets
-- **Context compiler:** Context Compile V0 turns broad search candidates into
-  selected/rejected/missing evidence packets with trusted `context_packet_id` provenance
-- **Extraction:** structured fact extraction from conversations via the configured model backend (default Sonnet; Codex/GPT models also supported)
-- **Transport:** CLI subprocess (Claude/Codex) — officially supported, ToS compliant
+| Package                                       | What it is                                                                                                     | You run it?          |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------- |
+| [mama-os](packages/standalone/) 0.29.2        | The daemon: connectors, trigger loop, reports, task board, web UI. 92k lines. "MAMA" means this.               | `mama start`         |
+| [mama-core](packages/mama-core/) 2.0.0        | The library underneath: memory, provenance, graph, embeddings. Everything imports it; it imports nothing here. | No binary            |
+| [mama-server](packages/mcp-server/) 1.15.0    | A deliberately thin MCP adapter over the core — 3.7k lines, no logic of its own.                               | As an MCP server     |
+| [plugin](packages/claude-code-plugin/) 1.11.0 | Claude Code hooks + slash commands. No background process.                                                     | Installed, not run   |
+| [memorybench](packages/memorybench/) 1.0.0    | The benchmark harness behind the retrieval numbers.                                                            | To reproduce a score |
 
-## What Works Today
+Dependency direction is one-way: nothing depends on the daemon.
 
-Anyone who installs MAMA OS and connects their apps gets:
+## Our numbers, including the bad ones
 
-- **Automatic knowledge extraction** — Connectors poll 14 sources, AI extracts decisions/deadlines/changes without manual input
-- **Cross-source evidence reads** — "What happened with X?" can pull from connected raw sources and decisions together
-- **Noise-resistant search** — Strict and balanced modes can reject vector-only matches and show why a result was included
-- **Bounded agent calls** — Gateway and worker calls can be tied to runtime envelopes and audited for scope or destination mismatches
-- **Evidence provenance** — Memory rows can be traced to raw refs, model runs, tool traces, and trusted runtime context
-- **Worker context APIs** — Raw search, situation packets, graph/entity APIs, and twin edges give sub-agents structured evidence surfaces
-- **Task-scoped context packets** — `context_compile` selects, rejects, and explains evidence
-  for a specific task before a worker saves memory or composes a report
-- **Decision evolution tracking** — Not just what was decided, but what it replaced, contradicted, and depended on
-- **Situation briefings** — Dashboard and situation agents summarize what changed, what is stale, and what needs attention
-- **Wiki organization** — The wiki agent keeps an Obsidian vault as an append-only daily journal plus durable lesson pages, compiled from promoted decisions
-- **93% retrieval accuracy** — 100-question LongMemEval tool-use sample against long conversation histories
-
-`mama_search` remains the broad candidate retriever. `context_compile` is now the task-shaped layer
-that selects, rejects, and explains evidence before a worker writes memory or composes a report.
+- **93.0%** on a 100-question LongMemEval tool-use sample (Sonnet 4.6, fully
+  local) — above SuperMemory (81.6%), below Mastra (94.87%).
+  [Reproduce it](packages/memorybench/).
+- **84% of trigger-authoring passes create nothing.** A duplicate gate rejects
+  near-copies of triggers that already exist. That is correct, but a loop this idle
+  should at least say why it declined.
+- **Cache reuse is 15.9x** per built context, against 144.8x for a comparable system
+  on the same machine. This is our biggest known cost problem.
+- **3 of 18 recent changes carried a cause.** Honest, but low. Most runs are
+  autonomous and have no owner message to cite. We plan to raise it, not excuse it.
 
 ## Roadmap
 
-| Phase    | Version | Focus                                                                                                                                                                                                                                                                                |
-| -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                                                         |
-| **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                                                      |
-| **Done** | v0.17   | Connector framework (13 connectors at the time), truth-first 3-pass extraction                                                                                                                                                                                                       |
-| **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                                                                  |
-| **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                                                          |
-| **Done** | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance                                    |
-| **Done** | v0.21   | The operator runtime: self-evolving trigger loop with a citation success circuit, `/ui` operator board (four live report slots + trigger library), task-truth from the real task ledger, wiki v5 daily journal + lessons, scheduled memory promotion, self-auditing with alert dedup |
-| **Done** | v0.23   | The owner console + workorder ownership: trust-conditional `owner_console` role, artifact-hub tools, secret-safe memory writes, and the Stage-2 durable workorder pipeline                                                                                                           |
-| **Done** | v0.24   | Codex app-server parity: durable multiplexed threads, native MAMA host tools (including connector/Trello surfaces), role-scoped Code-Act, strict managed runtime isolation, and automatic migration from the legacy `codex-mcp` backend                                              |
-| **Done** | v0.25   | Verified temporal owner-task reconciliation with source-bound evidence, authoritative receipts, mixed-version safety, and bounded shutdown handling                                                                                                                                  |
-| **Done** | v0.26   | Telegram media conversations, owner-scoped Drive operations, and fail-closed media handling                                                                                                                                                                                          |
-| **Done** | v0.27   | Composable owner workflows, local document and image processing, and durable Telegram delivery                                                                                                                                                                                       |
-| **Done** | v0.28   | Agent-owned owner-console operating brief, per-call session keys, and deletion of the legacy persona run path                                                                                                                                                                        |
-| **Now**  | v0.29   | Evidence and effects: an effect ledger where every durable change names its cause or admits it has none, bounded runs, `changes_read` and `mama_provenance`, one channel-grant rule pinned by a differential test, and lane verification that observes without blocking              |
-|          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                             |
-|          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                          |
+|                    |                                                                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Done (v0.15–v0.28) | Search overhaul → connector framework → the operator runtime → owner console → durable workorder pipeline. Full history in the [CHANGELOG](CHANGELOG.md). |
+| **Now (v0.29)**    | Evidence and effects: every durable change names its cause, or admits it has none.                                                                        |
+| Next               | Eight concrete items, unpacked below.                                                                                                                     |
+| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                             |
+
+Each "Next" item comes from a measurement, or from a competitor doing it better:
+
+- **Stable prompt prefixes for the autonomous lanes.** Cache reuse is 15.9x against a
+  comparable system's 144.8x. One prompt cut (231 KB → 57 KB) already halved per-call
+  cost. The same discipline applies to the report and board lanes.
+- **Alarms for the daemon's own silence.** The authoring step once died for three days
+  before anyone noticed. A scheduled job that misses its slot repeatedly should page the
+  owner, and every subprocess death should record its exit code and output.
+- **Causes for the autonomous lanes.** Most changes are made by runs nobody prompted. A
+  board run should receive its event window as the cause of what it changes, the way work
+  orders already do.
+- **Zero-yield authoring that says why.** 84% of authoring passes create nothing. A pass
+  that declines should record what it rejected, and a near-duplicate should strengthen the
+  existing trigger instead of vanishing.
+- **A surface that can only answer "nothing" fails the build.** Two shipped APIs turned out
+  to be permanently empty. The drift guard that now covers the tool catalog generalizes to
+  every advertised surface.
+- **An approval inbox.** Taken from OpenWorker: when the owner is away, the system queues
+  the decision instead of raising its own authority.
+- **Permissions you can explain in one sentence.** Also from OpenWorker: label every
+  action as read, write-local, or external-send. And state the standing rule up front:
+  _external sends never happen without explicit permission, by design._
+- **A first briefing in the first five minutes.** Taken from Claude's Slack integration:
+  one connector, first poll, first report. The product should prove itself before anyone
+  has to believe anything.
 
 ## Development
 
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 4,958 tests across all packages
+pnpm test     # 4,958 tests across five packages
 ```
 
-See [CLAUDE.md](CLAUDE.md) for development guidelines.
-
-_Last updated: 2026-07-30_
+Guidelines in [CLAUDE.md](CLAUDE.md). _Last updated: 2026-07-30_
 
 ## License
 
