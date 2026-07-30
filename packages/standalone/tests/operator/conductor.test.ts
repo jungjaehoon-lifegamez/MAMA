@@ -26,6 +26,7 @@ type RunOptions = {
   freshSession?: boolean;
   agentContext?: AgentContext;
   envelope?: Envelope;
+  causeEventIds?: readonly string[];
 };
 
 describe('Conductor', () => {
@@ -179,6 +180,20 @@ describe('Conductor', () => {
     }
     expect(inbox.depth().dead).toBe(1);
     expect(logs.some((l) => l.includes('parked DEAD'))).toBe(true);
+  });
+
+  it('hands the batch identity to the run - causes are wired, not restated', async () => {
+    // S2 review #1: the host holds the batch; without this field every
+    // judgment-borne board change is born unattributed.
+    inbox.enqueue({ channelKey: 'c C1', eventIds: ['evi_1', 'evi_2'], lines: ['x', 'y'] });
+    const c = new Conductor({
+      inbox,
+      session: new ConductorSession(fakePool()),
+      runner: runner(),
+      reground: () => '',
+    });
+    await c.tick();
+    expect(calls[0].options?.causeEventIds).toEqual(['evi_1', 'evi_2']);
   });
 
   it('threads the agent policy and a per-run envelope into every run', async () => {

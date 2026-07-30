@@ -202,7 +202,8 @@ export function registerOperatorTaskRoutes(app: Express, deps: OperatorTaskRoute
 
     try {
       const patch = validatePatchBody(req.body);
-      const task = ledger.update(id, patch);
+      // REST writes are the owner console acting - id-less by nature.
+      const task = ledger.update(id, patch, { causeKind: 'owner_message' });
       res.json({ ok: true, task: serializeTask(task) });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : String(error) });

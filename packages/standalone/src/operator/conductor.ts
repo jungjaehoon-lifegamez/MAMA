@@ -40,6 +40,7 @@ interface RunnerLike {
       freshSession?: boolean;
       agentContext?: AgentContext;
       envelope?: Envelope;
+      causeEventIds?: readonly string[];
     }
   ): Promise<{ response: string }>;
 }
@@ -116,6 +117,12 @@ export class Conductor {
           ...(fresh ? { freshSession: true } : { resumeSession: true }),
           agentContext: this.deps.agentContext,
           envelope,
+          // The host already holds the batch (inbox identity = the whole
+          // batch). Handing it to the run is what makes every judgment-borne
+          // board change attributed - the HOST batch wins over anything the
+          // agent could restate (S2 review #1: without this one field the
+          // conductor's stream is causeless at the source).
+          causeEventIds: batch.eventIds,
         });
         this.deps.inbox.ack(batch.id);
         this.deps.session.noteTurn();
