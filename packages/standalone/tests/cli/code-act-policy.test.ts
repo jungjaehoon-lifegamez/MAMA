@@ -282,8 +282,8 @@ describe('STORY-B6: Code-Act runtime policy hardening', () => {
           'Read',
           'Write',
           'Bash',
-          'os_set_model',
-          'browser_click',
+          'task_create',
+          'task_update',
           'report_publish',
         ]) {
           expect(projected.names).not.toContain(forbidden);

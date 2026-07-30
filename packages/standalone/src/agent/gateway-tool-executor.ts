@@ -57,24 +57,8 @@ import type {
   GatewaySessionStore,
   MAMAApiInterface,
   MAMAApiSetInput,
-  BrowserNavigateInput,
-  BrowserScreenshotInput,
-  BrowserClickInput,
-  BrowserTypeInput,
-  BrowserScrollInput,
-  BrowserWaitForInput,
-  BrowserEvaluateInput,
-  BrowserPdfInput,
   AgentContext,
-  AddBotInput,
-  SetPermissionsInput,
   GetConfigInput,
-  SetModelInput,
-  ListBotsInput,
-  RestartBotInput,
-  StopBotInput,
-  BotStatus,
-  BotPlatform,
   EnvelopeDenialResult,
   GatewayExecutionSurface,
   GatewayToolExecutionContext,
@@ -99,30 +83,12 @@ import {
   handleUpdate,
   handleLoadCheckpoint,
 } from './mama-tool-handlers.js';
-import { getBrowserTool, type BrowserTool } from '../tools/browser-tool.js';
 import { RoleManager, getRoleManager } from './role-manager.js';
-import { loadConfig, saveConfig, getConfig } from '../cli/config/config-manager.js';
+import { loadConfig, getConfig } from '../cli/config/config-manager.js';
 import type { AgentProcessManager } from '../multi-agent/agent-process-manager.js';
 import type { AgentEventBus } from '../multi-agent/agent-event-bus.js';
 import type { SQLiteDatabase } from '../sqlite.js';
-import type { UICommandQueue } from '../api/ui-command-handler.js';
-import {
-  getLatestVersion,
-  createAgentVersion,
-  compareVersionMetrics,
-  getActivity,
-  logActivity,
-} from '../db/agent-store.js';
-import type { RoleConfig } from '../cli/config/types.js';
-import { DEFAULT_ROLES } from '../cli/config/types.js';
-import {
-  createManagedAgentRuntime,
-  updateManagedAgentRuntime,
-} from './managed-agent-runtime-sync.js';
-import {
-  validateManagedAgentCreateInput,
-  validateManagedAgentChanges,
-} from './managed-agent-validation.js';
+import { logActivity } from '../db/agent-store.js';
 import { EnvelopeEnforcer, EnvelopeViolation } from '../envelope/index.js';
 import type { Envelope, MemoryScope } from '../envelope/index.js';
 import {
@@ -229,14 +195,6 @@ type TrustedProvenanceRuntime = {
 };
 let trustedProvenanceRuntime: TrustedProvenanceRuntime | null = null;
 type ContextPacketLookupAdapter = Parameters<typeof getContextPacketForTrustedUse>[0];
-const AGENT_DETAIL_TABS = new Set([
-  'config',
-  'persona',
-  'tools',
-  'activity',
-  'validation',
-  'history',
-]);
 
 type GatewayExecutionContext = GatewayToolExecutionContext;
 type GatewayContextSnapshot = {
@@ -345,8 +303,6 @@ type TraceCapableMAMAApi = MAMAApiInterface & {
   failModelRun: (modelRunId: string, errorSummary: string) => Promise<ModelRunRecord>;
   appendToolTrace: (input: AppendToolTraceInput) => Promise<unknown>;
 };
-
-const managedAgentMutationTails = new Map<string, Promise<void>>();
 const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_save',
   'mama_search',
@@ -354,16 +310,12 @@ const MEMORY_SCOPE_AUDIT_TOOLS = new Set<string>([
   'mama_provenance',
   'context_compile',
   'mama_update',
-  'mama_add',
-  'mama_ingest',
 ]);
 
 const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'mama_save',
   'context_compile',
   'mama_update',
-  'mama_add',
-  'mama_ingest',
   'report_publish',
   'report_request',
   'workorder_request',
@@ -379,25 +331,7 @@ const TEMPORAL_WRITE_TOOLS = new Set<string>([
   'slack_send',
   'telegram_send',
   'webchat_send',
-  'os_add_bot',
-  'os_set_permissions',
-  'os_set_model',
-  'os_restart_bot',
-  'os_stop_bot',
-  'agent_update',
-  'agent_create',
-  'viewer_navigate',
-  'viewer_notify',
   'save_integration_token',
-  'browser_navigate',
-  'browser_screenshot',
-  'browser_click',
-  'browser_type',
-  'browser_scroll',
-  'browser_evaluate',
-  'browser_pdf',
-  'browser_close',
-  'agent_test',
 ]);
 const MEMORY_READ_PERMISSION_BEFORE_ENVELOPE_TOOLS = new Set<string>([
   'mama_save',
@@ -538,26 +472,6 @@ function sanitizeMamaRecallBundle(bundle: unknown): SafeRecallBundle {
   };
 }
 
-async function withManagedAgentMutationLock<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-  const previous = managedAgentMutationTails.get(agentId) ?? Promise.resolve();
-  let release!: () => void;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  const tail = previous.then(() => current);
-  managedAgentMutationTails.set(agentId, tail);
-
-  await previous;
-  try {
-    return await fn();
-  } finally {
-    release();
-    if (managedAgentMutationTails.get(agentId) === tail) {
-      managedAgentMutationTails.delete(agentId);
-    }
-  }
-}
-
 function sanitizeCommandForAudit(command: string): { commandHash: string; commandPreview: string } {
   const commandHash = createHash('sha256').update(command).digest('hex');
   const commandPreview = command
@@ -662,31 +576,6 @@ function resolvePrivateWorkspaceFile(filePath: string): string {
   return realPath;
 }
 
-interface GHReviewThread {
-  id: string;
-  isResolved: boolean;
-  comments: {
-    nodes: Array<{
-      path: string;
-      line: number | null;
-      body: string;
-      author: { login: string } | null;
-    }>;
-  };
-}
-
-interface GHGraphQLResponse {
-  data?: {
-    repository?: {
-      pullRequest?: {
-        reviewThreads?: {
-          nodes?: GHReviewThread[];
-        };
-      };
-    };
-  };
-}
-
 export class GatewayToolExecutor {
   private readonly driveTools: DriveToolService;
   private readonly imageTranslationTools: ImageTranslationToolService;
@@ -700,7 +589,6 @@ export class GatewayToolExecutor {
   private discordGateway: DiscordGatewayInterface | null = null;
   private slackGateway: SlackGatewayInterface | null = null;
   private telegramGateway: TelegramGatewayInterface | null = null;
-  private browserTool: BrowserTool;
   private roleManager: RoleManager;
   private readonly executionContextStorage = new AsyncLocalStorage<ActiveGatewayExecutionContext>();
   private readonly envelopeEnforcer = new EnvelopeEnforcer();
@@ -754,18 +642,6 @@ export class GatewayToolExecutor {
    *  The setter stays because its callers are live - delete both together when a second
    *  reader appears or the callers do not. */
   setRawStore(_store: import('../connectors/framework/raw-store.js').RawStore): void {}
-  private uiCommandQueue: UICommandQueue | null = null;
-  setUICommandQueue(queue: UICommandQueue): void {
-    this.uiCommandQueue = queue;
-  }
-  private applyMultiAgentConfig: ((config: Record<string, unknown>) => Promise<void>) | null = null;
-  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
-    this.applyMultiAgentConfig = fn;
-  }
-  private restartMultiAgentAgent: ((agentId: string) => Promise<void>) | null = null;
-  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
-    this.restartMultiAgentAgent = fn;
-  }
   /** Same as setRawStore: the only reader was the delegation executor. */
   setValidationService(
     _svc: import('../validation/session-service.js').ValidationSessionService
@@ -860,16 +736,6 @@ export class GatewayToolExecutor {
     return this.getExecutionState().agentContext;
   }
 
-  /** Who and where the active turn is. Was typed by the delegation executor; now local. */
-  private getActiveRouting(): { agentId: string; source: string; channelId: string } {
-    const state = this.getExecutionState();
-    return {
-      agentId: state.agentId,
-      source: state.source,
-      channelId: state.channelId,
-    };
-  }
-
   async withExecutionContext<T>(
     executionContext: GatewayExecutionContext | undefined,
     fn: () => Promise<T>
@@ -938,85 +804,6 @@ export class GatewayToolExecutor {
     this.disallowedGatewayTools = new Set(tools);
   }
 
-  private getPreferredViewerAgentTab(): string {
-    if (!this.uiCommandQueue) {
-      return 'activity';
-    }
-    const { channelId } = this.getActiveRouting();
-    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
-    if (!currentPageContext || currentPageContext.currentRoute !== 'agents') {
-      return 'activity';
-    }
-    const pageData = currentPageContext.pageData as Record<string, unknown> | undefined;
-    const activeTab = pageData?.activeTab;
-    if (typeof activeTab === 'string' && AGENT_DETAIL_TABS.has(activeTab)) {
-      return activeTab;
-    }
-    return 'activity';
-  }
-
-  private syncViewerToAgentDetail(agentId: string, preferredTab?: string): void {
-    if (!this.uiCommandQueue) {
-      return;
-    }
-    const { source, channelId } = this.getActiveRouting();
-    if (source !== 'viewer') {
-      return;
-    }
-
-    const desiredTab =
-      preferredTab && AGENT_DETAIL_TABS.has(preferredTab)
-        ? preferredTab
-        : this.getPreferredViewerAgentTab();
-    const currentPageContext = this.uiCommandQueue.getPageContext(channelId || undefined);
-    const currentPageData = currentPageContext?.pageData as Record<string, unknown> | undefined;
-    if (
-      currentPageContext?.currentRoute === 'agents' &&
-      currentPageContext.selectedItem?.type === 'agent' &&
-      currentPageContext.selectedItem.id === agentId &&
-      currentPageData?.pageType === 'agent-detail' &&
-      currentPageData?.activeTab === desiredTab
-    ) {
-      return;
-    }
-
-    this.uiCommandQueue.push({
-      type: 'navigate',
-      payload: {
-        route: 'agents',
-        params: {
-          id: agentId,
-          tab: desiredTab,
-        },
-      },
-    });
-  }
-
-  private resolveManagedAgentId(agentId: string): string {
-    if (!this.sessionsDb) {
-      return agentId;
-    }
-    const normalized = agentId
-      .trim()
-      .toLowerCase()
-      .replace(/[_\s]+/g, '-');
-    const candidates = Array.from(
-      new Set([
-        agentId,
-        agentId.trim(),
-        normalized,
-        normalized.endsWith('-agent') ? normalized.slice(0, -6) : `${normalized}-agent`,
-      ])
-    ).filter(Boolean);
-
-    for (const candidate of candidates) {
-      if (getLatestVersion(this.sessionsDb, candidate)) {
-        return candidate;
-      }
-    }
-    return agentId;
-  }
-
   setReportPublisher(fn: (slots: Record<string, string>) => void): void {
     this.reportPublisher = fn;
   }
@@ -1075,9 +862,6 @@ export class GatewayToolExecutor {
         };
       });
     this.wikiPublishAdapter = options.wikiPublishAdapter ?? null;
-    this.browserTool = getBrowserTool({
-      screenshotDir: join(privateWorkspaceRoot, 'media', 'outbound'),
-    });
     // Pass rolesConfig from config.yaml to RoleManager
     this.roleManager = getRoleManager(
       options.rolesConfig ? { rolesConfig: options.rolesConfig } : undefined
@@ -1203,8 +987,6 @@ export class GatewayToolExecutor {
         listDecisions: mama.list.bind(mama), // Note: mama exports listDecisions as 'list'
         suggest: mama.suggest.bind(mama),
         recallMemory: mama.recallMemory?.bind(mama),
-        ingestMemory: mama.ingestMemory?.bind(mama),
-        ingestWithTrustedProvenance: mama.ingestWithTrustedProvenance?.bind(mama),
         saveMemoryWithTrustedProvenance: mama.saveMemoryWithTrustedProvenance?.bind(mama),
         ingestConversationWithTrustedProvenance:
           mama.ingestConversationWithTrustedProvenance?.bind(mama),
@@ -1757,7 +1539,7 @@ export class GatewayToolExecutor {
     }
 
     const envelopeScopesSnapshot = ctx?.envelope?.scope.memory_scopes ?? null;
-    const requestedScopes = this.resolveAuditMemoryScopes(toolName, input, ctx);
+    const requestedScopes = this.resolveAuditMemoryScopes(toolName, input);
 
     if (!ctx?.envelope || !envelopeScopesSnapshot) {
       return { requestedScopes, envelopeScopesSnapshot, mismatch: 0 };
@@ -1788,8 +1570,7 @@ export class GatewayToolExecutor {
 
   private resolveAuditMemoryScopes(
     toolName: string,
-    input: GatewayToolInput,
-    ctx: ActiveGatewayExecutionContext | undefined
+    input: GatewayToolInput
   ): MemoryScope[] | null {
     if (toolName === 'mama_save') {
       return normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
@@ -1806,19 +1587,6 @@ export class GatewayToolExecutor {
 
     if (toolName === 'mama_update') {
       return null;
-    }
-
-    if (toolName === 'mama_add') {
-      return this.deriveMemoryScopesFromActiveContext(ctx);
-    }
-
-    if (toolName === 'mama_ingest') {
-      const fallbackScopes = this.deriveMemoryScopesFromActiveContext(ctx) ?? [];
-      const inputScopes = normalizeMemoryScopes((input as { scopes?: unknown }).scopes);
-      if (inputScopes && inputScopes.length > 0) {
-        return inputScopes;
-      }
-      return fallbackScopes.length > 0 ? fallbackScopes : null;
     }
 
     return null;
@@ -2018,10 +1786,6 @@ export class GatewayToolExecutor {
     };
   }
 
-  private supportsTrustedIngest(api: MAMAApiInterface): boolean {
-    return Boolean(api.ingestWithTrustedProvenance);
-  }
-
   private supportsTrustedSave(api: MAMAApiInterface): boolean {
     return Boolean(api.saveWithTrustedProvenance);
   }
@@ -2194,6 +1958,9 @@ export class GatewayToolExecutor {
     }
 
     try {
+      // Lazy MAMA API init — only for tools that need it
+      const getApi = () => this.initializeMAMAApi();
+
       // Handle non-MAMA tools first
       switch (toolName) {
         case 'Read':
@@ -2315,48 +2082,8 @@ export class GatewayToolExecutor {
             ),
           };
         // Browser tools
-        case 'browser_navigate':
-          return await this.executeBrowserNavigate(input as BrowserNavigateInput);
-        case 'browser_screenshot':
-          return await this.executeBrowserScreenshot(input as BrowserScreenshotInput);
-        case 'browser_click':
-          return await this.executeBrowserClick(input as BrowserClickInput);
-        case 'browser_type':
-          return await this.executeBrowserType(input as BrowserTypeInput);
-        case 'browser_get_text':
-          return await this.executeBrowserGetText();
-        case 'browser_scroll':
-          return await this.executeBrowserScroll(input as BrowserScrollInput);
-        case 'browser_wait_for':
-          return await this.executeBrowserWaitFor(input as BrowserWaitForInput);
-        case 'browser_evaluate':
-          return await this.executeBrowserEvaluate(input as BrowserEvaluateInput);
-        case 'browser_pdf':
-          return await this.executeBrowserPdf(input as BrowserPdfInput);
-        case 'browser_close':
-          return await this.executeBrowserClose();
-        // OS Management tools (viewer-only)
-        case 'os_add_bot':
-          return await this.executeAddBot(input as AddBotInput);
-        case 'os_set_permissions':
-          return await this.executeSetPermissions(input as SetPermissionsInput);
         case 'os_get_config':
           return await this.executeGetConfig(input as GetConfigInput);
-        case 'os_set_model':
-          return await this.executeSetModel(input as SetModelInput);
-        // OS Monitoring tools
-        case 'os_list_bots':
-          return await this.executeListBots(input as ListBotsInput);
-        case 'os_restart_bot':
-          return await this.executeRestartBot(input as RestartBotInput);
-        case 'os_stop_bot':
-          return await this.executeStopBot(input as StopBotInput);
-        // PR Review tools
-        case 'pr_review_threads':
-          return await this.executePrReviewThreads(
-            input as { pr_url?: string; owner?: string; repo?: string; pr_number?: number }
-          );
-        // Webchat tools
         case 'webchat_send':
           return await this.executeWebchatSend(
             input as { message?: string; file_path?: string } // session_id omitted: all files use shared outbound dir
@@ -2369,246 +2096,6 @@ export class GatewayToolExecutor {
           return await this.executeObsidian(
             input as { command: string; args?: Record<string, string> }
           );
-        // Agent management tools (Managed Agents pattern)
-        case 'agent_get': {
-          if (!this.sessionsDb) {
-            return { success: false, error: 'Sessions DB not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const agentId = this.resolveManagedAgentId((input as { agent_id: string }).agent_id);
-          const latestVer = getLatestVersion(this.sessionsDb, agentId);
-          if (!latestVer) {
-            return { success: false, error: `Agent '${agentId}' not found` };
-          }
-          this.syncViewerToAgentDetail(agentId);
-          return {
-            success: true,
-            agent_id: latestVer.agent_id,
-            version: latestVer.version,
-            config: JSON.parse(latestVer.snapshot),
-            system: latestVer.persona_text,
-            change_note: latestVer.change_note,
-            created_at: latestVer.created_at,
-          };
-        }
-        case 'agent_activity': {
-          if (!this.sessionsDb) {
-            return { success: false, error: 'Sessions DB not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const args = input as { agent_id: string; limit?: number; include_trace?: boolean };
-          const agentId = this.resolveManagedAgentId(args.agent_id);
-          const rawLimit = Number.parseInt(String(args.limit ?? 20), 10);
-          const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 100) : 20;
-          const latestVer = getLatestVersion(this.sessionsDb, agentId);
-          if (!latestVer) {
-            return { success: false, error: `Agent '${args.agent_id}' not found` };
-          }
-          this.syncViewerToAgentDetail(agentId, 'activity');
-          return {
-            success: true,
-            agent_id: agentId,
-            activity: getActivity(this.sessionsDb, agentId, limit, {
-              includeTrace: args.include_trace === true,
-            }),
-          };
-        }
-        case 'agent_update': {
-          if (!this.sessionsDb) {
-            return { success: false, error: 'Sessions DB not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const updateArgs = input as {
-            agent_id: string;
-            version: number;
-            changes: Record<string, unknown>;
-            change_note?: string;
-          };
-          const updateError = validateManagedAgentChanges(updateArgs.changes);
-          if (updateError) {
-            return { success: false, error: updateError };
-          }
-          const agentId = this.resolveManagedAgentId(updateArgs.agent_id);
-          const initialLatest = getLatestVersion(this.sessionsDb, agentId);
-          if (!initialLatest) {
-            return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
-          }
-          return withManagedAgentMutationLock(agentId, async () => {
-            const updateLatest = getLatestVersion(this.sessionsDb!, agentId);
-            if (!updateLatest) {
-              return { success: false, error: `Agent '${updateArgs.agent_id}' not found` };
-            }
-            if (updateLatest.version !== updateArgs.version) {
-              return {
-                success: false,
-                error: `Version conflict: current v${updateLatest.version}, sent v${updateArgs.version}`,
-              };
-            }
-            const synced = await updateManagedAgentRuntime(
-              {
-                agentId,
-                changes: updateArgs.changes,
-              },
-              {
-                loadConfig,
-                saveConfig:
-                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
-                applyMultiAgentConfig: this.applyMultiAgentConfig,
-                restartMultiAgentAgent: this.restartMultiAgentAgent,
-              }
-            );
-            const updatedV = createAgentVersion(this.sessionsDb!, {
-              agent_id: agentId,
-              snapshot: synced.snapshot,
-              persona_text: synced.personaText ?? updateLatest.persona_text,
-              change_note: updateArgs.change_note,
-            });
-            return {
-              success: true,
-              new_version: updatedV.version,
-              runtime_reloaded: synced.runtimeReloaded,
-            };
-          });
-        }
-        case 'agent_create': {
-          if (!this.sessionsDb) {
-            return { success: false, error: 'Sessions DB not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const createArgs = input as {
-            id: string;
-            name: string;
-            model: string;
-            tier: number;
-            system?: string;
-            backend?: 'claude' | 'codex';
-          };
-          const createError = validateManagedAgentCreateInput(
-            createArgs as unknown as Record<string, unknown>
-          );
-          if (createError) {
-            return { success: false, error: createError };
-          }
-          return withManagedAgentMutationLock(createArgs.id, async () => {
-            const existingAgent = getLatestVersion(this.sessionsDb!, createArgs.id);
-            if (existingAgent) {
-              return { success: false, error: `Agent '${createArgs.id}' already exists` };
-            }
-
-            const synced = await createManagedAgentRuntime(
-              {
-                id: createArgs.id,
-                name: createArgs.name,
-                model: createArgs.model,
-                tier: createArgs.tier,
-                backend: createArgs.backend,
-                system: createArgs.system,
-              },
-              {
-                loadConfig,
-                saveConfig:
-                  saveConfig as unknown as import('./managed-agent-runtime-sync.js').ManagedAgentRuntimeSyncOptions['saveConfig'],
-                applyMultiAgentConfig: this.applyMultiAgentConfig,
-                restartMultiAgentAgent: this.restartMultiAgentAgent,
-              }
-            );
-
-            const createdV = createAgentVersion(this.sessionsDb!, {
-              agent_id: createArgs.id,
-              snapshot: synced.snapshot,
-              persona_text: synced.personaText,
-              change_note: 'Created via agent_create tool',
-            });
-            return {
-              success: true,
-              id: createArgs.id,
-              version: createdV.version,
-              runtime_reloaded: synced.runtimeReloaded,
-            };
-          });
-        }
-        case 'agent_compare': {
-          if (!this.sessionsDb) {
-            return { success: false, error: 'Sessions DB not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const cmpArgs = input as {
-            agent_id: string;
-            version_a: number;
-            version_b: number;
-          };
-          const agentId = this.resolveManagedAgentId(cmpArgs.agent_id);
-          const cmpResult = compareVersionMetrics(
-            this.sessionsDb,
-            agentId,
-            cmpArgs.version_a,
-            cmpArgs.version_b
-          );
-          this.syncViewerToAgentDetail(agentId, 'validation');
-          return { success: true, agent_id: agentId, ...cmpResult };
-        }
-        // Viewer control tools (SmartStore pattern)
-        case 'viewer_state': {
-          if (!this.uiCommandQueue) {
-            return { success: false, error: 'UI command queue not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const { channelId } = this.getActiveRouting();
-          const ctx = this.uiCommandQueue.getPageContext(channelId || undefined);
-          return { success: true, context: ctx || { currentRoute: 'unknown', pageData: null } };
-        }
-        case 'viewer_navigate': {
-          if (!this.uiCommandQueue) {
-            return { success: false, error: 'UI command queue not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const navArgs = input as { route: string; params?: Record<string, string> };
-          this.uiCommandQueue.push({ type: 'navigate', payload: navArgs });
-          return { success: true, navigated: navArgs.route };
-        }
-        case 'viewer_notify': {
-          if (!this.uiCommandQueue) {
-            return { success: false, error: 'UI command queue not available' };
-          }
-          const permError = this.checkViewerOnly();
-          if (permError) {
-            return { success: false, error: permError };
-          }
-          const args = input as {
-            type: string;
-            message: string;
-            action?: Record<string, unknown>;
-          };
-          this.uiCommandQueue.push({ type: 'notify', payload: args });
-          return { success: true, notified: true };
-        }
-      }
-
-      // Lazy MAMA API init — only for tools that need it
-      const getApi = () => this.initializeMAMAApi();
-
-      switch (toolName as GatewayToolName) {
         case 'mama_save': {
           const saveInput = input as SaveInput;
           // Secret inviolability (plan v6 S1-T7): a secret saved as a
@@ -2718,46 +2205,6 @@ export class GatewayToolExecutor {
         }
         case 'mama_load_checkpoint':
           return await handleLoadCheckpoint(await getApi(), input as LoadCheckpointInput);
-        case 'mama_add': {
-          const addSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
-          if (!addSecretScan.clean) {
-            console.warn(
-              `[Security] mama_add refused: secret-shaped content (${addSecretScan.matches.join(', ')})`
-            );
-            return {
-              success: false,
-              code: 'secret_material_refused',
-              error: `Refusing to add: content matches secret pattern(s): ${addSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
-            };
-          }
-          const api = await getApi();
-          return await this.handleMamaAdd(
-            input as { content: string },
-            this.supportsTrustedIngest(api)
-              ? (await this.buildTrustedMemoryWriteOptions('mama_add', gatewayCallId)).options
-              : undefined
-          );
-        }
-        case 'mama_ingest': {
-          const ingestSecretScan = scanMemoryWriteInput(input as Record<string, unknown>);
-          if (!ingestSecretScan.clean) {
-            console.warn(
-              `[Security] mama_ingest refused: secret-shaped content (${ingestSecretScan.matches.join(', ')})`
-            );
-            return {
-              success: false,
-              code: 'secret_material_refused',
-              error: `Refusing to ingest: content matches secret pattern(s): ${ingestSecretScan.matches.join(', ')}. Secrets must never enter memory.`,
-            };
-          }
-          const api = await getApi();
-          return await this.handleMamaIngest(
-            input as { content: string; scopes?: unknown },
-            this.supportsTrustedIngest(api)
-              ? (await this.buildTrustedMemoryWriteOptions('mama_ingest', gatewayCallId)).options
-              : undefined
-          );
-        }
         case 'report_publish': {
           const slotsInput = (input as { slots?: Record<string, string> }).slots;
           if (!slotsInput || typeof slotsInput !== 'object') {
@@ -3841,339 +3288,6 @@ export class GatewayToolExecutor {
     }
   }
 
-  // ============================================================================
-  // Browser Tool Execution
-  // ============================================================================
-
-  /**
-   * Navigate to a URL
-   */
-  private async executeBrowserNavigate(
-    input: BrowserNavigateInput
-  ): Promise<{ success: boolean; title?: string; url?: string; error?: string }> {
-    try {
-      const result = await this.browserTool.navigate(input.url);
-      return { success: true, title: result.title, url: result.url };
-    } catch (err) {
-      return { success: false, error: `Navigation failed: ${err}` };
-    }
-  }
-
-  /**
-   * Take a screenshot
-   */
-  private async executeBrowserScreenshot(
-    input: BrowserScreenshotInput
-  ): Promise<{ success: boolean; path?: string; error?: string }> {
-    try {
-      const result = input.full_page
-        ? await this.browserTool.screenshotFullPage(input.filename, this.getExecutionState().signal)
-        : await this.browserTool.screenshot(input.filename, this.getExecutionState().signal);
-      return { success: true, path: result.path };
-    } catch (err) {
-      return { success: false, error: `Screenshot failed: ${err}` };
-    }
-  }
-
-  /**
-   * Click an element
-   */
-  private async executeBrowserClick(
-    input: BrowserClickInput
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.browserTool.click(input.selector);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Click failed: ${err}` };
-    }
-  }
-
-  /**
-   * Type text into an element
-   */
-  private async executeBrowserType(
-    input: BrowserTypeInput
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.browserTool.type(input.selector, input.text);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Type failed: ${err}` };
-    }
-  }
-
-  /**
-   * Get page text content
-   */
-  private async executeBrowserGetText(): Promise<{
-    success: boolean;
-    text?: string;
-    error?: string;
-  }> {
-    try {
-      const result = await this.browserTool.getText();
-      return { success: true, text: result.text };
-    } catch (err) {
-      return { success: false, error: `Get text failed: ${err}` };
-    }
-  }
-
-  /**
-   * Scroll the page
-   */
-  private async executeBrowserScroll(
-    input: BrowserScrollInput
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.browserTool.scroll(input.direction, input.amount);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Scroll failed: ${err}` };
-    }
-  }
-
-  /**
-   * Wait for element
-   */
-  private async executeBrowserWaitFor(
-    input: BrowserWaitForInput
-  ): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.browserTool.waitFor(input.selector, input.timeout);
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Wait failed: ${err}` };
-    }
-  }
-
-  /**
-   * Evaluate JavaScript in page
-   */
-  private async executeBrowserEvaluate(
-    input: BrowserEvaluateInput
-  ): Promise<{ success: boolean; result?: unknown; error?: string }> {
-    try {
-      const result = await this.browserTool.evaluate(input.script);
-      return { success: true, result: result.result };
-    } catch (err) {
-      return { success: false, error: `Evaluate failed: ${err}` };
-    }
-  }
-
-  /**
-   * Generate PDF of page
-   */
-  private async executeBrowserPdf(
-    input: BrowserPdfInput
-  ): Promise<{ success: boolean; path?: string; error?: string }> {
-    try {
-      const result = await this.browserTool.pdf(input.filename);
-      return { success: true, path: result.path };
-    } catch (err) {
-      return { success: false, error: `PDF failed: ${err}` };
-    }
-  }
-
-  /**
-   * Close the browser
-   */
-  private async executeBrowserClose(): Promise<{ success: boolean; error?: string }> {
-    try {
-      await this.browserTool.close();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: `Close failed: ${err}` };
-    }
-  }
-
-  // ============================================================================
-  // OS Management Tools (viewer-only)
-  // ============================================================================
-
-  /**
-   * Check if current context is from viewer (OS agent)
-   * Returns error message if not allowed
-   */
-  private checkViewerOnly(): string | null {
-    const context = this.getActiveContext();
-    if (!context) {
-      // No context = backward compatibility, allow
-      return null;
-    }
-
-    if (context.source !== 'viewer') {
-      return `Permission denied: This operation is only available from MAMA OS Viewer. Current source: ${context.source}`;
-    }
-
-    if (!context.role.systemControl) {
-      return `Permission denied: Role "${context.roleName}" does not have system control permissions`;
-    }
-
-    return null;
-  }
-
-  /**
-   * Execute os_add_bot tool - Add a new bot to config
-   * Viewer-only: requires systemControl permission
-   */
-  private async executeAddBot(
-    input: AddBotInput
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    // Check viewer-only permission
-    const permError = this.checkViewerOnly();
-    if (permError) {
-      return { success: false, error: permError };
-    }
-
-    const { platform, token, bot_token, app_token, default_channel_id, allowed_chats, room_ids } =
-      input;
-
-    if (!platform) {
-      return { success: false, error: 'Platform is required (discord, telegram, slack, chatwork)' };
-    }
-
-    try {
-      const config = await loadConfig();
-
-      switch (platform) {
-        case 'discord':
-          if (!token) {
-            return { success: false, error: 'Discord bot token is required' };
-          }
-          config.discord = {
-            enabled: true,
-            token,
-            default_channel_id,
-          };
-          break;
-
-        case 'telegram':
-          if (!token) {
-            return { success: false, error: 'Telegram bot token is required' };
-          }
-          config.telegram = {
-            enabled: true,
-            token,
-            allowed_chats,
-          };
-          break;
-
-        case 'slack':
-          if (!bot_token || !app_token) {
-            return { success: false, error: 'Slack requires both bot_token and app_token' };
-          }
-          config.slack = {
-            enabled: true,
-            bot_token,
-            app_token,
-          };
-          break;
-
-        case 'chatwork':
-          if (!token) {
-            return { success: false, error: 'Chatwork API token is required' };
-          }
-          config.chatwork = {
-            enabled: true,
-            api_token: token,
-            room_ids,
-          };
-          break;
-
-        default:
-          return { success: false, error: `Unknown platform: ${platform}` };
-      }
-
-      await saveConfig(config);
-
-      return {
-        success: true,
-        message: `${platform} bot added successfully. Restart MAMA to apply changes.`,
-      };
-    } catch (err) {
-      return { success: false, error: `Failed to add bot: ${err}` };
-    }
-  }
-
-  /**
-   * Execute os_set_permissions tool - Modify role permissions
-   * Viewer-only: requires systemControl permission
-   */
-  private async executeSetPermissions(
-    input: SetPermissionsInput
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    // Check viewer-only permission
-    const permError = this.checkViewerOnly();
-    if (permError) {
-      return { success: false, error: permError };
-    }
-
-    const {
-      role,
-      allowedTools,
-      blockedTools,
-      allowedPaths,
-      systemControl,
-      sensitiveAccess,
-      mapSource,
-    } = input;
-
-    if (!role) {
-      return { success: false, error: 'Role name is required' };
-    }
-
-    try {
-      const config = await loadConfig();
-
-      // Initialize roles if not present
-      if (!config.roles) {
-        config.roles = { ...DEFAULT_ROLES };
-      }
-
-      // Get or create role definition
-      const existingRole = config.roles.definitions[role] || {
-        allowedTools: ['mama_*', 'Read'],
-      };
-
-      // Update role properties
-      const updatedRole: RoleConfig = {
-        allowedTools: allowedTools ?? existingRole.allowedTools,
-        blockedTools: blockedTools ?? existingRole.blockedTools,
-        allowedPaths: allowedPaths ?? existingRole.allowedPaths,
-        systemControl: systemControl ?? existingRole.systemControl,
-        sensitiveAccess: sensitiveAccess ?? existingRole.sensitiveAccess,
-      };
-
-      // Clean up undefined values
-      if (!updatedRole.blockedTools?.length) delete updatedRole.blockedTools;
-      if (!updatedRole.allowedPaths?.length) delete updatedRole.allowedPaths;
-      if (updatedRole.systemControl === undefined) delete updatedRole.systemControl;
-      if (updatedRole.sensitiveAccess === undefined) delete updatedRole.sensitiveAccess;
-
-      config.roles.definitions[role] = updatedRole;
-
-      // Map source to role if specified
-      if (mapSource) {
-        config.roles.sourceMapping[mapSource] = role;
-      }
-
-      await saveConfig(config);
-
-      // Update RoleManager with new config (trust anchor included: telegram
-      // allowed_chats may have changed alongside roles in the saved config)
-      this.roleManager.updateRolesConfig(config.roles);
-      this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
-
-      return {
-        success: true,
-        message: `Role "${role}" updated successfully.${mapSource ? ` Source "${mapSource}" now maps to this role.` : ''}`,
-      };
-    } catch (err) {
-      return { success: false, error: `Failed to set permissions: ${err}` };
-    }
-  }
-
   /**
    * Execute os_get_config tool - Get current configuration
    * Masks sensitive data for non-viewer sources
@@ -4240,7 +3354,19 @@ export class GatewayToolExecutor {
         // Fully mask sensitive values - don't expose any characters
         // Show only length hint for debugging without revealing content
         masked[key] = `***[${value.length} chars]***`;
-      } else if (typeof value === 'object' && !Array.isArray(value)) {
+      } else if (isSensitive && typeof value !== 'object') {
+        // Non-string sensitive scalars (numbers, booleans) must not pass
+        // through either - the key marked them secret.
+        masked[key] = '***';
+      } else if (Array.isArray(value)) {
+        // Arrays must be descended: a token inside multi_agent.agents[] or a
+        // bots[] entry would otherwise return in clear text (review).
+        masked[key] = value.map((item) =>
+          item !== null && typeof item === 'object' && !Array.isArray(item)
+            ? this.maskSensitiveData(item as Record<string, unknown>, showSensitive)
+            : item
+        );
+      } else if (typeof value === 'object') {
         masked[key] = this.maskSensitiveData(value as Record<string, unknown>, showSensitive);
       } else {
         masked[key] = value;
@@ -4248,436 +3374,6 @@ export class GatewayToolExecutor {
     }
 
     return masked;
-  }
-
-  /**
-   * Execute os_set_model tool - Set model configuration for a role or globally
-   * Viewer-only: requires systemControl permission
-   *
-   * Usage:
-   * - Set role-specific model: { role: 'chat_bot', model: 'claude-3-haiku-20240307' }
-   * - Set global model: { model: 'claude-sonnet-4-6' }
-   */
-  private async executeSetModel(
-    input: SetModelInput
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    // Check viewer-only permission
-    const permError = this.checkViewerOnly();
-    if (permError) {
-      return { success: false, error: permError };
-    }
-
-    const { role, model, maxTurns, timeout } = input;
-
-    if (!model) {
-      return { success: false, error: 'Model name is required' };
-    }
-
-    // Validate model name format - Claude/Anthropic models only
-    // Valid formats per Anthropic API docs:
-    // - Pinned snapshots: claude-sonnet-4-20250514, claude-3-5-sonnet-20241022
-    // - Rolling aliases: claude-3-7-sonnet-latest, claude-opus-4-latest
-    // - Family aliases: claude-opus-4-5, claude-sonnet-4-0
-    const claudeModelPattern =
-      /^claude-(?:opus|sonnet|haiku|3|3-5|3-7)-?[a-z0-9-]*(?:-\d{8}|-latest)?$/i;
-    const isValidModel = claudeModelPattern.test(model);
-
-    if (!isValidModel) {
-      return {
-        success: false,
-        error: `Invalid model name format: ${model}. Expected Claude model format (e.g., claude-sonnet-4-6, claude-opus-4-latest)`,
-      };
-    }
-
-    if (maxTurns !== undefined && (maxTurns < 1 || maxTurns > 100)) {
-      return { success: false, error: 'maxTurns must be between 1 and 100' };
-    }
-
-    if (timeout !== undefined && (timeout < 10000 || timeout > 600000)) {
-      return { success: false, error: 'timeout must be between 10000ms and 600000ms (10s-10min)' };
-    }
-
-    try {
-      const config = await loadConfig();
-
-      // If role is specified, update that role's model
-      if (role) {
-        // Initialize roles if not present
-        if (!config.roles) {
-          config.roles = { ...DEFAULT_ROLES };
-        }
-
-        // Check if role exists
-        if (!config.roles.definitions[role]) {
-          return {
-            success: false,
-            error: `Role "${role}" not found. Available roles: ${Object.keys(config.roles.definitions).join(', ')}`,
-          };
-        }
-
-        // Update role-specific settings
-        config.roles.definitions[role].model = model;
-        if (maxTurns !== undefined) {
-          config.roles.definitions[role].maxTurns = maxTurns;
-        }
-
-        await saveConfig(config);
-
-        // Update RoleManager with new config (trust anchor included)
-        this.roleManager.updateRolesConfig(config.roles);
-        this.roleManager.setTelegramTrust(config.telegram?.allowed_chats);
-
-        const changes = [`model: ${model}`];
-        if (maxTurns !== undefined) changes.push(`maxTurns: ${maxTurns}`);
-
-        return {
-          success: true,
-          message: `Role "${role}" updated: ${changes.join(', ')}. New conversations for this role will use these settings.`,
-        };
-      }
-
-      // No role specified - update global agent config
-      if (!config.agent) {
-        config.agent = {
-          backend: 'claude',
-          model: 'claude-sonnet-4-6',
-          max_turns: 10,
-          timeout: 300000,
-        };
-      }
-
-      config.agent.model = model;
-      if (maxTurns !== undefined) {
-        config.agent.max_turns = maxTurns;
-      }
-      if (timeout !== undefined) {
-        config.agent.timeout = timeout;
-      }
-
-      await saveConfig(config);
-
-      const changes = [`model: ${model}`];
-      if (maxTurns !== undefined) changes.push(`maxTurns: ${maxTurns}`);
-      if (timeout !== undefined) changes.push(`timeout: ${timeout}ms`);
-
-      return {
-        success: true,
-        message: `Global agent settings updated: ${changes.join(', ')}. New conversations will use these settings.`,
-      };
-    } catch (err) {
-      return { success: false, error: `Failed to set model: ${err}` };
-    }
-  }
-
-  // ============================================================================
-  // OS Monitoring Tools (viewer-only)
-  // ============================================================================
-
-  /**
-   * Callback to get bot status from running gateways
-   * Set by the main application when gateways are initialized
-   */
-  private botStatusCallback: (() => Map<BotPlatform, { running: boolean; error?: string }>) | null =
-    null;
-
-  /**
-   * Callback to control bots
-   * Set by the main application when gateways are initialized
-   */
-  private botControlCallback:
-    | ((
-        platform: BotPlatform,
-        action: 'start' | 'stop'
-      ) => Promise<{ success: boolean; error?: string }>)
-    | null = null;
-
-  /**
-   * Set the bot status callback (called by main app)
-   */
-  setBotStatusCallback(
-    callback: () => Map<BotPlatform, { running: boolean; error?: string }>
-  ): void {
-    this.botStatusCallback = callback;
-  }
-
-  /**
-   * Set the bot control callback (called by main app)
-   */
-  setBotControlCallback(
-    callback: (
-      platform: BotPlatform,
-      action: 'start' | 'stop'
-    ) => Promise<{ success: boolean; error?: string }>
-  ): void {
-    this.botControlCallback = callback;
-  }
-
-  /**
-   * Execute os_list_bots tool - List all configured bots and their status
-   */
-  private async executeListBots(
-    input: ListBotsInput
-  ): Promise<{ success: boolean; bots?: BotStatus[]; error?: string }> {
-    const { platform } = input;
-
-    try {
-      const config = await loadConfig();
-      const platforms: BotPlatform[] = ['discord', 'telegram', 'slack', 'chatwork'];
-      const bots: BotStatus[] = [];
-
-      // Get runtime status if callback is available
-      const runtimeStatus = this.botStatusCallback?.() ?? new Map();
-
-      for (const p of platforms) {
-        // Skip if filtering by platform
-        if (platform && p !== platform) continue;
-
-        const platformConfig = config[p];
-        const configured = !!platformConfig;
-        const enabled = configured && platformConfig.enabled === true;
-        const runtime = runtimeStatus.get(p);
-
-        let status: BotStatus['status'];
-        if (!configured) {
-          status = 'not_configured';
-        } else if (runtime?.running) {
-          status = 'running';
-        } else if (runtime?.error) {
-          status = 'error';
-        } else if (enabled) {
-          status = 'stopped';
-        } else {
-          status = 'stopped';
-        }
-
-        bots.push({
-          platform: p,
-          enabled,
-          configured,
-          status,
-          error: runtime?.error,
-        });
-      }
-
-      return { success: true, bots };
-    } catch (err) {
-      return { success: false, error: `Failed to list bots: ${err}` };
-    }
-  }
-
-  /**
-   * Execute os_restart_bot tool - Restart a bot
-   * Viewer-only: requires systemControl permission
-   */
-  private async executeRestartBot(
-    input: RestartBotInput
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    // Check viewer-only permission
-    const permError = this.checkViewerOnly();
-    if (permError) {
-      return { success: false, error: permError };
-    }
-
-    const { platform } = input;
-
-    if (!platform) {
-      return { success: false, error: 'Platform is required' };
-    }
-
-    if (!this.botControlCallback) {
-      return {
-        success: false,
-        error:
-          'Bot control not available. Please restart MAMA server to apply configuration changes.',
-      };
-    }
-
-    try {
-      // Stop then start
-      const stopResult = await this.botControlCallback(platform, 'stop');
-      if (!stopResult.success && stopResult.error !== 'Bot not running') {
-        return { success: false, error: `Failed to stop bot: ${stopResult.error}` };
-      }
-
-      // Small delay
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      const startResult = await this.botControlCallback(platform, 'start');
-      if (!startResult.success) {
-        return { success: false, error: `Failed to start bot: ${startResult.error}` };
-      }
-
-      return { success: true, message: `${platform} bot restarted successfully` };
-    } catch (err) {
-      return { success: false, error: `Failed to restart bot: ${err}` };
-    }
-  }
-
-  /**
-   * Execute os_stop_bot tool - Stop a bot
-   * Viewer-only: requires systemControl permission
-   */
-  private async executeStopBot(
-    input: StopBotInput
-  ): Promise<{ success: boolean; message?: string; error?: string }> {
-    // Check viewer-only permission
-    const permError = this.checkViewerOnly();
-    if (permError) {
-      return { success: false, error: permError };
-    }
-
-    const { platform } = input;
-
-    if (!platform) {
-      return { success: false, error: 'Platform is required' };
-    }
-
-    if (!this.botControlCallback) {
-      return {
-        success: false,
-        error:
-          'Bot control not available. Manually disable the bot in config.yaml and restart MAMA.',
-      };
-    }
-
-    try {
-      const result = await this.botControlCallback(platform, 'stop');
-      if (!result.success) {
-        return { success: false, error: `Failed to stop bot: ${result.error}` };
-      }
-
-      return { success: true, message: `${platform} bot stopped successfully` };
-    } catch (err) {
-      return { success: false, error: `Failed to stop bot: ${err}` };
-    }
-  }
-
-  // ============================================================================
-  // PR Review Tools
-  // ============================================================================
-
-  private parsePRUrl(url: string): { owner: string; repo: string; prNumber: number } | null {
-    const match = url.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)\/?$/);
-    if (!match) return null;
-    return { owner: match[1], repo: match[2], prNumber: parseInt(match[3], 10) };
-  }
-
-  private async executePrReviewThreads(input: {
-    pr_url?: string;
-    owner?: string;
-    repo?: string;
-    pr_number?: number;
-  }): Promise<{ success: boolean; threads?: unknown[]; summary?: string; error?: string }> {
-    let owner: string;
-    let repo: string;
-    let prNumber: number;
-
-    if (input.pr_url) {
-      const parsed = this.parsePRUrl(input.pr_url);
-      if (!parsed) return { success: false, error: `Invalid PR URL: ${input.pr_url}` };
-      ({ owner, repo, prNumber } = parsed);
-    } else if (input.owner && input.repo && input.pr_number) {
-      owner = input.owner;
-      repo = input.repo;
-      prNumber = input.pr_number;
-    } else {
-      return { success: false, error: 'Provide pr_url or (owner, repo, pr_number)' };
-    }
-
-    try {
-      const query = `
-        query($owner: String!, $repo: String!, $prNumber: Int!) {
-          repository(owner: $owner, name: $repo) {
-            pullRequest(number: $prNumber) {
-              reviewThreads(last: 100) {
-                nodes {
-                  id
-                  isResolved
-                  comments(first: 10) {
-                    nodes { path line body author { login } }
-                  }
-                }
-              }
-            }
-          }
-        }
-      `;
-
-      const { stdout } = await execFileAsync(
-        'gh',
-        [
-          'api',
-          'graphql',
-          '-f',
-          `query=${query}`,
-          '-F',
-          `owner=${owner}`,
-          '-F',
-          `repo=${repo}`,
-          '-F',
-          `prNumber=${prNumber}`,
-        ],
-        { timeout: 30000 }
-      );
-
-      let data: GHGraphQLResponse;
-      try {
-        data = JSON.parse(stdout) as GHGraphQLResponse;
-      } catch {
-        return {
-          success: false,
-          error: `Failed to parse GitHub API response: ${stdout.substring(0, 200)}`,
-        };
-      }
-      const threads = data.data?.repository?.pullRequest?.reviewThreads?.nodes ?? [];
-
-      const unresolved = threads
-        .filter((thread) => !thread.isResolved)
-        .map((thread) => ({
-          id: thread.id,
-          comments: thread.comments.nodes.map((comment) => ({
-            path: comment.path,
-            line: comment.line,
-            body: comment.body,
-            author: comment.author?.login ?? 'unknown',
-          })),
-        }));
-
-      // Build summary grouped by file
-      const byFile = new Map<string, { line: number | null; body: string; author: string }[]>();
-      for (const t of unresolved) {
-        const first = t.comments[0];
-        if (!first) continue;
-        const file = first.path || '(general)';
-        const list = byFile.get(file) || [];
-        list.push({ line: first.line, body: first.body, author: first.author });
-        byFile.set(file, list);
-      }
-
-      const summaryLines = [
-        `${unresolved.length} unresolved thread(s) across ${byFile.size} file(s)`,
-        '',
-      ];
-      for (const [file, items] of byFile) {
-        summaryLines.push(`**${file}** (${items.length})`);
-        for (const item of items) {
-          const lineRef = item.line ? `L${item.line} ` : '';
-          const body = item.body.length > 300 ? item.body.substring(0, 300) + '…' : item.body;
-          summaryLines.push(`  • ${lineRef}@${item.author}: ${body}`);
-        }
-        summaryLines.push('');
-      }
-
-      if (byFile.size > 1) {
-        summaryLines.push(
-          `💡 ${byFile.size} independent files — delegate fixes in parallel (DELEGATE_BG)`
-        );
-      }
-
-      return { success: true, threads: unresolved, summary: summaryLines.join('\n') };
-    } catch (err) {
-      return { success: false, error: `Failed to fetch PR threads: ${err}` };
-    }
   }
 
   // ============================================================================
@@ -4999,124 +3695,6 @@ export class GatewayToolExecutor {
           : successfulMessage
         : `Code-Act error: ${result.error?.message || 'Unknown error'}`,
     } as GatewayToolResult;
-  }
-
-  /**
-   * Handle mama_add — auto-extract facts from conversation content with derived memory scopes.
-   */
-  private async handleMamaAdd(
-    input: { content: string },
-    options?: TrustedMemoryWriteOptions
-  ): Promise<GatewayToolResult> {
-    const context = this.getActiveContext();
-    if (!context) {
-      return {
-        success: false,
-        error: 'mama_add requires an active agent context',
-      } as GatewayToolResult;
-    }
-
-    const scopes = deriveMemoryScopes({
-      source: context.source,
-      channelId: context.session.channelId,
-      userId: context.session.userId,
-      projectId: process.env.MAMA_WORKSPACE || process.cwd(),
-    });
-
-    return this.handleMamaIngest(
-      {
-        ...input,
-        scopes,
-      },
-      options
-    );
-  }
-
-  private async handleMamaIngest(
-    input: {
-      content: string;
-      scopes?: unknown;
-    },
-    options?: TrustedMemoryWriteOptions
-  ): Promise<GatewayToolResult> {
-    const { content } = input;
-    if (!content || typeof content !== 'string') {
-      return {
-        success: false,
-        error: 'content is required and must be a string',
-      } as GatewayToolResult;
-    }
-
-    try {
-      const api = await this.initializeMAMAApi();
-      if (options && !api.ingestWithTrustedProvenance) {
-        return {
-          success: false,
-          error: 'Trusted memory ingest API not available.',
-        } as GatewayToolResult;
-      }
-
-      if (!options && !api.ingestMemory) {
-        return {
-          success: false,
-          error: 'Memory ingest API not available.',
-        } as GatewayToolResult;
-      }
-
-      const activeState = this.getExecutionState();
-      const context = activeState.agentContext;
-      const envelopeScopes = activeState.envelope?.scope.memory_scopes ?? null;
-      const fallbackScopes =
-        envelopeScopes && envelopeScopes.length > 0
-          ? envelopeScopes
-          : context
-            ? deriveMemoryScopes({
-                source: context.source,
-                channelId: context.session.channelId,
-                userId: context.session.userId,
-                projectId: process.env.MAMA_WORKSPACE || process.cwd(),
-              })
-            : [];
-
-      let scopes = fallbackScopes;
-      if (Array.isArray(input.scopes) && input.scopes.length > 0) {
-        const derivedIds = new Set(fallbackScopes.map((s) => `${s.kind}:${s.id}`));
-        const allInDerived = input.scopes.every((s) => derivedIds.has(`${s.kind}:${s.id}`));
-        scopes = allInDerived ? input.scopes : fallbackScopes;
-      }
-
-      if (scopes.length === 0) {
-        return {
-          success: false,
-          error: 'mama_ingest requires scopes (provide via input or active agent context)',
-        } as GatewayToolResult;
-      }
-
-      const payload = {
-        content: content.substring(0, 10_000),
-        scopes,
-        source: {
-          package: 'standalone',
-          source_type: 'gateway_tool_executor',
-          source: context?.source || null,
-        },
-      };
-      const result = options
-        ? await api.ingestWithTrustedProvenance!(payload, options)
-        : await api.ingestMemory!(payload);
-
-      return {
-        success: true,
-        extracted: 1,
-        saved: 1,
-        result,
-      } as GatewayToolResult;
-    } catch (err) {
-      return {
-        success: false,
-        error: `Ingest failed: ${err instanceof Error ? err.message : String(err)}`,
-      } as GatewayToolResult;
-    }
   }
 
   /**

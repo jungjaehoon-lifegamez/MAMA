@@ -709,8 +709,30 @@ export interface MAMAConfig {
   token_budget?: TokenBudgetConfig;
   /** Message-router memory policy */
   memory_policy?: MemoryPolicyConfig;
+  /** Stateful conductor (S1). Default-off; the owner enables it live. */
+  conductor?: ConductorConfig;
   /** Preserve user-defined sections (scheduling, custom integrations, etc.) */
   [key: string]: unknown;
+}
+
+/**
+ * Stateful conductor (S1): one long-lived operator session consuming the
+ * durable inbox. Backend note: the conductor pins the claude backend in S1 -
+ * codex sessions do not reset on token usage (session-pool.ts), so the
+ * lifecycle contract only holds on claude until S2 addresses codex compaction.
+ * Config is read at boot; enabling requires a daemon restart.
+ */
+export interface ConductorConfig {
+  /** Run the conductor loop. false = inbox still records durably (shadow). */
+  enabled: boolean;
+  /** Consume-tick interval @default 30000 */
+  tickMs: number;
+  /** Session recycle: max age @default 21600000 (6h) */
+  maxAgeMs: number;
+  /** Session recycle: max turns @default 400 */
+  maxTurns: number;
+  /** Session recycle: max pooled-session tokens @default 150000 */
+  maxTokens: number;
 }
 
 /**
@@ -802,6 +824,13 @@ export const DEFAULT_CONFIG: MAMAConfig = {
   memory_policy: {
     implicit_recall: false,
     implicit_legacy_context_search: false,
+  },
+  conductor: {
+    enabled: false,
+    tickMs: 30_000,
+    maxAgeMs: 21_600_000,
+    maxTurns: 400,
+    maxTokens: 150_000,
   },
 };
 

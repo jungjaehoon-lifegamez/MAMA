@@ -17,13 +17,10 @@ export type ToolCategory =
   | 'memory'
   | 'business_data'
   | 'utility'
-  | 'browser'
   | 'os_management'
   | 'os_monitoring'
-  | 'pr_review'
   | 'webchat'
   | 'code_act'
-  | 'multi_agent'
   | 'system';
 
 export interface ToolDefinitionMeta {
@@ -167,18 +164,6 @@ register({
   category: 'os_monitoring',
   params: 'command, args?',
 });
-register({
-  name: 'mama_add',
-  description: 'Auto-extract and save facts from conversation content via Haiku',
-  category: 'memory',
-  params: 'content',
-});
-register({
-  name: 'mama_ingest',
-  description: 'Ingest raw content into memory v2',
-  category: 'memory',
-  params: 'content, scopes?, source?',
-});
 
 // Utility tools
 register({ name: 'Read', description: 'Read file', category: 'utility', params: 'path' });
@@ -266,110 +251,12 @@ register({
   params: 'localPath, folderId, fileName?, destinationCapability?',
 });
 
-// Browser tools (Playwright)
-register({
-  name: 'browser_navigate',
-  description: 'Open URL in headless browser',
-  category: 'browser',
-  params: 'url',
-});
-register({
-  name: 'browser_screenshot',
-  description: 'Take screenshot',
-  category: 'browser',
-  params: 'filename?, fullPage?',
-});
-register({
-  name: 'browser_click',
-  description: 'Click element by CSS selector',
-  category: 'browser',
-  params: 'selector',
-});
-register({
-  name: 'browser_type',
-  description: 'Type text into input',
-  category: 'browser',
-  params: 'selector, text',
-});
-register({ name: 'browser_get_text', description: 'Get all text from page', category: 'browser' });
-register({
-  name: 'browser_scroll',
-  description: 'Scroll page',
-  category: 'browser',
-  params: 'direction, amount?',
-});
-register({
-  name: 'browser_wait_for',
-  description: 'Wait for element',
-  category: 'browser',
-  params: 'selector, timeout?',
-});
-register({
-  name: 'browser_evaluate',
-  description: 'Run JavaScript in page',
-  category: 'browser',
-  params: 'script',
-});
-register({
-  name: 'browser_pdf',
-  description: 'Save page as PDF',
-  category: 'browser',
-  params: 'filename?',
-});
-register({ name: 'browser_close', description: 'Close browser', category: 'browser' });
-
 // OS Management (viewer-only)
-register({
-  name: 'os_add_bot',
-  description: 'Add a bot platform (Discord/Telegram/Slack/Chatwork)',
-  category: 'os_management',
-  viewerOnly: true,
-});
-register({
-  name: 'os_set_permissions',
-  description: 'Set tool/path permissions for a role',
-  category: 'os_management',
-  viewerOnly: true,
-});
 register({
   name: 'os_get_config',
   description: 'Get current configuration',
   category: 'os_management',
   viewerOnly: true,
-});
-register({
-  name: 'os_set_model',
-  description: 'Set AI model for a role',
-  category: 'os_management',
-  viewerOnly: true,
-});
-
-// OS Monitoring (viewer-only)
-register({
-  name: 'os_list_bots',
-  description: 'List configured bot platforms and status',
-  category: 'os_monitoring',
-  viewerOnly: true,
-});
-register({
-  name: 'os_restart_bot',
-  description: 'Restart a bot platform',
-  category: 'os_monitoring',
-  viewerOnly: true,
-});
-register({
-  name: 'os_stop_bot',
-  description: 'Stop a bot platform',
-  category: 'os_monitoring',
-  viewerOnly: true,
-});
-
-// PR Review
-register({
-  name: 'pr_review_threads',
-  description: 'Fetch unresolved review threads from GitHub PR',
-  category: 'pr_review',
-  params: 'pr_url',
 });
 
 // Webchat
@@ -518,80 +405,6 @@ register({
   params: 'limit?',
 });
 
-// Agent management tools (Managed Agents pattern)
-register({
-  name: 'agent_get',
-  description:
-    'Get agent config, persona, and current version. In viewer sessions, this also syncs the viewer to that agent detail so you and the user stay on the same page.',
-  category: 'os_management',
-  params: 'agent_id',
-  viewerOnly: true,
-});
-register({
-  name: 'agent_activity',
-  description:
-    'Get recent agent activity rows and sync the viewer to that agent activity tab so you and the user inspect the same logs.',
-  category: 'os_monitoring',
-  params: 'agent_id, limit?',
-  viewerOnly: true,
-});
-register({
-  name: 'agent_update',
-  description:
-    'Update agent config. Requires current version for optimistic concurrency. Bumps version on change.',
-  category: 'os_management',
-  params: 'agent_id, version, changes: {model?, tier?, system?, tools?, ...}, change_note?',
-  viewerOnly: true,
-});
-register({
-  name: 'agent_create',
-  description: 'Create new agent with initial config and persona',
-  category: 'os_management',
-  params: 'id, name, model, tier, system?, backend?',
-  viewerOnly: true,
-});
-register({
-  name: 'agent_compare',
-  description: 'Compare metrics between two versions of an agent (Before/After)',
-  category: 'os_monitoring',
-  params: 'agent_id, version_a, version_b',
-  viewerOnly: true,
-});
-
-// Viewer control tools (SmartStore pattern)
-register({
-  name: 'viewer_state',
-  description:
-    'Get current viewer state (current route, selected item, pageData). Call after navigation to verify which item and tab are actually open.',
-  category: 'os_management',
-  params: '',
-  viewerOnly: true,
-});
-register({
-  name: 'viewer_navigate',
-  description:
-    'Navigate viewer to a specific page/tab. Use route "agents" with params {id, tab} for agent detail, or route "wiki" with params {path} for a wiki document.',
-  category: 'os_management',
-  params: 'route, params?: {id?, tab?, compareV1?, compareV2?, path?}',
-  viewerOnly: true,
-});
-register({
-  name: 'viewer_notify',
-  description: 'Show toast or alert card in viewer',
-  category: 'os_management',
-  params: 'type: info|warning|suggest, message, action?: {label, navigate}',
-  viewerOnly: true,
-});
-
-// Agent lifecycle tools
-register({
-  name: 'agent_test',
-  description: 'Test agent with connector data. Auto-scores pass/fail ratio.',
-  category: 'os_management',
-  params: 'agent_id, sample_count?, test_data?',
-  viewerOnly: true,
-});
-
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 export class ToolRegistry {
@@ -719,13 +532,10 @@ export class ToolRegistry {
       business_data:
         'Business Data (progressive exploration: overview -> entities -> tasks -> messages)',
       utility: 'Utility',
-      browser: 'Browser (Playwright)',
       os_management: 'OS Management (viewer-only)',
       os_monitoring: 'OS Monitoring & Operator Console',
-      pr_review: 'PR Review',
       webchat: 'Webchat',
       code_act: 'Code-Act Sandbox',
-      multi_agent: 'Multi-Agent Delegation',
       system: 'System',
     };
 

@@ -838,13 +838,13 @@ describe('Story A2 Task 7: trusted temporal work context', () => {
         ...executionContext.agentContext!,
         role: {
           ...executionContext.agentContext!.role,
-          allowedTools: ['browser_click'],
+          allowedTools: ['telegram_send'],
         },
       },
     };
 
     await expect(
-      executor.execute('browser_click', { selector: '#danger' } as never, legacyContext)
+      executor.execute('telegram_send', { message: 'must not send' } as never, legacyContext)
     ).rejects.toMatchObject({ code: 'WORKORDER_SUPERSEDED' });
   });
 

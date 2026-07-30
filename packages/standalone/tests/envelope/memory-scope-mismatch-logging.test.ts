@@ -385,7 +385,7 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
 
   it('covers each memory-mutating tool and uses effective scopes for derived ingest paths', async () => {
     const cases: Array<{
-      toolName: 'mama_save' | 'mama_update' | 'mama_add' | 'mama_ingest';
+      toolName: 'mama_save' | 'mama_update';
       input: GatewayToolInput;
       assertWrite: (api: MAMAApiInterface) => void;
       expectedRequestedScope?: { kind: string; id: string };
@@ -411,21 +411,6 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
           outcome: 'success',
         } as unknown as GatewayToolInput,
         assertWrite: (api) => expect(api.updateOutcome).toHaveBeenCalledOnce(),
-      },
-      {
-        toolName: 'mama_add',
-        input: { content: 'remember this from the telegram channel' },
-        assertWrite: (api) => expect(api.ingestMemory).toHaveBeenCalledOnce(),
-        expectedRequestedScope: { kind: 'channel', id: 'telegram:abc' },
-      },
-      {
-        toolName: 'mama_ingest',
-        input: {
-          content: 'remember this direct ingest',
-          scopes: [{ kind: 'global', id: 'system' }],
-        },
-        assertWrite: (api) => expect(api.ingestMemory).toHaveBeenCalledOnce(),
-        expectedRequestedScope: { kind: 'global', id: 'system' },
       },
     ];
 
@@ -471,58 +456,6 @@ describe('Story M1R: memory scope mismatch audit logging', () => {
       );
       db.close();
     }
-  });
-
-  it('audits caller-supplied mama_ingest scopes while executing with derived fallback scopes', async () => {
-    const { db, executor, mamaApi, metricsStore } = createExecutorHarness();
-    const envelope = makeSignedEnvelope({
-      source: 'telegram',
-      channel_id: 'abc',
-      scope: {
-        project_refs: [{ kind: 'project', id: process.env.MAMA_WORKSPACE! }],
-        raw_connectors: ['telegram'],
-        memory_scopes: [{ kind: 'channel', id: 'telegram:abc' }],
-        allowed_destinations: [{ kind: 'telegram', id: 'abc' }],
-      },
-    });
-
-    const result = await executor.execute(
-      'mama_ingest',
-      {
-        content: 'attempted escalation should remain visible',
-        scopes: [{ kind: 'global', id: 'system' }],
-      },
-      {
-        agentId: 'chat_bot',
-        source: 'telegram',
-        channelId: 'abc',
-        agentContext: createTelegramContext(),
-        envelope,
-        executionSurface: 'model_tool',
-      }
-    );
-
-    expect(result).toMatchObject({ success: true });
-    expect(mamaApi.ingestMemory).toHaveBeenCalledWith(
-      expect.objectContaining({
-        scopes: expect.arrayContaining([{ kind: 'channel', id: 'telegram:abc' }]),
-      })
-    );
-    expect(mamaApi.ingestMemory).not.toHaveBeenCalledWith(
-      expect.objectContaining({
-        scopes: expect.arrayContaining([{ kind: 'global', id: 'system' }]),
-      })
-    );
-    const [row] = readGatewayToolRows(db);
-    expect(row.scope_mismatch).toBe(1);
-    expect(parseScopes(row.requested_scopes)).toEqual([auditScope('global', 'system')]);
-    expect(parseScopes(row.envelope_scopes_snapshot)).toEqual([
-      { kind: 'channel', id: 'telegram:abc' },
-    ]);
-    expect(metricsStore.record).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'envelope_scope_mismatch' })
-    );
-    db.close();
   });
 
   it('audits report_publish without creating a memory autosave side effect', async () => {

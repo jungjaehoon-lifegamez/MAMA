@@ -16,7 +16,7 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toContain('Write');
       expect(dts).toContain('Bash');
       expect(dts).toContain('discord_send');
-      expect(dts).toContain('browser_navigate');
+      expect(dts).toContain('telegram_send');
     });
 
     it('includes category headers', () => {
@@ -24,7 +24,6 @@ describe('TypeDefinitionGenerator', () => {
       expect(dts).toContain('// --- memory ---');
       expect(dts).toContain('// --- file ---');
       expect(dts).toContain('// --- communication ---');
-      expect(dts).toContain('// --- browser ---');
       expect(dts).toContain('// --- os ---');
     });
 

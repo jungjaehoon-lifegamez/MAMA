@@ -96,7 +96,10 @@ const DEFAULT_TOOLS_CONFIG = {
   mcp_config: '~/.mama/mama-mcp-config.json',
 };
 
-const SOURCE_GLOBAL_LANES: Record<string, string> = {
+// Exported so the conductor test can PIN that 'conductor' is absent: the
+// conductor must run on its own session:operator:conductor lane, never the
+// global operator lane where Stage-2 workers serialize (deadlock topology).
+export const SOURCE_GLOBAL_LANES: Record<string, string> = {
   viewer: 'viewer',
   system: 'system',
   // Operator work (scheduled reports, briefed worker runs) serializes among
@@ -1017,13 +1020,6 @@ export class AgentLoop {
   }
 
   /**
-   * Set UI command queue for viewer_state / viewer_navigate tools.
-   */
-  setUICommandQueue(queue: import('../api/ui-command-handler.js').UICommandQueue): void {
-    this.mcpExecutor.setUICommandQueue(queue);
-  }
-
-  /**
    * Set validation service for agent_test / delegate validation flows.
    */
   setValidationService(
@@ -1073,20 +1069,6 @@ export class AgentLoop {
   ): void {
     pm.setGatewayToolExecutor(this.mcpExecutor);
     this.mcpExecutor.setAgentProcessManager(pm);
-  }
-
-  /**
-   * Set runtime multi-agent config applier for agent management tools.
-   */
-  setApplyMultiAgentConfig(fn: ((config: Record<string, unknown>) => Promise<void>) | null): void {
-    this.mcpExecutor.setApplyMultiAgentConfig(fn);
-  }
-
-  /**
-   * Set per-agent runtime restarter for agent management tools.
-   */
-  setRestartMultiAgentAgent(fn: ((agentId: string) => Promise<void>) | null): void {
-    this.mcpExecutor.setRestartMultiAgentAgent(fn);
   }
 
   /**

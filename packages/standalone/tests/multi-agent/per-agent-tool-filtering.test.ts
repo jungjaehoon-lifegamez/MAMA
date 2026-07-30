@@ -12,16 +12,16 @@ describe('Per-agent tool filtering', () => {
       expect(prompt).toContain('mama_save');
       expect(prompt).toContain('mama_search');
       expect(prompt).not.toContain('Read');
-      expect(prompt).not.toContain('browser_navigate');
+      expect(prompt).not.toContain('task_list');
     });
 
-    it('should filter to browser + utility tools', () => {
-      const prompt = ToolRegistry.generatePrompt(['browser_*', 'Read', 'Write', 'Bash']);
-      expect(prompt).toContain('browser_navigate');
+    it('should filter to task + utility tools', () => {
+      const prompt = ToolRegistry.generatePrompt(['task_*', 'Read', 'Write', 'Bash']);
+      expect(prompt).toContain('task_list');
       expect(prompt).toContain('Read');
       expect(prompt).toContain('Bash');
       expect(prompt).not.toContain('mama_save');
-      expect(prompt).not.toContain('os_add_bot');
+      expect(prompt).not.toContain('telegram_send');
     });
 
     it('should return full prompt for wildcard', () => {
@@ -42,7 +42,7 @@ describe('Per-agent tool filtering', () => {
       expect(prompt).toContain('Read');
       expect(prompt).toContain('webchat_send');
       expect(prompt).not.toContain('Write');
-      expect(prompt).not.toContain('browser_navigate');
+      expect(prompt).not.toContain('task_list');
     });
   });
 

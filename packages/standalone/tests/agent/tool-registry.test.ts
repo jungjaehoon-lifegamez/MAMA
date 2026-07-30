@@ -12,7 +12,7 @@ describe('ToolRegistry', () => {
       expect(names.length).toBeGreaterThan(25);
       expect(names).toContain('mama_save');
       expect(names).toContain('Read');
-      expect(names).toContain('browser_navigate');
+      expect(names).toContain('telegram_send');
       expect(names).toContain('code_act');
     });
   });
@@ -68,8 +68,6 @@ describe('ToolRegistry', () => {
         'mama_provenance',
         'mama_update',
         'mama_load_checkpoint',
-        'mama_add',
-        'mama_ingest',
       ]);
     });
 
@@ -80,12 +78,12 @@ describe('ToolRegistry', () => {
     });
 
     it('should support mixed patterns', () => {
-      const filtered = ToolRegistry.getFilteredTools(['mama_*', 'Read', 'browser_*']);
+      const filtered = ToolRegistry.getFilteredTools(['mama_*', 'Read', 'task_*']);
       expect(filtered.length).toBeGreaterThan(10);
       const names = filtered.map((t) => t.name);
       expect(names).toContain('mama_save');
       expect(names).toContain('Read');
-      expect(names).toContain('browser_navigate');
+      expect(names).toContain('task_list');
       expect(names).not.toContain('Write');
     });
 
@@ -101,7 +99,7 @@ describe('ToolRegistry', () => {
 
       expect(definitions.length).toBeGreaterThan(0);
       expect(definitions.map((tool) => tool.name)).toContain('mama_search');
-      expect(definitions.map((tool) => tool.name)).not.toContain('os_add_bot');
+      expect(definitions.map((tool) => tool.name)).not.toContain('os_get_config');
       expect(definitions.every((tool) => ToolRegistry.isRegistered(tool.name))).toBe(true);
       expect(definitions.every((tool) => !tool.name.startsWith('mcp__'))).toBe(true);
     });
@@ -130,27 +128,27 @@ describe('ToolRegistry', () => {
     it('should let instance disallowedTools take precedence over allowedTools', () => {
       const definitions = ToolRegistry.getHostToolDefinitions({
         allowedTools: ['*'],
-        disallowedTools: ['Read', 'browser_*ate'],
+        disallowedTools: ['Read', 'task_*te'],
       });
 
       expect(definitions.map((tool) => tool.name)).not.toContain('Read');
-      expect(definitions.map((tool) => tool.name)).not.toContain('browser_navigate');
-      expect(definitions.map((tool) => tool.name)).not.toContain('browser_evaluate');
-      expect(definitions.map((tool) => tool.name)).toContain('browser_click');
+      expect(definitions.map((tool) => tool.name)).not.toContain('task_create');
+      expect(definitions.map((tool) => tool.name)).not.toContain('task_update');
+      expect(definitions.map((tool) => tool.name)).toContain('task_list');
       expect(definitions.map((tool) => tool.name)).toContain('Write');
     });
 
     it('should include viewerOnly tools only for authorized viewer runs', () => {
       const unauthorized = ToolRegistry.getHostToolDefinitions({
-        allowedTools: ['os_add_bot'],
+        allowedTools: ['os_get_config'],
       });
       const authorized = ToolRegistry.getHostToolDefinitions({
-        allowedTools: ['os_add_bot'],
+        allowedTools: ['os_get_config'],
         viewer: true,
       });
 
       expect(unauthorized).toEqual([]);
-      expect(authorized.map((tool) => tool.name)).toEqual(['os_add_bot']);
+      expect(authorized.map((tool) => tool.name)).toEqual(['os_get_config']);
     });
 
     it('should convert metadata to permissive dynamic function definitions', () => {
@@ -205,11 +203,9 @@ describe('ToolRegistry', () => {
         'context_compile',
         'mama_update',
         'mama_load_checkpoint',
-        'mama_add',
-        'mama_ingest',
       ]);
-      expect(grouped.has('browser')).toBe(true);
-      expect(grouped.get('browser')!.length).toBeGreaterThan(5);
+      expect(grouped.has('business_data')).toBe(true);
+      expect(grouped.get('business_data')!.length).toBeGreaterThan(5);
     });
   });
 
@@ -235,14 +231,14 @@ describe('ToolRegistry', () => {
       expect(prompt).toContain('# Gateway Tools');
       expect(prompt).toContain('## MAMA Memory');
       expect(prompt).toContain('mama_save');
-      expect(prompt).toContain('## Browser');
+      expect(prompt).toContain('## Business Data');
     });
 
     it('should generate filtered prompt', () => {
       const prompt = ToolRegistry.generatePrompt(['mama_*']);
       expect(prompt).toContain('mama_save');
       expect(prompt).not.toContain('Read');
-      expect(prompt).not.toContain('browser_navigate');
+      expect(prompt).not.toContain('task_list');
     });
   });
 
@@ -262,12 +258,7 @@ describe('ToolRegistry', () => {
 
   describe('viewerOnly tools', () => {
     it('should mark OS management tools as viewerOnly', () => {
-      const tool = ToolRegistry.getTool('os_add_bot');
-      expect(tool?.viewerOnly).toBe(true);
-    });
-
-    it('should mark agent_test as viewerOnly', () => {
-      const tool = ToolRegistry.getTool('agent_test');
+      const tool = ToolRegistry.getTool('os_get_config');
       expect(tool?.viewerOnly).toBe(true);
     });
 

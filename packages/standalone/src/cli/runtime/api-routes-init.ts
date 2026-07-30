@@ -152,10 +152,6 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     res.json({ ok: true, message: 'Viewer now renders data directly from Intelligence API' });
   });
 
-  // ── Conductor Persona (section injection — non-destructive) ────────
-  const { ensureConductorPersona } = await import('../../multi-agent/conductor-persona.js');
-  ensureConductorPersona();
-
   if (dashboardAgentConfigured || wikiAgentConfigured) {
     // Merge code-act MCP server into mama-mcp-config.json.
     // Makes code_act available to configured legacy self-paced agents.
