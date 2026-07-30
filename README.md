@@ -44,6 +44,22 @@ Three things it is **not**: a chatbot with good memory (it runs while nobody is
 talking to it), a memory database (storage is the input; the report is the
 product), or a hosted service (no account, no cloud, no upload).
 
+## Why not a task agent, or your chat app's AI?
+
+Both exist, both are good — and both answer a different question.
+
+- **A task coworker finishes work you already know about.** You still have to notice that
+  the deadline moved before you can delegate it. MAMA's job is the noticing.
+- **A chat integration reads Slack when you ask.** Your clients are on Chatwork, iMessage,
+  Telegram DMs, a Trello board, an Obsidian vault. MAMA reads fourteen sources — the messy
+  ones where the money actually talks.
+- **Both start from zero every time.** MAMA's answers are lookups in a record it has been
+  keeping on your disk, with the source message linked — not a fresh search that dies with
+  the session.
+- **Neither can say "third day unanswered."** That sentence needs state: what changed since
+  the last report, what is still open, what got worse. MAMA keeps that state. A scheduled
+  summary re-reads the world and has nothing to compare it to.
+
 ## Built to be checked, not believed
 
 A system that acts on its own is tolerable only if you can audit it afterwards.
@@ -122,12 +138,39 @@ Dependency direction is one-way: nothing depends on the daemon.
 
 ## Roadmap
 
-|                    |                                                                                                                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Done (v0.15–v0.28) | Search overhaul → connector framework → the operator runtime → owner console → durable workorder pipeline. Full history in the [CHANGELOG](CHANGELOG.md).                 |
-| **Now (v0.29)**    | Evidence and effects: every durable change names its cause, or admits it has none.                                                                                        |
-| Next               | Context reuse (closing the 15.9x → 144.8x gap), a health surface that makes the daemon's own silence loud, attribution for the autonomous lanes that do most of the work. |
-| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                                             |
+|                    |                                                                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Done (v0.15–v0.28) | Search overhaul → connector framework → the operator runtime → owner console → durable workorder pipeline. Full history in the [CHANGELOG](CHANGELOG.md). |
+| **Now (v0.29)**    | Evidence and effects: every durable change names its cause, or admits it has none.                                                                        |
+| Next               | Eight concrete items, unpacked below.                                                                                                                     |
+| v1.0               | Team mode: a shared, scoped knowledge graph. General release.                                                                                             |
+
+"Next", unpacked — each item traceable to a measurement, or to a competitor doing it better:
+
+- **Stable prompt prefixes for the autonomous lanes.** Cache reuse is 15.9x against a
+  neighbouring operator's 144.8x on the same machine. The 231 KB → 57 KB prompt cut already
+  halved per-call cost; the same discipline applies to the report and board lanes.
+- **A health surface that makes the daemon's own silence loud.** The authoring step once
+  died for three days unnoticed. A scheduled leg that misses N consecutive ticks should page
+  the owner, and every subprocess death should record its exit code, stderr, and stdout.
+- **Causes for the autonomous lanes.** Most changes are made by runs nobody prompted. A
+  board run should receive its event window as the cause of what it changes, the way work
+  orders already do.
+- **Zero-yield authoring that says why.** 84% of authoring passes create nothing. A pass
+  that declines should record what it rejected, and a near-duplicate should strengthen the
+  existing trigger instead of vanishing.
+- **A surface that can only answer "nothing" fails the build.** Two shipped APIs turned out
+  to be permanently empty. The drift guard that now covers the tool catalog generalizes to
+  every advertised surface.
+- **An approval inbox.** Taken from OpenWorker: unattended operation queues decisions for
+  the owner — it never raises its own autonomy.
+- **Permission language you can say in one breath.** Also from OpenWorker: describe every
+  action as read / write-local / external-send, and put the standing invariant — _external
+  sends never happen without an explicit envelope, by design_ — on the surface instead of
+  in a document.
+- **A first briefing in the first five minutes.** Taken from Claude's Slack integration:
+  one connector, first poll, first report — the product proves itself before the reader has
+  to believe anything.
 
 ## Development
 
