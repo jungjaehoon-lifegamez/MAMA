@@ -88,10 +88,18 @@ export class ConductorSession {
   }
 
   shouldRecycle(): string | null {
-    if (this.suspicion) return `suspicion: ${this.suspicion}`;
-    if (this.now() - this.bornAt > this.policy.maxAgeMs) return 'max_age';
-    if (this.now() - this.lastRunAt > this.policy.idleExpiryMs) return 'idle_expiry';
-    if (this.turns >= this.policy.maxTurns) return 'max_turns';
+    if (this.suspicion) {
+      return `suspicion: ${this.suspicion}`;
+    }
+    if (this.now() - this.bornAt > this.policy.maxAgeMs) {
+      return 'max_age';
+    }
+    if (this.now() - this.lastRunAt > this.policy.idleExpiryMs) {
+      return 'idle_expiry';
+    }
+    if (this.turns >= this.policy.maxTurns) {
+      return 'max_turns';
+    }
     if (this.pool.getTokenUsage(CONDUCTOR_POOL_KEY) >= this.policy.maxTokens) {
       return 'max_tokens';
     }

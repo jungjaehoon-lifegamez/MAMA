@@ -169,7 +169,9 @@ export class ConductorInbox {
       for (const row of rows) seenIds.add(row.event_id);
     }
     const fresh = batch.eventIds.filter((id) => !seenIds.has(id));
-    if (fresh.length === 0) return null; // fully redelivered - already durable
+    if (fresh.length === 0) {
+      return null; // fully redelivered - already durable
+    }
 
     const run = this.db.transaction(() => {
       const now = this.now();
@@ -194,9 +196,13 @@ export class ConductorInbox {
           attempts: number;
         }
       | undefined;
-    if (!row) return null;
+    if (!row) {
+      return null;
+    }
     const claimed = this.stmtClaimUpdate.run(this.now(), row.id);
-    if (claimed.changes !== 1) return null; // lost a race; caller just tries again next tick
+    if (claimed.changes !== 1) {
+      return null; // lost a race; caller just tries again next tick
+    }
     return {
       id: row.id,
       channelKey: row.channel_key,
@@ -218,7 +224,9 @@ export class ConductorInbox {
    */
   retry(id: number, error: string): 'pending' | 'dead' | 'noop' {
     const result = this.stmtRetry.run(error.slice(0, 500), id);
-    if (result.changes !== 1) return 'noop'; // replayStale already flipped it
+    if (result.changes !== 1) {
+      return 'noop'; // replayStale already flipped it
+    }
     const row = this.stmtRetryStatus.get(id) as { status: string } | undefined;
     return row?.status === 'dead' ? 'dead' : 'pending';
   }
