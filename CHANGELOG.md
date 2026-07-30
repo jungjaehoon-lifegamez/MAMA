@@ -4,6 +4,67 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.30.0] - 2026-07-30
+
+S1 Conductor Foundations (PR #215) - the first sprint of the stateful-operator
+redesign. Everything ships behind `conductor.enabled` (default **false**); the
+inbox records shadow-mode data either way.
+
+### Added
+
+- **Durable conductor inbox.** Drained channel batches persist to
+  `conductor_inbox` BEFORE the delta cursor commits - a crash between the two
+  redelivers, and per-event dedupe absorbs the duplicate (including PARTIAL
+  redelivery under a different batch boundary). Claims are leases; retry and
+  lease-replay share one 5-attempt poison cap; acked (7d), stale-pending (7d)
+  and dedupe (30d) rows all have bounded retention; a dead batch is loud.
+- **Conductor session lifecycle.** One long-lived judgment session on its own
+  `session:conductor:main` lane - the lane comes from the session key's FIRST
+  segment, and tests pin that axis, because `operator:conductor` would have
+  landed on the global operator lane where Stage-2 workers serialize. Recycle
+  on age (6h) / turns (400) / tokens (150k, below the pool's own 160k drop) /
+  idle (25min, below the pool's 30min drop) / suspicion; every fresh session
+  owes the board one re-ground before its first judgment, and a failed run
+  does not consume it. Fresh turns go through agent-loop's sanctioned
+  `freshSession` reset - `resumeSession` alone cannot express "start over".
+- **Board re-ground builder.** What `task_list` shows, newest-first, bounded
+  per status with an honest `(+N more open)` total; titles sanitized against
+  close-marker forgery.
+- **Conductor runner.** Consumes the inbox up to 8 batches per tick, never
+  awaits a worker from its model turn, acks only successful judgments. Batch
+  lines enter the prompt only through `wrapUntrustedContent` under the
+  evidence instruction; runs carry a dedicated conductor policy (no sends, no
+  memory writes, no compile, no raw connectors) and a per-run envelope,
+  mirroring the report lane.
+- **Boot wiring behind `conductor.enabled` (default false).** Claude backend
+  pinned in S1; budgets validated loudly at boot (a zero tickMs would have
+  spun the event loop); shutdown awaits an in-flight tick before the operator
+  DB closes.
+
+### Changed
+
+- **The report gathers the native board.** The full-report gather instructs
+  `task_list`; all four `kagemusha_*` tools become granted-but-silent (the
+  owner's personal deployment only). Lane-wiring pins both the flip and that
+  no instruction line contains `kagemusha_` - MAMA presupposes no Kagemusha.
+- **`os_get_config` masking descends arrays** and masks non-string sensitive
+  scalars - a token inside `multi_agent.agents[]` escaped the only redaction
+  layer the tool has.
+
+### Removed
+
+- **28 verified-dead gateway tools** (zero dispatches over the full trace
+  history, no instructing brief): `browser_*` (10), `agent_*` (6),
+  `viewer_*` (3), bot ops (6), `pr_review_threads`, `mama_add`,
+  `mama_ingest`. Registry 78 → 50; catalog -15%. Kept on TG-03/04 contract
+  evidence despite zero calls: the send surface, `create_fb_overlay`,
+  `mama_load_checkpoint`, `mama_provenance`, `task_external_correlation`.
+  Downstream swept: executor cases, host-bridge descriptors/tiers, dead
+  boot wiring, the conductor-persona injector (it wrote culled-tool
+  instructions into user personas every boot), stale prompt text (a new pin
+  test keeps code-act instructions honest against the registry), the
+  browser-tool module and its `playwright` dependency.
+
 ## mama-os [0.29.2] - 2026-07-30
 
 ### Fixed
