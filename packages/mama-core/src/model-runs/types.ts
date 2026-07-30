@@ -55,6 +55,8 @@ export interface AppendToolTraceInput {
   execution_status?: string | null;
   duration_ms?: number | null;
   envelope_hash?: string | null;
+  /** Thrower's closed cause (e.g. envelope_missing). Carried, never invented. */
+  failure_code?: string | null;
   created_at?: number;
 }
 
@@ -68,5 +70,6 @@ export interface ToolTraceRecord {
   execution_status: string | null;
   duration_ms: number;
   envelope_hash: string | null;
+  failure_code: string | null;
   created_at: number;
 }
