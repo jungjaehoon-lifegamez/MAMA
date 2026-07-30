@@ -159,7 +159,7 @@ export const EVIDENCE_EFFECTS_DDL = `
     run_id TEXT,
     channel_id TEXT,
     cause_state TEXT NOT NULL CHECK (cause_state IN ('attributed', 'unattributed')),
-    cause_kind TEXT NOT NULL DEFAULT 'clock'
+    cause_kind TEXT NOT NULL
       CHECK (cause_kind IN ('event', 'owner_message', 'clock', 'card_transition')),
     source_event_ids_json TEXT NOT NULL
       CHECK (
@@ -290,29 +290,21 @@ function migrateCauseKind(adapter: EffectAdapter): void {
       )
       .run();
   }
+  // run_id-bearing unattributed rows are scheduled runs (board:full and
+  // friends): the ALTER's DEFAULT already left them 'clock', which is the
+  // intended label - no UPDATE needed (a `cause_kind <> 'clock'` predicate
+  // here would be dead code, review).
   adapter
     .prepare(
-      `UPDATE evidence_effects SET cause_kind = 'clock'
-        WHERE cause_state = 'unattributed' AND cause_kind <> 'clock' AND run_id IS NOT NULL`
+      hasTemporalTable
+        ? `UPDATE evidence_effects SET cause_kind = 'owner_message'
+             WHERE cause_state = 'unattributed' AND run_id IS NULL
+               AND NOT EXISTS (SELECT 1 FROM operator_temporal_effects t
+                                WHERE CAST(t.task_id AS TEXT) = evidence_effects.target_id)`
+        : `UPDATE evidence_effects SET cause_kind = 'owner_message'
+             WHERE cause_state = 'unattributed' AND run_id IS NULL`
     )
     .run();
-  adapter
-    .prepare(
-      `UPDATE evidence_effects SET cause_kind = 'owner_message'
-        WHERE cause_state = 'unattributed' AND run_id IS NULL
-          AND NOT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='operator_temporal_effects')`
-    )
-    .run();
-  if (hasTemporalTable) {
-    adapter
-      .prepare(
-        `UPDATE evidence_effects SET cause_kind = 'owner_message'
-          WHERE cause_state = 'unattributed' AND run_id IS NULL
-            AND NOT EXISTS (SELECT 1 FROM operator_temporal_effects t
-                             WHERE CAST(t.task_id AS TEXT) = evidence_effects.target_id)`
-      )
-      .run();
-  }
 }
 
 export class EffectWithoutCauseError extends Error {

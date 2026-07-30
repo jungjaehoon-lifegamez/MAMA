@@ -251,15 +251,15 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     };
 
     // First run after 10s (let connectors poll first), then every 30 min
+    // ONE constant feeds both the timer and the declared cadence - if they
+    // drift apart the watchdog pages on a schedule nobody is running.
+    const DASHBOARD_AGENT_INTERVAL_MS = 30 * 60 * 1000;
     setTimeout(runDashboardAgent, 10_000);
-    getLegCadence()?.declare('dashboard-agent', 30 * 60 * 1000);
-    setInterval(
-      () => {
-        getLegCadence()?.beat('dashboard-agent');
-        runDashboardAgent();
-      },
-      30 * 60 * 1000
-    );
+    getLegCadence()?.declare('dashboard-agent', DASHBOARD_AGENT_INTERVAL_MS);
+    setInterval(() => {
+      getLegCadence()?.beat('dashboard-agent');
+      runDashboardAgent();
+    }, DASHBOARD_AGENT_INTERVAL_MS);
 
     // Manual trigger (owner-forced: the workorder carries force=true so the
     // worker brief skips its NO_UPDATE delta gate)

@@ -19,11 +19,6 @@
  */
 import type { SQLiteDatabase } from '../sqlite.js';
 
-export interface LegDeclaration {
-  name: string;
-  declaredCadenceMs: number;
-}
-
 export interface LegPageEvent {
   name: string;
   declaredCadenceMs: number;
@@ -37,6 +32,8 @@ export interface LegCadenceOptions {
   quietStartHour?: number;
   quietEndHour?: number;
 }
+
+const OVERDUE_CADENCE_MULTIPLIER = 2;
 
 export class LegCadence {
   private readonly legs = new Map<string, number>();
@@ -71,18 +68,25 @@ export class LegCadence {
     this.stmtSetPaged = this.db.prepare(`UPDATE leg_beats SET paged_at = ? WHERE name = ?`);
   }
 
-  /** Declare a leg. First declaration seeds last_beat_at = now (boot counts). */
+  /**
+   * Declare a leg. BOOT COUNTS AS A BEAT, always: seeding only on first
+   * declaration meant a restart after downtime paged every leg for the
+   * outage the daemon just recovered from (review) - the watchdog watches
+   * the running daemon's legs, not the graveyard shift.
+   */
   declare(name: string, declaredCadenceMs: number): void {
     this.legs.set(name, declaredCadenceMs);
-    const row = this.stmtRow.get(name) as { last_beat_at: number } | undefined;
-    if (!row) {
-      this.stmtBeat.run(name, this.now());
-    }
+    this.beat(name);
   }
 
   /** One line per leg tick. Undeclared beats are recorded, not errors. */
   beat(name: string): void {
-    this.stmtBeat.run(name, this.now());
+    try {
+      this.stmtBeat.run(name, this.now());
+    } catch {
+      // A beat after DB close (shutdown race on a bare setInterval) must
+      // not surface as an uncaughtException - observability never throws.
+    }
   }
 
   private isQuietHour(): boolean {
@@ -101,6 +105,15 @@ export class LegCadence {
   check(): { pages: LegPageEvent[]; recoveries: string[] } {
     const pages: LegPageEvent[] = [];
     const recoveries: string[] = [];
+    try {
+      this.checkInto(pages, recoveries);
+    } catch {
+      // A check against a closing DB returns empty, never throws.
+    }
+    return { pages, recoveries };
+  }
+
+  private checkInto(pages: LegPageEvent[], recoveries: string[]): void {
     const now = this.now();
     for (const [name, cadence] of this.legs) {
       const row = this.stmtRow.get(name) as
@@ -110,7 +123,7 @@ export class LegCadence {
         continue;
       }
       const silentFor = now - row.last_beat_at;
-      const overdue = silentFor > cadence * 2;
+      const overdue = silentFor > cadence * OVERDUE_CADENCE_MULTIPLIER;
       if (overdue && row.paged_at === null) {
         if (this.isQuietHour()) {
           // Deferred, not dropped: still unpaged next check after sunrise.
@@ -123,7 +136,6 @@ export class LegCadence {
         this.stmtSetPaged.run(null, name);
       }
     }
-    return { pages, recoveries };
   }
 }
 

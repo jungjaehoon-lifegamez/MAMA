@@ -91,7 +91,48 @@ describe('S2 Task 0: failure_code carried into tool traces', () => {
     expect(appendToolTrace).toHaveBeenCalledWith(
       expect.objectContaining({
         tool_name: 'mama_save',
+        execution_status: 'failed',
         failure_code: null,
+      })
+    );
+  });
+
+  it('a thrown AgentError carries its structured code - the error branch', async () => {
+    // AgentErrors pass the executor's catch unwrapped, so a handler dying
+    // with a closed cause reaches extractFailureCode as error.code (the
+    // generic TOOL_ERROR wrapper is filtered - it names nothing).
+    const { AgentError } = await import('../../src/agent/types.js');
+    const throwing = new GatewayToolExecutor({
+      mamaApi: {
+        save: vi.fn().mockImplementation(() => {
+          throw new AgentError('scope denied', 'memory_scope_out_of_scope', undefined, false);
+        }),
+        search: vi.fn(),
+        recallMemory: vi.fn(),
+        appendToolTrace,
+        beginModelRun: vi.fn().mockResolvedValue({ model_run_id: 'run_3' }),
+        commitModelRun: vi.fn().mockResolvedValue({ model_run_id: 'run_3' }),
+        failModelRun: vi.fn().mockResolvedValue({ model_run_id: 'run_3' }),
+      } as unknown as MAMAApiInterface,
+    });
+    await throwing
+      .execute(
+        'mama_save',
+        { type: 'decision', topic: 't', decision: 'd', reasoning: 'r' },
+        {
+          agentId: 'host',
+          source: 'watch',
+          channelId: 'c1',
+          executionSurface: 'direct',
+          modelRunId: 'run_3',
+        }
+      )
+      .catch(() => undefined);
+    expect(appendToolTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tool_name: 'mama_save',
+        execution_status: 'failed',
+        failure_code: 'memory_scope_out_of_scope',
       })
     );
   });

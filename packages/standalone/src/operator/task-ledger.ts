@@ -159,7 +159,7 @@ export interface ChangeOrigin {
    * the ledger's only fallback is 'owner_message' (the human-adjacent
    * bucket - a wrong 'clock' fabricates a schedule that never fired).
    */
-  causeKind?: 'owner_message' | 'clock' | 'card_transition';
+  causeKind?: import('../evidence/effects.js').UnattributedCauseKind;
   /**
    * The events this write responds to.
    *
@@ -799,11 +799,18 @@ export class TaskLedger implements TaskSource {
             ...(input.confirmed !== undefined ? { confirmed: input.confirmed } : {}),
             ...(input.latest_event !== undefined ? { latest_event: input.latest_event } : {}),
           },
-          // A duplicate delivery of the same event: here the cause genuinely is known,
-          // because it is the event the row is keyed on.
+          // A duplicate delivery of the same event. The HOST batch still wins
+          // (review: the agent-supplied source_event_id was overriding it here,
+          // letting a model forge an attributed cause on every judgment-borne
+          // create); the keyed event is only the fallback when the host
+          // carried nothing.
           {
             ...origin,
-            causeEventIds: input.source_event_id ? [input.source_event_id] : origin.causeEventIds,
+            causeEventIds: origin.causeEventIds?.length
+              ? origin.causeEventIds
+              : input.source_event_id
+                ? [input.source_event_id]
+                : origin.causeEventIds,
           }
         );
       }

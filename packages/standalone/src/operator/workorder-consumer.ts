@@ -126,7 +126,8 @@ export const WORKORDER_MAX_ATTEMPTS: Record<WorkOrderKind, number> = {
   temporal: TEMPORAL_WORKORDER_MAX_ATTEMPTS,
 };
 
-const DEFAULT_TICK_MS = 60_000;
+/** Exported so the boot-time leg declaration and the timer share one number. */
+export const DEFAULT_TICK_MS = 60_000;
 const ALARM_DEDUP_MS = 6 * 60 * 60 * 1000;
 const MAX_EFFECT_VERDICT_REASON_LENGTH = 500;
 

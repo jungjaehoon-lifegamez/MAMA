@@ -80,6 +80,22 @@ describe('LegCadence', () => {
     expect(legs.check().pages).toHaveLength(1);
   });
 
+  it('a non-wrapping quiet window defers inside and pages outside', () => {
+    const legs = new LegCadence(db, {
+      now: () => t,
+      hourOfDay: () => hour,
+      quietStartHour: 1,
+      quietEndHour: 5,
+    });
+    legs.declare('report', 1_000);
+    legs.beat('report');
+    t += 3_000;
+    hour = 3; // inside 01-05
+    expect(legs.check().pages).toEqual([]);
+    hour = 5; // boundary: end hour is exclusive - quiet is over
+    expect(legs.check().pages).toHaveLength(1);
+  });
+
   it('boot seeds the clock - a leg that never beats still pages eventually', () => {
     const legs = make();
     legs.declare('never-runs', 1_000);
