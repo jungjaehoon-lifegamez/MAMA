@@ -617,6 +617,87 @@ export interface WorkOrderAgentPolicy {
 }
 
 /**
+ * The conductor's grant (S1). Reads and judgment surfaces plus the ONE write
+ * family the spec's center names: committing work orders and board cards. No
+ * sends, no memory writes, no compile - the untrusted-input lane stays the
+ * most restricted lane, not the least (review F2/security).
+ */
+export const CONDUCTOR_TOOL_POLICY = {
+  roleName: 'conductor',
+  allowedTools: [
+    'board_read',
+    'changes_read',
+    'mama_recall',
+    'mama_search',
+    'task_create',
+    'task_list',
+    'task_update',
+    'workorder_request',
+    'workorder_status',
+  ],
+} as const satisfies WorkOrderToolPolicy;
+
+/** Mirrors buildOperatorReportAgentPolicy - same shape, conductor grant. */
+export function buildConductorAgentPolicy(
+  model: string,
+  backend: RuntimeBackend
+): WorkOrderAgentPolicy {
+  const blockedTools: string[] = [];
+  const innerTools = uniqueToolList(CONDUCTOR_TOOL_POLICY.allowedTools);
+  const allowedTools = uniqueToolList([...innerTools]);
+  const agentContext: AgentContext = {
+    source: 'conductor',
+    platform: 'cli',
+    roleName: CONDUCTOR_TOOL_POLICY.roleName,
+    role: {
+      allowedTools,
+      blockedTools,
+      allowedPaths: [],
+      systemControl: false,
+      sensitiveAccess: false,
+      model,
+    },
+    session: {
+      sessionId: 'conductor:main',
+      channelId: 'conductor',
+      startedAt: new Date(),
+    },
+    capabilities: allowedTools,
+    limitations: blockedTools.map((tool) => `Cannot use ${tool}`),
+    // Write tier: board cards and work orders only - matches the envelope.
+    tier: 2,
+    backend,
+  };
+  return { agentContext, gatewayToolsPrompt: ToolRegistry.generatePrompt(innerTools) };
+}
+
+/**
+ * Merge + validate the conductor config at boot. No-fallback: a malformed
+ * value must crash loudly, not silently clamp (review F10: tickMs 0 spins
+ * the event loop with a DB write per iteration).
+ */
+export function resolveConductorConfig(
+  config: Pick<import('../config/types.js').MAMAConfig, 'conductor'>
+): import('../config/types.js').ConductorConfig {
+  const resolved = {
+    ...DEFAULT_CONFIG.conductor!,
+    ...(config.conductor ?? {}),
+  };
+  const positive: Array<[string, number, number]> = [
+    ['tickMs', resolved.tickMs, 1_000],
+    ['maxAgeMs', resolved.maxAgeMs, 60_000],
+    ['maxTurns', resolved.maxTurns, 1],
+    ['maxTokens', resolved.maxTokens, 1_000],
+  ];
+  for (const [name, value, min] of positive) {
+    if (!Number.isFinite(value) || value < min) {
+      throw new Error(`conductor.${name} must be a number >= ${min}, got ${String(value)}`);
+    }
+  }
+  return resolved;
+}
+
+/**
  * Build the Code-Act role the operator report lane runs under.
  *
  * Without an agentContext.role, roleAllowsOuterCodeAct() returns false (agent-loop.ts), the
@@ -1438,12 +1519,10 @@ export async function runAgentLoop(
   }
   // S1: durable conductor inbox - constructed UNCONDITIONALLY so drained
   // batches persist before the cursor commits even while the conductor is
-  // disabled (that accumulation IS the shadow-mode data).
+  // disabled (that accumulation IS the shadow-mode data; retention inside
+  // ConductorInbox keeps it bounded).
   const conductorInbox = new ConductorInbox(operatorDb);
-  const conductorConfig = {
-    ...DEFAULT_CONFIG.conductor!,
-    ...(config.conductor ?? {}),
-  };
+  const conductorConfig = resolveConductorConfig(config);
   if (conductorConfig.enabled && runtimeBackend !== 'claude') {
     // S1 pins the claude backend: codex sessions do not reset on token usage
     // (session-pool.ts), so the lifecycle contract cannot hold there yet.
@@ -1716,6 +1795,14 @@ export async function runAgentLoop(
   // connector_event_index) and after mama-core initDB. Read-only: recall/surface/log.
   const { isOperatorTriggerLoopEnabled, resolveOperatorReportChatId } =
     await import('../../operator/runtime-config.js');
+  if (!isOperatorTriggerLoopEnabled(process.env) && conductorConfig.enabled) {
+    // The conductor lives inside the trigger-loop branch (its inbox is fed by
+    // the loop's drain). enabled=true with the loop off would otherwise boot
+    // silently into a conductor that never runs (review).
+    console.error(
+      '[conductor] conductor.enabled=true but the trigger loop is disabled - the conductor will NOT run. Enable the trigger loop or disable the conductor.'
+    );
+  }
   if (isOperatorTriggerLoopEnabled(process.env)) {
     let stopTriggerAgentRuntime: (() => Promise<void>) | undefined;
     // Component isolation (PR #119 review): a trigger-loop bootstrap failure (bad import,
@@ -1939,27 +2026,64 @@ export async function runAgentLoop(
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
 
       // S1: the stateful conductor consumes the durable inbox on its own
-      // session:operator:conductor lane. Default-off; the inbox records
+      // session:conductor:main lane. Default-off; the inbox records
       // either way (shadow-mode data).
       let conductorTimer: NodeJS.Timeout | null = null;
+      let conductorTickPromise: Promise<unknown> | null = null;
       if (conductorConfig.enabled) {
         const conductorSession = new ConductorSession(getSessionPool(), {
           maxAgeMs: conductorConfig.maxAgeMs,
           maxTurns: conductorConfig.maxTurns,
           maxTokens: conductorConfig.maxTokens,
         });
+        const conductorPolicy = buildConductorAgentPolicy(config.agent.model, runtimeBackend);
+        // Per-run envelope, mirroring the report lane: without it every
+        // model_tool call dies 'envelope_missing' while the run resolves and
+        // acks the batch - zero work, green ledger (review F2).
+        const conductorIssueEnvelope =
+          envelopeBootstrap.envelopeAuthority && envelopeBootstrap.metadata.issuance !== 'off'
+            ? async () => {
+                const projectId = resolveReactiveProjectRoot(config, process.env);
+                const wallSeconds = 300; // one judgment turn, not a gather run
+                return envelopeBootstrap.envelopeAuthority!.buildAndPersist({
+                  agent_id: 'conductor',
+                  instance_id: randomUUID(),
+                  source: 'watch',
+                  channel_id: 'conductor',
+                  trigger_context: { user_text: '<conductor batch judgment>' },
+                  scope: {
+                    project_refs: [{ kind: 'project' as const, id: projectId }],
+                    // The conductor reads channel text from its own durable
+                    // inbox, never from connectors - no raw read authority.
+                    raw_connectors: [],
+                    memory_scopes: resolveCodeActMemoryScopes(
+                      deriveMemoryScopes({
+                        source: 'conductor',
+                        channelId: 'conductor',
+                        projectId,
+                      }),
+                      getAdapter()
+                    ),
+                    allowed_destinations: [], // NO send surface
+                  },
+                  tier: 2,
+                  budget: { wall_seconds: wallSeconds },
+                  expires_at: new Date(Date.now() + wallSeconds * 1000 + 30_000).toISOString(),
+                });
+              }
+            : undefined;
         const conductor = new Conductor({
           inbox: conductorInbox,
           session: conductorSession,
           runner: agentLoop,
           reground: () => buildBoardReground(taskLedger),
+          agentContext: conductorPolicy.agentContext,
+          issueEnvelope: conductorIssueEnvelope,
           log: (line) => console.log(line),
         });
-        let conductorTickInFlight = false;
         conductorTimer = setInterval(() => {
-          if (conductorTickInFlight) return; // never overlap ticks
-          conductorTickInFlight = true;
-          void conductor
+          if (conductorTickPromise) return; // never overlap ticks
+          conductorTickPromise = conductor
             .tick()
             .catch((err) =>
               console.error(
@@ -1967,7 +2091,7 @@ export async function runAgentLoop(
               )
             )
             .finally(() => {
-              conductorTickInFlight = false;
+              conductorTickPromise = null;
             });
         }, conductorConfig.tickMs);
         console.log(`✓ Conductor enabled (tick ${conductorConfig.tickMs}ms)`);
@@ -1979,6 +2103,11 @@ export async function runAgentLoop(
         stop: async () => {
           triggerLoopNudge.current = null;
           if (conductorTimer) clearInterval(conductorTimer);
+          // Let an in-flight tick finish BEFORE the operator DB closes: a
+          // SIGTERM mid-ack otherwise throws on a closed handle, the row
+          // stays 'claimed', and every launchd restart replays the batch
+          // (review F7).
+          if (conductorTickPromise) await conductorTickPromise;
           stopTriggerLoop();
           await triggerAgentRuntime.stop();
           // The shared operator DB handle is closed by the unconditional stop
