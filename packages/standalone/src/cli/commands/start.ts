@@ -973,28 +973,6 @@ export async function runAgentLoop(
   const { metricsStore, metricsCleanup, healthService, healthCheckService, metricsInterval } =
     await initMetrics(config, db, EMBEDDING_PORT);
 
-  // Ensure swarm_tasks table exists (used by Graph API delegations endpoint)
-  db.prepare(
-    `
-    CREATE TABLE IF NOT EXISTS swarm_tasks (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      description TEXT NOT NULL,
-      category TEXT NOT NULL,
-      priority INTEGER DEFAULT 0,
-      wave INTEGER NOT NULL,
-      status TEXT DEFAULT 'pending',
-      claimed_by TEXT,
-      claimed_at INTEGER,
-      completed_at INTEGER,
-      result TEXT,
-      files_owned TEXT,
-      depends_on TEXT,
-      retry_count INTEGER DEFAULT 0
-    )
-  `
-  ).run();
-
   // ── Phase 2: Session + Tool + Agent Loop ──────────────────────────────────
 
   const sessionStore = new SessionStore(db);

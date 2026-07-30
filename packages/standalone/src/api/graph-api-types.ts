@@ -42,19 +42,6 @@ export interface CheckpointData {
 
 // === Handler Options ===
 
-export interface DelegationHistoryEntry {
-  id: string;
-  fromAgentId: string;
-  toAgentId: string;
-  task: string;
-  background: boolean;
-  status: 'active' | 'completed' | 'failed';
-  startedAt: string;
-  completedAt: string | null;
-  duration: number | null;
-  error: string | null;
-}
-
 export interface CodeActResult {
   success: boolean;
   value?: unknown;
@@ -74,8 +61,6 @@ export interface CodeActExecutionContext {
 
 export interface GraphHandlerOptions {
   getAgentStates?: () => Map<string, string>;
-  getSwarmTasks?: (limit: number) => SwarmTask[];
-  getRecentDelegations?: (limit: number) => DelegationHistoryEntry[];
   applyMultiAgentConfig?: (config: Record<string, unknown>) => Promise<void>;
   restartMultiAgentAgent?: (agentId: string) => Promise<void>;
   stopMultiAgentAgent?: (agentId: string) => Promise<void>;
@@ -93,18 +78,6 @@ export interface GraphHandlerOptions {
   sessionsDb?: import('../sqlite.js').SQLiteDatabase;
   /** UI command queue for bidirectional Agent↔Viewer communication */
   uiCommandQueue?: import('./ui-command-handler.js').UICommandQueue;
-}
-
-export interface SwarmTask {
-  id: string;
-  description: string;
-  category: string;
-  wave: number;
-  status: string;
-  claimed_by: string | null;
-  claimed_at: number | null;
-  completed_at: number | null;
-  result: string | null;
 }
 
 // === Stats Types ===

@@ -255,16 +255,6 @@ export interface MultiAgentAgentsResponse {
 export interface MultiAgentDashboardStatus {
   enabled: boolean;
   agents: MultiAgentAgent[];
-  recentDelegations?: {
-    id?: string;
-    description?: string;
-    category?: string;
-    wave?: number;
-    status?: string;
-    claimedBy?: string | null;
-    claimedAt?: number | null;
-    completedAt?: number | null;
-  }[];
   activeChains?: number;
 }
 

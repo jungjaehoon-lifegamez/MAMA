@@ -2425,12 +2425,6 @@ function createGraphHandler(options: GraphHandlerOptions = {}): GraphHandlerFn {
       return true;
     }
 
-    // Route: GET /api/multi-agent/delegations - get recent delegations
-    if (pathname === '/api/multi-agent/delegations' && req.method === 'GET') {
-      await handleMultiAgentDelegationsRequest(req, res, options);
-      return true;
-    }
-
     // Route: GET /api/mcp-servers - get available MCP servers from config
     if (pathname === '/api/mcp-servers' && req.method === 'GET') {
       await handleMCPServersRequest(req, res);
@@ -3590,15 +3584,11 @@ async function handleMultiAgentStatusRequest(
     // Count active chains (agents currently busy)
     const busyCount = agents.filter((a) => a.status === 'busy').length;
 
-    // Get recent delegations from DelegationManager history
-    const recentDelegations = options.getRecentDelegations ? options.getRecentDelegations(20) : [];
-
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         enabled: multiAgentConfig.enabled || false,
         agents,
-        recentDelegations,
         activeChains: busyCount,
       })
     );
@@ -3923,67 +3913,6 @@ async function handleMultiAgentUpdateAgentRequest(
       JSON.stringify({
         error: true,
         code: 'MULTI_AGENT_UPDATE_ERROR',
-        message,
-      })
-    );
-  }
-}
-
-async function handleMultiAgentDelegationsRequest(
-  req: IncomingMessage,
-  res: ServerResponse,
-  options: GraphHandlerOptions = {}
-): Promise<void> {
-  try {
-    const url = new URL(req.url!, `http://${req.headers.host}`);
-    const limit = parseInt(url.searchParams.get('limit') || '20', 10);
-
-    let delegations: Array<{
-      id: string;
-      description: string;
-      category: string;
-      wave: number;
-      status: string;
-      claimedBy: string | null;
-      claimedAt: number | null;
-      completedAt: number | null;
-      result: string | null;
-    }> = [];
-    if (options.getSwarmTasks) {
-      try {
-        const tasks = options.getSwarmTasks(limit);
-        delegations = tasks.map((task) => ({
-          id: task.id,
-          description: task.description,
-          category: task.category,
-          wave: task.wave,
-          status: task.status,
-          claimedBy: task.claimed_by,
-          claimedAt: task.claimed_at,
-          completedAt: task.completed_at,
-          result: task.result,
-        }));
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[GraphAPI] Failed to fetch swarm tasks:', msg);
-      }
-    }
-
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        delegations,
-        count: delegations.length,
-      })
-    );
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error('[GraphAPI] Multi-agent delegations error:', message);
-    res.writeHead(500, { 'Content-Type': 'application/json' });
-    res.end(
-      JSON.stringify({
-        error: true,
-        code: 'MULTI_AGENT_DELEGATIONS_ERROR',
         message,
       })
     );
