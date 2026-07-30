@@ -4,6 +4,45 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.31.0] - 2026-07-31
+
+S2 Evidence Transposition (PR #216) - the system can now say what caused each
+change, why each failure failed, and which scheduled leg went silent.
+Requires @jungjaehoon/mama-core 2.1.0 (tool-trace `failure_code`, migration 043).
+
+### Added
+
+- **Causes are wired, not relabeled.** The conductor hands its inbox batch
+  (`causeEventIds`) to every run, so judgment-borne board changes are born
+  attributed. `cause_kind` (`event | owner_message | clock | card_transition`)
+  lands on the effect ledger with a cross-shape CHECK trigger and a
+  discriminator backfill; `changes_read` surfaces it. On duplicate delivery
+  the HOST batch outranks the agent-supplied `source_event_id` (forgeable).
+  Delegated board workorders dedupe on a batch-deterministic occurrence key.
+- **Failures carry the thrower's code.** `tool_traces.failure_code` records
+  the structured code already emitted at the failure choke - carried, never
+  invented (the generic TOOL_ERROR wrapper stays NULL). The dominant digest
+  now has a name: `memory_scope_out_of_scope` x1882 was 52% of
+  context_compile failures - a scope-issuance problem, not a compile problem.
+- **A silent leg pages the owner - after sunrise.** Every scheduled leg
+  declares its cadence and beats on tick; an independent watchdog timer
+  (outside the trigger loop it watches) pages past 2x cadence, defers through
+  quiet hours (23-08), suppresses duplicates across restarts, and reports
+  recovery once. Boot counts as a beat, so a restart never pages for the
+  outage it just recovered from.
+- **Report parity rubric checked in** (`docs/development/report-parity-rubric.md`):
+  the six-item board/delta/cause/schedule/delivery/honesty comparison; 6/6
+  three days running hands report authority to the conductor leg.
+
+### Changed
+
+- **Temporal freshness is a receipt, not a gate.** Live measurement decided
+  each precondition: 94% of reconcile rejections came from packets carrying
+  only recalled memories, so the HOST now seeds the compile with the bound
+  source's channel/event (strictly additive - only when the run's envelope
+  grants that connector), and a stale-but-source-backed packet COMMITS with
+  `packet_created_at` receipted instead of being rejected.
+
 ## mama-os [0.30.1] - 2026-07-30
 
 ### Fixed
