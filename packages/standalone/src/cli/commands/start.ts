@@ -364,12 +364,11 @@ export function buildFullReportGatherLines({
 }: {
   lastSuccessIso: string | null;
 }): string[] {
+  // Product premise (S1): MAMA presupposes no Kagemusha. The report gathers
+  // the NATIVE board; message evidence is the SituationReporter's accumulated
+  // window, never a re-fetch through a personal system.
   return [
-    'kagemusha_overview() for room/task/message counts',
-    'kagemusha_tasks({}) for the open task board, plus kagemusha_tasks({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
-    lastSuccessIso
-      ? `kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId, since: "${lastSuccessIso}" }) on the busiest 2-3 - since is the last successful report; do NOT widen it`
-      : 'kagemusha_entities({ activeOnly: true }) for active channels, then kagemusha_messages({ channelId }) on the busiest 2-3 (since defaults to the last 7 days; pass an ISO-8601 timestamp like since: "2026-07-09T00:00:00Z" to narrow it - never a phrase like "24h ago")',
+    'task_list({}) for the open native task board, plus task_list({ status: "review" }) for items awaiting review (status values must be real board statuses like pending/in_progress/review - invented labels match nothing)',
     'mama_recall(query) for memory relevant to what you find',
     'schedule_upcoming({ days: 14 }) for upcoming calendar events -- cross-check task deadlines against them',
     lastSuccessIso

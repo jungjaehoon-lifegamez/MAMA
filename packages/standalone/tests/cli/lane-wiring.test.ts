@@ -73,15 +73,32 @@ describe('report lane: instructions against the grant', () => {
   it('pins the granted-but-never-instructed set', () => {
     const silent = [...REPORT_GRANT].filter((t) => !instructed.has(t)).sort();
     expect(silent).toEqual([
+      // S1: the gather instructs the NATIVE board (task_list). The kagemusha
+      // grants stay for the owner's personal deployment, deliberately silent -
+      // MAMA presupposes no Kagemusha.
+      'kagemusha_entities',
+      'kagemusha_messages',
+      'kagemusha_overview',
+      'kagemusha_tasks',
       // Read on demand while writing, not part of the gather sequence.
       'mama_provenance',
       'mama_save',
       'mama_search',
       'report_publish',
       'task_external_correlation',
-      'task_list',
       'trello_kanban',
     ]);
+  });
+
+  // Product premise (S1 spec): MAMA presupposes no Kagemusha. An instruction
+  // line reaching for kagemusha_* would rebuild the dependency this pin ended.
+  it('never instructs a kagemusha tool', () => {
+    for (const lines of [
+      buildFullReportGatherLines({ lastSuccessIso: '2026-07-28T00:00:00Z' }),
+      buildFullReportGatherLines({ lastSuccessIso: null }),
+    ]) {
+      expect(lines.join('\n')).not.toContain('kagemusha_');
+    }
   });
 
   it('instructs the delta tool with the last successful report as its window', () => {
