@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.30.1] - 2026-07-30
+
+### Fixed
+
+- **Owner chat's Trello reads died 100% - reads are no longer gated.** The
+  07-28 code-act transport switch moved the main persona's tool calls onto
+  the api-code-act envelope, whose per-principal filter (#199) stripped
+  trello: 07-28 175 ok/0 fail → 07-29 224/49 → 07-30 0/107, every one
+  `connector_out_of_scope`. The workaround's cost was real: the board
+  drifted 3 weeks undetected (7 delivered items shown overdue). The filter
+  contradicted the standing rules - enforcement only for irreversible sends;
+  answers read direct - and Kagemusha's proven model (reads free, actions
+  receipted, sends confirmed). `scopeDaemonRawConnectors` is deleted; every
+  daemon envelope keeps `allowed_destinations: []` as the real gate, per-tool
+  enforcement is unchanged, and every read lands in tool traces.
+
 ## mama-os [0.30.0] - 2026-07-30
 
 S1 Conductor Foundations (PR #215) - the first sprint of the stateful-operator
