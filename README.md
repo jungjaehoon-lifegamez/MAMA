@@ -6,7 +6,7 @@
 [![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Right now, you read every channel yourself so nothing slips past you.
-> MAMA reads them instead, and messages you the few things that need you.
+> MAMA reads them instead, and sends you the few things that need you.
 > Every claim links to its source.
 
 ![The operator board: live report slots with linked evidence](docs/website/assets/mama-os-hero-evidence-board.png)
@@ -48,7 +48,8 @@ And three things it is **not**:
 
 - Not a chatbot with good memory. It runs while nobody is talking to it.
 - Not a memory database. Storage is the input; the report is the product.
-- Not a hosted service. No account, no cloud, no upload.
+- Not a hosted service. There is no MAMA account and no MAMA server. It runs on
+  the logins you already have.
 
 ## Why not a task agent, or your chat app's AI?
 
@@ -76,10 +77,11 @@ A system that acts on its own must be easy to check afterwards.
 - **It drafts; you send.** An agent can write the customer reply from the
   evidence, but sending requires an explicit permission for that destination.
   Memory writes refuse anything shaped like a secret.
-- **Nothing leaves your machine.** Local SQLite, local embeddings, 100+ languages.
-  The only network traffic is the `claude` or `codex` CLI you already logged into,
-  run as an official subprocess. No API keys, no token tricks, no terms-of-service
-  violations.
+- **Your record stays on your machine.** The databases are local SQLite and the
+  embeddings are computed locally. Network traffic goes to two places only: the
+  services you connected (Slack, Gmail, and so on) and your AI provider, through
+  the official `claude` or `codex` CLI you already logged into. Nothing is ever
+  uploaded to a MAMA server, because there is none.
 - **Search shows its work.** Strict mode drops a semantic match that has no text or
   entity evidence behind it. A wrong answer that merely sounds right gets rejected,
   not displayed.
@@ -103,7 +105,9 @@ Slack, Telegram. Requires Node >= 22 and an authenticated
 [Claude Code](https://claude.ai/claude-code) or
 [Codex](https://www.npmjs.com/package/@openai/codex) CLI.
 
-**Claude Code plugin** — no daemon; decision memory for coding sessions:
+**Claude Code plugin** — decision memory for coding sessions. It works without the
+daemon; one hook (conversation ingestion at compaction) uses the daemon when it is
+running, and skips quietly when it is not:
 
 ```bash
 /plugin install mama
