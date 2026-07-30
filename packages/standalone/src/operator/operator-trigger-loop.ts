@@ -36,6 +36,7 @@ import type {
   PendingReportStore,
 } from './pending-report-store.js';
 import type { ReportMode } from './situation-report.js';
+import { getLegCadence } from './leg-cadence.js';
 
 /** Structural delta source - satisfied by ConnectorDeltaRepo. */
 export interface DeltaSource {
@@ -308,6 +309,7 @@ export class OperatorTriggerLoop {
   }
 
   async tick(): Promise<TickResult> {
+    getLegCadence()?.beat('trigger-loop');
     const { delta, memory, registry, askAgent, review, config, log } = this.deps;
     const { output, reportScheduler } = this.deps;
     const fullLegOn = Boolean(output && reportScheduler);

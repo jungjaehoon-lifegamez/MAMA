@@ -91,6 +91,7 @@ import { ConductorInbox } from '../../operator/conductor-inbox.js';
 import { ConductorSession } from '../../operator/conductor-session.js';
 import { Conductor } from '../../operator/conductor.js';
 import { buildBoardReground } from '../../operator/board-reground.js';
+import { initLegCadence, getLegCadence, getLegPageNotifier } from '../../operator/leg-cadence.js';
 import { getSessionPool } from '../../agent/session-pool.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
@@ -1504,6 +1505,32 @@ export async function runAgentLoop(
   // disabled (that accumulation IS the shadow-mode data; retention inside
   // ConductorInbox keeps it bounded).
   const conductorInbox = new ConductorInbox(operatorDb);
+  // S2: leg cadence watchdog - its OWN timer, deliberately outside the
+  // trigger loop (a watchdog inside the thing it watches dies with it).
+  // Legs declare+beat at their own tick sites via the singleton; pages ride
+  // the owner-alert targets registered in gateway wiring. Alarm, never
+  // enforcement; quiet hours honored inside check().
+  const legCadence = initLegCadence(operatorDb);
+  legCadence.declare('trigger-loop', 60_000);
+  legCadence.declare('workorder-consumer', 60_000);
+  const legWatchdog = setInterval(() => {
+    try {
+      const { pages, recoveries } = legCadence.check();
+      for (const page of pages) {
+        const minutes = Math.round(page.silentForMs / 60_000);
+        const message = `[leg-watchdog] '${page.name}' has been silent ${minutes}min (declared ${Math.round(page.declaredCadenceMs / 60_000)}min cadence)`;
+        console.error(message);
+        void getLegPageNotifier()?.(message).catch(() => {});
+      }
+      for (const name of recoveries) {
+        const message = `[leg-watchdog] '${name}' recovered`;
+        console.log(message);
+        void getLegPageNotifier()?.(message).catch(() => {});
+      }
+    } catch (err) {
+      console.error('[leg-watchdog] check failed:', err);
+    }
+  }, 60_000);
   const conductorConfig = resolveConductorConfig(config);
   if (conductorConfig.enabled && runtimeBackend !== 'claude') {
     // S1 pins the claude backend: codex sessions do not reset on token usage
@@ -1530,6 +1557,7 @@ export async function runAgentLoop(
 
   gateways.push({
     stop: async () => {
+      clearInterval(legWatchdog);
       // Consumer stop BEFORE db close (same gateway = ordered; parallel
       // gateways would race an in-flight tick into "database is not open").
       await closeTemporalRuntimeBeforeDatabase(temporalRuntime, workOrderConsumer, () => {
@@ -1969,8 +1997,11 @@ export async function runAgentLoop(
         fullReportBoardLines: buildBoardPublishLines(),
         // S1-T4 context carry: the delivered FULL report persists so the owner
         // console references it per turn instead of fabricating status.
-        persistLastFullReport: (iso, text) =>
-          persistLastFullReport(iso, text, lastReportProvenance),
+        persistLastFullReport: (iso, text) => (
+          getLegCadence()?.declare('full-report', 24 * 60 * 60 * 1000),
+          getLegCadence()?.beat('full-report'),
+          persistLastFullReport(iso, text, lastReportProvenance)
+        ),
         pendingReportStore: new FilePendingReportStore(
           expandPath('~/.mama/operator/pending-owner-reports.json'),
           (line) => console.error(line)

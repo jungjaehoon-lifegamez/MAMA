@@ -56,6 +56,7 @@ import {
 } from '../../security/security-monitor.js';
 
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
+import { getLegCadence } from '../../operator/leg-cadence.js';
 
 const { DebugLogger } = debugLogger as unknown as {
   DebugLogger: new (context?: string) => {
@@ -251,7 +252,14 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
     // First run after 10s (let connectors poll first), then every 30 min
     setTimeout(runDashboardAgent, 10_000);
-    setInterval(runDashboardAgent, 30 * 60 * 1000);
+    getLegCadence()?.declare('dashboard-agent', 30 * 60 * 1000);
+    setInterval(
+      () => {
+        getLegCadence()?.beat('dashboard-agent');
+        runDashboardAgent();
+      },
+      30 * 60 * 1000
+    );
 
     // Manual trigger (owner-forced: the workorder carries force=true so the
     // worker brief skips its NO_UPDATE delta gate)
@@ -626,7 +634,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
     }
 
     setTimeout(() => runMemoryPromotion(), PROMOTION_INITIAL_DELAY_MS);
-    setInterval(() => runMemoryPromotion(), PROMOTION_INTERVAL_MS);
+    getLegCadence()?.declare('memory-promotion', PROMOTION_INTERVAL_MS);
+    setInterval(() => {
+      getLegCadence()?.beat('memory-promotion');
+      runMemoryPromotion();
+    }, PROMOTION_INTERVAL_MS);
 
     apiServer.app.post('/api/memory/promote', requireAuth, (_req, res) => {
       runMemoryPromotion({ manual: true });
@@ -714,7 +726,11 @@ export async function registerApiRoutes(params: RegisterApiRoutesParams): Promis
 
   setTimeout(() => {
     void runSystemAudit();
-    setInterval(() => void runSystemAudit(), AUDIT_INTERVAL_MS);
+    getLegCadence()?.declare('system-audit', AUDIT_INTERVAL_MS);
+    setInterval(() => {
+      getLegCadence()?.beat('system-audit');
+      void runSystemAudit();
+    }, AUDIT_INTERVAL_MS);
   }, AUDIT_INITIAL_DELAY_MS);
 
   // Manual trigger returns the full report (read-only, no LLM, fast)

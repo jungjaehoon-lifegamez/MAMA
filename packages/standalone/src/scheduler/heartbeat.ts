@@ -8,6 +8,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { AgentLoop } from '../agent/agent-loop.js';
 import { getMemoryLogger } from '../memory/memory-logger.js';
+import { getLegCadence } from '../operator/leg-cadence.js';
 
 export interface HeartbeatConfig {
   /** Interval in milliseconds (default: 30 minutes) */
@@ -63,6 +64,7 @@ export class HeartbeatScheduler {
     }, 5000);
 
     // Schedule regular heartbeats
+    getLegCadence()?.declare('heartbeat', this.config.interval);
     this.timer = setInterval(() => this.tick(), this.config.interval);
   }
 
@@ -99,6 +101,7 @@ export class HeartbeatScheduler {
    * Execute a heartbeat tick
    */
   private async tick(): Promise<void> {
+    getLegCadence()?.beat('heartbeat');
     // Skip during quiet hours
     if (this.isQuietHours()) {
       console.log('[Heartbeat] Quiet hours - skipping');
