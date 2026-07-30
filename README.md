@@ -9,7 +9,7 @@
 > MAMA reads them instead, and sends you the few things that need you.
 > Every claim links to its source.
 
-![The operator board: live report slots with linked evidence](docs/website/assets/mama-os-hero-evidence-board.png)
+![The briefing MAMA sends: three items with source links, one action, one recorded decision](docs/website/assets/mama-briefing-hero.svg)
 
 ## The product is a message that arrives
 
