@@ -412,11 +412,14 @@ export class WorkOrderConsumer {
     tokensUsed?: number
   ): void {
     const auditReason = temporalFailureAuditReason(reason);
+    const logReason = temporalFailureLogReason(reason);
     let state: TemporalAttemptState;
     try {
       state = this.deps.ledger.inspectTemporalAttempt(wo.id);
     } catch (err) {
-      this.deferTemporalArbitration(wo, auditReason, err, allowRetry, tokensUsed);
+      // The RAW reason, not the digest: a deferred attempt is re-arbitrated later, and
+      // parking the digest here made the cause unrecoverable for every recheck after it.
+      this.deferTemporalArbitration(wo, reason, err, allowRetry, tokensUsed);
       return;
     }
 
@@ -485,14 +488,14 @@ export class WorkOrderConsumer {
       this.log(`[workorder-consumer] temporal#${wo.id} exhaustion was already committed`);
       this.alarm(
         'temporal',
-        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${auditReason}`
+        `workorder temporal#${wo.id} retries exhausted (${wo.payload.attempts}/${WORKORDER_MAX_ATTEMPTS.temporal}): ${logReason}`
       );
       return;
     }
     if (state.workOrder.status !== 'in_progress') {
       this.deferTemporalArbitration(
         wo,
-        auditReason,
+        reason,
         new Error(
           `attempt is '${state.workOrder.status}' with generation '${state.generation.disposition}'`
         ),
@@ -508,7 +511,9 @@ export class WorkOrderConsumer {
     } catch (err) {
       // A competing effect/supersession may have won after the read. Do not
       // guess which transition won; force another authoritative read first.
-      this.deferTemporalArbitration(wo, auditReason, err, allowRetry, tokensUsed);
+      // The RAW reason, not the digest: a deferred attempt is re-arbitrated later, and
+      // parking the digest here made the cause unrecoverable for every recheck after it.
+      this.deferTemporalArbitration(wo, reason, err, allowRetry, tokensUsed);
       return;
     }
     this.unresolvedTemporalEffects.delete(wo.id);
@@ -530,14 +535,14 @@ export class WorkOrderConsumer {
         workOrderId: result.replacement.id,
       });
       this.log(
-        `[workorder-consumer] failed temporal#${wo.id} (${auditReason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
+        `[workorder-consumer] failed temporal#${wo.id} (${logReason}) -> requeued #${result.replacement.id} (attempt ${result.attempt + 1}/${result.maxAttempts})`
       );
       return;
     }
     this.log(
       result.retrySuppressed
         ? `[workorder-consumer] failed temporal#${wo.id}: non-retryable ambiguous mutation outcome`
-        : `[workorder-consumer] failed temporal#${wo.id}: ${auditReason}`
+        : `[workorder-consumer] failed temporal#${wo.id}: ${logReason}`
     );
     this.emitEvent({
       type: 'exhausted',
@@ -548,8 +553,8 @@ export class WorkOrderConsumer {
     this.alarm(
       'temporal',
       result.retrySuppressed
-        ? `workorder temporal#${wo.id} automatic retry suppressed because a mutation outcome is ambiguous: ${auditReason}`
-        : `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${auditReason}`
+        ? `workorder temporal#${wo.id} automatic retry suppressed because a mutation outcome is ambiguous: ${logReason}`
+        : `workorder temporal#${wo.id} retries exhausted (${result.attempt}/${result.maxAttempts}): ${logReason}`
     );
   }
 
@@ -625,6 +630,52 @@ function isAmbiguousCodeActMutation(error: unknown): boolean {
     (error.code === 'CODE_ACT_MUTATION_COMMITTED_AFTER_ABORT' ||
       error.code === 'CODE_ACT_MUTATION_OUTCOME_UNKNOWN')
   );
+}
+
+/**
+ * A closed vocabulary of failure shapes, and the ONLY thing the log learns about a cause.
+ *
+ * Nothing is copied out of the error: a pattern matches, and a fixed label is emitted. That
+ * is what keeps this inside the privacy contract these failures already have - a runner
+ * error can carry connector evidence or a token, so logs, notices, sends, events and the
+ * ledger row must never contain its text. `temporalFailureAuditReason` enforces that by
+ * hashing, and the hash is still what the durable row stores.
+ *
+ * But the digest was ALSO all the operator ever saw. Five consecutive live failures reported
+ * `temporal-worker-failure;sha256=...;length=31` - a fingerprint of a cause nobody could
+ * read, so nobody could tell an upstream outage from a bug in this code. A label from this
+ * table separates those without quoting a single byte of the error.
+ */
+const TEMPORAL_FAILURE_SHAPES: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b429\b|rate.?limit|too many requests/i, 'rate-limited'],
+  [/\b5\d{2}\b|overloaded|server error|internal error/i, 'upstream-5xx'],
+  [/timed?.?out|etimedout|deadline|aborted/i, 'timeout'],
+  [/econnrefused|enotfound|econnreset|socket hang up|network/i, 'network'],
+  [/\b4\d{2}\b|invalid.?request|bad request|unauthorized|forbidden/i, 'request-rejected'],
+  [/no such tool|unknown tool|not dispatchable|no executor/i, 'tool-missing'],
+  [/out of memory|heap|maxbuffer/i, 'resource-exhausted'],
+];
+
+/** The failure shape, or null when none of the known ones match. */
+export function classifyTemporalFailure(reason: string): string | null {
+  for (const [pattern, label] of TEMPORAL_FAILURE_SHAPES) {
+    if (pattern.test(reason)) {
+      return label;
+    }
+  }
+  return null;
+}
+
+/**
+ * What the OPERATOR reads: a shape label from the closed table above, plus a short digest
+ * prefix so the line can still be tied to its audit row. Never any text from the error.
+ *
+ * An unmatched failure reads `unclassified`, which carries exactly as much as the old digest
+ * did - the classification only ever adds.
+ */
+function temporalFailureLogReason(reason: string): string {
+  const digest = createHash('sha256').update(reason).digest('hex').slice(0, 12);
+  return `temporal-worker-failure(${classifyTemporalFailure(reason) ?? 'unclassified'}) sha256=${digest}`;
 }
 
 function temporalFailureAuditReason(reason: string): string {
