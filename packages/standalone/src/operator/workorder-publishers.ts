@@ -10,6 +10,7 @@
  */
 
 import type { WorkOrderKind } from './task-ledger.js';
+import { createHash } from 'node:crypto';
 
 export const STAGE2_FLAG_ENV = 'MAMA_STAGE2_WORKORDERS';
 
@@ -45,6 +46,20 @@ export function boardFullKey(now: number): string {
  *  never dedup against a pending scheduled FULL that lacks force. */
 export function boardManualKey(now: number): string {
   return `board:manual:${now}`;
+}
+
+/**
+ * Batch-deterministic key (S2 Task 4): a conductor judgment that delegates
+ * carries its inbox batch, and a crash between enqueue and ack redelivers
+ * the batch - the SAME ids must produce the SAME key so the retry dedups
+ * instead of double-ordering. Wall-clock keys cannot give that.
+ */
+export function boardBatchKey(causeEventIds: readonly string[]): string {
+  const digest = createHash('sha256')
+    .update([...causeEventIds].sort().join('\n'))
+    .digest('hex')
+    .slice(0, 16);
+  return `board:batch:${digest}`;
 }
 
 export function boardReconcileKey(channelKey: string, now: number): string {
