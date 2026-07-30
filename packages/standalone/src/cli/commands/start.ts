@@ -69,7 +69,12 @@ import { buildRuntimeEnvelopeBootstrap } from '../runtime/envelope-bootstrap.js'
 import { resolveMessageRouterConfig } from '../runtime/message-router-config.js';
 import { resolveReactiveProjectRoot } from '../../envelope/reactive-config.js';
 import { deriveMemoryScopes, type MemoryScopeRef } from '../../memory/scope-context.js';
-import { DEFAULT_ROLES, type AgentPersonaConfig, type RoleConfig } from '../config/types.js';
+import {
+  DEFAULT_CONFIG,
+  DEFAULT_ROLES,
+  type AgentPersonaConfig,
+  type RoleConfig,
+} from '../config/types.js';
 import { RoleManager } from '../../agent/role-manager.js';
 import { randomUUID } from 'node:crypto';
 import * as debugLogger from '@jungjaehoon/mama-core/debug-logger';
@@ -82,6 +87,11 @@ import type { DBManagerAdapter as DatabaseAdapter } from '@jungjaehoon/mama-core
 import { OPERATOR_REPORT_SESSION_KEY } from '../../operator/report-run.js';
 import { ensureConsoleBrief } from '../../operator/console-brief.js';
 import { TaskLedger, type WorkOrderKind } from '../../operator/task-ledger.js';
+import { ConductorInbox } from '../../operator/conductor-inbox.js';
+import { ConductorSession } from '../../operator/conductor-session.js';
+import { Conductor } from '../../operator/conductor.js';
+import { buildBoardReground } from '../../operator/board-reground.js';
+import { getSessionPool } from '../../agent/session-pool.js';
 import { buildTemporalWorkerContext } from '../../operator/temporal-worker.js';
 import {
   closeTemporalRuntimeBeforeDatabase,
@@ -1427,6 +1437,22 @@ export async function runAgentLoop(
     operatorDb.close();
     throw err;
   }
+  // S1: durable conductor inbox - constructed UNCONDITIONALLY so drained
+  // batches persist before the cursor commits even while the conductor is
+  // disabled (that accumulation IS the shadow-mode data).
+  const conductorInbox = new ConductorInbox(operatorDb);
+  const conductorConfig = {
+    ...DEFAULT_CONFIG.conductor!,
+    ...(config.conductor ?? {}),
+  };
+  if (conductorConfig.enabled && runtimeBackend !== 'claude') {
+    // S1 pins the claude backend: codex sessions do not reset on token usage
+    // (session-pool.ts), so the lifecycle contract cannot hold there yet.
+    operatorDb.close();
+    throw new Error(
+      'conductor.enabled requires the claude backend in S1 - codex session lifecycle lands in S2'
+    );
+  }
   // ── Stage-2 workorder consumer (plan S2-T3): the only system run path.
   // Constructed before production runtime assembly registers per-kind
   // completion hooks, and started only after route registration and recovery
@@ -1765,6 +1791,7 @@ export async function runAgentLoop(
         ),
         memory: createMamaMemoryPort(),
         registry: triggerRegistry,
+        conductorInbox,
         onChannelDelta: (channelKey, lines, eventIds) =>
           channelDeltaSink.current?.(channelKey, lines, eventIds),
         askAgent: triggerAgentRuntime.askAuthor,
@@ -1911,9 +1938,48 @@ export async function runAgentLoop(
       // S1-T3: owner-intent forwarder - report_request routes to the SAME
       // report machinery (fresh session, delta anchor, consume semantics).
       toolExecutor.setReportRequestHandler(() => triggerLoop.startFullReport());
+
+      // S1: the stateful conductor consumes the durable inbox on its own
+      // session:operator:conductor lane. Default-off; the inbox records
+      // either way (shadow-mode data).
+      let conductorTimer: NodeJS.Timeout | null = null;
+      if (conductorConfig.enabled) {
+        const conductorSession = new ConductorSession(getSessionPool(), {
+          maxAgeMs: conductorConfig.maxAgeMs,
+          maxTurns: conductorConfig.maxTurns,
+          maxTokens: conductorConfig.maxTokens,
+        });
+        const conductor = new Conductor({
+          inbox: conductorInbox,
+          session: conductorSession,
+          runner: agentLoop,
+          reground: () => buildBoardReground(taskLedger),
+          log: (line) => console.log(line),
+        });
+        let conductorTickInFlight = false;
+        conductorTimer = setInterval(() => {
+          if (conductorTickInFlight) return; // never overlap ticks
+          conductorTickInFlight = true;
+          void conductor
+            .tick()
+            .catch((err) =>
+              console.error(
+                `[conductor] tick failed: ${err instanceof Error ? err.message : String(err)}`
+              )
+            )
+            .finally(() => {
+              conductorTickInFlight = false;
+            });
+        }, conductorConfig.tickMs);
+        console.log(`✓ Conductor enabled (tick ${conductorConfig.tickMs}ms)`);
+      } else {
+        console.log('Conductor inbox recording (conductor disabled)');
+      }
+
       gateways.push({
         stop: async () => {
           triggerLoopNudge.current = null;
+          if (conductorTimer) clearInterval(conductorTimer);
           stopTriggerLoop();
           await triggerAgentRuntime.stop();
           // The shared operator DB handle is closed by the unconditional stop
