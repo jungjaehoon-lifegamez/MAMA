@@ -992,7 +992,7 @@
           <a href="#local">Local</a>
           <a href="#install">Install</a>
         </div>
-        <span class="nav-cta">v0.21</span>
+        <span class="nav-cta">v0.29</span>
         <button
           class="nav-toggle"
           type="button"
@@ -1078,7 +1078,7 @@
               next year can both re-simulate the same history.
             </p>
             <ul>
-              <li>15 connectors poll chats, docs, sheets, repos, and work logs</li>
+              <li>14 connectors poll chats, docs, sheets, repos, and work logs</li>
               <li>Raw layer: cross-source unified search, windowing, and as-of time travel</li>
               <li>
                 Graph: entities, cases, decisions linked by typed edges (supersedes · builds_on ·
@@ -1235,25 +1235,29 @@
       <div class="container">
         <div class="section-head">
           <span class="eyebrow">Today and next</span>
-          <h2>v0.20 shipped the foundation. v0.21 ships the operator.</h2>
+          <h2>The operator runs. v0.29 makes it accountable.</h2>
           <p>
-            Substrate, agent surfaces, envelopes, decision evolution, and
-            <code style="font-family: var(--mono)">context_compile</code> are the foundation. On
-            top of it now runs a self-evolving operator: agent-authored triggers, a live report
-            board, scheduled memory curation, and a wiki that reads like a journal.
+            The substrate and the self-evolving operator both ship: agent-authored triggers, a live
+            report board, scheduled memory curation, and a wiki that reads like a journal. What
+            v0.29 adds is the part that makes an autonomous system answerable — every durable change
+            can name what caused it, or say plainly that it cannot.
           </p>
         </div>
         <div class="today-next">
           <article class="tn-col shipped">
-            <span class="badge">v0.20 · SHIPPED</span>
-            <h3>The runtime foundation.</h3>
+            <span class="badge">v0.21–v0.28 · SHIPPED</span>
+            <h3>The foundation, and the operator on top of it.</h3>
             <p>
               Local ingestion, worker evidence surfaces, provenance, graph APIs, situation packets,
-              runtime envelopes, decision evolution.
+              runtime envelopes, decision evolution — then the operator runtime, the owner console,
+              and a durable workorder pipeline on top.
             </p>
             <ul class="tn-list">
-              <li>15 connectors and local ingestion</li>
-              <li>Operator board at /ui · four live report slots + trigger library (legacy viewer retained)</li>
+              <li>14 connectors and local ingestion</li>
+              <li>
+                Operator board at /ui · four live report slots + trigger library (legacy viewer
+                retained)
+              </li>
               <li>Raw search and raw window APIs</li>
               <li>Graph, entity, and timeline APIs</li>
               <li>Worker situation packets</li>
@@ -1265,35 +1269,42 @@
             </ul>
           </article>
           <article class="tn-col planned">
-            <span class="badge">v0.21 · THE OPERATOR RUNTIME</span>
-            <h3>A trigger loop that evolves itself.</h3>
+            <span class="badge">v0.29 · EVIDENCE AND EFFECTS</span>
+            <h3>Every change names its cause, or admits it has none.</h3>
             <p>
-              The agent authors its own triggers from recurring situations, fires them to recall
-              the right memory, and reports to the owner. Delivered reports that cite a trigger
-              feed a success signal back; a review pass retires the noisy ones. Every six hours a
-              curation pass promotes durable judgments into memory, and promoted decisions compile
-              into an Obsidian wiki of daily journals and lessons.
+              A run is bounded by the delta batch it was handed, and that batch becomes the cause of
+              everything the run changes — the agent never restates it, and a host batch beats an
+              agent-supplied id, which is forgeable. With no batch, a named source event is still
+              used: weaker evidence, not worthless. Only when there is neither is a change marked
+              unattributed — the honest answer rather than a plausible-looking one.
             </p>
             <pre class="cc-code">
-author → fire → recall → report
-        ↑ cited in a delivered report → succeeded</pre
+{channel, delta batch} → run → change
+        cause derived by the host, never claimed by the agent</pre
             >
             <div class="cc-cells">
               <div class="cc-cell selected">
-                <div class="label">Board</div>
-                <div class="desc">four live slots, task truth from the ledger</div>
+                <div class="label">Effect ledger</div>
+                <div class="desc">
+                  one table; a CHECK forbids a cause without attribution, and attribution without a
+                  cause
+                </div>
               </div>
               <div class="cc-cell rejected">
-                <div class="label">Triggers</div>
-                <div class="desc">agent-authored, review-pruned, success-scored</div>
+                <div class="label">changes_read</div>
+                <div class="desc">what changed since a point, with coverage counts</div>
               </div>
               <div class="cc-cell missing">
-                <div class="label">Promotion</div>
-                <div class="desc">durable judgments only, never task states</div>
+                <div class="label">Provenance</div>
+                <div class="desc">
+                  what a memory rests on — a citation must not out-read reading
+                </div>
               </div>
               <div class="cc-cell caveats">
-                <div class="label">Wiki</div>
-                <div class="desc">daily journal + lessons in Obsidian</div>
+                <div class="label">Lane verification</div>
+                <div class="desc">
+                  claims reconciled against completed tool traces; observes, never blocks
+                </div>
               </div>
             </div>
           </article>
@@ -1346,16 +1357,14 @@ author → fire → recall → report
         <div class="footer-brand">
           <img src="assets/mama-icon.svg" alt="" />
           <span>MAMA OS</span>
-          <span class="footer-version">v0.21</span>
+          <span class="footer-version">v0.29</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA">GitHub</a>
           <a href="https://www.npmjs.com/package/@jungjaehoon/mama-os">npm</a>
           <a href="https://github.com/jungjaehoon-lifegamez/MAMA/issues">Issues</a>
         </div>
-        <p class="footer-legal">
-          MIT · Operator runtime · Local-first · AI provider independent.
-        </p>
+        <p class="footer-legal">MIT · Operator runtime · Local-first · AI provider independent.</p>
       </div>
     </footer>
     <script>

@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node Version](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org)
 [![LongMemEval 100Q](https://img.shields.io/badge/LongMemEval%20100Q-93%25-blue)](packages/memorybench/)
-[![Tests](https://img.shields.io/badge/tests-3000%2B%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
+[![Tests](https://img.shields.io/badge/tests-4958%20passing-success)](https://github.com/jungjaehoon-lifegamez/MAMA)
 
 > Local operating memory that lets AI agents read the board, cite the evidence, and stay inside
 > explicit boundaries.
@@ -44,6 +44,31 @@ What runs continuously today:
 - **Hourly self-audit** — a conductor pass checks process health, databases, config, and security
   posture, deduplicating alerts against a state file so the owner hears about a finding once, not
   every hour.
+
+## Evidence and Effects
+
+A system that changes things on your behalf should be able to say what caused each change — or say
+plainly that it cannot. MAMA OS records that in one place, with the numerator and denominator of
+coverage kept inseparable.
+
+- **Effect ledger** — one table, `evidence_effects`. A database CHECK forbids both "attributed with
+  no cause" and "unattributed with a cause", and a trigger rejects unusable cause ids. There is no
+  shape in which a change can quietly lose its provenance.
+- **Bounded runs** — a run is `{channel, delta batch}`. The batch the host handed the run becomes the
+  cause of everything that run changes; the agent never restates it, and a host batch always beats an
+  agent-supplied source id, which is forgeable. When the host handed the run no batch, a named source
+  event is still used — weaker evidence, not worthless. Only when there is neither is the change
+  marked unattributed, which is the honest answer rather than a plausible-looking one.
+- **`changes_read`** — what this system durably changed since a given point, with coverage counts.
+  The full report leads with it.
+- **`mama_provenance`** — what a memory rests on. A citation must not out-read reading: the same
+  channel grant bounds both.
+- **Channel grant** — one rule decides which `(connector, channel)` pairs a run may read, compiled
+  both to a boolean and to a SQL clause that a differential test pins against each other.
+- **Lane verification** — a work order reaching `done` proves only that the agent replied. Each
+  lane's claim is reconciled against completed tool traces since a run-bound snapshot. It observes
+  and reports; it never blocks. Where a tool cannot distinguish a read from a write, the verdict says
+  so rather than claiming more than it knows.
 
 ## Target Workflow
 
@@ -120,7 +145,7 @@ legacy viewer at `/viewer` remains available with `Dashboard`, `Memory`, `Feed`,
 
 **Current building blocks and direction:**
 
-- **Read connected sources** — 15 connectors poll Slack, Gmail, Trello, Obsidian, and more
+- **Read connected sources** — 14 connectors poll Slack, Gmail, Trello, Obsidian, and more
 - **Reconstruct timelines** — Show raw, memory, case, entity, and edge events in order
 - **Build the relationship graph** — Link people, projects, customers, channels, documents, PRs, and decisions across sources
 - **Surface risk signals** — Highlight stale coverage, blocked cases, low-confidence memories, open questions, and conflicting evidence candidates
@@ -185,8 +210,8 @@ MAMA answers "why did we switch?" — not just "what do we use?"
 ## Architecture
 
 ```
-Connectors (15)              Gateways (4)
-Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
+Connectors (14)              Gateways (3)
+Slack, Gmail, Sheets...      Discord, Slack, Telegram
        |                            |
        v                            v
  3-Pass Extraction          Reactive Runtime Envelopes
@@ -199,6 +224,11 @@ Slack, Gmail, Sheets...      Discord, Slack, Telegram, Chatwork
              memory, raw refs, model runs,
              tool traces, twin edges,
              worker packets, context packets
+                    |
+             Effect ledger (operator/triggers.db)
+             every durable change, with the delta
+             batch that caused it - or an explicit
+             "unattributed"
                     |
              +------+------+
              |             |
@@ -319,7 +349,7 @@ legacy viewer at `http://localhost:3847/viewer` with `Dashboard`, `Memory`, `Fee
 
 Anyone who installs MAMA OS and connects their apps gets:
 
-- **Automatic knowledge extraction** — Connectors poll 15 sources, AI extracts decisions/deadlines/changes without manual input
+- **Automatic knowledge extraction** — Connectors poll 14 sources, AI extracts decisions/deadlines/changes without manual input
 - **Cross-source evidence reads** — "What happened with X?" can pull from connected raw sources and decisions together
 - **Noise-resistant search** — Strict and balanced modes can reject vector-only matches and show why a result was included
 - **Bounded agent calls** — Gateway and worker calls can be tied to runtime envelopes and audited for scope or destination mismatches
@@ -341,14 +371,18 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Done** | v0.15   | Search quality overhaul, FTS5, evolution engine (58% -> 88%)                                                                                                                                                                                                                         |
 | **Done** | v0.16   | `event_date` API, tool-use answer, memory agent v5 (88% -> 93%)                                                                                                                                                                                                                      |
-| **Done** | v0.17   | Connector framework (15 connectors), truth-first 3-pass extraction                                                                                                                                                                                                                   |
+| **Done** | v0.17   | Connector framework (13 connectors at the time), truth-first 3-pass extraction                                                                                                                                                                                                       |
 | **Done** | v0.18   | Output layer: knowledge agents, viewer redesign, security hardening                                                                                                                                                                                                                  |
 | **Done** | v0.19   | Agent-management foundation: viewer-aware frontdoor, validation UI, activity telemetry, conductor isolation                                                                                                                                                                          |
 | **Done** | v0.20.1 | M1-M6 runtime foundation plus Context Compile V0: envelopes, model/tool trace ledger, raw/situation/graph worker APIs, strict search diagnostics, append-only `context_packets`, `context_compile`, and downstream `context_packet_id` provenance                                    |
 | **Done** | v0.21   | The operator runtime: self-evolving trigger loop with a citation success circuit, `/ui` operator board (four live report slots + trigger library), task-truth from the real task ledger, wiki v5 daily journal + lessons, scheduled memory promotion, self-auditing with alert dedup |
 | **Done** | v0.23   | The owner console + workorder ownership: trust-conditional `owner_console` role, artifact-hub tools, secret-safe memory writes, and the Stage-2 durable workorder pipeline                                                                                                           |
 | **Done** | v0.24   | Codex app-server parity: durable multiplexed threads, native MAMA host tools (including connector/Trello surfaces), role-scoped Code-Act, strict managed runtime isolation, and automatic migration from the legacy `codex-mcp` backend                                              |
-| **Now**  | v0.25   | Verified temporal owner-task reconciliation with source-bound evidence, authoritative receipts, mixed-version safety, and bounded shutdown handling                                                                                                                                  |
+| **Done** | v0.25   | Verified temporal owner-task reconciliation with source-bound evidence, authoritative receipts, mixed-version safety, and bounded shutdown handling                                                                                                                                  |
+| **Done** | v0.26   | Telegram media conversations, owner-scoped Drive operations, and fail-closed media handling                                                                                                                                                                                          |
+| **Done** | v0.27   | Composable owner workflows, local document and image processing, and durable Telegram delivery                                                                                                                                                                                       |
+| **Done** | v0.28   | Agent-owned owner-console operating brief, per-call session keys, and deletion of the legacy persona run path                                                                                                                                                                        |
+| **Now**  | v0.29   | Evidence and effects: an effect ledger where every durable change names its cause or admits it has none, bounded runs, `changes_read` and `mama_provenance`, one channel-grant rule pinned by a differential test, and lane verification that observes without blocking              |
 |          | Later   | Cross-language retrieval hardening, domain extraction templates, cross-worker packet analytics, and team-scoped context review workflows                                                                                                                                             |
 |          | v1.0    | Team mode: shared scoped knowledge graph for organizations. General release                                                                                                                                                                                                          |
 
@@ -357,12 +391,12 @@ that selects, rejects, and explains evidence before a worker writes memory or co
 ```bash
 git clone https://github.com/jungjaehoon-lifegamez/MAMA.git
 cd MAMA && pnpm install && pnpm build
-pnpm test     # 3000+ tests across all packages
+pnpm test     # 4,958 tests across all packages
 ```
 
 See [CLAUDE.md](CLAUDE.md) for development guidelines.
 
-_Last updated: 2026-07-21_
+_Last updated: 2026-07-30_
 
 ## License
 
