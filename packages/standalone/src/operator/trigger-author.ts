@@ -246,11 +246,33 @@ export function validateTriggerSpec(spec: unknown): TriggerSpec {
 }
 
 /** Build the legacy bare-Claude JSON runner while allowing command injection in tests. */
+/**
+ * Effort for the bare-CLI structured-JSON calls, named rather than inherited.
+ *
+ * Without this the call inherits `effortLevel` from ~/.claude/settings.json, which on the
+ * owner's install is `xhigh` - and the daemon exports MAX_THINKING_TOKENS=0 (added
+ * 2026-07-27 to stop sonnet-5 empty thinking blocks corrupting chat transcripts). The two
+ * together are a hard API 400: "output_config.effort 'xhigh' is not supported when thinking
+ * is disabled on this model."
+ *
+ * The trigger author died on that from 2026-07-28 onward - 46 failures against 8 successes
+ * that day, then 34 against ZERO the next - and nobody could see it, because the executor
+ * dropped the CLI's output and Node's message carried only the 240 KB command line. The
+ * diagnostics added in 0.29.1 printed the cause on the first failure after deploy.
+ *
+ * Naming the effort here keeps the daemon-wide thinking setting untouched: it exists for a
+ * real transcript-corruption problem, and this call is a small structured-JSON task that
+ * never needed the top tier.
+ */
+const TRIGGER_AUTHOR_EFFORT = 'high';
+
 export function createAskAgentCLI(execute: ClaudeCliExecutor = executeClaudeCLI): AskAgent {
   return async (prompt) => {
-    const { stdout } = await execute('claude', ['-p', prompt, '--output-format', 'json'], {
-      maxBuffer: 16 * 1024 * 1024,
-    });
+    const { stdout } = await execute(
+      'claude',
+      ['-p', prompt, '--output-format', 'json', '--effort', TRIGGER_AUTHOR_EFFORT],
+      { maxBuffer: 16 * 1024 * 1024 }
+    );
     const parsed = JSON.parse(stdout) as { type?: string; result?: unknown };
     if (parsed.type === 'result' && typeof parsed.result === 'string') return parsed.result;
     throw new Error('claude CLI did not return a text result');
@@ -347,6 +369,10 @@ async function executeClaudeCLI(
     const { stdout } = await execFileAsync(file, args, {
       ...options,
       timeout: CLAUDE_CLI_TIMEOUT_MS,
+      // The CLI's "no stdin data received in 3s" warning rides along on stderr here. It is
+      // noise, not the cause - closing stdin is not available on this path, because execFile
+      // does not forward `stdio` to the spawn beneath it. Left alone deliberately: the
+      // failure text captures stdout too, so the warning no longer hides the real error.
     });
     return { stdout: String(stdout) };
   } catch (error) {
