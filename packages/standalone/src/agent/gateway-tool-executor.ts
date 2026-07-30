@@ -3354,7 +3354,19 @@ export class GatewayToolExecutor {
         // Fully mask sensitive values - don't expose any characters
         // Show only length hint for debugging without revealing content
         masked[key] = `***[${value.length} chars]***`;
-      } else if (typeof value === 'object' && !Array.isArray(value)) {
+      } else if (isSensitive && typeof value !== 'object') {
+        // Non-string sensitive scalars (numbers, booleans) must not pass
+        // through either - the key marked them secret.
+        masked[key] = '***';
+      } else if (Array.isArray(value)) {
+        // Arrays must be descended: a token inside multi_agent.agents[] or a
+        // bots[] entry would otherwise return in clear text (review).
+        masked[key] = value.map((item) =>
+          item !== null && typeof item === 'object' && !Array.isArray(item)
+            ? this.maskSensitiveData(item as Record<string, unknown>, showSensitive)
+            : item
+        );
+      } else if (typeof value === 'object') {
         masked[key] = this.maskSensitiveData(value as Record<string, unknown>, showSensitive);
       } else {
         masked[key] = value;

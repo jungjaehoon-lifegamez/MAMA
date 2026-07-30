@@ -89,7 +89,9 @@ export class Conductor {
     let processed = 0;
     for (; processed < this.maxBatchesPerTick; ) {
       const batch = this.deps.inbox.claimNext();
-      if (!batch) break;
+      if (!batch) {
+        break;
+      }
 
       const fresh = this.deps.session.needsReground();
       const parts: string[] = [];
@@ -134,17 +136,26 @@ export class Conductor {
             }`
           );
         }
+        this.logDepth(processed);
         return 'failed';
       }
     }
 
+    this.logDepth(processed);
+    return processed > 0 ? 'processed' : 'idle';
+  }
+
+  /**
+   * A growing inbox must be loud - silence is how backlogs hide. Runs on the
+   * failure path too: a batch stuck in retries (attempts 1-4) is exactly when
+   * the backlog grows unattended (review).
+   */
+  private logDepth(processed: number): void {
     const depth = this.deps.inbox.depth();
     if (depth.pending > 0 || depth.dead > 0) {
-      // A growing inbox must be loud - silence here is how backlogs hide.
       this.deps.log?.(
         `[conductor] tick budget spent: ${processed} processed, ${depth.pending} pending, ${depth.dead} dead`
       );
     }
-    return processed > 0 ? 'processed' : 'idle';
   }
 }
