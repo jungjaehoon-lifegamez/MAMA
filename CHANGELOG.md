@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## mama-os [0.29.2] - 2026-07-30
+
+### Fixed
+
+- **The trigger author had been dead for two days, and 0.29.1's diagnostics named why on
+  their first live failure.** The call is a bare `claude -p`, so it inherited `effortLevel`
+  from the user's settings - `xhigh` - while the daemon exports `MAX_THINKING_TOKENS=0`
+  (set 2026-07-27 to stop empty thinking blocks corrupting chat transcripts). The pair is a
+  hard API 400: _"output_config.effort 'xhigh' is not supported when thinking is disabled."_
+  Measured: 46 failures against 8 successes on 07-28, then 34 against ZERO on 07-29.
+  Reproduced three ways - bare shell succeeds, daemon env 400s, `--effort high` succeeds.
+  The chat path already passed `--effort` and `--setting-sources`; this was the only bare
+  call site, which is exactly why chat survived the same environment and the author did not.
+  The earlier prompt-size hypothesis was wrong; that reduction stands on its own as a cost fix.
+
+- **A temporal worker failure reported a fingerprint instead of a cause.** Five consecutive
+  live failures logged only `temporal-worker-failure;sha256=...;length=31`, so an upstream
+  outage could not be told from a bug here. The hashing itself is correct and stays - a
+  runner error can carry connector evidence, and logs, notices, sends, events and the ledger
+  row must never contain its text. The log now carries a label from a CLOSED table of failure
+  shapes (`upstream-5xx`, `timeout`, `rate-limited`, ...); nothing is copied out of the error,
+  and an unmatched failure reads `unclassified`, which carries exactly what the digest did.
+  Also fixed: a deferred arbitration parked the digest, so every recheck after a deferral had
+  already lost the cause.
+
+- **The channel-key backfill could redeliver an entire partition.** Rows live in SQLite and
+  delta cursors in a JSON file, so no transaction spans them; the script committed the rekey
+  first and wrote cursors after. A crash between the two left `drainNew` with no cursor for
+  the new key - it starts from 0 and redelivers everything, and re-running does not heal it
+  because the plan finds no old keys left to carry. Cursors now go first (a stall, which a
+  re-run DOES heal), a failed rekey restores the pre-image, and the write is atomic so a
+  crash mid-write cannot leave an unparseable file that sends every partition back to 0.
+
+### Removed
+
+- **`GET /api/multi-agent/delegations` and `recentDelegations`,** which could only ever answer
+  "nothing". The handler read an accessor no caller supplied, from a `swarm_tasks` table
+  nothing in the repo wrote; verified empty on the live daemon before removal. Route, handler,
+  both accessors, the `SwarmTask` and `DelegationHistoryEntry` types, the boot-time table, the
+  viewer's type field and the API reference entry are gone.
+
 ## mama-os [0.29.1] - 2026-07-30
 
 ### Fixed
