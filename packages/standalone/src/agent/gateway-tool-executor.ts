@@ -3931,7 +3931,10 @@ export class GatewayToolExecutor {
       if (temporalContext && this.taskLedger) {
         const boundTask = this.taskLedger.getById(temporalContext.taskId);
         const rawChannel = boundTask?.sourceChannel ?? null;
-        const rawEventId = boundTask?.sourceEventId ?? null;
+        // Trimmed: a whitespace-only event id is truthy but fails ref
+        // normalization downstream - which would fail the WHOLE compile,
+        // exactly what "strictly additive" forbids.
+        const rawEventId = boundTask?.sourceEventId?.trim() || null;
         const sep = rawChannel ? rawChannel.indexOf(':') : -1;
         const seedConnector = rawChannel && sep > 0 ? rawChannel.slice(0, sep) : null;
         const seedChannelId = rawChannel && sep > 0 ? rawChannel.slice(sep + 1) : null;
